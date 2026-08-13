@@ -1,16 +1,17 @@
-import { PLAYER_COATS, type CoatSwatch } from '../critters/palette.js';
+import type GUI from 'lil-gui';
+import { PLAYER_COATS } from '../critters/palette.js';
 import type { CritterTuning } from './critter.js';
-import { LABEL_CSS, type TuningGroup } from './tuning-panel.js';
+import type { TuningGroup } from './tuning-panel.js';
 
 /**
  * The critter's side of the sandbox panel (spec 055): a coat picker and the
  * cosmetic knobs that are not the shared figure ones.
  *
- * The coat picker is the whole customisation surface a player ever sees. It is a
- * grid of swatches rather than a colour wheel on purpose -- the derivation that
- * keeps a critter legible (see `critters/palette.ts`) is only guaranteed for
- * colours in the mid-value band these twelve occupy, and a free picker would let
- * someone build a black pig whose eyes and hooves vanish into it.
+ * The coat picker was a grid of twelve swatches and nothing else, because the
+ * derivation that keeps a critter legible (see `critters/palette.ts`) is only
+ * guaranteed inside the mid-value band those twelve occupy. Since spec 152 the
+ * colour here is free, with the twelve kept as presets -- see `buildCoatPicker`
+ * for why that argument does not bind a *tuning sandbox*.
  */
 
 /** Tuning rows for the critter, shown while a critter is the active unit. */
@@ -89,63 +90,79 @@ export const CRITTER_TUNING_GROUPS: readonly TuningGroup<CritterTuning>[] = [
   },
 ];
 
+
 export interface CoatPicker {
-  readonly element: HTMLElement;
-  /** Highlight the swatch matching `hex`, if any. */
+  /** Show `hex` as the current colour, after a unit switch picked it up. */
   setActive(hex: number): void;
   setVisible(visible: boolean): void;
 }
 
-/** Two hex digits, for building a CSS colour from a 24-bit number. */
-function css(hex: number): string {
-  return `#${hex.toString(16).padStart(6, '0')}`;
-}
-
 /**
- * Build the coat swatch grid. `onPick` fires with the chosen colour; the caller
- * pushes it into whichever rig is live, which is what lets the picker keep
- * working across a unit switch without knowing what a rig is.
+ * Build the coat controls: any colour, plus the twelve as presets.
+ *
+ * The picker used to be the swatch grid and nothing else, and the reason was
+ * written down: the derivation that keeps a critter legible is only *guaranteed*
+ * for the mid-value band those twelve occupy, so a free picker lets somebody
+ * build a black pig whose eyes and hooves vanish into it. That argument is
+ * about the surface a **player** customises through, which is not this one --
+ * this is the tuning sandbox, whose entire job is trying the thing to see what
+ * it does. So the colour is free here and the twelve stay one click away, and
+ * the guarantee is a note in the tip rather than a fence.
+ *
+ * `onPick` fires with the chosen colour; the caller pushes it into whichever rig
+ * is live, which is what lets the picker keep working across a unit switch
+ * without knowing what a rig is.
  */
-export function buildCoatPicker(onPick: (swatch: CoatSwatch) => void): CoatPicker {
-  const wrap = document.createElement('div');
+export function buildCoatPicker(parent: GUI, onPick: (hex: number) => void): CoatPicker {
+  const folder = parent.addFolder('Coat');
+  // lil-gui binds to a property, so the pick lives on a record of its own; the
+  // rig is the authority on what is actually being worn and is read back into
+  // this by `setActive`.
+  // `preset` holds the *hex*, not a name: lil-gui matches a dropdown's current
+  // entry by looking the bound value up in its option values, so a string here
+  // would match nothing and the control would show a raw number. -1 is "not one
+  // of the twelve", which is what a freely picked colour is.
+  const state = { color: PLAYER_COATS[0]?.hex ?? 0xffffff, preset: -1 };
 
-  const label = document.createElement('div');
-  label.textContent = 'Coat';
-  label.title =
-    "The player's colour. Everything else on the animal — its shading, its snout, its markings — is derived from this one pick and kept legible against it.";
-  label.style.cssText = 'color:#f0f0f8;font-weight:600;margin:12px 0 5px;letter-spacing:.03em;';
-  wrap.appendChild(label);
-
-  const grid = document.createElement('div');
-  grid.style.cssText = 'display:grid;grid-template-columns:repeat(6,1fr);gap:5px;';
-  const cells: { hex: number; button: HTMLButtonElement }[] = [];
-
-  const style = (btn: HTMLButtonElement, hex: number, on: boolean): void => {
-    btn.style.cssText =
-      `${LABEL_CSS}aspect-ratio:1;padding:0;border-radius:6px;cursor:pointer;background:${css(hex)};` +
-      (on ? 'border:2px solid #f0f0f8;box-shadow:0 0 0 1px #16161e;' : 'border:2px solid #2a2a3a;');
-  };
-
-  for (const swatch of PLAYER_COATS) {
-    const btn = document.createElement('button');
-    btn.title = `${swatch.name} (${css(swatch.hex)})`;
-    style(btn, swatch.hex, false);
-    btn.addEventListener('click', () => {
-      for (const cell of cells) style(cell.button, cell.hex, cell.hex === swatch.hex);
-      onPick(swatch);
+  const colour = folder
+    .addColor(state, 'color')
+    .name('Colour')
+    .onChange((hex: number) => {
+      state.preset = presetFor(hex);
+      preset.updateDisplay();
+      onPick(hex);
     });
-    grid.appendChild(btn);
-    cells.push({ hex: swatch.hex, button: btn });
-  }
-  wrap.appendChild(grid);
+  colour.domElement.title =
+    "The animal's one colour. Everything else — its shading, its snout, its markings, its hooves — is derived from this single pick. " +
+    'The derivation is only guaranteed legible in the mid-value band the presets sit in: at the black and white ends there is no room left to shade or to tint, ' +
+    'and the species accents that carry the animal’s identity get swamped.';
+
+  const options: Record<string, number> = {};
+  for (const swatch of PLAYER_COATS) options[swatch.name] = swatch.hex;
+  const preset = folder
+    .add(state, 'preset', { '—': -1, ...options })
+    .name('Preset')
+    .onChange((hex: number) => {
+      if (hex < 0) return;
+      state.color = hex;
+      colour.updateDisplay();
+      onPick(hex);
+    });
+  preset.domElement.title =
+    'The twelve player coats: warm, desaturated, and deliberately all mid-value, so one sits in an illustration beside another and every one of them can be named across a lobby.';
 
   return {
-    element: wrap,
     setActive: (hex) => {
-      for (const cell of cells) style(cell.button, cell.hex, cell.hex === hex);
+      state.color = hex;
+      state.preset = presetFor(hex);
+      colour.updateDisplay();
+      preset.updateDisplay();
     },
-    setVisible: (visible) => {
-      wrap.style.display = visible ? 'block' : 'none';
-    },
+    setVisible: (visible) => folder.show(visible),
   };
+}
+
+/** The preset dropdown's value for a colour: its own entry, or -1 for none. */
+function presetFor(hex: number): number {
+  return PLAYER_COATS.some((swatch) => swatch.hex === hex) ? hex : -1;
 }

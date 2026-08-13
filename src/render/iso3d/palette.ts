@@ -29,6 +29,13 @@ export const PALETTE = {
   enemySkitter: 0x5fb4d6,
   enemyBrute: 0x9a5ad0,
   enemyEye: 0x1a1208,
+  // The small spider (spec 152), body and legs the same colour. A dark slate
+  // violet rather than 0x000000, for two reasons: every material here is a
+  // Lambert, so a pure black body multiplies the sun out and loses its own
+  // facets -- it becomes a hole rather than a round thing -- and the violet in
+  // it is what stops a near-black body on dark ground from reading as a gap in
+  // the world. Tuned in the movement sandbox against the real grass.
+  enemySpider: 0x3d3846,
   // The player-controlled mech in the movement sandbox (a friendly steel blue).
   mechAlly: 0x4a7fb0,
   // The grey metal walker unit in the movement sandbox (a rotating turret on legs).

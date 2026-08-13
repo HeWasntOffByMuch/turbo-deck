@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import GUI from 'lil-gui';
 import { characterAt } from '../../sim/characters.js';
 import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
 import type { Vec2, WorldColliders } from '../../sim/types.js';
@@ -17,7 +18,14 @@ import {
   type TerrainWorld,
 } from '../../terrain/index.js';
 import { buildTerrainMesh } from './terrain-mesh.js';
-import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
+import {
+  defaultMechAppearance,
+  defaultMechTuning,
+  MechRig,
+  type MechAppearance,
+  type MechTuning,
+} from './rigs.js';
+import { monsterLookFor, type MechRigTuning } from './world/monster-look.js';
 import { buildPropField } from './props.js';
 import { RobeRig } from './robe.js';
 import { ROBE_TUNING_GROUPS } from './robe-panel.js';
@@ -25,10 +33,10 @@ import { CritterRig, defaultCritterTuning, type CritterTuning } from './critter.
 import { buildCoatPicker, CRITTER_TUNING_GROUPS } from './critter-panel.js';
 import { CRITTERS, CRITTER_IDS, isCritterId, type CritterId } from '../critters/index.js';
 import {
-  buildTuningSection,
+  addTuningGroups,
+  embedGui,
+  fitPanelHeight,
   LABEL_CSS,
-  panelButton,
-  panelButtonRow,
   type TuningGroup,
 } from './tuning-panel.js';
 import { authoredIdOf, isAuthoredKind, type SandboxUnit, type UnitKind } from './unit.js';
@@ -49,6 +57,56 @@ import { viewSeed } from './seed.js';
 
 // Per-frame easing fraction for camera framing changes (spec 034), matching IsoScene.
 const CAMERA_SMOOTH = 0.15;
+
+/** The monster id whose look the sandbox's small-spider chip mirrors. */
+const SMALL_SPIDER_ID = 'small_spider';
+
+/**
+ * What each mech chip loads into the two shared records (spec 152).
+ *
+ * The mechs have always shared one tuning object, which is what makes the
+ * panel's mech section one set of sliders rather than one per unit. A third
+ * mech with *different* numbers therefore has to load them, exactly as the C key
+ * already loads an archetype preset and the reset button loads the defaults.
+ *
+ * The two halves carry separate ids because they change on different picks.
+ * Spider and walker have always differed in colour and never in tuning, so
+ * moving between them must not touch a slider somebody has dragged -- while
+ * moving to or from the small spider must, or the chip shows a body that is not
+ * the one in the game.
+ */
+interface MechPreset {
+  /** Which chips share this tuning; picking within a group loads nothing. */
+  readonly tuningId: string;
+  /** Overrides on top of `defaultMechTuning()`. Empty is the default mech. */
+  readonly tuning: MechRigTuning;
+  readonly appearanceId: string;
+  readonly appearance: MechAppearance;
+}
+
+const MECH_PRESETS: Readonly<Record<string, MechPreset>> = {
+  spider: {
+    tuningId: 'default',
+    tuning: {},
+    appearanceId: 'spider',
+    appearance: defaultMechAppearance(PALETTE.mechAlly),
+  },
+  walker: {
+    tuningId: 'default',
+    tuning: {},
+    appearanceId: 'walker',
+    appearance: defaultMechAppearance(PALETTE.walkerBody),
+  },
+  'spider-small': {
+    tuningId: 'small-spider',
+    // Read from the table the game draws it from rather than copied, so the
+    // sandbox cannot show a spider the arena does not have.
+    tuning: monsterLookFor(SMALL_SPIDER_ID)?.tuning ?? {},
+    appearanceId: 'small-spider',
+    appearance:
+      monsterLookFor(SMALL_SPIDER_ID)?.appearance ?? defaultMechAppearance(PALETTE.mechAlly),
+  },
+};
 
 /**
  * The movement sandbox tab (spec 032/033/046, restored by 066): no game -- just
@@ -90,14 +148,33 @@ class MovementScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  // Both mechs share one tuning object so the panel drives whichever is active;
-  // the grey mech only differs in colour and a non-turning lower body.
+  // Every mech shares one tuning object and one appearance object, so the panel
+  // drives whichever is active; the chips differ in what they *load* into the
+  // two (see MECH_PRESETS) and, for the grey walker, a non-turning lower body.
   private readonly sharedTuning: MechTuning = defaultMechTuning();
-  private readonly spider = new MechRig('ally', PALETTE.mechAlly, { tuning: this.sharedTuning });
+  private readonly sharedAppearance: MechAppearance = defaultMechAppearance(PALETTE.mechAlly);
+  private readonly spider = new MechRig('ally', PALETTE.mechAlly, {
+    tuning: this.sharedTuning,
+    appearance: this.sharedAppearance,
+  });
   private readonly walker = new MechRig('ally', PALETTE.walkerBody, {
     tuning: this.sharedTuning,
+    appearance: this.sharedAppearance,
     lowerBodyTurns: false,
   });
+  /**
+   * The shipped small spider (spec 152) as a third body on the same rig, so the
+   * enemy that is in the game can be tuned rather than a lookalike rebuilt from
+   * memory. It shares the two records like the others; its chip loads the look
+   * table's values into them.
+   */
+  private readonly smallSpider = new MechRig('small_spider', undefined, {
+    tuning: this.sharedTuning,
+    appearance: this.sharedAppearance,
+  });
+  /** Which preset is currently loaded into each shared record; see `loadMechPreset`. */
+  private loadedTuningPreset = 'default';
+  private loadedAppearancePreset = 'spider';
   /** The robed figure (spec 046), built lazily so its cloth costs nothing unless picked. */
   private robeRig: RobeRig | null = null;
   private readonly robeTuning: RobeTuning = defaultRobeTuning();
@@ -200,9 +277,14 @@ class MovementScene {
     return createWorldColliders(ARENA_OBSTACLES, vegetationColliders(this.vegetation));
   }
 
-  /** The shared live-editable tuning both mechs use (the panel binds to it). */
+  /** The shared live-editable tuning every mech uses (the panel binds to it). */
   get tuning(): MechTuning {
     return this.sharedTuning;
+  }
+
+  /** The shared live-editable shape and colours (the colour wells bind to it). */
+  get appearance(): MechAppearance {
+    return this.sharedAppearance;
   }
 
   /** The robe's live-editable tuning (the panel binds to it). */
@@ -240,20 +322,65 @@ class MovementScene {
     return this.dummy;
   }
 
-  /** Swap the controllable unit, keeping the sim (position/heading) running. */
-  setUnit(kind: UnitKind): void {
+  /**
+   * Swap the controllable unit, keeping the sim (position/heading) running.
+   *
+   * Returns whether the panel's controls need re-reading, which is true exactly
+   * when a mech chip loaded a preset the sliders are not already showing.
+   */
+  setUnit(kind: UnitKind): boolean {
     const critter = isCritterId(kind) ? this.ensureCritter(kind) : null;
     const authored = isAuthoredKind(kind) ? this.ensureAuthored(authoredIdOf(kind)) : null;
     this.activeCritter = critter;
     this.activeAuthored = authored;
+    const loaded = this.loadMechPreset(kind);
     const next =
       authored ??
       critter ??
-      (kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider);
-    if (next === this.active) return;
-    this.scene.remove(this.active.group);
-    this.active = next;
-    this.scene.add(this.active.group);
+      (kind === 'walker'
+        ? this.walker
+        : kind === 'robe'
+          ? this.ensureRobe()
+          : kind === 'spider-small'
+            ? this.smallSpider
+            : this.spider);
+    if (next !== this.active) {
+      this.scene.remove(this.active.group);
+      this.active = next;
+      this.scene.add(this.active.group);
+    }
+    return loaded;
+  }
+
+  /**
+   * Load a mech chip's preset into the two shared records, and say whether
+   * anything moved.
+   *
+   * Each half is loaded only when its id changes, so picking between two chips
+   * that agree about it leaves a dragged slider or a picked colour alone. With
+   * `force` it always loads, which is what the reset button wants: reset while
+   * the small spider is up should restore the *small spider*, not the mech.
+   */
+  private loadMechPreset(kind: UnitKind, force = false): boolean {
+    const preset = MECH_PRESETS[kind];
+    if (preset === undefined) return false;
+    let loaded = false;
+    if (force || preset.tuningId !== this.loadedTuningPreset) {
+      this.loadedTuningPreset = preset.tuningId;
+      Object.assign(this.sharedTuning, defaultMechTuning(), preset.tuning);
+      loaded = true;
+    }
+    if (force || preset.appearanceId !== this.loadedAppearancePreset) {
+      this.loadedAppearancePreset = preset.appearanceId;
+      Object.assign(this.sharedAppearance, preset.appearance);
+      loaded = true;
+    }
+    return loaded;
+  }
+
+  /** Restore the active mech chip's own preset, for the panel's reset button. */
+  resetMech(kind: UnitKind): void {
+    this.loadMechPreset(kind, true);
   }
 
   /**
@@ -493,6 +620,17 @@ const MECH_TUNING_GROUPS: readonly TuningGroup<MechTuning>[] = [
         tip: 'Overall creature size — scales every leg and body dimension and how far each step reaches.',
       },
       {
+        label: 'Body size',
+        min: 0.2,
+        max: 3,
+        step: 0.05,
+        key: 'bodySize',
+        digits: 2,
+        tip:
+          'How big the body is against its own legs — the sphere’s radius on a round body, the chassis and everything bolted to it on a boxy one. ' +
+          'Separate from Size, which moves the body and the legs together and so cannot change the proportion between them.',
+      },
+      {
         label: 'Legs',
         min: 3,
         max: 8,
@@ -707,10 +845,43 @@ const MECH_TUNING_GROUPS: readonly TuningGroup<MechTuning>[] = [
   },
 ];
 
+/**
+ * The mech's colours (spec 152), in their own group because they are the two
+ * rows in this panel that are not numbers you drag.
+ *
+ * The hex beside each well is the readout on purpose: it is what somebody
+ * copies out of here and pastes into `monster-look.ts` or the palette.
+ */
+const MECH_LOOK_GROUP: TuningGroup<MechAppearance> = {
+  title: 'Colour',
+  rows: [
+    {
+      label: 'Body',
+      key: 'bodyColor',
+      swatch: true,
+      tip: 'The upper body’s colour. The chassis variant darkens its own top plate off this; the sphere is this exact colour.',
+    },
+    {
+      label: 'Legs',
+      key: 'legColor',
+      swatch: true,
+      tip: 'The legs’ colour. The hip and the shin are drawn a little darker than this, so a leg still reads as three segments.',
+    },
+  ],
+};
+
 /** Everything the sandbox panel needs to drive: the tunings and a set of actions. */
 export interface SandboxPanelOptions {
   /** The mech tuning (also the holder of the sim move-speed/turn-rate overrides). */
   readonly mech: MechTuning;
+  /**
+   * The mech's live shape and colours (spec 152), edited by the colour wells.
+   *
+   * Optional for the same reason `attack` is: the rig debugger mounts this panel
+   * over two mechs whose colours are fixed at construction, so absent means the
+   * colour rows are never shown rather than shown and inert.
+   */
+  readonly appearance?: MechAppearance;
   /** The robed figure's cloth/figure/wind tuning. */
   readonly robe: RobeTuning;
   /** The critters' shared cosmetic tuning. */
@@ -749,6 +920,14 @@ export interface SandboxPanel {
   readonly element: HTMLElement;
   /** Push every tuning's current values back into the controls (after a reset). */
   sync(): void;
+  /**
+   * Re-measure the column so it runs to the bottom of the window.
+   *
+   * Called by the tab's `start()` rather than at build time, because the shell
+   * makes a tab visible and only then starts it -- and a panel measured while
+   * its tab is `display:none` has no box to measure.
+   */
+  fit(): void;
 }
 
 /**
@@ -761,6 +940,11 @@ const UNIT_CHIPS: readonly { kind: UnitKind; label: string; tip: string }[] = [
     kind: 'spider',
     label: 'Spider',
     tip: 'Control the organic spider mech — its whole body turns to face where it moves.',
+  },
+  {
+    kind: 'spider-small',
+    label: 'Small spider',
+    tip: 'The enemy that is in the game (spec 152), loaded from the same look table the arena draws it from — so the size, gait and colours below are the shipped ones, ready to be changed.',
   },
   {
     kind: 'walker',
@@ -788,19 +972,30 @@ const UNIT_CHIPS: readonly { kind: UnitKind; label: string; tip: string }[] = [
 ];
 
 /**
- * Build the side control panel. The unit picker swaps which tuning section is
- * shown -- the mech's leg/gait knobs or the robe's fabric, force and wind knobs
- * -- while the movement group stays visible for both, since it drives the mover
- * rather than either rig.
+ * Build the side control panel (spec 032, on lil-gui since 152).
+ *
+ * The unit picker swaps which folders are shown -- the mech's leg/gait knobs or
+ * the robe's fabric, force and wind knobs -- while the movement group stays
+ * visible for all of them, since it drives the mover rather than any rig.
+ *
+ * The picker is a dropdown rather than the row of chips it used to be, and that
+ * is a fix rather than a translation: the chips were one flex row across a
+ * 300px panel, and the roster has grown past what that can hold -- with two
+ * critters and one authored unit the last chip was already being clipped
+ * mid-word. A list that is as long as the roster costs one click and cannot
+ * overflow.
  */
 export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
   const panel = document.createElement('div');
-  panel.style.cssText =
-    `${LABEL_CSS}width:300px;max-height:${DISPLAY_H}px;overflow-y:auto;padding:4px 12px 12px;` +
-    'background:#16161e;border:1px solid #2a2a3a;border-radius:8px;font-size:12px;box-sizing:border-box;';
+  // No cap of its own: `fit` measures where the column starts and runs it to
+  // the bottom of the window. `100vh` until then, so the very first frame is
+  // bounded by something even if it is never fitted.
+  panel.style.cssText = `${LABEL_CSS}width:300px;max-height:100vh;overflow-y:auto;box-sizing:border-box;`;
 
   const help = document.createElement('div');
-  help.style.cssText = 'line-height:1.5;color:#9a9ab0;margin:6px 0 10px;';
+  help.style.cssText =
+    'line-height:1.5;color:#9a9ab0;margin:6px 0 10px;font-size:12px;background:#16161e;' +
+    'border:1px solid #2a2a3a;border-radius:8px;padding:8px 10px;';
   help.innerHTML =
     '<b style="color:#f0f0f8;">Movement sandbox</b><br>' +
     '<b>Right-click</b> the ground to move. MOBA turn-rate: the unit turns to face ' +
@@ -810,99 +1005,86 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     'Pick a unit below.';
   panel.appendChild(help);
 
-  // Unit picker: one chip per controllable unit.
-  const pickerLabel = document.createElement('div');
-  pickerLabel.textContent = 'Unit';
-  pickerLabel.title = "Choose which unit the sandbox controls; the sliders below follow the choice.";
-  pickerLabel.style.cssText = 'color:#f0f0f8;font-weight:600;margin:2px 0 4px;letter-spacing:.03em;';
-  panel.appendChild(pickerLabel);
-  const picker = document.createElement('div');
-  picker.style.cssText = 'display:flex;gap:6px;margin:0 0 6px;';
-  const chips: HTMLButtonElement[] = [];
-  const styleChip = (btn: HTMLButtonElement, on: boolean): void => {
-    btn.style.cssText =
-      `${LABEL_CSS}flex:1;padding:6px 2px;border-radius:6px;cursor:pointer;font-size:11px;border:1px solid #2a2a3a;` +
-      (on ? 'background:#3a5c7a;color:#f0f0f8;' : 'background:#20202c;color:#9a9ab0;');
-  };
+  const gui = embedGui(new GUI({ container: panel, title: 'Tuning', width: 300 }));
 
-  const movement = buildTuningSection([MOVEMENT_GROUP], opts.mech);
+  const unitState = { unit: (UNIT_CHIPS[0]?.kind ?? 'spider') as UnitKind };
+  const unitOptions: Record<string, UnitKind> = {};
+  for (const chip of UNIT_CHIPS) unitOptions[chip.label] = chip.kind;
+  const unit = gui
+    .add(unitState, 'unit', unitOptions)
+    .name('Unit')
+    .onChange((kind: UnitKind) => {
+      // Swap the unit *before* refreshing the panel: `showUnit` reads the new
+      // unit's coat, which does not exist until the rig has been built.
+      opts.onUnit(kind);
+      showUnit(kind);
+    });
+  unit.domElement.title =
+    'Which unit the sandbox controls. The folders below follow the choice, and each unit’s tips describe it.';
+
+  const movement = addTuningGroups(gui, [MOVEMENT_GROUP], opts.mech);
   const attackTarget = opts.attack ?? null;
-  const attack = buildTuningSection([ATTACK_GROUP], attackTarget ?? defaultAttackTuning());
-  const mech = buildTuningSection(MECH_TUNING_GROUPS, opts.mech);
-  const robe = buildTuningSection(ROBE_TUNING_GROUPS, opts.robe);
-  const critter = buildTuningSection(CRITTER_TUNING_GROUPS, opts.critter);
-  const coats = buildCoatPicker((swatch) => opts.onCoat(swatch.hex));
-
-  // Robe-only actions: the discrete events the cloth reacts to, which cannot be
-  // produced by dragging a slider.
-  const robeActions = document.createElement('div');
-  robeActions.appendChild(
-    panelButtonRow(
-      panelButton('Jump', 'Hop the figure (or press J) and watch the robe trail, then flare on landing.', opts.onJump),
-      panelButton('Drop', 'Drop the figure from a height, to watch the robe billow through a long fall.', opts.onDrop),
-    ),
-  );
-  robeActions.appendChild(
-    panelButtonRow(
-      panelButton('Gust', 'Fire a one-shot gust of wind on top of the sustained wind.', opts.onGust),
-      panelButton('Re-settle', 'Drop every garment back onto its rest pose at rest. Useful after a big retune.', opts.onResettle),
-    ),
-  );
+  const attack = addTuningGroups(gui, [ATTACK_GROUP], attackTarget ?? defaultAttackTuning());
 
   // The authored unit's own controls: a swing, a weapon, and whether it is
   // drawn. Built once and shown only for an authored unit, the same way the
   // robe's cloth buttons are.
-  const authoredActions = document.createElement('div');
-  authoredActions.appendChild(
-    panelButtonRow(
-      panelButton('Swing', 'Throw one attack (or press Space). Refused while the last one is still running or on cooldown.', () => opts.onSwing?.()),
-    ),
-  );
+  const held = gui.addFolder('Weapon');
+  const weaponNames: Record<string, string> = { None: '' };
+  for (const id of weaponIds()) weaponNames[weaponAssets(id)?.def.name ?? id] = id;
+  const heldState = {
+    swing: () => opts.onSwing?.(),
+    weapon: weaponIds()[0] ?? '',
+    sheathed: false,
+  };
+  held
+    .add(heldState, 'swing')
+    .name('Swing')
+    .domElement.title =
+    'Throw one attack (or press Space). Refused while the last one is still running or on cooldown.';
+  held
+    .add(heldState, 'weapon', weaponNames)
+    .name('Held')
+    .onChange((id: string) => opts.onWeapon?.(id === '' ? null : id))
+    .domElement.title =
+    'Which held object goes in the weapon.main socket. Read from assets/items/, so a new weapon appears here on its own.';
+  held
+    .add(heldState, 'sheathed')
+    .name('Sheathed (weapon.stow)')
+    .onChange((on: boolean) => opts.onSheathed?.(on))
+    .domElement.title =
+    'Move the weapon to the stow socket on the back. Instant -- the unsheathing animation is not built yet.';
 
-  const weaponLabel = document.createElement('div');
-  weaponLabel.textContent = 'Weapon';
-  weaponLabel.title = 'Which held object goes in the weapon.main socket. Read from assets/items/, so a new weapon appears here on its own.';
-  weaponLabel.style.cssText = 'color:#f0f0f8;font-weight:600;margin:10px 0 4px;letter-spacing:.03em;';
-  const weaponRow = document.createElement('div');
-  weaponRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px;';
-  const weaponChips: HTMLButtonElement[] = [];
-  const weaponOptions: (string | null)[] = [null, ...weaponIds()];
-  weaponOptions.forEach((id, index) => {
-    const btn = document.createElement('button');
-    btn.textContent = id === null ? 'None' : (weaponAssets(id)?.def.name ?? id);
-    btn.title = id === null ? 'Empty the hand.' : `Hold ${id}.`;
-    styleChip(btn, index === 1);
-    btn.addEventListener('click', () => {
-      weaponChips.forEach((chip, other) => styleChip(chip, other === index));
-      opts.onWeapon?.(id);
-    });
-    weaponRow.appendChild(btn);
-    weaponChips.push(btn);
-  });
+  const mech = addTuningGroups(gui, MECH_TUNING_GROUPS, opts.mech);
+  const lookTarget = opts.appearance ?? null;
+  const mechLook = addTuningGroups(gui, [MECH_LOOK_GROUP], lookTarget ?? defaultMechAppearance(0));
+  const robe = addTuningGroups(gui, ROBE_TUNING_GROUPS, opts.robe);
 
-  const sheathe = document.createElement('label');
-  sheathe.style.cssText = `${LABEL_CSS}display:flex;align-items:center;gap:6px;margin:2px 0 4px;cursor:pointer;`;
-  const sheatheBox = document.createElement('input');
-  sheatheBox.type = 'checkbox';
-  sheatheBox.style.accentColor = '#4a7fb0';
-  sheatheBox.addEventListener('change', () => opts.onSheathed?.(sheatheBox.checked));
-  sheathe.append(sheatheBox, document.createTextNode('Sheathed (weapon.stow)'));
-  sheathe.title = 'Move the weapon to the stow socket on the back. Instant -- the unsheathing animation is not built yet.';
-  authoredActions.append(weaponLabel, weaponRow, sheathe);
+  // Robe-only actions: the discrete events the cloth reacts to, which cannot be
+  // produced by dragging a slider.
+  const cloth = gui.addFolder('Cloth actions');
+  const clothActions = {
+    jump: () => opts.onJump(),
+    drop: () => opts.onDrop(),
+    gust: () => opts.onGust(),
+    resettle: () => opts.onResettle(),
+  };
+  cloth.add(clothActions, 'jump').name('Jump').domElement.title =
+    'Hop the figure (or press J) and watch the robe trail, then flare on landing.';
+  cloth.add(clothActions, 'drop').name('Drop').domElement.title =
+    'Drop the figure from a height, to watch the robe billow through a long fall.';
+  cloth.add(clothActions, 'gust').name('Gust').domElement.title =
+    'Fire a one-shot gust of wind on top of the sustained wind.';
+  cloth.add(clothActions, 'resettle').name('Re-settle').domElement.title =
+    'Drop every garment back onto its rest pose at rest. Useful after a big retune.';
 
-  panel.append(
-    picker,
-    movement.element,
-    attack.element,
-    authoredActions,
-    mech.element,
-    robe.element,
-    robeActions,
-    coats.element,
-    critter.element,
-  );
+  const coats = buildCoatPicker(gui, (hex) => opts.onCoat(hex));
+  const critter = addTuningGroups(gui, CRITTER_TUNING_GROUPS, opts.critter);
 
-  const showUnit = (kind: UnitKind): void => {
+  const reset = gui.add({ reset: () => opts.onReset() }, 'reset').name('Reset to defaults');
+  reset.domElement.title = "Restore every control above to the active unit's default tuning.";
+
+  function showUnit(kind: UnitKind): void {
     const isRobe = kind === 'robe';
     const isCritter = isCritterId(kind);
     const isAuthored = isAuthoredKind(kind) && attackTarget !== null;
@@ -910,43 +1092,28 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     // robe and the critters have no swing to play, and a slider that visibly
     // does nothing is worse than an absent one (spec 047's rule for this tab).
     attack.setVisible(isAuthored);
-    authoredActions.style.display = isAuthored ? 'block' : 'none';
-    mech.setVisible(!isRobe && !isCritter && !isAuthored);
+    held.show(isAuthored);
+    const isMech = !isRobe && !isCritter && !isAuthored;
+    mech.setVisible(isMech);
+    mechLook.setVisible(isMech && lookTarget !== null);
     robe.setVisible(isRobe);
-    robeActions.style.display = isRobe ? 'block' : 'none';
+    cloth.show(isRobe);
     critter.setVisible(isCritter);
     coats.setVisible(isCritter);
     const coat = opts.coatOf(kind);
     if (coat !== null) coats.setActive(coat);
-  };
-
-  UNIT_CHIPS.forEach((u, i) => {
-    const btn = document.createElement('button');
-    btn.textContent = u.label;
-    btn.title = u.tip;
-    styleChip(btn, i === 0);
-    btn.addEventListener('click', () => {
-      chips.forEach((c, j) => styleChip(c, j === i));
-      // Swap the unit *before* refreshing the panel: `showUnit` reads the new
-      // unit's coat, which does not exist until the rig has been built.
-      opts.onUnit(u.kind);
-      showUnit(u.kind);
-    });
-    picker.appendChild(btn);
-    chips.push(btn);
-  });
-  showUnit('spider');
-
-  const reset = panelButton('Reset to defaults', "Restore every slider above to the active unit's default tuning.", opts.onReset);
-  reset.style.marginTop = '14px';
-  panel.appendChild(panelButtonRow(reset));
+  }
+  showUnit(unitState.unit);
 
   return {
     element: panel,
+    fit: () => fitPanelHeight(panel),
     sync: () => {
+      unit.updateDisplay();
       movement.sync();
       attack.sync();
       mech.sync();
+      mechLook.sync();
       robe.sync();
       critter.sync();
     },
@@ -1007,6 +1174,7 @@ export function mountMovement(container: HTMLElement): ViewHandle {
 
   const panel = buildPanel({
     mech: tuning,
+    appearance: scene.appearance,
     robe: scene.robe,
     critter: scene.critter,
     attack: attackTuning,
@@ -1014,12 +1182,17 @@ export function mountMovement(container: HTMLElement): ViewHandle {
       if (unit === 'robe') Object.assign(scene.robe, defaultRobeTuning());
       else if (isCritterId(unit)) Object.assign(scene.critter, defaultCritterTuning());
       else if (isAuthoredKind(unit)) Object.assign(attackTuning, defaultAttackTuning());
-      else Object.assign(tuning, defaultMechTuning());
+      // A mech resets to its own chip's preset rather than to the bare defaults:
+      // reset while the small spider is up must restore the small spider, or the
+      // button silently turns the unit into a different one.
+      else scene.resetMech(unit);
       panel.sync();
     },
     onUnit: (kind) => {
       unit = kind;
-      scene.setUnit(kind);
+      // Picking a mech chip may load a preset into the shared tuning and the
+      // shared colours, and the controls are showing the old ones until told.
+      if (scene.setUnit(kind)) panel.sync();
       // A body that has just been built is holding nothing, so the picked
       // weapon has to be put back into it -- switching units and finding an
       // empty hand would read as the weapon picker having broken.
@@ -1125,6 +1298,9 @@ export function mountMovement(container: HTMLElement): ViewHandle {
       running = true;
       lastFrame = undefined;
       accumulator = 0;
+      // The shell shows the tab and then starts it, so this is the first moment
+      // the panel has a box to measure.
+      panel.fit();
       input.attach(window);
       requestAnimationFrame(frame);
     },

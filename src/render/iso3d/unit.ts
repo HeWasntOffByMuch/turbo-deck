@@ -42,7 +42,7 @@ export interface SandboxUnit {
  * nothing else.
  */
 export type AuthoredKind = `authored:${string}`;
-export type UnitKind = 'spider' | 'walker' | 'robe' | CritterId | AuthoredKind;
+export type UnitKind = 'spider' | 'spider-small' | 'walker' | 'robe' | CritterId | AuthoredKind;
 
 /** The prefix that tells the two pigs apart. */
 export const AUTHORED_PREFIX = 'authored:';

@@ -239,6 +239,18 @@ class MechLeg {
   }
 
   /**
+   * Repaint the three bones (spec 152). Called only when the colour changes.
+   *
+   * The two darkened tones are re-derived here rather than stored, so this and
+   * the constructor cannot disagree about what a leg looks like.
+   */
+  setColor(legColor: number): void {
+    this.coxa.material = flatMaterial(darken(legColor, 0.85));
+    this.femur.material = flatMaterial(legColor);
+    this.tibia.material = flatMaterial(darken(legColor, 0.9));
+  }
+
+  /**
    * Resize the leg to the rig's size scale: lengthen the bones (the IK reads the
    * new lengths) and thicken their cross-section to match. Called only when the
    * size changes, not every frame.
@@ -398,6 +410,10 @@ const FEMUR_LEN = 27;
 const TIBIA_LEN = 36;
 const BODY_Y = 40;
 const BODY_SIZE = 22;
+// The sphere body's radius (spec 152). A touch over the cube's half-extent,
+// because an icosahedron's flat faces sit *inside* its circumradius: matched
+// exactly to 11 it reads as a smaller body than the cube it replaced.
+const BODY_RADIUS = 13.2;
 
 // Fixed feel constants (not exposed as sliders).
 const COUPLE_SLACK = 8; // a leg pulls its diagonal partner along if within this of triggering
@@ -474,6 +490,13 @@ function cross2(ax: number, az: number, bx: number, bz: number): number {
 export interface MechTuning {
   /** Overall creature size; scales every leg/body dimension and step distance. */
   sizeScale: number;
+  /**
+   * Body size: a multiplier on the upper body alone, on top of `sizeScale`.
+   *
+   * How big the body is *against its own legs*, which `sizeScale` cannot say
+   * because it moves both together. 1 is the proportion the rig was built at.
+   */
+  bodySize: number;
   /** Sim: base move speed (world units/s, before the engine clamp of 100..550). */
   moveSpeed: number;
   /** Sim: turn rate (degrees/s). */
@@ -556,6 +579,7 @@ export interface MechTuning {
 export function defaultMechTuning(): MechTuning {
   return {
     sizeScale: 1,
+    bodySize: 1,
     moveSpeed: 147.5,
     turnRate: 180,
     numLegs: 4,
@@ -588,6 +612,7 @@ export function defaultMechTuning(): MechTuning {
 // reach the pose math, not to second-guess ordinary slider use.
 const TUNING_BOUNDS: Record<keyof MechTuning, readonly [number, number]> = {
   sizeScale: [0.1, 8],
+  bodySize: [0.05, 6],
   moveSpeed: [1, 5000],
   turnRate: [1, 5000],
   numLegs: [3, 8],
@@ -770,6 +795,48 @@ function partnerOf(legIndex: number, numLegs: number): number {
  * + yaw), never by reading or writing sim state. Body colour keys off the enemy
  * type unless an explicit colour is given (e.g. the movement sandbox's ally mech).
  */
+/**
+ * What the upper body is made of (spec 152).
+ *
+ * `'box'` is the chassis-plate-head-eye mech every unit on this rig has always
+ * been. `'sphere'` is one faceted body and nothing else -- three of the box's
+ * four parts exist to say which way a mech points, and on a round black body
+ * they say nothing that its legs and its heading do not already say.
+ */
+export type MechBodyShape = 'box' | 'sphere';
+
+/**
+ * What a mech is made of, as opposed to how it moves (spec 152).
+ *
+ * The second live object beside {@link MechTuning}, and live for the same
+ * reason: the sandbox edits it while the rig is running and the rig picks the
+ * change up on its next frame. It is separate from the tuning rather than three
+ * more fields on it because the tuning is a record of *numbers* -- clamped to
+ * safe ranges, bound to sliders, spread over defaults -- and a shape is not a
+ * number while a colour is one only by accident of encoding. Sanitizing a
+ * colour against a min and a max would be nonsense.
+ *
+ * `bodySize` deliberately is NOT here: how big the body is against its legs is
+ * a proportion, it is tuned by dragging, and it belongs with the other
+ * proportions.
+ */
+export interface MechAppearance {
+  /** The upper body's shape. */
+  shape: MechBodyShape;
+  bodyColor: number;
+  /**
+   * The legs' colour, always concrete rather than "omitted means darkened".
+   * {@link defaultMechAppearance} applies that default once, so anything
+   * reading this -- the rig, a panel's colour well -- sees a real colour.
+   */
+  legColor: number;
+}
+
+/** The chassis look, with legs the body darkened: the contrast a mech wants. */
+export function defaultMechAppearance(bodyColor: number): MechAppearance {
+  return { shape: 'box', bodyColor, legColor: darken(bodyColor, 0.55) };
+}
+
 export interface MechOptions {
   /**
    * When false, the lower body (leg platform) does NOT turn to the heading: the
@@ -780,6 +847,13 @@ export interface MechOptions {
   readonly lowerBodyTurns?: boolean;
   /** Share an external tuning object (so two units can be tuned together). */
   readonly tuning?: MechTuning;
+  /**
+   * Share an external appearance object, the same way `tuning` is shared -- so
+   * a panel can edit one record and every mech built against it follows. When
+   * given it supersedes the `bodyColorOverride` argument, which is the same
+   * fact stated the older way.
+   */
+  readonly appearance?: MechAppearance;
 }
 
 const RAD2DEG = 180 / Math.PI;
@@ -845,6 +919,8 @@ export class MechRig {
   readonly group = new THREE.Group();
   /** Live-editable movement/appearance constants (the sandbox mutates this). */
   readonly tuning: MechTuning;
+  /** Live-editable shape and colours (spec 152); read on every frame. */
+  readonly appearance: MechAppearance;
   /** Whether the scene should set group.rotation.y to the heading (spider) or 0 (mech). */
   readonly orientsWithGroupYaw: boolean;
   private readonly lowerBodyTurns: boolean;
@@ -856,10 +932,14 @@ export class MechRig {
   private plants: LegPlant[];
   private lastNumLegs = -1;
   private legJustRecreated = false;
-  private readonly bodyColor: number;
-  private readonly legColor: number;
   // Body meshes + their base (scale-1) positions, so a size change can resize them.
-  private readonly bodyParts: { readonly mesh: THREE.Mesh; readonly base: THREE.Vector3 }[] = [];
+  private bodyParts: { readonly mesh: THREE.Mesh; readonly base: THREE.Vector3 }[] = [];
+  // What the meshes currently ON SCREEN were built from, so an edit to the live
+  // appearance is a rebuild and everything else is not.
+  private builtShape: MechBodyShape | null = null;
+  private builtBodyColor = -1;
+  private builtBodySize = -1;
+  private builtLegColor = -1;
   private appliedScale = -1; // last size applied to the meshes/bones (forces a first pass)
   private scale = 1; // size scale in effect this frame
   private prev: { x: number; z: number } | null = null;
@@ -893,31 +973,86 @@ export class MechRig {
   private readonly sRoll = new Spring(0, 4);
 
   constructor(type: string, bodyColorOverride?: number, opts: MechOptions = {}) {
-    this.bodyColor = bodyColorOverride ?? enemyColor(type);
-    this.legColor = darken(this.bodyColor, 0.55);
     this.tuning = opts.tuning ?? defaultMechTuning();
+    this.appearance = opts.appearance ?? defaultMechAppearance(bodyColorOverride ?? enemyColor(type));
     this.lowerBodyTurns = opts.lowerBodyTurns ?? true;
     this.orientsWithGroupYaw = this.lowerBodyTurns;
 
     // group -> carriage (lower body, leg frame) -> turret (upper body, faces heading).
     this.group.add(this.carriage);
     this.carriage.add(this.turret);
-    const body = box(BODY_SIZE, BODY_SIZE, BODY_SIZE, this.bodyColor);
-    body.position.y = BODY_Y;
-    const plate = box(BODY_SIZE - 6, 4, BODY_SIZE - 6, darken(this.bodyColor, 0.8));
-    plate.position.y = BODY_Y + BODY_SIZE / 2 + 1;
-    const head = box(10, 9, 12, this.bodyColor);
-    head.position.set(BODY_SIZE / 2 + 3, BODY_Y - 1, 0);
-    const eye = box(3, 5, 10, PALETTE.enemyEye);
-    eye.position.set(BODY_SIZE / 2 + 8, BODY_Y, 0);
-    for (const mesh of [body, plate, head, eye]) {
-      this.turret.add(mesh);
-      this.bodyParts.push({ mesh, base: mesh.position.clone() });
-    }
+    this.rebuildBody();
 
     this.legs = [];
     this.plants = [];
     this.recreateLegs();
+  }
+
+  /**
+   * Rebuild the upper body, a no-op unless its shape, colour or size changed.
+   *
+   * The same contract `recreateLegs` has, and for the same reason: the sandbox
+   * edits the live appearance record and the rig notices on its next frame.
+   * Rebuilding is the honest way to change a colour here -- `flatMaterial`
+   * caches one material per colour and shares it across the whole scene, so
+   * mutating the material in place would repaint every other thing wearing it.
+   *
+   * The old meshes are disposed rather than dropped: they are parented to the
+   * turret, so letting them go leaves them in the scene forever.
+   */
+  private rebuildBody(): void {
+    const { shape, bodyColor } = this.appearance;
+    const bodySize = Math.max(0.01, finiteOr(this.tuning.bodySize, 1));
+    if (shape === this.builtShape && bodyColor === this.builtBodyColor && bodySize === this.builtBodySize) {
+      return;
+    }
+    this.builtShape = shape;
+    this.builtBodyColor = bodyColor;
+    this.builtBodySize = bodySize;
+
+    for (const part of this.bodyParts) {
+      this.turret.remove(part.mesh);
+      part.mesh.geometry.dispose();
+    }
+    this.bodyParts = [];
+    for (const mesh of this.buildBody(shape, bodyColor, bodySize)) {
+      this.turret.add(mesh);
+      this.bodyParts.push({ mesh, base: mesh.position.clone() });
+    }
+    // The parts are brand new and at base positions, so whatever `sizeScale` is
+    // in effect has to be applied to them again.
+    this.appliedScale = -1;
+  }
+
+  /**
+   * The upper body's meshes, in the turret's frame (spec 152).
+   *
+   * Positioned at `sizeScale` 1: `applyScale` multiplies each part's recorded
+   * base position and scales the mesh, so anything built here follows the
+   * creature size without knowing it exists. `bodySize` is baked in instead,
+   * because it changes the body's proportion against the legs rather than the
+   * whole rig, and every offset scales with it so a chassis does not come apart.
+   */
+  private buildBody(shape: MechBodyShape, color: number, bodySize: number): readonly THREE.Mesh[] {
+    if (shape === 'sphere') {
+      // One part. A plate and a head on a sphere would be a mech wearing a ball,
+      // and the eye that says which way a chassis points is unreadable on a body
+      // this dark -- which is the case this shape was added for.
+      const body = faceted(BODY_RADIUS * bodySize, color);
+      body.position.y = BODY_Y;
+      return [body];
+    }
+
+    const size = BODY_SIZE * bodySize;
+    const body = box(size, size, size, color);
+    body.position.y = BODY_Y;
+    const plate = box(size - 6 * bodySize, 4 * bodySize, size - 6 * bodySize, darken(color, 0.8));
+    plate.position.y = BODY_Y + (BODY_SIZE / 2 + 1) * bodySize;
+    const head = box(10 * bodySize, 9 * bodySize, 12 * bodySize, color);
+    head.position.set((BODY_SIZE / 2 + 3) * bodySize, BODY_Y - 1 * bodySize, 0);
+    const eye = box(3 * bodySize, 5 * bodySize, 10 * bodySize, PALETTE.enemyEye);
+    eye.position.set((BODY_SIZE / 2 + 8) * bodySize, BODY_Y, 0);
+    return [body, plate, head, eye];
   }
 
   /**
@@ -931,11 +1066,27 @@ export class MechRig {
    * so letting them go without detaching leaves them in the scene forever, frozen
    * in their last pose.
    */
+  /**
+   * Repaint the legs when the live appearance's leg colour changes.
+   *
+   * Deliberately not `recreateLegs`: rebuilding a leg re-plants every foot, so
+   * picking a colour would make the unit hop on the spot. A material swap
+   * changes nothing about where the body is standing.
+   */
+  private repaintLegs(): void {
+    const legColor = this.appearance.legColor;
+    if (legColor === this.builtLegColor) return;
+    this.builtLegColor = legColor;
+    for (const leg of this.legs) leg.setColor(legColor);
+  }
+
   private recreateLegs(): void {
     const numLegs = Math.round(clamp(this.tuning.numLegs, 3, 8));
     if (numLegs === this.lastNumLegs) return;
     this.lastNumLegs = numLegs;
     this.legJustRecreated = true;
+    // Fresh legs are built in the current colour, so nothing is owed a repaint.
+    this.builtLegColor = this.appearance.legColor;
 
     for (const leg of this.legs) leg.dispose();
 
@@ -980,7 +1131,7 @@ export class MechRig {
     this.legs = rests.map(
       (r) =>
         new MechLeg(
-          this.legColor,
+          this.appearance.legColor,
           COXA_LEN,
           FEMUR_LEN,
           TIBIA_LEN,
@@ -1108,6 +1259,8 @@ export class MechRig {
     dt = sclamp(dt, 1e-4, 0.1, 1 / 60);
     sanitizeTuning(this.tuning);
     this.recreateLegs(); // recreate if numLegs changed
+    this.rebuildBody(); // rebuild if the shape, the colour or the body size changed
+    this.repaintLegs(); // repaint if the leg colour changed
     const wx = finiteOr(worldPos.x, this.prev?.x ?? 0);
     const wz = finiteOr(worldPos.y, this.prev?.z ?? 0); // sim (x, y) -> world floor (x, z)
     ry = finiteOr(ry, this.prevRy);

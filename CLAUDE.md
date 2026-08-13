@@ -782,7 +782,27 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  reads the boxes back off `data-ui-frames`, reloads the tab and
                  requires the same numbers. Everything the feature decides is
                  asserted in Node; what it could not say is whether any of it
-                 was connected to anything)
+                 was connected to anything),
+                 and monster-look.ts (what a monster's rig is *built* with, spec
+                 152, beside the appearance.ts that says which rig draws it:
+                 body shape, colours and the tuning overrides. Every monster was
+                 `new MechRig(typeId)` -- the defaults at size 1 in
+                 `enemyColor`'s fallback, because that function still switches on
+                 three sim type names no row in MONSTERS has used since spec 062
+                 -- so four enemies shared one silhouette and there was nowhere
+                 to say an enemy is small. The rule it holds is that **a sim
+                 number has one home and it is not here**: `MechRigTuning` is the
+                 rig's tuning minus `moveSpeed` and `turnRate`, the two fields
+                 the rig itself has never read and that exist only because the
+                 movement sandbox needed somewhere to hang its overrides, so a
+                 look that could name them would be a second place to write down
+                 how fast a monster moves. Pure, which is also why the merge onto
+                 `defaultMechTuning()` happens in scene.ts rather than here:
+                 nothing in this directory's pure half imports the rig module.
+                 The shape and colours are the rig's own `MechAppearance` rather
+                 than a shape this file invents, which is what makes the movement
+                 sandbox's chip honest -- the panel's colour wells write into the
+                 same type, so what is tuned there is what gets pasted back here)
                  are pure and tested headlessly; scene.ts, shot.ts, hud.ts,
                  ui-layer.ts (the second canvas, the scale and one coordinate
                  conversion -- the whole impure half of the mount) and
@@ -794,6 +814,16 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  real arena (`?units=grazer:mannequin`) and asserts a skinned
                  body with 25 bones is being posed -- the half of spec 111 that
                  only exists once a browser has fetched a .glb and skinned it.
+                 `npx tsx scripts/preview-monsters.ts` is the contact sheet of
+                 the roster (spec 152), built through the same look table and the
+                 same MechRig scene.ts uses and rasterised in software. Two
+                 things it does that preview-critters.ts does not, both for one
+                 reason: **one world-space window for every cell**, because
+                 auto-framing each subject on its own extent hides the only thing
+                 a row of monsters is being asked -- whether the small one is
+                 small -- and the collider drawn as a ring, since the drawn size
+                 and the collider are authored in different files and nothing
+                 forces them to agree.
                  `presentation-only.test.ts` beside them is the brief's
                  assertion: the same seed and inputs twice, once with the
                  animation layer driven and once without, and the authoritative
@@ -1037,6 +1067,19 @@ src/render/iso3d/weapon-rig.ts, unit-rig.ts's attach()  a weapon in a hand (spec
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
                  a cloth solve or a turn rate can be watched in isolation.
+                 Since spec 152 it also drives the *shipped* small spider, loaded
+                 from the same look table the arena draws it from, so what gets
+                 tuned is the enemy in the game rather than a lookalike rebuilt
+                 from memory. The mechs share one tuning object -- that is what
+                 makes the panel's mech section one set of sliders rather than
+                 one per unit -- so a third mech with different numbers has to
+                 *load* them, the same thing C already does with the archetype
+                 presets. A preset's tuning and its appearance carry separate ids
+                 because they change on different picks: spider and walker have
+                 always differed in colour and never in tuning, so moving between
+                 those two must still leave a dragged slider alone. Reset follows
+                 the active chip rather than the bare defaults, or the button
+                 quietly turns the small spider into a mech.
                  Since spec 140 the movement sandbox also drives an *authored*
                  unit -- one chip per entry in the manifest, so `authored:pig_a_pose_full`
                  is the generated body posed by its state machine and `pig` is
@@ -1054,6 +1097,24 @@ src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  joint and cloth overlays. Both drive sandbox-mover.ts -- a pure,
                  headlessly tested position/heading/move-order driver, NOT a
                  second sim -- through sandbox-input.ts, and share buildPanel().
+                 Since spec 152 that panel is **lil-gui**, which the map editor
+                 has always used: no second UI framework in the tree, and no
+                 hand-written sliders, number fields, colour wells or folder
+                 chevrons. What did not move is the row *data* -- a `TuningGroup`
+                 is a plain description with no lil-gui in it, the same split
+                 `editor/tools.ts` keeps from `editor/panel.ts`, which is what
+                 makes the mech, robe and critter tables readable on their own.
+                 Two things changed shape rather than being translated. The unit
+                 picker is a dropdown, because the chips were one flex row across
+                 a 300px panel and the roster had already grown past what that
+                 could hold -- the last chip was being clipped mid-word. And the
+                 critter's coat is a free colour with the twelve kept as presets:
+                 the swatch grid existed because the derivation that keeps a
+                 critter legible is only *guaranteed* in the mid-value band those
+                 twelve occupy, but that argument is about the surface a player
+                 customises through, and this is the tab whose whole job is
+                 trying the thing to see what it does. The guarantee is a note in
+                 the tip now rather than a fence.
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
 .claude/         harness config: agents/ (the delegation policy, see below),
                  hooks/session-start.sh (branch-base check + dependency install),
