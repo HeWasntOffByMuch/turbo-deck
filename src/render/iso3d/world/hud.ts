@@ -965,7 +965,10 @@ function aimLine(aiming: { readonly abilityId: string | null; readonly pending: 
     return touch
       // No key numbers to name on a phone since spec 094 -- the bar is tapped.
       ? 'tap ground to move, a unit to attack · pinch to zoom · tap a skill to cast it'
-      : 'right-click ground to move, a unit to attack · WASD · 1-8 abilities · Esc cancel';
+      // The range is derived rather than typed, or it goes stale the next time a
+      // row is added to the bar -- which is exactly what spec 154 did to the
+      // `1-8` that was here.
+      : `right-click ground to move, a unit to attack · WASD · 1-${HOTBAR.length} abilities · Esc cancel`;
   }
   if (!aiming.pending) {
     return touch

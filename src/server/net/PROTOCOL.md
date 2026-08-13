@@ -241,7 +241,14 @@ with no upserts and no removals is not sent.
 `Spawn` is set the first time an entity enters this client's interest set, and
 carries identity so a client never has to infer a field it was not told.
 
-`kind`: `0` player, `1` monster, `2` prop, `3` projectile.
+`kind`: `0` player, `1` monster, `2` prop, `3` projectile, `4` mote.
+
+A **mote** (spec 154) is a restorative pickup and is replicated to exactly one
+client: the player it belongs to. The filter is server-side, in
+`broadcastDeltas`, so there is no ownership field on the wire and nothing for
+another client to reason about — a mote a teammate cannot see is a mote they
+cannot take. Its `typeId` says what it restores: `mote.vitality` or
+`mote.focus`.
 `activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.
 
 A projectile in flight is an ordinary entity (spec 062), so it replicates
@@ -322,6 +329,26 @@ Entries already expired when the frame is built are omitted. One that expires
 later, with no cast in between, is simply left with the client: `readyAtTick` is
 in the past, so the client's own `readyAtTick - tick` is negative and it draws
 nothing.
+
+### `0x55 Restoration`
+`u8 meter` · `u8 charges` · `u8 maxCharges` · `u32 atTick`
+
+The health economy's two live numbers (spec 154), owner-only and sent when
+either changes — the same reasoning as `Cooldowns`, with one difference: there
+is nothing here for a client to model forward. The meter moves on kills and the
+flask on casts and rests, so "has it changed" is a comparison against what was
+last sent rather than against what the client would have believed.
+
+`meter` is a **fraction** of the restoration threshold, quantised to a byte —
+not the absolute progress the sim keeps. A bar only asks how full it is; the
+threshold is tuning that may move between builds; and a client told its raw
+progress could work out exactly which kill produces the next mote, which is a
+thing to farm rather than a thing to feel. The dirty check is made on the
+quantised value, so a meter drifting by a thousandth does not turn this into a
+per-tick broadcast.
+
+`maxCharges` rides along because Constitution decides it, so the client can draw
+the empty pips as well as the full ones.
 
 ### `0x45 Chat` — `u8 channel` · `str from` · `str text`
 `channel`: `0` say, `1` system, `2` admin broadcast.
