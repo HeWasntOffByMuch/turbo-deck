@@ -67,26 +67,40 @@ Fly's convenience is real — it owns TLS, restarts and OS patching, and it has 
 Warsaw region. It is also priced per GB, and this game's whole job is sending
 GBs of deltas.
 
-## The exact plan
+## What this actually runs on
 
-**Hetzner Cloud CX23**, in Falkenstein (`fsn1`), Nuremberg (`nbg1`) or Helsinki
-(`hel1`).
+**OVHcloud VPS-1, Warsaw, Ubuntu Server 24.04 LTS.** Chosen and ordered; the
+runbook below is written against it.
 
 | | |
 |---|---|
-| vCPU | 2 shared, Intel Xeon (**x86-64** — this matters, see below) |
-| RAM | 4 GB |
-| Disk | 40 GB NVMe |
-| Traffic | 20 TB/month included, €1/TB after |
-| Price | €5.49/month, plus €0.50/month for the primary IPv4 |
-| Image | Ubuntu 24.04 |
+| vCPU | 4, x86-64 (**the architecture the deploy builds for**) |
+| RAM | 8 GB |
+| Disk | 75 GB NVMe |
+| Traffic | unlimited, capped at 400 Mbit/s |
+| Price | 44.53 zł/month inc. VAT, ~€10.5 |
+| Location | Warsaw — the only option here that is in the same country as the players |
 
-Against the measurements above that is ~4x the RAM the process needs at its
-ceiling and enough traffic for five times the players one core can serve. It is
-the cheapest plan that includes 20 TB; there is nothing to gain by going
-smaller and nothing this workload can use by going bigger.
+Three properties earned it over the cheaper boxes below. **Unlimited traffic**
+retires the resource that made the host choice interesting at all — 400 Mbit/s
+is ~3,300 players' worth of deltas at 120 kbit/s each, thirty times what one
+core can simulate. **Warsaw** turns the ~25ms to German datacentres into ~5ms;
+not decisive on its own, per the latency note below, but free here. And
+**anti-DDoS is standard**, which is the one risk self-hosting could not
+mitigate at any price.
 
-Two near-misses, so they can be ruled out rather than reconsidered later:
+Against the measured numbers it is roughly 4x the RAM and 4x the cores this
+server can use, which is fine: nothing cheaper is meaningfully cheaper once
+the alternatives are priced honestly, and headroom on the box that hosts a live
+playtest is not the place to economise.
+
+### The cheaper alternative, if that price stops being worth it
+
+**Hetzner Cloud CX23** — 2 shared Intel vCPU, 4 GB, 40 GB NVMe, 20 TB traffic,
+€5.49/month plus €0.50 for the primary IPv4, in Falkenstein (`fsn1`), Nuremberg
+(`nbg1`) or Helsinki (`hel1`). About half the money for a box that still
+comfortably clears what one core can simulate. Two near-misses in the same
+catalogue, so they are ruled out rather than reconsidered later:
 
 - **CAX11** (€5.99, 2 vCPU, 4 GB, 20 TB) is the Arm64/Ampere equivalent — fifty
   cents more, and the deploy workflow builds an **amd64** image. Going Arm means
@@ -97,8 +111,8 @@ Two near-misses, so they can be ruled out rather than reconsidered later:
   is more money for less RAM and 5% of the allowance, which twenty players would
   exhaust in a fortnight.
 
-CX and CAX are EU-only (Germany and Finland). That is the whole location menu,
-and per the paragraph below it does not matter much which one you take.
+CX and CAX are EU-only (Germany and Finland), and Hetzner runs its cloud close
+enough to capacity that stock is a real consideration — see below.
 
 ### If Hetzner has nothing in stock
 
@@ -116,36 +130,17 @@ enough that it cannot be planned around. Before assuming anything is wrong:
   identity and payment verification complete, which presents as an order page
   where nothing can be created.
 
-### The alternative, which is arguably the better box
+### A note on the prices in this document
 
-**OVHcloud VPS-1**, in their **Warsaw** datacenter.
+44.53 zł is what OVH's Polish checkout actually charges, not the ~€6 an earlier
+draft of this file took from a comparison site: those quote net, and Polish VAT
+is 23%. Assume the same gap applies to every other figure here — they are all
+list prices from vendor pages and comparison sites, and none of them is a quote.
 
-| | |
-|---|---|
-| vCPU | 4 |
-| RAM | 8 GB |
-| Disk | 75 GB SSD |
-| Traffic | unlimited, capped at 400 Mbit/s |
-| Price | **44.53 zł/month** at the Polish checkout — ~€10.5, VAT included |
-| Location | Warsaw, Poland |
-
-That price is what the order page actually charges, not the ~€6 an earlier
-draft of this document took from a comparison site: those quote net prices, and
-Polish VAT is 23%. It is still the cheapest option here once the old machine is
-in the comparison, since that tower burns ~75 zł a month in electricity to be
-slower.
-
-For this workload the plan is not a downgrade in any dimension. Unlimited
-traffic removes the resource that made the host choice interesting at all;
-400 Mbit/s is ~3,300 players' worth of deltas at 120 kbit/s each, which is
-thirty times what one core can simulate. And it is the one plan on this page
-that is *in Poland*, so the ~25ms to Falkenstein becomes ~5ms.
-
-Three smaller things, none of which changes the recommendation: OVH's headline
-price is sometimes a 12-month commitment rate with a higher month-to-month one
-beside it, provisioning takes minutes rather than Hetzner's seconds, and
-**anti-DDoS is included as standard** — which is worth something specific here,
-given that it is the risk self-hosting cannot mitigate.
+Worth confirming at OVH's own checkout: whether that rate is month-to-month or
+a 12-month commitment, since the order page shows both. Provisioning also takes
+minutes rather than the seconds a Hetzner box takes; that is normal, not a
+failed order.
 
 ### Which distribution
 
@@ -181,9 +176,9 @@ Docker and an SSH key. Only this document names a vendor.
 
 ### Self-hosting on a machine you already own
 
-Which the deploy pipeline supports without a single change — `DEPLOY_HOST` is
-an address, and it does not care whose. Worth doing for a playtest; worth
-understanding before it becomes the permanent answer.
+Not the path taken — the VPS above is — but kept, because the pipeline supports
+it without a single change and the old tower is the obvious staging server.
+Everything below applies whenever a box you own is the target.
 
 **Bandwidth is a non-issue.** At 120 kbit/s per player, a hundred players is
 ~12 Mbit/s upstream. A gigabit line is three orders of magnitude past what this
