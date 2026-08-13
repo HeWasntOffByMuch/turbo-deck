@@ -1068,7 +1068,19 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  cut did -- answers the exact question the reveal exists to ask,
                  and leaves a feature that only delays a *brightness*. What is
                  legible early is that something is unusual (the pulse, the
-                 swell); never how unusual, and never what. Cues are names emitted into the
+                 swell); never how unusual, and never what.
+                 `npx tsx scripts/preview-loot.ts` is the picture, and the
+                 reason it exists is that the first cut of this feature passed
+                 every test it had and did almost nothing on screen -- the
+                 label was computed and drawn by nobody, the tier colour was
+                 baked into the rig's constructor, and no cue was authored. One
+                 row per tier, one column per sampled tick, through the real
+                 presenter and the real rig, rasterised in software because what
+                 is being looked at is a *sequence* and this environment paints a
+                 real page at a few frames a second. Two things it draws that the
+                 game does not: the origin as a cross and the landing as a ring,
+                 so a drop that failed to travel would sit on the ring in the
+                 first column. Cues are names emitted into the
                  vfx system and an unauthored one is *silence*, deliberately --
                  `addEffect`'s fallback ring under every potion that ever drops
                  is exactly the noise the restrained-presentation rule exists to

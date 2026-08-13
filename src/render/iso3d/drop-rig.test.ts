@@ -18,6 +18,8 @@ import { DropRig } from './drop-rig.js';
 /** The halo is the additive sphere: the one mesh whose scale tracks the flare. */
 function halo(rig: DropRig): THREE.Mesh {
   const meshes = rig.group.children.filter((child): child is THREE.Mesh => child instanceof THREE.Mesh);
+  // The inner of the two shells: the first one added, and the one whose radius
+  // the flare is quoted in.
   const found = meshes.find((mesh) => mesh.geometry instanceof THREE.SphereGeometry);
   if (!found) throw new Error('no halo');
   return found;
@@ -27,7 +29,7 @@ describe('the drop rig', () => {
   it('builds for every tier', () => {
     for (const rarity of RARITY_IDS) {
       const rig = new DropRig(rarity);
-      expect(rig.group.children).toHaveLength(3);
+      expect(rig.group.children).toHaveLength(4);
       rig.dispose();
     }
   });
@@ -174,6 +176,6 @@ describe('the drop rig', () => {
       material.addEventListener('dispose', () => disposed.add(material));
     }
     rig.dispose();
-    expect(disposed.size).toBe(6);
+    expect(disposed.size).toBe(8);
   });
 });
