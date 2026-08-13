@@ -291,6 +291,24 @@ export interface WatchSpawnersMessage {
   readonly on: boolean;
 }
 
+/**
+ * Take a drop off the ground (spec 154).
+ *
+ * A request like every other on this side of the wire: the server checks that
+ * the entity is a drop, that it belongs to the asker, that they are alive and
+ * close enough, and that the bag has room -- and answers with an `Inventory` at
+ * this `requestId` either way, so a refusal takes the client's guess back the
+ * same way an acceptance replaces it.
+ *
+ * There is no "and reveal it first". A drop mid-reveal is picked up now.
+ */
+export interface PickUpItemMessage {
+  readonly type: typeof ClientMessageType.PickUpItem;
+  readonly requestId: number;
+  /** The drop's entity id. A drop has no slot address until it is in a bag. */
+  readonly entityId: number;
+}
+
 export type ClientMessage =
   | HelloMessage
   | InputMessage
@@ -315,7 +333,8 @@ export type ClientMessage =
   | UseAbilityMessage
   | CancelCastMessage
   | RequestChunkMessage
-  | WatchSpawnersMessage;
+  | WatchSpawnersMessage
+  | PickUpItemMessage;
 
 /**
  * A slot address, as a container byte and a signed index (spec 126).
@@ -439,6 +458,9 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       writeAddress(writer, message.to);
       writer.varuint(message.count);
       break;
+    case ClientMessageType.PickUpItem:
+      writer.varuint(message.requestId).varuint(message.entityId);
+      break;
     case ClientMessageType.OpenVendor:
       writer.str(message.vendorId);
       break;
@@ -542,6 +564,12 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         from: readAddress(reader),
         to: readAddress(reader),
         count: reader.varuint(),
+      };
+    case ClientMessageType.PickUpItem:
+      return {
+        type: ClientMessageType.PickUpItem,
+        requestId: reader.varuint(),
+        entityId: reader.varuint(),
       };
     case ClientMessageType.OpenVendor:
       return { type: ClientMessageType.OpenVendor, vendorId: reader.str() };
@@ -971,6 +999,37 @@ export interface SpawnerStatesMessage {
   readonly spawners: readonly SpawnerStatus[];
 }
 
+/**
+ * A drop in the world, and how much of it this client may know yet (spec 154).
+ *
+ * The one place an item's identity crosses the wire for something lying on the
+ * ground, and the reason the drop's entity record carries no `typeId`: the
+ * delta goes to everyone in range on first sight, and *what* an unrevealed drop
+ * is must not.
+ *
+ * `defId` empty (and `count` zero) is the wire form of "not revealed yet". Not a
+ * flag beside the real value -- the value is genuinely absent, so there is no
+ * path by which a client could draw it early, honest or otherwise.
+ *
+ * `spawnTick` and `revealTick` are both sent because a client needs the whole
+ * span to draw the run-up, and because a late observer's own "when did I first
+ * see this" is not the answer -- it would restart the anticipation for somebody
+ * who walked up halfway through it.
+ */
+export interface LootDropMessage {
+  readonly type: typeof ServerMessageType.LootDrop;
+  readonly entityId: number;
+  /** One of `RARITY_IDS`, as its index. Drives the cue, never the identity. */
+  readonly rarity: number;
+  readonly spawnTick: number;
+  /** Equal to `spawnTick` for a drop that was never going to wait. */
+  readonly revealTick: number;
+  /** The item, or `''` while it is still being withheld. */
+  readonly defId: string;
+  /** How many, or `0` while the identity is withheld. */
+  readonly count: number;
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | DeltaMessage
@@ -992,7 +1051,8 @@ export type ServerMessage =
   | MapInfoMessage
   | MapChunkMessage
   | ChunkDeniedMessage
-  | SpawnerStatesMessage;
+  | SpawnerStatesMessage
+  | LootDropMessage;
 
 // Field bits, duplicated here as plain numbers so the hot encode path is a
 // bitmask test rather than a property lookup. Kept in sync with protocol.ts.
@@ -1283,6 +1343,15 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writeEquipment(writer, message.equipment);
       writer.varuint(message.coins);
       break;
+    case ServerMessageType.LootDrop:
+      writer
+        .varuint(message.entityId)
+        .u8(message.rarity)
+        .u32(message.spawnTick)
+        .u32(message.revealTick)
+        .str(message.defId)
+        .varuint(message.count);
+      break;
     case ServerMessageType.VendorState:
       writer.str(message.vendorId).str(message.name).varuint(message.stock.length);
       for (const entry of message.stock) writer.str(entry.defId).varuint(entry.price);
@@ -1438,6 +1507,16 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         inventory: readInventory(reader),
         equipment: readEquipment(reader),
         coins: reader.varuint(),
+      };
+    case ServerMessageType.LootDrop:
+      return {
+        type: ServerMessageType.LootDrop,
+        entityId: reader.varuint(),
+        rarity: reader.u8(),
+        spawnTick: reader.u32(),
+        revealTick: reader.u32(),
+        defId: reader.str(),
+        count: reader.varuint(),
       };
     case ServerMessageType.VendorState: {
       const vendorId = reader.str();

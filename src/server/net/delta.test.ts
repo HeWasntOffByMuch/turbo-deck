@@ -54,6 +54,7 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     cast: null,
     cooldowns: {},
     projectile: null,
+    drop: null,
     ...blankProgression(),
     ...overrides,
   };

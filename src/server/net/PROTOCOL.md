@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v15
+# turbo-deck wire protocol v16
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -179,6 +179,23 @@ this message with different addresses, which is what keeps the conservation rule
 in one place. Answered with an `Inventory` at the same `requestId` whether it was
 taken or refused, plus an `Error(RejectedAction)` when it was refused.
 
+### `0x19 PickUpItem`
+`varuint requestId` · `varuint entityId`
+
+Take a drop off the ground (spec 154). The drop's **entity id** is the only
+address it has — it is not in a container until it is in the bag.
+
+The server checks all five: the entity is a drop, the asker is alive, the drop
+is theirs, they are within `PICKUP_RANGE` of it, and the bag has room. Answered
+with an `Inventory` at this `requestId` whether it was taken or refused, plus
+`Error(RejectedAction)` when it was refused — the same shape `MoveItem` uses,
+and for the same reason: the refusal is what a client's optimistic guess is
+rolled back by.
+
+**A drop may be taken before its reveal has finished**, and is served
+immediately when it is. The pending presentation simply never happens.
+Anticipation is never a lock on the player's hands.
+
 ### `0x0b WatchSpawners`
 `bool on`
 
@@ -241,7 +258,11 @@ with no upserts and no removals is not sent.
 `Spawn` is set the first time an entity enters this client's interest set, and
 carries identity so a client never has to infer a field it was not told.
 
-`kind`: `0` player, `1` monster, `2` prop, `3` projectile.
+`kind`: `0` player, `1` monster, `2` prop, `3` projectile, `4` drop.
+
+A drop's `typeId` is **empty and stays empty** (spec 154). What the item is
+travels on `LootDrop`, never here: this record goes to every client in interest
+range on first sight, and what an unrevealed drop is must not.
 `activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.
 
 A projectile in flight is an ordinary entity (spec 062), so it replicates
@@ -564,6 +585,37 @@ guess needs taking away.
 Equipment slot order is the wire contract: a new slot is appended to
 `EQUIP_SLOTS` and never reordered, because there are no names on the wire.
 
+### `0x55 LootDrop`
+`varuint entityId` · `u8 rarity` · `u32 spawnTick` · `u32 revealTick` ·
+`str defId` · `varuint count`
+
+An item lying in the world, and how much of it this client is allowed to know
+yet (spec 154). Sent when the drop first enters this connection's interest set —
+the same first-sight the delta's `Spawn` bit computes, so there is no second
+visibility system — and again on the tick it reveals.
+
+**`defId` is `''` and `count` is `0` until the reveal.** The identity is absent
+from the wire rather than flagged on it, so there is no path by which a client
+could draw it early. A client whose first sight is *after* the reveal gets the
+filled version straight away, which makes the late observer and the reconnecting
+one the same case with no code of their own.
+
+`rarity` is the tier's index in `RARITY_IDS` (`0` common, `1` rare, `2`
+exceptional) and *is* sent up front, deliberately: the anticipation cue is
+tier-shaped, so playing it needs the tier. That is the "notice" step. What is
+withheld is the payoff.
+
+`spawnTick` and `revealTick` are both sent because the client draws the run-up
+against the whole span. Its own "when did I first see this" is not the answer —
+it would restart the anticipation for somebody who walked up halfway through.
+`revealTick === spawnTick` means there was never anything to wait for, which is
+every `common` drop.
+
+The server sends this to everyone whose interest set contains the drop, not only
+to its owner: the flare is in the world, so two players watching it resolve see
+the same thing at the same instant. **Ownership is not on the wire** — it is a
+server-side check on `PickUpItem` and nothing a client is told.
+
 ## `admin:*` — client → server
 
 Every one of these is refused unless the connection's stored token verifies **on
@@ -588,11 +640,12 @@ immediately. Every decision, accepted or refused, appends an audit entry.
 | `0x8C` | `admin:getAudit` | `u16 limit` |
 
 Events currently understood by `triggerEvent`: `raid` (magnitude = how many),
-`clear` (magnitude = radius), `heal`.
+`clear` (magnitude = radius), `heal`, `drop` (magnitude = the rarity ordinal —
+an unowned drop of that tier, so the reveal can be tuned without farming).
 
 Live config keys: `spawnRateMultiplier`, `dropRateMultiplier`,
-`maxEntitiesPerChunk`, `correctionThreshold`, `speedTolerance`,
-`spawnIntervalTicks`. Values are clamped to per-key bounds; an unknown key or a
+`lootRevealScale`, `maxEntitiesPerChunk`, `correctionThreshold`,
+`speedTolerance`, `spawnIntervalTicks`. Values are clamped to per-key bounds; an unknown key or a
 non-finite value is refused rather than silently ignored.
 
 ## `admin:*` — server → client

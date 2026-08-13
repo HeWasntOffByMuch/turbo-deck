@@ -12,6 +12,7 @@ import type { Rng } from '../../shared/prng.js';
 import type { Vec2 } from '../../sim/types.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import type { AttackTiming } from './attack-timing.js';
+import type { DropState } from './loot.js';
 import type { Statuses } from './statuses.js';
 
 export const EntityKindValue = {
@@ -25,6 +26,17 @@ export const EntityKindValue = {
    * their own bugs.
    */
   Projectile: 3,
+  /**
+   * An item lying on the ground (spec 154). An entity for the reason a
+   * projectile is one: interest management, delta tracking, despawn and the
+   * reconnect path then apply to it unchanged instead of being reimplemented
+   * beside it with their own bugs.
+   *
+   * Inert in every pass -- it does not walk, cannot be targeted, is not hostile
+   * to anything and is not hit by shots. The only thing that happens to it is
+   * being picked up or expiring.
+   */
+  Drop: 4,
 } as const;
 
 export const ActivityValue = {
@@ -250,6 +262,15 @@ export interface ServerEntity {
   readonly cooldowns: Readonly<Record<string, number>>;
   /** Set only on a projectile entity; null on everything that walks. */
   readonly projectile: ProjectileState | null;
+  /**
+   * Set only on a drop entity; null on everything else (spec 154).
+   *
+   * The item's identity lives *here* rather than in {@link typeId}, which a drop
+   * leaves empty. That is the whole information-hiding argument: `typeId` rides
+   * the entity delta and is therefore told to every client that can see the
+   * body, and what an unrevealed drop is must not be.
+   */
+  readonly drop: DropState | null;
   /**
    * The position this entity's client last claimed to have predicted, or null
    * before its first input (spec 057).
@@ -481,6 +502,25 @@ export type ServerSimEvent =
     }
   | { readonly kind: 'spawned'; readonly entityId: number; readonly typeId: string }
   | { readonly kind: 'despawned'; readonly entityId: number }
+  | {
+      /**
+       * A drop crossed its reveal tick (spec 154).
+       *
+       * Its own event rather than the server re-deriving the crossing per
+       * connection, for the reason `poiseBroken` is one: the sim owns the clock,
+       * so the tick a reveal happens on is a fact about the world rather than
+       * something each observer works out for itself and gets slightly
+       * differently. The server turns it into one `LootDrop` per interested
+       * connection; a client that was not there hears the identity on first
+       * sight instead.
+       *
+       * Emitted exactly once per drop, and never for one that spawned already
+       * revealed -- there is nothing to announce when the first message a client
+       * gets already carries the answer.
+       */
+      readonly kind: 'lootRevealed';
+      readonly entityId: number;
+    }
   | { readonly kind: 'died'; readonly entityId: number; readonly killerId: number | null };
 
 export interface StepResult {

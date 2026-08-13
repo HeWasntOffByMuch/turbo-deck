@@ -20,6 +20,7 @@ import {
   type EffectiveStats,
   type Equipment,
   type Inventory,
+  type ItemStack,
   type PersistedPlayer,
   type Vec3,
 } from '../state/types.js';
@@ -300,6 +301,27 @@ export class PlayerManager {
     this.commit(next);
     await this.store.savePlayer(next.record);
     return next;
+  }
+
+  /**
+   * Put a stack in the bag, or refuse for want of room (spec 154).
+   *
+   * Not a move: a move is between two addresses and this comes from outside both
+   * containers. It is the same `addToInventory` the starting kit is handed
+   * through, which is what makes "there was no room" one answer rather than two
+   * -- and the refusal is a plain reason, because the caller has to leave the
+   * drop lying in the world when the bag is full.
+   */
+  async giveItem(playerId: string, stack: ItemStack): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+
+    const bag = addToInventory(session.record.inventory, stack);
+    if (bag === null) return { ok: false, reason: 'your bag is full' };
+
+    this.commit({ ...session, record: { ...session.record, inventory: bag } });
+    const updated = await this.recalculate(playerId);
+    return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
   /**
