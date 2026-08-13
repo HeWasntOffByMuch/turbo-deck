@@ -229,6 +229,33 @@ export class BufferReader {
     return zigzag % 2 === 0 ? zigzag / 2 : -(zigzag + 1) / 2;
   }
 
+  /**
+   * A varuint that is about to size a collection (spec 152).
+   *
+   * `str` has always called `need` before reading, so a declared length of four
+   * billion is a thrown `CodecError` and not an allocation. Counted collections
+   * never learned the same lesson: they read a count and handed it straight to
+   * `new Array(...)`, which threw a `RangeError` past 2^32 -- not a `CodecError`,
+   * so nothing catching `CodecError` caught it -- and quietly allocated
+   * gigabytes below that.
+   *
+   * The bound is exact rather than a tuned cap. Every element of every counted
+   * collection here costs **at least one byte**: a `str` is a length byte
+   * minimum, a `varuint` is one byte minimum, a struct is at least one field.
+   * So `n` elements need at least `n` bytes after the count, and `n > remaining`
+   * describes precisely the frames that cannot exist. This refuses the
+   * impossible and nothing else -- no legitimate message is ever turned away.
+   */
+  count(): number {
+    const value = this.varuint();
+    if (value > this.remaining) {
+      throw new CodecError(
+        `count of ${value} in a frame with ${this.remaining} bytes left`,
+      );
+    }
+    return value;
+  }
+
   str(): string {
     const length = this.varuint();
     this.need(length);
