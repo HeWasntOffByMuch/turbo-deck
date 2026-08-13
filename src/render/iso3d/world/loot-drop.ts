@@ -1,5 +1,5 @@
 /**
- * How a drop looks while it is still deciding what to tell you (spec 154).
+ * How a drop looks while it is still deciding what to tell you (spec 156).
  *
  * Everything about the reveal that a renderer needs is here, and none of it is
  * a timer: the phase is a comparison against two ticks the server sent, and the
@@ -106,7 +106,7 @@ export interface PickupOrder {
 }
 
 /**
- * Walk to the drop, then ask for it (spec 154).
+ * Walk to the drop, then ask for it (spec 156).
  *
  * The same shape `target.ts` uses for an attack order and for the same reason:
  * routing the walk client-side is what keeps prediction exact, and the decision

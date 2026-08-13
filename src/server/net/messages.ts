@@ -292,7 +292,7 @@ export interface WatchSpawnersMessage {
 }
 
 /**
- * Take a drop off the ground (spec 154).
+ * Take a drop off the ground (spec 156).
  *
  * A request like every other on this side of the wire: the server checks that
  * the entity is a drop, that it belongs to the asker, that they are alive and
@@ -1000,7 +1000,7 @@ export interface SpawnerStatesMessage {
 }
 
 /**
- * A drop in the world, and how much of it this client may know yet (spec 154).
+ * A drop in the world, and how much of it this client may know yet (spec 156).
  *
  * The one place an item's identity crosses the wire for something lying on the
  * ground, and the reason the drop's entity record carries no `typeId`: the

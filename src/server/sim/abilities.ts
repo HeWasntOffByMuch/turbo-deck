@@ -1520,7 +1520,7 @@ export function projectileHits(projectile: ServerEntity, target: ServerEntity): 
   if (!flight) return false;
   if (target.id === flight.ownerId || target.id === projectile.id) return false;
   if (target.health <= 0 || target.kind === EntityKindValue.Projectile) return false;
-  // A drop is not a body (spec 154). Without this a shot loosed at a monster
+  // A drop is not a body (spec 156). Without this a shot loosed at a monster
   // that died to the previous one detonates on the item it left behind.
   if (target.kind === EntityKindValue.Drop) return false;
   const dx = target.position.x - projectile.position.x;

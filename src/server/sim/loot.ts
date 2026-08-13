@@ -1,5 +1,5 @@
 /**
- * A drop, and how far its presentation has got (spec 154).
+ * A drop, and how far its presentation has got (spec 156).
  *
  * The idea this file exists to hold is that **the item is decided at once and
  * its presentation unfolds afterwards**. `defId` is written on the tick the body

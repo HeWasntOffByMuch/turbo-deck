@@ -113,7 +113,7 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 15: the welcome issues a session token and a hello may present one, so a
  * dropped socket can come back to the same body instead of spawning a new one;
  * and a goodbye says a disconnection was meant (spec 150).
- * 16: items drop (spec 154). A fifth entity kind, a `LootDrop` describing one --
+ * 16: items drop (spec 156). A fifth entity kind, a `LootDrop` describing one --
  * with its identity withheld until an authoritative reveal tick -- and a
  * `PickUpItem` to take it.
  */
@@ -234,7 +234,7 @@ export const MAP_CHUNK_REFILL_PER_SECOND = 16;
 export const RESOURCE_EPSILON = 0.05;
 
 /**
- * Ceiling on {@link LiveConfig.lootRevealScale} (spec 154).
+ * Ceiling on {@link LiveConfig.lootRevealScale} (spec 156).
  *
  * Picking a drop up is legal throughout its reveal, so a long delay costs
  * nobody their loot -- but a reveal that outlived `DROP_LIFETIME_TICKS` would
@@ -269,7 +269,7 @@ export interface LiveConfig {
   /** Scales drop chance on entity death. Read by the loot roll, not by the sim's shape. */
   readonly dropRateMultiplier: number;
   /**
-   * Scales how long a drop's rarity takes to resolve (spec 154).
+   * Scales how long a drop's rarity takes to resolve (spec 156).
    *
    * A presentation knob and only that -- it moves the reveal clock stamped on a
    * drop at the instant it lands and reaches nothing about what dropped. `0`

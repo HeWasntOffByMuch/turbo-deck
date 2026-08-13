@@ -1,5 +1,5 @@
 /**
- * The drop's three meshes (spec 154).
+ * The drop's three meshes (spec 156).
  *
  * three.js builds geometry and materials with no GL context, so the half of
  * this file a headless test can reach is the half worth reaching: that the rig

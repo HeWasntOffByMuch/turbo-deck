@@ -1,5 +1,5 @@
 /**
- * The drop and its clock (spec 154).
+ * The drop and its clock (spec 156).
  *
  * The properties here are the ones the whole feature rests on: the item is
  * decided once, the reveal is derived rather than stored, and the roll is a

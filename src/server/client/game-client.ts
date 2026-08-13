@@ -167,7 +167,7 @@ export interface TradeView {
 }
 
 /**
- * A drop as this client knows it (spec 154).
+ * A drop as this client knows it (spec 156).
  *
  * The withholding is expressed in the *types*: `defId` and `name` are `null`
  * until the reveal, so a screen that wanted to draw the label early has nothing
@@ -274,7 +274,7 @@ export interface ClientView {
    */
   readonly spawners: readonly SpawnerStatus[];
   /**
-   * Items lying in the world that this client can see (spec 154).
+   * Items lying in the world that this client can see (spec 156).
    *
    * Beside {@link entities} rather than folded into it, because a drop's
    * identity does not travel on the entity record -- the two halves arrive on
@@ -523,7 +523,7 @@ export class GameClient {
   private coins = 0;
   private vendorView: VendorView | null = null;
   /**
-   * Drops by entity id, exactly as the server described them (spec 154).
+   * Drops by entity id, exactly as the server described them (spec 156).
    *
    * Replaced whole by each `LootDrop`, which is the same rule `Inventory` and
    * `TradeState` follow: the server's last word *is* the state, so a reveal is
@@ -810,7 +810,7 @@ export class GameClient {
   }
 
   /**
-   * Ask for the drop under `entityId` (spec 154).
+   * Ask for the drop under `entityId` (spec 156).
    *
    * Deliberately **not** predicted, where a bag move is. A move is between two
    * slots this client can both see and the rules for it are pure and local; a

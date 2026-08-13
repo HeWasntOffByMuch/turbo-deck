@@ -4,153 +4,352 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>turbo-deck admin</title>
+    <link rel="icon" href="data:," />
+    <!--
+      The admin console (spec 154).
+
+      One page, no bundler, no dependency: it speaks the same binary protocol the
+      server does, by hand, in the `W`/`Rd` pair at the top of the script. That is
+      deliberate -- it is served as a static file by `src/server/index.ts`, so
+      there is nothing to build before an operator can use it.
+
+      The shape it is built around: **a selection, not a form per action.** The
+      player table is polled live and one row is selected; every action reads that
+      selection rather than an id typed into a box beside it. Before spec 154 the
+      table and the actions were two unconnected halves of the page and you
+      retyped an id per action, correctly, or you moderated the wrong person.
+    -->
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: dark;
+        --bg: #101317;
+        --panel: #171b21;
+        --panel-2: #1d222a;
+        --line: #272d37;
+        --line-soft: #21262e;
+        --text: #dfe4ea;
+        --dim: #8b97a7;
+        --dimmer: #6a7585;
+        --accent: #6fa8ff;
+        --accent-bg: #1e2c44;
+        --ok: #79d98d;
+        --warn: #e8c56a;
+        --err: #ef7f86;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
       body {
-        margin: 0; padding: 16px;
-        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-        background: #14161a; color: #d6dae0;
+        margin: 0;
+        padding: 14px 16px 24px;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
       }
-      h1 { font-size: 15px; margin: 0 0 12px; letter-spacing: 0.04em; text-transform: uppercase; color: #8fa5c0; }
-      h2 { font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.06em; color: #6f7d8f; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
-      fieldset { border: 1px solid #2b313a; border-radius: 6px; padding: 10px 12px 12px; margin: 0; }
-      legend { padding: 0 6px; color: #8fa5c0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-      input, select, button, textarea {
-        font: inherit; background: #1c2028; color: #d6dae0;
-        border: 1px solid #333a45; border-radius: 4px; padding: 4px 6px;
+
+      /* --- header ------------------------------------------------------- */
+      header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+      h1 {
+        font-size: 13px; margin: 0; letter-spacing: 0.09em; text-transform: uppercase;
+        color: var(--dim); font-weight: 600;
       }
-      input, select { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
-      button { cursor: pointer; background: #223047; border-color: #35507a; }
-      button:hover { background: #2c3f5e; }
-      button.wide { width: 100%; }
-      table { border-collapse: collapse; width: 100%; font-size: 12px; }
-      th, td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid #23272e; white-space: nowrap; }
-      th { color: #6f7d8f; font-weight: normal; }
-      #log { height: 180px; overflow: auto; background: #0f1114; border: 1px solid #23272e; border-radius: 6px; padding: 8px; margin-top: 12px; }
-      .ok { color: #7fce8c; } .err { color: #e2757b; } .dim { color: #6f7d8f; }
-      .row { display: flex; gap: 6px; }
+      .spacer { flex: 1; }
+      .pill {
+        font: 600 11px/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase;
+        padding: 5px 9px; border-radius: 999px; border: 1px solid var(--line);
+        background: var(--panel); color: var(--dim);
+      }
+      .pill.live { color: var(--ok); border-color: #2c4a35; background: #14251a; }
+      .pill.down { color: var(--err); border-color: #472a2d; background: #241618; }
+      .pill.count { color: var(--text); }
+      .pill.count b { color: var(--accent); }
+
+      /* --- panels ------------------------------------------------------- */
+      .panel {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+        padding: 12px 13px 13px;
+      }
+      .panel > h2, .group > h3 {
+        margin: 0 0 9px; font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase;
+        color: var(--dimmer); font-weight: 600;
+      }
+      .group { border-top: 1px solid var(--line-soft); margin-top: 13px; padding-top: 11px; }
+      .group:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+
+      .columns { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; }
+      @media (max-width: 1000px) { .columns { grid-template-columns: minmax(0, 1fr); } }
+
+      /* --- controls ----------------------------------------------------- */
+      input, select, button {
+        font: inherit; color: var(--text); background: var(--panel-2);
+        border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; min-width: 0;
+      }
+      input[type='number'] { font-family: var(--mono); }
+      input:focus, select:focus, button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+      button { cursor: pointer; background: #232b36; border-color: #333d4c; white-space: nowrap; }
+      button:hover:not(:disabled) { background: #2c3644; border-color: #435268; }
+      button.primary { background: var(--accent-bg); border-color: #35507e; color: #cfe0ff; }
+      button.primary:hover:not(:disabled) { background: #26385a; }
+      button.danger { background: #2b1d20; border-color: #4d3034; color: #f0b4b8; }
+      button.danger:hover:not(:disabled) { background: #3a2429; }
+      button:disabled, input:disabled, select:disabled { opacity: 0.4; cursor: not-allowed; }
+      label { display: block; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--dimmer); margin-bottom: 3px; }
+      .row { display: flex; gap: 6px; align-items: flex-end; }
       .row > * { flex: 1; }
-      #status { float: right; font-size: 12px; }
+      .row > button { flex: 0 0 auto; }
+      .row + .row { margin-top: 7px; }
+      .field { min-width: 0; }
+      .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+
+      /* --- the player table --------------------------------------------- */
+      .scroll { overflow-x: auto; }
+      table { border-collapse: collapse; width: 100%; font-size: 12px; }
+      th, td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+      th { color: var(--dimmer); font-weight: 600; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; }
+      td.num, th.num { text-align: right; font-family: var(--mono); }
+      #players tbody tr { cursor: pointer; }
+      #players tbody tr:hover { background: #1b212a; }
+      #players tbody tr.selected { background: var(--accent-bg); }
+      #players tbody tr.selected td { border-bottom-color: #35507e; }
+      #players tbody tr.dead .who { color: var(--err); }
+      .who { font-weight: 600; }
+      .id { color: var(--dimmer); font-family: var(--mono); font-size: 11px; }
+      .tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #33261c; color: var(--warn); }
+      .empty { color: var(--dimmer); padding: 18px 0; text-align: center; }
+
+      /* --- the selected player's card ----------------------------------- */
+      #card { margin-bottom: 12px; }
+      #card .name { font-size: 15px; font-weight: 600; }
+      #card .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; margin-top: 8px; font-size: 12px; }
+      #card .facts span { color: var(--dimmer); }
+      #card .facts b { font-family: var(--mono); font-weight: 500; }
+      .bar { height: 5px; border-radius: 3px; background: #262c35; margin-top: 8px; overflow: hidden; }
+      .bar > i { display: block; height: 100%; background: var(--accent); }
+      .none { color: var(--dimmer); font-style: italic; }
+
+      /* --- collapsible world tools -------------------------------------- */
+      details.panel { padding: 0; }
+      details.panel > summary {
+        cursor: pointer; padding: 10px 13px; font-size: 10px; letter-spacing: 0.11em;
+        text-transform: uppercase; color: var(--dimmer); font-weight: 600;
+      }
+      details.panel[open] > summary { border-bottom: 1px solid var(--line-soft); }
+      details.panel > .body { padding: 12px 13px 13px; }
+      .tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+
+      /* --- log ---------------------------------------------------------- */
+      #log {
+        margin-top: 12px; height: 150px; overflow: auto; padding: 8px 10px;
+        background: #0c0e12; border: 1px solid var(--line); border-radius: 8px;
+        font: 12px/1.6 var(--mono);
+      }
+      #log div { white-space: pre-wrap; }
+      #log .t { color: #4c5666; }
+      .ok { color: var(--ok); } .err { color: var(--err); } .dim { color: var(--dimmer); }
     </style>
   </head>
   <body>
-    <h1>turbo-deck admin <span id="status" class="dim">disconnected</span></h1>
+    <header>
+      <h1>turbo-deck admin</h1>
+      <span id="count" class="pill count" hidden><b>0</b>&nbsp;online</span>
+      <span class="spacer"></span>
+      <span id="status" class="pill down">disconnected</span>
+    </header>
 
-    <fieldset>
-      <legend>connection</legend>
+    <div class="panel" style="margin-bottom: 12px">
       <div class="row">
-        <input id="url" placeholder="ws://localhost:8787" />
-        <input id="token" placeholder="admin JWT (printed by the server on boot)" />
+        <div class="field"><label for="url">server</label><input id="url" placeholder="ws://localhost:8787" /></div>
+        <div class="field" style="flex: 2"><label for="token">admin token</label><input id="token" placeholder="the JWT the server printed on boot" /></div>
+        <button id="connect" class="primary">connect</button>
+        <button id="disconnect" disabled>disconnect</button>
       </div>
-      <button id="connect" class="wide">connect &amp; authenticate</button>
-    </fieldset>
-
-    <div class="grid" style="margin-top: 12px">
-      <fieldset>
-        <legend>players</legend>
-        <button id="refresh" class="wide">list connected players</button>
-        <div style="overflow-x: auto; margin-top: 8px"><table id="players"></table></div>
-      </fieldset>
-
-      <fieldset>
-        <legend>moderation</legend>
-        <input id="modPlayer" placeholder="player id" />
-        <input id="modReason" placeholder="reason" />
-        <input id="modSeconds" type="number" value="300" placeholder="seconds (0 = permanent)" />
-        <div class="row">
-          <button data-act="kick">kick</button>
-          <button data-act="ban">ban</button>
-          <button data-act="mute">mute</button>
-          <button data-act="unmute">unmute</button>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>teleport</legend>
-        <input id="tpPlayer" placeholder="player id" />
-        <div class="row"><input id="tpX" type="number" value="600" /><input id="tpY" type="number" value="450" /></div>
-        <button data-act="teleport" class="wide">teleport</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>entities</legend>
-        <select id="spawnType">
-          <option value="grazer">grazer</option>
-          <option value="stalker">stalker</option>
-          <option value="ravager">ravager</option>
-        </select>
-        <div class="row"><input id="spawnX" type="number" value="600" /><input id="spawnY" type="number" value="450" /><input id="spawnCount" type="number" value="3" /></div>
-        <div class="row">
-          <button data-act="spawn">spawn</button>
-          <button data-act="despawn">despawn id</button>
-        </div>
-        <input id="despawnId" type="number" placeholder="entity id" />
-      </fieldset>
-
-      <fieldset>
-        <legend>world events</legend>
-        <select id="eventName">
-          <option value="raid">raid (magnitude = count)</option>
-          <option value="clear">clear (magnitude = radius)</option>
-          <option value="heal">heal all players</option>
-        </select>
-        <div class="row"><input id="evX" type="number" value="600" /><input id="evY" type="number" value="450" /><input id="evMag" type="number" value="5" /></div>
-        <button data-act="event" class="wide">trigger</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>broadcast</legend>
-        <input id="bcText" placeholder="message to every player" />
-        <button data-act="broadcast" class="wide">send</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>live config</legend>
-        <button id="getConfig" class="wide">read current config</button>
-        <div class="row" style="margin-top: 6px">
-          <input id="cfgKey" placeholder="key" />
-          <input id="cfgValue" type="number" step="any" placeholder="value" />
-        </div>
-        <button data-act="setConfig" class="wide">set (no restart)</button>
-        <table id="config" style="margin-top: 8px"></table>
-      </fieldset>
-
-      <fieldset>
-        <legend>audit log</legend>
-        <button id="getAudit" class="wide">last 50 admin actions</button>
-        <div style="overflow-x: auto; margin-top: 8px"><table id="audit"></table></div>
-      </fieldset>
     </div>
+
+    <div class="columns">
+      <div class="panel">
+        <h2>players &mdash; click one to act on it</h2>
+        <div class="scroll">
+          <table id="players">
+            <thead>
+              <tr>
+                <th>player</th>
+                <th class="num">lvl</th>
+                <th class="num">xp</th>
+                <th class="num">sp/ap</th>
+                <th class="num">hp</th>
+                <th>zone</th>
+                <th class="num">x</th>
+                <th class="num">y</th>
+                <th class="num">ent</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="playersEmpty" class="empty">not connected</div>
+      </div>
+
+      <div>
+        <div id="card" class="panel">
+          <div class="none">no player selected</div>
+        </div>
+
+        <div class="panel">
+          <h2>actions</h2>
+
+          <div class="group">
+            <h3>progression</h3>
+            <div class="row">
+              <div class="field"><label for="levelAmount">levels</label><input id="levelAmount" type="number" min="1" max="60" value="1" /></div>
+              <button data-act="giveLevels">give levels</button>
+            </div>
+            <div class="row">
+              <div class="field"><label for="xpAmount">experience</label><input id="xpAmount" type="number" min="1" value="500" /></div>
+              <button data-act="giveXp">give xp</button>
+            </div>
+            <div class="row" style="margin-top: 9px">
+              <button data-act="resetLevel" class="danger">reset level</button>
+              <button data-act="resetXp" class="danger">reset xp</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <h3>items</h3>
+            <div class="field"><label for="itemId">item</label><select id="itemId"></select></div>
+            <div class="row" style="margin-top: 7px">
+              <div class="field"><label for="itemCount">count</label><input id="itemCount" type="number" min="1" max="999" value="1" /></div>
+              <button data-act="giveItem">give item</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <h3>presence</h3>
+            <div class="row">
+              <div class="field"><label for="reason">reason</label><input id="reason" placeholder="afk" /></div>
+              <button data-act="kick">kick</button>
+            </div>
+            <!--
+              No heal beside the kill: a dead player is respawned at full health
+              by the server after RESPAWN_DELAY_TICKS, so a kill undoes itself.
+              "heal all players" is an event, and lives with the events.
+            -->
+            <div class="row" style="margin-top: 9px">
+              <button data-act="kill" class="danger">kill</button>
+            </div>
+            <div class="row" style="margin-top: 9px">
+              <div class="field"><label for="tpX">teleport to</label><input id="tpX" type="number" value="600" /></div>
+              <div class="field"><label for="tpY">&nbsp;</label><input id="tpY" type="number" value="450" /></div>
+              <button data-act="teleport">go</button>
+            </div>
+            <div class="row" style="margin-top: 9px">
+              <div class="field"><label for="seconds">seconds</label><input id="seconds" type="number" min="0" value="300" /></div>
+              <button data-act="mute">mute</button>
+              <button data-act="unmute">unmute</button>
+            </div>
+            <div class="row" style="margin-top: 7px">
+              <button data-act="ban" class="danger">ban (0 = permanent)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <details class="panel" style="margin-top: 12px">
+      <summary>world tools</summary>
+      <div class="body tools">
+        <div>
+          <h3>entities</h3>
+          <div class="field"><label for="spawnType">monster</label><input id="spawnType" value="ravager" /></div>
+          <div class="row" style="margin-top: 7px">
+            <div class="field"><label for="spawnX">x</label><input id="spawnX" type="number" value="600" /></div>
+            <div class="field"><label for="spawnY">y</label><input id="spawnY" type="number" value="450" /></div>
+            <div class="field"><label for="spawnCount">n</label><input id="spawnCount" type="number" min="1" value="3" /></div>
+          </div>
+          <div class="row" style="margin-top: 7px">
+            <button data-act="spawn">spawn</button>
+            <div class="field"><label for="despawnId">entity id</label><input id="despawnId" type="number" /></div>
+            <button data-act="despawn">despawn</button>
+          </div>
+        </div>
+
+        <div>
+          <h3>events</h3>
+          <div class="field">
+            <label for="eventName">event</label>
+            <select id="eventName">
+              <option value="raid">raid (magnitude = count)</option>
+              <option value="clear">clear (magnitude = radius)</option>
+              <option value="heal">heal all players</option>
+            </select>
+          </div>
+          <div class="row" style="margin-top: 7px">
+            <div class="field"><label for="evX">x</label><input id="evX" type="number" value="600" /></div>
+            <div class="field"><label for="evY">y</label><input id="evY" type="number" value="450" /></div>
+            <div class="field"><label for="evMag">mag</label><input id="evMag" type="number" value="5" /></div>
+            <button data-act="event">fire</button>
+          </div>
+          <div class="row" style="margin-top: 11px">
+            <div class="field"><label for="bcText">broadcast</label><input id="bcText" placeholder="message to every player" /></div>
+            <button data-act="broadcast">send</button>
+          </div>
+        </div>
+
+        <div>
+          <h3>live config</h3>
+          <div class="row">
+            <div class="field"><label for="cfgKey">key</label><input id="cfgKey" list="cfgKeys" /></div>
+            <datalist id="cfgKeys"></datalist>
+            <div class="field"><label for="cfgValue">value</label><input id="cfgValue" type="number" step="any" /></div>
+            <button data-act="setConfig">set</button>
+          </div>
+          <table id="config" style="margin-top: 9px"></table>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel" style="margin-top: 12px">
+      <summary>audit log</summary>
+      <div class="body">
+        <button id="getAudit">load the last 50 admin decisions</button>
+        <div class="scroll" style="margin-top: 9px"><table id="audit"></table></div>
+      </div>
+    </details>
 
     <div id="log"></div>
 
     <script>
-      // --- the same binary protocol the server speaks, by hand -------------
+      // --- the wire, by hand ---------------------------------------------
+      // Same layout as `admin-messages.ts`; see net/PROTOCOL.md for the table.
       const T = {
-        Auth: 0x80, ListPlayers: 0x81, Kick: 0x82, Ban: 0x83, Mute: 0x84,
-        Teleport: 0x85, Spawn: 0x86, Despawn: 0x87, Event: 0x88,
-        Broadcast: 0x89, SetConfig: 0x8a, GetConfig: 0x8b, GetAudit: 0x8c,
+        auth: 0x80, listPlayers: 0x81, kick: 0x82, ban: 0x83, mute: 0x84,
+        teleport: 0x85, spawn: 0x86, despawn: 0x87, event: 0x88,
+        broadcast: 0x89, setConfig: 0x8a, getConfig: 0x8b, getAudit: 0x8c,
+        setProgress: 0x8d, giveItem: 0x8e, getItems: 0x8f, kill: 0x90,
       };
-      const R = { Ok: 0xa0, Error: 0xa1, PlayerList: 0xa2, Config: 0xa3, Audit: 0xa4 };
+      const R = { ok: 0xa0, error: 0xa1, players: 0xa2, config: 0xa3, audit: 0xa4, items: 0xa5 };
+      // `AdminProgressMode` in protocol.ts.
+      const MODE = { addLevels: 0, setLevel: 1, addExperience: 2, setExperience: 3 };
       const NAMES = Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k]));
 
       class W {
-        constructor() { this.bytes = []; }
-        u8(v) { this.bytes.push(v & 0xff); return this; }
-        u16(v) { this.bytes.push(v & 0xff, (v >> 8) & 0xff); return this; }
-        u32(v) { for (let i = 0; i < 4; i++) this.bytes.push((v >>> (i * 8)) & 0xff); return this; }
-        f32(v) { const b = new Uint8Array(4); new DataView(b.buffer).setFloat32(0, v, true); this.bytes.push(...b); return this; }
-        f64(v) { const b = new Uint8Array(8); new DataView(b.buffer).setFloat64(0, v, true); this.bytes.push(...b); return this; }
+        constructor() { this.b = []; }
+        u8(v) { this.b.push(v & 0xff); return this; }
+        u16(v) { this.b.push(v & 0xff, (v >> 8) & 0xff); return this; }
+        u32(v) { for (let i = 0; i < 4; i++) this.b.push((v >>> (i * 8)) & 0xff); return this; }
+        f32(v) { const a = new Uint8Array(4); new DataView(a.buffer).setFloat32(0, v, true); this.b.push(...a); return this; }
+        f64(v) { const a = new Uint8Array(8); new DataView(a.buffer).setFloat64(0, v, true); this.b.push(...a); return this; }
         varuint(v) { let n = Math.max(0, Math.floor(v)); do { const s = n & 0x7f; n = Math.floor(n / 128); this.u8(n > 0 ? s | 0x80 : s); } while (n > 0); return this; }
-        str(s) { const e = new TextEncoder().encode(String(s ?? '')); this.varuint(e.length); this.bytes.push(...e); return this; }
-        out() { return new Uint8Array(this.bytes); }
+        str(s) { const e = new TextEncoder().encode(String(s ?? '')); this.varuint(e.length); this.b.push(...e); return this; }
+        out() { return new Uint8Array(this.b); }
       }
 
       class Rd {
-        constructor(buf) { this.b = new Uint8Array(buf); this.v = new DataView(this.b.buffer); this.o = 0; }
+        constructor(buffer) {
+          this.b = new Uint8Array(buffer);
+          this.v = new DataView(this.b.buffer, this.b.byteOffset, this.b.byteLength);
+          this.o = 0;
+        }
         u8() { return this.v.getUint8(this.o++); }
-        u32() { const x = this.v.getUint32(this.o, true); this.o += 4; return x; }
         f32() { const x = this.v.getFloat32(this.o, true); this.o += 4; return x; }
         f64() { const x = this.v.getFloat64(this.o, true); this.o += 8; return x; }
         bool() { return this.u8() !== 0; }
@@ -158,44 +357,132 @@
         str() { const n = this.varuint(); const s = new TextDecoder().decode(this.b.subarray(this.o, this.o + n)); this.o += n; return s; }
       }
 
-      let socket = null;
+      // --- state ----------------------------------------------------------
       const $ = (id) => document.getElementById(id);
       const val = (id) => $(id).value.trim();
       const num = (id) => Number($(id).value);
+      const STORE = 'turbo-deck.admin';
+
+      let socket = null;
+      let authenticated = false;
+      let pollTimer = null;
+      /** The selection, held by playerId so a poll cannot move it. */
+      let selectedId = null;
+      let players = [];
+      let items = [];
 
       function log(text, cls) {
         const line = document.createElement('div');
-        if (cls) line.className = cls;
-        line.textContent = new Date().toLocaleTimeString() + '  ' + text;
+        const at = document.createElement('span');
+        at.className = 't';
+        at.textContent = new Date().toLocaleTimeString() + '  ';
+        const body = document.createElement('span');
+        if (cls) body.className = cls;
+        body.textContent = text;
+        line.append(at, body);
         $('log').prepend(line);
+        while ($('log').childElementCount > 300) $('log').lastElementChild.remove();
       }
 
       function send(bytes) {
-        if (!socket || socket.readyState !== WebSocket.OPEN) { log('not connected', 'err'); return; }
+        if (!socket || socket.readyState !== WebSocket.OPEN) { log('not connected', 'err'); return false; }
         socket.send(bytes);
+        return true;
       }
 
-      $('url').value = location.protocol === 'https:' ? 'wss://' + location.host : 'ws://' + (location.host || 'localhost:8787');
+      const selected = () => players.find((p) => p.playerId === selectedId) ?? null;
 
-      $('connect').onclick = () => {
-        if (socket) socket.close();
-        socket = new WebSocket(val('url'));
+      /**
+       * An action that needs a selection, refused here rather than sent with an
+       * empty player id -- so a stray click cannot reach the server at all.
+       */
+      function withSelection(build, confirmText) {
+        const player = selected();
+        if (!player) { log('select a player first', 'err'); return; }
+        if (confirmText && !window.confirm(confirmText.replace('%s', player.displayName))) return;
+        send(build(player));
+      }
+
+      // --- connection -----------------------------------------------------
+      function setStatus(text, cls) {
+        $('status').textContent = text;
+        $('status').className = 'pill ' + cls;
+      }
+
+      function stopPolling() {
+        if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
+      }
+
+      function connect() {
+        if (socket) { socket.onclose = null; socket.close(); }
+        authenticated = false;
+        try {
+          socket = new WebSocket(val('url'));
+        } catch (error) {
+          log('bad server url: ' + error.message, 'err');
+          return;
+        }
         socket.binaryType = 'arraybuffer';
-        socket.onopen = () => {
-          $('status').textContent = 'connected';
-          $('status').className = 'ok';
-          send(new W().u8(T.Auth).str(val('token')).out());
-        };
-        socket.onclose = () => { $('status').textContent = 'disconnected'; $('status').className = 'dim'; };
-        socket.onerror = () => log('socket error', 'err');
-        socket.onmessage = (event) => handle(new Rd(event.data));
-      };
+        setStatus('connecting', 'pill');
+        $('disconnect').disabled = false;
 
+        socket.onopen = () => {
+          setStatus('authenticating', 'pill');
+          send(new W().u8(T.auth).str(val('token')).out());
+        };
+        socket.onclose = () => {
+          authenticated = false;
+          stopPolling();
+          setStatus('disconnected', 'down');
+          $('count').hidden = true;
+          $('disconnect').disabled = true;
+          players = [];
+          renderPlayers();
+          $('playersEmpty').textContent = 'not connected';
+        };
+        socket.onerror = () => log('socket error -- is the server running on that port?', 'err');
+        socket.onmessage = (event) => handle(new Rd(event.data));
+      }
+
+      /** Everything that happens once the token is accepted. */
+      function onAuthenticated() {
+        authenticated = true;
+        setStatus('connected', 'live');
+        localStorage.setItem(STORE, JSON.stringify({ url: val('url'), token: val('token') }));
+        // The catalog is asked for once; the list is polled.
+        send(new W().u8(T.getItems).out());
+        send(new W().u8(T.getConfig).out());
+        refresh();
+        stopPolling();
+        pollTimer = setInterval(refresh, 1000);
+      }
+
+      function refresh() {
+        if (authenticated) send(new W().u8(T.listPlayers).out());
+      }
+
+      // --- replies --------------------------------------------------------
       function handle(r) {
         const type = r.u8();
-        if (type === R.Ok) { const req = r.u8(); log((NAMES[req] || req) + ': ' + r.str(), 'ok'); return; }
-        if (type === R.Error) { const req = r.u8(); log((NAMES[req] || req) + ': ' + r.str(), 'err'); return; }
-        if (type === R.PlayerList) {
+
+        if (type === R.ok || type === R.error) {
+          const requestType = r.u8();
+          const message = r.str();
+          const name = NAMES[requestType] ?? '0x' + requestType.toString(16);
+          if (requestType === T.auth && type === R.ok) { onAuthenticated(); }
+          if (requestType === T.auth && type === R.error) {
+            setStatus('rejected', 'down');
+            stopPolling();
+          }
+          log(name + ': ' + message, type === R.ok ? 'ok' : 'err');
+          // An action that changed a player shows up in the next poll on its own,
+          // but a second of stale numbers under the cursor reads as "nothing
+          // happened", so the list is asked for immediately as well.
+          if (type === R.ok && requestType !== T.auth && requestType !== T.listPlayers) refresh();
+          return;
+        }
+
+        if (type === R.players) {
           const count = r.varuint();
           const rows = [];
           for (let i = 0; i < count; i++) {
@@ -204,66 +491,279 @@
               x: r.f32(), y: r.f32(), z: r.f32(), zone: r.str(), chunk: r.str(),
               health: r.f32(), maxHealth: r.f32(), level: r.varuint(),
               attackDamage: r.f32(), moveSpeed: r.f32(), muted: r.bool(),
+              experience: r.varuint(), experienceToNextLevel: r.varuint(),
+              unspentSkillPoints: r.varuint(), unspentAttributePoints: r.varuint(),
             });
           }
-          renderTable('players',
-            ['player', 'name', 'ent', 'x', 'y', 'zone', 'chunk', 'hp', 'lvl', 'dmg', 'spd', 'muted'],
-            rows.map((p) => [p.playerId, p.displayName, p.entityId, p.x.toFixed(0), p.y.toFixed(0),
-              p.zone, p.chunk, p.health.toFixed(0) + '/' + p.maxHealth.toFixed(0),
-              p.level, p.attackDamage.toFixed(1), p.moveSpeed.toFixed(0), p.muted ? 'yes' : '']));
-          log(count + ' player(s) online', 'dim');
+          players = rows;
+          renderPlayers();
           return;
         }
-        if (type === R.Config) {
+
+        if (type === R.items) {
+          const count = r.varuint();
+          const rows = [];
+          for (let i = 0; i < count; i++) {
+            rows.push({
+              id: r.str(), name: r.str(), slot: r.str(),
+              levelRequirement: r.varuint(), maxStack: r.varuint(),
+            });
+          }
+          items = rows;
+          renderItems();
+          return;
+        }
+
+        if (type === R.config) {
           const count = r.varuint();
           const rows = [];
           for (let i = 0; i < count; i++) rows.push([r.str(), r.f64()]);
-          renderTable('config', ['key', 'value'], rows);
+          renderTable('config', ['key', 'value'], rows.map(([k, v]) => [k, v]), [false, true]);
+          $('cfgKeys').replaceChildren(...rows.map(([k]) => {
+            const option = document.createElement('option');
+            option.value = k;
+            return option;
+          }));
           return;
         }
-        if (type === R.Audit) {
+
+        if (type === R.audit) {
           const count = r.varuint();
           const rows = [];
           for (let i = 0; i < count; i++) {
             const at = r.f64(), actor = r.str(), action = r.str(), target = r.str(), detail = r.str(), accepted = r.bool();
-            rows.push([new Date(at).toLocaleTimeString(), actor, action, target, detail, accepted ? 'ok' : 'REFUSED']);
+            rows.push([new Date(at).toLocaleTimeString(), actor, action, target || '-', detail, accepted ? 'ok' : 'REFUSED']);
           }
           renderTable('audit', ['when', 'who', 'what', 'target', 'detail', ''], rows);
           return;
         }
-        log('unhandled reply type 0x' + type.toString(16), 'dim');
+
+        log('unhandled reply 0x' + type.toString(16), 'dim');
       }
 
-      function renderTable(id, headers, rows) {
-        const table = $(id);
-        table.innerHTML = '';
-        const head = table.insertRow();
-        for (const h of headers) { const th = document.createElement('th'); th.textContent = h; head.append(th); }
-        for (const row of rows) {
-          const tr = table.insertRow();
-          for (const cell of row) tr.insertCell().textContent = String(cell);
+      // --- rendering ------------------------------------------------------
+      function renderPlayers() {
+        const body = $('players').tBodies[0];
+        body.replaceChildren();
+
+        for (const player of players) {
+          const tr = document.createElement('tr');
+          tr.className =
+            (player.playerId === selectedId ? 'selected ' : '') + (player.health <= 0 ? 'dead' : '');
+          tr.onclick = () => { selectedId = player.playerId; renderPlayers(); };
+
+          const who = document.createElement('td');
+          const name = document.createElement('div');
+          name.className = 'who';
+          name.textContent = player.displayName;
+          const id = document.createElement('div');
+          id.className = 'id';
+          id.textContent = player.playerId;
+          who.append(name, id);
+          tr.append(who);
+
+          const cells = [
+            [player.level, true],
+            [player.experience + ' / ' + player.experienceToNextLevel, true],
+            [player.unspentSkillPoints + ' / ' + player.unspentAttributePoints, true],
+            [Math.round(player.health) + ' / ' + Math.round(player.maxHealth), true],
+            [player.zone, false],
+            [Math.round(player.x), true],
+            [Math.round(player.y), true],
+            [player.entityId, true],
+          ];
+          for (const [text, isNumber] of cells) {
+            const td = document.createElement('td');
+            if (isNumber) td.className = 'num';
+            td.textContent = String(text);
+            tr.append(td);
+          }
+
+          const tags = document.createElement('td');
+          for (const [text, show] of [['dead', player.health <= 0], ['muted', player.muted]]) {
+            if (!show) continue;
+            const tag = document.createElement('span');
+            tag.className = 'tag';
+            tag.textContent = text;
+            tags.append(tag, ' ');
+          }
+          tr.append(tags);
+          body.append(tr);
+        }
+
+        $('count').hidden = !authenticated;
+        $('count').querySelector('b').textContent = String(players.length);
+        $('playersEmpty').hidden = players.length > 0 || !authenticated;
+        if (authenticated) $('playersEmpty').textContent = 'nobody is online';
+        renderCard();
+      }
+
+      function renderCard() {
+        const card = $('card');
+        const player = selected();
+
+        if (!player) {
+          const none = document.createElement('div');
+          none.className = 'none';
+          none.textContent = selectedId === null
+            ? 'no player selected'
+            : selectedId + ' is no longer online';
+          card.replaceChildren(none);
+          setActionsEnabled(false);
+          return;
+        }
+
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = player.displayName;
+        const id = document.createElement('div');
+        id.className = 'id';
+        id.textContent = player.playerId + ' · entity ' + player.entityId;
+
+        const facts = document.createElement('div');
+        facts.className = 'facts';
+        const rows = [
+          ['level', player.level],
+          ['skill points', player.unspentSkillPoints],
+          ['attribute points', player.unspentAttributePoints],
+          ['experience', player.experience + ' / ' + player.experienceToNextLevel],
+          ['health', Math.round(player.health) + ' / ' + Math.round(player.maxHealth)],
+          ['damage', player.attackDamage.toFixed(1)],
+          ['move speed', Math.round(player.moveSpeed)],
+          ['zone', player.zone],
+          ['position', Math.round(player.x) + ', ' + Math.round(player.y)],
+        ];
+        for (const [label, value] of rows) {
+          const key = document.createElement('span');
+          key.textContent = label;
+          const held = document.createElement('b');
+          held.textContent = String(value);
+          facts.append(key, held);
+        }
+
+        const bar = document.createElement('div');
+        bar.className = 'bar';
+        const fill = document.createElement('i');
+        const fraction = player.experienceToNextLevel > 0
+          ? Math.min(1, player.experience / player.experienceToNextLevel)
+          : 0;
+        fill.style.width = (fraction * 100).toFixed(1) + '%';
+        bar.append(fill);
+
+        card.replaceChildren(name, id, bar, facts);
+        setActionsEnabled(true);
+      }
+
+      /**
+       * Greys out every action bound to the selection when there is not one, so
+       * the page never offers a button that could only refuse.
+       */
+      function setActionsEnabled(enabled) {
+        for (const element of document.querySelectorAll('#card ~ .panel input, #card ~ .panel select, #card ~ .panel button')) {
+          element.disabled = !enabled;
         }
       }
 
+      function renderItems() {
+        const select = $('itemId');
+        const bySlot = new Map();
+        for (const item of items) {
+          const slot = item.slot === '-' ? 'carried' : item.slot;
+          if (!bySlot.has(slot)) bySlot.set(slot, []);
+          bySlot.get(slot).push(item);
+        }
+        select.replaceChildren(...[...bySlot.entries()].map(([slot, group]) => {
+          const optgroup = document.createElement('optgroup');
+          optgroup.label = slot;
+          for (const item of group.sort((a, b) => a.name.localeCompare(b.name))) {
+            const option = document.createElement('option');
+            option.value = item.id;
+            option.textContent =
+              item.name + ' · L' + item.levelRequirement +
+              (item.maxStack > 1 ? ' · stacks ' + item.maxStack : '');
+            optgroup.append(option);
+          }
+          return optgroup;
+        }));
+        log(items.length + ' item(s) in the catalog', 'dim');
+      }
+
+      function renderTable(id, headers, rows, numeric = []) {
+        const table = $(id);
+        table.replaceChildren();
+        const head = table.insertRow();
+        for (let i = 0; i < headers.length; i++) {
+          const th = document.createElement('th');
+          if (numeric[i]) th.className = 'num';
+          th.textContent = headers[i];
+          head.append(th);
+        }
+        for (const row of rows) {
+          const tr = table.insertRow();
+          for (let i = 0; i < row.length; i++) {
+            const td = tr.insertCell();
+            if (numeric[i]) td.className = 'num';
+            td.textContent = String(row[i]);
+          }
+        }
+      }
+
+      // --- actions --------------------------------------------------------
+      const progress = (mode, amount) => (p) =>
+        new W().u8(T.setProgress).str(p.playerId).u8(mode).u32(amount).out();
+
       const actions = {
-        kick: () => new W().u8(T.Kick).str(val('modPlayer')).str(val('modReason')).out(),
-        ban: () => new W().u8(T.Ban).str(val('modPlayer')).u32(num('modSeconds')).str(val('modReason')).out(),
-        mute: () => new W().u8(T.Mute).str(val('modPlayer')).u32(num('modSeconds')).out(),
-        unmute: () => new W().u8(T.Mute).str(val('modPlayer')).u32(0).out(),
-        teleport: () => new W().u8(T.Teleport).str(val('tpPlayer')).f32(num('tpX')).f32(num('tpY')).out(),
-        spawn: () => new W().u8(T.Spawn).str(val('spawnType')).f32(num('spawnX')).f32(num('spawnY')).u16(num('spawnCount')).out(),
-        despawn: () => new W().u8(T.Despawn).varuint(num('despawnId')).out(),
-        event: () => new W().u8(T.Event).str(val('eventName')).f32(num('evX')).f32(num('evY')).f32(num('evMag')).out(),
-        broadcast: () => new W().u8(T.Broadcast).str(val('bcText')).out(),
-        setConfig: () => new W().u8(T.SetConfig).str(val('cfgKey')).f64(num('cfgValue')).out(),
+        giveLevels: () => withSelection(progress(MODE.addLevels, Math.max(1, num('levelAmount')))),
+        giveXp: () => withSelection(progress(MODE.addExperience, Math.max(1, num('xpAmount')))),
+        // Confirmed, because a level low enough to stop paying for the skill tree
+        // clears it -- the one action here that destroys something a player built.
+        resetLevel: () => withSelection(progress(MODE.setLevel, 1), 'Reset %s to level 1? A skill tree the new level cannot pay for is cleared.'),
+        resetXp: () => withSelection(progress(MODE.setExperience, 0)),
+        giveItem: () => withSelection((p) =>
+          new W().u8(T.giveItem).str(p.playerId).str(val('itemId')).u16(Math.max(1, num('itemCount'))).out()),
+        kick: () => withSelection((p) => new W().u8(T.kick).str(p.playerId).str(val('reason') || 'kicked by an admin').out()),
+        kill: () => withSelection((p) => new W().u8(T.kill).str(p.playerId).out()),
+        teleport: () => withSelection((p) => new W().u8(T.teleport).str(p.playerId).f32(num('tpX')).f32(num('tpY')).out()),
+        mute: () => withSelection((p) => new W().u8(T.mute).str(p.playerId).u32(Math.max(1, num('seconds'))).out()),
+        unmute: () => withSelection((p) => new W().u8(T.mute).str(p.playerId).u32(0).out()),
+        ban: () => withSelection(
+          (p) => new W().u8(T.ban).str(p.playerId).u32(Math.max(0, num('seconds'))).str(val('reason') || 'banned by an admin').out(),
+          'Ban %s? They are kicked immediately and refused on reconnect.',
+        ),
+
+        spawn: () => send(new W().u8(T.spawn).str(val('spawnType')).f32(num('spawnX')).f32(num('spawnY')).u16(Math.max(1, num('spawnCount'))).out()),
+        despawn: () => send(new W().u8(T.despawn).varuint(num('despawnId')).out()),
+        event: () => send(new W().u8(T.event).str(val('eventName')).f32(num('evX')).f32(num('evY')).f32(num('evMag')).out()),
+        broadcast: () => send(new W().u8(T.broadcast).str(val('bcText')).out()),
+        setConfig: () => send(new W().u8(T.setConfig).str(val('cfgKey')).f64(num('cfgValue')).out()),
       };
 
       for (const button of document.querySelectorAll('button[data-act]')) {
-        button.onclick = () => send(actions[button.dataset.act]());
+        button.onclick = () => actions[button.dataset.act]();
       }
-      $('refresh').onclick = () => send(new W().u8(T.ListPlayers).out());
-      $('getConfig').onclick = () => send(new W().u8(T.GetConfig).out());
-      $('getAudit').onclick = () => send(new W().u8(T.GetAudit).u16(50).out());
+      $('connect').onclick = connect;
+      $('disconnect').onclick = () => { if (socket) socket.close(); };
+      $('getAudit').onclick = () => send(new W().u8(T.getAudit).u16(50).out());
+
+      // Enter in any action field runs that section's first button, so a count
+      // can be typed and applied without reaching for the mouse.
+      for (const input of document.querySelectorAll('input')) {
+        input.onkeydown = (event) => {
+          if (event.key !== 'Enter') return;
+          const button = input.closest('.row')?.querySelector('button') ?? input.closest('.panel')?.querySelector('button');
+          button?.click();
+        };
+      }
+
+      // --- boot -----------------------------------------------------------
+      // The server signs a throwaway key per boot unless ADMIN_SECRET is set, so
+      // pasting a JWT is otherwise the first thing an operator does every time.
+      const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE) ?? '{}'); } catch { return {}; } })();
+      $('url').value = saved.url || (location.protocol === 'https:' ? 'wss://' + location.host : 'ws://' + (location.host || 'localhost:8787'));
+      $('token').value = saved.token || '';
+      setActionsEnabled(false);
+      $('playersEmpty').hidden = false;
+      if ($('token').value) connect();
     </script>
   </body>
 </html>

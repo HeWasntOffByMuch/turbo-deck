@@ -1,5 +1,5 @@
 /**
- * What a drop looks like while it is still withholding itself (spec 154).
+ * What a drop looks like while it is still withholding itself (spec 156).
  *
  * The claims worth a test here are the ones a screenshot cannot make: that the
  * label is genuinely absent rather than merely unstyled, that a cue fires once

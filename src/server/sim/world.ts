@@ -266,7 +266,7 @@ export function spawnEntity(
 }
 
 /**
- * How far a player may be from a drop and still take it (spec 154).
+ * How far a player may be from a drop and still take it (spec 156).
  *
  * A little past the longest melee reach in the table (95), so a body that just
  * killed something at arm's length is already standing close enough. It is a
@@ -307,7 +307,7 @@ function dropEntity(id: number, drop: DropState, position: Vec3, zoneId: string)
 /**
  * Put a drop in the world outright, without a body having died for it.
  *
- * The developer path (spec 154): `admin:triggerEvent 'drop'` and the tests. It
+ * The developer path (spec 156): `admin:triggerEvent 'drop'` and the tests. It
  * takes an already-decided item rather than rolling one, so tuning the reveal
  * needs no monster, no fight and no luck -- which is the whole point of it
  * existing, since a presentation timed by farming is a presentation nobody
@@ -382,7 +382,7 @@ export function isHostile(
   // caused it, and a bolt can be shot down by another bolt.
   if (attacker.kind === EntityKindValue.Projectile) return false;
   if (target.kind === EntityKindValue.Projectile) return false;
-  // A drop is scenery with an owner (spec 154). Nothing swings at it, nothing
+  // A drop is scenery with an owner (spec 156). Nothing swings at it, nothing
   // aggros onto it, and it swings at nothing -- the same exclusion a projectile
   // gets, and for the same reason: it is in the entity map to be replicated,
   // not to be fought.
@@ -450,7 +450,7 @@ export function step(
 
     // Projectiles fly on their own path; they are moved in their own pass.
     if (current.kind === EntityKindValue.Projectile) continue;
-    // A drop lies where it landed and is handled in its own pass (spec 154).
+    // A drop lies where it landed and is handled in its own pass (spec 156).
     // Without this it would fall into the branch below and be handed to
     // `monsterIntent`, which would give an item on the ground a target and a
     // path to it.
@@ -842,7 +842,7 @@ export function step(
   /** Spawners whose body left the world this tick; their timers start now. */
   const emptied: string[] = [];
   /**
-   * Who killed what, this tick (spec 154).
+   * Who killed what, this tick (spec 156).
    *
    * `died` is emitted by the blow that landed it and the sweep below is the only
    * place that knows a body is actually leaving, so the two are joined here
@@ -868,7 +868,7 @@ export function step(
       }
       continue;
     }
-    // What it leaves is loot or nothing (spec 154). The *body* still leaves
+    // What it leaves is loot or nothing (spec 156). The *body* still leaves
     // nothing behind (spec 076): a five-second corpse that cannot be looted, hit
     // or walked through is not a corpse, it is a monster you have stopped being
     // able to fight standing in the doorway. A drop is a separate, inert entity

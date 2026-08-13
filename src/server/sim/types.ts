@@ -27,7 +27,7 @@ export const EntityKindValue = {
    */
   Projectile: 3,
   /**
-   * An item lying on the ground (spec 154). An entity for the reason a
+   * An item lying on the ground (spec 156). An entity for the reason a
    * projectile is one: interest management, delta tracking, despawn and the
    * reconnect path then apply to it unchanged instead of being reimplemented
    * beside it with their own bugs.
@@ -263,7 +263,7 @@ export interface ServerEntity {
   /** Set only on a projectile entity; null on everything that walks. */
   readonly projectile: ProjectileState | null;
   /**
-   * Set only on a drop entity; null on everything else (spec 154).
+   * Set only on a drop entity; null on everything else (spec 156).
    *
    * The item's identity lives *here* rather than in {@link typeId}, which a drop
    * leaves empty. That is the whole information-hiding argument: `typeId` rides
@@ -504,7 +504,7 @@ export type ServerSimEvent =
   | { readonly kind: 'despawned'; readonly entityId: number }
   | {
       /**
-       * A drop crossed its reveal tick (spec 154).
+       * A drop crossed its reveal tick (spec 156).
        *
        * Its own event rather than the server re-deriving the crossing per
        * connection, for the reason `poiseBroken` is one: the sim owns the clock,

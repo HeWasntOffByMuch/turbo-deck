@@ -25,7 +25,7 @@
  * how a body is drawn getting to it -- so it is driven here beside the machines
  * and held to the same assertion.
  *
- * Spec 154 added a third: a drop's reveal. That one is worth having here more
+ * Spec 156 added a third: a drop's reveal. That one is worth having here more
  * than either of the others, because the failure it guards against is not
  * abstract -- a reveal implemented as client-side state would be a client
  * deciding when an item becomes real, and the state compared below includes the
@@ -90,7 +90,7 @@ function stateOf(view: ClientView): string {
   const casts = [...view.casts]
     .sort((a, b) => a.entityId - b.entityId)
     .map((cast) => `${cast.entityId}:${cast.abilityId}:${cast.phase}`);
-  // What the drop actually is, on every tick (spec 154). The identity is the
+  // What the drop actually is, on every tick (spec 156). The identity is the
   // field the whole feature withholds, so it is the field a presentation layer
   // must be shown to be unable to move.
   const drops = [...view.drops]
@@ -160,7 +160,7 @@ async function play(animate: boolean): Promise<RunResult> {
     server.tick();
     // A rare drop, at a fixed point rather than one read off the view, so both
     // runs put it in the same place for the same reason the inputs are scripted
-    // (spec 154). Rare, because a common one reveals on the tick it lands and
+    // (spec 156). Rare, because a common one reveals on the tick it lands and
     // would never exercise the withheld half at all.
     if (tick === 20) server.triggerEvent('drop', 620, 450, 1);
     client.advanceTick();
@@ -268,7 +268,7 @@ describe('animation is presentation only', () => {
     expect(worst).toBeGreaterThan(0);
   }, 30_000);
 
-  it('was actually revealing a drop, and withheld it first (spec 154)', async () => {
+  it('was actually revealing a drop, and withheld it first (spec 156)', async () => {
     // The same guard the yaw gets: a run whose drop presentation did nothing
     // would satisfy the byte-for-byte assertion above and prove nothing.
     const animated = await play(true);

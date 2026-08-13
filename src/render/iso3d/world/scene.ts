@@ -275,7 +275,7 @@ interface DrivenUnit {
 }
 
 /**
- * The volume the cursor picks a drop by (spec 154).
+ * The volume the cursor picks a drop by (spec 156).
  *
  * Wider than the object is drawn and taller than it floats, because a drop is a
  * seven-unit shape at the far end of an isometric camera and a hitbox that
@@ -416,7 +416,7 @@ export class WorldScene {
    * else in the repo.
    */
   private readonly vfx: VfxLayer;
-  /** One rig per drop on screen (spec 154), pooled by entity id like a body. */
+  /** One rig per drop on screen (spec 156), pooled by entity id like a body. */
   private readonly dropRigs = new Map<number, DropRig>();
   /** Which of each drop's cues have already been heard. Pure; see `loot-drop.ts`. */
   private readonly dropPresenter = new DropPresenter();
@@ -1237,7 +1237,7 @@ export class WorldScene {
     }
 
     for (const entity of view.entities) {
-      // Drops are drawn by `syncDrops` instead (spec 154): what a drop is lit
+      // Drops are drawn by `syncDrops` instead (spec 156): what a drop is lit
       // by comes from `view.drops` rather than from the entity record, and
       // threading a rarity through `bodyFor` would put the one field this
       // feature exists to withhold into the pooled-rig key.
@@ -1323,7 +1323,7 @@ export class WorldScene {
   }
 
   /**
-   * The items lying in the world (spec 154).
+   * The items lying in the world (spec 156).
    *
    * Its own pass rather than a branch in `syncBodies`, because a drop is joined
    * from two halves that arrive on different messages: the *position* comes off
@@ -1389,7 +1389,7 @@ export class WorldScene {
   }
 
   /**
-   * A loot cue, if anything has been authored for it (spec 154).
+   * A loot cue, if anything has been authored for it (spec 156).
    *
    * A cue is a *name*, and this is the whole of the hook: when the effect
    * library knows the id it plays it, and when it does not this is silent.
@@ -1517,7 +1517,7 @@ export class WorldScene {
 
     if (this.hovered !== null) {
       this.bodies.get(this.hovered)?.highlight?.setHighlighted(true);
-      // A drop is not in `bodies` (spec 154), so it lights itself. Its response
+      // A drop is not in `bodies` (spec 156), so it lights itself. Its response
       // is the ground ring rather than an outline, because the object is already
       // glowing and a second glow would read as part of the reveal.
       this.dropRigs.get(this.hovered)?.setHovered(true);

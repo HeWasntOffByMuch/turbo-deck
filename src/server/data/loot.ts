@@ -1,5 +1,5 @@
 /**
- * What drops, and how loudly it announces itself (spec 154).
+ * What drops, and how loudly it announces itself (spec 156).
  *
  * Same contract as SKILLS, ITEMS and MONSTERS: content is data, an entity only
  * ever stores an id, and both ends read this file rather than the server
@@ -37,7 +37,7 @@ export interface RarityRow {
    */
   readonly anticipationTicks: number;
   /**
-   * Cue **names**, not assets (spec 154).
+   * Cue **names**, not assets (spec 156).
    *
    * The renderer decides what a name sounds and looks like; loot logic never
    * learns, and the server never sees one at all -- it sends a tier and two
@@ -161,7 +161,7 @@ export interface DropTable {
 /**
  * What each monster leaves.
  *
- * Small and unglamorous by design. The point of spec 154 is the reveal, and a
+ * Small and unglamorous by design. The point of spec 156 is the reveal, and a
  * generous table would make the ceremony ordinary within a minute -- which is
  * exactly the contrast failure `docs/reward-philosophy.md` §3 warns about. The
  * one exceptional entry is on the one monster that is genuinely a fight.

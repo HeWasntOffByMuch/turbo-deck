@@ -1,5 +1,5 @@
 /**
- * An item lying in the grass (spec 154).
+ * An item lying in the grass (spec 156).
  *
  * Beside `rigs.ts`, `critter.ts` and `weapon-rig.ts` rather than in `world/`,
  * because it is what those are: three.js meshes with an `update`. Everything

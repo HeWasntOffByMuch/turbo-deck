@@ -1,5 +1,5 @@
 /**
- * A drop over the real wire (spec 154).
+ * A drop over the real wire (spec 156).
  *
  * The pure half of this feature is pinned down in `sim/loot.test.ts`. What is
  * only true once there is a socket is everything here: that the server decides
@@ -457,7 +457,7 @@ function held(r: Rig, playerIds: readonly string[], defId: string): number {
  */
 async function fillBag(r: Rig, playerId: string): Promise<void> {
   for (let i = 0; i < INVENTORY_SLOTS + 1; i++) {
-    await r.server.playerManager.giveItem(playerId, { defId: 'sword.worn', count: 1 });
+    await r.server.playerManager.giveItem(playerId, 'sword.worn', 1);
   }
   const bag = r.server.playerManager.get(playerId)?.record.inventory ?? [];
   expect(bag.every((stack) => stack !== null)).toBe(true);

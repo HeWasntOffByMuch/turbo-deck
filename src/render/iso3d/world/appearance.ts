@@ -102,7 +102,7 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
     case EntityKind.Prop:
       return { rig: 'prop', typeId: entity.typeId || 'prop', radius: DEFAULT_MONSTER_RADIUS, showsHealth: false, look: null };
 
-    // A drop has no `typeId` and that is deliberate (spec 154): what the item is
+    // A drop has no `typeId` and that is deliberate (spec 156): what the item is
     // arrives on `LootDrop`, not on the entity record. So every drop is one look
     // here, and the tier that decides how it is *lit* comes from
     // `ClientView.drops` -- which is also the only place it could come from

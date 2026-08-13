@@ -182,7 +182,7 @@ taken or refused, plus an `Error(RejectedAction)` when it was refused.
 ### `0x19 PickUpItem`
 `varuint requestId` · `varuint entityId`
 
-Take a drop off the ground (spec 154). The drop's **entity id** is the only
+Take a drop off the ground (spec 156). The drop's **entity id** is the only
 address it has — it is not in a container until it is in the bag.
 
 The server checks all five: the entity is a drop, the asker is alive, the drop
@@ -260,7 +260,7 @@ carries identity so a client never has to infer a field it was not told.
 
 `kind`: `0` player, `1` monster, `2` prop, `3` projectile, `4` drop.
 
-A drop's `typeId` is **empty and stays empty** (spec 154). What the item is
+A drop's `typeId` is **empty and stays empty** (spec 156). What the item is
 travels on `LootDrop`, never here: this record goes to every client in interest
 range on first sight, and what an unrevealed drop is must not.
 `activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.
@@ -590,7 +590,7 @@ Equipment slot order is the wire contract: a new slot is appended to
 `str defId` · `varuint count`
 
 An item lying in the world, and how much of it this client is allowed to know
-yet (spec 154). Sent when the drop first enters this connection's interest set —
+yet (spec 156). Sent when the drop first enters this connection's interest set —
 the same first-sight the delta's `Spawn` bit computes, so there is no second
 visibility system — and again on the tick it reveals.
 
@@ -621,7 +621,10 @@ server-side check on `PickUpItem` and nothing a client is told.
 Every one of these is refused unless the connection's stored token verifies **on
 that message**, with a `role: admin` claim. Authentication is not a flag set once
 at connect: the token is re-verified per request, so expiry takes effect
-immediately. Every decision, accepted or refused, appends an audit entry.
+immediately. Every **decision**, accepted or refused, appends an audit entry;
+the reads — `listPlayers`, `getConfig`, `getItems`, `getAudit` — do not, because
+asking who is online is not something done to anybody and the console polls the
+list once a second for its live count (spec 154).
 
 | Byte | Message | Payload |
 |---|---|---|
@@ -638,16 +641,29 @@ immediately. Every decision, accepted or refused, appends an audit entry.
 | `0x8A` | `admin:setConfig` | `str key` · `f64 value` |
 | `0x8B` | `admin:getConfig` | — |
 | `0x8C` | `admin:getAudit` | `u16 limit` |
+| `0x8D` | `admin:setProgress` | `str playerId` · `u8 mode` · `u32 amount` |
+| `0x8E` | `admin:giveItem` | `str playerId` · `str defId` · `u16 count` |
+| `0x8F` | `admin:getItems` | — |
+| `0x90` | `admin:kill` | `str playerId` |
 
 Events currently understood by `triggerEvent`: `raid` (magnitude = how many),
 `clear` (magnitude = radius), `heal`, `drop` (magnitude = the rarity ordinal —
 an unowned drop of that tier) and `reveal` (magnitude = radius — pulls every
 unrevealed drop in range to its reveal now).
 
-Those two plus `lootRevealScale` are the whole developer path for spec 154:
+Those two plus `lootRevealScale` are the whole developer path for spec 156:
 spawn a chosen tier, stretch or collapse its run-up, and force one that is
 already lying there. **None of them can change what the item is** — there is
 nothing in any of them that could, which is the design rather than a promise.
+
+`setProgress` modes (spec 154): `0` addLevels, `1` setLevel, `2` addExperience,
+`3` setExperience. An unknown mode is a `CodecError` rather than a no-op, because
+the mode selects arithmetic. `amount` is a `u32`, so an `Add` cannot be negative
+by construction — a decrease is a `Set`, and so is a reset (`setLevel 1`,
+`setExperience 0`). Levels are clamped to `MAX_PLAYER_LEVEL`, experience is
+clamped into its own level's band, and skill points are re-derived from the
+resulting level rather than adjusted; a level too low to pay for the tree it
+inherits clears the tree and refunds every earned point.
 
 Live config keys: `spawnRateMultiplier`, `dropRateMultiplier`,
 `lootRevealScale`, `maxEntitiesPerChunk`, `correctionThreshold`,
@@ -660,9 +676,14 @@ non-finite value is refused rather than silently ignored.
 |---|---|---|
 | `0xA0` | Ok | `u8 requestType` · `str message` |
 | `0xA1` | Error | `u8 requestType` · `str message` |
-| `0xA2` | PlayerList | `varuint count`, then per row: `str playerId` · `str displayName` · `varuint entityId` · `f32 x` · `f32 y` · `f32 z` · `str zone` · `str chunk` · `f32 health` · `f32 maxHealth` · `varuint level` · `f32 attackDamage` · `f32 moveSpeed` · `bool muted` |
+| `0xA2` | PlayerList | `varuint count`, then per row: `str playerId` · `str displayName` · `varuint entityId` · `f32 x` · `f32 y` · `f32 z` · `str zone` · `str chunk` · `f32 health` · `f32 maxHealth` · `varuint level` · `f32 attackDamage` · `f32 moveSpeed` · `bool muted` · `varuint experience` · `varuint experienceToNextLevel` · `varuint unspentSkillPoints` · `varuint unspentAttributePoints` |
 | `0xA3` | Config | `varuint count`, then per entry: `str key` · `f64 value` |
 | `0xA4` | Audit | `varuint count`, then per entry: `f64 at` (epoch ms) · `str actor` · `str action` · `str target` · `str detail` · `bool accepted` |
+| `0xA5` | ItemList | `varuint count`, then per row: `str id` · `str name` · `str slot` (`-` when it is not worn) · `varuint levelRequirement` · `varuint maxStack` |
+
+`ItemList`'s count is decoded through `BufferReader.count()` (spec 152), so a
+declared length larger than the frame can hold is a `CodecError` rather than an
+allocation. The three replies above it predate that primitive.
 
 ## Client-side prediction contract
 

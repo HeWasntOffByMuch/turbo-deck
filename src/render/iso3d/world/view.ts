@@ -79,6 +79,7 @@ import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
+import { windupLostItsMarkIn } from './withdraw.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
@@ -642,7 +643,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   let targetId: number | null = null;
   /**
-   * The drop being walked over to, or null (spec 154).
+   * The drop being walked over to, or null (spec 156).
    *
    * Beside {@link targetId} rather than folded into it because the two end
    * differently: an attack order stands until the body is down, and this one is
@@ -790,7 +791,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   /**
    * Whether a right-click on this body is a pickup rather than an attack or a
-   * walk (spec 154).
+   * walk (spec 156).
    *
    * As thin as `attackable` and for the same reason: whether the drop is
    * *yours*, whether you are close enough, and whether the bag has room are all
@@ -1013,6 +1014,22 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       return;
     }
     if (picked && attackable(picked, client.view().selfEntityId)) {
+      // A new mark withdraws from the blow aimed at the old one (spec 155),
+      // through exactly the call the empty-ground branch below makes. The button
+      // that says "go there instead" and the button that says "hit that one
+      // instead" are the same button giving a new order, and an order withdraws
+      // -- otherwise the swing lands on the body you just stopped attacking and
+      // the click you actually made waits out its follow-through.
+      //
+      // Guarded on the id, because right-clicking the body you are already
+      // attacking is not a change of mind: unguarded, spam-clicking a mark would
+      // cancel every wind-up it started.
+      //
+      // Not gated on the attack point, exactly as the ground click is not.
+      // Skipping a backswing buys movement and never a faster next attack -- the
+      // interval was stamped at the attack point and no cancellation path writes
+      // it again (spec 144) -- so an explicit new order may end one.
+      if (picked.id !== targetId) client.cancelCast();
       targetId = picked.id;
       // The chase is the auto-attack's to set, tick by tick, as the target
       // moves; a standing order left over from a previous click would fight it.
@@ -1399,7 +1416,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * One tick of a pickup order (spec 154): close the gap, then ask once.
+   * One tick of a pickup order (spec 156): close the gap, then ask once.
    *
    * The same shape as `driveAutoAttack` and `driveCastOrder` -- a destination
    * into `moveIntent` and a request to the server, which validates it exactly as
@@ -1441,7 +1458,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
   }
 
+  /**
+   * Call off a blow whose mark has left the world (spec 155).
+   *
+   * Here rather than inside `driveAutoAttack` because it is not the attack
+   * order's rule: a confirmed aim (spec 080) that names a body reaches the same
+   * wind-up by a different road, and one rule in one place is what stops the two
+   * disagreeing about it. `withdraw.ts` holds the decision; this finds the two
+   * things it needs.
+   */
+  function withdrawIfMarkGone(view: ReturnType<typeof client.view>): void {
+    if (windupLostItsMarkIn(view)) client.cancelCast();
+  }
+
   function sendInput(): void {
+    // First, and off its own read of the view, so everything below sees a body
+    // that has already been let go: the legs come back on the tick the mark
+    // died rather than on the one after it.
+    withdrawIfMarkGone(client.view());
     const view = client.view();
     const me = selfPosition();
     driveCastOrder(view, me);
