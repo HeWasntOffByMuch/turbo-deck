@@ -231,6 +231,64 @@ Five things, in the order they pay off:
 - **Dust it and repaste it.** It will be running a tick loop continuously, and
   it is the only thing here with fans.
 
+### If it currently runs Windows
+
+**Wipe it and install Ubuntu Server 24.04.** Not because Linux is nicer, but
+because of a date: free Windows 10 support ended on 14 October 2025, the
+consumer ESU that bridges the gap runs out on **13 October 2026**, and there is
+no consumer option after that — you cannot keep paying. Hardware of this age
+also fails Windows 11's requirements, so there is no upgrade path either. An
+unpatched Windows with ports forwarded to it from the internet is a bad thing
+to own, and that is precisely what this machine would become before the year is
+out.
+
+Ubuntu Server 24.04 LTS is security-maintained until May 2029, free, and ten
+years with Ubuntu Pro, which is also free for personal use on up to five
+machines. It is what every command in the runbook below assumes.
+
+What you give up is the Windows remoting you already have. The replacement is
+SSH, and for a box that only ever runs `docker compose` it is the better tool —
+no session to keep alive, and it is what the deploy uses anyway. Install with
+"Ubuntu Server (minimized)", tick OpenSSH during setup, and paste in a public
+key rather than choosing a password.
+
+If the machine has another job and cannot be wiped, in preference order:
+
+- **A Hyper-V VM running Ubuntu Server.** Windows Pro has Hyper-V built in.
+  Give the VM an *external* virtual switch so it gets its own address on the
+  LAN and the port forward can point straight at it, and set its automatic
+  start action to "Always start". Every command below then applies unchanged
+  inside the VM, and the game server is isolated from the Windows install
+  rather than sharing it. This is the only keep-Windows option that does not
+  bend the rest of this document.
+- **WSL2 with Docker.** Fine for trying it out tonight, poor as a permanent
+  answer: WSL does not start at boot without a scheduled task, port forwarding
+  from the Windows host into the WSL network needs its own setup and does not
+  survive a reboot cleanly, and Docker Desktop's licence is not free for
+  companies past a size threshold.
+
+Either way the Windows-10 clock is still running, so treat these as ways to
+schedule the reinstall rather than avoid it.
+
+### The network side, for a box on your own line
+
+- **Forward 80 and 443 to it, and nothing else.** Port 80 is not optional:
+  Caddy proves the domain over ACME on it. If the ISP blocks 80, switch Caddy
+  to a DNS-01 challenge instead.
+- **Do not forward 22.** Set the `DEPLOY_RUNNER` repository variable to a
+  self-hosted GitHub Actions runner's label instead, and run that runner on the
+  box. It polls GitHub outbound, so the rollout needs no inbound port, no key
+  in a secret, and no SSH exposed to the internet at all — the deploy workflow
+  takes that path automatically when the variable is set. Keep SSH for
+  yourself, on the LAN.
+- **Put it somewhere its own.** A separate VLAN, or the router's DMZ. This
+  machine accepts connections from strangers; the rest of the network should
+  not be reachable from it.
+- **Point an A record at your static address** and use that name as
+  `SERVER_DOMAIN`, rather than the bare IP — the certificate is issued against
+  a name, and a name is also what lets you move the whole thing to a rented box
+  later without every player needing a new URL.
+
 **Latency is not what picks the host either.** Falkenstein is ~25ms from Poland
 against ~5ms for a Warsaw datacenter, and that 20ms is worth less than it sounds:
 deltas go out every 50ms (`BROADCAST_EVERY_N_TICKS` = 3 at 60Hz), and
@@ -243,24 +301,31 @@ would actually hurt is hosting in `us-east` and playing from Europe.
 
 ### Once, on the box
 
-Either box from above, Ubuntu 24.04. Nothing below this line is vendor-specific.
-From a fresh machine:
+Any box from above — rented or your own — on Ubuntu 24.04. Nothing below this
+line is vendor-specific.
 
 ```sh
 # as root
 adduser --disabled-password --gecos '' deploy
-usermod -aG docker deploy          # after docker is installed, below
 apt update && apt install -y docker.io docker-compose-v2 unattended-upgrades
 systemctl enable --now docker
+usermod -aG docker deploy          # after docker exists, or the group does not
 
 ufw default deny incoming && ufw default allow outgoing
-ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp && ufw enable
+ufw allow 80/tcp && ufw allow 443/tcp
+# SSH: on a rented box the deploy comes in this way, so allow it from anywhere.
+ufw allow 22/tcp
+# On your own box, prefer restricting it to the LAN -- the deploy uses a
+# self-hosted runner there and needs no inbound SSH at all:
+# ufw allow from 192.168.0.0/16 to any port 22 proto tcp
+ufw enable
 ```
 
 `unattended-upgrades` is the whole OS-patching story; it is the one piece of
 owning a box that cannot be skipped.
 
-Point an A record at the box (`play.example.com`), then as `deploy`:
+Point an A record at the box — at the rented box's address, or at your static
+one with 80 and 443 forwarded — then as `deploy`:
 
 ```sh
 mkdir ~/turbo-deck && cd ~/turbo-deck
@@ -287,15 +352,34 @@ curl -s https://play.example.com/healthz     # {"ok":true,"tick":...,"players":0
 
 ### Once, in the repository
 
+Both paths need these:
+
 | Where | Name | Value |
 |---|---|---|
 | Variable | `DEPLOY_ENABLED` | `true` — until this is set, the deploy job skips |
 | Variable | `PLAY_SERVER_URL` | `wss://play.example.com/ws` — what the Pages build bakes in |
+
+**A rented box** (GitHub connects in over SSH) additionally needs:
+
+| Where | Name | Value |
+|---|---|---|
 | Secret | `DEPLOY_HOST` | the box's address |
 | Secret | `DEPLOY_USER` | `deploy` |
 | Secret | `DEPLOY_DOMAIN` | `play.example.com` |
 | Secret | `DEPLOY_SSH_KEY` | a deploy-only private key, whose public half is in `~deploy/.ssh/authorized_keys` |
 | Secret | `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan play.example.com` output, so the deploy does not trust DNS |
+
+**Your own box** (a runner on the machine polls GitHub) needs none of those —
+no key, no exposed SSH — just:
+
+| Where | Name | Value |
+|---|---|---|
+| Variable | `DEPLOY_RUNNER` | the runner's label, e.g. `self-hosted` |
+| Variable | `DEPLOY_DIR` | where `compose.yml` lives, if not `~/turbo-deck` |
+
+Install the runner from the repository's *Settings → Actions → Runners*, as the
+same user that owns `~/turbo-deck` and is in the `docker` group, and register it
+as a service (`./svc.sh install && ./svc.sh start`) so it survives a reboot.
 
 ### Then
 

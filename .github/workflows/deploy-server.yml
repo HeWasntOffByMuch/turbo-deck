@@ -90,7 +90,17 @@ jobs:
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    # Two ways in, and which one you want follows from where the box is.
+    #
+    # A rented box takes the SSH path: GitHub's runner connects in, which needs
+    # port 22 reachable from the internet -- fine on a machine whose entire job
+    # is being on the internet.
+    #
+    # A box on your own network should not open SSH to the world for this. Set
+    # the DEPLOY_RUNNER repository variable to a self-hosted runner's label and
+    # the rollout happens *on the box*, with the runner polling GitHub
+    # outbound: no inbound port, no key in a secret, and nothing to firewall.
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       # The box pulls with this run's own token rather than a long-lived PAT
@@ -112,8 +122,12 @@ jobs:
       DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
       REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REGISTRY_USER: ${{ github.actor }}
+      # Where compose.yml and .env live on the box. Only the self-hosted path
+      # reads it; the SSH path cds to the same place remotely.
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '~/turbo-deck' }}
     steps:
-      - name: Roll the new image out
+      - name: Roll the new image out, over SSH
+        if: ${{ vars.DEPLOY_RUNNER == '' }}
         run: |
           set -euo pipefail
           install -m 600 /dev/null key known_hosts
@@ -133,7 +147,27 @@ jobs:
              docker logout ghcr.io
              docker image prune -f"
 
-      - name: Wait for the world to be advancing again
+      - name: Roll the new image out, on the box itself
+        if: ${{ vars.DEPLOY_RUNNER != '' }}
+        run: |
+          set -euo pipefail
+          cd "${DEPLOY_DIR/#\~/$HOME}"
+          echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+          export SERVER_IMAGE="$IMAGE"
+          docker compose pull server
+          docker compose up -d server
+          docker logout ghcr.io
+          docker image prune -f
+
+      # Two health checks for one question, because the two paths cannot reach
+      # the server the same way. From outside, the public URL is the honest
+      # test -- it exercises DNS, the port forward and Caddy's certificate as
+      # well as the process. From the box itself that URL often does not
+      # resolve back to the box at all: consumer routers commonly do not
+      # hairpin a forward to their own WAN address, so the check would fail
+      # against a perfectly healthy server. Ask the container directly there.
+      - name: Wait for the world to be advancing again, from outside
+        if: ${{ vars.DEPLOY_RUNNER == '' }}
         run: |
           set -euo pipefail
           # The health endpoint reports the tick, so this asks the question that
@@ -143,6 +177,30 @@ jobs:
           tick_now() {
             curl -fsS --max-time 5 "https://$DEPLOY_DOMAIN/healthz" \
               | sed -n 's/.*"tick":\([0-9]*\).*/\1/p'
+          }
+          for attempt in $(seq 1 20); do
+            first=$(tick_now || true)
+            sleep 3
+            second=$(tick_now || true)
+            if [ -n "$first" ] && [ -n "$second" ] && [ "$second" -gt "$first" ]; then
+              echo "healthy: tick $first -> $second"
+              exit 0
+            fi
+            echo "attempt $attempt: not advancing yet"
+          done
+          echo "server did not come back healthy" >&2
+          exit 1
+
+      - name: Wait for the world to be advancing again, from the box
+        if: ${{ vars.DEPLOY_RUNNER != '' }}
+        run: |
+          set -euo pipefail
+          cd "${DEPLOY_DIR/#\~/$HOME}"
+          # Same question, asked through the container, which is also how
+          # compose.yml's own healthcheck asks it.
+          tick_now() {
+            docker compose exec -T server node -e \
+              "fetch('http://127.0.0.1:8787/healthz').then(r=>r.json()).then(j=>console.log(j.tick))"
           }
           for attempt in $(seq 1 20); do
             first=$(tick_now || true)
