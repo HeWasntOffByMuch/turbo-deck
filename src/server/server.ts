@@ -195,6 +195,15 @@ interface Connection {
    */
   leaving: boolean;
   /**
+   * Set when a newer connection has taken this player over (spec 157).
+   *
+   * Distinct from `leaving`, and the difference is the whole point: a leaving
+   * connection still owns its body and its session and reaps both, while a
+   * displaced one owns *neither* -- somebody else is holding them -- so it must
+   * end without lingering and without reaping anything at all.
+   */
+  displaced: boolean;
+  /**
    * The cooldown map last sent to this client. Compared by *identity*: entities
    * are immutable and the map is only rebuilt when it actually changes, so this
    * is a pointer compare per connection per tick rather than a walk.
@@ -425,6 +434,7 @@ export class GameServer implements AdminHost {
       sessionToken: '',
       lastSeenTick: this.state.tick,
       leaving: false,
+      displaced: false,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -836,6 +846,50 @@ export class GameServer implements AdminHost {
       return;
     }
 
+    // Already playing, on a socket that is still up (spec 157).
+    //
+    // This is the case spec 150 had no answer for, and every door into "not
+    // logged in" went through it. The commonest is a reconnect the server has
+    // not noticed yet: a socket dies without delivering a `close`, the client
+    // comes back with a perfectly good token, and there is no lingering entry
+    // to match it against because the old connection is still, as far as this
+    // end knows, live. Falling through to a fresh login there spawned a second
+    // body and overwrote the session, and reaping the old connection half a
+    // minute later logged out the client that was actually playing.
+    //
+    // So the newest connection wins and takes the body with it. Not a refusal:
+    // that would turn an ordinary blip into a ten-second lockout on exactly the
+    // connection that had just recovered.
+    const held = this.liveConnectionFor(playerId);
+    if (held) {
+      // Read *before* the displacement, which clears them: taking the body over
+      // and taking it away are the same two fields, so the order is the whole
+      // difference between a resumed session and a welcome naming entity -1.
+      const takenOver = held.entityId;
+      const body = this.state.entities.get(takenOver);
+      const session = this.players.get(playerId);
+      if (body && session) {
+        connection.playerId = playerId;
+        connection.entityId = takenOver;
+        connection.sessionToken = this.mintSessionToken();
+        this.displace(held);
+        // The session is already logged in and already attached; re-attaching
+        // is what makes `byEntity` point at a session this connection can
+        // reach, and is a no-op when it already did.
+        this.players.attachEntity(playerId, takenOver);
+        this.welcome(connection, playerId, takenOver);
+        // Everything, for the reason the resume path says: the client taking
+        // over is a page that was constructed a moment ago and holds nothing.
+        this.sendMapInfo(connection);
+        this.sendStats(connection);
+        this.sendInventory(connection, 0);
+        return;
+      }
+      // A connection logged in as somebody whose body or session has gone is
+      // not something to take over -- it is something to clear out of the way.
+      this.displace(held);
+    }
+
     // Coming back to the body that is still standing there (spec 150).
     //
     // A token that does not match is simply a new login rather than an error:
@@ -867,6 +921,18 @@ export class GameServer implements AdminHost {
       }
       this.lingering.delete(playerId);
     }
+
+    // A fresh login clears the ground first (spec 157).
+    //
+    // `lingering.delete` above is only reached when the token *matched*, so an
+    // empty or stale one left the entry armed: its body was then reaped by
+    // nothing until the grace expired, at which point the reap logged out the
+    // session this login is about to create. Reaping it here rather than there
+    // is what keeps spec 150's "a wrong token is a new login" true without the
+    // delayed cost -- you are still spawned afresh at your saved position, and
+    // the body you left goes now instead of taking your session with it later.
+    const stale = this.lingering.get(playerId);
+    if (stale) await this.reap(playerId, stale.entityId);
 
     const session = await this.players.login(playerId, displayName);
     // Not on top of whoever is already standing there (spec 145). A saved
@@ -1001,6 +1067,11 @@ export class GameServer implements AdminHost {
     connection: Connection,
     options: { readonly intentional?: boolean } = {},
   ): Promise<void> {
+    // Taken over by a newer connection (spec 157). Its body and its session
+    // belong to somebody else now, so there is nothing here to cancel, to hold
+    // open, or to reap -- and reaping it is exactly how the player who took it
+    // over gets told they are not logged in.
+    if (connection.displaced) return;
     if (!this.connections.has(connection)) return;
     // Before the connection leaves the set, so the *other* side is still told
     // (spec 132). A trade that outlived a disconnect would be a trade nobody
@@ -1030,6 +1101,48 @@ export class GameServer implements AdminHost {
     await this.reap(connection.playerId, connection.entityId);
   }
 
+  /**
+   * The connection currently logged in as this player, if any (spec 157).
+   *
+   * A scan rather than an index: `connections` is a handful, this is asked once
+   * per login and once per reap, and an index keyed on `playerId` would be a
+   * fourth thing keyed on `playerId` to keep in step with the other three.
+   */
+  private liveConnectionFor(playerId: string, except?: Connection): Connection | null {
+    for (const connection of this.connections) {
+      if (connection === except) continue;
+      if (connection.playerId === playerId) return connection;
+    }
+    return null;
+  }
+
+  /**
+   * End a connection without ending what it was holding (spec 157).
+   *
+   * Its body and its session belong to the connection that just took over, so
+   * this does everything `disconnect` does about *this socket* -- the trade and
+   * the vendor, which are promises to other people and do not survive a
+   * takeover any more than they survive a drop -- and nothing about the player.
+   */
+  private displace(connection: Connection): void {
+    // Before the flag, because cancelling a trade needs the playerId that is
+    // about to stop meaning this connection.
+    if (connection.playerId !== null) {
+      const ended = this.trades.cancelFor(connection.playerId, 'they logged in elsewhere');
+      if (ended) this.endTrade(ended);
+    }
+    connection.openVendorId = '';
+    connection.displaced = true;
+    // Cleared so that nothing reached through this connection -- a frame still
+    // in flight, a close handler about to run -- can name the player whose
+    // session it no longer owns.
+    connection.playerId = null;
+    connection.entityId = -1;
+    this.connections.delete(connection);
+    this.send(connection, { type: ServerMessageType.Disconnect, reason: 'logged in elsewhere' });
+    connection.channel.close();
+  }
+
   /** Take the body out of the world and save the record. The end of a session. */
   private async reap(playerId: string | null, entityId: number): Promise<void> {
     if (entityId >= 0) {
@@ -1037,10 +1150,14 @@ export class GameServer implements AdminHost {
       this.history.forget(entityId);
       this.state = removeEntity(this.state, entityId);
     }
-    if (playerId !== null) {
-      this.lingering.delete(playerId);
-      await this.players.logout(playerId);
-    }
+    if (playerId === null) return;
+    // Somebody is holding this id (spec 157). The entity removed above was an
+    // orphan and had to go; the *session* is not one, and logging it out is how
+    // a live client ends up being told "not logged in" while its body stands in
+    // the world and its socket is still up.
+    if (this.liveConnectionFor(playerId)) return;
+    this.lingering.delete(playerId);
+    await this.players.logout(playerId);
   }
 
   /**
