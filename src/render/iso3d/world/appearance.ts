@@ -41,7 +41,7 @@ export interface Appearance {
   readonly look: ProjectileLook | null;
   /**
    * An override colour for the rig, or absent for whatever it draws itself as
-   * (spec 154).
+   * (spec 156).
    *
    * Only motes use it, and only to tell health from focus. It lives here rather
    * than in the scene because *what colour a thing is* is the same kind of
@@ -51,11 +51,11 @@ export interface Appearance {
   readonly tint?: number;
   /**
    * How many times to subdivide the orb, or absent for the faceted default
-   * (spec 154). Motes only -- see {@link MOTE_DETAIL}.
+   * (spec 156). Motes only -- see {@link MOTE_DETAIL}.
    */
   readonly detail?: number;
   /**
-   * A brighter rim around the orb, or absent for none (spec 154).
+   * A brighter rim around the orb, or absent for none (spec 156).
    *
    * Motes only. A 7-unit ball of deep blood on a green field is a dark dot on a
    * dark field at the size it is actually drawn; the rim is what separates it
@@ -72,7 +72,7 @@ const DEFAULT_PROJECTILE_LOOK: ProjectileLook = 'orb';
 /** Matches `SERVER_PLAYER_RADIUS`; a player's look is not a content-table entry. */
 const PLAYER_RADIUS = 16;
 /**
- * How big a mote is drawn, and in what (spec 154).
+ * How big a mote is drawn, and in what (spec 156).
  *
  * The radius matches the one `world.ts` gives the entity. The colours are the
  * only thing that tells a health mote from a focus one, so they are named here
@@ -157,7 +157,7 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
     }
 
     case EntityKind.Mote:
-      // A restorative mote (spec 154). It draws through the *shot* rig, which is
+      // A restorative mote (spec 156). It draws through the *shot* rig, which is
       // not a shortcut: a mote is a small bright thing floating in the air, which
       // is exactly what `ShotRig`'s orb already is, and building a second rig to
       // draw the same sphere would be a second thing to keep looking right. What

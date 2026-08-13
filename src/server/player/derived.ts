@@ -199,7 +199,7 @@ export function deriveTraits(
   const { strength: STR, agility: AGI, intelligence: INT } = attributes;
   const { constitution: CON, perception: PER, wisdom: WIS } = attributes;
   const S = SCALING;
-  /** The health economy's per-point rates (spec 154), read like `S`. */
+  /** The health economy's per-point rates (spec 156), read like `S`. */
   const R = RESTORATION.stats;
   const rate = context.tickRate > 0 ? context.tickRate : 60;
 
@@ -288,7 +288,7 @@ export function deriveTraits(
       ? Math.max(0, context.maxHealth * S.constitution.shieldFraction)
       : 0;
 
-  // --- the health economy (spec 154) --------------------------------------
+  // --- the health economy (spec 156) --------------------------------------
   // One route per attribute, and none of them is "+X% healing received". These
   // are granted by attributes alone and by no content table, which is why there
   // is no `t.` term on any of them: `TraitModifier` deliberately only names

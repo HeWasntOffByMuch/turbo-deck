@@ -42,7 +42,7 @@ const TRACE_SPACING = 0.55;
 const TRACE_WIDTH = 0.42;
 const TRACE_LIFT = 2.5;
 /**
- * How much larger the outline shell is than the orb it rims (spec 154).
+ * How much larger the outline shell is than the orb it rims (spec 156).
  *
  * A ratio rather than a width in world units, so the rim is the same fraction
  * of the ball whatever size the ball is -- a mote is 7 units across and the
@@ -98,7 +98,7 @@ export class ShotRig {
     radius: number,
     /**
      * An override colour for the orb, or absent for the arcane core it has
-     * always been (spec 154).
+     * always been (spec 156).
      *
      * Orb only, and deliberately: an arrow and a star are *objects* whose
      * materials say what they are made of, where an orb is a bead of light and
@@ -107,7 +107,7 @@ export class ShotRig {
      */
     /**
      * How to draw the orb, or absent for the arcane core it has always been
-     * (spec 154).
+     * (spec 156).
      *
      * Orb only, and deliberately: an arrow and a star are *objects* whose
      * materials say what they are made of, where an orb is a bead of light and

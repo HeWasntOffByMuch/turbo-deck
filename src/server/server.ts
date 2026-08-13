@@ -27,6 +27,7 @@ import {
   DENY_ALL_ADMIN,
   type AdminConnectionState,
   type AdminHost,
+  type AdminOutcome,
   type AdminTokenVerifier,
 } from './admin/router.js';
 import {
@@ -51,8 +52,14 @@ import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
 import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
+import { ALL_ITEMS, maxStackOf } from './data/items.js';
 import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
-import { decodeAdminRequest, encodeAdminReply, type AdminPlayerRow } from './net/admin-messages.js';
+import {
+  decodeAdminRequest,
+  encodeAdminReply,
+  type AdminItemRow,
+  type AdminPlayerRow,
+} from './net/admin-messages.js';
 import { CodecError } from './net/codec.js';
 import { DeltaTracker } from './net/delta.js';
 import {
@@ -71,10 +78,11 @@ import {
   isAdminRequest,
   ServerMessageType,
   SpawnerStateValue,
+  type AdminProgressModeValue,
 } from './net/protocol.js';
 import { attributeByOrdinal } from './data/attributes.js';
 import { resolveProgression } from './player/progression.js';
-import { DEFAULT_SPAWN, PlayerManager } from './player/player-manager.js';
+import { DEFAULT_SPAWN, experienceForLevel, PlayerManager } from './player/player-manager.js';
 import {
   inTradeRange,
   isSwappable,
@@ -203,7 +211,7 @@ interface Connection {
   sentResource: number;
   sentResourceTick: number;
   /**
-   * The health economy as this connection was last told it stood (spec 154).
+   * The health economy as this connection was last told it stood (spec 156).
    *
    * The meter is held *quantised to the byte the wire carries*, which is what
    * keeps a bar that moves by a thousandth from marking itself dirty every tick.
@@ -877,7 +885,7 @@ export class GameServer implements AdminHost {
       level: session.record.level,
       zoneId: session.record.currentZone,
       health: session.record.health,
-      // The flask comes back as it was left (spec 154). `login` has already
+      // The flask comes back as it was left (spec 156). `login` has already
       // turned an absent field into a full one; the fallback here is only what
       // `exactOptionalPropertyTypes` needs to see, and it is the same answer.
       fallbackCharges: session.record.fallbackCharges ?? session.stats.traits.fallbackCharges,
@@ -1166,7 +1174,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * The health economy's two numbers, when either has moved (spec 154).
+   * The health economy's two numbers, when either has moved (spec 156).
    *
    * Change-driven and owner-only for the same reasons as `sendCooldowns`, with
    * one difference: there is nothing to model forward. The meter moves on kills
@@ -1551,7 +1559,7 @@ export class GameServer implements AdminHost {
         entity.position,
         entity.facing,
         entity.health,
-        // The flask, mirrored back like health (spec 154): the sim spends it and
+        // The flask, mirrored back like health (spec 156): the sim spends it and
         // the rest loop refills it, so the record has to hear about both or a
         // relog is the cheapest heal in the game.
         entity.fallbackCharges,
@@ -1572,7 +1580,7 @@ export class GameServer implements AdminHost {
     // Cooldowns ride the same reasoning as corrections: rare, owner-only, and
     // the point of them is that the button greys out the moment it is spent.
     for (const connection of this.connections) this.sendCooldowns(connection, this.state.tick);
-    // The health economy rides the same reasoning (spec 154): rare, owner-only,
+    // The health economy rides the same reasoning (spec 156): rare, owner-only,
     // and the point of it is that the flask greys out the moment it is drunk.
     for (const connection of this.connections) this.sendRestoration(connection, this.state.tick);
     if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) {
@@ -1714,7 +1722,7 @@ export class GameServer implements AdminHost {
         ...entity,
         position,
         health: session.stats.maxHealth,
-        // Death is the other reset point (spec 154): you come back at
+        // Death is the other reset point (spec 156): you come back at
         // Hearthstead whole, flask included, and the meter is gone. That is the
         // shape the whole economy is built around -- a bad run costs the
         // momentum you had built, and never leaves you unable to start again.
@@ -1905,7 +1913,7 @@ export class GameServer implements AdminHost {
         const entity = this.state.entities.get(id);
         if (!entity) continue;
         // A mote is replicated to exactly one client: the one it belongs to
-        // (spec 154). Filtering here rather than checking ownership at pickup is
+        // (spec 156). Filtering here rather than checking ownership at pickup is
         // the stronger rule and the cheaper one -- a teammate cannot see one,
         // cannot walk toward one, and cannot be accused of taking one, and the
         // wire carries no ownership field for anybody to reason about.
@@ -1949,6 +1957,10 @@ export class GameServer implements AdminHost {
       const entity = this.state.entities.get(session.entityId);
       const position: Vec3 = entity?.position ?? session.record.position;
       rows.push({
+        experience: session.record.experience,
+        experienceToNextLevel: experienceForLevel(session.record.level + 1),
+        unspentSkillPoints: session.record.unspentSkillPoints,
+        unspentAttributePoints: session.record.unspentAttributePoints,
         playerId: session.playerId,
         displayName: session.displayName,
         entityId: session.entityId,
@@ -1968,11 +1980,105 @@ export class GameServer implements AdminHost {
     return rows;
   }
 
+  listItems(): readonly AdminItemRow[] {
+    return ALL_ITEMS.map((item) => ({
+      id: item.id,
+      name: item.name,
+      slot: item.slot ?? '-',
+      levelRequirement: item.levelRequirement,
+      // Through `maxStackOf` rather than off the field, which is optional and
+      // means 1 when absent -- the console divides by it.
+      maxStack: maxStackOf(item.id),
+    }));
+  }
+
   kick(playerId: string, reason: string): boolean {
     const connection = this.connectionForPlayer(playerId);
     if (!connection) return false;
     this.drop(connection, `kicked: ${reason}`);
     return true;
+  }
+
+  /**
+   * A level or experience edit (spec 154), pushed to the player it happened to.
+   *
+   * The push is the half that would be easy to leave out and impossible to
+   * notice from the console: the record and the derived stats are correct
+   * immediately, but the client draws its sheet from the last `Stats` message it
+   * was sent, so without this an operator sees level 9 in the table while the
+   * player sees level 4 until something else happens to send them one.
+   */
+  async setProgress(
+    playerId: string,
+    mode: AdminProgressModeValue,
+    amount: number,
+  ): Promise<AdminOutcome> {
+    const result = await this.players.setProgress(playerId, mode, amount);
+    if (!result.ok) return { ok: false, detail: result.reason };
+
+    const connection = this.connectionForPlayer(playerId);
+    if (connection) {
+      this.sendStats(connection);
+      // The tree may have been cleared to pay for a lowered level, and the sheet
+      // draws the tree from the same message; the bag is untouched, so it is not
+      // resent.
+      this.send(connection, {
+        type: ServerMessageType.Chat,
+        channel: ChatChannel.System,
+        from: 'World',
+        text: `An admin changed your progression: ${result.detail}.`,
+      });
+    }
+    return { ok: true, detail: result.detail };
+  }
+
+  async giveItem(playerId: string, defId: string, count: number): Promise<AdminOutcome> {
+    const result = await this.players.giveItem(playerId, defId, count);
+    if (!result.ok) return { ok: false, detail: result.reason };
+
+    const connection = this.connectionForPlayer(playerId);
+    if (connection) {
+      // 0 is "unprompted resend" -- there is no client request this answers.
+      this.sendInventory(connection, 0);
+      this.send(connection, {
+        type: ServerMessageType.Chat,
+        channel: ChatChannel.System,
+        from: 'World',
+        text: `You have been given ${count} x ${defId}.`,
+      });
+    }
+    return { ok: true, detail: `gave ${playerId} ${count} x ${defId}` };
+  }
+
+  /**
+   * Kills a player outright (spec 154).
+   *
+   * Health to zero and nothing else invented: the sim's own sweep marks a
+   * zero-health player `Dead` and leaves the body in the world, and
+   * `handleRespawns` already says "You have fallen" and puts them back on their
+   * feet after `RESPAWN_DELAY_TICKS`. So an admin kill and a monster's kill end
+   * the same way.
+   *
+   * The one thing the sweep does not do is cancel a trade -- only the `'died'`
+   * event does that, and it is emitted by `abilities.ts` when a blow lands, not
+   * by the sweep. So this cancels it, exactly as the `'died'` handler does.
+   * Without it, killing somebody mid-trade is the one way to be dead and still
+   * at the table.
+   */
+  kill(playerId: string): AdminOutcome {
+    const session = this.players.get(playerId);
+    if (!session || session.entityId < 0) return { ok: false, detail: `${playerId} is not in the world` };
+    const entity = this.state.entities.get(session.entityId);
+    if (!entity) return { ok: false, detail: `${playerId} has no body in the world` };
+    if (entity.health <= 0) return { ok: false, detail: `${playerId} is already dead` };
+
+    this.state = replaceEntity(this.state, { ...entity, health: 0 });
+    this.players.syncFromEntity(playerId, entity.position, entity.facing, 0);
+
+    const ended = this.trades.cancelFor(playerId, 'they were killed');
+    if (ended) this.endTrade(ended);
+
+    return { ok: true, detail: `killed ${playerId}` };
   }
 
   async ban(playerId: string, seconds: number, reason: string, issuedBy: string): Promise<boolean> {
@@ -2100,7 +2206,7 @@ export class GameServer implements AdminHost {
         }
         return `healed ${healed} player(s)`;
       }
-      // --- the health economy's debug controls (spec 154) -----------------
+      // --- the health economy's debug controls (spec 156) -----------------
       // Three levers, on the admin channel, because every one of them is a
       // question a designer has mid-session and none of them is answerable by
       // playing: how does a nearly-full meter behave, what does an empty flask

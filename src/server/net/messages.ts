@@ -946,7 +946,7 @@ export interface CooldownsMessage {
 }
 
 /**
- * The health economy, as the owner sees it (spec 154).
+ * The health economy, as the owner sees it (spec 156).
  *
  * Two numbers and a tick. It rides the same reasoning as {@link
  * CooldownsMessage}: owner-only, sent when it changes, and never on the entity

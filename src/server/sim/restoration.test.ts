@@ -1,5 +1,5 @@
 /**
- * The health economy, asserted (spec 154).
+ * The health economy, asserted (spec 156).
  *
  * Two halves, and the split is deliberate. The first drives the *arithmetic* --
  * the meter, the bonuses, the anti-farm rules -- directly against
@@ -784,7 +784,7 @@ describe('a mote on the ground', () => {
   }
 
   it('hops out of the body before it may be taken', () => {
-    // The visibility fix, asserted (spec 154). A mote used to spawn inside its
+    // The visibility fix, asserted (spec 156). A mote used to spawn inside its
     // owner's attract radius and be collected on the first tick it was legally
     // allowed to be -- 0.30s on screen, six frames at the broadcast rate. The
     // hop is what buys a drop a beat to be seen in, so it is checked directly:

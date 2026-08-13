@@ -331,7 +331,7 @@ export function projectileLifetimeTicks(spec: {
 }
 
 /**
- * Fallback flask charges after a recalculation (spec 154).
+ * Fallback flask charges after a recalculation (spec 156).
  *
  * The one place `undefined` is turned into a number, and it becomes a *full*
  * flask: a record written before the field existed cannot tell "drank them all"

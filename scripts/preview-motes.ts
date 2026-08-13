@@ -1,4 +1,4 @@
-// Dev-only: photograph a restorative mote (spec 154) -- what it is made of, and
+// Dev-only: photograph a restorative mote (spec 156) -- what it is made of, and
 // what it does between leaving a body and reaching a player.
 // `npx tsx scripts/preview-motes.ts`
 //
@@ -70,7 +70,7 @@ interface Tri {
   /** Unlit, like the game's own `MeshBasicMaterial` orbs. */
   readonly flat: boolean;
   /**
-   * Drawn from the inside, like the outline shell (spec 154).
+   * Drawn from the inside, like the outline shell (spec 156).
    *
    * The rasteriser culls back faces because the real renderer does, and the
    * outline is a `BackSide` mesh -- so without this the shell would be culled

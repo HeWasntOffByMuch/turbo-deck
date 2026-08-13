@@ -183,7 +183,7 @@ export interface PersistedPlayer {
   /** Ability resource, clamped the same way. Live, not derived. */
   readonly resource: number;
   /**
-   * Fallback flask charges left (spec 154).
+   * Fallback flask charges left (spec 156).
    *
    * Live like health, and persisted for the same reason: it is the insurance a
    * character is carrying, and a relog that refilled it would make logging out
@@ -408,7 +408,7 @@ export interface TraitStats {
   /** Tier-3 stat skills open this many attribute points early. */
   readonly masteryRelief: number;
 
-  // --- the health economy: one route per attribute (spec 154) -------------
+  // --- the health economy: one route per attribute (spec 156) -------------
   /**
    * Extra restoration progress from an overkill or an execution, as a fraction
    * of the kill's base. Strength's route: a body that dies decisively pays more.

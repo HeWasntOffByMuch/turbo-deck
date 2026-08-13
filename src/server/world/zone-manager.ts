@@ -20,7 +20,7 @@ export interface ZoneDefinition {
   /** Whether players may damage each other here. */
   readonly pvp: boolean;
   /**
-   * Whether standing here refills health and the fallback flask (spec 154).
+   * Whether standing here refills health and the fallback flask (spec 156).
    *
    * A flag on the zone rather than a check against a zone *id*, so "where can
    * you rest" is a property of the world's layout that a second hub inherits by
@@ -54,7 +54,7 @@ export const DEFAULT_ZONES: readonly ZoneDefinition[] = [
     spawnMultiplier: 0,
     // The one rest zone, and the reason the flask is insurance rather than a
     // heal button: refilling it is a decision to disengage and walk home
-    // (spec 154).
+    // (spec 156).
     rest: true,
   },
   {

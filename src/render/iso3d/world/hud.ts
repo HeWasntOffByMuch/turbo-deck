@@ -76,7 +76,7 @@ export const HOTBAR: readonly string[] = [
   'bolt.seek',
   'ground.quake',
   'self.mend',
-  // The flask (spec 154). On the bar rather than on a key of its own, because it
+  // The flask (spec 156). On the bar rather than on a key of its own, because it
   // is an ability like every other and the only thing that makes it insurance is
   // what it costs -- putting it somewhere special would be the interface
   // claiming a distinction the rules do not make.
@@ -802,7 +802,7 @@ export function createHud(project: Projector): HudHandle {
       `guard ${Math.round((self?.poise ?? 0) * (stats?.traits.maxPoise ?? 0))}/` +
       `${Math.round(stats?.traits.maxPoise ?? 0)}   ` +
       `lvl ${view.level}   xp ${view.experience}\n` +
-      // The health economy, in the readout rather than as a bar (spec 154). The
+      // The health economy, in the readout rather than as a bar (spec 156). The
       // meter arrives as a fraction and is shown as one: the absolute progress
       // and the threshold behind it are server tuning, and a client that knew
       // both could work out exactly which kill produces the next mote.
@@ -966,7 +966,7 @@ function aimLine(aiming: { readonly abilityId: string | null; readonly pending: 
       // No key numbers to name on a phone since spec 094 -- the bar is tapped.
       ? 'tap ground to move, a unit to attack · pinch to zoom · tap a skill to cast it'
       // The range is derived rather than typed, or it goes stale the next time a
-      // row is added to the bar -- which is exactly what spec 154 did to the
+      // row is added to the bar -- which is exactly what spec 156 did to the
       // `1-8` that was here.
       : `right-click ground to move, a unit to attack · WASD · 1-${HOTBAR.length} abilities · Esc cancel`;
   }
@@ -1004,7 +1004,7 @@ function formatSeconds(seconds: number): string {
  */
 function affordable(view: ClientView, ability: AbilityDefinition | null): boolean {
   if (!ability || !view.stats) return true;
-  // The flask's cost is a charge, not resource (spec 154), and an empty one is
+  // The flask's cost is a charge, not resource (spec 156), and an empty one is
   // the same kind of "you cannot press this" as an empty pool. Read off the
   // replicated count minus what a request in flight has already spent, so a
   // second press inside the round trip is dimmed rather than refused.

@@ -121,7 +121,7 @@ export interface AbilityDefinition {
   /** Negative damage heals; kept explicit so the sign is never a surprise. */
   readonly healing?: number;
   /**
-   * Healing as a fraction of the caster's own maximum health (spec 154).
+   * Healing as a fraction of the caster's own maximum health (spec 156).
    *
    * Added to {@link healing} rather than replacing it, so a row may be flat, or
    * proportional, or both. A flask has to be proportional: a flat 70 is a third
@@ -130,7 +130,7 @@ export interface AbilityDefinition {
    */
   readonly healingFraction?: number;
   /**
-   * Fallback flask charges this costs (spec 154). Absent is free.
+   * Fallback flask charges this costs (spec 156). Absent is free.
    *
    * A number rather than a flag so a second, larger draught is a row here
    * instead of a special case in `startCast`. Charges are spent at the commit

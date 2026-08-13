@@ -177,7 +177,7 @@ export function blankProgression(): Pick<
     shieldUntilTick: 0,
     statuses: NO_STATUSES,
     stillSinceTick: 0,
-    // The health economy starts empty and the flask starts full (spec 154). A
+    // The health economy starts empty and the flask starts full (spec 156). A
     // body that enters the world part-way to a mote would make the meter a
     // function of when it spawned; a body that enters with no insurance would
     // make a fresh character's first bad fight unrecoverable.
@@ -246,7 +246,7 @@ export interface SpawnSpec {
   /** Where it considers home, and so the centre of its leash. */
   readonly anchor?: Vec2;
   /**
-   * Flask charges and restoration progress this body arrives with (spec 154).
+   * Flask charges and restoration progress this body arrives with (spec 156).
    *
    * Both optional and both for the same caller: a player logging back in, whose
    * charges are on their save. Absent means a full flask and an empty meter,
@@ -291,7 +291,7 @@ export function spawnEntity(
     mote: null,
     // A body enters the world with a full guard, like it enters with full
     // health: poise is a live resource, not a derived stat. The flask is the
-    // same shape -- a count the build decides the ceiling of (spec 154).
+    // same shape -- a count the build decides the ceiling of (spec 156).
     ...blankProgression(),
     poise: spec.stats.traits.maxPoise,
     fallbackCharges: spec.fallbackCharges ?? spec.stats.traits.fallbackCharges,
@@ -359,7 +359,7 @@ export function isHostile(
   // caused it, and a bolt can be shot down by another bolt.
   if (attacker.kind === EntityKindValue.Projectile) return false;
   if (target.kind === EntityKindValue.Projectile) return false;
-  // A mote is scenery with a rule attached (spec 154): it cannot be hit, cannot
+  // A mote is scenery with a rule attached (spec 156): it cannot be hit, cannot
   // be caught by a blast, and cannot be shot down. Refused at both ends for the
   // reason a projectile is -- a cone that swept up the motes it had just created
   // would delete the reward for the kill that made them.
@@ -426,7 +426,7 @@ export function step(
     if (!isSimulated(current)) continue;
 
     // Projectiles fly on their own path; they are moved in their own pass. So do
-    // motes, which drift toward whoever they belong to (spec 154) -- and which
+    // motes, which drift toward whoever they belong to (spec 156) -- and which
     // would otherwise fall through to `monsterIntent` and be asked what they
     // want to attack.
     if (current.kind === EntityKindValue.Projectile) continue;
@@ -514,7 +514,7 @@ export function step(
         : steered.pardon,
     };
     next = expireActivity(next, tick, moved ? ActivityValue.Moving : ActivityValue.Idle);
-    // --- 1c: resting (spec 154) ------------------------------------------
+    // --- 1c: resting (spec 156) ------------------------------------------
     // Here rather than in `advanceProgression` because it is the one thing in
     // the tick that depends on *where* the body is, and the zone it is in was
     // settled three lines up. Deliberately a place rather than a timer: the
@@ -821,7 +821,7 @@ export function step(
     events.push({ kind: 'despawned', entityId: entity.id });
   }
 
-  // --- 3c: what the dead are worth (spec 154) ----------------------------
+  // --- 3c: what the dead are worth (spec 156) ----------------------------
   // Between the fighting and the sweep, because it reads bodies that are about
   // to be removed: a `died` event names a victim whose position, spawner and
   // assist marks all disappear on the next pass. Driven off events rather than
@@ -943,7 +943,7 @@ export function advanceProgression(
   return { ...entity, statuses, stillSinceTick, shield, poise, health };
 }
 
-// --- the health economy (spec 154) --------------------------------------
+// --- the health economy (spec 156) --------------------------------------
 
 /**
  * One tick of resting.
@@ -999,7 +999,7 @@ interface CreditResult {
 }
 
 /**
- * Everything that died this tick, priced and paid out (spec 154).
+ * Everything that died this tick, priced and paid out (spec 156).
  *
  * Runs off the `died` events rather than off the bodies, because the half that
  * matters -- *how* it died -- is a fact only the blow had, and it is already on
@@ -1092,7 +1092,7 @@ function buildMote(
     kind: EntityKindValue.Mote,
     typeId: MOTE_TYPE_ID[spawn.kind] ?? MOTE_TYPE_ID[MoteKind.Vitality] ?? '',
     // It starts *at the body*, not where it will land: the hop is the whole
-    // point (spec 154), and a mote that appeared at its rest point would have
+    // point (spec 156), and a mote that appeared at its rest point would have
     // nothing to travel.
     position: { x: at.x, y: at.y, z: at.z + MOTE_HOVER },
     zoneId: owner.zoneId,
@@ -1177,7 +1177,7 @@ function advanceMotes(
       continue;
     }
 
-    // --- the hop (spec 154) ---------------------------------------------
+    // --- the hop (spec 156) ---------------------------------------------
     // Out of the body, over an arc, down to its rest point. Nothing may touch it
     // while it is in the air: it is not attracted, not collected, and not
     // interested in whether its owner has room. That is what buys the drop a

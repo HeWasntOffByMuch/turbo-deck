@@ -77,7 +77,7 @@ export const StatusId = {
   /** Agility: this body took a hit recently, which is what Perfect Exit reads. */
   RecentlyHit: 'recentlyHit',
   /**
-   * This body has traded a blow lately -- given or taken (spec 154).
+   * This body has traded a blow lately -- given or taken (spec 156).
    *
    * Longer than {@link RecentlyHit} and deliberately a different thing. That one
    * is a *reaction window*, half a second wide, and Perfect Exit and the untouched

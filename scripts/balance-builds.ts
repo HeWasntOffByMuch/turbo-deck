@@ -27,7 +27,7 @@
  * glass-cannon build, so read Intelligence's DPS with that in mind rather than
  * tuning it down to match this table.
  *
- * Since spec 154 there is a second table under it, and one more thing it cannot
+ * Since spec 156 there is a second table under it, and one more thing it cannot
  * see. Each opponent is given its own spawner id, so the sustain numbers are the
  * *un-farmed* economy -- which is what a tuning table wants, and which means the
  * elite guarantee fires on every elite kill instead of once per spawner per
@@ -204,7 +204,7 @@ function run(preset: BuildPreset): Row {
       });
       state = next.state;
       foeId = next.entity.id;
-      // Each opponent gets its own spawner id (spec 154). Without one they all
+      // Each opponent gets its own spawner id (spec 156). Without one they all
       // share a per-type farm key, and this harness -- which is a stream of the
       // same monster at the same spot -- decays to the floor within seconds and
       // measures the anti-farm rule instead of the economy. That rule has its
@@ -339,7 +339,7 @@ for (const row of rows) {
   );
 }
 
-// --- the health economy (spec 154) ---------------------------------------
+// --- the health economy (spec 156) ---------------------------------------
 // A second table rather than ten more columns, because it answers a different
 // question. The one above asks whether the six builds *fight* differently; this
 // one asks whether they *sustain* differently, and the column that matters is

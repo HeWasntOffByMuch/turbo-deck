@@ -348,7 +348,7 @@ export interface ClientView {
    */
   readonly resource: number;
   /**
-   * The health economy, as the server last said it stood (spec 154).
+   * The health economy, as the server last said it stood (spec 156).
    *
    * Replicated rather than modelled, unlike `resource`: the meter moves on kills
    * this client did not resolve and the flask moves on casts it did not decide,
@@ -532,7 +532,7 @@ export class GameClient {
   private requestedAbilityId: string | null = null;
   private cooldowns: Readonly<Record<string, number>> = {};
   /**
-   * The health economy as the server last reported it (spec 154).
+   * The health economy as the server last reported it (spec 156).
    *
    * All three are replicated rather than modelled, unlike resource: the meter
    * moves on kills the client does not resolve, and the flask moves on casts the
@@ -996,7 +996,7 @@ export class GameClient {
       this.predictedCast = decision.cast;
       this.predictedCastRequestId = id;
       // The flask's charge, spent locally so a second press inside the round
-      // trip is refused by this end rather than by the server (spec 154).
+      // trip is refused by this end rather than by the server (spec 156).
       if (decision.cast.spentCharges > 0) {
         this.predictedCharges = decision.cast.spentCharges;
         this.chargesWhenPredicted = Math.max(0, this.fallbackCharges - decision.cast.spentCharges);
@@ -1084,7 +1084,7 @@ export class GameClient {
       // back cheaper.
       poise: self.poise * this.stats.traits.maxPoise,
       shield: atTick < self.shieldUntilTick ? self.shield : 0,
-      // The flask's own message (spec 154), plus whatever this client has
+      // The flask's own message (spec 156), plus whatever this client has
       // already spent and not been told about -- the same shape as the
       // cooldowns above, and for the same reason: the press has to grey the
       // button out now rather than in a round trip.
@@ -1137,7 +1137,7 @@ export class GameClient {
     const live = this.predictedCast ?? (this.welcome ? this.casts.get(this.welcome.entityId) : null);
     if (live) this.predictedCooldowns.delete(live.abilityId);
     // The charge comes back with everything else: a withdrawal before the attack
-    // point means the draught never happened (spec 154), and the server's own
+    // point means the draught never happened (spec 156), and the server's own
     // refund is the thing this is guessing at.
     this.predictedCharges = 0;
     this.predictedCast = null;
@@ -1158,7 +1158,7 @@ export class GameClient {
         // refund", which is the truth.
         spentResource: 0,
         spentHealth: 0,
-        // And no flask charge either, for the same reason (spec 154): the
+        // And no flask charge either, for the same reason (spec 156): the
         // refund is the server's, and the `Restoration` message tells this
         // client what it actually has left.
         spentCharges: 0,
@@ -1810,7 +1810,7 @@ export class GameClient {
             this.predictedCast = null;
             this.predictedCastRequestId = -1;
             // And the charge, for the same reason the cooldown goes back: a
-            // refused draught was never drunk (spec 154).
+            // refused draught was never drunk (spec 156).
             this.predictedCharges = 0;
           }
         }

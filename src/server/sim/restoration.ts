@@ -1,5 +1,5 @@
 /**
- * Kill sustain, worked out (spec 154).
+ * Kill sustain, worked out (spec 156).
  *
  * The domain service the whole health economy lives in. Everything here is a
  * pure function of `(bodies, tick, statuses)` -- no world, no clock, no
@@ -459,7 +459,7 @@ export function creditKill(
   const kind = moteKindFor(killerIn);
   return {
     killer: { ...killerIn, restoration: advanced.meter, statuses },
-    // Burst out of the body *toward the killer* (spec 154), so the drop closes
+    // Burst out of the body *toward the killer* (spec 156), so the drop closes
     // some of the distance itself rather than adding to it.
     motes: scatterMotes(count, kind, moteValueFor(killerIn, kind), scatterAngle(victim, killerIn)),
     contribution,

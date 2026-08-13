@@ -163,7 +163,7 @@ export const ServerMessageType = {
    */
   TradeState: 0x54,
   /**
-   * The health economy's own two numbers (spec 154): how full the restoration
+   * The health economy's own two numbers (spec 156): how full the restoration
    * meter is, and how many flask charges are left.
    *
    * Owner-only and change-driven, exactly like `Cooldowns` and for the same
@@ -231,7 +231,37 @@ export const AdminMessageType = {
   SetConfig: 0x8a,
   GetConfig: 0x8b,
   GetAudit: 0x8c,
+  /** Edit a character's level or experience (spec 154). */
+  SetProgress: 0x8d,
+  GiveItem: 0x8e,
+  /** The item table, so the console has a list rather than remembered ids. */
+  GetItems: 0x8f,
+  Kill: 0x90,
 } as const;
+
+/**
+ * Which field of a character's progression an `admin:setProgress` edits, and
+ * whether it adds to it or replaces it (spec 154).
+ *
+ * Four operator asks -- give levels, give experience, reset levels, reset
+ * experience -- are two verbs over two fields, so they are a mode on one message
+ * rather than four type bytes. A reset is `SetLevel 1` or `SetExperience 0`,
+ * which is what keeps it from being a third code path with its own idea of what
+ * a consistent record looks like.
+ */
+export const AdminProgressMode = {
+  AddLevels: 0,
+  SetLevel: 1,
+  AddExperience: 2,
+  SetExperience: 3,
+} as const;
+
+export type AdminProgressModeValue =
+  (typeof AdminProgressMode)[keyof typeof AdminProgressMode];
+
+export function isAdminProgressMode(value: number): value is AdminProgressModeValue {
+  return (Object.values(AdminProgressMode) as readonly number[]).includes(value);
+}
 
 export const AdminReplyType = {
   Ok: 0xa0,
@@ -239,6 +269,8 @@ export const AdminReplyType = {
   PlayerList: 0xa2,
   Config: 0xa3,
   Audit: 0xa4,
+  /** The item table (spec 154). */
+  ItemList: 0xa5,
 } as const;
 
 export const ADMIN_REQUEST_MIN = 0x80;
@@ -326,7 +358,7 @@ export const EntityKind = {
   Prop: 2,
   Projectile: 3,
   /**
-   * A restorative mote (spec 154). Mirrors `EntityKindValue.Mote`.
+   * A restorative mote (spec 156). Mirrors `EntityKindValue.Mote`.
    *
    * Replicated to exactly one client -- its owner -- which is filtered in
    * `server.ts` rather than expressed on the wire: a mote nobody else is told

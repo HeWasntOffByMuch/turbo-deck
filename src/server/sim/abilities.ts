@@ -100,7 +100,7 @@ export type CastRejection =
   | 'onCooldown'
   | 'notEnoughResource'
   /**
-   * The flask is empty (spec 154). Its own reason rather than
+   * The flask is empty (spec 156). Its own reason rather than
    * `notEnoughResource`, because the fix is different: one is "wait a moment"
    * and the other is "go and rest", and a player told the wrong one waits
    * forever.
@@ -416,7 +416,7 @@ export function startCast(
   const overflow = shortfall > 0 ? overflowCostFor(entity, shortfall) : 0;
   if (shortfall > 0 && overflow <= 0) return { ok: false, reason: 'notEnoughResource' };
 
-  // The flask's cost (spec 154). Checked here and spent below with everything
+  // The flask's cost (spec 156). Checked here and spent below with everything
   // else, so a charge behaves exactly like resource: taken at the commit, handed
   // back by a withdrawal, and gone for good once the draught is down. There is
   // deliberately no overflow equivalent -- a charge you have not got is a
@@ -782,7 +782,7 @@ function cancelWindup(
       health: cast.spentHealth > 0
         ? Math.min(entity.stats.maxHealth, entity.health + cast.spentHealth)
         : entity.health,
-      // And the flask charge (spec 154). Clamped like the resource refund, for
+      // And the flask charge (spec 156). Clamped like the resource refund, for
       // the same reason -- a rest tick can return a charge mid-wind-up, and an
       // unclamped refund would put the flask above its own ceiling.
       fallbackCharges: Math.min(
@@ -1344,7 +1344,7 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
   // what happens to the part that will not fit (spec 147). Both go through
   // `applyHealing`, which is the one place either question is answered.
   //
-  // Flat plus proportional (spec 154). A flask has to be a fraction of the
+  // Flat plus proportional (spec 156). A flask has to be a fraction of the
   // drinker or it stops being insurance as a character grows; Mend is flat and
   // stays flat, because a spell's number is the spell's statement about itself.
   const amount =
@@ -1388,7 +1388,7 @@ export interface HealResult {
   readonly healed: number;
   /** What did not fit, before Constitution or Wisdom got hold of it. */
   readonly overheal: number;
-  /** Of that, what Wisdom put back into the restoration meter (spec 154). */
+  /** Of that, what Wisdom put back into the restoration meter (spec 156). */
   readonly salvaged: number;
   /** And what nothing caught. The number the instrumentation calls waste. */
   readonly wasted: number;
@@ -1432,7 +1432,7 @@ export function applyHealing(entity: ServerEntity, amount: number, tick: number)
   let resource = entity.resource;
 
   // What none of the outlets caught. Tracked rather than inferred, because
-  // Wisdom's salvage is applied to *what is actually left* (spec 154) -- a
+  // Wisdom's salvage is applied to *what is actually left* (spec 156) -- a
   // salvage that read the whole overheal would pay twice for the part
   // Constitution's shield or Wisdom's own conversion had already taken.
   let leftover = overheal;

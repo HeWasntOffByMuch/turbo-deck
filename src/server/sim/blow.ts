@@ -271,7 +271,7 @@ export function resolveBlow(
   }
 
   if (killed) {
-    // What was good about this kill, for the health economy to price (spec 154).
+    // What was good about this kill, for the health economy to price (spec 156).
     // Nothing here is measured for this purpose: all five are facts the blow
     // above already had to establish. `untouched` is the one that reads off the
     // *attacker*, and it is the mark `markTarget` leaves on everyone it hits --
@@ -357,11 +357,11 @@ function markTarget(
   }
   statuses = applyStatus(statuses, StatusId.RecentlyHit, tick, RECENTLY_HIT_TICKS);
   // And the wider "you are in a fight" window, which only resting reads
-  // (spec 154). Both, because they answer different questions at different
+  // (spec 156). Both, because they answer different questions at different
   // widths -- see `StatusId.InCombat`.
   statuses = applyStatus(statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
 
-  // "This player hit me", left on the victim for its death to read (spec 154).
+  // "This player hit me", left on the victim for its death to read (spec 156).
   // The whole assist system is this line plus a lookup: no threat table, no
   // damage ledger, nothing to keep in step with the damage that actually
   // happened -- the mark a blow was always going to leave is the mark the kill
@@ -407,7 +407,7 @@ function rewardAttacker(
   let next = attacker;
   let resource = next.resource;
   let health = next.health;
-  // Landing a blow puts *you* in a fight too (spec 154), and it is stamped here
+  // Landing a blow puts *you* in a fight too (spec 156), and it is stamped here
   // rather than in `markTarget` because that one skips a body it just killed --
   // and a player standing over a corpse in the safe zone has very much been
   // fighting.

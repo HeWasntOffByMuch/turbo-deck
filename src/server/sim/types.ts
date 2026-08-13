@@ -26,7 +26,7 @@ export const EntityKindValue = {
    */
   Projectile: 3,
   /**
-   * A restorative mote lying on the ground (spec 154).
+   * A restorative mote lying on the ground (spec 156).
    *
    * An entity for the reason a projectile is one: interest management, delta
    * tracking, replication and removal all apply to it unchanged instead of
@@ -109,7 +109,7 @@ export interface CastState {
   /** Health an Arcane Overflow paid on top. Refunded by a withdrawal too. */
   readonly spentHealth: number;
   /**
-   * Fallback flask charges this cast took (spec 154).
+   * Fallback flask charges this cast took (spec 156).
    *
    * Beside `spentResource` and for the same reason: a withdrawal has to hand
    * back *what was paid*, and a charge is the flask's whole cost. Spending it at
@@ -176,7 +176,7 @@ export interface CastState {
 }
 
 /**
- * A restorative mote's state (spec 154). Set only on a mote entity, null on
+ * A restorative mote's state (spec 156). Set only on a mote entity, null on
  * everything else -- the same shape {@link ProjectileState} has, for the same
  * reason: a payload that belongs to one kind of body has no business being
  * seven nullable fields on every body.
@@ -195,7 +195,7 @@ export interface MoteState {
    */
   readonly ownerEntityId: number;
   /**
-   * The hop, as two points and a clock (spec 154).
+   * The hop, as two points and a clock (spec 156).
    *
    * A mote bursts out of the body and lands a short way off before it may be
    * taken. That is not decoration: without it a mote spawns inside its owner's
@@ -332,7 +332,7 @@ export interface ServerEntity {
   readonly cooldowns: Readonly<Record<string, number>>;
   /** Set only on a projectile entity; null on everything that walks. */
   readonly projectile: ProjectileState | null;
-  /** Set only on a mote entity; null on everything else (spec 154). */
+  /** Set only on a mote entity; null on everything else (spec 156). */
   readonly mote: MoteState | null;
   /**
    * The position this entity's client last claimed to have predicted, or null
@@ -408,7 +408,7 @@ export interface ServerEntity {
    */
   readonly stillSinceTick: number;
 
-  // --- the health economy (spec 154) --------------------------------------
+  // --- the health economy (spec 156) --------------------------------------
   /**
    * Progress toward the next restorative mote.
    *
@@ -500,7 +500,7 @@ export interface ServerInput {
 }
 
 /**
- * What was good about a killing blow (spec 154).
+ * What was good about a killing blow (spec 156).
  *
  * Five facts, and every one of them is something `resolveBlow` already worked
  * out for its own reasons -- which is what "already detectable server-side" has
@@ -618,7 +618,7 @@ export type ServerSimEvent =
     }
   | {
       /**
-       * A body was credited for a kill (spec 154).
+       * A body was credited for a kill (spec 156).
        *
        * Carries the breakdown, and that is the whole reason it exists: the
        * brief's quality bar asks whether a designer can inspect *why* a player
@@ -643,7 +643,7 @@ export type ServerSimEvent =
       readonly sources: readonly { readonly reason: string; readonly amount: number }[];
     }
   | {
-      /** A mote reached somebody, or faded without doing (spec 154). */
+      /** A mote reached somebody, or faded without doing (spec 156). */
       readonly kind: 'mote';
       /** The mote's own entity id, which is about to stop existing. */
       readonly entityId: number;
@@ -663,7 +663,7 @@ export type ServerSimEvent =
       readonly entityId: number;
       readonly killerId: number | null;
       /**
-       * How it died (spec 154).
+       * How it died (spec 156).
        *
        * On the event that already says *who* killed *whom* rather than as a
        * second event beside it, because there is one death and it should have

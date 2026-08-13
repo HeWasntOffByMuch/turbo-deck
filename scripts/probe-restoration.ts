@@ -1,6 +1,6 @@
 /**
  * Why a player got that much restoration, and what seven kinds of player get
- * (spec 154).
+ * (spec 156).
  *
  * The health economy's answer to two questions the balance table cannot ask.
  * `npm run balance` measures twelve builds fighting the same duel, which is the

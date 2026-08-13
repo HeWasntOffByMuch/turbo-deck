@@ -1,5 +1,5 @@
 /**
- * Every number the health economy is tuned by, in one object (spec 154).
+ * Every number the health economy is tuned by, in one object (spec 156).
  *
  * The same reasoning as `data/scaling.ts`, and deliberately its neighbour: a
  * balance pass on kill sustain should be a diff of this file and nothing else,
@@ -231,7 +231,7 @@ export const RESTORATION = {
   // --- PvP --------------------------------------------------------------
   /**
    * The separate tuning layer the brief asks for, rather than exceptions hidden
-   * in the sim (spec 154 § E).
+   * in the sim (spec 156 § E).
    */
   pvp: {
     /** Progress a player kill is worth, per level of the body killed. */
@@ -246,7 +246,7 @@ export const RESTORATION = {
   /**
    * Per-point rates, measured from the starting attribute like every other
    * scale in `data/scaling.ts`. One route per stat and no two the same shape --
-   * see spec 154 § F for why none of these is "+X% healing received".
+   * see spec 156 § F for why none of these is "+X% healing received".
    */
   stats: {
     /** Strength: overkill and execution pay more. */
