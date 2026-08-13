@@ -20,6 +20,16 @@ export interface ZoneDefinition {
   /** Whether players may damage each other here. */
   readonly pvp: boolean;
   /**
+   * Whether standing here refills health and the fallback flask (spec 154).
+   *
+   * A flag on the zone rather than a check against a zone *id*, so "where can
+   * you rest" is a property of the world's layout that a second hub inherits by
+   * saying so. Optional, and absent means no: every zone that predates the
+   * health economy is somewhere you cannot recover, which is the reading that
+   * cannot accidentally turn the wilds into a rest stop.
+   */
+  readonly rest?: boolean;
+  /**
    * Reserved for a zone that wants its own repopulation rate. Unread since spec
    * 073 took spawning out of the zone and into the map document; kept because
    * "this region refills faster" is a knob a zone should own, and removing it
@@ -42,6 +52,10 @@ export const DEFAULT_ZONES: readonly ZoneDefinition[] = [
     bounds: { x: 450, y: 300, w: 300, h: 300 },
     pvp: false,
     spawnMultiplier: 0,
+    // The one rest zone, and the reason the flask is insurance rather than a
+    // heal button: refilling it is a decision to disengage and walk home
+    // (spec 154).
+    rest: true,
   },
   {
     id: 'greenmarch',

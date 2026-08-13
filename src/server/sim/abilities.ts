@@ -49,6 +49,7 @@ import {
 import { ballisticPeak, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { PERFECT_EXIT_COOLDOWN_TICKS, RECENTLY_HIT_TICKS, resolveBlow } from './blow.js';
 import { isInCone } from './combat.js';
+import { salvageFrom } from './restoration.js';
 import {
   applyStatus,
   clearStatus,
@@ -98,6 +99,13 @@ export type CastRejection =
   | 'alreadyCasting'
   | 'onCooldown'
   | 'notEnoughResource'
+  /**
+   * The flask is empty (spec 154). Its own reason rather than
+   * `notEnoughResource`, because the fix is different: one is "wait a moment"
+   * and the other is "go and rest", and a player told the wrong one waits
+   * forever.
+   */
+  | 'noCharges'
   | 'dead'
   | 'outOfRange'
   /** A `targeting: 'unit'` ability asked for with nothing named (spec 080). */
@@ -408,6 +416,16 @@ export function startCast(
   const overflow = shortfall > 0 ? overflowCostFor(entity, shortfall) : 0;
   if (shortfall > 0 && overflow <= 0) return { ok: false, reason: 'notEnoughResource' };
 
+  // The flask's cost (spec 154). Checked here and spent below with everything
+  // else, so a charge behaves exactly like resource: taken at the commit, handed
+  // back by a withdrawal, and gone for good once the draught is down. There is
+  // deliberately no overflow equivalent -- a charge you have not got is a
+  // refusal, because the whole point of insurance is that it runs out.
+  const charges = Math.max(0, Math.floor(ability.chargeCost ?? 0));
+  if (charges > 0 && entity.fallbackCharges < charges) {
+    return { ok: false, reason: 'noCharges' };
+  }
+
   // A skill aimed at a body has to have one (spec 080). Refused rather than
   // quietly downgraded to a cone or a patch of ground: an ability whose whole
   // shape is "the thing you picked" has no meaning without the pick, and a
@@ -456,6 +474,7 @@ export function startCast(
     abilityId: ability.id,
     spentResource: Math.min(cost, entity.resource),
     spentHealth: overflow,
+    spentCharges: charges,
     startedTick: tick,
     // Provisional while turning, and re-stamped at alignment: the attack has
     // not started until the wind-up has, and the interval is measured from it.
@@ -479,6 +498,7 @@ export function startCast(
       ...entity,
       cast,
       resource: Math.max(0, entity.resource - cost),
+      fallbackCharges: entity.fallbackCharges - charges,
       // Arcane Overflow: the shortfall, paid in health (spec 147). Never lethal
       // -- `overflowCostFor` refuses anything past 40% of what is left -- so the
       // risk is that the *next* thing to hit you finds you low, which is the
@@ -762,6 +782,13 @@ function cancelWindup(
       health: cast.spentHealth > 0
         ? Math.min(entity.stats.maxHealth, entity.health + cast.spentHealth)
         : entity.health,
+      // And the flask charge (spec 154). Clamped like the resource refund, for
+      // the same reason -- a rest tick can return a charge mid-wind-up, and an
+      // unclamped refund would put the flask above its own ceiling.
+      fallbackCharges: Math.min(
+        entity.stats.traits.fallbackCharges,
+        entity.fallbackCharges + cast.spentCharges,
+      ),
       cooldowns,
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
@@ -1316,7 +1343,13 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
   // Wisdom scales what a restorative tool is worth, and Constitution decides
   // what happens to the part that will not fit (spec 147). Both go through
   // `applyHealing`, which is the one place either question is answered.
-  const restored = applyHealing(caster, ability.healing ?? 0, tick);
+  //
+  // Flat plus proportional (spec 154). A flask has to be a fraction of the
+  // drinker or it stops being insurance as a character grows; Mend is flat and
+  // stays flat, because a spell's number is the spell's statement about itself.
+  const amount =
+    (ability.healing ?? 0) + caster.stats.maxHealth * (ability.healingFraction ?? 0);
+  const restored = applyHealing(caster, amount, tick);
   const healed = restored.entity.health;
   return {
     updated: new Map([[caster.id, restored.entity]]),
@@ -1355,6 +1388,10 @@ export interface HealResult {
   readonly healed: number;
   /** What did not fit, before Constitution or Wisdom got hold of it. */
   readonly overheal: number;
+  /** Of that, what Wisdom put back into the restoration meter (spec 154). */
+  readonly salvaged: number;
+  /** And what nothing caught. The number the instrumentation calls waste. */
+  readonly wasted: number;
 }
 
 /**
@@ -1375,7 +1412,7 @@ export interface HealResult {
  * exactly what `landSelf` did before this existed.
  */
 export function applyHealing(entity: ServerEntity, amount: number, tick: number): HealResult {
-  if (!(amount > 0)) return { entity, healed: 0, overheal: 0 };
+  if (!(amount > 0)) return { entity, healed: 0, overheal: 0, salvaged: 0, wasted: 0 };
   const traits = entity.stats.traits;
 
   const surge =
@@ -1394,22 +1431,46 @@ export function applyHealing(entity: ServerEntity, amount: number, tick: number)
   let shieldUntilTick = entity.shieldUntilTick;
   let resource = entity.resource;
 
+  // What none of the outlets caught. Tracked rather than inferred, because
+  // Wisdom's salvage is applied to *what is actually left* (spec 154) -- a
+  // salvage that read the whole overheal would pay twice for the part
+  // Constitution's shield or Wisdom's own conversion had already taken.
+  let leftover = overheal;
   if (overheal > 0) {
     if (traits.overhealShieldTicks > 0 && traits.maxShield > 0) {
+      const before = shield;
       shield = Math.min(traits.maxShield, shield + overheal);
       shieldUntilTick = tick + traits.overhealShieldTicks;
+      leftover -= shield - before;
     } else if (traits.conversionCap > 0) {
+      const before = resource;
       resource = Math.min(
         entity.stats.maxResource,
         resource + Math.min(traits.conversionCap, overheal),
       );
+      leftover -= resource - before;
     }
   }
+
+  // The last outlet, and the only path in the game from healing back to the
+  // restoration meter. Bounded twice -- by the fraction Wisdom has bought and by
+  // a cap under one threshold -- so no amount of overhealing funds a mote
+  // outright, and a build with no Wisdom simply loses the remainder.
+  const salvaged = salvageFrom(entity, leftover);
 
   return {
     healed,
     overheal,
-    entity: { ...entity, health: entity.health + healed, shield, shieldUntilTick, resource },
+    salvaged,
+    wasted: Math.max(0, leftover - salvaged),
+    entity: {
+      ...entity,
+      health: entity.health + healed,
+      shield,
+      shieldUntilTick,
+      resource,
+      restoration: entity.restoration + salvaged,
+    },
   };
 }
 

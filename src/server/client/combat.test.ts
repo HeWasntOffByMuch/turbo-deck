@@ -47,6 +47,9 @@ const STATS: EffectiveStats = {
 function mirror(overrides: Partial<Mirror> = {}): Mirror {
   return {
     position: { x: 0, y: 0 },
+    // A full flask, so a test that does not care about the health economy is
+    // never refused for the reason it was not testing (spec 154).
+    fallbackCharges: NEUTRAL_TRAITS.fallbackCharges,
     // Pointing east, which is where every aim below is, so a cast starts winding
     // up rather than turning unless a test asks for a turn.
     facing: 0,

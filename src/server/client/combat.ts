@@ -63,6 +63,8 @@ export interface Mirror {
   /** Replicated, so the mirror may claim them. Statuses are not (spec 147). */
   readonly poise: number;
   readonly shield: number;
+  /** Replicated on its own message (spec 154), so the flask gate is predictable. */
+  readonly fallbackCharges: number;
 }
 
 /**
@@ -99,6 +101,7 @@ export function asEntity(mirror: Mirror): ServerEntity {
     cast: mirror.cast,
     cooldowns: mirror.cooldowns,
     projectile: null,
+    mote: null,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
@@ -114,6 +117,12 @@ export function asEntity(mirror: Mirror): ServerEntity {
     ...blankProgression(),
     poise: mirror.poise,
     shield: mirror.shield,
+    // The flask, replicated (spec 154). Real rather than assumed, because the
+    // gate this mirror exists to ask is `startCast`, and an empty flask is a
+    // refusal the client must predict: a button that lights up on a draught the
+    // server will refuse is exactly the mispredicted press this file exists to
+    // prevent.
+    fallbackCharges: mirror.fallbackCharges,
   };
 }
 

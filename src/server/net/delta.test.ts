@@ -33,6 +33,7 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     ownerPlayerId: null,
     position: { x: 100, y: 200, z: 0 },
     facing: 0,
+    mote: null,
     health: 100,
     level: 1,
     zoneId: 'greenmarch',

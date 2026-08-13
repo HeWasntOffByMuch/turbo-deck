@@ -945,6 +945,34 @@ export interface CooldownsMessage {
   readonly atTick: number;
 }
 
+/**
+ * The health economy, as the owner sees it (spec 154).
+ *
+ * Two numbers and a tick. It rides the same reasoning as {@link
+ * CooldownsMessage}: owner-only, sent when it changes, and never on the entity
+ * delta -- what somebody else has left to drink changes nothing this client
+ * draws, and the delta is the message that is paid for per entity.
+ *
+ * `meter` is a **fraction**, and that is the interesting decision. The
+ * absolute progress and the threshold it is measured against are both server
+ * tuning; a bar asks only how full it is; and a client told its raw progress is
+ * a client that could work out exactly which kill produces the next mote, which
+ * is a thing to farm rather than a thing to feel.
+ *
+ * `atTick` is not decoration, for the reason it is not on the cooldowns: the
+ * number is a round trip old when it lands, and a client easing a bar toward it
+ * has to know how far behind it is.
+ */
+export interface RestorationMessage {
+  readonly type: typeof ServerMessageType.Restoration;
+  /** Progress toward the next mote, 0..1. */
+  readonly meter: number;
+  readonly charges: number;
+  /** What this build's Constitution allows, so the pips can be drawn empty. */
+  readonly maxCharges: number;
+  readonly atTick: number;
+}
+
 /** One spawner's live state, as the overlay draws it (spec 076). */
 export interface SpawnerStatus {
   readonly id: string;
@@ -989,6 +1017,7 @@ export type ServerMessage =
   | EffectMessage
   | CastRejectedMessage
   | CooldownsMessage
+  | RestorationMessage
   | MapInfoMessage
   | MapChunkMessage
   | ChunkDeniedMessage
@@ -1242,6 +1271,15 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       for (const entry of message.entries) writer.str(entry.abilityId).u32(entry.readyAtTick);
       writer.f32(message.resource).u32(message.atTick);
       break;
+    case ServerMessageType.Restoration:
+      // The meter in one byte, like poise on the delta and for the same reason:
+      // it draws a bar, and a 255th of a bar is a fifth of a percent.
+      writer
+        .u8(Math.max(0, Math.min(255, Math.round(message.meter * 255))))
+        .u8(Math.max(0, Math.min(255, Math.round(message.charges))))
+        .u8(Math.max(0, Math.min(255, Math.round(message.maxCharges))))
+        .u32(message.atTick);
+      break;
     case ServerMessageType.Delta:
       writer.u32(message.tick).varuint(message.ackInputSeq).varuint(message.removed.length);
       for (const id of message.removed) writer.varuint(id);
@@ -1389,6 +1427,12 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       const resource = reader.f32();
       const atTick = reader.u32();
       return { type: ServerMessageType.Cooldowns, entries, resource, atTick };
+    }
+    case ServerMessageType.Restoration: {
+      const meter = reader.u8() / 255;
+      const charges = reader.u8();
+      const maxCharges = reader.u8();
+      return { type: ServerMessageType.Restoration, meter, charges, maxCharges, atTick: reader.u32() };
     }
     case ServerMessageType.Delta: {
       const tick = reader.u32();

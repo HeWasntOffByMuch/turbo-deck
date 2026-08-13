@@ -25,6 +25,17 @@ export const EntityKindValue = {
    * their own bugs.
    */
   Projectile: 3,
+  /**
+   * A restorative mote lying on the ground (spec 154).
+   *
+   * An entity for the reason a projectile is one: interest management, delta
+   * tracking, replication and removal all apply to it unchanged instead of
+   * being reimplemented alongside with their own bugs. It neither walks, fights,
+   * blocks nor can be hit -- {@link isHostile} refuses it at both ends and the
+   * movement pass skips it -- so what it costs the rest of the sim is two
+   * `continue`s and a pass of its own.
+   */
+  Mote: 4,
 } as const;
 
 export const ActivityValue = {
@@ -97,6 +108,16 @@ export interface CastState {
   readonly spentResource: number;
   /** Health an Arcane Overflow paid on top. Refunded by a withdrawal too. */
   readonly spentHealth: number;
+  /**
+   * Fallback flask charges this cast took (spec 154).
+   *
+   * Beside `spentResource` and for the same reason: a withdrawal has to hand
+   * back *what was paid*, and a charge is the flask's whole cost. Spending it at
+   * the commit is what stops the flask being feint-able -- the alternative,
+   * charging at the release, makes starting one free and cancelling it strictly
+   * better than not starting it.
+   */
+  readonly spentCharges: number;
   /** Tick the request was committed to, turn included. */
   readonly startedTick: number;
   /**
@@ -152,6 +173,31 @@ export interface CastState {
   readonly targetEntityId: number;
   /** Channels only: the next tick a pulse is due. */
   readonly nextPulseTick: number;
+}
+
+/**
+ * A restorative mote's state (spec 154). Set only on a mote entity, null on
+ * everything else -- the same shape {@link ProjectileState} has, for the same
+ * reason: a payload that belongs to one kind of body has no business being
+ * seven nullable fields on every body.
+ */
+export interface MoteState {
+  /** `MoteKind`: what it restores. See `sim/restoration.ts`. */
+  readonly kind: number;
+  /** How much, before `applyHealing` scales it. Fixed at generation. */
+  readonly amount: number;
+  /**
+   * The only body that may see or take this, and never 0.
+   *
+   * Ownership by *entity* rather than by player id, so the whole rule stays
+   * inside the sim: nothing in here has ever needed to know what a player id is,
+   * and a pickup check that had to would be the first.
+   */
+  readonly ownerEntityId: number;
+  /** First tick it may be collected -- a beat, so it is seen rather than counted. */
+  readonly armedAtTick: number;
+  /** First tick it is gone. Expiry is a comparison, like a status. */
+  readonly expiresAtTick: number;
 }
 
 /** A projectile's flight, carried so its arc is reproducible on both ends. */
@@ -250,6 +296,8 @@ export interface ServerEntity {
   readonly cooldowns: Readonly<Record<string, number>>;
   /** Set only on a projectile entity; null on everything that walks. */
   readonly projectile: ProjectileState | null;
+  /** Set only on a mote entity; null on everything else (spec 154). */
+  readonly mote: MoteState | null;
   /**
    * The position this entity's client last claimed to have predicted, or null
    * before its first input (spec 057).
@@ -323,6 +371,27 @@ export interface ServerEntity {
    * is the length of the current lull.
    */
   readonly stillSinceTick: number;
+
+  // --- the health economy (spec 154) --------------------------------------
+  /**
+   * Progress toward the next restorative mote.
+   *
+   * Live sim state, and the one number the whole kill-sustain economy turns on.
+   * Not replicated in absolute terms and not persisted: the client is told a
+   * fraction because that is all a bar asks, and a save that carried it would
+   * make logging out at 99 a way to bank a mote.
+   *
+   * There is no client message that reaches this. The only thing that moves it
+   * is a kill the server resolved, or Wisdom salvaging an overheal.
+   */
+  readonly restoration: number;
+  /**
+   * Fallback flask charges left. Live, clamped to `stats.traits.fallbackCharges`
+   * on recalculation, exactly like health and poise.
+   */
+  readonly fallbackCharges: number;
+  /** How far through the current charge a rest is. Ticks, and only in a rest zone. */
+  readonly restingTicks: number;
 }
 
 /** One map spawner's live state (spec 076). */
@@ -393,6 +462,38 @@ export interface ServerInput {
   /** Withdraw from whatever is winding up. Honoured before any new commit. */
   readonly cancelCast: boolean;
 }
+
+/**
+ * What was good about a killing blow (spec 154).
+ *
+ * Five facts, and every one of them is something `resolveBlow` already worked
+ * out for its own reasons -- which is what "already detectable server-side" has
+ * to mean if the health economy's skill hooks are not to become a second combat
+ * system running beside the first.
+ *
+ * Here rather than in `sim/restoration.ts` because it rides the `died` event,
+ * and an event's payload belongs with the events.
+ */
+export interface KillQualities {
+  /** The killing blow found a weak point. Perception's route. */
+  readonly weakPoint: boolean;
+  /** It did far more damage than was left to do. Strength's. */
+  readonly overkill: boolean;
+  /** The body was staggered when it died. Strength's, again. */
+  readonly execution: boolean;
+  /** The killer had not been hit in the last half second. Agility's. */
+  readonly untouched: boolean;
+  /** It was an ability rather than the weapon. Intelligence's. */
+  readonly abilityKill: boolean;
+}
+
+export const NO_QUALITIES: KillQualities = {
+  weakPoint: false,
+  overkill: false,
+  execution: false,
+  untouched: false,
+  abilityKill: false,
+};
 
 export type ServerSimEvent =
   | {
@@ -479,9 +580,67 @@ export type ServerSimEvent =
       readonly radius: number;
       readonly durationTicks: number;
     }
+  | {
+      /**
+       * A body was credited for a kill (spec 154).
+       *
+       * Carries the breakdown, and that is the whole reason it exists: the
+       * brief's quality bar asks whether a designer can inspect *why* a player
+       * received a given amount of restoration, and a number with no derivation
+       * beside it is exactly what gets retuned in the wrong direction. Nothing
+       * in the sim reads it -- the meter has already moved by the time this is
+       * pushed -- so it is pure instrumentation and costs nothing to ignore.
+       */
+      readonly kind: 'restoration';
+      readonly entityId: number;
+      readonly victimId: number;
+      /** Progress added by this kill, bonuses and farm decay included. */
+      readonly progress: number;
+      /** How full the meter is now, 0..1. */
+      readonly meter: number;
+      readonly motes: number;
+      /** Of those, how many the elite guarantee added on top. */
+      readonly guaranteed: number;
+      /** True when this body helped rather than finished. */
+      readonly assist: boolean;
+      /** What paid, and how much, as fractions of the base. */
+      readonly sources: readonly { readonly reason: string; readonly amount: number }[];
+    }
+  | {
+      /** A mote reached somebody, or faded without doing (spec 154). */
+      readonly kind: 'mote';
+      /** The mote's own entity id, which is about to stop existing. */
+      readonly entityId: number;
+      readonly ownerId: number;
+      /** `MoteKind`. See `sim/restoration.ts`. */
+      readonly moteKind: number;
+      /** What actually landed. Zero when it faded untaken. */
+      readonly restored: number;
+      /** What did not: the overheal on a collection, or all of it on a fade. */
+      readonly wasted: number;
+      readonly collected: boolean;
+    }
   | { readonly kind: 'spawned'; readonly entityId: number; readonly typeId: string }
   | { readonly kind: 'despawned'; readonly entityId: number }
-  | { readonly kind: 'died'; readonly entityId: number; readonly killerId: number | null };
+  | {
+      readonly kind: 'died';
+      readonly entityId: number;
+      readonly killerId: number | null;
+      /**
+       * How it died (spec 154).
+       *
+       * On the event that already says *who* killed *whom* rather than as a
+       * second event beside it, because there is one death and it should have
+       * one record. Every field is something `resolveBlow` had already worked
+       * out for its own reasons, so none of it is a new measurement -- and the
+       * restoration pass in `world.ts` is the only reader, because it is the
+       * only thing that has to tell a scrappy kill from a clean one.
+       *
+       * All false for a death with no blow behind it: a fall, an admin
+       * despawn, a body that ran out of health with nobody to credit.
+       */
+      readonly qualities: KillQualities;
+    };
 
 export interface StepResult {
   readonly state: ServerWorldState;

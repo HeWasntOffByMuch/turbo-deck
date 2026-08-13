@@ -25,6 +25,7 @@
 
 import { MAX_DAMAGE_REDUCTION, PLAYER_ATTACK_DAMAGE } from '../../sim/constants.js';
 import { above, linear, reciprocal, SCALING, softCap } from '../data/scaling.js';
+import { desperationSurge, maxFallbackCharges, RESTORATION } from '../data/restoration.js';
 import { emptyTraitTotals, type ModifierTotals } from '../data/modifiers.js';
 import type { TraitStats } from '../state/types.js';
 import type { AttributeTotals } from './progression.js';
@@ -133,6 +134,16 @@ export const NEUTRAL_TRAITS: TraitStats = {
   adaptationTicks: 0,
   conversionCap: 0,
   masteryRelief: 0,
+  restoreOverkillPct: 0,
+  restoreEvasivePct: 0,
+  restoreAbilityKillPct: 0,
+  restoreWeakPointPct: 0,
+  moteAttractRadius: 0,
+  restoreSalvagePct: 0,
+  // A body with no progression carries the flask everybody carries. Monsters
+  // never cast it -- no monster row names it -- so the number is harmless there
+  // and the alternative would be a player-shaped special case in `blankEntity`.
+  fallbackCharges: RESTORATION.fallback.charges,
 };
 
 /**
@@ -188,6 +199,8 @@ export function deriveTraits(
   const { strength: STR, agility: AGI, intelligence: INT } = attributes;
   const { constitution: CON, perception: PER, wisdom: WIS } = attributes;
   const S = SCALING;
+  /** The health economy's per-point rates (spec 154), read like `S`. */
+  const R = RESTORATION.stats;
   const rate = context.tickRate > 0 ? context.tickRate : 60;
 
   // --- Strength -----------------------------------------------------------
@@ -275,6 +288,23 @@ export function deriveTraits(
       ? Math.max(0, context.maxHealth * S.constitution.shieldFraction)
       : 0;
 
+  // --- the health economy (spec 154) --------------------------------------
+  // One route per attribute, and none of them is "+X% healing received". These
+  // are granted by attributes alone and by no content table, which is why there
+  // is no `t.` term on any of them: `TraitModifier` deliberately only names
+  // what something actually grants.
+  //
+  // Constitution's route runs through `healingSurge`, which already existed and
+  // already runs inside `applyHealing`. Its threshold has to come with it: a
+  // surge with no `healingSurgeBelow` never fires, and the synergy that grants
+  // both keeps its own (deeper) threshold because this is a max rather than an
+  // assignment.
+  const healingSurge = Math.max(0, t.healingSurge + desperationSurge(CON));
+  const healingSurgeBelow =
+    healingSurge > 0
+      ? Math.max(RESTORATION.stats.desperationBelow, clamp(t.healingSurgeBelow, 0, 1))
+      : 0;
+
   return {
     staggerPower: Math.max(0, staggerPower),
     staggerTicks,
@@ -358,8 +388,8 @@ export function deriveTraits(
     resourceCostScale,
     cooldownScale,
     healingScale,
-    healingSurge: Math.max(0, t.healingSurge),
-    healingSurgeBelow: clamp(t.healingSurgeBelow, 0, 1),
+    healingSurge,
+    healingSurgeBelow,
     attunedMaxStacks: Math.max(0, Math.round(t.attunedMaxStacks)),
     attunedTicks: Math.max(0, Math.round(t.attunedTicks)),
     attunedCostPct: clamp(t.attunedCostPct, 0, 0.2),
@@ -369,6 +399,14 @@ export function deriveTraits(
     adaptationTicks: Math.max(0, Math.round(t.adaptationTicks)),
     conversionCap: Math.max(0, t.conversionCap),
     masteryRelief: Math.max(0, Math.round(t.masteryRelief)),
+
+    restoreOverkillPct: linear(above(STR), R.strengthOverkillPer),
+    restoreEvasivePct: linear(above(AGI), R.agilityEvasivePer),
+    restoreAbilityKillPct: linear(above(INT), R.intelligenceAbilityPer),
+    restoreWeakPointPct: linear(above(PER), R.perceptionWeakPointPer),
+    moteAttractRadius: linear(above(PER), R.perceptionAttractPer),
+    restoreSalvagePct: Math.min(R.wisdomSalvageCap, linear(above(WIS), R.wisdomSalvagePer)),
+    fallbackCharges: maxFallbackCharges(CON),
   };
 }
 

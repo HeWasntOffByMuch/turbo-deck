@@ -183,6 +183,25 @@ export interface PersistedPlayer {
   /** Ability resource, clamped the same way. Live, not derived. */
   readonly resource: number;
   /**
+   * Fallback flask charges left (spec 154).
+   *
+   * Live like health, and persisted for the same reason: it is the insurance a
+   * character is carrying, and a relog that refilled it would make logging out
+   * the cheapest way to heal. A save written before this field existed comes
+   * back full, which is the generous reading and the only one that cannot
+   * strand an existing character with no way to recover.
+   *
+   * The restoration *meter* is deliberately not here. It is momentum inside an
+   * expedition rather than a possession, and a persisted one would be a thing
+   * to bank by logging out at 99.
+   *
+   * Optional, and that is the migration: a record written before this field
+   * existed has `undefined` here, which `player-manager.ts` reads as a full
+   * flask. The alternative -- required, defaulted to zero by whoever forgot --
+   * strands an existing character with no way to recover.
+   */
+  readonly fallbackCharges?: number;
+  /**
    * What this character can spend (spec 129).
    *
    * A live resource like health, not a derived stat: it is changed by an
@@ -388,6 +407,33 @@ export interface TraitStats {
   readonly conversionCap: number;
   /** Tier-3 stat skills open this many attribute points early. */
   readonly masteryRelief: number;
+
+  // --- the health economy: one route per attribute (spec 154) -------------
+  /**
+   * Extra restoration progress from an overkill or an execution, as a fraction
+   * of the kill's base. Strength's route: a body that dies decisively pays more.
+   */
+  readonly restoreOverkillPct: number;
+  /** The same, from a kill that took no damage. Agility's route. */
+  readonly restoreEvasivePct: number;
+  /** The same, from a kill made with an ability rather than the weapon. Intelligence's. */
+  readonly restoreAbilityKillPct: number;
+  /** The same, from a weak-point kill. Perception's. */
+  readonly restoreWeakPointPct: number;
+  /** Extra world units a mote reaches for its owner from. Perception's, again. */
+  readonly moteAttractRadius: number;
+  /**
+   * The fraction of a restorative's overheal that goes back into the meter,
+   * capped per event. Wisdom's route, and the only path in the game from
+   * healing to the restoration meter.
+   */
+  readonly restoreSalvagePct: number;
+  /**
+   * Fallback flask charges this body may hold. Constitution's route -- more
+   * insurance rather than more healing, which is what keeps it from becoming
+   * the mandatory stat.
+   */
+  readonly fallbackCharges: number;
 }
 
 /**
@@ -481,6 +527,13 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'adaptationTicks',
   'conversionCap',
   'masteryRelief',
+  'restoreOverkillPct',
+  'restoreEvasivePct',
+  'restoreAbilityKillPct',
+  'restoreWeakPointPct',
+  'moteAttractRadius',
+  'restoreSalvagePct',
+  'fallbackCharges',
 ];
 
 /**
