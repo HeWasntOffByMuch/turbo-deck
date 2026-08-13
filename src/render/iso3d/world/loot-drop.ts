@@ -181,15 +181,21 @@ function thump(t: number, at: number, amplitude: number): number {
  *
  * Two beats per cycle, the second smaller and close behind the first, which is
  * what makes it read as a heart rather than as a blink -- lub-dub, then quiet
- * for most of the second. Phased off `spawnTick` rather than off any local
- * clock, so every client's copy of the same drop beats together.
+ * for most of the second.
+ *
+ * **Withheld until the reveal, and phased off it.** A pulse that ran during the
+ * anticipation would say "rare or better" from the first frame, which is the
+ * same leak the tier colour was: something the reveal is supposed to be for,
+ * answered before it happens. Starting the cycle *at* `revealTick` also makes
+ * the first beat the punctuation of the reveal rather than something that had
+ * been going on underneath it.
  *
  * Exactly 1 for a tier with no pulse, so "common loot does not move" needs no
  * branch at the call site.
  */
 export function heartbeatAt(drop: DropView, tick: number): number {
   if (!rarityRow(drop.rarity).heartbeat) return 1;
-  const since = tick - drop.spawnTick;
+  const since = tick - drop.revealTick;
   if (!(since >= 0)) return 1;
   const t = since % HEARTBEAT_TICKS;
   // The dub of the *previous* cycle can still be decaying into this one, so the
@@ -230,6 +236,41 @@ export interface PickupInput {
   readonly reach: number;
   /** True while a request of ours is unanswered, so we do not ask again. */
   readonly pending: boolean;
+  /**
+   * How far this client's predicted position may be ahead of the server's, in
+   * world units (spec 156).
+   *
+   * The fix for a bug that looked like the range was wrong and was not: a
+   * client legitimately runs ahead of the server by about the one-way latency,
+   * and while walking *toward* something that lead points straight at it. So
+   * the client reached its own copy of the reach, asked, and was refused by a
+   * server still holding the body a stride further back -- an out-of-range
+   * error at the exact moment the item was under your feet.
+   *
+   * Derived rather than typed: it is how far this body travels in its own
+   * measured round trip, so a good connection gives up almost nothing and a bad
+   * one closes further before asking. See `pickupLead`.
+   */
+  readonly lead: number;
+}
+
+/**
+ * How far a body travels in one round trip, which is how far its prediction can
+ * be ahead of the server (spec 156).
+ *
+ * Both numbers are ones the client already has and neither is a guess: the move
+ * speed is off the replicated stat block and the round trip is measured. The
+ * cap keeps a pathological reading from shrinking the usable reach to nothing --
+ * past half of it, walking closer is cheaper than trusting the estimate.
+ */
+export function pickupLead(
+  moveSpeed: number,
+  roundTripTicks: number,
+  tickRate: number,
+  reach: number,
+): number {
+  if (!(moveSpeed > 0) || !(roundTripTicks > 0) || !(tickRate > 0)) return 0;
+  return Math.min(reach * 0.5, (moveSpeed * roundTripTicks) / tickRate);
 }
 
 export interface PickupOrder {
@@ -254,10 +295,18 @@ export interface PickupOrder {
 export function pickupOrderFor(input: PickupInput): PickupOrder {
   const { drop } = input;
   if (!drop || input.selfHealth <= 0) return { walkTo: null, ask: false };
-  const near = Math.hypot(drop.x - input.self.x, drop.y - input.self.y) <= input.reach;
-  if (!near) return { walkTo: { x: drop.x, y: drop.y }, ask: false };
-  // Standing on it: stop walking, and ask once. `pending` is what keeps that
-  // one ask from becoming sixty a second while the answer is in flight.
+  // Measured against the reach *minus the lead*, so what this client believes
+  // is a comfortable arrival is one the server agrees with even holding the
+  // body a round trip behind. Both the stopping and the asking use the same
+  // number: a body that stopped at one distance and asked at another would
+  // stand still being refused, which is exactly the bug.
+  const usable = Math.max(0, input.reach - Math.max(0, input.lead));
+  const gap = Math.hypot(drop.x - input.self.x, drop.y - input.self.y);
+  if (gap > usable) return { walkTo: { x: drop.x, y: drop.y }, ask: false };
+  // Close enough on both clocks: stop, and ask once. `pending` is what keeps
+  // that one ask from becoming sixty a second while the answer is in flight --
+  // and it is cleared by the answer, so a refusal is asked again rather than
+  // wedging the order shut.
   return { walkTo: null, ask: !input.pending };
 }
 

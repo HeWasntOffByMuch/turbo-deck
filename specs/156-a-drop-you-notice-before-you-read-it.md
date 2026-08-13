@@ -153,11 +153,14 @@ same sword in a different place on every screen, and "did you see where it went"
 stops having an answer.
 
 A rare-or-better drop also has a **heartbeat** — a small scale bump and a lift,
-twice a second, the smaller beat behind the bigger, phased off `spawnTick` so
-every client beats together. It is the notice-without-recognition signal: it
-says a tier was crossed without saying which.
+twice a second, the smaller beat behind the bigger. It is **withheld until the
+reveal and phased off it**, like the tier colour and for the same reason: a
+pulse running during the anticipation announces "rare or better" from the first
+frame, which is a thing the reveal is supposed to be for. Starting the cycle on
+`revealTick` also makes the first beat the reveal's punctuation rather than
+something that had been going on underneath it.
 
-### The tier's colour is withheld, not just its name
+### The tier's colour and its pulse are withheld, not just its name
 
 `tierMixAt` is `0` for the whole of `Spawned` and `Anticipation`. An unrevealed
 drop is drawn in the **same neutral colour ordinary loot wears**, so the tier is
@@ -167,6 +170,35 @@ nothing says how unusual until the reveal lands.
 This is the difference between a rarity reveal and a rarity *brightness* reveal.
 A drop coloured by its tier from the first frame has already answered the
 question the reveal exists to ask.
+
+The rule that falls out of it: **nothing categorical about a tier is legible
+before its reveal.** The flare is an intensity and differs by tier on purpose —
+that is "something is unusual". A colour and a pulse are kinds, not amounts, and
+both wait.
+
+### Asking for it accounts for the lead
+
+The client's predicted position runs ahead of the server's by about the one-way
+latency, and while walking *toward* something that lead points straight at it.
+A client that walked to its own copy of `PICKUP_RANGE` and asked was refused by
+a server still holding the body a stride back — and, because the order had
+stopped walking and was waiting on an answer that had already come, it sat
+there. That looked like a broken range check and was two bugs:
+
+```ts
+// src/render/iso3d/world/loot-drop.ts
+export function pickupLead(moveSpeed, roundTripTicks, tickRate, reach): number;
+```
+
+The order closes to `reach - lead` and asks from the same distance, where `lead`
+is how far this body travels in its own *measured* round trip — derived, so a
+good connection gives up almost nothing. And `awaitingPickup` lives on the
+session and is cleared by the `Inventory` that answers it, refusal included, so
+a request that was refused is simply asked again.
+
+**`MoveItem` and `PickUpItem` share one request-id counter**, because they share
+an answer: both are replied to with an `Inventory` at their id, and two counters
+meant a pickup's answer retired a bag move that happened to share its number.
 
 ### Presentation is a pure function of the drop and the drawn tick
 
@@ -232,6 +264,13 @@ the delay is tunable on a running server from the admin console.
   the cycle, never shrinks the object, and is phased off `spawnTick`.
 - A revealed drop names itself on hover; an unrevealed one shows nothing at all
   rather than a placeholder.
+- **Before its reveal, a drop's `tierMix` is 0 and its `beat` is exactly 1** —
+  for every tier. Nothing categorical leaks.
+- The order stops walking at exactly the distance it will ask from, at every
+  lead and every gap. A body that stopped at one distance and asked from
+  another is a body standing still being refused.
+- A refused pickup clears `awaitingPickup`, so the next tick asks again; and a
+  pickup's answer never retires an unrelated bag move.
 - Presentation cannot change state: the same fight with the drop presentation
   driven and undriven produces identical authoritative state.
 

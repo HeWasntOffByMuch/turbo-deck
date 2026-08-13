@@ -388,6 +388,15 @@ export interface ClientView {
    */
   readonly awaitingCast: boolean;
   /**
+   * True while a `pickUp` of ours is unanswered (spec 156).
+   *
+   * What stops a standing pickup order asking sixty times a second -- and,
+   * because it is cleared by the answer rather than by a timer, what lets the
+   * order ask *again* when the server says no. The client keeps no optimistic
+   * bag state for a pickup, so this is the whole of what it remembers.
+   */
+  readonly awaitingPickup: boolean;
+  /**
    * Ability id -> the tick it may next be used (spec 065). Straight from the
    * server; the client subtracts the tick it is drawing to get the sweep, and
    * never works out how long a cooldown is for itself.
@@ -537,8 +546,15 @@ export class GameClient {
    * identity could survive one.
    */
   private readonly drops = new Map<number, Omit<DropView, 'phase'>>();
-  /** Answers a `pickUp`, so a caller can tell its own request from a resend. */
-  private pickUpRequests = 0;
+  /**
+   * The pickup this client is waiting on, or null (spec 156).
+   *
+   * A request id rather than a boolean, because that is what the answer names.
+   * Cleared by the `Inventory` that settles it -- taken or refused, since both
+   * arrive the same way -- which is what stops a refused pickup wedging an
+   * order that would otherwise never ask again.
+   */
+  private pickUpInFlight: number | null = null;
   /**
    * How many answers about a shop this client has had (spec 131).
    *
@@ -555,6 +571,21 @@ export class GameClient {
   /** Moves sent and not yet answered, oldest first. */
   private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
   private moveRequests = 0;
+
+  /**
+   * The next id for anything answered by an `Inventory` (spec 156).
+   *
+   * **One counter for `MoveItem` and `PickUpItem` together**, because they share
+   * an answer: both are replied to with an `Inventory` at their request id, and
+   * two counters meant a pickup's answer could carry an id a move had already
+   * used. `replayMoves` retires everything at or below the id that arrives, so
+   * a pickup answered at 3 was silently throwing away a drag still in flight at
+   * 3 -- a rollback nobody asked for, on a message about something else.
+   */
+  private nextRequestId(): number {
+    this.moveRequests += 1;
+    return this.moveRequests;
+  }
   private shopRequests = 0;
   private level = 1;
   private experience = 0;
@@ -758,8 +789,7 @@ export class GameClient {
    */
   moveItem(from: SlotAddress, to: SlotAddress, count = 0): number {
     if (!this.connected) return 0;
-    this.moveRequests += 1;
-    const requestId = this.moveRequests;
+    const requestId = this.nextRequestId();
     const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
     this.pendingMoves.push({ requestId, request });
     this.replayMoves();
@@ -828,8 +858,8 @@ export class GameClient {
    */
   pickUp(entityId: number): number {
     if (!this.connected) return 0;
-    this.pickUpRequests += 1;
-    const requestId = this.pickUpRequests;
+    const requestId = this.nextRequestId();
+    this.pickUpInFlight = requestId;
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.PickUpItem, requestId, entityId }),
     );
@@ -1446,6 +1476,7 @@ export class GameClient {
       cooldowns: this.visibleCooldowns(),
       selfRoot: this.selfRoot(),
       awaitingCast: this.outstandingCasts.length > 0,
+      awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),
     };
   }
@@ -1624,6 +1655,7 @@ export class GameClient {
     // descriptions would leave a revealed name attached to an id the server may
     // since have reused.
     this.drops.clear();
+    this.pickUpInFlight = null;
     this.connected = false;
     void this.connect().catch(() => undefined);
   }
@@ -1695,6 +1727,12 @@ export class GameClient {
         // truth about both. What is left is what is still in flight.
         while ((this.pendingMoves[0]?.requestId ?? Infinity) <= message.requestId) {
           this.pendingMoves.shift();
+        }
+        // Settled either way -- an `Inventory` is the answer to a pickup whether
+        // it was served or refused, and a refusal that left this set would leave
+        // the order that made it never asking again (spec 156).
+        if (this.pickUpInFlight !== null && message.requestId >= this.pickUpInFlight) {
+          this.pickUpInFlight = null;
         }
         this.replayMoves();
         break;

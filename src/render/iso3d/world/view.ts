@@ -67,7 +67,7 @@ import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
 import { effectsForBlow } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
-import { pickupOrderFor } from './loot-drop.js';
+import { pickupLead, pickupOrderFor } from './loot-drop.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
 import { decideKeyDown, decideKeyUp } from './key-actions.js';
 import { UiLayer } from './ui-layer.js';
@@ -652,8 +652,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * point of the feature.
    */
   let pickupId: number | null = null;
-  /** The pickup request in flight, so the order asks once rather than per tick. */
-  let pickupPending = false;
   /**
    * The skill being aimed but not yet thrown (spec 080).
    *
@@ -1007,7 +1005,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // drop is not attackable, so the two can never both be true.
     if (picked && collectable(picked)) {
       pickupId = picked.id;
-      pickupPending = false;
       targetId = null;
       destination = null;
       planner.clear();
@@ -1432,30 +1429,32 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const mark = view.entities.find((entity) => entity.id === pickupId);
     if (!mark) {
       pickupId = null;
-      pickupPending = false;
       destination = null;
       planner.clear();
       return;
     }
 
     const self = view.entities.find((entity) => entity.id === view.selfEntityId);
+    const reach = PICKUP_RANGE + SERVER_PLAYER_RADIUS;
     const decision = pickupOrderFor({
       self: me,
       selfHealth: self?.health ?? 1,
       drop: { entityId: mark.id, x: mark.x, y: mark.y },
       // The server's own reach, plus our body radius, because it measures from
-      // the same two centres. Asking a hair early costs one refused message.
-      reach: PICKUP_RANGE + SERVER_PLAYER_RADIUS,
-      pending: pickupPending,
+      // the same two centres.
+      reach,
+      // ...and how far in front of the server this body's prediction may be,
+      // measured rather than assumed. Without it the walk stopped at the
+      // client's copy of the reach and the server refused from a stride
+      // further back.
+      lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+      // Cleared by whichever `Inventory` answers it, so a refusal is asked
+      // again on the next tick rather than leaving the order standing there.
+      pending: view.awaitingPickup,
     });
     destination = decision.walkTo;
     if (!decision.walkTo) planner.clear();
-    if (decision.ask) {
-      client.pickUp(mark.id);
-      // Asked once. The answer removes the entity (or refuses), and either way
-      // the branch above ends the order on the frame the view changes.
-      pickupPending = true;
-    }
+    if (decision.ask) client.pickUp(mark.id);
   }
 
   /**

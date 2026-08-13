@@ -17,6 +17,7 @@ import {
   DropPresenter,
   flareAt,
   heartbeatAt,
+  pickupLead,
   HEARTBEAT_TICKS,
   pickupOrderFor,
   REVEAL_SETTLE_TICKS,
@@ -153,10 +154,27 @@ describe('the heartbeat', () => {
     }
   });
 
+  /** The correction: a pulse before the reveal says "rare or better" for free. */
+  it('is withheld entirely until the reveal', () => {
+    for (const rarity of ['rare', 'exceptional'] as const) {
+      const drop = view(rarity);
+      for (let tick = drop.spawnTick; tick < drop.revealTick; tick++) {
+        expect(heartbeatAt(drop, tick), `${rarity} @ ${tick}`).toBe(1);
+      }
+    }
+  });
+
+  /** ...and the first beat lands *on* the reveal, as its punctuation. */
+  it('starts its cycle at the reveal tick', () => {
+    const drop = view('exceptional');
+    expect(heartbeatAt(drop, drop.revealTick)).toBeGreaterThan(1.05);
+    expect(heartbeatAt(drop, drop.revealTick - 1)).toBe(1);
+  });
+
   it('beats twice a cycle -- a big one and a small one behind it', () => {
     const drop = view('rare');
     const cycle: number[] = [];
-    for (let t = 0; t < HEARTBEAT_TICKS; t++) cycle.push(heartbeatAt(drop, t));
+    for (let t = 0; t < HEARTBEAT_TICKS; t++) cycle.push(heartbeatAt(drop, drop.revealTick + t));
 
     // Count local maxima strictly above the resting scale.
     const peaks: number[] = [];
@@ -176,7 +194,9 @@ describe('the heartbeat', () => {
     const drop = view('exceptional');
     // Most of the second is quiet: that is what makes it a heart.
     let quiet = 0;
-    for (let t = 0; t < HEARTBEAT_TICKS; t++) if ((heartbeatAt(drop, t) ?? 1) < 1.01) quiet++;
+    for (let t = 0; t < HEARTBEAT_TICKS; t++) {
+      if ((heartbeatAt(drop, drop.revealTick + t) ?? 1) < 1.01) quiet++;
+    }
     expect(quiet).toBeGreaterThan(HEARTBEAT_TICKS * 0.6);
   });
 
@@ -184,18 +204,37 @@ describe('the heartbeat', () => {
     for (const rarity of RARITY_IDS) {
       const drop = view(rarity);
       for (let t = 0; t < HEARTBEAT_TICKS * 2; t++) {
-        const beat = heartbeatAt(drop, t);
+        const beat = heartbeatAt(drop, drop.revealTick + t);
         expect(beat).toBeGreaterThanOrEqual(1);
         expect(beat).toBeLessThan(1.2);
       }
     }
   });
 
-  it('is phased off the spawn tick, so every client beats together', () => {
+  it('is phased off the reveal tick, so every client beats together', () => {
     const early = view('rare', 0);
     const late = view('rare', 1000);
-    for (let i = 0; i < HEARTBEAT_TICKS; i++) {
-      expect(heartbeatAt(late, 1000 + i)).toBeCloseTo(heartbeatAt(early, i), 9);
+    for (let i = 0; i < HEARTBEAT_TICKS * 2; i++) {
+      expect(heartbeatAt(late, late.revealTick + i)).toBeCloseTo(
+        heartbeatAt(early, early.revealTick + i),
+        9,
+      );
+    }
+  });
+
+  /**
+   * The whole withholding, stated once: nothing about a drop distinguishes one
+   * tier from another *categorically* before its reveal. The flare differs by
+   * tier and is meant to -- an intensity is "something is unusual", where a
+   * colour and a pulse are "it is this kind of unusual".
+   */
+  it('leaves colour and pulse both silent before the reveal', () => {
+    for (const rarity of RARITY_IDS) {
+      const drop = view(rarity);
+      for (let tick = drop.spawnTick; tick < drop.revealTick; tick++) {
+        expect(tierMixAt(drop, tick), `${rarity} mix @ ${tick}`).toBe(0);
+        expect(heartbeatAt(drop, tick), `${rarity} beat @ ${tick}`).toBe(1);
+      }
     }
   });
 });
@@ -321,6 +360,7 @@ describe('walking over to it', () => {
       selfHealth: 100,
       drop,
       reach: 50,
+      lead: 0,
       pending: false,
     });
     expect(far.walkTo).toEqual({ x: 100, y: 0 });
@@ -331,10 +371,74 @@ describe('walking over to it', () => {
       selfHealth: 100,
       drop,
       reach: 50,
+      lead: 0,
       pending: false,
     });
     expect(near.walkTo).toBeNull();
     expect(near.ask).toBe(true);
+  });
+
+  /**
+   * The bug this exists for: the client's prediction leads the server while it
+   * walks, so arriving at *its* copy of the reach and asking earns an
+   * out-of-range refusal from a server holding the body a stride further back.
+   */
+  it('keeps closing while the lead would put the server out of range', () => {
+    const far = { entityId: 3, x: 60, y: 0 };
+    // 60 away, reach 50: out of range on both clocks, so it walks.
+    expect(
+      pickupOrderFor({ self: { x: 0, y: 0 }, selfHealth: 100, drop: far, reach: 50, lead: 20, pending: false }).ask,
+    ).toBe(false);
+    // 45 away: inside the client's own reach, and *not* inside it once the
+    // 20-unit lead is taken off. It keeps walking rather than asking.
+    const edge = pickupOrderFor({
+      self: { x: 15, y: 0 },
+      selfHealth: 100,
+      drop: far,
+      reach: 50,
+      lead: 20,
+      pending: false,
+    });
+    expect(edge.ask).toBe(false);
+    expect(edge.walkTo).toEqual({ x: 60, y: 0 });
+    // 25 away: inside even with the lead taken off. Now it asks, and stops.
+    const arrived = pickupOrderFor({
+      self: { x: 35, y: 0 },
+      selfHealth: 100,
+      drop: far,
+      reach: 50,
+      lead: 20,
+      pending: false,
+    });
+    expect(arrived.ask).toBe(true);
+    expect(arrived.walkTo).toBeNull();
+  });
+
+  /** It stops and asks at the same distance -- or it stands there being refused. */
+  it('never stops walking at a distance it will not ask from', () => {
+    for (const lead of [0, 5, 20, 49, 200]) {
+      for (let gap = 0; gap <= 80; gap += 1) {
+        const order = pickupOrderFor({
+          self: { x: 0, y: 0 },
+          selfHealth: 100,
+          drop: { entityId: 1, x: gap, y: 0 },
+          reach: 50,
+          lead,
+          pending: false,
+        });
+        expect(order.ask, `lead ${lead} gap ${gap}`).toBe(order.walkTo === null);
+      }
+    }
+  });
+
+  it('derives the lead from the connection rather than assuming one', () => {
+    // A body doing 150 units/s on a 12-tick round trip is 30 units ahead.
+    expect(pickupLead(150, 12, 60, 126)).toBeCloseTo(30, 6);
+    // A perfect connection gives up nothing...
+    expect(pickupLead(150, 0, 60, 126)).toBe(0);
+    // ...and a pathological one cannot eat the whole reach.
+    expect(pickupLead(150, 10_000, 60, 126)).toBe(63);
+    expect(pickupLead(0, 12, 60, 126)).toBe(0);
   });
 
   /** One ask, not sixty a second while the answer is in flight. */
@@ -344,6 +448,7 @@ describe('walking over to it', () => {
       selfHealth: 100,
       drop,
       reach: 50,
+      lead: 0,
       pending: true,
     });
     expect(order.ask).toBe(false);
@@ -352,10 +457,10 @@ describe('walking over to it', () => {
 
   it('does nothing without an order, and nothing while dead', () => {
     expect(
-      pickupOrderFor({ self: { x: 0, y: 0 }, selfHealth: 100, drop: null, reach: 50, pending: false }),
+      pickupOrderFor({ self: { x: 0, y: 0 }, selfHealth: 100, drop: null, reach: 50, lead: 0, pending: false }),
     ).toEqual({ walkTo: null, ask: false });
     expect(
-      pickupOrderFor({ self: { x: 100, y: 0 }, selfHealth: 0, drop, reach: 50, pending: false }),
+      pickupOrderFor({ self: { x: 100, y: 0 }, selfHealth: 0, drop, reach: 50, lead: 0, pending: false }),
     ).toEqual({ walkTo: null, ask: false });
   });
 });

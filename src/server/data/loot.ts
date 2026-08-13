@@ -72,11 +72,12 @@ export interface RarityRow {
   /**
    * Whether the drop has a pulse (spec 156).
    *
-   * The "something landed here that is not ordinary" signal, and the one thing
-   * about a drop that is legible *before* the reveal -- a heartbeat says a tier
-   * was crossed without saying which one, which is exactly the notice-without-
-   * recognition the whole feature is built around. Off for common, so ordinary
-   * loot lies there inert.
+   * What a resolved drop does while it lies there, and part of the *payoff*
+   * rather than of the run-up: `heartbeatAt` withholds it until the reveal and
+   * phases the cycle off that tick, so the first beat lands on the moment the
+   * item becomes known. A pulse running during the anticipation would say "rare
+   * or better" from the first frame, which is the same leak the tier colour
+   * was. Off for common, so ordinary loot lies there inert forever.
    */
   readonly heartbeat: boolean;
 }

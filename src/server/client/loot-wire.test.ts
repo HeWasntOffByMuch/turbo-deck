@@ -278,6 +278,71 @@ describe('it looks dropped, and it looks the same to everybody', () => {
   });
 });
 
+describe('asking for it', () => {
+  /**
+   * The wedge, as a test: a refused pickup used to leave `awaitingPickup` set
+   * forever, so the standing order stopped walking, stopped asking, and sat
+   * there. Clicking again was the only way out, which is exactly what was
+   * reported.
+   */
+  it('clears the request once the server answers, refusal included', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    await r.tick(2);
+    const at = positionOf(r, ana.view().selfEntityId);
+    r.server.triggerEvent('drop', at.x + 60, at.y, rarityToByte('rare'));
+    await r.tick(4);
+    const drop = ana.view().drops[0];
+    if (!drop) throw new Error('no drop');
+
+    // Out of range on purpose, so the answer is a refusal rather than a grant.
+    r.server.teleport('ana', DEFAULT_SPAWN.x + 2000, DEFAULT_SPAWN.y);
+    await r.tick(4);
+
+    ana.pickUp(drop.entityId);
+    expect(ana.view().awaitingPickup, 'asked, and waiting').toBe(true);
+    await r.tick(6);
+    expect(ana.view().awaitingPickup, 'a refusal is an answer').toBe(false);
+
+    // ...and the next ask goes through, which is what the order relies on.
+    r.server.teleport('ana', at.x + 60, at.y);
+    await r.tick(4);
+    ana.pickUp(drop.entityId);
+    await r.tick(6);
+    expect(ana.view().awaitingPickup).toBe(false);
+    expect(r.server.world.entities.get(drop.entityId)).toBeUndefined();
+  });
+
+  /**
+   * `MoveItem` and `PickUpItem` are answered by the same message at the same id
+   * space. Two counters meant a pickup's answer retired a drag that happened to
+   * share its number -- a rollback on a message about something else.
+   */
+  it('does not let a pickup answer retire an unrelated bag move', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    await r.tick(2);
+    const at = positionOf(r, ana.view().selfEntityId);
+    r.server.triggerEvent('drop', at.x + 40, at.y, rarityToByte('common'));
+    await r.tick(4);
+    const drop = ana.view().drops[0];
+    if (!drop) throw new Error('no drop');
+
+    const moveId = ana.moveItem(
+      { container: 'inventory', index: 0 },
+      { container: 'inventory', index: 20 },
+    );
+    const pickId = ana.pickUp(drop.entityId);
+    expect(pickId, 'two verbs, one id space').not.toBe(moveId);
+    await r.tick(8);
+
+    // Both landed, and the bag holds the result of both.
+    const bag = r.server.playerManager.get('ana')?.record.inventory ?? [];
+    expect(bag[20]).toBeTruthy();
+    expect(held(r, ['ana'], 'potion.minor')).toBeGreaterThan(0);
+  });
+});
+
 describe('the developer path', () => {
   /**
    * Tuning a presentation must not require farming for one. Both halves are
