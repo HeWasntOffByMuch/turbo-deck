@@ -24,6 +24,9 @@ import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { EntityKindValue } from '../sim/types.js';
 import { RevealPhase } from '../sim/loot.js';
 import { INVENTORY_SLOTS } from '../state/types.js';
+import { PICKUP_RANGE } from '../sim/world.js';
+import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
+import { pickupLead, pickupOrderFor } from '../../render/iso3d/world/loot-drop.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -311,6 +314,74 @@ describe('asking for it', () => {
     await r.tick(6);
     expect(ana.view().awaitingPickup).toBe(false);
     expect(r.server.world.entities.get(drop.entityId)).toBeUndefined();
+  });
+
+  /**
+   * The reported bug, driven end to end: right-click something far away, walk
+   * over under the standing order, and the item arrives **and** "that is too
+   * far away" appears.
+   *
+   * Both really happened. `PickUpItem` carries no `afterInputSeq`, so the server
+   * answered it against the last input it had *applied* while the client had
+   * asked from its prediction some ticks further on; the first ask was refused
+   * and the retry a tick later took the item. The order is driven here through
+   * the same pure `pickupOrderFor` the view uses, so this is the approach a
+   * player actually makes rather than a teleport and a click.
+   */
+  it('walks over from far away and takes it without a word', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    await r.tick(4);
+
+    const refusals: string[] = [];
+    ana.onError((_code, message) => refusals.push(message));
+
+    const at = positionOf(r, ana.view().selfEntityId);
+    // Well outside the reach, so the whole approach is under the order.
+    r.server.triggerEvent('drop', at.x + 700, at.y, rarityToByte('rare'));
+    await r.tick(4);
+    const drop = ana.view().drops[0];
+    if (!drop) throw new Error('no drop');
+    const target = positionOf(r, drop.entityId);
+    const before = held(r, ['ana'], 'sword.keen');
+
+    const reach = PICKUP_RANGE + SERVER_PLAYER_RADIUS;
+    for (let i = 0; i < 600 && r.server.world.entities.get(drop.entityId); i++) {
+      const view = ana.view();
+      const self = view.entities.find((e) => e.id === view.selfEntityId);
+      // The *predicted* position, which is what `view.ts` measures from and
+      // what the whole disagreement is about -- reading the replica here would
+      // be asking the server where it thinks we are, which is the one thing a
+      // client does not do while it is walking.
+      const me = view.self ?? { x: self?.x ?? 0, y: self?.y ?? 0 };
+      const order = pickupOrderFor({
+        self: me,
+        selfHealth: self?.health ?? 1,
+        drop: { entityId: drop.entityId, x: target.x, y: target.y },
+        reach,
+        lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+        pending: view.awaitingPickup,
+      });
+      if (order.ask) ana.pickUp(drop.entityId);
+      // Straight at it, exactly as `moveIntent` would drive the approach.
+      const dx = target.x - me.x;
+      const dy = target.y - me.y;
+      const span = Math.hypot(dx, dy) || 1;
+      const walking = order.walkTo !== null;
+      ana.sendInput({
+        moveX: walking ? dx / span : 0,
+        moveY: walking ? dy / span : 0,
+        facing: Math.atan2(dy, dx),
+        buttons: 0,
+      });
+      await r.tick();
+    }
+
+    expect(held(r, ['ana'], 'sword.keen'), 'the item should arrive').toBe(before + 1);
+    expect(r.server.world.entities.get(drop.entityId)).toBeUndefined();
+    // ...and nothing was said about it. A refusal here is the order's machinery
+    // showing through, not something the player did.
+    expect(refusals).toEqual([]);
   });
 
   /**

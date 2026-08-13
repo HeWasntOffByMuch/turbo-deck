@@ -13,6 +13,7 @@ import type { DropView } from '../../../server/client/game-client.js';
 import { anticipationTickFor, RevealPhase, revealPhaseAt } from '../../../server/sim/loot.js';
 import { rarityRow } from '../../../server/data/loot.js';
 import { RARITY_IDS, type RarityId } from '../../../server/data/items.js';
+import { BROADCAST_EVERY_N_TICKS } from '../../../server/config.js';
 import {
   DropPresenter,
   flareAt,
@@ -541,11 +542,29 @@ describe('walking over to it', () => {
   it('derives the lead from the connection rather than assuming one', () => {
     // A body doing 150 units/s on a 12-tick round trip is 30 units ahead.
     expect(pickupLead(150, 12, 60, 126)).toBeCloseTo(30, 6);
-    // A perfect connection gives up nothing...
-    expect(pickupLead(150, 0, 60, 126)).toBe(0);
-    // ...and a pathological one cannot eat the whole reach.
+    // A pathological connection cannot eat the whole reach.
     expect(pickupLead(150, 10_000, 60, 126)).toBe(63);
+    // A body that cannot move needs no margin at all.
     expect(pickupLead(0, 12, 60, 126)).toBe(0);
+  });
+
+  /**
+   * The bug: on a fast connection the measured round trip rounds to zero, the
+   * lead came out zero, and the order asked from *exactly* the distance the
+   * server refuses past. A prediction is never zero ticks ahead, so that was
+   * one refusal and a retry on every single pickup -- "it says too far away and
+   * then picks it up".
+   */
+  it('never lets a moving body ask from the boundary itself', () => {
+    for (const rtt of [0, 1, 2, 3]) {
+      const lead = pickupLead(155, rtt, 60, 126);
+      expect(lead, `round trip ${rtt}`).toBeGreaterThan(0);
+      // At least a broadcast interval of travel, which is the coarsest this
+      // client's knowledge of where the server put it ever is.
+      expect(lead, `round trip ${rtt}`).toBeCloseTo((155 * BROADCAST_EVERY_N_TICKS) / 60, 6);
+    }
+    // ...and a measured round trip past that floor still wins.
+    expect(pickupLead(155, 20, 60, 126)).toBeGreaterThan(pickupLead(155, 0, 60, 126));
   });
 
   /** One ask, not sixty a second while the answer is in flight. */

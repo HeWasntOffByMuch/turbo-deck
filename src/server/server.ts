@@ -40,6 +40,7 @@ import {
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
+  MAX_REWIND_TICKS,
   RESUME_GRACE_TICKS,
   CONNECTION_TIMEOUT_TICKS,
   PROTOCOL_VERSION,
@@ -1220,6 +1221,8 @@ export class GameServer implements AdminHost {
    */
   private async pickUpDrop(connection: Connection, entityId: number): Promise<string | null> {
     if (connection.playerId === null) return 'not logged in';
+    const session = this.players.get(connection.playerId);
+    if (!session) return 'not logged in';
     const entity = this.state.entities.get(entityId);
     const drop = entity?.drop ?? null;
     if (!entity || drop === null) return 'there is nothing there';
@@ -1229,7 +1232,25 @@ export class GameServer implements AdminHost {
     if (drop.ownerPlayerId !== null && drop.ownerPlayerId !== connection.playerId) {
       return 'that is not yours';
     }
-    const reach = PICKUP_RANGE + body.radius;
+    // The reach, plus however far this body would have got if the server were
+    // not behind on its own inputs (spec 156).
+    //
+    // `PickUpItem` carries no `afterInputSeq`, unlike `UseAbility` -- so it is
+    // handled on the tick it *arrives*, while `body.position` is where the last
+    // *applied* input put it. The client asked from its prediction, which is
+    // that many ticks further along, and the two disagreed by exactly the queue
+    // it had not got to yet: the item was under the player's feet, the refusal
+    // said it was too far away, and the retry a tick later took it. Both
+    // happened, which is what made it look like a message rather than a bug.
+    //
+    // Measured from the server's own queue and the server's own stat block --
+    // nothing here is client-supplied. Bounded by `MAX_REWIND_TICKS` for the
+    // reason spec 149 gives about the rewind: a client that stalls its input
+    // stream on purpose gains at most the compensation an honest player on a
+    // bad connection already gets.
+    const behind = Math.min(connection.inputs.length, MAX_REWIND_TICKS);
+    const slack = (session.stats.moveSpeed * behind) / SERVER_TICK_RATE;
+    const reach = PICKUP_RANGE + body.radius + slack;
     if (Math.hypot(body.position.x - entity.position.x, body.position.y - entity.position.y) > reach) {
       return 'that is too far away';
     }

@@ -728,7 +728,16 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  "one drop, one stack" a property of the code rather than of the
                  timing; a full bag puts it back, at the same id, because a
                  refusal that ate the loot would be the worst bug this feature
-                 could have. `admin:triggerEvent 'drop'`/`'reveal'` and the live
+                 could have. Taking one is bent at *both* ends, because the
+                 two sides measure the reach from different instants: the client
+                 asks from its **prediction** and the server checks against the
+                 last input it **applied**. So `pickupLead` floors the client's
+                 margin at a broadcast interval -- a measured round trip of zero
+                 left the order asking from exactly the distance the server
+                 refuses past, which made every pickup on a good connection one
+                 refusal and a retry -- and the server's own check allows for its
+                 input backlog, bounded by `MAX_REWIND_TICKS`.
+                 `admin:triggerEvent 'drop'`/`'reveal'` and the live
                  `lootRevealScale` are the developer path, so a presentation is
                  tuned without farming for one -- and none of the three can
                  change what the item is.

@@ -213,10 +213,24 @@ export function pickupLead(moveSpeed, roundTripTicks, tickRate, reach): number;
 ```
 
 The order closes to `reach - lead` and asks from the same distance, where `lead`
-is how far this body travels in its own *measured* round trip — derived, so a
-good connection gives up almost nothing. And `awaitingPickup` lives on the
-session and is cleared by the `Inventory` that answers it, refusal included, so
-a request that was refused is simply asked again.
+is how far this body travels in its own *measured* round trip — **floored at a
+broadcast interval**, which is the part that matters. On a fast connection the
+measured round trip rounds to zero, so the lead was zero, so the order asked
+from *exactly* the distance the server refuses past; and a prediction is never
+zero ticks ahead, because the client applies an input the instant it is produced
+and the server applies it at least a tick later. Every pickup on a good
+connection was therefore one refusal and then a retry that worked — which is
+precisely "it says too far away and then picks it up".
+
+The server bends from its end too: `PickUpItem` carries no `afterInputSeq`, so
+it is answered on the tick it *arrives* while `body.position` is where the last
+*applied* input put it. The range check allows for that backlog, measured off
+the server's own queue and its own stat block and bounded by `MAX_REWIND_TICKS`
+for the reason spec 149 gives about the rewind.
+
+And `awaitingPickup` lives on the session and is cleared by the `Inventory` that
+answers it, refusal included, so a request that was refused is simply asked
+again.
 
 **`MoveItem` and `PickUpItem` share one request-id counter**, because they share
 an answer: both are replied to with an `Inventory` at their id, and two counters
@@ -302,6 +316,8 @@ the delay is tunable on a running server from the admin console.
   another is a body standing still being refused.
 - A refused pickup clears `awaitingPickup`, so the next tick asks again; and a
   pickup's answer never retires an unrelated bag move.
+- **`pickupLead` is never zero for a body that can move**, however good the
+  connection — the order never asks from the boundary itself.
 - Presentation cannot change state: the same fight with the drop presentation
   driven and undriven produces identical authoritative state.
 

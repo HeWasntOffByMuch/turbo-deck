@@ -16,6 +16,7 @@
  * else's file, and the server has never heard of either.
  */
 
+import { BROADCAST_EVERY_N_TICKS } from '../../../server/config.js';
 import { rarityRow } from '../../../server/data/loot.js';
 import type { DropView } from '../../../server/client/game-client.js';
 import { RevealPhase, revealPhaseAt, type RevealPhaseValue } from '../../../server/sim/loot.js';
@@ -309,6 +310,19 @@ export interface PickupInput {
  * speed is off the replicated stat block and the round trip is measured. The
  * cap keeps a pathological reading from shrinking the usable reach to nothing --
  * past half of it, walking closer is cheaper than trusting the estimate.
+ *
+ * **The floor is the part that matters.** On a fast connection the measured
+ * round trip rounds to zero, so this returned zero, so the order stopped and
+ * asked from *exactly* the distance the server refuses past -- and a client's
+ * prediction is never actually zero ticks ahead, because it applies an input
+ * locally the instant it is produced and the server applies it at least a tick
+ * later. Every pickup on a good connection was therefore one refusal followed
+ * by a retry that worked, which is what "it says too far away and then picks it
+ * up" was.
+ *
+ * A broadcast interval is the floor because it is the coarsest this client's
+ * knowledge of where the server put it ever is: between deltas it is guessing,
+ * and the guess is always forward.
  */
 export function pickupLead(
   moveSpeed: number,
@@ -316,8 +330,9 @@ export function pickupLead(
   tickRate: number,
   reach: number,
 ): number {
-  if (!(moveSpeed > 0) || !(roundTripTicks > 0) || !(tickRate > 0)) return 0;
-  return Math.min(reach * 0.5, (moveSpeed * roundTripTicks) / tickRate);
+  if (!(moveSpeed > 0) || !(tickRate > 0)) return 0;
+  const ticks = Math.max(BROADCAST_EVERY_N_TICKS, roundTripTicks);
+  return Math.min(reach * 0.5, (moveSpeed * ticks) / tickRate);
 }
 
 export interface PickupOrder {
