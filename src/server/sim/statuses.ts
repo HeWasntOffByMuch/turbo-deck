@@ -76,6 +76,17 @@ export const StatusId = {
   PerfectExitSpent: 'perfectExit.spent',
   /** Agility: this body took a hit recently, which is what Perfect Exit reads. */
   RecentlyHit: 'recentlyHit',
+  /**
+   * This body has traded a blow lately -- given or taken (spec 156).
+   *
+   * Longer than {@link RecentlyHit} and deliberately a different thing. That one
+   * is a *reaction window*, half a second wide, and Perfect Exit and the untouched
+   * -kill bonus both need it to be exactly that narrow. This one is "are you in a
+   * fight", and the only thing that reads it is resting: gating a refill on the
+   * reaction window would let a player refill between a ravager's swings, which is
+   * two and a quarter seconds apart.
+   */
+  InCombat: 'inCombat',
 } as const;
 
 /** Adaptation is per ability id: `adapt:bolt.arcane`. */

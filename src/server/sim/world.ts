@@ -29,6 +29,7 @@ import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { monsterById } from '../data/monsters.js';
+import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
@@ -51,12 +52,23 @@ import { abilityById } from '../data/abilities.js';
 import {
   advanceCast,
   applyDamage,
+  applyHealing,
   cancelCast,
   projectileHits,
   startCast,
   type CastAttempt,
   type ProjectileSpawn,
 } from './abilities.js';
+import {
+  assistsOn,
+  attractRadiusFor,
+  creditAssist,
+  creditKill,
+  meterFraction,
+  MoteKind,
+  MOTE_TYPE_ID,
+  type MoteSpawn,
+} from './restoration.js';
 import { shotHeightAt, SHOT_IMPACT_HEIGHT } from './ballistics.js';
 import { resolveMovement, type MovementContext } from './movement.js';
 import { regenerated } from './resource.js';
@@ -64,6 +76,7 @@ import {
   ActivityValue,
   CastEndReason,
   EntityKindValue,
+  type MoteState,
   type ServerEntity,
   type ServerInput,
   type ServerSimEvent,
@@ -132,6 +145,7 @@ function blankEntity(id: number): ServerEntity {
     cast: null,
     cooldowns: {},
     projectile: null,
+    mote: null,
     ...blankProgression(),
   };
 }
@@ -146,7 +160,15 @@ function blankEntity(id: number): ServerEntity {
  */
 export function blankProgression(): Pick<
   ServerEntity,
-  'poise' | 'staggerImmuneUntilTick' | 'shield' | 'shieldUntilTick' | 'statuses' | 'stillSinceTick'
+  | 'poise'
+  | 'staggerImmuneUntilTick'
+  | 'shield'
+  | 'shieldUntilTick'
+  | 'statuses'
+  | 'stillSinceTick'
+  | 'restoration'
+  | 'fallbackCharges'
+  | 'restingTicks'
 > {
   return {
     poise: 0,
@@ -155,6 +177,13 @@ export function blankProgression(): Pick<
     shieldUntilTick: 0,
     statuses: NO_STATUSES,
     stillSinceTick: 0,
+    // The health economy starts empty and the flask starts full (spec 156). A
+    // body that enters the world part-way to a mote would make the meter a
+    // function of when it spawned; a body that enters with no insurance would
+    // make a fresh character's first bad fight unrecoverable.
+    restoration: 0,
+    fallbackCharges: RESTORATION.fallback.charges,
+    restingTicks: 0,
   };
 }
 
@@ -216,6 +245,15 @@ export interface SpawnSpec {
   readonly targetId?: number;
   /** Where it considers home, and so the centre of its leash. */
   readonly anchor?: Vec2;
+  /**
+   * Flask charges and restoration progress this body arrives with (spec 156).
+   *
+   * Both optional and both for the same caller: a player logging back in, whose
+   * charges are on their save. Absent means a full flask and an empty meter,
+   * which is what everything the server spawns itself wants.
+   */
+  readonly fallbackCharges?: number;
+  readonly restoration?: number;
 }
 
 export function spawnEntity(
@@ -250,10 +288,14 @@ export function spawnEntity(
     cast: null,
     cooldowns: {},
     projectile: null,
+    mote: null,
     // A body enters the world with a full guard, like it enters with full
-    // health: poise is a live resource, not a derived stat.
+    // health: poise is a live resource, not a derived stat. The flask is the
+    // same shape -- a count the build decides the ceiling of (spec 156).
     ...blankProgression(),
     poise: spec.stats.traits.maxPoise,
+    fallbackCharges: spec.fallbackCharges ?? spec.stats.traits.fallbackCharges,
+    restoration: spec.restoration ?? 0,
   };
   const entities = new Map(state.entities);
   entities.set(entity.id, entity);
@@ -317,6 +359,12 @@ export function isHostile(
   // caused it, and a bolt can be shot down by another bolt.
   if (attacker.kind === EntityKindValue.Projectile) return false;
   if (target.kind === EntityKindValue.Projectile) return false;
+  // A mote is scenery with a rule attached (spec 156): it cannot be hit, cannot
+  // be caught by a blast, and cannot be shot down. Refused at both ends for the
+  // reason a projectile is -- a cone that swept up the motes it had just created
+  // would delete the reward for the kill that made them.
+  if (attacker.kind === EntityKindValue.Mote) return false;
+  if (target.kind === EntityKindValue.Mote) return false;
   if (attacker.kind === target.kind) {
     if (attacker.kind !== EntityKindValue.Player) return false;
     // Both ends, not just the attacker's (spec 145). Reading the attacker's
@@ -377,8 +425,12 @@ export function step(
     }
     if (!isSimulated(current)) continue;
 
-    // Projectiles fly on their own path; they are moved in their own pass.
+    // Projectiles fly on their own path; they are moved in their own pass. So do
+    // motes, which drift toward whoever they belong to (spec 156) -- and which
+    // would otherwise fall through to `monsterIntent` and be asked what they
+    // want to attack.
     if (current.kind === EntityKindValue.Projectile) continue;
+    if (current.kind === EntityKindValue.Mote) continue;
 
     const input = inputByEntity.get(current.id) ?? null;
     let rawIntent: ServerInput | null;
@@ -462,6 +514,13 @@ export function step(
         : steered.pardon,
     };
     next = expireActivity(next, tick, moved ? ActivityValue.Moving : ActivityValue.Idle);
+    // --- 1c: resting (spec 156) ------------------------------------------
+    // Here rather than in `advanceProgression` because it is the one thing in
+    // the tick that depends on *where* the body is, and the zone it is in was
+    // settled three lines up. Deliberately a place rather than a timer: the
+    // flask refills by walking back, which is the "return, rest" leg of the
+    // loop and the reason the fallback is insurance rather than a heal button.
+    next = advanceRest(next, tick, context.zones.byIdOrWilderness(next.zoneId).rest === true);
     // --- 1b: the progression timers (spec 147) --------------------------
     // One pass, here, because all four read the same three facts this pass has
     // just settled -- did the body move, is it committed, is it staggered -- and
@@ -762,6 +821,19 @@ export function step(
     events.push({ kind: 'despawned', entityId: entity.id });
   }
 
+  // --- 3c: what the dead are worth (spec 156) ----------------------------
+  // Between the fighting and the sweep, because it reads bodies that are about
+  // to be removed: a `died` event names a victim whose position, spawner and
+  // assist marks all disappear on the next pass. Driven off events rather than
+  // off the entities, because *how* something died is the half the health
+  // economy prices and only the blow knew it.
+  const credited = creditDeaths(working, events, tick, nextEntityId);
+  nextEntityId = credited.nextEntityId;
+  events.push(...credited.events);
+
+  // --- 3d: motes drift, are collected, and fade -------------------------
+  events.push(...advanceMotes(working, tick, context));
+
   // --- 4: sweep the dead ------------------------------------------------
   /** Spawners whose body left the world this tick; their timers start now. */
   const emptied: string[] = [];
@@ -869,6 +941,359 @@ export function advanceProgression(
     return entity;
   }
   return { ...entity, statuses, stillSinceTick, shield, poise, health };
+}
+
+// --- the health economy (spec 156) --------------------------------------
+
+/**
+ * One tick of resting.
+ *
+ * Two rules, and both are about what resting must *not* be able to do. It only
+ * happens in a zone that says `rest`, so it is a place you walk back to rather
+ * than a state you enter by standing still; and it refuses while `InCombat` is
+ * live, so a player who dragged something into town cannot refill mid-fight.
+ *
+ * `InCombat` rather than `RecentlyHit`, and the difference is load-bearing: the
+ * reaction window is half a second, a ravager swings every two and a quarter,
+ * and gating on the narrow one let a player heal between the blows of the thing
+ * killing them.
+ *
+ * Health comes back fast enough to be worth the walk and slow enough to be a
+ * walk; the flask returns one charge at a time, so a full reset is a real pause
+ * rather than a touch of the boundary.
+ *
+ * Returns the same object when nothing changed, like every other per-tick
+ * helper here.
+ */
+export function advanceRest(entity: ServerEntity, tick: number, resting: boolean): ServerEntity {
+  if (entity.kind !== EntityKindValue.Player) return entity;
+  if (!resting || hasStatus(entity.statuses, StatusId.InCombat, tick)) {
+    return entity.restingTicks === 0 ? entity : { ...entity, restingTicks: 0 };
+  }
+
+  const maxCharges = entity.stats.traits.fallbackCharges;
+  const health = Math.min(
+    entity.stats.maxHealth,
+    entity.health + (entity.stats.maxHealth * RESTORATION.rest.healthPerSecond) / SERVER_TICK_RATE,
+  );
+
+  let charges = entity.fallbackCharges;
+  let restingTicks = 0;
+  if (charges < maxCharges) {
+    restingTicks = entity.restingTicks + 1;
+    if (restingTicks >= RESTORATION.rest.chargeTicks) {
+      charges += 1;
+      restingTicks = 0;
+    }
+  }
+
+  if (health === entity.health && charges === entity.fallbackCharges && restingTicks === entity.restingTicks) {
+    return entity;
+  }
+  return { ...entity, health, fallbackCharges: charges, restingTicks };
+}
+
+interface CreditResult {
+  readonly nextEntityId: number;
+  readonly events: readonly ServerSimEvent[];
+}
+
+/**
+ * Everything that died this tick, priced and paid out (spec 156).
+ *
+ * Runs off the `died` events rather than off the bodies, because the half that
+ * matters -- *how* it died -- is a fact only the blow had, and it is already on
+ * the event. It has to run before the sweep: the victim's position, its spawner
+ * and the assist marks on it all leave the world on the next pass.
+ *
+ * Two payouts, and the difference between them is the whole multiplayer rule:
+ *
+ *  - the **killer** gets the full contribution, the skill bonuses, the elite
+ *    guarantee and the motes, which land at the corpse;
+ *  - every other player who damaged it inside the assist window gets a fraction
+ *    of the base into their own meter, and any motes that produces land at
+ *    *their* feet.
+ *
+ * So last-hitting takes the drop and never the credit, and a teammate cannot
+ * reach another player's survival economy at all.
+ */
+function creditDeaths(
+  working: Map<number, ServerEntity>,
+  events: readonly ServerSimEvent[],
+  tick: number,
+  nextEntityIdIn: number,
+): CreditResult {
+  let nextEntityId = nextEntityIdIn;
+  const made: ServerSimEvent[] = [];
+
+  for (const event of events) {
+    if (event.kind !== 'died') continue;
+    const victim = working.get(event.entityId);
+    if (!victim) continue;
+
+    /** One payout, written back and turned into motes wherever they belong. */
+    const pay = (
+      body: ServerEntity,
+      credit: ReturnType<typeof creditKill>,
+      at: ServerEntity,
+      assist: boolean,
+    ): void => {
+      if (credit.contribution.total <= 0) return;
+      working.set(body.id, credit.killer);
+      made.push({
+        kind: 'restoration',
+        entityId: body.id,
+        victimId: victim.id,
+        progress: credit.contribution.total,
+        meter: meterFraction(credit.killer.restoration),
+        motes: credit.motes.length,
+        guaranteed: credit.guaranteed,
+        assist,
+        sources: credit.contribution.sources,
+      });
+      for (const spawn of credit.motes) {
+        const mote = buildMote(nextEntityId, credit.killer, at.position, spawn, tick);
+        working.set(mote.id, mote);
+        nextEntityId += 1;
+        made.push({ kind: 'spawned', entityId: mote.id, typeId: mote.typeId });
+      }
+    };
+
+    const killer = event.killerId === null ? null : working.get(event.killerId) ?? null;
+    if (killer) pay(killer, creditKill(killer, victim, event.qualities, tick), victim, false);
+
+    for (const helperId of assistsOn(victim.statuses, tick)) {
+      if (helperId === event.killerId) continue;
+      const helper = working.get(helperId);
+      if (!helper) continue;
+      pay(helper, creditAssist(helper, victim, tick), helper, true);
+    }
+  }
+
+  return { nextEntityId, events: made };
+}
+
+/** How high above the ground a mote floats, so it reads as an object rather than a stain. */
+const MOTE_HOVER = 14;
+/** Its body radius. Never collided with -- this is what the renderer draws it at. */
+const MOTE_RADIUS = 7;
+
+/** One mote entity, at a scattered offset from the body it came from. */
+function buildMote(
+  id: number,
+  owner: ServerEntity,
+  at: Vec3,
+  spawn: MoteSpawn,
+  tick: number,
+): ServerEntity {
+  const lands = tick + RESTORATION.mote.launchTicks;
+  return {
+    ...blankEntity(id),
+    kind: EntityKindValue.Mote,
+    typeId: MOTE_TYPE_ID[spawn.kind] ?? MOTE_TYPE_ID[MoteKind.Vitality] ?? '',
+    // It starts *at the body*, not where it will land: the hop is the whole
+    // point (spec 156), and a mote that appeared at its rest point would have
+    // nothing to travel.
+    position: { x: at.x, y: at.y, z: at.z + MOTE_HOVER },
+    zoneId: owner.zoneId,
+    radius: MOTE_RADIUS,
+    mote: {
+      kind: spawn.kind,
+      amount: spawn.amount,
+      ownerEntityId: owner.id,
+      originX: at.x,
+      originY: at.y,
+      // The corpse's own height rather than a fresh terrain sample: one blow can
+      // scatter several, and a mote that snapped to the hillside under it would
+      // leave from a different height from its siblings.
+      originZ: at.z,
+      restX: at.x + spawn.offsetX,
+      restY: at.y + spawn.offsetY,
+      launchFromTick: tick,
+      landsAtTick: lands,
+      armedAtTick: lands + RESTORATION.mote.lingerTicks,
+      expiresAtTick: tick + RESTORATION.mote.lifetimeTicks,
+    },
+  };
+}
+
+/**
+ * Whether a mote of this kind has anywhere to go on this body.
+ *
+ * The one question that decides both halves of collection: a mote with nowhere
+ * to go is neither attracted nor taken, so it waits, visible, until it fades.
+ * That is the answer to two of the brief's requirements at once -- there is no
+ * housekeeping (walking over a mote you cannot use costs nothing) and no
+ * hoarding strategy (the lifetime is short and there is nothing to hold one
+ * in).
+ *
+ * Constitution's overheal shield and Wisdom's conversion count as somewhere to
+ * go, because for those builds a mote at full health is genuinely worth taking.
+ * Wisdom's *salvage* deliberately does not: counting it would have a full-health
+ * Wisdom build hoovering motes to feed the meter that makes motes, which is a
+ * loop however small its coefficient.
+ */
+function moteHasRoom(body: ServerEntity, kind: number): boolean {
+  if (kind === MoteKind.Focus) return body.resource < body.stats.maxResource;
+  if (body.health < body.stats.maxHealth) return true;
+  const traits = body.stats.traits;
+  if (traits.overhealShieldTicks > 0 && traits.maxShield > 0 && body.shield < traits.maxShield) {
+    return true;
+  }
+  return traits.conversionCap > 0 && body.resource < body.stats.maxResource;
+}
+
+/**
+ * Motes drift toward whoever they belong to, are collected, and fade.
+ *
+ * Everything here is the owner's business alone: a mote is attracted by one
+ * body, collected by one body, and replicated to one client. There is no
+ * contest to resolve and no eligibility to check at the moment of pickup,
+ * because ownership was decided when it was made.
+ */
+function advanceMotes(
+  working: Map<number, ServerEntity>,
+  tick: number,
+  context: StepContext,
+): readonly ServerSimEvent[] {
+  const events: ServerSimEvent[] = [];
+
+  for (const entity of [...working.values()]) {
+    const mote = entity.mote;
+    if (!mote) continue;
+
+    if (tick >= mote.expiresAtTick) {
+      working.delete(entity.id);
+      events.push({
+        kind: 'mote',
+        entityId: entity.id,
+        ownerId: mote.ownerEntityId,
+        moteKind: mote.kind,
+        restored: 0,
+        wasted: mote.amount,
+        collected: false,
+      });
+      events.push({ kind: 'despawned', entityId: entity.id });
+      continue;
+    }
+
+    // --- the hop (spec 156) ---------------------------------------------
+    // Out of the body, over an arc, down to its rest point. Nothing may touch it
+    // while it is in the air: it is not attracted, not collected, and not
+    // interested in whether its owner has room. That is what buys the drop a
+    // beat on screen to be seen in.
+    //
+    // A pure function of the tick rather than an integrated velocity, so a
+    // replay lands it on the same blade of grass.
+    if (tick < mote.landsAtTick) {
+      const span = mote.landsAtTick - mote.launchFromTick;
+      const progress = span > 0 ? Math.max(0, Math.min(1, (tick - mote.launchFromTick) / span)) : 1;
+      const x = mote.originX + (mote.restX - mote.originX) * progress;
+      const y = mote.originY + (mote.restY - mote.originY) * progress;
+      // The same ballistic the arrows fly (spec 089), at a fraction of the
+      // height: a mote pops, it does not lob.
+      const z = shotHeightAt(
+        progress,
+        mote.originZ + MOTE_HOVER,
+        context.terrain.heightAt(x, y) + MOTE_HOVER,
+        RESTORATION.mote.hopHeight,
+      );
+      working.set(entity.id, { ...entity, position: { x, y, z } });
+      continue;
+    }
+
+    // Landed, and not yet armed: it sits exactly where it fell, in plain sight,
+    // for the linger. This is the branch that guarantees a drop is *seen* --
+    // without it the on-screen time is whatever the scatter direction happened
+    // to leave, and a mote that landed under the player's feet was taken on the
+    // tick it touched down.
+    if (tick < mote.armedAtTick) continue;
+
+    // A dead or departed owner leaves the mote lying there until it fades. It is
+    // deliberately not reassigned: a mote is somebody's, and a mote that changed
+    // hands on a death would be the one way a teammate could take one.
+    const owner = working.get(mote.ownerEntityId);
+    if (!owner || owner.health <= 0) continue;
+    if (!moteHasRoom(owner, mote.kind)) continue;
+
+    const dx = owner.position.x - entity.position.x;
+    const dy = owner.position.y - entity.position.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance <= RESTORATION.mote.pickupRadius) {
+      events.push(...collectMote(working, owner, entity, mote, tick));
+      continue;
+    }
+
+    if (distance > attractRadiusFor(owner) || distance <= 1e-6) continue;
+    const stride = Math.min(distance, RESTORATION.mote.attractSpeed / SERVER_TICK_RATE);
+    const x = entity.position.x + (dx / distance) * stride;
+    const y = entity.position.y + (dy / distance) * stride;
+    working.set(entity.id, {
+      ...entity,
+      position: { x, y, z: context.terrain.heightAt(x, y) + MOTE_HOVER },
+    });
+  }
+
+  return events;
+}
+
+/** One mote, spent. The health path goes through `applyHealing` like every heal. */
+function collectMote(
+  working: Map<number, ServerEntity>,
+  owner: ServerEntity,
+  entity: ServerEntity,
+  mote: MoteState,
+  tick: number,
+): readonly ServerSimEvent[] {
+  const events: ServerSimEvent[] = [];
+  let restored = 0;
+  let wasted = 0;
+
+  if (mote.kind === MoteKind.Focus) {
+    const before = owner.resource;
+    const resource = Math.min(owner.stats.maxResource, before + mote.amount);
+    restored = resource - before;
+    wasted = mote.amount - restored;
+    working.set(owner.id, { ...owner, resource });
+  } else {
+    // Through `applyHealing`, which is the one place healing is scaled and the
+    // one place overheal goes anywhere -- so a mote inherits Wisdom's scale,
+    // Constitution's surge and shield, and Wisdom's conversion and salvage
+    // without knowing any of them exist.
+    const healed = applyHealing(owner, mote.amount, tick);
+    restored = healed.healed;
+    wasted = healed.wasted;
+    working.set(owner.id, healed.entity);
+    if (restored > 0) {
+      // Reported as a hit against itself with negative damage, the same shape
+      // every other heal in the game uses, so the client already draws it.
+      events.push({
+        kind: 'hit',
+        attackerId: owner.id,
+        targetId: owner.id,
+        damage: -restored,
+        targetHealth: healed.entity.health,
+        killed: false,
+        critical: false,
+        blocked: false,
+        weakPoint: false,
+      });
+    }
+  }
+
+  working.delete(entity.id);
+  events.push({
+    kind: 'mote',
+    entityId: entity.id,
+    ownerId: owner.id,
+    moteKind: mote.kind,
+    restored,
+    wasted,
+    collected: true,
+  });
+  events.push({ kind: 'despawned', entityId: entity.id });
+  return events;
 }
 
 /**

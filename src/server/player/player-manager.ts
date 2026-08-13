@@ -51,7 +51,12 @@ import {
 import { resolveProgression } from './progression.js';
 import { sanitizeSkills, spendSkillPoint, type AttributeTotals } from './skills.js';
 import type { Holdings } from './trade.js';
-import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
+import {
+  clampCharges,
+  clampHealthToStats,
+  clampResourceToStats,
+  computeEffectiveStats,
+} from './stats.js';
 import { applyLevelEdit, experienceForLevel, SKILL_POINTS_PER_LEVEL } from './levels.js';
 import { itemById, maxStackOf } from '../data/items.js';
 import { AdminProgressMode, type AdminProgressModeValue } from '../net/protocol.js';
@@ -212,6 +217,11 @@ export class PlayerManager {
         // A fresh login comes back with a full pool; there is nothing to gain
         // from making someone wait out a regen timer at the character select.
         resource: stats.maxResource,
+        // The flask comes back as it was left (spec 156). A save from before it
+        // existed loads full: an upgrade must not strand an existing character
+        // with no insurance, and `undefined` cannot be told from "drank them
+        // all" in a field that was not there.
+        fallbackCharges: clampCharges(record.fallbackCharges, stats),
         currentZone: this.zones.zoneIdAt(record.position.x, record.position.y),
       },
       stats,
@@ -241,6 +251,9 @@ export class PlayerManager {
       unspentAttributePoints: STARTING_ATTRIBUTE_POINTS,
       health: 0,
       resource: 0,
+      // `fallbackCharges` is deliberately absent (spec 156), so a brand-new
+      // character takes the same "load it full" path a pre-spec-154 save does
+      // and there is one rule rather than two that have to agree.
       coins: STARTING_COINS,
     };
   }
@@ -305,6 +318,9 @@ export class PlayerManager {
         ...record,
         health: clampHealthToStats(record.health, stats),
         resource: clampResourceToStats(record.resource, stats),
+        // Clamped on every recalculation like health and the pool, because
+        // Constitution decides the ceiling and a respec can lower it (spec 156).
+        fallbackCharges: clampCharges(record.fallbackCharges, stats),
       },
     };
     this.commit(next);
@@ -639,14 +655,20 @@ export class PlayerManager {
   /**
    * Mirrors the authoritative entity back into the persisted record, so a
    * disconnect saves where the player actually was rather than where they
-   * logged in. Position and health only -- everything else about an entity is
-   * derived and must not leak back into storage.
+   * logged in. Position, health and the flask only -- everything else about an
+   * entity is derived and must not leak back into storage.
+   *
+   * The flask is here for the reason health is (spec 156): it is a live count
+   * the sim spends and the rest loop refills, and a relog that handed it back
+   * full would make logging out the cheapest heal in the game. The restoration
+   * *meter* is deliberately not mirrored -- see `PersistedPlayer`.
    */
   syncFromEntity(
     playerId: string,
     position: Vec3,
     facing: number,
     health: number,
+    fallbackCharges?: number,
   ): PlayerSession | null {
     const session = this.sessions.get(playerId);
     if (!session) return null;
@@ -657,6 +679,10 @@ export class PlayerManager {
         position,
         facing,
         health,
+        // Spread rather than assigned: `exactOptionalPropertyTypes` means
+        // writing `undefined` is not the same as leaving the key off, and
+        // leaving it off is what "the caller had nothing to say" has to mean.
+        ...(fallbackCharges === undefined ? {} : { fallbackCharges }),
         currentZone: this.zones.zoneIdAt(position.x, position.y),
       },
     });

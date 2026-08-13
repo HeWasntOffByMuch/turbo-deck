@@ -162,6 +162,20 @@ export const ServerMessageType = {
    * disappear.
    */
   TradeState: 0x54,
+  /**
+   * The health economy's own two numbers (spec 156): how full the restoration
+   * meter is, and how many flask charges are left.
+   *
+   * Owner-only and change-driven, exactly like `Cooldowns` and for the same
+   * reasons. What another player has left to drink changes nothing this client
+   * draws, and the entity delta is the one message that is paid for per entity.
+   *
+   * The meter rides as a *fraction*, never as the absolute number the sim keeps.
+   * A bar only asks how full, the threshold is a tuning value that may move
+   * between builds, and a client that knew its absolute progress would be a
+   * client that could be asked to compute the next mote.
+   */
+  Restoration: 0x55,
 } as const;
 
 /** A trade's stage, as a byte (spec 132). Mirrors `TradeStage` in `trade.ts`. */
@@ -343,6 +357,15 @@ export const EntityKind = {
   Monster: 1,
   Prop: 2,
   Projectile: 3,
+  /**
+   * A restorative mote (spec 156). Mirrors `EntityKindValue.Mote`.
+   *
+   * Replicated to exactly one client -- its owner -- which is filtered in
+   * `server.ts` rather than expressed on the wire: a mote nobody else is told
+   * about cannot be stolen, cannot be raced for, and needs no ownership field
+   * for a client to check.
+   */
+  Mote: 4,
 } as const;
 
 export const EntityActivity = {

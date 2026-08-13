@@ -347,6 +347,24 @@ export interface ClientView {
    * answered. The number a button is greyed out against.
    */
   readonly resource: number;
+  /**
+   * The health economy, as the server last said it stood (spec 156).
+   *
+   * Replicated rather than modelled, unlike `resource`: the meter moves on kills
+   * this client did not resolve and the flask moves on casts it did not decide,
+   * so there is no local curve that could carry either forward honestly. The
+   * one thing predicted is a charge already spent on a request in flight, which
+   * is what stops a double press asking for a draught the server will refuse.
+   */
+  readonly restoration: RestorationView;
+}
+
+/** Two numbers and a ceiling: what the HUD draws for the health economy. */
+export interface RestorationView {
+  /** Progress toward the next mote, 0..1. */
+  readonly meter: number;
+  readonly charges: number;
+  readonly maxCharges: number;
 }
 
 type CombatListener = (result: CombatResultMessage) => void;
@@ -513,6 +531,30 @@ export class GameClient {
   private readonly casts = new Map<number, KnownCast>();
   private requestedAbilityId: string | null = null;
   private cooldowns: Readonly<Record<string, number>> = {};
+  /**
+   * The health economy as the server last reported it (spec 156).
+   *
+   * All three are replicated rather than modelled, unlike resource: the meter
+   * moves on kills the client does not resolve, and the flask moves on casts the
+   * client does not decide, so there is nothing here that a local curve could
+   * carry forward honestly between messages.
+   */
+  private restorationMeter = 0;
+  private fallbackCharges = 0;
+  private maxFallbackCharges = 0;
+  /**
+   * Flask charges spent by a request in flight, and what the count was when it
+   * went out.
+   *
+   * The same shape as `predictedCooldowns` above and for exactly the same
+   * reason: the server's answer is a round trip away, and a flask that stayed
+   * lit through the whole wind-up is a second press the server refuses. The
+   * guess is retired only once the server's own count has come down to meet it,
+   * because the message in flight when the press was sent describes the state
+   * before it.
+   */
+  private predictedCharges = 0;
+  private chargesWhenPredicted = 0;
   private estimated = 0;
   /**
    * Ability requests sent and not yet answered, oldest first (spec 067).
@@ -953,6 +995,12 @@ export class GameClient {
       // that way until the clock caught up with it.
       this.predictedCast = decision.cast;
       this.predictedCastRequestId = id;
+      // The flask's charge, spent locally so a second press inside the round
+      // trip is refused by this end rather than by the server (spec 156).
+      if (decision.cast.spentCharges > 0) {
+        this.predictedCharges = decision.cast.spentCharges;
+        this.chargesWhenPredicted = Math.max(0, this.fallbackCharges - decision.cast.spentCharges);
+      }
     }
 
 
@@ -1036,6 +1084,11 @@ export class GameClient {
       // back cheaper.
       poise: self.poise * this.stats.traits.maxPoise,
       shield: atTick < self.shieldUntilTick ? self.shield : 0,
+      // The flask's own message (spec 156), plus whatever this client has
+      // already spent and not been told about -- the same shape as the
+      // cooldowns above, and for the same reason: the press has to grey the
+      // button out now rather than in a round trip.
+      fallbackCharges: Math.max(0, this.fallbackCharges - this.predictedCharges),
     };
   }
 
@@ -1083,6 +1136,10 @@ export class GameClient {
   private withdrawLocally(): void {
     const live = this.predictedCast ?? (this.welcome ? this.casts.get(this.welcome.entityId) : null);
     if (live) this.predictedCooldowns.delete(live.abilityId);
+    // The charge comes back with everything else: a withdrawal before the attack
+    // point means the draught never happened (spec 156), and the server's own
+    // refund is the thing this is guessing at.
+    this.predictedCharges = 0;
     this.predictedCast = null;
     this.predictedCastRequestId = -1;
     if (this.welcome) this.casts.delete(this.welcome.entityId);
@@ -1101,6 +1158,10 @@ export class GameClient {
         // refund", which is the truth.
         spentResource: 0,
         spentHealth: 0,
+        // And no flask charge either, for the same reason (spec 156): the
+        // refund is the server's, and the `Restoration` message tells this
+        // client what it actually has left.
+        spentCharges: 0,
         startedTick: confirmed.startTick,
         windupStartTick: confirmed.startTick,
         releaseTick: confirmed.releaseTick,
@@ -1360,6 +1421,11 @@ export class GameClient {
       selfRoot: this.selfRoot(),
       awaitingCast: this.outstandingCasts.length > 0,
       resource: this.modelledResource(),
+      restoration: {
+        meter: this.restorationMeter,
+        charges: Math.max(0, this.fallbackCharges - this.predictedCharges),
+        maxCharges: this.maxFallbackCharges,
+      },
     };
   }
 
@@ -1743,6 +1809,9 @@ export class GameClient {
           if (refused && refused.id === this.predictedCastRequestId) {
             this.predictedCast = null;
             this.predictedCastRequestId = -1;
+            // And the charge, for the same reason the cooldown goes back: a
+            // refused draught was never drunk (spec 156).
+            this.predictedCharges = 0;
           }
         }
         for (const listener of this.castRejectedListeners) {
@@ -1771,6 +1840,20 @@ export class GameClient {
           if (predicted !== undefined && entry.readyAtTick >= predicted.readyAtTick) {
             this.predictedCooldowns.delete(entry.abilityId);
           }
+        }
+        break;
+
+      case ServerMessageType.Restoration:
+        this.restorationMeter = message.meter;
+        this.fallbackCharges = message.charges;
+        this.maxFallbackCharges = message.maxCharges;
+        // The guess is retired the moment the server's own count has come down
+        // to meet it -- the same rule the cooldown guesses above follow, and for
+        // the same reason: the message in flight when the press was sent
+        // describes the state *before* it, and dropping the guess on any
+        // restoration message would grey the flask back in mid-wind-up.
+        if (this.predictedCharges > 0 && message.charges <= this.chargesWhenPredicted) {
+          this.predictedCharges = 0;
         }
         break;
 

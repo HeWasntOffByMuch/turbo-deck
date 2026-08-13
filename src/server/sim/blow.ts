@@ -34,10 +34,12 @@
 
 import type { Rng } from '../../shared/prng.js';
 import { SERVER_TICK_RATE } from '../config.js';
+import { RESTORATION } from '../data/restoration.js';
 import { SCALING } from '../data/scaling.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { applyArmor } from '../player/stats.js';
 import { applyPoiseDamage, isResolute, poiseDamageOf } from './poise.js';
+import { markAssist } from './restoration.js';
 import {
   adaptationAgainst,
   adaptedKey,
@@ -49,7 +51,13 @@ import {
   StatusId,
   type Statuses,
 } from './statuses.js';
-import { ActivityValue, CastEndReason, type ServerEntity, type ServerSimEvent } from './types.js';
+import {
+  ActivityValue,
+  CastEndReason,
+  EntityKindValue,
+  type ServerEntity,
+  type ServerSimEvent,
+} from './types.js';
 
 /** How much armour Sundered removes, and for how long. */
 export const SUNDER_ARMOR = 0.1;
@@ -159,6 +167,12 @@ export function resolveBlow(
     damage *= 1 + A.executeBonus;
   }
 
+  // Captured before the mitigation below, because the execution bonus in the
+  // health economy asks whether the body was staggered *when it was hit*, and
+  // the poise pass a few lines down is free to stagger it afterwards. Reading
+  // `activity` at the end would count a blow that caused the stagger as one that
+  // exploited it.
+  const wasStaggered = staggered;
   const raw = damage;
 
   // --- 4: mitigate --------------------------------------------------------
@@ -187,6 +201,7 @@ export function resolveBlow(
   const toHealth = damage - absorbed;
   const health = Math.max(0, target.health - toHealth);
   const killed = health <= 0;
+  const overkill = killed && toHealth >= targetIn.health * (1 + SCALING.combat.overkillFraction);
 
   target = {
     ...target,
@@ -255,7 +270,26 @@ export function resolveBlow(
     target = { ...target, cast: null };
   }
 
-  if (killed) events.push({ kind: 'died', entityId: target.id, killerId: attacker.id });
+  if (killed) {
+    // What was good about this kill, for the health economy to price (spec 156).
+    // Nothing here is measured for this purpose: all five are facts the blow
+    // above already had to establish. `untouched` is the one that reads off the
+    // *attacker*, and it is the mark `markTarget` leaves on everyone it hits --
+    // so "I did not get hit doing that" is answered by the same status Perfect
+    // Exit reads, rather than by a second window that could drift from it.
+    events.push({
+      kind: 'died',
+      entityId: target.id,
+      killerId: attacker.id,
+      qualities: {
+        weakPoint,
+        overkill,
+        execution: wasStaggered,
+        untouched: !hasStatus(attacker.statuses, StatusId.RecentlyHit, tick),
+        abilityKill: !isBasicAttack,
+      },
+    });
+  }
 
   // --- 7: aftermath -------------------------------------------------------
   target = markTarget(target, attacker, ability, tick, weakPoint);
@@ -263,7 +297,7 @@ export function resolveBlow(
     weakPoint,
     killed,
     damage,
-    overkill: killed && toHealth >= targetIn.health * (1 + SCALING.combat.overkillFraction),
+    overkill,
   });
 
   return { attacker, target, events, rng };
@@ -322,6 +356,22 @@ function markTarget(
     });
   }
   statuses = applyStatus(statuses, StatusId.RecentlyHit, tick, RECENTLY_HIT_TICKS);
+  // And the wider "you are in a fight" window, which only resting reads
+  // (spec 156). Both, because they answer different questions at different
+  // widths -- see `StatusId.InCombat`.
+  statuses = applyStatus(statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
+
+  // "This player hit me", left on the victim for its death to read (spec 156).
+  // The whole assist system is this line plus a lookup: no threat table, no
+  // damage ledger, nothing to keep in step with the damage that actually
+  // happened -- the mark a blow was always going to leave is the mark the kill
+  // reads, and it expires on its own like every other status here.
+  //
+  // Players only. A monster that helped kill another monster has no meter to
+  // credit, and marking it would be an entry nothing ever looks up.
+  if (attacker.kind === EntityKindValue.Player) {
+    statuses = markAssist(statuses, attacker.id, tick);
+  }
 
   if (weakPoint && A.exposeTicks > 0 && A.exposedDamagePct > 0) {
     statuses = applyStatus(statuses, StatusId.Exposed, tick, A.exposeTicks, {
@@ -357,7 +407,11 @@ function rewardAttacker(
   let next = attacker;
   let resource = next.resource;
   let health = next.health;
-  let statuses = next.statuses;
+  // Landing a blow puts *you* in a fight too (spec 156), and it is stamped here
+  // rather than in `markTarget` because that one skips a body it just killed --
+  // and a player standing over a corpse in the safe zone has very much been
+  // fighting.
+  let statuses = applyStatus(next.statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
 
   if (outcome.weakPoint) {
     resource += A.weakPointResource;

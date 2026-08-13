@@ -400,6 +400,10 @@ describe('persistence never carries a derived stat', () => {
         'equipment',
         'experience',
         'facing',
+        // A live count like health, not a derived stat (spec 156): the flask is
+        // insurance a character is carrying, and a relog that handed it back
+        // full would make logging out the cheapest heal in the game.
+        'fallbackCharges',
         'health',
         'id',
         // Ids and counts, like `equipment` -- an item's numbers stay in the

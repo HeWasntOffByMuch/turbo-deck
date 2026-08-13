@@ -121,6 +121,23 @@ export interface AbilityDefinition {
   /** Negative damage heals; kept explicit so the sign is never a surprise. */
   readonly healing?: number;
   /**
+   * Healing as a fraction of the caster's own maximum health (spec 156).
+   *
+   * Added to {@link healing} rather than replacing it, so a row may be flat, or
+   * proportional, or both. A flask has to be proportional: a flat 70 is a third
+   * of a starting character and a tenth of a Constitution build, and the one
+   * thing insurance must not do is stop being insurance as you grow.
+   */
+  readonly healingFraction?: number;
+  /**
+   * Fallback flask charges this costs (spec 156). Absent is free.
+   *
+   * A number rather than a flag so a second, larger draught is a row here
+   * instead of a special case in `startCast`. Charges are spent at the commit
+   * and refunded by a withdrawal, exactly like resource.
+   */
+  readonly chargeCost?: number;
+  /**
    * The weapon swing (spec 070). Three things follow from this flag and nothing
    * else in the table does any of them (spec 144): its interval comes from the
    * caster's own Base Attack Time rather than from {@link cooldownTicks}, that
@@ -277,6 +294,26 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description: 'Heals the caster. Long enough to be punished for using it badly.',
   },
   {
+    id: 'self.hearthdraught',
+    name: 'Hearthdraught',
+    kind: 'self',
+    targeting: 'self',
+    // Long enough to be punished for reaching for it in the wrong moment, which
+    // is what stops insurance from being a rotation. Shorter than Mend, because
+    // Mend is a spell you built for and this is the thing everybody carries.
+    windupTicks: seconds(0.9),
+    cooldownTicks: seconds(12),
+    // Free of resource on purpose: a fallback that cost mana would be no
+    // fallback at all for the build most likely to be out of it.
+    cost: 0,
+    chargeCost: 1,
+    range: 0,
+    damage: 0,
+    healingFraction: 0.35,
+    description:
+      'A draught from the hearth flask. Limited charges, refilled by resting in a safe zone.',
+  },
+  {
     id: 'channel.drain',
     name: 'Drain',
     kind: 'channel',
@@ -319,6 +356,7 @@ export const STARTING_ABILITIES: readonly string[] = [
   'bolt.seek',
   'ground.quake',
   'self.mend',
+  'self.hearthdraught',
   'channel.drain',
 ];
 

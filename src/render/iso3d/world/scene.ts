@@ -1524,7 +1524,7 @@ export class WorldScene {
     const existing = this.bodies.get(id);
     if (existing) return existing;
 
-    const { rig, typeId, radius, look } = appearance;
+    const { rig, typeId, radius, look, tint, detail, outline } = appearance;
     let body: Body;
 
     // Tried before anything else, and for the player as well as a monster
@@ -1596,7 +1596,7 @@ export class WorldScene {
     } else if (rig === 'projectile') {
       // The silhouette comes from the ability that threw it (spec 087), so a
       // thrown weapon reads as one in the air rather than as a bead of light.
-      const shot = new ShotRig(look ?? 'orb', radius);
+      const shot = new ShotRig(look ?? 'orb', radius, { tint, detail, outline });
       // A shot never shows a bar, so its headroom is the shared default rather
       // than anything measured off the mesh.
       body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM };
