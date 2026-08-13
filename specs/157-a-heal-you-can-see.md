@@ -86,6 +86,23 @@ quietly, it is a different event that happens to travel on the blow's message.
 `view.ts` drops an `Effect` message whose id is in `REDUNDANT_SERVER_EFFECTS`
 rather than falling through to the debug disc.
 
+## What the contact sheet changed
+
+`scripts/preview-heal.ts` photographs the effect at five moments, twice: framed
+to itself, and again at the density the game actually draws it (one world unit
+to 760/900 of a pixel, the same zoom `auras.test.ts` judges ring radii at). The
+second row is the one that decides anything, and it moved three numbers:
+
+- **The plusses burst, and burst is wrong.** Five symbols born on one tick in
+  one small disc overlap into a single green mass with no cross anywhere in it.
+  They are staggered over a third of a second instead, with a wide spread of
+  speeds, so they climb past each other as separate symbols.
+- **The streaks were hairlines.** At 3.2 units a streak is under three pixels
+  and the dither eats it; at 4.2 it is a solid bar, which is what makes the rise
+  read as a rise rather than as a shimmer under the plusses.
+- **The plus fades in too slowly.** A cutout ramping up over a tenth of its life
+  spends three ticks as a speckle of half a symbol. In fast, out slow.
+
 ## Invariants tested
 
 - A heal (negative damage) plays `heal_restore` and **never** `hit_blood`,
