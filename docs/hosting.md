@@ -143,6 +143,67 @@ Also worth knowing: **none of this repo is Hetzner-specific.** The image, the
 compose file, the Caddy config and the deploy workflow want an Ubuntu box with
 Docker and an SSH key. Only this document names a vendor.
 
+### Self-hosting on a machine you already own
+
+Which the deploy pipeline supports without a single change — `DEPLOY_HOST` is
+an address, and it does not care whose. Worth doing for a playtest; worth
+understanding before it becomes the permanent answer.
+
+**Bandwidth is a non-issue.** At 120 kbit/s per player, a hundred players is
+~12 Mbit/s upstream. A gigabit line is three orders of magnitude past what this
+game can produce, and even a modest upstream would do. Check that the line is
+symmetric, and then stop thinking about it.
+
+**Compute is the actual argument for it.** CPU is this server's capacity
+ceiling and an old desktop core at 3.5 GHz beats a shared vCPU that is
+oversubscribed by design. A ten-year-old i5 or i7 plausibly serves two or three
+times what the €6 boxes above do.
+
+**"Just power cost" is usually not cheaper.** Polish all-in electricity is
+~1.04-1.32 PLN/kWh in 2026 (energy plus distribution, the second being over
+half the bill). Continuous draw, at ~1.15 PLN and ~4.25 PLN/EUR:
+
+| Machine | Idle draw | Per month |
+|---|---|---|
+| Mini-PC, NUC, laptop | ~15 W | ~12 PLN / **€3** |
+| Modern-ish small desktop | ~35 W | ~29 PLN / **€7** |
+| Typical old desktop | ~60 W | ~50 PLN / **€12** |
+| Old desktop with a dedicated GPU | ~120 W | ~99 PLN / **€23** |
+
+The server is close to idle-plus-a-few-watts under real load — 16 players cost
+14% of one core — so those idle figures are the figures. A typical tower costs
+**more in electricity than the VPS costs in total**, and only a low-power box,
+or one already running 24/7 for other reasons, is genuinely cheaper. Measure
+yours with a plug meter rather than taking a row from this table.
+
+**Three things to verify before it can work at all:**
+
+- **A public IPv4 that reaches you.** Behind CGNAT, no port forward exists and
+  the whole approach is dead without a tunnel. A commercial line usually
+  includes a static address; confirm it.
+- **Inbound 443 *and* 80.** Caddy proves the domain over ACME on port 80 or
+  443. If the ISP blocks 80, switch it to a DNS-01 challenge; if the address is
+  dynamic, add a DDNS updater and expect the occasional certificate scramble.
+- **Somewhere isolated to put it.** This box accepts connections from the
+  internet and sits on your LAN. A separate VLAN or the router's DMZ, plus the
+  `ufw` rules in the runbook, is the difference between exposing a game server
+  and exposing a network.
+
+**What you are actually buying from a VPS**, given the above, is not compute:
+
+- **Blast radius.** A game server's address is a target, and a line under
+  attack is your internet under attack — the office, not just the game. On a
+  VPS the worst case is a box you can rebuild.
+- **Uptime that is not your problem.** Power cuts, ISP maintenance, a router
+  reboot, somebody unplugging it. Fine for a session you are present for; a
+  different thing when players expect it to be there.
+
+So: **self-host it now**, point `DEPLOY_HOST` at it, and get the game in front
+of people this week. Move it to a rented box at the point where strangers are
+connecting or where it needs to be up while you sleep — and note that running
+both is normal, since the old machine makes an excellent staging server once
+the public one exists.
+
 **Latency is not what picks the host either.** Falkenstein is ~25ms from Poland
 against ~5ms for a Warsaw datacenter, and that 20ms is worth less than it sounds:
 deltas go out every 50ms (`BROADCAST_EVERY_N_TICKS` = 3 at 60Hz), and
