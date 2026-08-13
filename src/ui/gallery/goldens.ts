@@ -227,7 +227,7 @@ export interface PlayGoldenCase {
  *
  * The frames worth a picture are the ones where a *state* is being drawn rather
  * than a value: a cast bar that exists, a cooldown wedge, a slot that cannot be
- * paid for, and a branch that has been locked out.
+ * paid for, and a skill whose attribute gate is not met.
  */
 export const PLAY_GOLDEN_CASES: readonly PlayGoldenCase[] = [
   {
@@ -246,9 +246,9 @@ export const PLAY_GOLDEN_CASES: readonly PlayGoldenCase[] = [
     covers: 'a drained pool: what cannot be afforded reads differently from what is on cooldown',
   },
   {
-    name: 'play-locked',
-    options: { tab: 'arcane', spend: ['might.toughness'] },
-    covers: 'a branch locked out by a commitment, said in words rather than by dim buttons',
+    name: 'play-gated',
+    options: { tab: 'skills', spend: ['str.crushingBlows'] },
+    covers: 'a skill whose attribute gate is not met, greyed out beside one that is',
   },
   {
     name: 'play-small',

@@ -1,5 +1,5 @@
 /**
- * The admin console, driven in a real browser (spec 153):
+ * The admin console, driven in a real browser (spec 154):
  * `npx tsx scripts/probe-admin-console.ts`
  *
  * Everything the feature *decides* is asserted in Node -- the arithmetic in
@@ -32,7 +32,9 @@ interface Row {
   readonly playerId: string;
   readonly level: number;
   readonly experience: number;
+  /** The skill half of `sp / ap` -- levelling grants two budgets (spec 147). */
   readonly skillPoints: number;
+  readonly attributePoints: number;
   readonly health: number;
   readonly dead: boolean;
   readonly selected: boolean;
@@ -103,12 +105,14 @@ async function readRows(page: Page): Promise<Row[]> {
     rows.map((row) => {
       const cells = Array.from(row.querySelectorAll('td'), (cell) => cell.textContent ?? '');
       const fraction = (cells[2] ?? '').split('/');
+      const points = (cells[3] ?? '').split('/');
       const health = (cells[4] ?? '').split('/');
       return {
         playerId: row.querySelector('.id')?.textContent ?? '',
         level: Number(cells[1]),
         experience: Number(fraction[0]),
-        skillPoints: Number(cells[3]),
+        skillPoints: Number(points[0]),
+        attributePoints: Number(points[1]),
         health: Number(health[0]),
         dead: row.className.includes('dead'),
         selected: row.className.includes('selected'),
@@ -237,6 +241,12 @@ async function main(): Promise<void> {
       `four levels grant four skill points (${before.skillPoints} -> ${levelled.skillPoints})`,
       levelled.skillPoints === before.skillPoints + 4,
     );
+    // Both budgets, because spec 147 gave levelling a second one and a console
+    // that showed only the first would make half of what the button did invisible.
+    check(
+      `four levels grant attribute points too (${before.attributePoints} -> ${levelled.attributePoints})`,
+      levelled.attributePoints > before.attributePoints,
+    );
 
     // --- give experience ---
     await page.fill('#xpAmount', '17');
@@ -281,6 +291,13 @@ async function main(): Promise<void> {
     const reset = await untilRow(page, target, (row) => row.level === 1, 'level back to 1');
     check('reset level puts the character at level 1', reset.level === 1);
     check('reset level re-derives the skill points', reset.skillPoints === 1, `saw ${reset.skillPoints}`);
+    // Back to exactly what a level-1 character had, which the bot was when this
+    // started -- rather than an arithmetic restatement of pointsPerLevel here.
+    check(
+      'reset level re-derives the attribute points',
+      reset.attributePoints === before.attributePoints,
+      `saw ${reset.attributePoints}, level 1 has ${before.attributePoints}`,
+    );
 
     // Photographed here rather than at the end: this is the page an operator
     // actually works in -- a live table, a selected row and a populated card.

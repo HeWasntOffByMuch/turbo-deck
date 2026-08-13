@@ -10,10 +10,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { abilityById, ALL_ABILITIES } from '../../../server/data/abilities.js';
-import { ALL_SKILLS } from '../../../server/data/skills.js';
+import { ATTRIBUTES } from '../../../server/data/attributes.js';
+import { ALL_SKILLS, skillsFor } from '../../../server/data/skills.js';
+import { ALL_SYNERGIES } from '../../../server/data/synergies.js';
 import { validateSkillSpend } from '../../../server/player/skills.js';
 import { experienceForLevel } from '../../../server/player/player-manager.js';
-import type { EffectiveStats, PersistedPlayer, SkillAllocation } from '../../../server/state/types.js';
+import type { BaseStats, EffectiveStats, SkillAllocation } from '../../../server/state/types.js';
 import { bakeAtlas } from '../../../ui/render/atlas.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import {
@@ -22,9 +24,12 @@ import {
   characterViewOf,
   hudViewOf,
   UNKNOWN_ABILITY_ICON,
+  type CharacterSource,
 } from './character-model.js';
 import { HOTBAR } from './hud.js';
 import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
+import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
+import { startingBaseStats } from '../../../server/player/attributes.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 138,
@@ -40,10 +45,28 @@ const STATS: EffectiveStats = {
   maxResource: 40,
   resourceRegen: 0.5,
   basicAttackId: 'melee.slash',
+  traits: NEUTRAL_TRAITS,
 };
 
-function source(skills: readonly SkillAllocation[], unspent = 3, level = 6) {
-  return { name: 'Kestrel', level, experience: 40, unspentSkillPoints: unspent, skills, stats: STATS };
+function source(
+  skills: readonly SkillAllocation[],
+  unspent = 3,
+  level = 6,
+  overrides: Partial<CharacterSource> = {},
+): CharacterSource {
+  return {
+    name: 'Kestrel',
+    level,
+    experience: 40,
+    unspentSkillPoints: unspent,
+    skills,
+    stats: STATS,
+    baseStats: startingBaseStats(),
+    attributes: startingBaseStats(),
+    unspentAttributePoints: 4,
+    coins: 100,
+    ...overrides,
+  };
 }
 
 describe('the HUD view', () => {
@@ -147,31 +170,31 @@ describe('the character view', () => {
     const cases: readonly { skills: SkillAllocation[]; unspent: number }[] = [
       { skills: [], unspent: 0 },
       { skills: [], unspent: 1 },
-      { skills: [{ skillId: 'might.toughness', level: 1 }], unspent: 4 },
-      { skills: [{ skillId: 'might.toughness', level: 5 }], unspent: 4 },
-      { skills: [{ skillId: 'arcane.focus', level: 2 }], unspent: 9 },
-      // An allocation naming a skill the table has dropped: the sheet still has
-      // to answer for every *other* skill rather than throwing on the way past.
-      { skills: [{ skillId: 'arcane.spark', level: 2 }], unspent: 9 },
+      { skills: [{ skillId: 'str.crushingBlows', level: 1 }], unspent: 4 },
+      { skills: [{ skillId: 'str.crushingBlows', level: 3 }], unspent: 4 },
+      { skills: [{ skillId: 'agi.quickRecovery', level: 2 }], unspent: 9 },
+      // An allocation naming a skill the table has dropped -- which is exactly
+      // what every save written before spec 147 holds, since `might.toughness`
+      // and its branch are gone. The sheet still has to answer for every *other*
+      // skill rather than throwing on the way past.
+      { skills: [{ skillId: 'might.toughness', level: 2 }], unspent: 9 },
       {
-        skills: ALL_SKILLS.filter((skill) => skill.branch === 'finesse' && skill.tier === 1).map(
-          (skill) => ({ skillId: skill.id, level: 1 }),
-        ),
+        skills: skillsFor('wisdom')
+          .filter((skill) => skill.tier === 1)
+          .map((skill) => ({ skillId: skill.id, level: 1 })),
         unspent: 6,
       },
     ];
 
     for (const item of cases) {
-      const view = characterViewOf(source(item.skills, item.unspent));
-      const stand = {
-        skills: item.skills,
-        level: 6,
-        unspentSkillPoints: item.unspent,
-      } as unknown as PersistedPlayer;
+      const built = source(item.skills, item.unspent);
+      const view = characterViewOf(built);
+      const stand = { skills: item.skills, unspentSkillPoints: item.unspent };
+      const totals = built.attributes as unknown as Record<string, number>;
 
       for (const branch of view.branches) {
         for (const skill of branch.skills) {
-          const truth = validateSkillSpend(stand, skill.id);
+          const truth = validateSkillSpend(stand, totals as never, skill.id);
           expect(skill.canSpend, `${skill.id} with ${JSON.stringify(item)}`).toBe(truth.ok);
           if (!truth.ok) expect(skill.blockedBecause).toBe(truth.detail);
         }
@@ -179,17 +202,69 @@ describe('the character view', () => {
     }
   });
 
-  it('marks a branch locked out by a commitment, and refuses all of it', () => {
-    // Might locks arcane, symmetrically (spec 056's table).
-    const view = characterViewOf(source([{ skillId: 'might.toughness', level: 1 }], 5));
-    const arcane = view.branches.find((branch) => branch.id === 'arcane');
-    expect(arcane?.locked).toBe(true);
-    for (const skill of arcane?.skills ?? []) expect(skill.canSpend).toBe(false);
+  it('has one column per attribute and no locks anywhere in it', () => {
+    // Spec 056's branch tree locked two of its three columns out of each other.
+    // This one has six columns and nothing forecloses anything: what gates a
+    // skill is the attribute you built, which you can always build more of.
+    const view = characterViewOf(source([]));
+    expect(view.branches).toHaveLength(6);
+    expect(view.branches.map((branch) => branch.id)).toEqual(
+      ATTRIBUTES.map((attribute) => `attr:${attribute.key}`),
+    );
+    for (const branch of view.branches) {
+      expect(branch.skills).toHaveLength(6);
+      expect('locked' in branch).toBe(false);
+    }
   });
 
-  it('counts what is in a branch, so a tier gate is legible', () => {
-    const view = characterViewOf(source([{ skillId: 'might.toughness', level: 3 }], 1));
-    expect(view.branches.find((branch) => branch.id === 'might')?.pointsSpent).toBe(3);
+  it('never names a two-attribute pair, anywhere in the view', () => {
+    // The design rule, checked against the whole serialised view rather than
+    // against the field that used to hold the list -- so re-introducing it under
+    // any name fails here (spec 147).
+    const built: BaseStats = {
+      strength: 30, agility: 30, intelligence: 30,
+      constitution: 30, perception: 30, wisdom: 30,
+    };
+    const view = characterViewOf(source([], 4, 6, { attributes: built, baseStats: built }));
+    const drawn = JSON.stringify(view);
+    for (const synergy of ALL_SYNERGIES) {
+      expect(drawn.includes(synergy.name), `the view names "${synergy.name}"`).toBe(false);
+    }
+  });
+
+  it('describes every attribute whether or not there is a point to spend', () => {
+    // The tooltip used to be the *refusal* when a row could not be allocated to,
+    // so a character between two level-ups -- which is nearly always -- read "no
+    // unspent attribute points" on all six rows. A budget is not an explanation,
+    // so the description is unconditional and comes off the table's own `owns`.
+    for (const points of [0, 3]) {
+      const view = characterViewOf(source([], 4, 6, { unspentAttributePoints: points }));
+      expect(view.unspentAttributePoints).toBe(points);
+      for (const [index, row] of view.attributes.entries()) {
+        const definition = ATTRIBUTES[index];
+        if (!definition) throw new Error(`no attribute ${index}`);
+        expect(row.description, row.key).toContain(definition.verb);
+        for (const owned of definition.owns) {
+          expect(row.description.toLowerCase(), row.key).toContain(owned.toLowerCase());
+        }
+      }
+    }
+  });
+
+  it('gives every stat row a hint, and says so where nothing implements it', () => {
+    const view = characterViewOf(source([]));
+    for (const row of view.stats) {
+      expect(row.hint.length, row.label).toBeGreaterThan(10);
+    }
+    // Attack speed is a socket with nothing plugged into it (specs 091, 144),
+    // and the sheet says that rather than describing a stat that never moves.
+    const speed = view.stats.find((row) => row.label === 'Attack speed');
+    expect(speed?.hint).toContain('Not implemented');
+  });
+
+  it('counts what is in a column, so the investment is legible', () => {
+    const view = characterViewOf(source([{ skillId: 'str.crushingBlows', level: 3 }], 1));
+    expect(view.branches.find((branch) => branch.id === 'attr:strength')?.pointsSpent).toBe(3);
   });
 
   it('says how far the next level is, from the same curve the server levels on', () => {

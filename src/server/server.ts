@@ -79,6 +79,8 @@ import {
   SpawnerStateValue,
   type AdminProgressModeValue,
 } from './net/protocol.js';
+import { attributeByOrdinal } from './data/attributes.js';
+import { resolveProgression } from './player/progression.js';
 import { DEFAULT_SPAWN, experienceForLevel, PlayerManager } from './player/player-manager.js';
 import {
   inTradeRange,
@@ -671,6 +673,31 @@ export class GameServer implements AdminHost {
         break;
       }
 
+
+      // The three progression writes (spec 147). Each is the same three lines
+      // for the same reason: the client says which button was pressed, the
+      // manager decides, and `reportAction` sends the refusal or the fresh
+      // `Stats`. There is no path here that reads a number off the message.
+      case ClientMessageType.AllocateAttribute: {
+        if (connection.playerId === null) return;
+        const attribute = attributeByOrdinal(message.attribute);
+        const result = attribute
+          ? await this.players.allocateAttribute(connection.playerId, attribute.key)
+          : { ok: false as const, reason: `no such attribute: ${message.attribute}` };
+        this.reportAction(connection, result.ok ? null : result.reason);
+        break;
+      }
+
+      case ClientMessageType.RespecAttributes: {
+        if (connection.playerId === null) return;
+        const result = await this.players.respec(connection.playerId);
+        this.reportAction(connection, result.ok ? null : result.reason);
+        // The purse changed, so the bag view has to be resent -- coins ride on
+        // the inventory message (spec 129).
+        if (result.ok) this.sendInventory(connection, 0);
+        break;
+      }
+
       case ClientMessageType.SpendSkillPoint: {
         if (connection.playerId === null) return;
         const result = await this.players.spendSkillPoint(connection.playerId, message.skillId);
@@ -812,6 +839,17 @@ export class GameServer implements AdminHost {
         this.players.attachEntity(playerId, waiting.entityId);
         this.chunks.place(waiting.entityId, body.position.x, body.position.y, true);
         this.welcome(connection, playerId, waiting.entityId);
+        // Everything a fresh login is pushed, because *the client resuming is
+        // not the client that left*. What survives a resume is the body, on the
+        // server; the page is new, its `GameClient` was constructed a moment
+        // ago and holds nothing. This branch used to send `Welcome` and return,
+        // so a reconnected player got no MapInfo -- no chunk list, so no ground
+        // -- no Stats, so `maxHealth` and `maxPoise` read 0 and the character
+        // sheet had nothing to draw, and no Inventory, so an empty bag. Every
+        // reload after the first one looked like a broken world.
+        this.sendMapInfo(connection);
+        this.sendStats(connection);
+        this.sendInventory(connection, 0);
         return;
       }
       this.lingering.delete(playerId);
@@ -1060,6 +1098,13 @@ export class GameServer implements AdminHost {
           ...entity,
           stats: session.stats,
           health: Math.min(entity.health, session.stats.maxHealth),
+          // Poise is a live resource like health (spec 147), so it is held
+          // under the *fresh* ceiling for the same reason: a respec that
+          // shrinks the pool must not leave a body carrying a guard bigger than
+          // it now has. The sim's own reads clamp too, so this is belt and
+          // braces -- but a body that is briefly over its own maximum is the
+          // sort of thing that shows up as a bar past the end of its track.
+          poise: Math.min(entity.poise, session.stats.traits.maxPoise),
           level: session.record.level,
         });
       }
@@ -1121,9 +1166,15 @@ export class GameServer implements AdminHost {
       level: session.record.level,
       experience: session.record.experience,
       unspentSkillPoints: session.record.unspentSkillPoints,
-      // What has actually been spent (spec 128), not just what is left to
+      // What has actually been spent (specs 128, 147), not just what is left to
       // spend: a client told only the remainder cannot draw a tree.
       skills: session.record.skills,
+      // Allocated and total, both (spec 147). The sheet spends against the
+      // first and reads thresholds off the second, and a client sent only one
+      // of them has to guess at the other.
+      baseStats: session.record.baseStats,
+      attributes: resolveProgression(session.record).attributes,
+      unspentAttributePoints: session.record.unspentAttributePoints,
       stats: session.stats,
     });
   }
@@ -1839,6 +1890,7 @@ export class GameServer implements AdminHost {
         experience: session.record.experience,
         experienceToNextLevel: experienceForLevel(session.record.level + 1),
         unspentSkillPoints: session.record.unspentSkillPoints,
+        unspentAttributePoints: session.record.unspentAttributePoints,
         playerId: session.playerId,
         displayName: session.displayName,
         entityId: session.entityId,
@@ -1878,7 +1930,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * A level or experience edit (spec 153), pushed to the player it happened to.
+   * A level or experience edit (spec 154), pushed to the player it happened to.
    *
    * The push is the half that would be easy to leave out and impossible to
    * notice from the console: the record and the derived stats are correct
@@ -1929,7 +1981,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Kills a player outright (spec 153).
+   * Kills a player outright (spec 154).
    *
    * Health to zero and nothing else invented: the sim's own sweep marks a
    * zero-health player `Dead` and leaves the body in the world, and

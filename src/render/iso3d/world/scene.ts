@@ -113,6 +113,17 @@ import { drawnPixels, mixerCadence, shouldApply } from './unit-lod.js';
 import { DEFAULT_CANONICAL_HEIGHT } from '../../../units/canonical-height.js';
 import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
+import {
+  SampledGround,
+  aimTemplate,
+  discTemplate,
+  projectDecal,
+  ringTemplate,
+  vertexCount,
+  type DecalPlacement,
+  type DecalTemplate,
+  type HeightAt,
+} from './ground-decal.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 import type { WorldAnchor } from './damage-popup.js';
@@ -135,6 +146,25 @@ const TARGET_RING_COLOR = 0xff6a5a;
  * click *would* do and what is already being hit must never be the same mark.
  */
 const AIM_COLOR = 0x7fd4ff;
+/**
+ * How far above the ground an indicator floats (spec 153).
+ *
+ * Small, and it can afford to be, because a decal now follows the heightfield
+ * rather than hovering at one sampled height: what the lift has to clear is the
+ * error between two samples eleven units apart, not the whole fall of a
+ * hillside. The order is the drawing order -- the range ring under the shape,
+ * the shape under the telegraph -- since two of them are often over the same
+ * ground and a tie is decided by whatever three drew last.
+ */
+const RANGE_RING_LIFT = 1.1;
+const AIM_SHAPE_LIFT = 1.3;
+const TELEGRAPH_LIFT = 1.5;
+/**
+ * How thick the range ring is, as a fraction of the range: the same 1.5% the
+ * unit `RingGeometry` scaled to the range gave it, kept so that conforming to
+ * the ground is the only thing this change did to the picture.
+ */
+const RANGE_RING_THICKNESS = 0.015;
 
 /**
  * Where the middle of a body is, as a fraction of the height its health bar
@@ -392,7 +422,7 @@ export class WorldScene {
    * has left the scene.
    */
   private readonly exemptBodies: THREE.Object3D[] = [];
-  private readonly telegraphs = new Map<number, THREE.Mesh>();
+  private readonly telegraphs = new Map<number, GroundDecal>();
   /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
   private readonly hoverTargets: HoverTarget[] = [];
   /**
@@ -413,16 +443,23 @@ export class WorldScene {
    * The aim indicator (spec 080): the shape of the blow, the range ring that
    * says the confirm will be a walk, and the ring under a named body.
    *
-   * Four meshes built once and re-pointed, rather than geometry rebuilt per
-   * frame -- the cursor moves every frame, and a `CircleGeometry` allocated at
-   * 60Hz for as long as somebody is deciding is a garbage-collection pause
-   * during the one moment the player is looking closely.
+   * The first two are ground decals since spec 153 -- their vertices are placed
+   * on the heightfield rather than the mesh being moved to one sampled height,
+   * which is the only way a shape a hundred units across can be right anywhere
+   * but its own centre. The third is not: it is body-sized and sits under
+   * something standing on one point.
    */
-  private readonly aimShapeMesh: THREE.Mesh;
-  private readonly aimRangeRing: THREE.Mesh;
+  private readonly aimShapeDecal: GroundDecal;
+  private readonly aimRangeDecal: GroundDecal;
   private readonly aimUnitRing: THREE.Mesh;
-  /** The shape currently baked into `aimShapeMesh`, so it is rebuilt only on a change. */
-  private aimShapeKey = '';
+  /**
+   * The ground, as the decals ask about it: memoized, because they ask about
+   * thousands of points a frame and `heightAt` is a five-microsecond question
+   * (see {@link SampledGround}). Invalidated whenever the terrain changes under
+   * it -- a height sampled over ground that had not streamed in yet is a height
+   * that has to be thrown away.
+   */
+  private readonly sampledGround = new SampledGround((x, z) => this.ground(x, z));
   private readonly effects: LiveEffect[] = [];
   private readonly anchors: ScreenAnchor[] = [];
 
@@ -567,35 +604,14 @@ export class WorldScene {
     this.targetRing.visible = false;
     this.scene.add(this.targetRing);
 
-    // The aim (spec 080). Flat, unlit and never depth-writing, exactly like the
-    // ground telegraph and the blast effects it sits among.
-    this.aimShapeMesh = new THREE.Mesh(
-      new THREE.CircleGeometry(1, 28),
-      new THREE.MeshBasicMaterial({
-        color: AIM_COLOR,
-        transparent: true,
-        opacity: 0.28,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    this.aimShapeMesh.rotation.x = -Math.PI / 2;
-    this.aimShapeMesh.visible = false;
-    this.scene.add(this.aimShapeMesh);
+    // The aim (spec 080). Unlit and never depth-writing, exactly like the ground
+    // telegraph and the blast effects it sits among -- and since spec 153 lying
+    // on the ground rather than over it.
+    this.aimShapeDecal = new GroundDecal(decalMaterial(AIM_COLOR, 0.28));
+    this.scene.add(this.aimShapeDecal.mesh);
 
-    this.aimRangeRing = new THREE.Mesh(
-      new THREE.RingGeometry(0.985, 1, 48),
-      new THREE.MeshBasicMaterial({
-        color: AIM_COLOR,
-        transparent: true,
-        opacity: 0.35,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    this.aimRangeRing.rotation.x = -Math.PI / 2;
-    this.aimRangeRing.visible = false;
-    this.scene.add(this.aimRangeRing);
+    this.aimRangeDecal = new GroundDecal(decalMaterial(AIM_COLOR, 0.35));
+    this.scene.add(this.aimRangeDecal.mesh);
 
     this.aimUnitRing = new THREE.Mesh(
       new THREE.RingGeometry(22, 27, 24),
@@ -621,6 +637,7 @@ export class WorldScene {
    */
   setMap(map: StreamedMap): void {
     this.map = map;
+    this.sampledGround.invalidate();
     this.terrainMesh = buildTerrainMeshFromChunks(map.meshLayers, []);
     this.scene.add(this.terrainMesh.group);
     this.propField = buildPropField([], (x, z) => this.ground(x, z), undefined, this.propShading);
@@ -720,6 +737,11 @@ export class WorldScene {
    */
   addTerrainChunk(chunk: TerrainChunk): void {
     this.terrainMesh?.rebuild(chunk);
+    // The memo is over the ground this chunk just changed. Everything it holds
+    // near here was sampled over a hole (spec 153) -- and a decal drawn from
+    // stale heights is drawn on terrain that no longer exists, which is the
+    // fault this whole spec is about, arrived at from the other side.
+    this.sampledGround.invalidate();
   }
 
   /**
@@ -1061,8 +1083,13 @@ export class WorldScene {
     this.bodies.clear();
     for (const effect of this.effects) this.scene.remove(effect.mesh);
     this.effects.length = 0;
-    for (const mesh of this.telegraphs.values()) this.scene.remove(mesh);
+    for (const decal of this.telegraphs.values()) {
+      this.scene.remove(decal.mesh);
+      decal.dispose();
+    }
     this.telegraphs.clear();
+    this.aimShapeDecal.dispose();
+    this.aimRangeDecal.dispose();
     this.terrainMesh?.dispose();
     this.propField?.dispose();
     this.buffers?.dispose();
@@ -1410,8 +1437,8 @@ export class WorldScene {
   private syncAim(frame: FrameInfo): void {
     const aim = frame.aim;
     if (!aim) {
-      this.aimShapeMesh.visible = false;
-      this.aimRangeRing.visible = false;
+      this.aimShapeDecal.hide();
+      this.aimRangeDecal.hide();
       this.aimUnitRing.visible = false;
       return;
     }
@@ -1432,53 +1459,49 @@ export class WorldScene {
     }
 
     // Out of range is the one thing the picture has to say that the shape
-    // cannot: the confirm will be a walk before it is a blow.
-    this.aimRangeRing.visible = !aim.inRange && aim.range > 0;
-    if (this.aimRangeRing.visible) {
-      this.aimRangeRing.position.set(aim.origin.x, this.ground(aim.origin.x, aim.origin.y) + 1.1, aim.origin.y);
-      this.aimRangeRing.scale.setScalar(aim.range);
+    // cannot: the confirm will be a walk before it is a blow. It is also the
+    // largest thing drawn on the ground -- 700 units across at the top of the
+    // ability table, which is thirty terrain cells -- and so the one a flat mesh
+    // was most wrong about.
+    if (!aim.inRange && aim.range > 0) {
+      const range = aim.range;
+      this.aimRangeDecal.lay(
+        `ring:${range}`,
+        () => ringTemplate(range * (1 - RANGE_RING_THICKNESS), range),
+        { x: aim.origin.x, z: aim.origin.y, heading: 0, lift: RANGE_RING_LIFT },
+        this.sampledGround.at,
+      );
+    } else {
+      this.aimRangeDecal.hide();
     }
 
     const shape = aim.shape;
     if (shape.kind === 'none') {
-      this.aimShapeMesh.visible = false;
+      this.aimShapeDecal.hide();
       return;
     }
 
     const dx = aim.point.x - aim.origin.x;
     const dy = aim.point.y - aim.origin.y;
     const heading = Math.hypot(dx, dy) > 1e-6 ? Math.atan2(dy, dx) : 0;
-    this.setAimShape(shape);
-    this.aimShapeMesh.visible = true;
-    // Dimmer out of range: the same shape, said less certainly.
-    (this.aimShapeMesh.material as THREE.MeshBasicMaterial).opacity = aim.inRange ? 0.3 : 0.15;
-
-    if (shape.kind === 'circle') {
-      // A burst lands where it was placed; nothing about it points anywhere.
-      this.aimShapeMesh.position.set(aim.point.x, this.ground(aim.point.x, aim.point.y) + 1.3, aim.point.y);
-      this.aimShapeMesh.rotation.set(-Math.PI / 2, 0, 0);
-      return;
-    }
-
-    // A cone and a lane both run from the caster toward the cursor. The mesh is
-    // built pointing down +X in its own plane, so the third Euler term -- which
-    // is the world Y spin once the mesh is laid flat -- is the heading, negated
-    // because the flat rotation mirrors the sweep.
-    this.aimShapeMesh.position.set(
-      aim.origin.x,
-      this.ground(aim.origin.x, aim.origin.y) + 1.3,
-      aim.origin.y,
+    // A burst lands where it was placed and nothing about it points anywhere; a
+    // cone and a lane both run from the caster toward the cursor. That is the
+    // whole difference between them here -- the template is authored down local
+    // +X either way, and `projectDecal` turns it.
+    const placed = shape.kind === 'circle';
+    this.aimShapeDecal.lay(
+      JSON.stringify(shape),
+      () => aimTemplate(shape),
+      {
+        x: placed ? aim.point.x : aim.origin.x,
+        z: placed ? aim.point.y : aim.origin.y,
+        heading: placed ? 0 : heading,
+        lift: AIM_SHAPE_LIFT,
+      },
+      this.sampledGround.at,
     );
-    this.aimShapeMesh.rotation.set(-Math.PI / 2, 0, -heading);
-  }
-
-  /** Rebuild the aim geometry, but only when the shape it is drawing changed. */
-  private setAimShape(shape: AimShape): void {
-    const key = JSON.stringify(shape);
-    if (key === this.aimShapeKey) return;
-    this.aimShapeKey = key;
-    this.aimShapeMesh.geometry.dispose();
-    this.aimShapeMesh.geometry = buildAimGeometry(shape);
+    // Dimmer out of range: the same shape, said less certainly.
+    this.aimShapeDecal.material.opacity = aim.inRange ? 0.3 : 0.15;
   }
 
   /** Hang the torch off the local player's rig; see {@link applyPlayerLights}. */
@@ -1628,37 +1651,32 @@ export class WorldScene {
       if (!ability?.radius || ability.kind !== 'ground') continue;
       live.add(cast.entityId);
 
-      let mesh = this.telegraphs.get(cast.entityId);
-      if (!mesh) {
-        mesh = new THREE.Mesh(
-          new THREE.CircleGeometry(ability.radius, 28),
-          new THREE.MeshBasicMaterial({
-            color: TELEGRAPH_COLOR,
-            transparent: true,
-            opacity: 0.3,
-            depthWrite: false,
-            side: THREE.DoubleSide,
-          }),
-        );
-        mesh.rotation.x = -Math.PI / 2;
-        this.scene.add(mesh);
-        this.telegraphs.set(cast.entityId, mesh);
+      let decal = this.telegraphs.get(cast.entityId);
+      if (!decal) {
+        // A ground decal for the same reason the aim above it is one (spec
+        // 153): this is the same picture the aim was drawing a moment ago, so
+        // leaving it flat would have a conforming shape snap level at the
+        // instant of commitment -- which is the frame the player is watching.
+        decal = new GroundDecal(decalMaterial(TELEGRAPH_COLOR, 0.3));
+        this.scene.add(decal.mesh);
+        this.telegraphs.set(cast.entityId, decal);
       }
 
       const bar = castBar(cast, frame.tick);
-      mesh.position.set(
-        cast.targetX,
-        this.ground(cast.targetX, cast.targetY) + 1.2,
-        cast.targetY,
+      const radius = ability.radius;
+      decal.lay(
+        `disc:${radius}`,
+        () => discTemplate(radius),
+        { x: cast.targetX, z: cast.targetY, heading: 0, lift: TELEGRAPH_LIFT },
+        this.sampledGround.at,
       );
-      const material = mesh.material as THREE.MeshBasicMaterial;
-      material.opacity = 0.14 + 0.4 * bar.progress;
+      decal.material.opacity = 0.14 + 0.4 * bar.progress;
     }
 
-    for (const [id, mesh] of this.telegraphs) {
+    for (const [id, decal] of this.telegraphs) {
       if (live.has(id)) continue;
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
+      this.scene.remove(decal.mesh);
+      decal.dispose();
       this.telegraphs.delete(id);
     }
   }
@@ -2073,35 +2091,79 @@ export class WorldScene {
 }
 
 /**
- * The flat geometry for an aim shape (spec 080), built pointing down local +X.
+ * An indicator drawn on the ground rather than over it (spec 153).
  *
- * The mesh is laid flat by `rotation.x = -PI/2` and then spun by the heading,
- * under which local +X becomes the world direction from the caster to the
- * cursor -- so every shape is authored once, along one axis, and aimed by one
- * number.
+ * The mesh's transform is never touched: position, rotation and scale stay
+ * identity and the vertices are world-space, because a transform is exactly the
+ * thing that cannot express "and follow the hill". Where it goes and which way
+ * it points are arguments to {@link lay}, applied per vertex by `projectDecal`
+ * where the ground can be asked about the answer.
+ *
+ * The template is rebuilt only when the shape changes -- the cursor moves every
+ * frame, and a geometry allocated at 60Hz for as long as somebody is deciding is
+ * a garbage-collection pause during the one moment the player is looking
+ * closely. What happens per frame is a rewrite of a `Float32Array` that already
+ * exists.
  */
-function buildAimGeometry(shape: AimShape): THREE.BufferGeometry {
-  switch (shape.kind) {
-    case 'circle':
-      return new THREE.CircleGeometry(Math.max(1, shape.radius), 32);
-    case 'cone':
-      // A wedge symmetric about +X, with the half-angle the sim will actually
-      // test -- `isInCone` measures from the captured aim, and so does this.
-      return new THREE.CircleGeometry(
-        Math.max(1, shape.length),
-        32,
-        -shape.halfAngle,
-        shape.halfAngle * 2,
-      );
-    case 'line': {
-      // The lane a shot flies down: as long as the ability reaches, as wide as
-      // the projectile is, and starting at the caster rather than centred on
-      // them -- a plane is built about its own middle.
-      const plane = new THREE.PlaneGeometry(Math.max(1, shape.length), Math.max(1, shape.width));
-      plane.translate(shape.length / 2, 0, 0);
-      return plane;
+/**
+ * The material every ground decal shares the shape of: unlit, translucent, and
+ * never writing depth, so nothing it is drawn over gets an edge from it.
+ *
+ * The polygon offset is the second half of the lift: a decal that follows the
+ * ground is a fraction of a unit above ground whose depth is quantized, and a
+ * bias toward the camera settles the ties the lift alone leaves.
+ */
+function decalMaterial(color: number, opacity: number): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+}
+
+class GroundDecal {
+  readonly mesh: THREE.Mesh;
+  private template: DecalTemplate | null = null;
+  private key = '';
+  private world = new Float32Array(0);
+
+  constructor(readonly material: THREE.MeshBasicMaterial) {
+    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    // World-space vertices, so three's bounding sphere is stale the moment the
+    // decal moves and culling by it would blink the indicator out at the edge
+    // of the frame. There are three of these; the draw is cheaper than the box.
+    this.mesh.frustumCulled = false;
+    this.mesh.visible = false;
+  }
+
+  /**
+   * Lay `template` on the ground at `placement`. `key` names the shape: an
+   * unchanged key reuses everything and only the heights are re-read.
+   */
+  lay(key: string, build: () => DecalTemplate, placement: DecalPlacement, heightAt: HeightAt): void {
+    if (key !== this.key || !this.template) {
+      this.key = key;
+      this.template = build();
+      this.world = new Float32Array(vertexCount(this.template) * 3);
+      this.mesh.geometry.setAttribute('position', new THREE.BufferAttribute(this.world, 3));
+      this.mesh.geometry.setIndex(new THREE.BufferAttribute(this.template.index, 1));
     }
-    case 'none':
-      return new THREE.BufferGeometry();
+    projectDecal(this.template, placement, heightAt, this.world);
+    this.mesh.geometry.getAttribute('position').needsUpdate = true;
+    this.mesh.visible = this.world.length > 0;
+  }
+
+  hide(): void {
+    this.mesh.visible = false;
+  }
+
+  dispose(): void {
+    this.mesh.geometry.dispose();
+    this.material.dispose();
   }
 }

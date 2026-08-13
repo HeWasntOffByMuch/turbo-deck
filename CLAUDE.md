@@ -61,6 +61,7 @@ change a game outcome.
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
+| `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -451,6 +452,16 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
+                 One more rule of the same kind, from spec 147's sheet: **a
+                 hidden tab still has rectangles in it**. A tab switched away is
+                 hidden and never destroyed -- that is what makes a tab keep what
+                 you left in it -- so its rows keep `visible` true and keep the
+                 rect they were last arranged into, and any hover that hit-tests
+                 a *list of rows* gets three tabs stacked at the same
+                 coordinates. Only the ancestor chain says which tab a row is in.
+                 The framework's own `hitTest` is the obvious answer and is the
+                 wrong one for text: `Label` is deliberately pointer transparent,
+                 so a screen whose rows are bare labels goes silent under it.
                  The UI has a *scale*, not a resolution: one UI pixel is always a
                  whole number of device pixels and the viewport is whatever the
                  window leaves, so it never reads the world's `lowRes` setting --
@@ -668,31 +679,138 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
-                 player/progress.ts is what a level *is* (spec 153), and it is
-                 three numbers rather than one: the level, the skill points it
-                 earned, and the experience not yet spent on the next one. Pure,
-                 and the only place any of them is written, because the failure
-                 mode of an admin edit is not a wrong number -- it is a record
-                 that says something the game's own rules call impossible, which
-                 nothing downstream would notice. Three rules, each of them the
-                 fix for the version without it: skill points are **re-derived**
-                 from the resulting level rather than nudged by a delta (grant 5,
-                 spend them, reset the level, and a delta leaves the points gone);
-                 a level too low to pay for the tree it inherits **clears the
-                 tree and refunds every earned point**, since twelve points of
-                 skills at level 1 is not a character; and experience is
+                 Since spec 147 `skills.ts` is the *attuned* tree -- six columns
+                 of six, gated on the attribute you actually built -- and spec
+                 056's branch-locked Might/Finesse/Arcane tree is gone: a system
+                 whose premise is that unusual combinations should be
+                 discoverable cannot also have three columns that permanently
+                 foreclose each other, and keeping both meant two skill systems
+                 where one would do. A save holding the old rows loads with them
+                 dropped and the points handed back. Beside it are the rest of
+                 the progression tables -- six attributes, eighteen milestones,
+                 fifteen pairs -- and `scaling.ts`, which is every coefficient
+                 the six scale by in one object, so a balance pass is a diff of
+                 one file. Three curve shapes and only three, because a number
+                 should be understandable from its shape: `linear` for the
+                 quantities where twice the investment is twice the value,
+                 `softCap` for the ones an unbounded specialist would break, and
+                 `reciprocal` -- `1/(1+attr*per)`, floored -- for every "less of
+                 a thing", because it cannot reach zero and 0.5 means *half*
+                 where "-50%" invites the question of whether two of them is
+                 -100%. All three are measured from the *starting* attribute
+                 rather than from zero: a coefficient on the raw value meant a
+                 brand-new character already carried five points of every scale,
+                 so every authored number in `abilities.ts` described somebody
+                 who does not exist.
+                 The attributes replace spec 056's four, which were four
+                 coefficients -- a sheet with four sliders on it that all mean
+                 "slightly more" asks the player *how much* rather than *how*.
+                 The rule the design is reviewed against, and the one the tests
+                 in `progression-tables.test.ts` enforce rather than trust: every
+                 attribute viable when heavily invested in, and every one of the
+                 fifteen pairs producing an interaction that is not "both numbers
+                 are big". A pair with no row fails CI.
+                 The pairs are also **never named on the character sheet**, and
+                 that is a rule with a test behind it in two places: naming them
+                 would turn fifteen things to discover into fifteen things to
+                 build toward, and the question the sheet exists to ask is "how
+                 do I want to solve problems" rather than "which of the fifteen
+                 am I". They are live in the sim; a player finds out by having
+                 one. What the sheet *does* say is what each attribute changes
+                 next, and one short line per stat row -- and where something is
+                 a socket with nothing plugged into it yet, that line says so in
+                 as many words rather than describing a number that never moves.
+                 The structural commitment is one line in `attackTimingFor`:
+                 **Agility scales the attack point and the backswing and nothing
+                 it writes reaches `baseAttackTimeTicks`.** A high-Agility
+                 character attacks exactly as often as anybody else and spends far
+                 less of each cycle rooted, which makes "the fast stat must not
+                 become the mandatory damage stat" a property of the module graph
+                 rather than a number somebody keeps retuning.
+                 The derivation runs one way and stops (`player/progression.ts`,
+                 `player/derived.ts`): allocation plus held grants settles the
+                 attributes, those decide which milestones and pairs are met, and
+                 only then do their grants feed the traits. A milestone therefore
+                 cannot unlock a milestone -- the graph is acyclic *by
+                 construction* rather than by nobody having yet written the loop,
+                 and it costs one thing, which is that an item granting +5
+                 Strength can open a Strength milestone while a synergy granting
+                 the same could not. No synergy grants an attribute and a test
+                 says so.
+                 `sim/poise.ts` is the mechanic Strength spends and Constitution
+                 resists, and the number that keeps it a mechanic rather than a
+                 removal is the two-second immunity after a break: without it two
+                 attackers hold a third permanently. Hyper-armour is the other
+                 half and its rule is stated once -- **protection applies only
+                 while the body is committed to something**, never while idle and
+                 never merely because Strength was invested in, and it is capped
+                 below 1 because a wind-up nothing can answer would make the
+                 readable commitment this whole game is built on unreadable.
+                 `sim/statuses.ts` is one small timer map and everything the
+                 progression needs to remember between ticks goes in it, because
+                 twelve mechanics as twenty-four entity fields is twenty-four
+                 places for an expiry to be forgotten. Expiry is a comparison and
+                 never a sweep, so reading a stale entry cannot produce a live
+                 effect. `sim/blow.ts` is one blow with all of it applied, in one
+                 order, written once -- and the line in it that must not move is
+                 that **crit is rolled before the weak point and always**: the Rng
+                 is threaded through the whole sim and a body that draws a
+                 different number of values changes every fight after it.
+                 What the tests found and what it was worth: `applyDamage`
+                 multiplied every blow by `spellPower` and read `attackDamage`
+                 nowhere at all, so Strength's damage coefficient had been
+                 decorative since spec 062 -- derived, replicated, printed on the
+                 sheet, reaching nothing. `traits.weaponPower` is that number
+                 turned into a multiplier a basic attack is actually multiplied
+                 by, derived *from* `attackDamage` so there is still one number
+                 meaning "how hard do I hit".
+                 `sim/metrics.ts` and `npm run balance` are the instrumentation,
+                 and the thing to know about them is what the table is *not* for:
+                 six builds with the same damage per second is not evidence of
+                 balance, it is evidence that five of them were tuned into the
+                 sixth. Read the *shape* of a row instead -- Strength high on
+                 staggers, Agility lowest on rooted time and health per kill,
+                 Perception highest on weak-point rate -- and treat a row that
+                 looks like somebody else's as the finding. The harness measures
+                 a stationary duel, so it under-reports Agility's repositioning
+                 and Intelligence's geometry by construction; that is a limit to
+                 read around rather than tune against.
+                 player/levels.ts is what a level *is* (spec 154), and it is four
+                 numbers rather than one: the level, the two point budgets it
+                 earned, and the experience not yet spent on the next one. Named
+                 for the level rather than for the edit so it sits beside
+                 `progression.ts` without either name suggesting it does the
+                 other's job -- this file is a level and what a level hands out,
+                 that one is what an allocation amounts to. Pure, and the only
+                 place any of the four is written, because the failure mode of an
+                 admin edit is not a wrong number -- it is a record that says
+                 something the game's own rules call impossible, which nothing
+                 downstream would notice. Three rules, each of them the fix for
+                 the version without it. Both budgets are **re-derived** from the
+                 resulting level rather than nudged by a delta: grant 5 levels,
+                 spend the points, reset the level, and a delta leaves the points
+                 gone. A level that cannot pay for what it is holding **gives it
+                 back** -- the tree cleared, the attributes returned to their
+                 starting spread, each independently of the other, since twelve
+                 points of skills at level 1 is not a character. And experience is
                  **clamped into its own level's band**, or `setLevel 1` on a
                  level-20 character is somebody who re-levels on their next kill.
+                 That second rule covers *two* currencies since spec 147 gave
+                 levelling a second one, and it has to:
+                 `reconcileAttributePoints` correctly clamps the unspent count to
+                 `earned - spent`, which is zero for a level-1 character holding a
+                 level-40 spread -- left there, the allocation stands forever and
+                 the reset only looked like it worked.
                  `MAX_PLAYER_LEVEL` is the first level cap this game states, and
-                 it bounds an *edit* rather than declaring an endgame --
-                 `computeEffectiveStats` is linear in the level, so an unclamped
+                 it bounds an *edit* rather than declaring an endgame -- the
+                 derived stats are linear in the level, so an unclamped
                  `addLevels 1000000` is a body with ten million health. Nothing in
                  the sim reads it. `grantExperience` is now this function with one
                  mode fixed instead of its own copy of the level-up loop, so a
                  monster's award and an admin's grant cannot come to different
                  answers -- including about that cap, which a second loop ignored.
                  `npm run server`, and `npm run server:bots` for load.
-src/server/admin-client/  the admin console (spec 153): one static HTML file, no
+src/server/admin-client/  the admin console (spec 154): one static HTML file, no
                  bundler and no dependency, speaking the same binary protocol by
                  hand so there is nothing to build before an operator can use it.
                  The shape it is built around is **a selection, not a form per
@@ -809,6 +927,43 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  pausing virtual time works but leaves the clock racing
                  afterwards, which silently starved the next measurement of
                  frames),
+                 ground-decal.ts (an indicator laid on the ground rather than
+                 over it, spec 153: the aim's shape, its range ring and the
+                 telegraph a committed cast draws. Each used to be one flat
+                 horizontal mesh placed at `ground(centre) + lift`, which is
+                 right at exactly one point of itself and wrong everywhere else
+                 the moment the ground is not level -- a 420-unit range ring near
+                 a hill was two hundred units inside it. A transform cannot
+                 express "and follow the hill", so the mesh's transform is never
+                 touched and its *vertices* are world-space and placed on the
+                 heightfield, rebuilt only when the shape changes and rewritten
+                 in place every frame. Three things it holds that were each
+                 learned by getting them wrong. **What gets buried is an edge,
+                 not a vertex** -- a vertex placed exactly on the ground was
+                 always fine, and the straight line to the next one is what cuts
+                 under the bump in between, so a vertex takes the highest of five
+                 samples half a step around it, plus a fraction of the local
+                 spread, which is zero on the flat and leaves a level-ground
+                 indicator exactly where the old one was. What no sampling can
+                 catch is a **crease**, because a fold is a line and five points
+                 can straddle a line -- but what a crease costs is set by the
+                 step and the fold and by *nothing about the indicator*, which is
+                 the whole improvement, since the flat mesh was wrong in
+                 proportion to its own size. And **`heightAt` costs 5.6us a
+                 call**: it jitters four corners, evaluates two triangle planes
+                 and searches the ring of neighbours when a point lands outside
+                 its nominal cell, so one 140-unit disc is 1100 vertices and 35ms
+                 a frame. `SampledGround` memoizes it on a lattice at the
+                 sampling step and blends between -- a cursor moving three units
+                 a frame asks about the cells it was already in, so the cost
+                 settles at a few dozen fresh samples a frame and 0.42ms.
+                 Invalidated whenever a chunk streams in, because a height
+                 sampled over ground that had not arrived is a height that has to
+                 be thrown away. `npx tsx scripts/preview-aim.ts` is the picture
+                 and the acceptance numbers, over the arena's real steepest
+                 ground and against the terrain triangles the renderer actually
+                 draws -- rasterised in software, because what is being looked at
+                 is a shape rather than something that happens over time),
                  inventory-model.ts, character-model.ts and shop-model.ts (what
                  the bag, the sheet and the shop are handed -- `src/ui/` may not
                  reach the sim, so the replicated facts and the content tables

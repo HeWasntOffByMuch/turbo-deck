@@ -131,6 +131,16 @@ interface Bar {
   readonly health: HTMLElement;
   /** The white band behind the fill: the ground a blow just took (spec 145). */
   readonly ghost: HTMLElement;
+  /**
+   * Guard, under the health bar (spec 147).
+   *
+   * Poise is the one resource in the game a player spends *somebody else's* of,
+   * and until now it was replicated to every client and drawn nowhere -- so the
+   * mechanic Strength exists to use was invisible on the body it was being used
+   * against. `entity.poise` is a fraction, which is all a bar needs.
+   */
+  readonly guard: HTMLElement;
+  readonly guardFill: HTMLElement;
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
 }
@@ -147,6 +157,12 @@ const BAR_EMPTY = '#08090b';
 const BAR_ENEMY = '#e0362a';
 const BAR_SELF = '#7fd08a';
 const BAR_LOST = '#f4f2ee';
+/**
+ * Guard (spec 147). Deliberately not a red and not the cast amber: health is
+ * what a blow takes off you, guard is what it takes off your *footing*, and a
+ * player has to be able to tell at a glance which bar just moved.
+ */
+const BAR_GUARD = '#8fa6c8';
 
 export interface HudHandle {
   readonly element: HTMLElement;
@@ -500,6 +516,12 @@ export function createHud(project: Projector): HudHandle {
     ].join(';');
 
     const healthTrack = document.createElement('div');
+    // Named, for the same reason the holder carries `data-entity`: a probe has
+    // to find this track without counting children. Counting is what the bars
+    // were read by, and spec 145's name element silently shifted every index by
+    // one -- `probe-health-flash.ts` has been resolving `firstElementChild` to
+    // the name ever since, finding no fill inside it, and sampling nothing.
+    healthTrack.dataset['bar'] = 'health';
     healthTrack.style.cssText =
       `position:relative;height:5px;background:${BAR_EMPTY};border-radius:2px;overflow:hidden;` +
       'box-shadow:0 0 0 1px rgba(0,0,0,.55);';
@@ -513,6 +535,24 @@ export function createHud(project: Projector): HudHandle {
     health.style.cssText = `position:absolute;left:0;top:0;height:100%;width:100%;background:${BAR_ENEMY};`;
     healthTrack.append(ghost, health);
 
+    // Guard, immediately under health and *in flow* -- so it is part of the
+    // holder's height on every bar, every frame, whether or not it is showing.
+    //
+    // Hidden with `visibility` rather than `display`, and that is the whole
+    // reason it can sit in flow at all: the holder is bottom-anchored, so
+    // anything that leaves and rejoins the layout moves the health bar above it
+    // (the cast bar is out of flow for exactly this reason). `visibility` keeps
+    // the box and drops the ink, so a guard that fills up vanishes without
+    // shifting the thing a player is actually reading.
+    const guard = document.createElement('div');
+    guard.dataset['bar'] = 'guard';
+    guard.style.cssText =
+      `position:relative;margin-top:1px;height:3px;background:${BAR_EMPTY};border-radius:2px;` +
+      'overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.55);visibility:hidden;';
+    const guardFill = document.createElement('div');
+    guardFill.style.cssText = `height:100%;width:100%;background:${BAR_GUARD};`;
+    guard.append(guardFill);
+
     // Hung off the health track rather than stacked under it in flow.
     //
     // The holder is anchored by its *bottom* -- `translate(-50%,-100%)` puts its
@@ -523,6 +563,7 @@ export function createHud(project: Projector): HudHandle {
     // cannot change the holder's height, so the health bar holds still and the
     // cast bar hangs below it.
     const cast = document.createElement('div');
+    cast.dataset['bar'] = 'cast';
     cast.style.cssText =
       'position:absolute;left:0;right:0;top:calc(100% + 2px);height:4px;' +
       'background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;display:none;';
@@ -530,9 +571,9 @@ export function createHud(project: Projector): HudHandle {
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
     cast.append(castFill);
 
-    holder.append(name, healthTrack, cast);
+    holder.append(name, healthTrack, guard, cast);
     root.append(holder);
-    const made: Bar = { root: holder, name, health, ghost, cast, castFill };
+    const made: Bar = { root: holder, name, health, ghost, guard, guardFill, cast, castFill };
     bars.set(id, made);
     return made;
   }
@@ -610,6 +651,15 @@ export function createHud(project: Projector): HudHandle {
       element.health.style.width = `${fill.health * 100}%`;
       element.ghost.style.width = `${fill.ghost * 100}%`;
       element.health.style.background = entity.id === view.selfEntityId ? BAR_SELF : BAR_ENEMY;
+
+      // Shown only once the guard is dented, because a full guard is the
+      // resting state of every body in the world and a bar that is always full
+      // is a bar nobody reads. It refills whole on a break (spec 147), so it
+      // also *leaves* at the moment the stagger lands -- which is the same
+      // information from the other side.
+      const guard = Math.min(1, Math.max(0, entity.poise ?? 1));
+      element.guard.style.visibility = guard < 1 ? 'visible' : 'hidden';
+      element.guardFill.style.width = `${guard * 100}%`;
       element.root.style.display = look.showsHealth ? 'block' : 'none';
 
       if (cast) {
@@ -739,6 +789,13 @@ export function createHud(project: Projector): HudHandle {
       // the readout sat at 3 while the game ran perfectly well underneath it.
       `tick ${Math.floor(tick)}   delta ${view.tick}   seed ${view.worldSeed ?? '-'}\n` +
       `hp ${Math.round(self?.health ?? 0)}/${Math.round(stats?.maxHealth ?? 0)}   ` +
+      // Guard beside health, in the same absolute units (spec 147). The wire
+      // carries a *fraction* -- one byte, and the ceiling is already known from
+      // the stats message -- so the whole number is reconstructed here. The
+      // floating bar can live on the fraction; a readout compared against
+      // somebody's `staggerPower` cannot.
+      `guard ${Math.round((self?.poise ?? 0) * (stats?.traits.maxPoise ?? 0))}/` +
+      `${Math.round(stats?.traits.maxPoise ?? 0)}   ` +
       `lvl ${view.level}   xp ${view.experience}\n` +
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +

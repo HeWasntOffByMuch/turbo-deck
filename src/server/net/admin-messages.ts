@@ -92,7 +92,7 @@ export interface AdminGetAuditRequest {
 }
 
 /**
- * An edit to one character's level or experience (spec 153). See
+ * An edit to one character's level or experience (spec 154). See
  * {@link AdminProgressMode} for why the four operator asks are one message.
  */
 export interface AdminSetProgressRequest {
@@ -292,7 +292,7 @@ export interface AdminPlayerRow {
   readonly attackDamage: number;
   readonly moveSpeed: number;
   readonly muted: boolean;
-  /** Progress within the current level (spec 153). */
+  /** Progress within the current level (spec 154). */
   readonly experience: number;
   /**
    * What the next level costs from here. Sent beside the experience because the
@@ -301,6 +301,12 @@ export interface AdminPlayerRow {
    */
   readonly experienceToNextLevel: number;
   readonly unspentSkillPoints: number;
+  /**
+   * The second budget a level grants (spec 147). On the row beside the first
+   * because a level grant moves both, and a console that showed one of them would
+   * make half of what the button did invisible.
+   */
+  readonly unspentAttributePoints: number;
 }
 
 /** One row of the item table, so the console offers a list rather than ids. */
@@ -380,7 +386,8 @@ export function encodeAdminReply(reply: AdminReply): Uint8Array {
           .bool(row.muted)
           .varuint(row.experience)
           .varuint(row.experienceToNextLevel)
-          .varuint(row.unspentSkillPoints);
+          .varuint(row.unspentSkillPoints)
+          .varuint(row.unspentAttributePoints);
       }
       break;
     case AdminReplyType.Config:
@@ -444,6 +451,7 @@ export function decodeAdminReply(frame: Uint8Array): AdminReply {
           experience: reader.varuint(),
           experienceToNextLevel: reader.varuint(),
           unspentSkillPoints: reader.varuint(),
+          unspentAttributePoints: reader.varuint(),
         });
       }
       return { type: AdminReplyType.PlayerList, players };

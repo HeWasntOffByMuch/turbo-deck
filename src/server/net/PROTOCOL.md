@@ -572,7 +572,7 @@ at connect: the token is re-verified per request, so expiry takes effect
 immediately. Every **decision**, accepted or refused, appends an audit entry;
 the reads — `listPlayers`, `getConfig`, `getItems`, `getAudit` — do not, because
 asking who is online is not something done to anybody and the console polls the
-list once a second for its live count (spec 153).
+list once a second for its live count (spec 154).
 
 | Byte | Message | Payload |
 |---|---|---|
@@ -597,7 +597,7 @@ list once a second for its live count (spec 153).
 Events currently understood by `triggerEvent`: `raid` (magnitude = how many),
 `clear` (magnitude = radius), `heal`.
 
-`setProgress` modes (spec 153): `0` addLevels, `1` setLevel, `2` addExperience,
+`setProgress` modes (spec 154): `0` addLevels, `1` setLevel, `2` addExperience,
 `3` setExperience. An unknown mode is a `CodecError` rather than a no-op, because
 the mode selects arithmetic. `amount` is a `u32`, so an `Add` cannot be negative
 by construction — a decrease is a `Set`, and so is a reset (`setLevel 1`,
@@ -617,7 +617,7 @@ non-finite value is refused rather than silently ignored.
 |---|---|---|
 | `0xA0` | Ok | `u8 requestType` · `str message` |
 | `0xA1` | Error | `u8 requestType` · `str message` |
-| `0xA2` | PlayerList | `varuint count`, then per row: `str playerId` · `str displayName` · `varuint entityId` · `f32 x` · `f32 y` · `f32 z` · `str zone` · `str chunk` · `f32 health` · `f32 maxHealth` · `varuint level` · `f32 attackDamage` · `f32 moveSpeed` · `bool muted` · `varuint experience` · `varuint experienceToNextLevel` · `varuint unspentSkillPoints` |
+| `0xA2` | PlayerList | `varuint count`, then per row: `str playerId` · `str displayName` · `varuint entityId` · `f32 x` · `f32 y` · `f32 z` · `str zone` · `str chunk` · `f32 health` · `f32 maxHealth` · `varuint level` · `f32 attackDamage` · `f32 moveSpeed` · `bool muted` · `varuint experience` · `varuint experienceToNextLevel` · `varuint unspentSkillPoints` · `varuint unspentAttributePoints` |
 | `0xA3` | Config | `varuint count`, then per entry: `str key` · `f64 value` |
 | `0xA4` | Audit | `varuint count`, then per entry: `f64 at` (epoch ms) · `str actor` · `str action` · `str target` · `str detail` · `bool accepted` |
 | `0xA5` | ItemList | `varuint count`, then per row: `str id` · `str name` · `str slot` (`-` when it is not worn) · `varuint levelRequirement` · `varuint maxStack` |

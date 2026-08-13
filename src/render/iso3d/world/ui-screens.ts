@@ -71,6 +71,9 @@ export interface UiScreensOptions {
   /** A drag that landed: where from, where to, and 0 for the whole stack. */
   readonly onMove: (from: SlotRef, to: SlotRef, count: number) => void;
   readonly onSpend: (skillId: string) => void;
+  /** Put one attribute point somewhere, and hand every one of them back (147). */
+  readonly onAllocate: (key: string) => void;
+  readonly onRespec: () => void;
   readonly onBuy: (vendorId: string, defId: string) => void;
   readonly onSell: (vendorId: string, index: number) => void;
   readonly onBuyBack: (vendorId: string, index: number) => void;
@@ -239,6 +242,9 @@ export class UiScreens {
   private lastSheetLevel = -1;
   private lastExperience = -1;
   private lastPoints = -1;
+  private lastBaseStats: unknown = null;
+  private lastStatSkills: unknown = null;
+  private lastSheetCoins = -1;
 
   constructor(
     private readonly options: UiScreensOptions,
@@ -272,8 +278,23 @@ export class UiScreens {
     this.layers.place('tooltip', this.inventory.tooltip);
 
     this.character = new CharacterScreen({ theme: THEME });
+    // The sheet's tooltip goes in the same layer as the bag's, for the reason
+    // the bag's is there: a hint about a row in one window must not be clipped
+    // by the window next to it. Two widgets rather than one shared, because they
+    // are pointed at from two different hit tests.
+    this.layers.place('tooltip', this.character.tooltip);
     this.character.onSpend = (skillId) => {
       options.onSpend(skillId);
+    };
+    // Three more asks, and every one of them is only an ask (spec 147): the
+    // screen sends a request and redraws when the server's answer arrives.
+    // Nothing here updates a number optimistically, because an attribute that
+    // ticked up and then back down is worse than one that ticks up late.
+    this.character.onAllocate = (key) => {
+      options.onAllocate(key);
+    };
+    this.character.onRespec = () => {
+      options.onRespec();
     };
 
     this.shop = new ShopScreen({ theme: THEME, contexts: this.root.contexts, focus: this.root.focus });
@@ -478,6 +499,10 @@ export class UiScreens {
           unspentSkillPoints: view.unspentSkillPoints,
           skills: view.skills,
           stats: view.stats,
+          baseStats: view.baseStats,
+          attributes: view.attributes,
+          unspentAttributePoints: view.unspentAttributePoints,
+          coins: view.coins,
         }),
       );
     }
@@ -547,6 +572,10 @@ export class UiScreens {
       this.inventory.cancelDrag();
     }
     this.inventory.updateTooltip(nowMs);
+    // The sheet's, on the same terms (spec 147).
+    this.character.tooltip.viewport = this.root.viewport;
+    if (!this.isOpen('character')) this.character.clearTooltip();
+    this.character.updateTooltip(nowMs, THEME.input.tooltipDelayMs);
     // ...and a capture does not outlive the window it was armed in either. It
     // holds `textEntry` while it waits, so a capture stranded by a window closing
     // any other way -- the title bar's cross, a second press of K -- is an
@@ -588,7 +617,10 @@ export class UiScreens {
       view.stats === this.lastStats &&
       view.level === this.lastSheetLevel &&
       view.experience === this.lastExperience &&
-      view.unspentSkillPoints === this.lastPoints
+      view.unspentSkillPoints === this.lastPoints &&
+      view.baseStats === this.lastBaseStats &&
+      view.skills === this.lastStatSkills &&
+      view.coins === this.lastSheetCoins
     ) {
       return false;
     }
@@ -597,6 +629,9 @@ export class UiScreens {
     this.lastSheetLevel = view.level;
     this.lastExperience = view.experience;
     this.lastPoints = view.unspentSkillPoints;
+    this.lastBaseStats = view.baseStats;
+    this.lastStatSkills = view.skills;
+    this.lastSheetCoins = view.coins;
     return true;
   }
 
@@ -868,6 +903,7 @@ export class UiScreens {
     // carry follows the cursor with nothing held, and a tooltip is by definition
     // about hovering (spec 136). This is the one place that sees every move.
     if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
+    if (phase === 'move' && this.isOpen('character')) this.character.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));
   }
 

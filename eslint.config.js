@@ -151,6 +151,12 @@ const PURE_RENDER = [
   // is what lets "a burst is one chunk" be replayed in Node rather than counted
   // by eye in a fight nobody can repeat.
   'src/render/iso3d/world/health-bar.ts',
+  // A shape laid on the ground rather than over it (spec 153). Where the
+  // vertices of an indicator go is arithmetic over a heightfield, and the
+  // heightfield is an argument -- which is what lets "every vertex sits the
+  // lift above the ground under it" be asserted against a hillside in Node,
+  // rather than judged by walking a cursor up one in a browser.
+  'src/render/iso3d/world/ground-decal.ts',
   // Touch gesture recognition (spec 093). A tap is a fact about a sequence of
   // timed samples -- the timestamps are passed in on the sample rather than read
   // from a clock here, which is exactly what lets the rules be replayed in Node

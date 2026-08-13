@@ -49,6 +49,7 @@ class FakeHost implements AdminHost {
       experience: 0,
       experienceToNextLevel: 50,
       unspentSkillPoints: 1,
+      unspentAttributePoints: 5,
     }));
   }
 
@@ -106,7 +107,7 @@ class FakeHost implements AdminHost {
     return [['spawnRateMultiplier', this.config.get().spawnRateMultiplier] as const];
   }
 
-  // --- spec 153 -------------------------------------------------------------
+  // --- spec 154 -------------------------------------------------------------
 
   setProgress(playerId: string, mode: number, amount: number): Promise<AdminOutcome> {
     this.calls.push(`setProgress:${playerId}:${mode}:${amount}`);
@@ -395,7 +396,7 @@ describe('admin routing', () => {
     expect(log[0]?.actor).toBe('alice-the-gm');
   });
 
-  it('does not audit a read (spec 153)', async () => {
+  it('does not audit a read (spec 154)', async () => {
     // A live player count polls the list once a second. The log holds decisions,
     // and one entry per poll would bury every one of them.
     const test = harness();
@@ -419,7 +420,7 @@ describe('admin routing', () => {
   });
 });
 
-describe('character edits (spec 153)', () => {
+describe('character edits (spec 154)', () => {
   async function authed(): Promise<Harness> {
     const test = harness();
     await test.router.handle(test.connection, { type: AdminMessageType.Auth, token: adminToken() });

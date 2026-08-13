@@ -1,4 +1,4 @@
-# 153 — A player you can point at
+# 154 — A player you can point at
 
 ## Problem
 
@@ -66,17 +66,22 @@ export interface AdminSetProgressRequest {
 the reset buttons are not a third code path that could disagree with the grant
 ones about what a consistent record looks like.
 
-### The arithmetic is pure, and lives in `player/progress.ts`
+### The arithmetic is pure, and lives in `player/levels.ts`
 
 ```ts
 export const MAX_PLAYER_LEVEL = 60;
 export function earnedSkillPoints(level: number): number;
-export function applyProgress(
+export function applyLevelEdit(
   player: PersistedPlayer,
   mode: AdminProgressModeValue,
   amount: number,
-): { readonly player: PersistedPlayer; readonly detail: string };
+): { readonly player: PersistedPlayer; readonly detail: string; ... };
 ```
+
+Named `levels.ts` rather than `progress.ts` so it sits beside spec 147's
+`progression.ts` without either name suggesting it does the other's job: this
+file is a level and what a level hands out, that one is what an attribute
+allocation amounts to.
 
 Pure, so the rules below are tested without a store, a session or a socket.
 `PlayerManager.setProgress` commits what it returns and calls `recalculate`,
@@ -85,17 +90,28 @@ which is the existing single funnel every stat change already passes through.
 Three rules, and each closes a way the record could be left saying something
 impossible:
 
-- **Skill points are re-derived from the level, never adjusted.**
+- **Both point budgets are re-derived from the level, never adjusted.**
   `earnedSkillPoints(level) = 1 + (level - 1) * SKILL_POINTS_PER_LEVEL` — the 1
-  is the point `createCharacter` starts a character with. Unspent becomes
-  `earned - totalPointsSpent(skills)`. Adding a delta instead would let an
+  is the point `createCharacter` starts a character with — and the attribute
+  budget defers to `attributes.ts`'s own `pointsEarned`, one place per currency.
+  Unspent becomes `earned - spent` for each. Adding a delta instead would let an
   operator who granted 5 levels and then reset the level to 1 keep the points.
 
-- **A level reset that cannot pay for the tree respecs it.** You cannot hold
-  twelve points of skills at level 1. If `earned - spent` is negative the tree
-  is cleared and every earned point handed back, and the reply says so — an
-  operator who reset a level and silently lost a build would find out from the
-  player.
+- **A level reset that cannot pay for what it holds gives it back.** You cannot
+  hold twelve points of skills, or a level-40 attribute spread, at level 1. Each
+  currency is checked independently: the tree is cleared, the attributes go back
+  to their starting spread, every point is handed back, and the reply says so —
+  an operator who reset a level and silently lost a build would find out from
+  the player.
+
+  This rule points the *opposite* way to the one `reconcileAttributePoints`
+  applies on login, which keeps an over-budget allocation and hands back zero.
+  Deliberately, because the causes differ. An over-budget *save* is somebody
+  else's bug — a table edit, a schema change — and the character is innocent, so
+  the generous reading is right. An over-budget *edit* is what the operator just
+  asked for on purpose, and keeping the allocation would mean "reset level"
+  leaves a level-1 character wearing a level-40 spread for good — the reset only
+  looked like it worked.
 
 - **Experience is clamped into its own level's band.** After any mode,
   `experience = min(experience, experienceForLevel(level + 1) - 1)`, so no
@@ -158,11 +174,12 @@ one way to be dead and still at the table.
 
 ### The row grows what an operator is about to change
 
-`AdminPlayerRow` gains three fields, appended: `experience`,
-`experienceToNextLevel` and `unspentSkillPoints`. Experience alone is not
-readable without the threshold, and the threshold's formula lives on the server,
-so the row carries both and the console renders `340 / 670`. Skill points are
-there because a level grant is what changes them.
+`AdminPlayerRow` gains four fields, appended: `experience`,
+`experienceToNextLevel`, `unspentSkillPoints` and `unspentAttributePoints`.
+Experience alone is not readable without the threshold, and the threshold's
+formula lives on the server, so the row carries both and the console renders
+`340 / 670`. Both point budgets are there because a level grant moves both, and a
+console that showed one of them would make half of what the button did invisible.
 
 ### A read is not a decision
 
@@ -205,12 +222,15 @@ Rewritten as one page with a selection, not a form per action:
 
 ## Invariants tested
 
-- **Progression arithmetic** (`progress.test.ts`, pure): `AddLevels` grants a
-  skill point per level; `SetLevel 1` on a level-20 character with a spent tree
-  clears the tree and returns exactly the earned points; `SetLevel` upward and
-  downward both leave `unspent = earned - spent`; experience never survives
-  above its own level's threshold; `AddExperience` levels up as far as it
-  carries and `MAX_PLAYER_LEVEL` is never exceeded from either mode.
+- **Progression arithmetic** (`levels.test.ts`, pure): `AddLevels` grants both
+  budgets; `SetLevel 1` on a level-20 character with a spent tree clears the tree
+  and returns exactly the earned points; the same on a level-40 attribute spread
+  returns it to the starting spread; the two refunds fire **independently**, so a
+  level low enough to give back the tree and high enough to keep the spread does
+  exactly that; `SetLevel` upward and downward both leave
+  `unspent = earned - spent` for each currency; experience never survives above
+  its own level's threshold; `AddExperience` levels up as far as it carries and
+  `MAX_PLAYER_LEVEL` is never exceeded from either mode.
 - **The four operator asks reach the right arithmetic** (`admin.test.ts`, via
   `AdminRouter.handle` and a fake host): give levels, give experience, reset
   level and reset experience each dispatch with the mode and amount they were

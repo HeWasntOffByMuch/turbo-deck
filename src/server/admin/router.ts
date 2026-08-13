@@ -56,11 +56,11 @@ export const DENY_ALL_ADMIN: AdminTokenVerifier = () => ({
 });
 
 /**
- * An action's result, with the reason it was refused (spec 153).
+ * An action's result, with the reason it was refused (spec 154).
  *
  * The actions that came before this return `boolean`, or -- in `triggerEvent`'s
  * case -- a description where `''` means refused. Rather than adding a third
- * convention, the player actions added by spec 153 share one type, so "their bag
+ * convention, the player actions added by spec 154 share one type, so "their bag
  * is full" and "no such item: sord.worn" reach the operator instead of being
  * flattened into "could not give item".
  */
@@ -92,7 +92,7 @@ export interface AdminHost {
   setConfig(key: string, value: number): number | null;
   getConfig(): readonly (readonly [string, number])[];
 
-  // --- spec 153: the character edits an operator actually reaches for --------
+  // --- spec 154: the character edits an operator actually reaches for --------
 
   setProgress(
     playerId: string,
@@ -193,7 +193,7 @@ export class AdminRouter {
         return this.ok(request.type, 'already authenticated');
 
       case AdminMessageType.ListPlayers:
-        // Not audited (spec 153). The log records what an admin *did*, and asking
+        // Not audited (spec 154). The log records what an admin *did*, and asking
         // who is online is not something done to anybody -- its read siblings
         // `getConfig` and `getAudit` never recorded one either. It is also what
         // makes a live count possible: the console polls this once a second, and

@@ -6,7 +6,7 @@
     <title>turbo-deck admin</title>
     <link rel="icon" href="data:," />
     <!--
-      The admin console (spec 153).
+      The admin console (spec 154).
 
       One page, no bundler, no dependency: it speaks the same binary protocol the
       server does, by hand, in the `W`/`Rd` pair at the top of the script. That is
@@ -15,7 +15,7 @@
 
       The shape it is built around: **a selection, not a form per action.** The
       player table is polled live and one row is selected; every action reads that
-      selection rather than an id typed into a box beside it. Before spec 153 the
+      selection rather than an id typed into a box beside it. Before spec 154 the
       table and the actions were two unconnected halves of the page and you
       retyped an id per action, correctly, or you moderated the wrong person.
     -->
@@ -174,7 +174,7 @@
                 <th>player</th>
                 <th class="num">lvl</th>
                 <th class="num">xp</th>
-                <th class="num">sp</th>
+                <th class="num">sp/ap</th>
                 <th class="num">hp</th>
                 <th>zone</th>
                 <th class="num">x</th>
@@ -492,7 +492,7 @@
               health: r.f32(), maxHealth: r.f32(), level: r.varuint(),
               attackDamage: r.f32(), moveSpeed: r.f32(), muted: r.bool(),
               experience: r.varuint(), experienceToNextLevel: r.varuint(),
-              unspentSkillPoints: r.varuint(),
+              unspentSkillPoints: r.varuint(), unspentAttributePoints: r.varuint(),
             });
           }
           players = rows;
@@ -565,7 +565,7 @@
           const cells = [
             [player.level, true],
             [player.experience + ' / ' + player.experienceToNextLevel, true],
-            [player.unspentSkillPoints, true],
+            [player.unspentSkillPoints + ' / ' + player.unspentAttributePoints, true],
             [Math.round(player.health) + ' / ' + Math.round(player.maxHealth), true],
             [player.zone, false],
             [Math.round(player.x), true],
@@ -625,6 +625,7 @@
         const rows = [
           ['level', player.level],
           ['skill points', player.unspentSkillPoints],
+          ['attribute points', player.unspentAttributePoints],
           ['experience', player.experience + ' / ' + player.experienceToNextLevel],
           ['health', Math.round(player.health) + ' / ' + Math.round(player.maxHealth)],
           ['damage', player.attackDamage.toFixed(1)],
