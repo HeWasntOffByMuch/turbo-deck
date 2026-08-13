@@ -1,6 +1,12 @@
 /**
  * An item lying in the grass (spec 154).
  *
+ * Beside `rigs.ts`, `critter.ts` and `weapon-rig.ts` rather than in `world/`,
+ * because it is what those are: three.js meshes with an `update`. Everything
+ * `world/` decides about a drop -- when, how bright, what the label says -- is
+ * pure and lives in `world/loot-drop.ts`, and the blanket lint rule on that
+ * directory's tests is the mechanical statement of the same split.
+ *
  * Three pieces and no more: the object itself, a halo that grows and brightens
  * with the flare, and a ring on the ground under it. What the halo does is the
  * whole of the "subtle rarity effect develops" step -- there are no particles,
@@ -14,7 +20,7 @@
  */
 
 import * as THREE from 'three';
-import type { RarityId } from '../../../server/data/items.js';
+import type { RarityId } from '../../server/data/items.js';
 
 /**
  * A tier's colour, here rather than in `data/loot.ts`.

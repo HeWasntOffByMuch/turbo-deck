@@ -975,7 +975,8 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  asserted in Node; what it could not say is whether any of it
                  was connected to anything),
                  loot-drop.ts (how a drop looks while it is still withholding
-                 itself, spec 154: the phase is a comparison against two ticks
+                 itself, spec 154 -- the three.js half is `iso3d/drop-rig.ts`,
+                 beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks
                  the server sent and the flare is a curve through them, so there
                  is no timer anywhere in scene.ts and no answer that differs by
                  frame rate or by who reconnected halfway through. The label is
