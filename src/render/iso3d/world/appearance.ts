@@ -54,6 +54,14 @@ export interface Appearance {
    * (spec 154). Motes only -- see {@link MOTE_DETAIL}.
    */
   readonly detail?: number;
+  /**
+   * A brighter rim around the orb, or absent for none (spec 154).
+   *
+   * Motes only. A 7-unit ball of deep blood on a green field is a dark dot on a
+   * dark field at the size it is actually drawn; the rim is what separates it
+   * from the grass without making the whole thing a bright blob.
+   */
+  readonly outline?: number;
 }
 
 /** Fallbacks, sized so an unknown body reads as a body rather than as a speck. */
@@ -78,7 +86,17 @@ const PLAYER_RADIUS = 16;
  */
 const MOTE_RADIUS = 7;
 const MOTE_VITALITY_COLOR = VFX_PALETTE.bloodFresh;
-const MOTE_FOCUS_COLOR = 0x4fa8ff;
+const MOTE_FOCUS_COLOR = 0x2d7fd6;
+/**
+ * The rim, brighter than the fill it surrounds.
+ *
+ * Deliberately *much* brighter rather than a shade up. What has to be beaten is
+ * the arena's grass, which is a mid green, and a dark red ball on it is one dark
+ * dot among the tree shadows. The pair -- deep core, hot rim -- is also what
+ * makes a mote read as lit from within rather than as a painted pebble.
+ */
+const MOTE_VITALITY_RIM = 0xff6a58;
+const MOTE_FOCUS_RIM = 0x82d4ff;
 /**
  * How round a mote is drawn.
  *
@@ -153,6 +171,7 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
         showsHealth: false,
         look: 'orb',
         tint: entity.typeId === 'mote.focus' ? MOTE_FOCUS_COLOR : MOTE_VITALITY_COLOR,
+        outline: entity.typeId === 'mote.focus' ? MOTE_FOCUS_RIM : MOTE_VITALITY_RIM,
         detail: MOTE_DETAIL,
       };
 

@@ -69,6 +69,15 @@ interface Tri {
   readonly color: THREE.Color;
   /** Unlit, like the game's own `MeshBasicMaterial` orbs. */
   readonly flat: boolean;
+  /**
+   * Drawn from the inside, like the outline shell (spec 154).
+   *
+   * The rasteriser culls back faces because the real renderer does, and the
+   * outline is a `BackSide` mesh -- so without this the shell would be culled
+   * here and drawn in the game, and this preview would confidently photograph a
+   * mote with no rim on it. That is worse than having no preview.
+   */
+  readonly inside: boolean;
 }
 
 /** Every triangle under `root`, in world space, with its material's colour. */
@@ -88,6 +97,7 @@ function collectTriangles(node3d: THREE.Object3D, into: Tri[] = []): Tri[] {
     // which is precisely the kind of quiet infidelity that makes a preview
     // worse than no preview.
     const flat = (material as { isMeshBasicMaterial?: boolean }).isMeshBasicMaterial === true;
+    const inside = material.side === THREE.BackSide;
     const count = index ? index.count : pos.count;
     for (let i = 0; i < count; i += 3) {
       const corners = [0, 1, 2].map((k) => {
@@ -102,6 +112,7 @@ function collectTriangles(node3d: THREE.Object3D, into: Tri[] = []): Tri[] {
         c: corners[2] as THREE.Vector3,
         color: material.color,
         flat,
+        inside,
       });
     }
   });
@@ -121,8 +132,8 @@ function ring(cx: number, cz: number, radius: number, color: number, into: Tri[]
     // Wound so the normal points up: the rasteriser culls back faces like the
     // real renderer, and a ring wound the other way is drawn and then discarded.
     into.push(
-      { a: at(a0, inner), b: at(a1, radius), c: at(a0, radius), color: tint, flat: true },
-      { a: at(a0, inner), b: at(a1, inner), c: at(a1, radius), color: tint, flat: true },
+      { a: at(a0, inner), b: at(a1, radius), c: at(a0, radius), color: tint, flat: true, inside: false },
+      { a: at(a0, inner), b: at(a1, inner), c: at(a1, radius), color: tint, flat: true, inside: false },
     );
   }
   return into;
@@ -174,7 +185,10 @@ function render(
     e1.subVectors(t.b, t.a);
     e2.subVectors(t.c, t.a);
     normal.crossVectors(e1, e2).normalize();
-    if (normal.dot(forward) > 0) continue;
+    // A `BackSide` mesh keeps the half a front-faced one throws away, which is
+    // what makes the shell a rim around the core rather than a ball in front of
+    // it.
+    if (t.inside ? normal.dot(forward) < 0 : normal.dot(forward) > 0) continue;
     const lambert = t.flat ? 1 : AMBIENT + (1 - AMBIENT) * Math.max(0, normal.dot(LIGHT));
     const r = encode(t.color.r * lambert);
     const g = encode(t.color.g * lambert);
@@ -218,7 +232,11 @@ function render(
 /** The rig the game would build for this mote, at the world position given. */
 function moteRig(typeId: string, x: number, y: number, z: number): THREE.Object3D {
   const look = appearanceOf({ kind: EntityKind.Mote, typeId });
-  const rig = new ShotRig(look.look ?? 'orb', look.radius, look.tint, look.detail);
+  const rig = new ShotRig(look.look ?? 'orb', look.radius, {
+    tint: look.tint,
+    detail: look.detail,
+    outline: look.outline,
+  });
   // World (x, y, z) to three's (x, height, z), the same swap `scene.ts` makes.
   rig.group.position.set(x, z, y);
   return rig.group;
