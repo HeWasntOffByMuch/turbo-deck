@@ -32,8 +32,16 @@ export interface RarityRow {
    */
   readonly revealTicks: number;
   /**
-   * Ticks from landing to the anticipation cue. Never past {@link revealTicks},
-   * and equal to it only when there is no anticipation window at all.
+   * Ticks of **quiet** between the drop landing and anything about it starting
+   * to change. Never past {@link revealTicks}, and equal to it only when there
+   * is no anticipation window at all.
+   *
+   * Half a second, and the point is the stillness. It used to be a sixth of
+   * one, so the aura began swelling while the item was still in the air --
+   * which reads as the object arriving mid-effect rather than as an object
+   * arriving and *then* something happening to it. The beat lands after the
+   * throw has finished (`TOSS_TICKS` is 18) with room to spare, so the sequence
+   * a player sees is: thrown, settles, pause, and only then does it begin.
    */
   readonly anticipationTicks: number;
   /**
@@ -61,26 +69,18 @@ export interface RarityRow {
   /**
    * How bright the drop's flare sits at rest, 0..1.
    *
-   * The floor a tier never goes below once it has revealed, and the contrast
+   * Where a revealed drop's aura ends up and stays -- and, since there is no
+   * overshoot anywhere in the curve, the brightest it ever gets. The contrast
    * §3 of `docs/reward-philosophy.md` is about: a common drop is a dim object
    * in the grass forever, and nothing about it competes with the one that is
    * not.
+   *
+   * It has to sit at or above `HIDDEN_PEAK_FLARE` for every tier that has a
+   * run-up, or the aura would climb through the anticipation and then sag at
+   * the reveal -- an anticlimax exactly where the payoff is meant to be.
+   * `loot-drop.test.ts` asserts it.
    */
   readonly restFlare: number;
-  /**
-   * How bright it flashes **at the reveal**, 0..1, before settling back to
-   * {@link restFlare}.
-   *
-   * Not the top of the run-up -- that is one shared number in `loot-drop.ts`,
-   * because a tier-scaled run-up answers the question the reveal exists to ask.
-   * This is the flash at the instant the identity lands, by which point there
-   * is nothing left to withhold, so it may be as tier-scaled as it likes.
-   *
-   * Equal to {@link restFlare} for a tier with nothing to announce, which is
-   * what keeps common loot a flat dim object rather than one with a small
-   * ceremony on landing.
-   */
-  readonly peakFlare: number;
   /**
    * Whether the drop has a pulse (spec 156).
    *
@@ -95,12 +95,19 @@ export interface RarityRow {
 }
 
 /**
- * At 60Hz: 0.75s for a rare, 1.6s for an exceptional.
+ * At 60Hz: half a second of quiet, then 0.6s of build for a rare and 1.4s for
+ * an exceptional.
+ *
+ * The quiet is the same for both because it is not a tier signal -- it is the
+ * drop landing and being an object for a moment. What differs is the build
+ * after it, and only in *length*: both climb between the same two brightnesses,
+ * so a longer one is a slower one rather than a brighter one, which is a rate
+ * read over time instead of a kind read at a glance.
  *
  * Long enough to be a beat rather than a stutter, short enough that walking two
- * steps to the thing already covers most of it -- which is the point. The
- * reveal is meant to resolve at about the moment a player who reacted to the
- * cue arrives, not to make them stand and wait for it.
+ * steps to the thing already covers most of it. The reveal is meant to resolve
+ * at about the moment a player who reacted to it arrives, not to make them
+ * stand and wait.
  */
 const RARITY_ROWS: readonly RarityRow[] = [
   {
@@ -110,35 +117,32 @@ const RARITY_ROWS: readonly RarityRow[] = [
     anticipationTicks: 0,
     cues: { spawn: 'loot.spawn', anticipation: '', reveal: '' },
     restFlare: 0.12,
-    peakFlare: 0.12,
     heartbeat: false,
   },
   {
     id: 'rare',
     name: 'Rare',
-    revealTicks: 45,
-    anticipationTicks: 9,
+    revealTicks: 66,
+    anticipationTicks: 30,
     cues: {
       spawn: 'loot.spawn',
       anticipation: 'loot.anticipation',
       reveal: 'loot.reveal.rare',
     },
     restFlare: 0.45,
-    peakFlare: 0.9,
     heartbeat: true,
   },
   {
     id: 'exceptional',
     name: 'Exceptional',
-    revealTicks: 96,
-    anticipationTicks: 12,
+    revealTicks: 114,
+    anticipationTicks: 30,
     cues: {
       spawn: 'loot.spawn',
       anticipation: 'loot.anticipation',
       reveal: 'loot.reveal.exceptional',
     },
     restFlare: 0.7,
-    peakFlare: 1,
     heartbeat: true,
   },
 ];

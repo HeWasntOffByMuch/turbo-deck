@@ -55,10 +55,11 @@ const LANDING = { x: 14, y: 8, z: 0 };
  * The ticks every row is sampled at.
  *
  * Absolute rather than per-tier, so the columns line up and the *difference*
- * between the tiers is what the eye lands on: the rare row resolves at column
- * 6 and the exceptional row is still withholding two columns later.
+ * between the tiers is what the eye lands on: the first three columns are the
+ * half-second of quiet and are identical in every row, the rare row resolves at
+ * t66, and the exceptional row is still withholding two columns after that.
  */
-const TICKS = [0, 6, 12, 18, 30, 45, 60, 96, 130];
+const TICKS = [0, 15, 30, 48, 66, 84, 114, 138, 200];
 
 interface Tri {
   readonly a: THREE.Vector3;

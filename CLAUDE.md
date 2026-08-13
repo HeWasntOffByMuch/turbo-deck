@@ -1078,7 +1078,11 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  withheld and phased off the reveal. And no cue that fires
                  before the reveal names a tier, because a tier in `cues.spawn`
                  is the rarity leaking out through the audio the moment anybody
-                 authors one.
+                 authors one. The curve all three ride has one shape rule --
+                 **it never decreases** -- so half a second of quiet (the throw
+                 finishes inside it) is followed by a climb to a shared hidden
+                 peak and then a second climb to the tier's own rest, and
+                 nothing deflates at the moment the payoff is meant to land.
                  `npx tsx scripts/preview-loot.ts` is the picture, and the
                  reason it exists is that the first cut of this feature passed
                  every test it had and did almost nothing on screen -- the

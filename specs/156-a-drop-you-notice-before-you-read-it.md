@@ -184,6 +184,15 @@ known, so neither may name a tier — they are one name each for every tier, and
 the rarity leaking through the audio channel the instant anything is authored
 for it.
 
+The curve those three channels ride on has one shape rule: **the aura never
+decreases.** Half a second of quiet at what ordinary loot rests at — the throw
+is over inside it, so the object lands, settles, and only *then* does something
+begin — then a climb to one shared hidden peak, then at the reveal a second
+climb to the tier's own rest, where it stays. There is deliberately no flash:
+the reveal already has the colour arriving, the pulse's first beat and the name
+becoming available, and a spike that fell away afterwards was the only one of
+the four that ended lower than it started.
+
 What survives is binary: it swells, or it does not. That is the "notice", and it
 has to survive or nothing would draw the eye and the reveal would resolve
 something nobody looked at. **An amount may say "something is unusual"; only a
@@ -277,6 +286,11 @@ the delay is tunable on a running server from the admin console.
   ordinary loot rests at. The tiers separate only once each has revealed.
 - No cue that fires before the reveal names a tier, and there is exactly one
   landing sound for all three.
+- **Nothing changes for the first half-second**, at any tier, and the throw
+  finishes inside that window.
+- **The flare never decreases**, at any tier, at any tick — asserted over the
+  whole curve, plus the table invariant it depends on (`restFlare` at or above
+  the shared hidden peak for every tier with a run-up).
 - The heartbeat is two beats a cycle with the second smaller, rests for most of
   the cycle, never shrinks the object, and is phased off `spawnTick`.
 - A revealed drop names itself on hover; an unrevealed one shows nothing at all

@@ -88,7 +88,17 @@ export const TIER_BLEND_TICKS = 12;
  * and every kind waits for the reveal.**
  */
 const HIDDEN_REST_FLARE = rarityRow('common').restFlare;
-const HIDDEN_PEAK_FLARE = 0.85;
+/**
+ * ...and it sits at or below every revealing tier's `restFlare` on purpose, so
+ * the reveal is a step *up* from where the run-up left the aura.
+ *
+ * It used to be 0.85 against a rare's resting 0.45, so the aura climbed to
+ * nearly full through the anticipation and then halved at the moment it was
+ * supposed to be paying off. There is now no overshoot anywhere in the curve --
+ * see {@link flareAt} -- so the aura only ever gets brighter, and the reveal is
+ * where it stops rather than where it deflates.
+ */
+export const HIDDEN_PEAK_FLARE = 0.4;
 
 export interface DropPresentation {
   readonly phase: RevealPhaseValue;
@@ -147,11 +157,18 @@ function smooth(t: number): number {
 /**
  * The flare curve, as a pure function of one drop and one tick.
  *
- * Three segments and one rule holding them together: the curve never leaves
- * `[restFlare, peakFlare]`. For a common drop those two are equal, so its curve
- * is a flat line at the dimmest value in the table -- which is what makes
- * "ordinary loot is quieter than everything else at every instant" true by
- * construction rather than by two curves happening not to cross.
+ * Three segments and one rule holding them together: **it never decreases.**
+ * Half a second flat at what ordinary loot rests at, a climb to one shared
+ * hidden peak that says nothing about the tier, and at the reveal a second
+ * climb to the tier's own rest, where it stays. A drop with no run-up -- every
+ * common one -- is a flat line at the dimmest value in the table, which is what
+ * makes "ordinary loot is quieter than everything else at every instant" true
+ * by construction rather than by two curves happening not to cross.
+ *
+ * There is deliberately no flash. The reveal already has the tier's colour
+ * arriving, the first beat of the pulse and the name becoming available; a
+ * spike that then fell away was a fourth thing, and the only one of the four
+ * that ended lower than it started.
  */
 export function flareAt(drop: DropView, tick: number): number {
   const row = rarityRow(drop.rarity);
@@ -165,11 +182,11 @@ export function flareAt(drop: DropView, tick: number): number {
     return HIDDEN_REST_FLARE + (HIDDEN_PEAK_FLARE - HIDDEN_REST_FLARE) * smooth(through);
   }
 
-  // --- revealed: the tier's own flash, settling to the tier's own rest ---
+  // --- revealed: the last climb, to the tier's own rest, and then nothing ---
   //
-  // A drop that never had a run-up settles from where it already was, so a
-  // common one is flat at its rest forever rather than flashing on landing.
-  const from = drop.revealTick > drop.spawnTick ? row.peakFlare : row.restFlare;
+  // A drop that never had a run-up starts from its own rest, so a common one is
+  // a flat line forever rather than easing from somewhere it never was.
+  const from = drop.revealTick > drop.spawnTick ? HIDDEN_PEAK_FLARE : row.restFlare;
   const settled = smooth((tick - drop.revealTick) / REVEAL_SETTLE_TICKS);
   return from + (row.restFlare - from) * settled;
 }

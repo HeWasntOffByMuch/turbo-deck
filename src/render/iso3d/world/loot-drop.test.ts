@@ -20,6 +20,7 @@ import {
   pickupLead,
   HEARTBEAT_TICKS,
   pickupOrderFor,
+  HIDDEN_PEAK_FLARE,
   REVEAL_SETTLE_TICKS,
   TIER_BLEND_TICKS,
   tierMixAt,
@@ -124,29 +125,60 @@ describe('the flare', () => {
     for (let tick = 0; tick < 300; tick++) expect(flareAt(drop, tick)).toBeCloseTo(row.restFlare, 9);
   });
 
-  it('rises through the anticipation and settles after the reveal', () => {
+  it('holds still for half a second before anything starts to change', () => {
+    for (const rarity of ['rare', 'exceptional'] as const) {
+      const drop = view(rarity);
+      const hidden = flareAt(drop, drop.spawnTick);
+      // Half a second, and the throw is over well inside it -- so the object
+      // lands, settles, and only then does something begin.
+      expect(drop.anticipationTick - drop.spawnTick).toBe(30);
+      expect(drop.anticipationTick - drop.spawnTick).toBeGreaterThan(TOSS_TICKS);
+      for (let tick = drop.spawnTick; tick <= drop.anticipationTick; tick++) {
+        expect(flareAt(drop, tick), `${rarity} @ ${tick}`).toBeCloseTo(hidden, 9);
+      }
+      // ...and then it does.
+      expect(flareAt(drop, drop.anticipationTick + 6)).toBeGreaterThan(hidden);
+    }
+  });
+
+  it('rises through the anticipation and holds after the reveal', () => {
     const drop = view('exceptional');
     const row = rarityRow('exceptional');
     const hidden = flareAt(view('common'), 0);
     // Starts where ordinary loot sits...
     expect(flareAt(drop, drop.spawnTick)).toBeCloseTo(hidden, 9);
-    // ...builds...
-    expect(flareAt(drop, drop.revealTick - 1)).toBeGreaterThan(hidden);
-    // ...flashes at the reveal, which is the first moment a tier may show...
-    expect(flareAt(drop, drop.revealTick)).toBeCloseTo(row.peakFlare, 9);
-    // ...and comes all the way back down to its own rest, rather than leaving a
-    // lit object.
+    // ...builds to the shared peak, which says nothing about the tier...
+    expect(flareAt(drop, drop.revealTick)).toBeCloseTo(HIDDEN_PEAK_FLARE, 9);
+    // ...and climbs the rest of the way to its own, where it stays.
     expect(flareAt(drop, drop.revealTick + REVEAL_SETTLE_TICKS)).toBeCloseTo(row.restFlare, 9);
     expect(flareAt(drop, drop.revealTick + 10_000)).toBeCloseTo(row.restFlare, 9);
   });
 
-  it('rises monotonically through the run-up', () => {
-    const drop = view('rare');
-    let previous = -1;
-    for (let tick = drop.anticipationTick; tick <= drop.revealTick; tick++) {
-      const flare = flareAt(drop, tick);
-      expect(flare).toBeGreaterThanOrEqual(previous);
-      previous = flare;
+  /**
+   * The rule the whole curve is built on: **it never decreases.**
+   *
+   * It used to climb to 0.85 through the anticipation and then halve to a
+   * rare's resting 0.45 -- the aura deflating at the exact moment the reveal
+   * was meant to be paying off.
+   */
+  it('never gets dimmer than it has been, at any tier, ever', () => {
+    for (const rarity of RARITY_IDS) {
+      const drop = view(rarity);
+      let previous = -Infinity;
+      for (let tick = drop.spawnTick; tick <= drop.revealTick + REVEAL_SETTLE_TICKS * 4; tick++) {
+        const flare = flareAt(drop, tick);
+        expect(flare, `${rarity} @ ${tick}`).toBeGreaterThanOrEqual(previous - 1e-9);
+        previous = flare;
+      }
+    }
+  });
+
+  /** The table has to hold up its end of that, or the curve cannot. */
+  it('authors no tier that would sag at its own reveal', () => {
+    for (const rarity of RARITY_IDS) {
+      const row = rarityRow(rarity);
+      if (row.revealTicks === 0) continue;
+      expect(row.restFlare, rarity).toBeGreaterThanOrEqual(HIDDEN_PEAK_FLARE);
     }
   });
 });
