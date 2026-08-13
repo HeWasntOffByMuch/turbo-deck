@@ -144,10 +144,12 @@ authored field.
 
 ## Carry-over and the meter's boundaries
 
-- Excess **always** carries. There is no reset on death, on zone change, or on
-  logout-within-a-session; the meter simply is not persisted (§ E), so a fresh
-  login starts at zero. That is deliberate: a persisted meter is a thing to bank
-  by logging out, and the meter is momentum, not currency.
+- Excess **always** carries, between kills. It is not persisted (§ E), so a
+  fresh login starts at zero, and it is **cleared on death**, alongside the
+  full-health, full-flask return the respawn already did. Both follow from the
+  same reading: the meter is momentum inside an expedition rather than a
+  possession. A persisted one would be a thing to bank by logging out at 99, and
+  a death that kept it would make dying the cheapest way to reset a fight.
 - The client cannot address the meter. There is no client message that reaches
   it, and the only thing that moves it is a kill the server resolved.
 
@@ -158,9 +160,12 @@ world that repeats.
 
 - **Diminishing returns per spawner.** A status `farm:<spawnerId>` on the
   killer, `farmWindowTicks` long, up to `farmMaxStacks`. Each stack removes
-  `farmDecayPerKill` of the contribution, floored at `farmFloor`. Bodies with no
-  spawner (admin-conjured, scripted) share one key, so nothing escapes by
-  having no home.
+  `farmDecayPerKill` of the contribution, floored at `farmFloor`. A body with no
+  spawner — admin-conjured, or placed by a scripted encounter — is keyed by its
+  *type* instead, so nothing escapes by having no home and a varied wave still
+  pays what it is worth. (One shared key for all of them was the first version
+  and was wrong in exactly that way: five different monsters would have decayed
+  as though one spawner had been farmed five times.)
 - **One elite guarantee per spawner per window.** A status
   `elite:<spawnerId>` on the killer, `eliteGuaranteeTicks` long. Inside it, an
   elite kill still pays meter progress and pays no guarantee. This is what stops
@@ -218,9 +223,12 @@ kill*, so the rate is bounded by the supply of things to kill.
   no reason to avoid collecting one, because a collected mote at full is one you
   chose to spend. A player who *does* have an overheal outlet — Constitution's
   shield, Wisdom's conversion — collects it and `applyHealing` does the rest.
-- **Waste.** Wisdom's `restoreSalvagePct` puts a fraction of a mote's overheal
-  back into the meter, capped per event. That is the only path from healing to
-  the meter, and it is bounded, so it cannot run away.
+- **Waste.** Wisdom's `restoreSalvagePct` puts a fraction of any overheal back
+  into the meter, capped per event. It lives inside `applyHealing`, so it
+  reaches a mote, the flask and `self.mend` alike, and it is applied to what the
+  *other* outlets did not take — Constitution's shield and Wisdom's own
+  conversion get first refusal, so nothing is paid for twice. The only path from
+  healing to the meter, and bounded twice, so it cannot run away.
 
 ---
 
@@ -254,16 +262,23 @@ able to say.
 ## Refill: rest
 
 `ZoneDefinition` gains `rest: boolean`. Hearthstead has it; nothing else does.
-Standing in a rest zone with no `RecentlyHit` mark:
+Standing in a rest zone with no `InCombat` mark:
 
 - health regenerates at `restHealthPerSecond` of maximum,
 - one charge returns every `restChargeTicks`.
 
 Deliberately a *place* rather than a timer, so the refill is a decision to
-disengage and walk back. Deliberately gated on not having been hit recently, so
-it cannot be used mid-fight by a player who dragged something into town.
-Deliberately not available in the wilds, which is where the fallback has to be
-insurance rather than a rest button.
+disengage and walk back. Deliberately gated on not being in a fight, so it
+cannot be used by a player who dragged something into town. Deliberately not
+available in the wilds, which is where the fallback has to be insurance rather
+than a rest button.
+
+`InCombat` is a **new, wider status** rather than the existing `RecentlyHit`,
+and the difference is load-bearing. `RecentlyHit` is a reaction window half a
+second wide, which is what Perfect Exit and the untouched-kill bonus both need
+it to be; a ravager swings every 2.25 seconds, so gating a refill on it let a
+player heal between the blows of the thing killing them. An existing session
+test caught it, because the default spawn point is inside Hearthstead.
 
 ---
 
@@ -376,7 +391,7 @@ bar, the flask still works, the meter still fills at the same rate.
 7. A mote is only ever collected by its owner, only inside `pickupRadius`, and only when it has something to fill.
 8. A mote expires, and expiring costs nothing.
 9. The flask spends a charge at commit, refunds it on withdrawal, and is refused with no charges.
-10. Rest refills charges and health; it does not fire with `RecentlyHit` live, or outside a rest zone.
+10. Rest refills charges and health; it does not fire with `InCombat` live, or outside a rest zone.
 11. A fixed seed and a fixed input sequence produce bit-identical restoration state, every run.
 12. Death behaviour is unchanged: same respawn delay, same full-health return, same `died` event.
 13. Presentation is not consulted: the same fight with the restoration message driven and not driven leaves identical authoritative state.
@@ -386,7 +401,18 @@ bar, the flask still works, the meter still fills at the same rate.
 
 `sim/metrics.ts` gains restoration columns — progress earned, by source; motes
 generated, collected and wasted; flask charges spent; net health delta — and
-`npm run balance` prints them, so the six routes are legible in the same table
-that already proves the six builds are different. `npx tsx
-scripts/probe-restoration.ts` prints the contribution breakdown for a kill,
-which is the answer to *why did this player get this much*.
+`npm run balance` prints them in a second table, so the six routes are legible
+beside the one that already proves the six builds are different.
+
+The signature to watch for there, because it reads as the opposite of what it
+is: **every build at exactly net zero health per kill is over-generation, not
+balance.** It means the economy is producing more than a fight costs and the
+only thing holding it down is the health bar's own ceiling. Read MOTE% beside
+it — a low one says most of what was generated was thrown away.
+
+`npx tsx scripts/probe-restoration.ts` is the other half. It prices every
+monster in the table under five kinds of play and prints the derivation line by
+line — the answer to *why did this player get this much* — then runs the seven
+players of the balance review below through twenty kills each. It also lists the
+admin levers: `meter`, `charges` and `elite` on `admin:triggerEvent`, beside the
+`raid` and `clear` that were already there.
