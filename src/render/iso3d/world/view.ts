@@ -122,10 +122,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery() });
 
   // The one branch in this file that decides what kind of game this is
-  // (spec 144). No `?server` is single-player over a loopback, exactly as
-  // before; `?server` connects out and constructs no server at all.
-  const plan = planConnection(location.search, location, sessionStorage, () =>
-    crypto.randomUUID(),
+  // (spec 144). No `?server` is single-player over a loopback; `?server`
+  // connects out and constructs no server at all.
+  //
+  // Since spec 153 a build can carry a server of its own: `VITE_SERVER_URL` is
+  // baked in by the Pages workflow, so the published page dials the deployed
+  // box with no query string at all. Absent -- which is every `npm run dev` and
+  // every preview script -- it is the empty string and nothing changes.
+  // `?server=local` is how a build that has one is still driven single-player.
+  const plan = planConnection(
+    location.search,
+    location,
+    sessionStorage,
+    () => crypto.randomUUID(),
+    import.meta.env?.VITE_SERVER_URL ?? '',
   );
 
   /**

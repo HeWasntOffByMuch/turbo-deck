@@ -87,6 +87,19 @@ function explicitUrl(value: string): string | null {
   return null;
 }
 
+/**
+ * The two values of `?server` that mean "no server" (spec 153).
+ *
+ * They exist because of the build-time default: once a published page has one
+ * baked in, a page with no query string is a *remote* page, and every preview
+ * script in this repo drives exactly that -- the built page, no query string.
+ * Without a way to say no, configuring a production server would silently point
+ * `preview-world`, `preview-units`, `probe-exempt` and the rest at it.
+ *
+ * Checked before the URL forms, so neither is ever mistaken for a hostname.
+ */
+const LOOPBACK_WORDS: readonly string[] = ['local', 'off'];
+
 /** Keep the token this session was issued, for the next load of this tab. */
 export function rememberSession(storage: StorageLike, token: string): void {
   write(storage, SESSION_TOKEN_KEY, token);
@@ -129,20 +142,36 @@ function identify(
 }
 
 /**
- * No `?server` is single-player, exactly as before. That is the default on
- * purpose: the loopback tab is the one every other spec's preview script
- * drives, and it must not start needing a server to boot.
+ * No `?server` is single-player *unless a server was built in* (spec 153).
+ *
+ * The order is the whole rule. An explicit `?server=` always wins, because
+ * somebody typing a host is answering this question directly. `?server=local`
+ * is the way back to the loopback, and it has to be checked before anything
+ * tries to read a URL out of the value. Only then does `defaultServer` apply,
+ * and an empty one leaves the original behaviour exactly as it was: the
+ * loopback tab is what every preview script drives, and it must not start
+ * needing a server to boot.
+ *
+ * `defaultServer` is an argument rather than an `import.meta.env` read because
+ * this file is pure -- the same reason the storage and the id minter are
+ * arguments. `view.ts` is where the bundler's value enters.
  */
 export function planConnection(
   search: string,
   origin: OriginLike,
   storage: StorageLike,
   newId: () => string,
+  defaultServer = '',
 ): ConnectionPlan {
   const params = new URLSearchParams(search);
-  if (!params.has('server')) return { mode: 'loopback' };
+  const asked = params.has('server') ? (params.get('server') ?? '') : defaultServer;
+  if (LOOPBACK_WORDS.includes(asked)) return { mode: 'loopback' };
+  if (!params.has('server') && asked === '') return { mode: 'loopback' };
 
-  const asked = params.get('server') ?? '';
+  // A default is normalised exactly like a typed one -- including the fallback
+  // to this origin -- so a misconfigured `VITE_SERVER_URL` cannot be dialled
+  // literally, and pasting `https://host` into the deploy works like pasting it
+  // into the address bar.
   const url = explicitUrl(asked) ?? sameOrigin(origin);
   const { playerId, displayName } = identify(params, storage, newId);
   const resumeToken = read(storage, SESSION_TOKEN_KEY) ?? '';

@@ -21,6 +21,17 @@ declare module '*?raw' {
  * with it for one function.
  */
 interface ImportMeta {
+  /**
+   * Build-time environment, typed to the one variable this project reads
+   * (spec 153): which server the published page dials with no `?server=`.
+   *
+   * Optional on `ImportMeta` itself, because `view.ts` is also loaded by Node
+   * in a test, where a bundler never replaced anything and `import.meta.env`
+   * does not exist at all. Declared here rather than by pulling in
+   * `vite/client`, for the same reason `glob` is.
+   */
+  readonly env?: { readonly VITE_SERVER_URL?: string };
+
   glob(pattern: string, options: { eager: true }): Record<string, unknown>;
   /**
    * The `?url` form, for discovering assets rather than naming them (spec 113).

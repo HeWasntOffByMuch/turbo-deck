@@ -129,6 +129,60 @@ describe('planConnection', () => {
     expect(anon.displayName).toBe('Player abcd');
   });
 
+  it('dials the built-in server when nothing asks otherwise (spec 153)', () => {
+    const plan = planConnection('', HTTPS, storage(), ids(), 'wss://play.example.net/ws');
+    if (plan.mode !== 'remote') throw new Error('expected remote');
+    expect(plan.url).toBe('wss://play.example.net/ws');
+    // Everything else about a remote plan still holds on this path.
+    expect(plan.playerId).toBe('id-1');
+    expect(plan.resumeToken).toBe('');
+  });
+
+  it('lets an explicit ?server beat the built-in one', () => {
+    const plan = planConnection(
+      '?server=wss://other.example.com/game',
+      HTTPS,
+      storage(),
+      ids(),
+      'wss://play.example.net/ws',
+    );
+    if (plan.mode !== 'remote') throw new Error('expected remote');
+    expect(plan.url).toBe('wss://other.example.com/game');
+  });
+
+  it('lets ?server=local turn a built-in server off', () => {
+    // The half the preview scripts depend on: a build with a server baked in is
+    // still drivable single-player, and neither word is read as a hostname.
+    for (const word of ['local', 'off']) {
+      expect(
+        planConnection(`?server=${word}`, HTTPS, storage(), ids(), 'wss://play.example.net/ws'),
+      ).toEqual({ mode: 'loopback' });
+      // And with no default configured at all, which is `npm run dev`.
+      expect(planConnection(`?server=${word}`, HTTPS, storage(), ids())).toEqual({
+        mode: 'loopback',
+      });
+    }
+  });
+
+  it('normalises a built-in server exactly like a typed one', () => {
+    const https = planConnection('', HTTPS, storage(), ids(), 'https://play.example.net/ws');
+    if (https.mode !== 'remote') throw new Error('expected remote');
+    expect(https.url).toBe('wss://play.example.net/ws');
+
+    // A misconfigured value is never dialled literally; it degrades to this
+    // origin, which is the same answer a bare `?server` gets.
+    const junk = planConnection('', HTTPS, storage(), ids(), 'play.example.net');
+    if (junk.mode !== 'remote') throw new Error('expected remote');
+    expect(junk.url).toBe('wss://play.example.com/ws');
+  });
+
+  it('is still single-player when no server is built in', () => {
+    // The regression that matters: an unconfigured build behaves as it always
+    // has, so `npm run dev` and every preview script are untouched.
+    expect(planConnection('', HTTP, storage(), ids(), '')).toEqual({ mode: 'loopback' });
+    expect(planConnection('?seed=4', HTTP, storage(), ids(), '')).toEqual({ mode: 'loopback' });
+  });
+
   it('costs a fresh id rather than an exception when storage refuses', () => {
     const mint = ids();
     const first = planConnection('?server&name=Ana', HTTP, hostileStorage(), mint);
