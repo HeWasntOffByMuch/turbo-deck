@@ -81,6 +81,12 @@ export class ShotRig {
      * than growing a second one, and this is the one thing it has to change.
      */
     tint?: number,
+    /**
+     * Icosahedron subdivisions for the orb, or absent for the faceted default
+     * (spec 154). A mote wants a sphere; a conjured bolt is supposed to look
+     * cut from glass and is on screen for a moment.
+     */
+    detail?: number,
   ) {
     this.group.add(this.pivot);
 
@@ -94,7 +100,7 @@ export class ShotRig {
         break;
       default:
         this.spinner = null;
-        this.buildOrb(radius, tint);
+        this.buildOrb(radius, tint, detail);
         break;
     }
 
@@ -229,9 +235,9 @@ export class ShotRig {
   }
 
   /** The look every shot had before this spec, and what an unknown one gets. */
-  private buildOrb(radius: number, tint?: number): void {
+  private buildOrb(radius: number, tint?: number, detail?: number): void {
     const mesh = new THREE.Mesh(
-      this.track(new THREE.IcosahedronGeometry(Math.max(3, radius), 0)),
+      this.track(new THREE.IcosahedronGeometry(Math.max(3, radius), detail ?? 0)),
       this.track(new THREE.MeshBasicMaterial({ color: tint ?? PALETTE.magicCore })),
     );
     this.pivot.add(mesh);

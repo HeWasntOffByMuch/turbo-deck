@@ -213,10 +213,28 @@ kill*, so the rate is bounded by the supply of things to kill.
 - **Value.** A fraction of the collector's own maximum (`moteHealthFraction`,
   `moteResourceFraction`), so a mote is worth the same *proportion* to every
   build and Wisdom's `healingScale` is the thing that makes it worth more.
-- **Attraction.** Within `attractRadius` (plus Perception's bonus) a mote
-  accelerates toward its owner and is collected inside `pickupRadius`. It is
-  never attracted toward a deficit it cannot fill — a vitality mote ignores a
-  player at full health — so nothing is wasted by walking over it.
+- **The hop, then attraction.** A mote bursts out of the body along the line
+  *toward its owner*, arcs, and lands `scatterRadius` away; it sits there for
+  `lingerTicks`; only then may it be attracted or taken. Within `attractRadius`
+  (plus Perception's bonus) it closes on its owner and is collected inside
+  `pickupRadius`. It is never attracted toward a deficit it cannot fill — a
+  vitality mote ignores a player at full health — so nothing is wasted by
+  walking over it.
+
+  **The hop and the linger exist because the first version could not be seen.**
+  A mote spawned at the corpse, inside its owner's attract radius, and was
+  collected on the first tick it was legally allowed to be: measured at **0.30
+  seconds**, six frames at the 20Hz broadcast rate, which is what "I can only
+  rarely see a drop" turned out to mean. The hop gives it somewhere to travel
+  and the linger is a *floor* under that, because a mote that happens to land
+  under the player's feet has no travel left and would otherwise be taken the
+  tick it touched down. Together they put a drop on screen for 0.85s at worst.
+
+  Bursting **toward** the killer rather than along the victim's facing is the
+  other half, and `preview-motes.ts` is what caught it: aimed by the corpse's
+  heading, a mote from a body that died 58 units away landed 102 units away —
+  further than if it had never hopped. The fiction is that the life leaves the
+  body and comes to you, and the geometry should say the same thing.
 - **Full-resource behaviour.** A mote whose resource is full is simply not
   collected. It waits, visible, until it expires. Two things follow: there is no
   banking (the lifetime is `moteLifetimeTicks`, and it is short), and there is
@@ -389,6 +407,7 @@ bar, the flask still works, the meter still fills at the same rate.
 5. A passive zero-aggro monster contributes `passiveFactor`; a zero-experience body contributes nothing.
 6. A monster killed by another monster generates nothing.
 7. A mote is only ever collected by its owner, only inside `pickupRadius`, and only when it has something to fill.
+7b. A mote is on screen for at least `launchTicks + lingerTicks`, wherever it lands, and its hop closes the distance to its owner rather than adding to it.
 8. A mote expires, and expiring costs nothing.
 9. The flask spends a charge at commit, refunds it on withdrawal, and is refused with no charges.
 10. Rest refills charges and health; it does not fire with `InCombat` live, or outside a rest zone.

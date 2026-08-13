@@ -329,22 +329,53 @@ export function attractRadiusFor(body: ServerEntity): number {
  * would change every fight recorded after it. This way the number of motes is
  * free to depend on the build and the seed sequence never notices.
  */
-export function scatterMotes(count: number, kind: number, amount: number): readonly MoteSpawn[] {
+export function scatterMotes(
+  count: number,
+  kind: number,
+  amount: number,
+  toward: number,
+): readonly MoteSpawn[] {
   const motes: MoteSpawn[] = [];
   const radius = RESTORATION.mote.scatterRadius;
+  const fan = RESTORATION.mote.scatterFan;
   for (let index = 0; index < count; index++) {
-    // 2.399963 rad -- the golden angle. Consecutive indices never bunch, so two
-    // motes from one kill are never drawn on top of each other.
-    const angle = index * 2.399963;
-    const spread = count > 1 ? radius : 0;
+    // **Toward the killer, in a fan.** The first version burst along the
+    // *victim's* facing plus the golden angle, which spread three motes nicely
+    // and sent them in whatever direction the corpse happened to be looking --
+    // so a monster facing away threw its drop further away, and a preview caught
+    // one landing 102 units from the player when the body had died at 58. The
+    // fiction is that the life leaves the body and comes to you; the geometry
+    // should say the same thing.
+    //
+    // A bounded fan rather than the golden angle, for the same reason: the
+    // golden angle is the right spread when direction does not matter, and here
+    // it is the only thing that does. Centred, so an odd count sends one
+    // straight at the killer and an even one splits around them.
+    const angle = toward + (index - (count - 1) / 2) * fan;
+    // Every mote travels, the single one included. It used to sit still when it
+    // was alone, which is the *common* case -- so the hop that exists to make a
+    // drop legible did nothing at all for most drops.
     motes.push({
       kind,
       amount,
-      offsetX: Math.cos(angle) * spread,
-      offsetY: Math.sin(angle) * spread,
+      offsetX: Math.cos(angle) * radius,
+      offsetY: Math.sin(angle) * radius,
     });
   }
   return motes;
+}
+
+/**
+ * The direction a body's motes should burst in: at `to`, or `from`'s own facing
+ * when the two are on the same spot and there is no line between them.
+ */
+export function scatterAngle(
+  from: Pick<ServerEntity, 'position' | 'facing'>,
+  to: Pick<ServerEntity, 'position'>,
+): number {
+  const dx = to.position.x - from.position.x;
+  const dy = to.position.y - from.position.y;
+  return Math.hypot(dx, dy) > 1e-6 ? Math.atan2(dy, dx) : from.facing;
 }
 
 // --- the whole credit ----------------------------------------------------
@@ -428,7 +459,9 @@ export function creditKill(
   const kind = moteKindFor(killerIn);
   return {
     killer: { ...killerIn, restoration: advanced.meter, statuses },
-    motes: scatterMotes(count, kind, moteValueFor(killerIn, kind)),
+    // Burst out of the body *toward the killer* (spec 154), so the drop closes
+    // some of the distance itself rather than adding to it.
+    motes: scatterMotes(count, kind, moteValueFor(killerIn, kind), scatterAngle(victim, killerIn)),
     contribution,
     guaranteed,
   };
@@ -461,7 +494,10 @@ export function creditAssist(
   const kind = moteKindFor(helper);
   return {
     killer: { ...helper, restoration: advanced.meter },
-    motes: scatterMotes(advanced.motes, kind, moteValueFor(helper, kind)),
+    // An assist's motes are already at the helper's feet, so there is no gap for
+    // them to close: they burst along the helper's own heading, which is the
+    // direction that body is looking anyway.
+    motes: scatterMotes(advanced.motes, kind, moteValueFor(helper, kind), helper.facing),
     contribution: {
       base,
       farmFactor: 1,

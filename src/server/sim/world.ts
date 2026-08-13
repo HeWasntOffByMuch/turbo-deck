@@ -1086,23 +1086,32 @@ function buildMote(
   spawn: MoteSpawn,
   tick: number,
 ): ServerEntity {
-  const x = at.x + spawn.offsetX;
-  const y = at.y + spawn.offsetY;
+  const lands = tick + RESTORATION.mote.launchTicks;
   return {
     ...blankEntity(id),
     kind: EntityKindValue.Mote,
     typeId: MOTE_TYPE_ID[spawn.kind] ?? MOTE_TYPE_ID[MoteKind.Vitality] ?? '',
-    // Kept at the corpse's own height rather than resampled off the terrain:
-    // one blow can scatter several, and a mote that snapped to the hillside
-    // under it would sit at a different height from its siblings.
-    position: { x, y, z: at.z + MOTE_HOVER },
+    // It starts *at the body*, not where it will land: the hop is the whole
+    // point (spec 154), and a mote that appeared at its rest point would have
+    // nothing to travel.
+    position: { x: at.x, y: at.y, z: at.z + MOTE_HOVER },
     zoneId: owner.zoneId,
     radius: MOTE_RADIUS,
     mote: {
       kind: spawn.kind,
       amount: spawn.amount,
       ownerEntityId: owner.id,
-      armedAtTick: tick + RESTORATION.mote.armTicks,
+      originX: at.x,
+      originY: at.y,
+      // The corpse's own height rather than a fresh terrain sample: one blow can
+      // scatter several, and a mote that snapped to the hillside under it would
+      // leave from a different height from its siblings.
+      originZ: at.z,
+      restX: at.x + spawn.offsetX,
+      restY: at.y + spawn.offsetY,
+      launchFromTick: tick,
+      landsAtTick: lands,
+      armedAtTick: lands + RESTORATION.mote.lingerTicks,
       expiresAtTick: tick + RESTORATION.mote.lifetimeTicks,
     },
   };
@@ -1168,6 +1177,38 @@ function advanceMotes(
       continue;
     }
 
+    // --- the hop (spec 154) ---------------------------------------------
+    // Out of the body, over an arc, down to its rest point. Nothing may touch it
+    // while it is in the air: it is not attracted, not collected, and not
+    // interested in whether its owner has room. That is what buys the drop a
+    // beat on screen to be seen in.
+    //
+    // A pure function of the tick rather than an integrated velocity, so a
+    // replay lands it on the same blade of grass.
+    if (tick < mote.landsAtTick) {
+      const span = mote.landsAtTick - mote.launchFromTick;
+      const progress = span > 0 ? Math.max(0, Math.min(1, (tick - mote.launchFromTick) / span)) : 1;
+      const x = mote.originX + (mote.restX - mote.originX) * progress;
+      const y = mote.originY + (mote.restY - mote.originY) * progress;
+      // The same ballistic the arrows fly (spec 089), at a fraction of the
+      // height: a mote pops, it does not lob.
+      const z = shotHeightAt(
+        progress,
+        mote.originZ + MOTE_HOVER,
+        context.terrain.heightAt(x, y) + MOTE_HOVER,
+        RESTORATION.mote.hopHeight,
+      );
+      working.set(entity.id, { ...entity, position: { x, y, z } });
+      continue;
+    }
+
+    // Landed, and not yet armed: it sits exactly where it fell, in plain sight,
+    // for the linger. This is the branch that guarantees a drop is *seen* --
+    // without it the on-screen time is whatever the scatter direction happened
+    // to leave, and a mote that landed under the player's feet was taken on the
+    // tick it touched down.
+    if (tick < mote.armedAtTick) continue;
+
     // A dead or departed owner leaves the mote lying there until it fades. It is
     // deliberately not reassigned: a mote is somebody's, and a mote that changed
     // hands on a death would be the one way a teammate could take one.
@@ -1179,7 +1220,7 @@ function advanceMotes(
     const dy = owner.position.y - entity.position.y;
     const distance = Math.hypot(dx, dy);
 
-    if (tick >= mote.armedAtTick && distance <= RESTORATION.mote.pickupRadius) {
+    if (distance <= RESTORATION.mote.pickupRadius) {
       events.push(...collectMote(working, owner, entity, mote, tick));
       continue;
     }

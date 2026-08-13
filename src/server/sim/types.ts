@@ -194,7 +194,43 @@ export interface MoteState {
    * and a pickup check that had to would be the first.
    */
   readonly ownerEntityId: number;
-  /** First tick it may be collected -- a beat, so it is seen rather than counted. */
+  /**
+   * The hop, as two points and a clock (spec 154).
+   *
+   * A mote bursts out of the body and lands a short way off before it may be
+   * taken. That is not decoration: without it a mote spawns inside its owner's
+   * attract radius and is collected on the first tick it is legally allowed to
+   * be, which measured at **0.30 seconds on screen** -- six frames at the 20Hz
+   * broadcast rate, and the whole of that was the arm delay. A drop nobody can
+   * see is a drop nobody believes in.
+   *
+   * Carried as an origin and a rest point rather than as a velocity, so the
+   * position during the hop is a pure function of the tick: no integration, no
+   * accumulated error, and a replay lands it on the same blade of grass.
+   */
+  readonly originX: number;
+  readonly originY: number;
+  readonly originZ: number;
+  readonly restX: number;
+  readonly restY: number;
+  /**
+   * The two ends of the hop, stored rather than derived from the config.
+   *
+   * Self-describing on purpose: reading a tuning constant to interpret stored
+   * state means a mote in flight when somebody retunes the constant is a mote
+   * whose arc changes under it.
+   */
+  readonly launchFromTick: number;
+  readonly landsAtTick: number;
+  /**
+   * First tick it may be attracted or collected -- landing plus a beat.
+   *
+   * The beat is a **floor on how long a drop is on screen**, and it is the half
+   * of the visibility fix the hop alone could not give. A mote that happens to
+   * land inside its owner's pickup radius has no travel left to do, so without
+   * this it is taken on the tick it touches down and the geometry decides
+   * whether the player ever saw it.
+   */
   readonly armedAtTick: number;
   /** First tick it is gone. Expiry is a comparison, like a status. */
   readonly expiresAtTick: number;

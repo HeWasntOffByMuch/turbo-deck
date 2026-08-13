@@ -17,6 +17,7 @@
 import { monsterById } from '../../../server/data/monsters.js';
 import { abilityById, type ProjectileLook } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import { VFX_PALETTE } from '../vfx/palette.js';
 import type { FigureTuning } from '../../cloth/params.js';
 import type { CritterId } from '../../critters/index.js';
 
@@ -48,6 +49,11 @@ export interface Appearance {
    * answered without a WebGL context.
    */
   readonly tint?: number;
+  /**
+   * How many times to subdivide the orb, or absent for the faceted default
+   * (spec 154). Motes only -- see {@link MOTE_DETAIL}.
+   */
+  readonly detail?: number;
 }
 
 /** Fallbacks, sized so an unknown body reads as a body rather than as a speck. */
@@ -60,14 +66,28 @@ const PLAYER_RADIUS = 16;
 /**
  * How big a mote is drawn, and in what (spec 154).
  *
- * The radius matches the one `world.ts` gives the entity, and the two colours
- * are the only thing that tells a health mote from a focus one -- so they are
- * named here beside the shape rather than picked in the scene, where nothing
- * could check them.
+ * The radius matches the one `world.ts` gives the entity. The colours are the
+ * only thing that tells a health mote from a focus one, so they are named here
+ * beside the shape rather than picked in the scene, where nothing could check
+ * them.
+ *
+ * Vitality is **the game's own blood**, `VFX_PALETTE.bloodFresh`, rather than a
+ * red picked to look like blood. The spray a killing blow throws and the stain
+ * it leaves are already that colour, so a health mote reads as part of the same
+ * event instead of as a pickup that happens to be nearby.
  */
 const MOTE_RADIUS = 7;
-const MOTE_VITALITY_COLOR = 0xff5a6e;
+const MOTE_VITALITY_COLOR = VFX_PALETTE.bloodFresh;
 const MOTE_FOCUS_COLOR = 0x4fa8ff;
+/**
+ * How round a mote is drawn.
+ *
+ * An icosahedron at detail 0 is twenty flat faces and reads as a die; one
+ * subdivision is eighty and reads as a sphere while staying inside the low-poly
+ * look everything else here is built in. The bolt keeps detail 0 -- a conjured
+ * shot is *supposed* to look faceted, and it is only on screen for a moment.
+ */
+const MOTE_DETAIL = 1;
 
 /**
  * The species the play view draws a player as (spec 081).
@@ -133,6 +153,7 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
         showsHealth: false,
         look: 'orb',
         tint: entity.typeId === 'mote.focus' ? MOTE_FOCUS_COLOR : MOTE_VITALITY_COLOR,
+        detail: MOTE_DETAIL,
       };
 
     case EntityKind.Prop:

@@ -574,18 +574,63 @@ describe('motes', () => {
   it('scatters without drawing from the Rng', () => {
     // Determinism: the generator is threaded through the whole sim, so a kill
     // that drew two values for a scatter would change every fight recorded
-    // after it. The offsets are a function of the index and nothing else.
-    const twice = [scatterMotes(3, MoteKind.Vitality, 10), scatterMotes(3, MoteKind.Vitality, 10)];
+    // after it. The offsets are a function of the index and the facing, and of
+    // nothing else.
+    const twice = [
+      scatterMotes(3, MoteKind.Vitality, 10, 0.7),
+      scatterMotes(3, MoteKind.Vitality, 10, 0.7),
+    ];
     expect(twice[0]).toEqual(twice[1]);
     // ...and no two land on the same spot.
     const spots = new Set((twice[0] ?? []).map((mote) => `${mote.offsetX},${mote.offsetY}`));
     expect(spots.size).toBe(3);
   });
 
-  it('leaves a single mote exactly where the body fell', () => {
-    const one = scatterMotes(1, MoteKind.Vitality, 10);
-    expect(one[0]?.offsetX).toBe(0);
-    expect(one[0]?.offsetY).toBe(0);
+  it('bursts toward whoever it belongs to, not out of a fixed compass point', () => {
+    const east = scatterMotes(1, MoteKind.Vitality, 10, 0);
+    const north = scatterMotes(1, MoteKind.Vitality, 10, Math.PI / 2);
+    expect(east[0]?.offsetX).toBeCloseTo(RESTORATION.mote.scatterRadius);
+    expect(north[0]?.offsetY).toBeCloseTo(RESTORATION.mote.scatterRadius);
+  });
+
+  it('closes the distance to the killer rather than adding to it', () => {
+    // The regression `preview-motes.ts` caught. Bursting along the *victim's*
+    // facing sent the drop wherever the corpse happened to be looking -- one
+    // landed 102 units from a player whose kill had died at 58, which is
+    // further away than if it had never hopped at all.
+    const killer = player();
+    const victim = monster('stalker', {
+      position: { x: ORIGIN.x + 120, y: ORIGIN.y, z: 0 },
+      // Facing hard away, which is the case that used to be worst.
+      facing: 0,
+      restoration: 0,
+    });
+    const credit = creditKill({ ...killer, restoration: RESTORATION.threshold * 0.99 }, victim, NO_QUALITIES, 0);
+    expect(credit.motes.length).toBeGreaterThan(0);
+    for (const mote of credit.motes) {
+      const landsX = victim.position.x + mote.offsetX;
+      const landsY = victim.position.y + mote.offsetY;
+      const before = Math.hypot(victim.position.x - ORIGIN.x, victim.position.y - ORIGIN.y);
+      const after = Math.hypot(landsX - ORIGIN.x, landsY - ORIGIN.y);
+      expect(after).toBeLessThan(before);
+    }
+  });
+
+  it('sends an odd count straight at the killer and splits an even one', () => {
+    const three = scatterMotes(3, MoteKind.Vitality, 10, 0);
+    // The middle one goes exactly where it was aimed.
+    expect(three[1]?.offsetY).toBeCloseTo(0);
+    // ...and the other two split around it, one either side.
+    expect(Math.sign(three[0]?.offsetY ?? 0)).toBe(-Math.sign(three[2]?.offsetY ?? 0));
+  });
+
+  it('makes even a lone mote travel', () => {
+    // The common case, and the one the first version left standing still -- so
+    // the hop that exists to make a drop legible did nothing for most drops.
+    const one = scatterMotes(1, MoteKind.Vitality, 10, 0);
+    expect(Math.hypot(one[0]?.offsetX ?? 0, one[0]?.offsetY ?? 0)).toBeCloseTo(
+      RESTORATION.mote.scatterRadius,
+    );
   });
 });
 
@@ -722,12 +767,116 @@ describe('a mote on the ground', () => {
         kind,
         amount,
         ownerEntityId: ownerId,
+        // Already landed: these tests are about what a mote does once it is on
+        // the ground, and the hop has its own block below.
+        originX: at.x,
+        originY: at.y,
+        originZ: 0,
+        restX: at.x,
+        restY: at.y,
+        launchFromTick: 0,
+        landsAtTick: 0,
         armedAtTick: 0,
         expiresAtTick: spawned.state.tick + RESTORATION.mote.lifetimeTicks,
       },
     };
     return { state: replaceEntity(spawned.state, mote), moteId: mote.id };
   }
+
+  it('hops out of the body before it may be taken', () => {
+    // The visibility fix, asserted (spec 154). A mote used to spawn inside its
+    // owner's attract radius and be collected on the first tick it was legally
+    // allowed to be -- 0.30s on screen, six frames at the broadcast rate. The
+    // hop is what buys a drop a beat to be seen in, so it is checked directly:
+    // it travels, it leaves the ground, and nothing takes it on the way.
+    const spawn = world();
+    let state = spawn.state;
+    const selfId = spawn.selfId;
+    const self = state.entities.get(selfId);
+    if (!self) throw new Error('no player');
+    state = replaceEntity(state, { ...self, health: 10 });
+
+    // Placed right on top of the player, so *only* the hop can explain any
+    // travel and only the hop can explain not being taken instantly.
+    const placed = withMote(state, selfId, { x: ORIGIN.x, y: ORIGIN.y });
+    const launched = placed.state.entities.get(placed.moteId);
+    if (!launched?.mote) throw new Error('no mote');
+    state = replaceEntity(placed.state, {
+      ...launched,
+      mote: {
+        ...launched.mote,
+        restX: ORIGIN.x + RESTORATION.mote.scatterRadius,
+        restY: ORIGIN.y,
+        launchFromTick: state.tick,
+        landsAtTick: state.tick + RESTORATION.mote.launchTicks,
+        armedAtTick: state.tick + RESTORATION.mote.launchTicks + RESTORATION.mote.lingerTicks,
+      },
+    });
+
+    const heights: number[] = [];
+    let travelled = 0;
+    let taken = false;
+    for (let t = 0; t < RESTORATION.mote.launchTicks - 1; t++) {
+      const stepped = tick(state, [idle(selfId)]);
+      state = stepped.state;
+      const flying = state.entities.get(placed.moteId);
+      if (!flying) break;
+      heights.push(flying.position.z);
+      travelled = Math.abs(flying.position.x - ORIGIN.x);
+      if (stepped.events.some((event) => event.kind === 'mote')) taken = true;
+    }
+
+    expect(taken).toBe(false);
+    expect(travelled).toBeGreaterThan(0);
+    // It arcs: the top of the hop is above both ends of it.
+    expect(Math.max(...heights)).toBeGreaterThan(heights[0] ?? 0);
+    expect(Math.max(...heights)).toBeGreaterThan(heights[heights.length - 1] ?? 0);
+  });
+
+  it('is on screen for at least the hop and the linger, wherever it lands', () => {
+    // The floor, and the regression this whole block exists to prevent. The
+    // first version had none: a mote spawned inside its owner's attract radius
+    // and was collected on the first tick it was legally allowed to be, which
+    // measured at 0.30s -- six frames at the 20Hz broadcast rate. Placed
+    // directly under the player, which is the worst case for visibility, it
+    // must still last the hop plus the linger.
+    const spawn = world();
+    let state = spawn.state;
+    const selfId = spawn.selfId;
+    const self = state.entities.get(selfId);
+    if (!self) throw new Error('no player');
+    state = replaceEntity(state, { ...self, health: 10 });
+
+    const at = { x: ORIGIN.x, y: ORIGIN.y };
+    const placed = withMote(state, selfId, at);
+    const landed = placed.state.entities.get(placed.moteId);
+    if (!landed?.mote) throw new Error('no mote');
+    const born = placed.state.tick;
+    state = replaceEntity(placed.state, {
+      ...landed,
+      mote: {
+        ...landed.mote,
+        // Lands where it started, so there is no travel to hide behind.
+        restX: at.x,
+        restY: at.y,
+        launchFromTick: born,
+        landsAtTick: born + RESTORATION.mote.launchTicks,
+        armedAtTick: born + RESTORATION.mote.launchTicks + RESTORATION.mote.lingerTicks,
+      },
+    });
+
+    let alive = 0;
+    for (let t = 0; t < RESTORATION.mote.lifetimeTicks; t++) {
+      const stepped = tick(state, [idle(selfId)]);
+      state = stepped.state;
+      if (stepped.events.some((event) => event.kind === 'mote')) break;
+      alive += 1;
+    }
+
+    expect(alive).toBeGreaterThanOrEqual(
+      RESTORATION.mote.launchTicks + RESTORATION.mote.lingerTicks - 1,
+    );
+  });
 
   it('is only ever collected by its owner', () => {
     const { state: base, selfId } = world();

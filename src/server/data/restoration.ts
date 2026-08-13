@@ -125,16 +125,58 @@ export const RESTORATION = {
     resourceFraction: 0.2,
     /** How long one survives before it fades. Short enough that hoarding is not a plan. */
     lifetimeTicks: seconds(12),
-    /** A beat before it may be taken, so it is seen rather than merely counted. */
-    armTicks: seconds(0.3),
+    /**
+     * How long the hop out of the body takes, and how high it goes.
+     *
+     * The three numbers below this comment are the visibility fix, and they
+     * were tuned against a measurement rather than a feeling. Before them a
+     * mote spawned inside its owner's attract radius, armed after 0.3s, and was
+     * taken on that very tick: **0.30 seconds on screen**, six frames at the
+     * 20Hz broadcast rate. A drop that brief is one a player never sees, which
+     * is exactly what was reported.
+     *
+     * Now it bursts out, arcs, lands, and is drawn back in -- about a second
+     * end to end, most of it spent somewhere the eye can follow.
+     */
+    launchTicks: seconds(0.5),
+    hopHeight: 26,
+    /**
+     * How long it sits where it landed before it is drawn in.
+     *
+     * The floor under the whole fix. The hop alone left the on-screen time to
+     * geometry -- a mote that landed inside the pickup radius was taken the tick
+     * it touched down -- so this is the beat every drop gets whatever direction
+     * it happened to fly.
+     */
+    lingerTicks: seconds(0.35),
     /** Collected inside this of the owner's centre. */
     pickupRadius: 44,
     /** Drawn toward its owner from inside this, before Perception widens it. */
     attractRadius: 130,
-    /** World units per second it closes at once attracted. */
-    attractSpeed: 300,
-    /** How far from the corpse motes are scattered, so two do not share a pixel. */
-    scatterRadius: 26,
+    /**
+     * World units per second it closes at once attracted.
+     *
+     * Deliberately slower than a projectile. It was 300, which crossed the whole
+     * attract radius in under half a second -- fast enough that the mote read as
+     * a flicker rather than as something coming toward you.
+     */
+    attractSpeed: 180,
+    /**
+     * How far from the body motes land.
+     *
+     * Wide enough that the hop is a journey rather than a twitch, and that two
+     * from one kill are plainly two. It is the *travel* that makes a drop
+     * legible, so this is the number to raise if they still read as instant.
+     */
+    scatterRadius: 46,
+    /**
+     * How far apart two motes from one kill are thrown, in radians.
+     *
+     * A bounded fan rather than the golden angle, because the burst has a
+     * *direction* now -- at the killer -- and the golden angle's whole virtue is
+     * spreading things when direction does not matter.
+     */
+    scatterFan: 0.55,
     /**
      * Health deficit above which a mote is always vitality.
      *
