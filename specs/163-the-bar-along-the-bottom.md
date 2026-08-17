@@ -84,8 +84,13 @@ segment with its own state.
 
 ```ts
 // src/render/iso3d/world/death.ts   -- pure
-export function deathOverlay(view: ClientView): { readonly dead: boolean; readonly text: string } | null;
+export const DEATH_TEXT = 'YOU ARE DEAD';
+export function deathOverlay(view: ClientView): { readonly text: string } | null;
 ```
+
+Null rather than a present-and-false shape, because there is one thing a caller
+does with this and it is decide whether the overlay is on screen -- a
+`{ dead: false }` would be an extra way to be wrong.
 
 Derived from the local body's replicated health, so no new field is needed to
 *know* — the client has always been told. What is new is the ask:
@@ -120,8 +125,14 @@ export interface ActionSlot {
   readonly keyNumber: number;
 }
 export const ACTION_BAR: readonly ActionSlot[];      // 4 skill + 1 vial
-export function abilityForSlot(index: number): string | null;
+export function buildActionBar(ids: readonly (string | null)[]): readonly ActionSlot[];
+export function actionBarFromQuery(search: string): readonly ActionSlot[];
+export function abilityForSlot(bar: readonly ActionSlot[], index: number): string | null;
 ```
+
+The bar is built **once** in `view.ts` and handed to both readers -- `createHud`
+draws it, the key handler presses it -- rather than each importing `ACTION_BAR`.
+A bar built twice is two answers about what is in slot 3.
 
 Four empty skill slots and one vial slot holding `self.hearthdraught`, and the
 emptiness is the point: a slot with nothing in it is a place a skill will go,
@@ -136,14 +147,43 @@ and one flask in the same undifferentiated row makes the flask look like a fifth
 skill. What it costs is a charge and not resource, and a slot that draws its
 charge count is the interface saying so.
 
+#### `?slots=` — the developer path, and why it is not scope creep
+
+With the bar empty, every ability in the game except the auto-attack and the
+flask becomes unreachable from the shipped page. That is the honest consequence
+of what this spec is for, and it is fine for a player -- but it also left the
+browser harnesses that check the aim (spec 080), the refusal on cooldown (143)
+and the ground telegraph (153) with nothing to press. Deleting those checks
+would have been this change quietly taking the coverage with it.
+
+So `?slots=melee.heavy,,ground.quake` fills the skill slots in order, in the same
+register as `?seed=`, `?wire=` and `?units=`. It is not an interface: a player
+has no way to reach it, nothing persists it, and the vial can never be one of the
+names -- a caller that could overwrite the fifth slot could take the flask off
+the bar.
+
 ### The pool is two bars, left of the slots
 
 ```ts
+// src/render/iso3d/world/pool-bars.ts   -- pure
+export function poolBars(view: ClientView): { health: PoolBar; resource: PoolBar };
+```
+
+One judgement in it: **an unknown maximum is not a maximum of zero.** Before the
+first `Stats` message there is no stat block, and dividing by the zero standing
+in for it paints an empty health bar over a player at full health for the opening
+frames of every session.
+
+#### Sized in the layout table, like everything else in the band
+
+```ts
 // src/render/iso3d/world/hud-layout.ts
-readonly pool: BoxSize;      // the health/resource block
-readonly poolGap: number;    // between it and the slots
+readonly pool: BoxSize;      // one of the two bars
+readonly poolGap: number;    // between them, and between the block and the slots
+readonly poolFontPx: number;
 readonly xpBarHeight: number;
-export function poolLeft(layout: HudLayout, slots: number, frameWidth: number): number;
+export function poolClearance(layout: HudLayout, slots: number, frameWidth: number): number;
+export function bottomEdge(layout: HudLayout): number;   // edge + xpBarHeight
 ```
 
 Health over resource, immediately left of the centred slots, each with its
@@ -178,6 +218,13 @@ pinned to the frame's bottom and everything else has to clear it.
   the vial, and the bar is five long.
 - The pool block plus the five slots clear the weapon switch and the frame edge
   on a phone in landscape.
+- `poolBars` reports an unknown maximum as unknown rather than as empty, clamps a
+  negative health to zero and a resource past its ceiling to full.
+- `?slots=` fills the slots it names in order, leaves an empty entry empty rather
+  than shifting the rest along, and cannot take the vial off the bar however many
+  names it is given.
+- The strip a player reads moves off zero on a real kill over a real loopback --
+  the join between the award and the bar, which neither side can assert alone.
 - The mount is still presentation only: the same seed and inputs, with the new
   overlay and bars driven and without, produce identical authoritative state.
 
@@ -186,7 +233,10 @@ pinned to the frame's bottom and everything else has to clear it.
 - **Putting a skill into a slot.** The four are empty and stay empty until
   there is a drag from the skill tree to put something in one, which needs the
   tree to have a source of draggable rows and is its own change. Nothing here
-  persists a binding, because nothing here creates one.
+  persists a binding, because nothing here creates one — `?slots=` is a
+  developer path and not the first half of that feature. The cost of leaving it
+  here is stated rather than hidden: until slot binding is built, a player can
+  reach the auto-attack and the flask and nothing else.
 - **A death recap** — what killed you, what it cost. The overlay says you died
   and offers the way back.
 - **A death penalty.** Spec 156's reset (flask restored, meter gone) is what
