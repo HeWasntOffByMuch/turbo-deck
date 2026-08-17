@@ -212,19 +212,27 @@ export const CONNECTION_TIMEOUT_TICKS = 600;
  * the trees appeared last. That is the throttle shaping normal play, which is
  * exactly what it is not for.
  *
- * 64 covers the shipped map outright, so a cold start is paced by the link and
- * by `CHUNK_REQUESTS_PER_PASS`, never by this. What the bucket still bounds is
- * the case it was written for: a client re-asking for one permanently-in-range
- * chunk forever. At 16/s sustained that costs ~190 KB/s of serialization, and a
- * player would have to cross a whole 616-unit chunk sixteen times a second to
- * need it legitimately.
+ * 64 covered the 56-chunk map outright, and then the map grew to 210 and the
+ * symptom this comment predicted -- "the far half of the world arrives late" --
+ * is exactly what happened: the radius can ask for 169 chunks, 105 of them came
+ * out of the refill at 16/s, and the cold start trickled for six seconds
+ * (spec 165).
  *
- * A map much larger than this one would want the burst raised with it, or the
- * cold start starts trickling again -- which is why the first symptom to look
- * for is "the far half of the world arrives late".
+ * So the burst is now **derived** rather than typed in. The quantity it has to
+ * cover is not "the map" -- a map may be arbitrarily larger than what one
+ * player can see -- it is every chunk {@link MAP_CHUNK_REQUEST_RADIUS} is
+ * allowed to ask for, which is the (2R+1)^2 square around them. Growing the map
+ * again cannot re-open this; only widening the radius can, and that moves this
+ * with it.
+ *
+ * What the bucket still bounds is the case it was written for: a client
+ * re-asking for one permanently-in-range chunk forever. The refill is what
+ * prices that, and it is the only half of this pair that is a judgement --
+ * 32/s is ~380 KB/s of serialization sustained, against a player who would have
+ * to cross a whole 616-unit chunk thirty-two times a second to need it.
  */
-export const MAP_CHUNK_BURST = 64;
-export const MAP_CHUNK_REFILL_PER_SECOND = 16;
+export const MAP_CHUNK_BURST = (2 * MAP_CHUNK_REQUEST_RADIUS + 1) ** 2;
+export const MAP_CHUNK_REFILL_PER_SECOND = 32;
 
 /**
  * How far the client's modelled resource may be from the server's before it is

@@ -130,6 +130,37 @@ export class StreamedMap {
     return true;
   }
 
+  /**
+   * How much of the ground within `radius` chunks of a point has arrived
+   * (spec 165).
+   *
+   * `needed` counts only chunks the map actually *declares*, so a player near
+   * the edge of the world is not left waiting on ground that was never going to
+   * be sent -- which is the difference between a progress bar that fills and one
+   * that stops at 80% forever on every map with a coastline.
+   *
+   * Chebyshev, matching the server's own `MAP_CHUNK_REQUEST_RADIUS` test: the
+   * question is about the square window the camera frames, not a circle.
+   */
+  coverage(x: number, z: number, radius: number): { held: number; needed: number } {
+    let held = 0;
+    let needed = 0;
+    for (let layer = 0; layer < this.info.layers.length; layer++) {
+      const info = this.info.layers[layer];
+      if (!info) continue;
+      const cx0 = Math.floor((x - info.origin.x) / this.chunkExtent);
+      const cz0 = Math.floor((z - info.origin.z) / this.chunkExtent);
+      for (let cz = cz0 - radius; cz <= cz0 + radius; cz++) {
+        for (let cx = cx0 - radius; cx <= cx0 + radius; cx++) {
+          if (!this.declared.has(`${layer}:${cx},${cz}`)) continue;
+          needed++;
+          if (this.has(layer, cx, cz)) held++;
+        }
+      }
+    }
+    return { held, needed };
+  }
+
   /** `heightAt` through the live world, plus the coverage query above. */
   sampler(): CoverageSampler {
     return {

@@ -106,6 +106,11 @@ export interface UiScreensOptions {
    */
   readonly onScaleChosen: (choice: ScaleChoice) => void;
   /**
+   * The player asked for the frame-time readout, or asked for it to go away
+   * (spec 165). Same contract as `onScaleChosen` for the same reason.
+   */
+  readonly onShowFpsChosen: (show: boolean) => void;
+  /**
    * The layout to restore, read at the DOM edge. Null when there is none.
    *
    * Held rather than applied, because it cannot be applied yet: see
@@ -347,6 +352,9 @@ export class UiScreens {
     this.display = new DisplayScreen({ theme: THEME });
     this.display.onScaleChosen = (choice) => {
       options.onScaleChosen(choice);
+    };
+    this.display.onShowFpsChosen = (show) => {
+      options.onShowFpsChosen(show);
     };
 
     this.optionsScreen = new OptionsScreen({
@@ -737,6 +745,11 @@ export class UiScreens {
   setScale(choice: ScaleChoice, effective: number): void {
     this.display.setChoice(choice);
     this.display.setEffectiveScale(effective);
+  }
+
+  /** Told whether the frame-time readout is being drawn (spec 165). */
+  setShowFps(show: boolean): void {
+    this.display.setShowFps(show);
   }
 
   /** Told whether the player has asked for less motion (spec 133). */

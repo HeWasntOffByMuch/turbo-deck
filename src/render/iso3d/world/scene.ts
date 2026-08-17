@@ -35,7 +35,13 @@ import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
-import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
+import {
+  buildPropField,
+  FLAT_SHADING,
+  type PropFieldHandle,
+  type PropRect,
+  type PropShading,
+} from '../props.js';
 import { type HikeSettings } from '../hike.js';
 import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
 import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
@@ -780,10 +786,14 @@ export class WorldScene {
    * Rebuild the instanced prop field from everything held.
    *
    * Deliberately *not* per chunk. One instanced mesh per species over the whole
-   * map is a handful of draw calls; one per chunk would be 56 times that, every
-   * frame, forever -- trading a startup cost for a permanent one. So the caller
-   * calls this when the chunk stream goes quiet, which costs one pass over
-   * ~1150 props, the same single pass the pre-streaming build did.
+   * map is a handful of draw calls; one per chunk would be 210 times that, every
+   * frame, forever -- trading a startup cost for a permanent one.
+   *
+   * This is the whole-field version, and it is now the *rare* one: it is for a
+   * shading change, which rebakes every normal in the world and so genuinely has
+   * no smaller unit. A chunk arriving wants {@link refreshPropsWithin} instead.
+   * On the grown map a full pass is ~6900 props and the streaming client used to
+   * pay for one between every pair of deltas (spec 165).
    */
   refreshProps(): void {
     if (!this.map || !this.propField) return;
@@ -794,9 +804,58 @@ export class WorldScene {
     this.propField.dispose();
     this.propField = buildPropField(props, heightAt, undefined, this.propShading);
     this.scene.add(this.propField.group);
+    this.unwalkableStale = true;
+  }
 
+  /**
+   * Rebuild only the batching regions overlapping a world rectangle (spec 165).
+   *
+   * The seam is spec 086's: the prop field is already grouped into 1100-unit
+   * regions so the camera can cull them, and `rebuildWithin` makes that grouping
+   * the unit of invalidation too. The editor's brush has used it since 086; the
+   * streaming client is what never did, and rebuilt the world's trees on every
+   * pump of the chunk stream instead.
+   *
+   * The props list handed down is the full current one -- the region re-buckets
+   * itself from it, so the caller only has to know which *ground* changed, which
+   * is the one thing a chunk arrival actually knows.
+   */
+  refreshPropsWithin(rects: PropRect | readonly PropRect[]): void {
+    if (!this.map || !this.propField) return;
+    if (Array.isArray(rects) && rects.length === 0) return;
+    this.propField.rebuildWithin(this.map.props(), rects);
+    this.unwalkableStale = true;
+  }
+
+  /**
+   * Whether the unwalkable overlay owes a rebuild before it is next shown.
+   *
+   * The overlay is a debug switch in the tuning panel and is off in every played
+   * session, but it used to be rebuilt inside `refreshProps` regardless: two
+   * `InstancedMesh`es over every vegetation collider in the world, one `heightAt`
+   * apiece at 5.6us a call. On the grown map that is ~78ms per refresh spent
+   * drawing something nobody asked to see (spec 165).
+   *
+   * So it is built on the frame it is first shown and not before. The flag is
+   * what carries "the world moved under it while you were not looking" across to
+   * that frame.
+   */
+  private unwalkableStale = true;
+
+  /**
+   * Build the unwalkable overlay if it is being shown and owes a rebuild.
+   *
+   * Called from the frame, after the panel has been read. Costs two comparisons
+   * in the session where the switch is off, which is all of them.
+   */
+  private syncUnwalkable(visible: boolean): void {
+    this.unwalkable.visible = visible;
+    if (!visible || !this.unwalkableStale || !this.map) return;
+    this.unwalkableStale = false;
     this.unwalkable.clear();
-    this.unwalkable.add(makeUnwalkableField(vegetationColliders(props), heightAt));
+    this.unwalkable.add(
+      makeUnwalkableField(vegetationColliders(this.map.props()), (x, z) => this.ground(x, z)),
+    );
   }
 
   /**
@@ -2129,7 +2188,7 @@ export class WorldScene {
     }
 
     this.applySun();
-    this.unwalkable.visible = this.controls.showUnwalkable();
+    this.syncUnwalkable(this.controls.showUnwalkable());
   }
 
   private applySun(): void {

@@ -49,8 +49,18 @@ import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
  * Comfortably under the server's `MAP_CHUNK_BURST`, so the throttle is a guard
  * against a misbehaving client rather than something that shapes the stream in
  * normal play -- a cold start should be paced by this number, not by a refusal.
+ *
+ * 8 was that pace for a 56-chunk map. On the grown map the radius reaches 169,
+ * and 8 per 50ms pump is twenty-one pumps of asking before the last one is even
+ * requested (spec 165). 24 brings the ask down to about seven pumps and stays
+ * well under the burst.
+ *
+ * Raising it is only safe because the *meshing* is budgeted separately now:
+ * before spec 165 a bigger pass would have arrived as a bigger pile of geometry
+ * rebuilds inside one frame, and asking faster would have traded a slow load for
+ * a juddering one.
  */
-const CHUNK_REQUESTS_PER_PASS = 8;
+const CHUNK_REQUESTS_PER_PASS = 24;
 
 /**
  * How often the backstop pump runs, in client ticks. One broadcast period: often

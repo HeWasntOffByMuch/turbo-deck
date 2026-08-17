@@ -40,7 +40,11 @@ function boxFor(display: DisplayScreen, choice: ScaleChoice): Checkbox {
 
 describe('the display page', () => {
   it('offers every choice the store knows about', () => {
-    expect(boxes(screen()).map((box) => box.name)).toEqual(
+    // The scale row only. The page has grown a second, unrelated checkbox since
+    // spec 165, and the thing being asserted here is that the exclusive group
+    // matches the store -- not how many checkboxes the page happens to have.
+    const scaleBoxes = boxes(screen()).filter((box) => box.name.startsWith('scale:'));
+    expect(scaleBoxes.map((box) => box.name)).toEqual(
       SCALE_CHOICES.map((choice) => `scale:${String(choice)}`),
     );
   });
@@ -110,6 +114,54 @@ describe('the options window', () => {
     expect(options.tabs.tabIds).toEqual(['keys', 'display']);
   });
 });
+
+describe('the frame-rate switch (spec 165)', () => {
+  it('opens off', () => {
+    const display = screen();
+    expect(display.frameRateShown).toBe(false);
+    expect(fpsBox(display).checked).toBe(false);
+  });
+
+  it('emits the wish and decides nothing itself', () => {
+    // The rule every screen since phase 4 follows, and the reason this page has
+    // no state that can disagree with what is drawn: the tick does not move
+    // until the mount calls back.
+    const display = screen();
+    const asked: boolean[] = [];
+    display.onShowFpsChosen = (show) => asked.push(show);
+
+    const box = fpsBox(display);
+    box.setChecked(true);
+    box.onToggle?.(true);
+    expect(asked).toEqual([true]);
+    // Neither the page's state nor its tick moved: the mount has not answered.
+    expect(display.frameRateShown).toBe(false);
+    expect(box.checked).toBe(false);
+
+    display.setShowFps(true);
+    expect(display.frameRateShown).toBe(true);
+    expect(fpsBox(display).checked).toBe(true);
+  });
+
+  it('asks to turn off once it is on', () => {
+    const display = screen();
+    const asked: boolean[] = [];
+    display.onShowFpsChosen = (show) => asked.push(show);
+    display.setShowFps(true);
+
+    const box = fpsBox(display);
+    box.setChecked(false);
+    box.onToggle?.(false);
+    expect(asked).toEqual([false]);
+    expect(box.checked).toBe(true);
+  });
+});
+
+function fpsBox(display: DisplayScreen): Checkbox {
+  const box = boxes(display).find((candidate) => candidate.name === 'showFps');
+  if (!box) throw new Error('no frame-rate checkbox');
+  return box;
+}
 
 /** Every label's text, without importing the widget's private shape. */
 function labelTexts(display: DisplayScreen): string[] {
