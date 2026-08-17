@@ -45,7 +45,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadUnitBundle } from '../../../units/bundle.js';
 import { UnitMachine, type FiredEvent } from '../../../units/machine.js';
-import { driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
+import { BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
+import { cancelledCast, driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
 import { TurnEase, lagBound, shortestTurn, type TurnLimits } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { ClientView } from '../../../server/client/game-client.js';
@@ -111,6 +112,9 @@ interface RunResult {
   readonly yaws: readonly { drawn: number; heading: number; limits: TurnLimits }[];
   /** Every drop presentation produced, so a run that presented nothing fails. */
   readonly drops: readonly DropPresentation[];
+  /** How many attacks were called off (spec 166), so a run that left every
+   * one-shot to finish on its own cannot claim to have covered the cancel. */
+  readonly cancels: number;
 }
 
 /**
@@ -155,6 +159,7 @@ async function play(animate: boolean): Promise<RunResult> {
   const yaws: { drawn: number; heading: number; limits: TurnLimits }[] = [];
   const dropPresenter = new DropPresenter();
   const drops: DropPresentation[] = [];
+  let cancels = 0;
 
   for (let tick = 0; tick < TICKS; tick += 1) {
     server.tick();
@@ -164,12 +169,18 @@ async function play(animate: boolean): Promise<RunResult> {
     // would never exercise the withheld half at all.
     if (tick === 20) server.triggerEvent('drop', 620, 450, 1);
     client.advanceTick();
-    // A fixed script: walk a circle, and swing on a fixed cadence. Nothing here
-    // reads the view, so both runs send byte-identical input.
+    // A fixed script: walk a circle, and every fortieth tick stop, swing, and
+    // then walk out of it again -- which withdraws (spec 166), because asking
+    // to move calls off a cast. The comment here used to claim the swing and
+    // the script never made one; the counter below is what noticed.
+    //
+    // Nothing here reads the view, so both runs send byte-identical input.
     const angle = (tick / 40) * Math.PI * 2;
+    const standing = tick % 40 < 6;
+    if (tick % 40 === 0) client.useAbility(BASIC_ATTACK_ID, 700, 500);
     client.sendInput({
-      moveX: Math.cos(angle),
-      moveY: Math.sin(angle),
+      moveX: standing ? 0 : Math.cos(angle),
+      moveY: standing ? 0 : Math.sin(angle),
       facing: angle,
       buttons: 0,
     });
@@ -217,15 +228,25 @@ async function play(animate: boolean): Promise<RunResult> {
         activity: entity.activity,
         castPhase: view.casts.find((cast) => cast.entityId === entity.id)?.phase ?? null,
         attackRate: 1,
+        abilityId: view.casts.find((cast) => cast.entityId === entity.id)?.abilityId ?? null,
+        castTicksLeft: (() => {
+          const cast = view.casts.find((entry) => entry.entityId === entity.id);
+          return cast === undefined ? null : cast.endTick - tick;
+        })(),
         dead: entity.maxHealth > 0 && entity.health <= 0,
       };
+      // Counted so the assertion below can say this fight really exercised the
+      // cancel path (spec 166) rather than only the trigger. It does, and for a
+      // reason that is easy to miss: the script walks a circle, and asking to
+      // move withdraws from a cast.
+      if (cancelledCast(facts, previous.get(entity.id) ?? null)) cancels += 1;
       events.push(...driveUnit(machine, facts, previous.get(entity.id) ?? null, 1));
       previous.set(entity.id, facts);
       if (was === null || moved) positions.set(entity.id, at);
     }
   }
 
-  return { states, events, yaws, drops };
+  return { states, events, yaws, drops, cancels };
 }
 
 describe('animation is presentation only', () => {
@@ -240,6 +261,11 @@ describe('animation is presentation only', () => {
     const animated = await play(true);
     expect(animated.events.length).toBeGreaterThan(0);
     expect(animated.states.length).toBe(TICKS);
+    // And it withdrew from attacks along the way, so the comparison covers the
+    // path that *leaves* a state early (spec 166) and not only the one that
+    // enters it. Walking is what does it -- asking to move withdraws from a
+    // cast -- and this script never stops walking.
+    expect(animated.cancels).toBeGreaterThan(0);
   }, 30_000);
 
   it('was actually easing a yaw, and easing it away from the heading', async () => {
@@ -294,12 +320,16 @@ describe('animation is presentation only', () => {
       activity: 0,
       castPhase: null,
       attackRate: 1,
+      abilityId: null,
+      castTicksLeft: null,
       dead: false,
     };
     expect(Object.keys(facts).sort()).toEqual([
+      'abilityId',
       'activity',
       'attackRate',
       'castPhase',
+      'castTicksLeft',
       'dead',
       'speed',
     ]);

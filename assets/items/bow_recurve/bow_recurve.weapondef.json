@@ -1,0 +1,19 @@
+{
+  "$comment": "Measured off the mesh rather than assumed (spec 165). The limbs run along Z from -0.955 to 0.955 and the riser's depth is X, so `point` is +Z -- either limb would do, since a bow is symmetric about its grip, and +Z is the one that makes the basis right-handed with the flat below. The six WrapBand cylinders are the handle: they sit at x 0.162..0.215 and z -0.089..0.089, so the palm is at x 0.189 and `at` is the middle of them. `flat` is +Y because Y is the axis the bow is thin in (+/-0.035 against the riser's 0.39 of X) -- the plane of the bow is XZ and Y is its normal, which is what stops it rolling to edge-on in the hand. The String mesh sits at x -0.211, a full 0.4 behind the grip, and that is the fact that decides which way round the bow goes in the palm: the string faces the archer. No `stowSocket`: `weapon.stow` is calibrated for a sword across the back and a bow hung at that angle would be visibly wrong, so this weapon has nowhere to hang until somebody measures one.",
+  "formatVersion": 1,
+  "id": "bow_recurve",
+  "name": "Recurve Bow",
+  "meshRef": "bow_recurve.glb",
+  "socket": "weapon.off",
+  "grip": {
+    "at": [0.189, 0, 0],
+    "point": "+Z",
+    "flat": "+Y"
+  },
+  "lengthWorld": 40,
+  "provenance": {
+    "source": "supplied by hand, 2026-08-17",
+    "generator": "trimesh",
+    "note": "644 triangles, three materials (Wood, String, Wrap), ten mesh nodes and every node transform identity -- no skin and no animation, which is the whole reason this is a weapondef and not a unitdef."
+  }
+}

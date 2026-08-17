@@ -214,10 +214,12 @@ export class UnitMachine {
 
     const t = Math.min(1, this.fadeElapsed / this.fadeTicks);
     const outgoing = this.samplesFor(this.outgoing);
-    return [
-      ...outgoing.map((sample) => ({ ...sample, weight: sample.weight * (1 - t) })),
-      ...incoming.map((sample) => ({ ...sample, weight: sample.weight * t })),
-    ].filter((sample) => sample.weight > 0.0001);
+    return mergeByClip(
+      [
+        ...outgoing.map((sample) => ({ ...sample, weight: sample.weight * (1 - t) })),
+        ...incoming.map((sample) => ({ ...sample, weight: sample.weight * t })),
+      ].filter((sample) => sample.weight > 0.0001),
+    );
   }
 
   // --- driving --------------------------------------------------------------
@@ -273,6 +275,41 @@ export class UnitMachine {
     this.activeAction = action;
     this.actionStartTick = this.tickCount;
     this.enter(state.id, state.blendInMs, timeScaleFor(action, clip.durationMs));
+    return true;
+  }
+
+  /**
+   * Leaves the attack that is playing, back to the loop it came from (spec 166).
+   *
+   * The counterpart to the trigger that started it. Without one, a one-shot runs
+   * to the end of its clip whatever the sim does, so a wind-up the player
+   * *withdrew* from -- the decision this whole game is built around -- was still
+   * drawn as a completed blow, impact frame and all, a quarter of a second after
+   * it had been refunded.
+   *
+   * Three things it is careful about.
+   *
+   * **It cross-fades rather than cutting**, over the state's own `blendInMs`,
+   * which is the same fade the natural return uses. A withdrawal that snapped to
+   * the idle pose would replace one wrong picture with a different one.
+   *
+   * **It leaves before the tick is stepped, so the events left in the clip never
+   * fire.** `eventsAt` reads the *incoming* state only, so a swing called off on
+   * tick T cannot emit the `swing.impact` it was three frames from -- and it
+   * must not, because on the sim's side that blow did not happen.
+   *
+   * **It only ever leaves a one-shot.** Called while walking, or in a terminal
+   * state, or in a locking one -- where the refusal to be interrupted is the
+   * whole point of the category -- it does nothing and says so.
+   */
+  cancelAction(blendMs?: number): boolean {
+    const state = this.stateOf(this.current);
+    if (!state || state.category !== 'oneshot') return false;
+    const back = this.returnTo;
+    if (back === null || back === this.current.stateId) return false;
+    this.returnTo = null;
+    this.activeAction = null;
+    this.enter(back, blendMs ?? state.blendInMs);
     return true;
   }
 
@@ -543,7 +580,21 @@ export class UnitMachine {
       this.returnTo = this.current.stateId;
     }
 
-    this.outgoing = this.current;
+    // Going back to the state a fade is in the middle of *leaving* is a
+    // reversal, and it fades from that state rather than from the half-arrived
+    // one (spec 167).
+    //
+    // `current` is only as visible as its own fade has got, and taking it as
+    // the new outgoing regardless is what put a hard jerk between two bow
+    // shots. A shot's clip is exactly as long as its cast and the next shot
+    // begins a tick or two later, so the machine starts back toward `idle`,
+    // gets a third of the way, and is sent straight back to `draw` -- at which
+    // point a body three quarters through drawing a bow was drawn *entirely*
+    // standing still for one frame, because `idle` became the full-weight thing
+    // to fade from. Reversing instead keeps the clip that is on screen on
+    // screen, and the two playheads on it merge in `poses`.
+    const reversing = this.outgoing !== null && this.outgoing.stateId === stateId;
+    if (!reversing) this.outgoing = this.current;
     this.fadeTicks = Math.max(0, Math.round(blendMs / this.tickMs));
     this.fadeElapsed = 0;
     if (this.fadeTicks === 0) this.outgoing = null;
@@ -556,4 +607,41 @@ export class UnitMachine {
     };
     if (next.clipRef !== this.activeAction?.clipRef) this.activeAction = null;
   }
+}
+
+/**
+ * One sample per clip, because a mixer only has one action per clip.
+ *
+ * `UnitRig.applyPoses` keys its actions by clip id and writes a weight and a
+ * time onto each, so two samples naming the same clip are not two layers -- the
+ * second silently overwrites the first, and which one that is depends on the
+ * order this array happens to come out in. An interrupted fade can produce
+ * exactly that: a state fading out and the state being entered can be two
+ * playheads on one clip, which is what a repeated attack is.
+ *
+ * Weights add, because together they are how much of that clip is showing. The
+ * *time* is the heavier sample's, because a single playhead has to be
+ * somewhere and the dominant one is the honest answer -- and for a clip whose
+ * first and last poses are the same, which every attack in this project has by
+ * construction, the two are the same pose anyway.
+ */
+function mergeByClip(samples: readonly PoseSample[]): readonly PoseSample[] {
+  const byClip = new Map<string, { normalizedTime: number; weight: number; top: number }>();
+  for (const sample of samples) {
+    const found = byClip.get(sample.clipId);
+    if (found === undefined) {
+      byClip.set(sample.clipId, { normalizedTime: sample.normalizedTime, weight: sample.weight, top: sample.weight });
+      continue;
+    }
+    found.weight += sample.weight;
+    if (sample.weight > found.top) {
+      found.top = sample.weight;
+      found.normalizedTime = sample.normalizedTime;
+    }
+  }
+  return [...byClip].map(([clipId, entry]) => ({
+    clipId,
+    normalizedTime: entry.normalizedTime,
+    weight: entry.weight,
+  }));
 }

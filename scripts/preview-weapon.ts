@@ -3,8 +3,16 @@
 //
 //   npx tsx scripts/preview-weapon.ts
 //   WEAPON=stick_knot STEP=100 SIZE=300 npx tsx scripts/preview-weapon.ts
-//   MAIN_ROT=0,0,-90 MAIN_OFF=0,0.02,0 npx tsx scripts/preview-weapon.ts   # try numbers
+//   ROT=0,0,-90 OFF=0,0.02,0 npx tsx scripts/preview-weapon.ts             # try numbers
 //   STOW=1 npx tsx scripts/preview-weapon.ts                               # sheathed
+//   CLIP=shoot WEAPON=bow_recurve npx tsx scripts/preview-weapon.ts        # the bow
+//
+// `CLIP` picks which authored clip the body is posed in, and it matters as much
+// as the numbers do: a socket calibration is only exactly right at the pose it
+// was solved against (spec 143), so a bow has to be judged in the draw and a
+// sword in the swing. `ROT`/`OFF` override whichever socket the *document*
+// names, rather than being per-socket names -- the weapon says where it is
+// held, and there are three sockets a weapon could pick.
 //
 // This supersedes the blade proxy in `preview-strike.ts`, which was a box on a
 // guess about which way a hand points. The whole grip chain runs here exactly as
@@ -30,6 +38,7 @@ import {
   type GlbBinary,
   type GlbReadNode,
 } from '../src/units/glb-read.js';
+import { PIG_SHOT, SHOT_KEY_MS } from '../src/units/pig-shot.js';
 import { PIG_STRIKE, STRIKE_KEY_MS } from '../src/units/pig-strike.js';
 import { poseWorldMatrices, skinPositions, triangleNormal } from '../src/units/skin.js';
 import { gripTransform } from '../src/items/grip.js';
@@ -44,6 +53,9 @@ const GAP = 6;
 const STEP_MS = Number(process.env['STEP'] ?? 100);
 const WEAPON = process.env['WEAPON'] ?? 'sword_jian';
 const STOWED = process.env['STOW'] === '1';
+const SHOOTING = (process.env['CLIP'] ?? 'slash') === 'shoot';
+const CLIP = SHOOTING ? PIG_SHOT : PIG_STRIKE;
+const KEY_MS: Readonly<Record<string, number>> = SHOOTING ? SHOT_KEY_MS : STRIKE_KEY_MS;
 
 const BG: readonly [number, number, number] = [58, 60, 68];
 const KEY_TINT: readonly [number, number, number] = [70, 66, 58];
@@ -263,8 +275,8 @@ function main(): void {
 
   // Overridable from the environment so a number can be tried without editing
   // the committed document, which is the whole loop this script exists for.
-  const offset = triple(STOWED ? 'STOW_OFF' : 'MAIN_OFF') ?? socket.offset ?? [0, 0, 0];
-  const rotation = triple(STOWED ? 'STOW_ROT' : 'MAIN_ROT') ?? socket.rotationDeg ?? [0, 0, 0];
+  const offset = triple('OFF') ?? socket.offset ?? [0, 0, 0];
+  const rotation = triple('ROT') ?? socket.rotationDeg ?? [0, 0, 0];
 
   // The same chain `weapon-rig.ts` builds, as matrices:
   //   bone . pivot(offset, euler, 1/hostScale) . align(gripRotation, gripScale) . model(-gripAt)
@@ -311,10 +323,10 @@ function main(): void {
     times.push(...sweep.map(() => sweepAt));
   } else {
     const from = Number(process.env['FROM'] ?? 0);
-    const to = Number(process.env['TO'] ?? PIG_STRIKE.durationMs);
+    const to = Number(process.env['TO'] ?? CLIP.durationMs);
     for (let ms = from; ms <= to; ms += STEP_MS) times.push(ms);
   }
-  const keyAt = new Map<number, string>(Object.entries(STRIKE_KEY_MS).map(([label, ms]) => [ms as number, label]));
+  const keyAt = new Map<number, string>(Object.entries(KEY_MS).map(([label, ms]) => [ms as number, label]));
 
   // Fixed framing off the bind mesh with room for a raised sword, so a frame
   // whose blade left the silhouette makes the body smaller rather than quietly
@@ -343,7 +355,7 @@ function main(): void {
 
   VIEWS.forEach((view, row) => {
     times.forEach((ms, column) => {
-      const world = poseWorldMatrices(nodes, poseAt(PIG_STRIKE, rig, ms));
+      const world = poseWorldMatrices(nodes, poseAt(CLIP, rig, ms));
       const posed = skinPositions({ ...mesh, inverseBind }, world);
       const boneWorld = world[boneIndex] ?? [];
       const candidate = sweep[column];

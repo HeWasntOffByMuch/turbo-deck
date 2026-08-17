@@ -356,12 +356,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let lastUnitReadout = '';
   function publishUnitReadout(): void {
     const readout = scene.authoredUnitReadout();
-    const text = `${readout.loaded}:${readout.bones}:${readout.states}`;
+    const text = `${readout.loaded}:${readout.bones}:${readout.states}:${readout.held}`;
     if (text === lastUnitReadout) return;
     lastUnitReadout = text;
     root.dataset['authoredUnits'] = String(readout.loaded);
     root.dataset['authoredBones'] = String(readout.bones);
     root.dataset['authoredStates'] = readout.states;
+    root.dataset['heldWeapons'] = readout.held;
   }
 
   /**

@@ -1047,7 +1047,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     .name('Held')
     .onChange((id: string) => opts.onWeapon?.(id === '' ? null : id))
     .domElement.title =
-    'Which held object goes in the weapon.main socket. Read from assets/items/, so a new weapon appears here on its own.';
+    'Which held object to hold. Which hand it goes in is the weapon document\'s own `socket` -- the swords take weapon.main and the bow takes weapon.off. Read from assets/items/, so a new weapon appears here on its own.';
   held
     .add(heldState, 'sheathed')
     .name('Sheathed (weapon.stow)')
