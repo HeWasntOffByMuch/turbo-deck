@@ -445,6 +445,23 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  is stepped so the events left in the clip never fire, and it
                  refuses to leave a `locking` state, because not being
                  interruptible is that category's whole reason to exist.
+                 Two rules about the *fade* live there too (spec 167). Going
+                 back to the state a fade is in the middle of leaving is a
+                 **reversal** and keeps that state as the thing it fades from,
+                 rather than the half-arrived one -- otherwise a body three
+                 quarters through drawing a bow is drawn entirely standing still
+                 for one frame, which is what a jerk between two shots turned
+                 out to be: 47.5 degrees of bone movement in one tick, against
+                 19.3 for the loose the draw is *meant* to snap through. It only
+                 happens where a clip is exactly as long as its cast, because
+                 then the return to idle and the next attack land on top of each
+                 other. And `poses` names **each clip once**, because a reversal
+                 is how two playheads on one clip arise and `applyPoses` keys its
+                 actions by clip id, so a second sample would silently overwrite
+                 the first. `npx tsx scripts/probe-shot-loop.ts` is the
+                 instrument -- a real server, a real client, shooting on a loop
+                 -- and it reports the pose as well as the mix, because a tidy
+                 mix can still jerk if the clip time under it jumps.
                  machine.ts is the state machine BOTH the Studio tab and the game
                  drive (specs 110-111) -- one machine, two callers, which is what
                  makes "the tool and the game read the same files" a fact about
