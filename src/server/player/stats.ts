@@ -330,6 +330,21 @@ export function projectileLifetimeTicks(spec: {
   return Math.max(1, Math.round((spec.lifetimeTicks * spec.speed) / speed));
 }
 
+/**
+ * Fallback flask charges after a recalculation (spec 156).
+ *
+ * The one place `undefined` is turned into a number, and it becomes a *full*
+ * flask: a record written before the field existed cannot tell "drank them all"
+ * from "never had any", and the generous reading is the only one that cannot
+ * strand an existing character with no way to recover. Clamped like health and
+ * the pool, because Constitution owns the ceiling and a respec can lower it.
+ */
+export function clampCharges(charges: number | undefined, stats: EffectiveStats): number {
+  const max = Math.max(0, Math.floor(stats.traits.fallbackCharges));
+  if (charges === undefined || !Number.isFinite(charges)) return max;
+  return Math.min(max, Math.max(0, Math.floor(charges)));
+}
+
 /** Ability resource after a recalculation, held under the fresh ceiling. */
 export function clampResourceToStats(resource: number, stats: EffectiveStats): number {
   if (!Number.isFinite(resource) || resource <= 0) return 0;

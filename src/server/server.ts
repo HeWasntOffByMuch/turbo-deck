@@ -51,7 +51,8 @@ import {
 } from './config.js';
 import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
-import { monsterById } from './data/monsters.js';
+import { ALL_MONSTERS, monsterById } from './data/monsters.js';
+import { RESTORATION } from './data/restoration.js';
 import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityToByte } from './data/items.js';
 import { isRevealed, makeDrop, type DropState } from './sim/loot.js';
 import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
@@ -115,6 +116,7 @@ import {
   spawnEntity,
   step,
 } from './sim/world.js';
+import { isEliteType, meterFraction } from './sim/restoration.js';
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
 import { PositionHistory } from './world/position-history.js';
@@ -199,6 +201,15 @@ interface Connection {
    */
   leaving: boolean;
   /**
+   * Set when a newer connection has taken this player over (spec 157).
+   *
+   * Distinct from `leaving`, and the difference is the whole point: a leaving
+   * connection still owns its body and its session and reaps both, while a
+   * displaced one owns *neither* -- somebody else is holding them -- so it must
+   * end without lingering and without reaping anything at all.
+   */
+  displaced: boolean;
+  /**
    * The cooldown map last sent to this client. Compared by *identity*: entities
    * are immutable and the map is only rebuilt when it actually changes, so this
    * is a pointer compare per connection per tick rather than a walk.
@@ -214,6 +225,15 @@ interface Connection {
    */
   sentResource: number;
   sentResourceTick: number;
+  /**
+   * The health economy as this connection was last told it stood (spec 156).
+   *
+   * The meter is held *quantised to the byte the wire carries*, which is what
+   * keeps a bar that moves by a thousandth from marking itself dirty every tick.
+   * Both start at -1, so a client that has never been told is always told.
+   */
+  sentMeter: number;
+  sentCharges: number;
   /** Token bucket on map chunk sends (spec 072). */
   readonly chunkBudget: ChunkBudget;
   /** How often this connection may say a thing (spec 151). */
@@ -355,6 +375,19 @@ export class GameServer implements AdminHost {
   }
 
   /**
+   * Whether this character has a session (spec 157).
+   *
+   * The question "not logged in" is the answer to, and the one worth asserting
+   * in a test: every refusal in `player-manager.ts` is this returning false,
+   * and the bug this spec closes was it going false under a connection that was
+   * still up. A predicate rather than exposing `players`, because the *answer*
+   * is what a caller outside this class has any business with.
+   */
+  isLoggedIn(playerId: string): boolean {
+    return this.players.get(playerId) !== null;
+  }
+
+  /**
    * How many of a player's inputs are sitting unconsumed (spec 148).
    *
    * The number the pong carries, readable from this end too -- a rate-matching
@@ -406,6 +439,8 @@ export class GameServer implements AdminHost {
       sentCooldowns: null,
       sentResource: -1,
       sentResourceTick: 0,
+      sentMeter: -1,
+      sentCharges: -1,
       chunkBudget: new ChunkBudget(
         MAP_CHUNK_BURST,
         MAP_CHUNK_REFILL_PER_SECOND,
@@ -418,6 +453,7 @@ export class GameServer implements AdminHost {
       sessionToken: '',
       lastSeenTick: this.state.tick,
       leaving: false,
+      displaced: false,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -840,6 +876,50 @@ export class GameServer implements AdminHost {
       return;
     }
 
+    // Already playing, on a socket that is still up (spec 157).
+    //
+    // This is the case spec 150 had no answer for, and every door into "not
+    // logged in" went through it. The commonest is a reconnect the server has
+    // not noticed yet: a socket dies without delivering a `close`, the client
+    // comes back with a perfectly good token, and there is no lingering entry
+    // to match it against because the old connection is still, as far as this
+    // end knows, live. Falling through to a fresh login there spawned a second
+    // body and overwrote the session, and reaping the old connection half a
+    // minute later logged out the client that was actually playing.
+    //
+    // So the newest connection wins and takes the body with it. Not a refusal:
+    // that would turn an ordinary blip into a ten-second lockout on exactly the
+    // connection that had just recovered.
+    const held = this.liveConnectionFor(playerId);
+    if (held) {
+      // Read *before* the displacement, which clears them: taking the body over
+      // and taking it away are the same two fields, so the order is the whole
+      // difference between a resumed session and a welcome naming entity -1.
+      const takenOver = held.entityId;
+      const body = this.state.entities.get(takenOver);
+      const session = this.players.get(playerId);
+      if (body && session) {
+        connection.playerId = playerId;
+        connection.entityId = takenOver;
+        connection.sessionToken = this.mintSessionToken();
+        this.displace(held);
+        // The session is already logged in and already attached; re-attaching
+        // is what makes `byEntity` point at a session this connection can
+        // reach, and is a no-op when it already did.
+        this.players.attachEntity(playerId, takenOver);
+        this.welcome(connection, playerId, takenOver);
+        // Everything, for the reason the resume path says: the client taking
+        // over is a page that was constructed a moment ago and holds nothing.
+        this.sendMapInfo(connection);
+        this.sendStats(connection);
+        this.sendInventory(connection, 0);
+        return;
+      }
+      // A connection logged in as somebody whose body or session has gone is
+      // not something to take over -- it is something to clear out of the way.
+      this.displace(held);
+    }
+
     // Coming back to the body that is still standing there (spec 150).
     //
     // A token that does not match is simply a new login rather than an error:
@@ -872,6 +952,18 @@ export class GameServer implements AdminHost {
       this.lingering.delete(playerId);
     }
 
+    // A fresh login clears the ground first (spec 157).
+    //
+    // `lingering.delete` above is only reached when the token *matched*, so an
+    // empty or stale one left the entry armed: its body was then reaped by
+    // nothing until the grace expired, at which point the reap logged out the
+    // session this login is about to create. Reaping it here rather than there
+    // is what keeps spec 150's "a wrong token is a new login" true without the
+    // delayed cost -- you are still spawned afresh at your saved position, and
+    // the body you left goes now instead of taking your session with it later.
+    const stale = this.lingering.get(playerId);
+    if (stale) await this.reap(playerId, stale.entityId);
+
     const session = await this.players.login(playerId, displayName);
     // Not on top of whoever is already standing there (spec 145). A saved
     // position that is clear comes back unchanged, so this only ever moves
@@ -889,6 +981,10 @@ export class GameServer implements AdminHost {
       level: session.record.level,
       zoneId: session.record.currentZone,
       health: session.record.health,
+      // The flask comes back as it was left (spec 156). `login` has already
+      // turned an absent field into a full one; the fallback here is only what
+      // `exactOptionalPropertyTypes` needs to see, and it is the same answer.
+      fallbackCharges: session.record.fallbackCharges ?? session.stats.traits.fallbackCharges,
     });
     this.state = spawned.state;
     this.players.attachEntity(playerId, spawned.entity.id);
@@ -1001,6 +1097,11 @@ export class GameServer implements AdminHost {
     connection: Connection,
     options: { readonly intentional?: boolean } = {},
   ): Promise<void> {
+    // Taken over by a newer connection (spec 157). Its body and its session
+    // belong to somebody else now, so there is nothing here to cancel, to hold
+    // open, or to reap -- and reaping it is exactly how the player who took it
+    // over gets told they are not logged in.
+    if (connection.displaced) return;
     if (!this.connections.has(connection)) return;
     // Before the connection leaves the set, so the *other* side is still told
     // (spec 132). A trade that outlived a disconnect would be a trade nobody
@@ -1030,6 +1131,48 @@ export class GameServer implements AdminHost {
     await this.reap(connection.playerId, connection.entityId);
   }
 
+  /**
+   * The connection currently logged in as this player, if any (spec 157).
+   *
+   * A scan rather than an index: `connections` is a handful, this is asked once
+   * per login and once per reap, and an index keyed on `playerId` would be a
+   * fourth thing keyed on `playerId` to keep in step with the other three.
+   */
+  private liveConnectionFor(playerId: string, except?: Connection): Connection | null {
+    for (const connection of this.connections) {
+      if (connection === except) continue;
+      if (connection.playerId === playerId) return connection;
+    }
+    return null;
+  }
+
+  /**
+   * End a connection without ending what it was holding (spec 157).
+   *
+   * Its body and its session belong to the connection that just took over, so
+   * this does everything `disconnect` does about *this socket* -- the trade and
+   * the vendor, which are promises to other people and do not survive a
+   * takeover any more than they survive a drop -- and nothing about the player.
+   */
+  private displace(connection: Connection): void {
+    // Before the flag, because cancelling a trade needs the playerId that is
+    // about to stop meaning this connection.
+    if (connection.playerId !== null) {
+      const ended = this.trades.cancelFor(connection.playerId, 'they logged in elsewhere');
+      if (ended) this.endTrade(ended);
+    }
+    connection.openVendorId = '';
+    connection.displaced = true;
+    // Cleared so that nothing reached through this connection -- a frame still
+    // in flight, a close handler about to run -- can name the player whose
+    // session it no longer owns.
+    connection.playerId = null;
+    connection.entityId = -1;
+    this.connections.delete(connection);
+    this.send(connection, { type: ServerMessageType.Disconnect, reason: 'logged in elsewhere' });
+    connection.channel.close();
+  }
+
   /** Take the body out of the world and save the record. The end of a session. */
   private async reap(playerId: string | null, entityId: number): Promise<void> {
     if (entityId >= 0) {
@@ -1037,10 +1180,14 @@ export class GameServer implements AdminHost {
       this.history.forget(entityId);
       this.state = removeEntity(this.state, entityId);
     }
-    if (playerId !== null) {
-      this.lingering.delete(playerId);
-      await this.players.logout(playerId);
-    }
+    if (playerId === null) return;
+    // Somebody is holding this id (spec 157). The entity removed above was an
+    // orphan and had to go; the *session* is not one, and logging it out is how
+    // a live client ends up being told "not logged in" while its body stands in
+    // the world and its socket is still up.
+    if (this.liveConnectionFor(playerId)) return;
+    this.lingering.delete(playerId);
+    await this.players.logout(playerId);
   }
 
   /**
@@ -1173,6 +1320,39 @@ export class GameServer implements AdminHost {
     });
   }
 
+  /**
+   * The health economy's two numbers, when either has moved (spec 156).
+   *
+   * Change-driven and owner-only for the same reasons as `sendCooldowns`, with
+   * one difference: there is nothing to model forward. The meter moves on kills
+   * and the flask on casts and rests, none of which a client can predict a curve
+   * for, so "has it changed" is a comparison against what was last sent rather
+   * than against what the client would have believed.
+   *
+   * The meter goes as a *fraction*, quantised to the byte the wire carries, and
+   * the comparison is made on that same quantised value -- otherwise a meter
+   * drifting by a thousandth marks itself dirty every tick and this becomes a
+   * per-tick broadcast of a number that draws the same bar.
+   */
+  private sendRestoration(connection: Connection, tick: number): void {
+    if (connection.entityId < 0) return;
+    const entity = this.state.entities.get(connection.entityId);
+    if (!entity) return;
+
+    const meter = Math.round(meterFraction(entity.restoration) * 255);
+    if (meter === connection.sentMeter && entity.fallbackCharges === connection.sentCharges) return;
+    connection.sentMeter = meter;
+    connection.sentCharges = entity.fallbackCharges;
+
+    this.send(connection, {
+      type: ServerMessageType.Restoration,
+      meter: meter / 255,
+      charges: entity.fallbackCharges,
+      maxCharges: entity.stats.traits.fallbackCharges,
+      atTick: tick,
+    });
+  }
+
   private sendStats(connection: Connection): void {
     if (connection.playerId === null) return;
     const session = this.players.get(connection.playerId);
@@ -1205,7 +1385,7 @@ export class GameServer implements AdminHost {
    * itself through the same code path an accepted one confirms itself through.
    */
   /**
-   * Take a drop, or say why not (spec 156). Returns null when it was taken.
+   * Take a drop, or say why not (spec 158). Returns null when it was taken.
    *
    * Every check here is the server's and none of them is asked of the client.
    * The order matters in exactly one place: **the entity is removed before the
@@ -1233,7 +1413,7 @@ export class GameServer implements AdminHost {
       return 'that is not yours';
     }
     // The reach, plus however far this body would have got if the server were
-    // not behind on its own inputs (spec 156).
+    // not behind on its own inputs (spec 158).
     //
     // `PickUpItem` carries no `afterInputSeq`, unlike `UseAbility` -- so it is
     // handled on the tick it *arrives*, while `body.position` is where the last
@@ -1269,7 +1449,7 @@ export class GameServer implements AdminHost {
     return null;
   }
 
-  /** One `LootDrop`, saying only as much as `tick` permits (spec 156). */
+  /** One `LootDrop`, saying only as much as `tick` permits (spec 158). */
   private lootDropMessage(entityId: number, drop: DropState, tick: number): LootDropMessage {
     const revealed = isRevealed(drop, tick);
     return {
@@ -1612,6 +1792,10 @@ export class GameServer implements AdminHost {
         entity.position,
         entity.facing,
         entity.health,
+        // The flask, mirrored back like health (spec 156): the sim spends it and
+        // the rest loop refills it, so the record has to hear about both or a
+        // relog is the cheapest heal in the game.
+        entity.fallbackCharges,
       );
     }
 
@@ -1629,6 +1813,9 @@ export class GameServer implements AdminHost {
     // Cooldowns ride the same reasoning as corrections: rare, owner-only, and
     // the point of them is that the button greys out the moment it is spent.
     for (const connection of this.connections) this.sendCooldowns(connection, this.state.tick);
+    // The health economy rides the same reasoning (spec 156): rare, owner-only,
+    // and the point of it is that the flask greys out the moment it is drunk.
+    for (const connection of this.connections) this.sendRestoration(connection, this.state.tick);
     if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) {
       this.broadcastDeltas();
       for (const connection of this.connections) {
@@ -1768,6 +1955,12 @@ export class GameServer implements AdminHost {
         ...entity,
         position,
         health: session.stats.maxHealth,
+        // Death is the other reset point (spec 156): you come back at
+        // Hearthstead whole, flask included, and the meter is gone. That is the
+        // shape the whole economy is built around -- a bad run costs the
+        // momentum you had built, and never leaves you unable to start again.
+        fallbackCharges: entity.stats.traits.fallbackCharges,
+        restoration: 0,
         activity: ActivityValue.Idle,
         activityUntilTick: 0,
         targetId: null,
@@ -1963,7 +2156,14 @@ export class GameServer implements AdminHost {
       const visible: ServerEntity[] = [];
       for (const id of this.chunks.interestSet(connection.entityId)) {
         const entity = this.state.entities.get(id);
-        if (entity) visible.push(entity);
+        if (!entity) continue;
+        // A mote is replicated to exactly one client: the one it belongs to
+        // (spec 156). Filtering here rather than checking ownership at pickup is
+        // the stronger rule and the cheaper one -- a teammate cannot see one,
+        // cannot walk toward one, and cannot be accused of taking one, and the
+        // wire carries no ownership field for anybody to reason about.
+        if (entity.mote && entity.mote.ownerEntityId !== connection.entityId) continue;
+        visible.push(entity);
       }
       const delta = connection.delta.build(
         this.state.tick,
@@ -1975,7 +2175,7 @@ export class GameServer implements AdminHost {
       if (DeltaTracker.isEmpty(delta)) continue;
       this.send(connection, delta);
 
-      // A drop's identity does not ride the delta (spec 156), so first sight of
+      // A drop's identity does not ride the delta (spec 158), so first sight of
       // one is where its `LootDrop` goes. The `Spawn` bit already means "this
       // client had never heard of it", so there is no second visibility system
       // to keep in step -- and a client walking up to a drop that revealed
@@ -2228,7 +2428,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * How far the admin drop throws, in world units (spec 156). Inside the
+   * How far the admin drop throws, in world units (spec 158). Inside the
    * scatter band the real one draws from, so the arc it exercises is the arc a
    * kill produces.
    */
@@ -2258,7 +2458,7 @@ export class GameServer implements AdminHost {
         return `cleared ${removed} monsters within ${magnitude} units`;
       }
       case 'drop': {
-        // The developer path (spec 156): a drop of a chosen tier, at a chosen
+        // The developer path (spec 158): a drop of a chosen tier, at a chosen
         // point, with no monster and no luck involved. `magnitude` is the tier's
         // ordinal, and the item is the first row in the table at that tier so
         // that the tiers can be put side by side and compared.
@@ -2288,7 +2488,7 @@ export class GameServer implements AdminHost {
         return `dropped ${definition.name} (${rarity}) at ${Math.round(position.x)}, ${Math.round(position.y)}`;
       }
       case 'reveal': {
-        // The other half of the developer path (spec 156): pull every drop
+        // The other half of the developer path (spec 158): pull every drop
         // within `magnitude` to its reveal now, so a presentation can be
         // stepped through without waiting for it or restarting the server.
         //
@@ -2331,6 +2531,54 @@ export class GameServer implements AdminHost {
           healed += 1;
         }
         return `healed ${healed} player(s)`;
+      }
+      // --- the health economy's debug controls (spec 156) -----------------
+      // Three levers, on the admin channel, because every one of them is a
+      // question a designer has mid-session and none of them is answerable by
+      // playing: how does a nearly-full meter behave, what does an empty flask
+      // feel like, and what does an elite's guarantee actually drop.
+      case 'meter': {
+        // `magnitude` is a *fraction* of the threshold, so "set it to 0.9" is
+        // the same instruction whatever the threshold is retuned to.
+        const fraction = Math.max(0, Math.min(1, magnitude));
+        let set = 0;
+        for (const session of this.players.all()) {
+          const entity = this.state.entities.get(session.entityId);
+          if (!entity) continue;
+          this.state = replaceEntity(this.state, {
+            ...entity,
+            restoration: RESTORATION.threshold * fraction,
+          });
+          set += 1;
+        }
+        return `meter set to ${Math.round(fraction * 100)}% for ${set} player(s)`;
+      }
+      case 'charges': {
+        let set = 0;
+        for (const session of this.players.all()) {
+          const entity = this.state.entities.get(session.entityId);
+          if (!entity) continue;
+          this.state = replaceEntity(this.state, {
+            ...entity,
+            fallbackCharges: Math.max(
+              0,
+              Math.min(entity.stats.traits.fallbackCharges, Math.round(magnitude)),
+            ),
+          });
+          set += 1;
+        }
+        return `flask set to ${Math.round(magnitude)} for ${set} player(s)`;
+      }
+      case 'elite': {
+        // The heaviest row in the table, which is what `isEliteType` classifies
+        // as elite -- asked of the data rather than named here, so a heavier
+        // monster added later is the one this conjures.
+        const elite = [...ALL_MONSTERS]
+          .filter((row) => isEliteType(row.id))
+          .sort((a, b) => b.experience - a.experience)[0];
+        if (!elite) return 'no elite in the monster table';
+        const spawned = this.spawnEntities(elite.id, x, y, Math.max(1, Math.round(magnitude || 1)));
+        return `elite: ${spawned} ${elite.name} at ${Math.round(x)}, ${Math.round(y)}`;
       }
       default:
         return '';

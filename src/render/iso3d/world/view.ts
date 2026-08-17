@@ -65,7 +65,7 @@ import { createHud, HOTBAR } from './hud.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
-import { effectsForBlow } from './vfx-wire.js';
+import { effectsForBlow, REDUNDANT_SERVER_EFFECTS } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
 import { pickupLead, pickupOrderFor } from './loot-drop.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
@@ -100,6 +100,23 @@ const TICK_MS = 1000 / SERVER_TICK_RATE;
 const PROP_SETTLE_FRAMES = 2;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
+/**
+ * Wall-clock period for the two things that must outlive the frame loop
+ * (spec 157): the heartbeat, and the reconnect backoff.
+ *
+ * Both used to ride `requestAnimationFrame`, which a browser throttles to
+ * nothing in a hidden tab -- so switching tabs for a minute stopped the pings,
+ * the server's ten-second timeout dropped the connection, and the backoff that
+ * would have brought it back was frozen by the same stall. A `setInterval` is
+ * clamped to about a second when hidden but never stops, which is the whole
+ * difference between "slower" and "never".
+ *
+ * 500ms is the rate the frame loop drove them at, so nothing about a visible
+ * tab changes.
+ */
+const KEEPALIVE_MS = 500;
+/** Ticks of backoff clock per keep-alive, so `ReconnectingChannel` stays tick-driven. */
+const KEEPALIVE_TICKS = Math.round(KEEPALIVE_MS / TICK_MS);
 /** Ms between deltas -- the interval the renderer interpolates across. */
 const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
@@ -517,6 +534,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
   });
   client.onEffect((effect) => {
+    // A self-heal reports itself twice: once as this message and once as the
+    // negative-damage blow that draws the heal (spec 157). The registry holds
+    // no entry under an ability's own id, so drawing this one too would put
+    // `addEffect`'s orange debug disc under the green heal for half a second.
+    if (REDUNDANT_SERVER_EFFECTS.has(effect.effectId)) return;
     // The id the server has always sent and this view has always dropped.
     scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
   });
@@ -643,7 +665,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   let targetId: number | null = null;
   /**
-   * The drop being walked over to, or null (spec 156).
+   * The drop being walked over to, or null (spec 158).
    *
    * Beside {@link targetId} rather than folded into it because the two end
    * differently: an attack order stands until the body is down, and this one is
@@ -789,7 +811,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   /**
    * Whether a right-click on this body is a pickup rather than an attack or a
-   * walk (spec 156).
+   * walk (spec 158).
    *
    * As thin as `attackable` and for the same reason: whether the drop is
    * *yours*, whether you are close enough, and whether the bag has room are all
@@ -1413,7 +1435,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * One tick of a pickup order (spec 156): close the gap, then ask once.
+   * One tick of a pickup order (spec 158): close the gap, then ask once.
    *
    * The same shape as `driveAutoAttack` and `driveCastOrder` -- a destination
    * into `moveIntent` and a request to the server, which validates it exactly as
@@ -1531,6 +1553,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   /** The wire's own clock: whole sim ticks, same as everything else here. */
   let wireTick = 0;
+  /**
+   * The reconnect backoff's clock, in the same ticks but off the wall (spec
+   * 157). Separate from `wireTick` because that one stops with the frame loop,
+   * and this one must not.
+   */
+  let backoffTick = 0;
+  /** The wall-clock timer driving the heartbeat and the backoff. 0 when stopped. */
+  let keepAlive = 0;
 
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
@@ -1549,8 +1579,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       accumulator -= tickMs;
       ticks += 1;
       wireTick += 1;
-      // The backoff runs on the sim clock, like the wire's queues.
-      reconnecting?.deliver(wireTick);
+      // The backoff used to be driven from here, on the sim clock. It is on the
+      // wall clock now (spec 157): a hidden tab stops this loop, and a
+      // reconnect that can only be attempted while somebody is looking at the
+      // tab is not a reconnect.
       // Released before the tick that will read them, so a frame due on this
       // tick is one this tick sees (spec 147).
       wire.deliver(wireTick);
@@ -1640,7 +1672,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
         pending: pendingAim !== null,
       },
-      // What the cursor is over, for the drop's name (spec 156).
+      // What the cursor is over, for the drop's name (spec 158).
       scene.hoveredEntityId,
       now,
     );
@@ -1714,16 +1746,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // the shell calls when this tab becomes visible, and a Hello sent twice
       // on one socket used to spawn a second body and orphan the first.
       if (plan.mode === 'remote') {
-        void client
-          .connect()
-          .then(() => {
-            // Kept for the next load of this tab, so a refresh is a resume
-            // rather than a second body beside the first (spec 150).
-            rememberSession(sessionStorage, client.sessionToken);
-          })
-          .catch((error: unknown) => {
-            banner.refuse(error instanceof Error ? error.message : String(error));
-          });
+        // On *every* welcome rather than in the `.then()` of this first one
+        // (spec 157). The server mints a fresh token per welcome, so writing it
+        // once left storage holding a stale one after any reconnect -- and the
+        // next reload of the tab was then a fresh login rather than a resume.
+        client.onWelcome(() => {
+          // Kept for the next load of this tab, so a refresh is a resume
+          // rather than a second body beside the first (spec 150).
+          rememberSession(sessionStorage, client.sessionToken);
+        });
+        // The heartbeat and the backoff, on a clock a hidden tab cannot stop.
+        keepAlive = window.setInterval(() => {
+          client.keepAlive();
+          backoffTick += KEEPALIVE_TICKS;
+          reconnecting?.deliver(backoffTick);
+        }, KEEPALIVE_MS);
+        void client.connect().catch((error: unknown) => {
+          banner.refuse(error instanceof Error ? error.message : String(error));
+        });
       } else {
         void client.connect();
       }
@@ -1734,6 +1774,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     },
     stop(): void {
       cancelAnimationFrame(raf);
+      if (keepAlive !== 0) {
+        window.clearInterval(keepAlive);
+        keepAlive = 0;
+      }
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);

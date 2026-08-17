@@ -1,5 +1,5 @@
 /**
- * An item lying in the grass (spec 156).
+ * An item lying in the grass (spec 158).
  *
  * Beside `rigs.ts`, `critter.ts` and `weapon-rig.ts` rather than in `world/`,
  * because it is what those are: three.js meshes with an `update`. Everything
@@ -37,7 +37,7 @@ const TIER_COLOR: Record<RarityId, number> = {
 };
 
 /**
- * What an unrevealed drop is drawn in (spec 156).
+ * What an unrevealed drop is drawn in (spec 158).
  *
  * **Common's own colour, deliberately.** An item whose tier has not resolved
  * looks exactly like ordinary loot, so the swell and the pulse are the only
@@ -169,7 +169,7 @@ export class DropRig {
   }
 
   /**
-   * How far the tier's colour has arrived, 0..1 (spec 156).
+   * How far the tier's colour has arrived, 0..1 (spec 158).
    *
    * Three materials lerped from the neutral rather than swapped, because this is
    * the moment the feature exists for and a hard swap reads as a glitch. Skipped

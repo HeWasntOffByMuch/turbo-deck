@@ -41,7 +41,7 @@ import type { RarityId } from '../../../server/data/items.js';
 const DROP_LABEL_LIFT = 34;
 
 /**
- * The tier's colour in *text* (spec 156).
+ * The tier's colour in *text* (spec 158).
  *
  * Separate values from `drop-rig.ts`'s mesh colours and deliberately so: those
  * are lit and go through the retro pass, and these are 12px type on a dark
@@ -93,6 +93,11 @@ export const HOTBAR: readonly string[] = [
   'bolt.seek',
   'ground.quake',
   'self.mend',
+  // The flask (spec 156). On the bar rather than on a key of its own, because it
+  // is an ability like every other and the only thing that makes it insurance is
+  // what it costs -- putting it somewhere special would be the interface
+  // claiming a distinction the rules do not make.
+  'self.hearthdraught',
   'channel.drain',
 ];
 
@@ -197,7 +202,7 @@ export interface HudHandle {
      */
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
     /**
-     * The entity under the cursor, or null (spec 156).
+     * The entity under the cursor, or null (spec 158).
      *
      * Only a drop does anything with it today: the name of a *revealed* drop is
      * shown while it is hovered. It comes in as a parameter rather than off the
@@ -325,7 +330,7 @@ export function createHud(project: Projector): HudHandle {
   root.append(errors);
 
   /**
-   * The name of the drop under the cursor (spec 156).
+   * The name of the drop under the cursor (spec 158).
    *
    * **One element, not one per drop**, because there is only ever one hovered
    * thing -- and because a name over every drop in a field is a loot feed with
@@ -631,7 +636,7 @@ export function createHud(project: Projector): HudHandle {
   }
 
   /**
-   * Name the hovered drop, once it has one (spec 156).
+   * Name the hovered drop, once it has one (spec 158).
    *
    * Three ways to show nothing and they are all the same branch: nothing is
    * hovered, the hovered thing is not a drop, or the drop has not revealed and
@@ -884,6 +889,12 @@ export function createHud(project: Projector): HudHandle {
       `guard ${Math.round((self?.poise ?? 0) * (stats?.traits.maxPoise ?? 0))}/` +
       `${Math.round(stats?.traits.maxPoise ?? 0)}   ` +
       `lvl ${view.level}   xp ${view.experience}\n` +
+      // The health economy, in the readout rather than as a bar (spec 156). The
+      // meter arrives as a fraction and is shown as one: the absolute progress
+      // and the threshold behind it are server tuning, and a client that knew
+      // both could work out exactly which kill produces the next mote.
+      `motes ${Math.round(view.restoration.meter * 100)}%   ` +
+      `flask ${view.restoration.charges}/${view.restoration.maxCharges}\n` +
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +
       `\n${targetLine(view, targetId)}` +
@@ -1041,7 +1052,10 @@ function aimLine(aiming: { readonly abilityId: string | null; readonly pending: 
     return touch
       // No key numbers to name on a phone since spec 094 -- the bar is tapped.
       ? 'tap ground to move, a unit to attack · pinch to zoom · tap a skill to cast it'
-      : 'right-click ground to move, a unit to attack · WASD · 1-8 abilities · Esc cancel';
+      // The range is derived rather than typed, or it goes stale the next time a
+      // row is added to the bar -- which is exactly what spec 156 did to the
+      // `1-8` that was here.
+      : `right-click ground to move, a unit to attack · WASD · 1-${HOTBAR.length} abilities · Esc cancel`;
   }
   if (!aiming.pending) {
     return touch
@@ -1077,5 +1091,11 @@ function formatSeconds(seconds: number): string {
  */
 function affordable(view: ClientView, ability: AbilityDefinition | null): boolean {
   if (!ability || !view.stats) return true;
+  // The flask's cost is a charge, not resource (spec 156), and an empty one is
+  // the same kind of "you cannot press this" as an empty pool. Read off the
+  // replicated count minus what a request in flight has already spent, so a
+  // second press inside the round trip is dimmed rather than refused.
+  const charges = ability.chargeCost ?? 0;
+  if (charges > 0 && view.restoration.charges < charges) return false;
   return ability.cost <= view.resource;
 }

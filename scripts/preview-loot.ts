@@ -1,4 +1,4 @@
-// Dev-only: photograph the reveal (spec 156) as a contact sheet, so "what is
+// Dev-only: photograph the reveal (spec 158) as a contact sheet, so "what is
 // the reveal actually doing" is a picture rather than a paragraph.
 // Not part of the app. `tsx scripts/preview-loot.ts`
 //

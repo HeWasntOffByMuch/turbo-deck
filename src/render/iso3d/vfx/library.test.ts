@@ -576,6 +576,132 @@ describe('the hit vocabulary', () => {
   });
 });
 
+describe('the heal (spec 157)', () => {
+  const heal = LIBRARY.find((effect) => effect.id === 'heal_restore');
+  const emitter = (id: string) => heal?.emitters.find((entry) => entry.id === id);
+
+  it('is the three layers the brief asks for, and nothing else', () => {
+    expect(heal?.emitters.map((entry) => entry.id)).toEqual(['wave', 'wave_halo', 'streaks', 'plusses']);
+  });
+
+  it('shares the one wavefront rather than authoring a second one', () => {
+    // The same two emitters an order and a shockwave use, so a tuning pass on
+    // the wave moves all three instead of leaving this one behind.
+    const order = LIBRARY.find((effect) => effect.id === 'order_move');
+    for (const id of ['wave', 'wave_halo']) {
+      expect(emitter(id)?.mesh?.shape, id).toBe(order?.emitters.find((entry) => entry.id === id)?.mesh?.shape);
+      expect(emitter(id)?.blend, id).toBe(order?.emitters.find((entry) => entry.id === id)?.blend);
+    }
+  });
+
+  it('keeps the shockwave at the feet and smaller than the selection ring', () => {
+    // Small, and inside every status ring: a heal is an event that happened
+    // here, and one that reached the outer radii would read as a status.
+    const peak = Math.max(...(emitter('wave')?.size.keys.map(([, value]) => value) ?? [0]));
+    const sigil = Math.max(
+      ...(LIBRARY.find((effect) => effect.id === 'aura_selected')
+        ?.emitters.find((entry) => entry.id === 'ring')
+        ?.size.keys.map(([, value]) => value) ?? [0]),
+    );
+    expect(peak).toBeLessThan(sigil);
+    // On the floor, a hair above it: the origin is the ground, not a chest.
+    for (const id of ['wave', 'wave_halo']) {
+      expect(emitter(id)?.offset?.y ?? 0, id).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('sends the streaks and the plusses straight up rather than outward', () => {
+    // A cone emits into the sky about +Y; a circle emits in the ground plane,
+    // which is what the flat shockwave uses and is exactly wrong here.
+    for (const id of ['streaks', 'plusses']) {
+      const shape = emitter(id)?.shape;
+      expect(shape?.kind, id).toBe('cone');
+      expect(shape?.kind === 'cone' ? shape.angle : Math.PI, `${id} fans out`).toBeLessThan(0.2);
+      // Gravity would arc a rise over into a spray, which is the blood this
+      // replaces. Nothing here falls.
+      expect(emitter(id)?.gravity ?? 0, id).toBe(0);
+    }
+  });
+
+  it('draws the streaks as ribbons, so a rise is a line and not a bar', () => {
+    expect(emitter('streaks')?.render).toBe('ribbon');
+    expect(emitter('streaks')?.ribbonSpacing ?? 0).toBeGreaterThan(0);
+  });
+
+  it('holds the plusses on screen after the streaks have gone', () => {
+    // The effect ends on the symbol rather than on the motion.
+    expect(emitter('plusses')?.lifetimeTicks[0] ?? 0).toBeGreaterThan(emitter('streaks')?.lifetimeTicks[1] ?? 0);
+    expect(emitter('plusses')?.speed[1] ?? 0).toBeLessThan(emitter('streaks')?.speed[0] ?? 0);
+  });
+
+  it('draws the plus as a cutout of the plus sheet, big enough to read', () => {
+    expect(emitter('plusses')?.sprite?.sheet).toBe('plus');
+    // The pixel-look blend: a plus that fades through partial alpha is a smudge
+    // the retro pass then bands.
+    expect(emitter('plusses')?.blend).toBe('dither-cutout');
+    // Roughly eleven pixels at the gameplay zoom (760px over ~900 world units),
+    // which is about a pixel and a half per texel of a 7x7 sheet.
+    const peak = Math.max(...(emitter('plusses')?.size.keys.map(([, value]) => value) ?? [0]));
+    expect(peak).toBeGreaterThanOrEqual(12);
+  });
+
+  it('is green throughout, in the greens the heal ring already uses', () => {
+    // Not "a green picked to look like healing": the same palette entries the
+    // heal aura is drawn in, so a heal landing and a heal status showing do not
+    // nearly match.
+    for (const entry of heal?.emitters ?? []) {
+      for (const [, key] of entry.color.stops) {
+        expect(['auraHeal', 'auraBuff'], `${entry.id} -> ${key}`).toContain(key);
+      }
+    }
+  });
+
+  it('ends on its own rather than standing under the body', () => {
+    // A heal is an event. A rate emitter never finishes, so one in here would be
+    // a status aura that nothing ever stops -- the plusses stagger with a ramp,
+    // which ends, rather than with a rate, which does not.
+    for (const entry of heal?.emitters ?? []) {
+      expect(entry.emission.kind, entry.id).not.toBe('rate');
+      if (entry.emission.kind === 'ramp') expect(entry.emission.overTicks, entry.id).toBeLessThanOrEqual(30);
+      expect(entry.lifetimeTicks[1], entry.id).toBeLessThanOrEqual(50);
+    }
+  });
+});
+
+describe('the plus sheet (spec 157)', () => {
+  const image = spriteSheet('plus').image;
+  // `TextureImageData.data` is a typed array of some flavour; every sheet in
+  // this file is RGBA bytes, and reading it as numbers is all this needs.
+  const data = image.data as ArrayLike<number>;
+  const alphaAt = (x: number, y: number): number => data[(y * image.width + x) * 4 + 3] ?? 0;
+
+  it('is one square frame', () => {
+    expect(sheetFrames('plus')).toBe(1);
+    expect(image.width).toBe(image.height);
+  });
+
+  it('is a cross rather than a blob or a box', () => {
+    const last = image.width - 1;
+    const mid = (image.width - 1) / 2;
+    // The arms reach all four edges...
+    expect(alphaAt(mid, 0)).toBe(255);
+    expect(alphaAt(mid, last)).toBe(255);
+    expect(alphaAt(0, mid)).toBe(255);
+    expect(alphaAt(last, mid)).toBe(255);
+    // ...and the corners are empty, which is the difference between a plus and
+    // a square.
+    for (const [x, y] of [[0, 0], [last, 0], [0, last], [last, last]]) {
+      expect(alphaAt(x ?? 0, y ?? 0)).toBe(0);
+    }
+  });
+
+  it('is every texel on or off, so the quantizer has nothing to band', () => {
+    for (let i = 3; i < data.length; i += 4) {
+      expect(data[i] === 0 || data[i] === 255).toBe(true);
+    }
+  });
+});
+
 describe('the whole library actually runs', () => {
   it('plays every effect for a hundred ticks without throwing or leaking', () => {
     // Cheap, and it is the only check that exercises collision, sub-effects,

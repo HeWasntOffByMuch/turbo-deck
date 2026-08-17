@@ -13,7 +13,7 @@ below is labelled, and the labels mean what they say:
 | **Future direction** | A shape a later spec may take. Not a commitment, and explicitly not a licence to build it as a side effect of some other task. |
 
 The only thing implemented under this heading today is delayed rarity reveal
-(spec 156). Everything else here is a rule or a direction. **A future direction
+(spec 158). Everything else here is a rule or a direction. **A future direction
 is not a backlog item you may pick up while doing something else** — it earns a
 `specs/` entry of its own or it does not happen.
 
@@ -75,7 +75,7 @@ An unusual item appears, and the player knows something exceptional happened
 *before* being handed every fact about it. **The anticipation is part of the
 reward**, not packaging around it.
 
-*Implemented, in one narrow form:* delayed rarity reveal (spec 156). A drop
+*Implemented, in one narrow form:* delayed rarity reveal (spec 158). A drop
 lands, an unusual cue plays, and the item's identity resolves a beat later. See
 §10 for the presentation constraints it works under.
 
@@ -106,7 +106,7 @@ Contrast is the whole mechanism. **If everything is surprising, nothing is.** If
 every system becomes a random reward generator, each individual reward means
 less than it did when only one of them was.
 
-This is the reason spec 156's `common` tier has a reveal delay of exactly zero
+This is the reason spec 158's `common` tier has a reveal delay of exactly zero
 ticks and no anticipation cue. Ordinary loot is meant to be quiet. The rare
 drop's beat only works because most drops do not have one.
 
@@ -148,7 +148,7 @@ Where practical, such modifiers should hang off concepts that already exist:
 Guard, Stagger, Weak Point, Flow, Momentum, Vulnerable, Prepared, Exposed,
 Attuned, Sundered, and the Wind-up / Attack Point / Backswing phases.
 
-**Not yet implemented, and explicitly out of scope for spec 156.** There is no
+**Not yet implemented, and explicitly out of scope for spec 158.** There is no
 affix system. `ItemDefinition.modifiers` is a flat `StatModifier` and every row
 in `src/server/data/items.ts` is a magnitude. Do not invent production affixes
 without a spec that says so.
@@ -243,7 +243,7 @@ impact / brief quiet
 **Current rule.** Not every tier gets ceremony. Basic loot stays quiet so
 unusual loot keeps its contrast (§3).
 
-**Current rule.** Presentation must never obstruct responsive play. Spec 156
+**Current rule.** Presentation must never obstruct responsive play. Spec 158
 resolves this explicitly: a drop can be picked up before its reveal finishes,
 and doing so simply ends the presentation. An invisible timer that blocks the
 player's hands is not anticipation.
@@ -289,7 +289,7 @@ What exists today, under this heading, in full:
 
 - **Implemented:** rarity as a property of an item row, a per-monster drop
   table, a drop that lands in the world as an entity, an authoritative reveal
-  clock, and a restrained tier-shaped presentation over it — all of spec 156 and
+  clock, and a restrained tier-shaped presentation over it — all of spec 158 and
   nothing beyond it.
 
 What does not exist, and must not appear as a side effect of some other task:

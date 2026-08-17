@@ -17,6 +17,7 @@
 import { monsterById } from '../../../server/data/monsters.js';
 import { abilityById, type ProjectileLook } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import { VFX_PALETTE } from '../vfx/palette.js';
 import type { FigureTuning } from '../../cloth/params.js';
 import type { CritterId } from '../../critters/index.js';
 
@@ -38,6 +39,29 @@ export interface Appearance {
    * and nothing here has to be told about it.
    */
   readonly look: ProjectileLook | null;
+  /**
+   * An override colour for the rig, or absent for whatever it draws itself as
+   * (spec 156).
+   *
+   * Only motes use it, and only to tell health from focus. It lives here rather
+   * than in the scene because *what colour a thing is* is the same kind of
+   * question as *what shape it is*, and this file is where that question is
+   * answered without a WebGL context.
+   */
+  readonly tint?: number;
+  /**
+   * How many times to subdivide the orb, or absent for the faceted default
+   * (spec 156). Motes only -- see {@link MOTE_DETAIL}.
+   */
+  readonly detail?: number;
+  /**
+   * A brighter rim around the orb, or absent for none (spec 156).
+   *
+   * Motes only. A 7-unit ball of deep blood on a green field is a dark dot on a
+   * dark field at the size it is actually drawn; the rim is what separates it
+   * from the grass without making the whole thing a bright blob.
+   */
+  readonly outline?: number;
 }
 
 /** Fallbacks, sized so an unknown body reads as a body rather than as a speck. */
@@ -49,6 +73,41 @@ const DEFAULT_PROJECTILE_LOOK: ProjectileLook = 'orb';
 const PLAYER_RADIUS = 16;
 /** Matches `DROP_RADIUS` on the server: what the cursor picks a drop by. */
 const DROP_RADIUS = 10;
+/**
+ * How big a mote is drawn, and in what (spec 156).
+ *
+ * The radius matches the one `world.ts` gives the entity. The colours are the
+ * only thing that tells a health mote from a focus one, so they are named here
+ * beside the shape rather than picked in the scene, where nothing could check
+ * them.
+ *
+ * Vitality is **the game's own blood**, `VFX_PALETTE.bloodFresh`, rather than a
+ * red picked to look like blood. The spray a killing blow throws and the stain
+ * it leaves are already that colour, so a health mote reads as part of the same
+ * event instead of as a pickup that happens to be nearby.
+ */
+const MOTE_RADIUS = 7;
+const MOTE_VITALITY_COLOR = VFX_PALETTE.bloodFresh;
+const MOTE_FOCUS_COLOR = 0x2d7fd6;
+/**
+ * The rim, brighter than the fill it surrounds.
+ *
+ * Deliberately *much* brighter rather than a shade up. What has to be beaten is
+ * the arena's grass, which is a mid green, and a dark red ball on it is one dark
+ * dot among the tree shadows. The pair -- deep core, hot rim -- is also what
+ * makes a mote read as lit from within rather than as a painted pebble.
+ */
+const MOTE_VITALITY_RIM = 0xff6a58;
+const MOTE_FOCUS_RIM = 0x82d4ff;
+/**
+ * How round a mote is drawn.
+ *
+ * An icosahedron at detail 0 is twenty flat faces and reads as a die; one
+ * subdivision is eighty and reads as a sphere while staying inside the low-poly
+ * look everything else here is built in. The bolt keeps detail 0 -- a conjured
+ * shot is *supposed* to look faceted, and it is only on screen for a moment.
+ */
+const MOTE_DETAIL = 1;
 
 /**
  * The species the play view draws a player as (spec 081).
@@ -99,10 +158,29 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
       };
     }
 
+    case EntityKind.Mote:
+      // A restorative mote (spec 156). It draws through the *shot* rig, which is
+      // not a shortcut: a mote is a small bright thing floating in the air, which
+      // is exactly what `ShotRig`'s orb already is, and building a second rig to
+      // draw the same sphere would be a second thing to keep looking right. What
+      // it does need is a colour of its own, which is the `tint` below -- red for
+      // health, blue for focus -- because two motes that restore different things
+      // must not be the same object.
+      return {
+        rig: 'projectile',
+        typeId: entity.typeId || 'mote',
+        radius: MOTE_RADIUS,
+        showsHealth: false,
+        look: 'orb',
+        tint: entity.typeId === 'mote.focus' ? MOTE_FOCUS_COLOR : MOTE_VITALITY_COLOR,
+        outline: entity.typeId === 'mote.focus' ? MOTE_FOCUS_RIM : MOTE_VITALITY_RIM,
+        detail: MOTE_DETAIL,
+      };
+
     case EntityKind.Prop:
       return { rig: 'prop', typeId: entity.typeId || 'prop', radius: DEFAULT_MONSTER_RADIUS, showsHealth: false, look: null };
 
-    // A drop has no `typeId` and that is deliberate (spec 156): what the item is
+    // A drop has no `typeId` and that is deliberate (spec 158): what the item is
     // arrives on `LootDrop`, not on the entity record. So every drop is one look
     // here, and the tier that decides how it is *lit* comes from
     // `ClientView.drops` -- which is also the only place it could come from

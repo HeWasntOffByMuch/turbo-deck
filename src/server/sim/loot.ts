@@ -1,5 +1,5 @@
 /**
- * A drop, and how far its presentation has got (spec 156).
+ * A drop, and how far its presentation has got (spec 158).
  *
  * The idea this file exists to hold is that **the item is decided at once and
  * its presentation unfolds afterwards**. `defId` is written on the tick the body
@@ -61,7 +61,7 @@ export interface DropState {
   readonly ownerPlayerId: string | null;
   /**
    * Where the body was standing when it fell -- the point the item was thrown
-   * *from* (spec 156).
+   * *from* (spec 158).
    *
    * The entity's own position is where it lands, so this is the other end of an
    * arc the client draws and nothing simulates. It is authoritative for one
@@ -118,7 +118,7 @@ export function makeDrop(
 }
 
 /**
- * How far from the body a drop can land, in world units (spec 156).
+ * How far from the body a drop can land, in world units (spec 158).
  *
  * Far enough that two drops from the same fight are two objects rather than one
  * pile, near enough that the thing is obviously *that* kill's. The floor is not

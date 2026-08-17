@@ -1,5 +1,5 @@
 /**
- * A drop inside the tick (spec 156).
+ * A drop inside the tick (spec 158).
  *
  * Between `loot.test.ts` (the clock, as arithmetic) and `client/loot-wire.test.ts`
  * (the whole path, over a socket) there is a third thing worth pinning down on

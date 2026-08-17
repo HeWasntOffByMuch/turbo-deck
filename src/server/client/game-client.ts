@@ -167,7 +167,7 @@ export interface TradeView {
 }
 
 /**
- * A drop as this client knows it (spec 156).
+ * A drop as this client knows it (spec 158).
  *
  * The withholding is expressed in the *types*: `defId` and `name` are `null`
  * until the reveal, so a screen that wanted to draw the label early has nothing
@@ -188,7 +188,7 @@ export interface DropView {
   readonly anticipationTick: number;
   readonly revealTick: number;
   /**
-   * Where the body fell (spec 156). The far end of the throw; the near end is
+   * Where the body fell (spec 158). The far end of the throw; the near end is
    * the entity's own replicated position, which is where it landed.
    */
   readonly origin: { readonly x: number; readonly y: number; readonly z: number };
@@ -279,7 +279,7 @@ export interface ClientView {
    */
   readonly spawners: readonly SpawnerStatus[];
   /**
-   * Items lying in the world that this client can see (spec 156).
+   * Items lying in the world that this client can see (spec 158).
    *
    * Beside {@link entities} rather than folded into it, because a drop's
    * identity does not travel on the entity record -- the two halves arrive on
@@ -388,7 +388,7 @@ export interface ClientView {
    */
   readonly awaitingCast: boolean;
   /**
-   * True while a `pickUp` of ours is unanswered (spec 156).
+   * True while a `pickUp` of ours is unanswered (spec 158).
    *
    * What stops a standing pickup order asking sixty times a second -- and,
    * because it is cleared by the answer rather than by a timer, what lets the
@@ -408,11 +408,39 @@ export interface ClientView {
    * answered. The number a button is greyed out against.
    */
   readonly resource: number;
+  /**
+   * The health economy, as the server last said it stood (spec 156).
+   *
+   * Replicated rather than modelled, unlike `resource`: the meter moves on kills
+   * this client did not resolve and the flask moves on casts it did not decide,
+   * so there is no local curve that could carry either forward honestly. The
+   * one thing predicted is a charge already spent on a request in flight, which
+   * is what stops a double press asking for a draught the server will refuse.
+   */
+  readonly restoration: RestorationView;
+}
+
+/** Two numbers and a ceiling: what the HUD draws for the health economy. */
+export interface RestorationView {
+  /** Progress toward the next mote, 0..1. */
+  readonly meter: number;
+  readonly charges: number;
+  readonly maxCharges: number;
 }
 
 type CombatListener = (result: CombatResultMessage) => void;
 type ChatListener = (message: ServerChatMessage) => void;
 type ErrorListener = (code: number, message: string) => void;
+/**
+ * Told on every welcome, not only the first (spec 157).
+ *
+ * The server mints a fresh `sessionToken` on each one -- a fresh login, a
+ * resume and a takeover alike -- so anything persisting the token has to hear
+ * about all of them. The Play tab wrote it once, in the `.then()` of the
+ * initial connect, which left `sessionStorage` holding a token the server would
+ * refuse the moment a reconnect had happened.
+ */
+type WelcomeListener = (info: WelcomeInfo) => void;
 type CastListener = (cast: CastStateMessage) => void;
 type CastEndListener = (end: CastEndedMessage) => void;
 type EffectListener = (effect: EffectMessage) => void;
@@ -537,7 +565,7 @@ export class GameClient {
   private coins = 0;
   private vendorView: VendorView | null = null;
   /**
-   * Drops by entity id, exactly as the server described them (spec 156).
+   * Drops by entity id, exactly as the server described them (spec 158).
    *
    * Replaced whole by each `LootDrop`, which is the same rule `Inventory` and
    * `TradeState` follow: the server's last word *is* the state, so a reveal is
@@ -547,7 +575,7 @@ export class GameClient {
    */
   private readonly drops = new Map<number, Omit<DropView, 'phase'>>();
   /**
-   * The pickup this client is waiting on, or null (spec 156).
+   * The pickup this client is waiting on, or null (spec 158).
    *
    * A request id rather than a boolean, because that is what the answer names.
    * Cleared by the `Inventory` that settles it -- taken or refused, since both
@@ -573,7 +601,7 @@ export class GameClient {
   private moveRequests = 0;
 
   /**
-   * The next id for anything answered by an `Inventory` (spec 156).
+   * The next id for anything answered by an `Inventory` (spec 158).
    *
    * **One counter for `MoveItem` and `PickUpItem` together**, because they share
    * an answer: both are replied to with an `Inventory` at their request id, and
@@ -601,6 +629,7 @@ export class GameClient {
   private readonly combatListeners: CombatListener[] = [];
   private readonly chatListeners: ChatListener[] = [];
   private readonly errorListeners: ErrorListener[] = [];
+  private readonly welcomeListeners: WelcomeListener[] = [];
   private readonly castListeners: CastListener[] = [];
   private readonly castEndListeners: CastEndListener[] = [];
   private readonly effectListeners: EffectListener[] = [];
@@ -608,6 +637,30 @@ export class GameClient {
   private readonly casts = new Map<number, KnownCast>();
   private requestedAbilityId: string | null = null;
   private cooldowns: Readonly<Record<string, number>> = {};
+  /**
+   * The health economy as the server last reported it (spec 156).
+   *
+   * All three are replicated rather than modelled, unlike resource: the meter
+   * moves on kills the client does not resolve, and the flask moves on casts the
+   * client does not decide, so there is nothing here that a local curve could
+   * carry forward honestly between messages.
+   */
+  private restorationMeter = 0;
+  private fallbackCharges = 0;
+  private maxFallbackCharges = 0;
+  /**
+   * Flask charges spent by a request in flight, and what the count was when it
+   * went out.
+   *
+   * The same shape as `predictedCooldowns` above and for exactly the same
+   * reason: the server's answer is a round trip away, and a flask that stayed
+   * lit through the whole wind-up is a second press the server refuses. The
+   * guess is retired only once the server's own count has come down to meet it,
+   * because the message in flight when the press was sent describes the state
+   * before it.
+   */
+  private predictedCharges = 0;
+  private chargesWhenPredicted = 0;
   private estimated = 0;
   /**
    * Ability requests sent and not yet answered, oldest first (spec 067).
@@ -689,6 +742,8 @@ export class GameClient {
   private serverResourceTick = 0;
   /** Ticks since this client started, which is the only clock it has. */
   private localTick = 0;
+  /** The tick `keepAlive` last saw, so it can tell a stalled loop from a live one. */
+  private lastKeepAliveTick = -1;
   private nextPingNonce = 1;
   /** Nonce -> the local tick it went out on, so a pong measures a round trip. */
   private readonly pingsInFlight = new Map<number, number>();
@@ -845,7 +900,7 @@ export class GameClient {
   }
 
   /**
-   * Ask for the drop under `entityId` (spec 156).
+   * Ask for the drop under `entityId` (spec 158).
    *
    * Deliberately **not** predicted, where a bag move is. A move is between two
    * slots this client can both see and the rules for it are pure and local; a
@@ -1069,6 +1124,12 @@ export class GameClient {
       // that way until the clock caught up with it.
       this.predictedCast = decision.cast;
       this.predictedCastRequestId = id;
+      // The flask's charge, spent locally so a second press inside the round
+      // trip is refused by this end rather than by the server (spec 156).
+      if (decision.cast.spentCharges > 0) {
+        this.predictedCharges = decision.cast.spentCharges;
+        this.chargesWhenPredicted = Math.max(0, this.fallbackCharges - decision.cast.spentCharges);
+      }
     }
 
 
@@ -1152,6 +1213,11 @@ export class GameClient {
       // back cheaper.
       poise: self.poise * this.stats.traits.maxPoise,
       shield: atTick < self.shieldUntilTick ? self.shield : 0,
+      // The flask's own message (spec 156), plus whatever this client has
+      // already spent and not been told about -- the same shape as the
+      // cooldowns above, and for the same reason: the press has to grey the
+      // button out now rather than in a round trip.
+      fallbackCharges: Math.max(0, this.fallbackCharges - this.predictedCharges),
     };
   }
 
@@ -1199,6 +1265,10 @@ export class GameClient {
   private withdrawLocally(): void {
     const live = this.predictedCast ?? (this.welcome ? this.casts.get(this.welcome.entityId) : null);
     if (live) this.predictedCooldowns.delete(live.abilityId);
+    // The charge comes back with everything else: a withdrawal before the attack
+    // point means the draught never happened (spec 156), and the server's own
+    // refund is the thing this is guessing at.
+    this.predictedCharges = 0;
     this.predictedCast = null;
     this.predictedCastRequestId = -1;
     if (this.welcome) this.casts.delete(this.welcome.entityId);
@@ -1217,6 +1287,10 @@ export class GameClient {
         // refund", which is the truth.
         spentResource: 0,
         spentHealth: 0,
+        // And no flask charge either, for the same reason (spec 156): the
+        // refund is the server's, and the `Restoration` message tells this
+        // client what it actually has left.
+        spentCharges: 0,
         startedTick: confirmed.startTick,
         windupStartTick: confirmed.startTick,
         releaseTick: confirmed.releaseTick,
@@ -1283,6 +1357,34 @@ export class GameClient {
 
   onError(listener: ErrorListener): void {
     this.errorListeners.push(listener);
+  }
+
+  /** Every welcome, so a caller keeping the resume token keeps the current one. */
+  onWelcome(listener: WelcomeListener): void {
+    this.welcomeListeners.push(listener);
+  }
+
+  /**
+   * A heartbeat for a tick loop that has stopped (spec 157).
+   *
+   * `advanceTick` pings every 30 ticks and is driven by the renderer's
+   * animation frame, which a browser throttles to nothing in a hidden tab. So
+   * ticks stop, pings stop, and the server's ten-second timeout drops a player
+   * whose only crime was looking at a different tab.
+   *
+   * The caller drives this from a wall clock, which is the one place a wall
+   * clock belongs. It stays pure by *detecting* the stall rather than timing
+   * it: two calls with no tick in between mean the loop is not running. While
+   * the tab is visible this sends nothing at all, so the ping rate is unchanged
+   * and the server's heartbeat bucket never sees the difference.
+   */
+  keepAlive(): void {
+    if (!this.connected) return;
+    if (this.localTick !== this.lastKeepAliveTick) {
+      this.lastKeepAliveTick = this.localTick;
+      return;
+    }
+    this.ping();
   }
 
   /**
@@ -1478,6 +1580,11 @@ export class GameClient {
       awaitingCast: this.outstandingCasts.length > 0,
       awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),
+      restoration: {
+        meter: this.restorationMeter,
+        charges: Math.max(0, this.fallbackCharges - this.predictedCharges),
+        maxCharges: this.maxFallbackCharges,
+      },
     };
   }
 
@@ -1685,6 +1792,10 @@ export class GameClient {
         this.resolveWelcome?.(this.welcome);
         this.resolveWelcome = null;
         this.rejectWelcome = null;
+        // After the promise, and on every welcome rather than only the first
+        // (spec 157): a resume and a takeover each mint a new token, and
+        // whoever is persisting it has to be told about those too.
+        for (const listener of this.welcomeListeners) listener(this.welcome);
         break;
       }
 
@@ -1730,7 +1841,7 @@ export class GameClient {
         }
         // Settled either way -- an `Inventory` is the answer to a pickup whether
         // it was served or refused, and a refusal that left this set would leave
-        // the order that made it never asking again (spec 156).
+        // the order that made it never asking again (spec 158).
         if (this.pickUpInFlight !== null && message.requestId >= this.pickUpInFlight) {
           this.pickUpInFlight = null;
         }
@@ -1849,6 +1960,14 @@ export class GameClient {
 
       case ServerMessageType.Error:
         for (const listener of this.errorListeners) listener(message.code, message.message);
+        // Any error fails a pending handshake, and spec 157 tried to narrow
+        // that to the codes that refuse a connection. It cannot be done by
+        // code: `hello` refuses 'already connected' and 'bad player id' with
+        // `RejectedAction`, which is the same code an ordinary mid-session
+        // refusal carries, and spec 145's hello-twice test rightly waits for
+        // the first of those to fail its `connect()`. Telling them apart needs
+        // a handshake-specific code, which is a protocol change and not this
+        // one -- see the note in specs/157.
         this.rejectWelcome?.(new Error(`server refused connection: ${message.message}`));
         this.rejectWelcome = null;
         this.resolveWelcome = null;
@@ -1924,6 +2043,9 @@ export class GameClient {
           if (refused && refused.id === this.predictedCastRequestId) {
             this.predictedCast = null;
             this.predictedCastRequestId = -1;
+            // And the charge, for the same reason the cooldown goes back: a
+            // refused draught was never drunk (spec 156).
+            this.predictedCharges = 0;
           }
         }
         for (const listener of this.castRejectedListeners) {
@@ -1952,6 +2074,20 @@ export class GameClient {
           if (predicted !== undefined && entry.readyAtTick >= predicted.readyAtTick) {
             this.predictedCooldowns.delete(entry.abilityId);
           }
+        }
+        break;
+
+      case ServerMessageType.Restoration:
+        this.restorationMeter = message.meter;
+        this.fallbackCharges = message.charges;
+        this.maxFallbackCharges = message.maxCharges;
+        // The guess is retired the moment the server's own count has come down
+        // to meet it -- the same rule the cooldown guesses above follow, and for
+        // the same reason: the message in flight when the press was sent
+        // describes the state *before* it, and dropping the guess on any
+        // restoration message would grey the flask back in mid-wind-up.
+        if (this.predictedCharges > 0 && message.charges <= this.chargesWhenPredicted) {
+          this.predictedCharges = 0;
         }
         break;
 

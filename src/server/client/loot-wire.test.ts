@@ -1,5 +1,5 @@
 /**
- * A drop over the real wire (spec 156).
+ * A drop over the real wire (spec 158).
  *
  * The pure half of this feature is pinned down in `sim/loot.test.ts`. What is
  * only true once there is a socket is everything here: that the server decides

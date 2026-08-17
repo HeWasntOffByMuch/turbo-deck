@@ -110,7 +110,7 @@ merge time.
 ```
 specs/           spec markdown, one file per system, written before its code
 docs/            durable direction that outlives one spec. vfx-plan.md, ui/, and
-                 reward-philosophy.md (spec 156) -- the rules future loot,
+                 reward-philosophy.md (spec 158) -- the rules future loot,
                  progression, encounter and feedback work is decided against:
                  world-embedded rewards over reward cards, contrast between
                  quiet and rare, and the existing combat vocabulary reused
@@ -690,7 +690,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `loot.ts` and `sim/loot.ts` are what a kill leaves behind
-                 (spec 156), and the two of them draw one line: **the item is
+                 (spec 158), and the two of them draw one line: **the item is
                  decided when the body falls and its presentation unfolds
                  afterwards.** `data/loot.ts` holds two tables that are
                  deliberately separate questions -- what drops (probability) and
@@ -1051,7 +1051,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  asserted in Node; what it could not say is whether any of it
                  was connected to anything),
                  loot-drop.ts (how a drop looks while it is still withholding
-                 itself, spec 156 -- the three.js half is `iso3d/drop-rig.ts`,
+                 itself, spec 158 -- the three.js half is `iso3d/drop-rig.ts`,
                  beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks
                  the server sent and the flare is a curve through them, so there
                  is no timer anywhere in scene.ts and no answer that differs by
@@ -1150,7 +1150,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  and the collider are authored in different files and nothing
                  forces them to agree.
                  `presentation-only.test.ts` beside them is the brief's
-                 assertion, and since spec 156 it drives a drop's reveal beside
+                 assertion, and since spec 158 it drives a drop's reveal beside
                  the machines and the eased yaw -- the compared state carries the
                  drop's authoritative identity on every tick, because a reveal
                  implemented as client state would be a client deciding when an

@@ -816,6 +816,100 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // ringed with shafts, never a different vocabulary.
   aura({ id: 'aura_telegraph', color: 'auraTelegraph', radius: 110, spin: 0, shafts: 10, priority: 3 }),
 
+  // --- healing ---------------------------------------------------------------
+  // What restoring health looks like (spec 157). Played at the healed body's
+  // *feet*, not at the chest a blow lands on: a heal comes up out of the ground,
+  // and the three layers below are stacked in the order they are read -- the
+  // ground says where, the streaks say which way, the plusses say what.
+  //
+  // Green throughout, and only the two green palette entries: `auraHeal` is the
+  // colour the heal ring already is, so a heal landing and a heal status showing
+  // are the same colour rather than two greens that nearly match.
+  //
+  // Nothing here is directional and nothing here is thrown. Every other impact
+  // in this library follows the blow vector, because "direction is information"
+  // and the information is where the blow came from; a heal has no such fact to
+  // carry, and a spray aimed off a healed body would be inventing one.
+  {
+    id: 'heal_restore',
+    priority: 2,
+    cullDistance: 1500,
+    emitters: [
+      // (a) The wavefront on the floor, the same one an order and a shockwave
+      // use. Peak radius is about 22 units, which is wider than a body and well
+      // inside the 34-unit selection ring -- a heal is an event that happened
+      // here, and one that reached the outer rings would read as a status.
+      ...waveEmitters(9, 'auraHeal', 'auraBuff'),
+      // (b) The streaks. Born on a disc about a body wide and thrown straight
+      // up with no gravity, drawn as ribbons -- a ribbon is the path a particle
+      // actually flew (spec 139), so "straight up" is a vertical line rather
+      // than a bar that was born full length and stayed one.
+      {
+        id: 'streaks',
+        shape: { kind: 'cone', angle: 0.05, radius: 13 },
+        emission: { kind: 'burst', count: 11 },
+        lifetimeTicks: [16, 28],
+        speed: [95, 150],
+        // No gravity at all. A rising streak that arcs over is a spray, and a
+        // spray of anything off a body is the blood this replaces.
+        drag: 0.5,
+        // Four units wide, which is between three and four pixels at the
+        // gameplay zoom. The first cut was 3.2 and the strip came out as a set
+        // of hairlines under the plusses: a streak that survives quantization
+        // has to be several pixels of solid colour, not one dithered one.
+        size: { keys: [[0, 4.2], [0.65, 4.2], [1, 1.8]] },
+        alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
+        color: { stops: [[0, 'auraHeal'], [1, 'auraBuff']] },
+        render: 'ribbon',
+        // Alpha rather than additive, for the reason the blood is: additive
+        // green over a green field is a bright nothing, and what has to survive
+        // here is the streak's edge.
+        blend: 'alpha',
+        ribbonSpacing: 3,
+        ribbonTaper: 0.3,
+        offset: { x: 0, y: 2, z: 0 },
+      },
+      // (c) The plusses. Slower than the streaks on purpose: they are still
+      // climbing when the streaks have gone, so the effect ends on the symbol
+      // rather than on the motion. Five, because this plays on every mote
+      // picked up and a fistful of floating crosses is a status bar.
+      {
+        id: 'plusses',
+        shape: { kind: 'cone', angle: 0.08, radius: 19 },
+        // Staggered rather than burst, and this is the one tuning decision the
+        // contact sheet actually changed. Five plusses born on the same tick in
+        // the same small disc overlap into a single green mass -- the sheet
+        // showed exactly that, a blob with no cross in it anywhere -- where six
+        // arriving over a third of a second are a column of separate symbols
+        // climbing past each other.
+        emission: { kind: 'ramp', perSecond: { keys: [[0, 28], [1, 0]] }, overTicks: 20 },
+        lifetimeTicks: [30, 46],
+        // A wide spread of speeds on purpose: with a narrow one they climb in
+        // step and stay at the same height as each other, which is the clump
+        // again in slow motion.
+        speed: [30, 78],
+        drag: 0.9,
+        // Twelve units is about ten pixels at the gameplay zoom, which is a
+        // pixel and a half per texel of the 7x7 sheet -- so the bar of the
+        // cross is four pixels and its tips are two. Smaller than this and the
+        // arms fall under a pixel and the symbol is a dot.
+        size: { keys: [[0, 9], [0.25, 12], [1, 10]] },
+        // In fast and out slow. A cutout ramping in over a tenth of its life is
+        // a speckle of half a plus for three ticks; what should be brief is the
+        // arrival, and what earns the time is the symbol sitting there readable.
+        alpha: { keys: [[0, 0], [0.06, 1], [0.75, 1], [1, 0]] },
+        color: { stops: [[0, 'auraHeal'], [1, 'auraBuff']] },
+        render: 'billboard',
+        // The pixel-look blend, and the one thing that keeps a plus legible
+        // while it fades: a cutout thins to a weave of solid pixels, where an
+        // alpha fade goes translucent and the retro pass bands what is left.
+        blend: 'dither-cutout',
+        sprite: { sheet: 'plus', frames: 1, fps: 0 },
+        offset: { x: 0, y: 8, z: 0 },
+      },
+    ],
+  },
+
   // --- orders ----------------------------------------------------------------
   // Where a walk order landed (spec 127). The wavefront on its own: no crystal,
   // no rock, nothing thrown -- an order threw nothing. Small enough to sit

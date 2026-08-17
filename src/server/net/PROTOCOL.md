@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v16
+# turbo-deck wire protocol v17
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -182,7 +182,7 @@ taken or refused, plus an `Error(RejectedAction)` when it was refused.
 ### `0x19 PickUpItem`
 `varuint requestId` · `varuint entityId`
 
-Take a drop off the ground (spec 156). The drop's **entity id** is the only
+Take a drop off the ground (spec 158). The drop's **entity id** is the only
 address it has — it is not in a container until it is in the bag.
 
 The server checks all five: the entity is a drop, the asker is alive, the drop
@@ -258,11 +258,21 @@ with no upserts and no removals is not sent.
 `Spawn` is set the first time an entity enters this client's interest set, and
 carries identity so a client never has to infer a field it was not told.
 
-`kind`: `0` player, `1` monster, `2` prop, `3` projectile, `4` drop.
+`kind`: `0` player, `1` monster, `2` prop, `3` projectile, `4` mote, `5` drop.
 
-A drop's `typeId` is **empty and stays empty** (spec 156). What the item is
+A **mote** (spec 156) is a restorative pickup and is replicated to exactly one
+client: the player it belongs to. The filter is server-side, in
+`broadcastDeltas`, so there is no ownership field on the wire and nothing for
+another client to reason about — a mote a teammate cannot see is a mote they
+cannot take. Its `typeId` says what it restores: `mote.vitality` or
+`mote.focus`.
+
+A **drop**'s `typeId` is **empty and stays empty** (spec 158). What the item is
 travels on `LootDrop`, never here: this record goes to every client in interest
-range on first sight, and what an unrevealed drop is must not.
+range on first sight, and what an unrevealed drop is must not. Unlike a mote it
+*is* replicated to everyone in range — two players watching the same kill watch
+the same throw — and ownership is a server-side check on `PickUpItem` rather
+than anything on the wire.
 `activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.
 
 A projectile in flight is an ordinary entity (spec 062), so it replicates
@@ -343,6 +353,26 @@ Entries already expired when the frame is built are omitted. One that expires
 later, with no cast in between, is simply left with the client: `readyAtTick` is
 in the past, so the client's own `readyAtTick - tick` is negative and it draws
 nothing.
+
+### `0x55 Restoration`
+`u8 meter` · `u8 charges` · `u8 maxCharges` · `u32 atTick`
+
+The health economy's two live numbers (spec 156), owner-only and sent when
+either changes — the same reasoning as `Cooldowns`, with one difference: there
+is nothing here for a client to model forward. The meter moves on kills and the
+flask on casts and rests, so "has it changed" is a comparison against what was
+last sent rather than against what the client would have believed.
+
+`meter` is a **fraction** of the restoration threshold, quantised to a byte —
+not the absolute progress the sim keeps. A bar only asks how full it is; the
+threshold is tuning that may move between builds; and a client told its raw
+progress could work out exactly which kill produces the next mote, which is a
+thing to farm rather than a thing to feel. The dirty check is made on the
+quantised value, so a meter drifting by a thousandth does not turn this into a
+per-tick broadcast.
+
+`maxCharges` rides along because Constitution decides it, so the client can draw
+the empty pips as well as the full ones.
 
 ### `0x45 Chat` — `u8 channel` · `str from` · `str text`
 `channel`: `0` say, `1` system, `2` admin broadcast.
@@ -585,12 +615,12 @@ guess needs taking away.
 Equipment slot order is the wire contract: a new slot is appended to
 `EQUIP_SLOTS` and never reordered, because there are no names on the wire.
 
-### `0x55 LootDrop`
+### `0x56 LootDrop`
 `varuint entityId` · `u8 rarity` · `u32 spawnTick` · `u32 revealTick` ·
 `f32 originX` · `f32 originY` · `f32 originZ` · `str defId` · `varuint count`
 
 An item lying in the world, and how much of it this client is allowed to know
-yet (spec 156). Sent when the drop first enters this connection's interest set —
+yet (spec 158). Sent when the drop first enters this connection's interest set —
 the same first-sight the delta's `Spawn` bit computes, so there is no second
 visibility system — and again on the tick it reveals.
 
@@ -660,7 +690,7 @@ Events currently understood by `triggerEvent`: `raid` (magnitude = how many),
 an unowned drop of that tier) and `reveal` (magnitude = radius — pulls every
 unrevealed drop in range to its reveal now).
 
-Those two plus `lootRevealScale` are the whole developer path for spec 156:
+Those two plus `lootRevealScale` are the whole developer path for spec 158:
 spawn a chosen tier, stretch or collapse its run-up, and force one that is
 already lying there. **None of them can change what the item is** — there is
 nothing in any of them that could, which is the design rather than a promise.

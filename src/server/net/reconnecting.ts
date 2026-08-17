@@ -21,14 +21,20 @@ import type { Channel } from './transport.js';
 import type { ConnectionPhase } from './transport-browser.js';
 
 /**
- * Half a second, one, two, four, eight -- about fifteen seconds in total.
+ * Half a second, one, two, four, eight, and then eight until the grace is out
+ * -- about forty seconds in total.
  *
- * Sized against the server's `RESUME_GRACE_TICKS` (1800, thirty seconds): a
- * client that is going to come back has come back well inside the window its
- * body is being held open for. Longer would be waiting for a session that has
- * already been reaped.
+ * Sized against the server's `RESUME_GRACE_TICKS` (1800, thirty seconds), and
+ * it used to *claim* that while stopping at 930 (spec 157). An outage between
+ * fifteen and thirty seconds was one the server would still have honoured a
+ * resume for and the client had already given up on, and nothing retries after
+ * that -- the tab is dead until somebody reloads it. The last three rungs are
+ * the ones that make the comment true.
+ *
+ * Asserted as arithmetic in the tests rather than trusted, so the ladder and
+ * the grace cannot drift apart again without something going red.
  */
-export const DEFAULT_BACKOFF_TICKS: readonly number[] = [30, 60, 120, 240, 480];
+export const DEFAULT_BACKOFF_TICKS: readonly number[] = [30, 60, 120, 240, 480, 480, 480, 480];
 
 export interface ReconnectOptions {
   /** Opens a fresh inner channel. Called once per attempt. */

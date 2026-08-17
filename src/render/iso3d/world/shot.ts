@@ -41,6 +41,31 @@ const TRACE_SAMPLES = 16;
 const TRACE_SPACING = 0.55;
 const TRACE_WIDTH = 0.42;
 const TRACE_LIFT = 2.5;
+/**
+ * How much larger the outline shell is than the orb it rims (spec 156).
+ *
+ * A ratio rather than a width in world units, so the rim is the same fraction
+ * of the ball whatever size the ball is -- a mote is 7 units across and the
+ * outline has to survive being drawn a few pixels wide.
+ */
+const OUTLINE_SCALE = 1.4;
+
+/**
+ * How to draw an orb: its colour, how round it is, and what rims it.
+ *
+ * Every field optional, and all three absent is the arcane bolt exactly as it
+ * has always been -- so the one caller that wants none of this passes nothing.
+ */
+export interface OrbLook {
+  readonly tint?: number | undefined;
+  /**
+   * Icosahedron subdivisions. A mote wants a sphere; a conjured bolt is
+   * supposed to look cut from glass and is on screen for a moment.
+   */
+  readonly detail?: number | undefined;
+  /** A brighter shell behind the core, or absent for no rim. */
+  readonly outline?: number | undefined;
+}
 
 export class ShotRig {
   readonly group = new THREE.Group();
@@ -71,6 +96,27 @@ export class ShotRig {
   constructor(
     readonly look: ProjectileLook,
     radius: number,
+    /**
+     * An override colour for the orb, or absent for the arcane core it has
+     * always been (spec 156).
+     *
+     * Orb only, and deliberately: an arrow and a star are *objects* whose
+     * materials say what they are made of, where an orb is a bead of light and
+     * its colour is the whole of its identity. A mote reuses this rig rather
+     * than growing a second one, and this is the one thing it has to change.
+     */
+    /**
+     * How to draw the orb, or absent for the arcane core it has always been
+     * (spec 156).
+     *
+     * Orb only, and deliberately: an arrow and a star are *objects* whose
+     * materials say what they are made of, where an orb is a bead of light and
+     * how it is coloured is the whole of its identity. A mote reuses this rig
+     * rather than growing a second one, and this bag is everything it needs to
+     * change. One object rather than three positional arguments, because
+     * `new ShotRig('orb', 7, 0xa32a26, 1, 0xff6a58)` says nothing to a reader.
+     */
+    orb?: OrbLook,
   ) {
     this.group.add(this.pivot);
 
@@ -84,7 +130,7 @@ export class ShotRig {
         break;
       default:
         this.spinner = null;
-        this.buildOrb(radius);
+        this.buildOrb(radius, orb);
         break;
     }
 
@@ -219,10 +265,27 @@ export class ShotRig {
   }
 
   /** The look every shot had before this spec, and what an unknown one gets. */
-  private buildOrb(radius: number): void {
+  private buildOrb(radius: number, orb?: OrbLook): void {
+    const size = Math.max(3, radius);
+    // The outline goes on *first* so it is behind the core in draw order, which
+    // costs nothing and means the pair still reads correctly if a caller ever
+    // turns depth testing off.
+    if (orb?.outline !== undefined) {
+      // A back-faced shell: the classic cheap outline, and the right one here
+      // because everything in this scene is already flat-shaded and back-face
+      // culled. Only the far side of the shell survives the cull, so what is
+      // drawn is a rim peeking out around the core rather than a second ball in
+      // front of it -- no shader, no second pass, one extra draw of eighty
+      // triangles.
+      const shell = new THREE.Mesh(
+        this.track(new THREE.IcosahedronGeometry(size * OUTLINE_SCALE, orb.detail ?? 0)),
+        this.track(new THREE.MeshBasicMaterial({ color: orb.outline, side: THREE.BackSide })),
+      );
+      this.pivot.add(shell);
+    }
     const mesh = new THREE.Mesh(
-      this.track(new THREE.IcosahedronGeometry(Math.max(3, radius), 0)),
-      this.track(new THREE.MeshBasicMaterial({ color: PALETTE.magicCore })),
+      this.track(new THREE.IcosahedronGeometry(size, orb?.detail ?? 0)),
+      this.track(new THREE.MeshBasicMaterial({ color: orb?.tint ?? PALETTE.magicCore })),
     );
     this.pivot.add(mesh);
   }

@@ -70,6 +70,7 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
       position: from,
       // Pointing at the origin, so the answer is about reach and nothing else.
       facing: Math.atan2(-from.y, -from.x),
+      fallbackCharges: 0,
       health: stats.maxHealth,
       resource: stats.maxResource,
       cooldowns: {},

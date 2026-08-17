@@ -275,7 +275,7 @@ interface DrivenUnit {
 }
 
 /**
- * The volume the cursor picks a drop by (spec 156).
+ * The volume the cursor picks a drop by (spec 158).
  *
  * Wider than the object is drawn and taller than it floats, because a drop is a
  * seven-unit shape at the far end of an isometric camera and a hitbox that
@@ -416,7 +416,7 @@ export class WorldScene {
    * else in the repo.
    */
   private readonly vfx: VfxLayer;
-  /** One rig per drop on screen (spec 156), pooled by entity id like a body. */
+  /** One rig per drop on screen (spec 158), pooled by entity id like a body. */
   private readonly dropRigs = new Map<number, DropRig>();
   /** Which of each drop's cues have already been heard. Pure; see `loot-drop.ts`. */
   private readonly dropPresenter = new DropPresenter();
@@ -1248,7 +1248,7 @@ export class WorldScene {
     }
 
     for (const entity of view.entities) {
-      // Drops are drawn by `syncDrops` instead (spec 156): what a drop is lit
+      // Drops are drawn by `syncDrops` instead (spec 158): what a drop is lit
       // by comes from `view.drops` rather than from the entity record, and
       // threading a rarity through `bodyFor` would put the one field this
       // feature exists to withhold into the pooled-rig key.
@@ -1334,7 +1334,7 @@ export class WorldScene {
   }
 
   /**
-   * The items lying in the world (spec 156).
+   * The items lying in the world (spec 158).
    *
    * Its own pass rather than a branch in `syncBodies`, because a drop is joined
    * from two halves that arrive on different messages: the *position* comes off
@@ -1370,7 +1370,7 @@ export class WorldScene {
 
       // The entity's replicated position is where it *landed*; the throw that
       // got it there is drawn between that and the origin the wire carried
-      // (spec 156).
+      // (spec 158).
       const landing = { x: at.x, y: at.y, z: this.ground(at.x, at.y) };
       const shown = this.dropPresenter.read(drop, landing, frame.tick);
       // Cleared here and turned back on by `syncHover`, the same handshake a
@@ -1407,7 +1407,7 @@ export class WorldScene {
   }
 
   /**
-   * A loot cue, if anything has been authored for it (spec 156).
+   * A loot cue, if anything has been authored for it (spec 158).
    *
    * A cue is a *name*, and this is the whole of the hook: when the effect
    * library knows the id it plays it, and when it does not this is silent.
@@ -1535,7 +1535,7 @@ export class WorldScene {
 
     if (this.hovered !== null) {
       this.bodies.get(this.hovered)?.highlight?.setHighlighted(true);
-      // A drop is not in `bodies` (spec 156), so it lights itself. Its response
+      // A drop is not in `bodies` (spec 158), so it lights itself. Its response
       // is the ground ring rather than an outline, because the object is already
       // glowing and a second glow would read as part of the reveal.
       this.dropRigs.get(this.hovered)?.setHovered(true);
@@ -1658,7 +1658,7 @@ export class WorldScene {
     const existing = this.bodies.get(id);
     if (existing) return existing;
 
-    const { rig, typeId, radius, look } = appearance;
+    const { rig, typeId, radius, look, tint, detail, outline } = appearance;
     let body: Body;
 
     // Tried before anything else, and for the player as well as a monster
@@ -1730,7 +1730,7 @@ export class WorldScene {
     } else if (rig === 'projectile') {
       // The silhouette comes from the ability that threw it (spec 087), so a
       // thrown weapon reads as one in the air rather than as a bead of light.
-      const shot = new ShotRig(look ?? 'orb', radius);
+      const shot = new ShotRig(look ?? 'orb', radius, { tint, detail, outline });
       // A shot never shows a bar, so its headroom is the shared default rather
       // than anything measured off the mesh.
       body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM };

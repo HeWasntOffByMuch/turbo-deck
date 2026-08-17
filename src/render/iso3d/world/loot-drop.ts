@@ -1,5 +1,5 @@
 /**
- * How a drop looks while it is still deciding what to tell you (spec 156).
+ * How a drop looks while it is still deciding what to tell you (spec 158).
  *
  * Everything about the reveal that a renderer needs is here, and none of it is
  * a timer: the phase is a comparison against two ticks the server sent, and the
@@ -70,7 +70,7 @@ export const TIER_BLEND_TICKS = 12;
 
 /**
  * What an unrevealed drop glows at, at rest and at the top of its run-up
- * (spec 156).
+ * (spec 158).
  *
  * **One pair for every tier**, which is the whole correction: the flare used to
  * be `row.restFlare` from the landing tick, so a rare drop was fourteen times
@@ -105,12 +105,12 @@ export interface DropPresentation {
   readonly phase: RevealPhaseValue;
   /**
    * Where to draw it: on the arc while it is still in the air, at its landing
-   * spot after (spec 156). Both ends came off the wire, so every client draws
+   * spot after (spec 158). Both ends came off the wire, so every client draws
    * the same throw and one that arrived late draws none of it.
    */
   readonly position: { readonly x: number; readonly y: number; readonly z: number };
   /**
-   * How far the tier's colour has arrived, 0..1 (spec 156).
+   * How far the tier's colour has arrived, 0..1 (spec 158).
    *
    * **0 until the reveal**, which is what makes this a rarity reveal rather
    * than a rarity *brightness* reveal: an unrevealed drop is drawn in the
@@ -120,7 +120,7 @@ export interface DropPresentation {
    */
   readonly tierMix: number;
   /**
-   * A scale multiplier, ~1, carrying the heartbeat (spec 156). Exactly 1 for a
+   * A scale multiplier, ~1, carrying the heartbeat (spec 158). Exactly 1 for a
    * tier with no pulse, so a common drop is inert by arithmetic.
    */
   readonly beat: number;
@@ -225,7 +225,7 @@ function thump(t: number, at: number, amplitude: number): number {
 }
 
 /**
- * The pulse, as a scale multiplier around 1 (spec 156).
+ * The pulse, as a scale multiplier around 1 (spec 158).
  *
  * Two beats per cycle, the second smaller and close behind the first, which is
  * what makes it read as a heart rather than as a blink -- lub-dub, then quiet
@@ -256,7 +256,7 @@ export function heartbeatAt(drop: DropView, tick: number): number {
 }
 
 /**
- * How far the tier's colour has arrived, 0..1 (spec 156).
+ * How far the tier's colour has arrived, 0..1 (spec 158).
  *
  * Zero for the whole of `Spawned` and `Anticipation`, which is the correction
  * this spec needed: colouring a drop by its tier from the first frame answers
@@ -286,7 +286,7 @@ export interface PickupInput {
   readonly pending: boolean;
   /**
    * How far this client's predicted position may be ahead of the server's, in
-   * world units (spec 156).
+   * world units (spec 158).
    *
    * The fix for a bug that looked like the range was wrong and was not: a
    * client legitimately runs ahead of the server by about the one-way latency,
@@ -304,7 +304,7 @@ export interface PickupInput {
 
 /**
  * How far a body travels in one round trip, which is how far its prediction can
- * be ahead of the server (spec 156).
+ * be ahead of the server (spec 158).
  *
  * Both numbers are ones the client already has and neither is a guess: the move
  * speed is off the replicated stat block and the round trip is measured. The
@@ -343,7 +343,7 @@ export interface PickupOrder {
 }
 
 /**
- * Walk to the drop, then ask for it (spec 156).
+ * Walk to the drop, then ask for it (spec 158).
  *
  * The same shape `target.ts` uses for an attack order and for the same reason:
  * routing the walk client-side is what keeps prediction exact, and the decision

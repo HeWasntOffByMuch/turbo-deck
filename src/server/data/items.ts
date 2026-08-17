@@ -10,10 +10,10 @@ import type { EquipSlot } from '../state/types.js';
 import type { StatModifier } from './modifiers.js';
 
 /**
- * The rarity tiers, in ascending order (spec 156). **Three, and on purpose.**
+ * The rarity tiers, in ascending order (spec 158). **Three, and on purpose.**
  *
  * Three is what the presentation ladder in `data/loot.ts` needs -- quiet,
- * delayed, longer -- and a fourth would be a tier with nothing to say. Spec 156
+ * delayed, longer -- and a fourth would be a tier with nothing to say. Spec 158
  * explicitly declines to design a full taxonomy: the ladder grows when
  * something needs a rung, and until then every tier differs from its neighbours
  * in how it behaves rather than only in its name.
@@ -82,12 +82,12 @@ export interface ItemDefinition {
    */
   readonly maxStack?: number;
   /**
-   * How loudly this announces itself when it drops (spec 156). Absent is
+   * How loudly this announces itself when it drops (spec 158). Absent is
    * `common`, so most of the table says nothing and means it.
    *
    * A property of the *row*, never of a drop: two copies of the same sword are
    * the same tier forever. A per-drop rarity would only mean something if two
-   * copies could differ in what they do, which needs affixes, which spec 156
+   * copies could differ in what they do, which needs affixes, which spec 158
    * deliberately does not build.
    *
    * It changes presentation and nothing else -- no price, no stats, no drop
@@ -265,7 +265,7 @@ export function itemById(id: string): ItemDefinition | null {
 }
 
 /**
- * An item's tier (spec 156).
+ * An item's tier (spec 158).
  *
  * Read off the row, so a drop cannot have a rarity its item does not. An
  * unknown id is `common`, like everything else about rarity that has to be

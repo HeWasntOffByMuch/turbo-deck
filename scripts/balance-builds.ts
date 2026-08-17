@@ -27,6 +27,17 @@
  * glass-cannon build, so read Intelligence's DPS with that in mind rather than
  * tuning it down to match this table.
  *
+ * Since spec 156 there is a second table under it, and one more thing it cannot
+ * see. Each opponent is given its own spawner id, so the sustain numbers are the
+ * *un-farmed* economy -- which is what a tuning table wants, and which means the
+ * elite guarantee fires on every elite kill instead of once per spawner per
+ * ninety seconds. The default `ravager` is an elite, so its MOTES/K pins at the
+ * guarantee and its NET/K reads far kinder than a real one:
+ *
+ *   npx tsx scripts/balance-builds.ts --monster=stalker --seconds=180
+ *
+ * is the ordinary economy, and the row to tune against.
+ *
  *   npx tsx scripts/balance-builds.ts [--seconds=n] [--monster=id] [--seed=n]
  *                                     [--preset=id]
  *
@@ -55,7 +66,13 @@ import {
   type ServerInput,
   type ServerWorldState,
 } from '../src/server/sim/types.js';
-import { createWorldState, spawnEntity, step, type StepContext } from '../src/server/sim/world.js';
+import {
+  createWorldState,
+  replaceEntity,
+  spawnEntity,
+  step,
+  type StepContext,
+} from '../src/server/sim/world.js';
 import {
   EMPTY_EQUIPMENT,
   emptyInventory,
@@ -187,6 +204,13 @@ function run(preset: BuildPreset): Row {
       });
       state = next.state;
       foeId = next.entity.id;
+      // Each opponent gets its own spawner id (spec 156). Without one they all
+      // share a per-type farm key, and this harness -- which is a stream of the
+      // same monster at the same spot -- decays to the floor within seconds and
+      // measures the anti-farm rule instead of the economy. That rule has its
+      // own tests; what this table is for is what an ordinary fight pays, which
+      // is a camp of distinct spawn points rather than one corner farmed.
+      state = replaceEntity(state, { ...next.entity, spawnerId: `bench-${next.entity.id}` });
     }
 
     const target = state.entities.get(foeId);
@@ -227,8 +251,8 @@ function run(preset: BuildPreset): Row {
     if (before && after) {
       metrics = foldResource(
         metrics,
-        { resource: before.resource, shield: before.shield },
-        { resource: after.resource, shield: after.shield },
+        { resource: before.resource, shield: before.shield, fallbackCharges: before.fallbackCharges },
+        { resource: after.resource, shield: after.shield, fallbackCharges: after.fallbackCharges },
       );
     }
   }
@@ -313,6 +337,49 @@ for (const row of rows) {
       `${pad(num(s.controlledFraction * 100), 6)}` +
       `${pad(row.survived ? 'yes' : 'NO', 6)}`,
   );
+}
+
+// --- the health economy (spec 156) ---------------------------------------
+// A second table rather than ten more columns, because it answers a different
+// question. The one above asks whether the six builds *fight* differently; this
+// one asks whether they *sustain* differently, and the column that matters is
+// NET/K -- health restored minus health lost, per kill.
+//
+// What a healthy table looks like: every row negative but not steeply so,
+// Agility nearest zero because it spends least, Wisdom highest on MOTE% because
+// it wastes least, Strength and Perception highest on RESTORE/K because their
+// bonuses fire, and FLASK/K near zero on all of them. A row at or above zero on
+// NET/K is a build that never has to leave, which is the failure this whole
+// spec exists to prevent.
+console.log('\n  Sustain -- net health per kill is the number this is tuned against:\n');
+console.log(
+  `  ${pad('BUILD', 16)}${pad('NET/K', 9)}${pad('REST/K', 9)}${pad('MOTES/K', 9)}` +
+    `${pad('TAKEN/K', 9)}${pad('HEALED/K', 10)}${pad('MOTE%', 8)}${pad('FLASK/K', 9)}`,
+);
+console.log(`  ${'-'.repeat(73)}`);
+
+for (const row of rows) {
+  const s = summarise(row.metrics, SERVER_TICK_RATE);
+  const kills = Math.max(1, row.metrics.kills);
+  console.log(
+    `  ${pad(row.preset.name, 16)}${pad(num(s.netHealthPerKill), 9)}` +
+      `${pad(num(row.metrics.restorationEarned / kills), 9)}` +
+      `${pad(num(s.motesPerKill, 2), 9)}${pad(num(s.healthPerKill), 9)}` +
+      `${pad(num(row.metrics.healingReceived / kills), 10)}` +
+      `${pad(num(s.moteEfficiency * 100), 8)}${pad(num(s.fallbackPerKill, 2), 9)}`,
+  );
+}
+
+// Why each build got what it got. The brief's quality bar asks whether a
+// designer can inspect the derivation rather than only the total, and a route
+// that is not firing shows up here as a missing line rather than as a number
+// that is merely lower than somebody else's.
+console.log('\n  Where the restoration came from:\n');
+for (const row of rows) {
+  const sources = Object.entries(row.metrics.restorationSources)
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, amount]) => `${reason} ${Math.round(amount)}`);
+  console.log(`  ${pad(row.preset.name, 16)}${sources.join(', ') || '(base only)'}`);
 }
 
 console.log('\n  What each build reached:\n');

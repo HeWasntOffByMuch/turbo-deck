@@ -89,7 +89,7 @@ export const ClientMessageType = {
   /** Hand every allocated point back, for coins. Priced and checked server-side. */
   RespecAttributes: 0x18,
   /**
-   * Take a drop off the ground (spec 156).
+   * Take a drop off the ground (spec 158).
    *
    * Names the drop's *entity id*, which is the only address it has -- a drop is
    * not in a container until it is in the bag. Answered with an `Inventory` at
@@ -178,7 +178,7 @@ export const ServerMessageType = {
   TradeState: 0x54,
   /**
    * A drop in the world, and how much of it this client is allowed to know
-   * (spec 156).
+   * (spec 158).
    *
    * Sent when a drop first enters a connection's interest set -- which the delta
    * already computes, so there is no second visibility system -- and again on
@@ -190,7 +190,21 @@ export const ServerMessageType = {
    * anticipation cue is tier-shaped and playing it needs the tier. That is the
    * "notice" step; the payoff is what is being withheld.
    */
-  LootDrop: 0x55,
+  LootDrop: 0x56,
+  /**
+   * The health economy's own two numbers (spec 156): how full the restoration
+   * meter is, and how many flask charges are left.
+   *
+   * Owner-only and change-driven, exactly like `Cooldowns` and for the same
+   * reasons. What another player has left to drink changes nothing this client
+   * draws, and the entity delta is the one message that is paid for per entity.
+   *
+   * The meter rides as a *fraction*, never as the absolute number the sim keeps.
+   * A bar only asks how full, the threshold is a tuning value that may move
+   * between builds, and a client that knew its absolute progress would be a
+   * client that could be asked to compute the next mote.
+   */
+  Restoration: 0x55,
 } as const;
 
 /** A trade's stage, as a byte (spec 132). Mirrors `TradeStage` in `trade.ts`. */
@@ -373,11 +387,20 @@ export const EntityKind = {
   Prop: 2,
   Projectile: 3,
   /**
-   * An item on the ground (spec 156). Its `typeId` is **empty** and stays empty:
+   * A restorative mote (spec 156). Mirrors `EntityKindValue.Mote`.
+   *
+   * Replicated to exactly one client -- its owner -- which is filtered in
+   * `server.ts` rather than expressed on the wire: a mote nobody else is told
+   * about cannot be stolen, cannot be raced for, and needs no ownership field
+   * for a client to check.
+   */
+  Mote: 4,
+  /**
+   * An item on the ground (spec 158). Its `typeId` is **empty** and stays empty:
    * what the item is travels on `LootDrop`, not on the entity record every
    * client in range is handed.
    */
-  Drop: 4,
+  Drop: 5,
 } as const;
 
 export const EntityActivity = {
