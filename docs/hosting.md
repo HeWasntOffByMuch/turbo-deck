@@ -330,6 +330,29 @@ would actually hurt is hosting in `us-east` and playing from Europe.
 
 ## The runbook
 
+### First, two keys — and it has to be two
+
+Generate them before ordering, because the vendor's panel asks for a public key
+at install time.
+
+```sh
+# Yours. With a passphrase, because you are there to type it.
+ssh-keygen -t ed25519 -C 'me@laptop -> turbo-deck' -f ~/.ssh/turbo-deck
+
+# CI's. No passphrase, because a workflow cannot type one.
+ssh-keygen -t ed25519 -N '' -C 'github-actions -> turbo-deck' -f ~/.ssh/turbo-deck-ci
+```
+
+Ed25519 rather than RSA: shorter, faster, and no key-size decision to get
+wrong. **Never** put your own key in `DEPLOY_SSH_KEY`. A CI key has properties
+yours must not have — it sits unencrypted in a repository secret, it is used
+unattended, and any workflow that can read secrets can use it — so it exists to
+be the thing that gets revoked. Two keys means revoking one is a one-line edit
+to `authorized_keys` rather than rotating the key you log into everything with.
+
+Paste `~/.ssh/turbo-deck.pub` — the *personal* one — into OVH's panel at
+install time. The CI key goes on the box in the next step, restricted.
+
 ### Once, on the box
 
 Any box from above — rented or your own — on Ubuntu 24.04. Nothing below this
@@ -354,6 +377,41 @@ ufw enable
 
 `unattended-upgrades` is the whole OS-patching story; it is the one piece of
 owning a box that cannot be skipped.
+
+Then give `deploy` both public keys, and shut the door behind them:
+
+```sh
+# still as root
+install -d -m 700 -o deploy -g deploy ~deploy/.ssh
+cat > ~deploy/.ssh/authorized_keys <<'EOF'
+ssh-ed25519 AAAA...your-personal-key... me@laptop
+restrict ssh-ed25519 AAAA...your-ci-key... github-actions
+EOF
+chown deploy:deploy ~deploy/.ssh/authorized_keys
+chmod 600 ~deploy/.ssh/authorized_keys
+
+# Keys only, from here on.
+cat > /etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+EOF
+systemctl restart ssh
+```
+
+The `restrict` prefix on the CI key is worth the eleven characters: it turns
+off port forwarding, agent forwarding, X11 and pty allocation, none of which a
+`docker compose pull` needs, all of which are useful to somebody who has the
+key and should not have the box. Running a command over SSH still works —
+that is the one thing it leaves.
+
+Verify from your laptop *before* closing the browser-based console, since a
+mistake in `sshd_config` locks you out of a box you can otherwise only reach
+through the vendor's KVM:
+
+```sh
+ssh -i ~/.ssh/turbo-deck deploy@play.example.com 'docker ps'
+```
 
 Point an A record at the box — at the rented box's address, or at your static
 one with 80 and 443 forwarded — then as `deploy`:
@@ -397,7 +455,7 @@ Both paths need these:
 | Secret | `DEPLOY_HOST` | the box's address |
 | Secret | `DEPLOY_USER` | `deploy` |
 | Secret | `DEPLOY_DOMAIN` | `play.example.com` |
-| Secret | `DEPLOY_SSH_KEY` | a deploy-only private key, whose public half is in `~deploy/.ssh/authorized_keys` |
+| Secret | `DEPLOY_SSH_KEY` | the whole of `~/.ssh/turbo-deck-ci` — the CI key, never yours — including both `-----BEGIN/END-----` lines and the trailing newline |
 | Secret | `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan play.example.com` output, so the deploy does not trust DNS |
 
 **Your own box** (a runner on the machine polls GitHub) needs none of those —
