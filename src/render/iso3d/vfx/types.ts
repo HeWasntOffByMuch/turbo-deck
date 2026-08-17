@@ -49,7 +49,19 @@ export type EmitterShape =
    * is about local +Y and `circle` is radial in the ground plane, so between
    * them there was no way to say "away from the attacker, and a bit upward".
    */
-  | { readonly kind: 'fan'; readonly angle: number; readonly radius: number; readonly rise: number };
+  | {
+      readonly kind: 'fan';
+      readonly angle: number;
+      readonly radius: number;
+      readonly rise: number;
+      /**
+       * Which way this lobe points within the effect's own frame, radians about
+       * Y (spec 159). Several fans at different bearings, with different counts
+       * and sizes, are how an explosion gets a *composition* -- clusters and
+       * gaps -- rather than the even spray a single cone produces.
+       */
+      readonly bearing?: number;
+    };
 
 export type Emission =
   /** All at once, optionally after a delay. The one-shot. */

@@ -39,13 +39,15 @@ export type ShapeKind = (typeof SHAPE)[keyof typeof SHAPE];
  * | box        | halfX      | halfY   | halfZ |
  * | circle     | radius     | shell   |       |
  * | arc        | radius     | sweep   |       |
- * | fan        | angle      | radius  | rise  |
+ * | fan        | angle      | radius  | rise  | bearing |
  */
 export interface CompiledShape {
   readonly kind: ShapeKind;
   readonly a: number;
   readonly b: number;
   readonly c: number;
+  /** Only `fan` uses a fourth: which way the lobe points, in the local frame. */
+  readonly d?: number;
 }
 
 /**
@@ -183,8 +185,14 @@ export function sampleShape(
       // makes the bias a bias: most marks land near the bearing and a few stray
       // wide, where a flat draw across the same angle gives a fan with as many
       // marks at its edges as down its middle.
+      //
+      // `bearing` (spec 159) turns the lobe within the effect's own frame, which
+      // is what lets an explosion be *composed* out of several fans pointing
+      // different ways with different counts and sizes -- clusters here, a gap
+      // there -- instead of one uniform cone, which is a radial star however
+      // much the individual marks differ.
       const bias = rng.signed(1);
-      const yaw = bias * Math.abs(bias) * shape.a;
+      const yaw = (shape.d ?? 0) + bias * Math.abs(bias) * shape.a;
       const pitch = shape.c + rng.signed(shape.a * 0.35);
       const cosPitch = Math.cos(pitch);
       out[dirAt] = Math.cos(yaw) * cosPitch;
