@@ -203,6 +203,35 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  its life in: `weapon.main` was solved against the swing's own
                  guard key, so the blade pointed forward for two frames of an
                  800ms clip and hung straight down the rest of the time.
+                 posture.ts is the third thing beside those two (spec 163): a
+                 stated edit to the posture a *bought* clip is played in, one
+                 angle per bone and constant over the clip, so the stride and
+                 the timing and the bob survive by construction and only the
+                 body's carriage moves. It exists because `run` came out of the
+                 retarget with the chest 30 degrees forward of standing and the
+                 gaze 54 below the horizon, against an idle and a walk at -18 --
+                 a character whose face is only visible while it is standing
+                 still. Three rules. **Every correction turns about one shared
+                 world axis**, the body's pitch axis, which is what makes a
+                 chain of them compose by *adding the degrees* and lets each be
+                 computed against the uncorrected pose and still be exact once
+                 its ancestors have moved -- the same commuting-rotations
+                 argument the pig's hip counter-turn rests on. **The axis comes
+                 from the parent's animated frame, never its bind one**, which
+                 is the one thing `pose.ts`'s `turnQuat` cannot give: at bind
+                 the two agree and 30 degrees into a lean they do not, and the
+                 bind-frame version arrives as a pitch mixed with a roll.
+                 And **the applied table is recorded in the file** it was
+                 applied to, in `animations[0].extras.posture`, because there is
+                 no source document behind a bought clip and a correction
+                 measured against its own last output bends the body further
+                 every time it is regenerated. `npx tsx
+                 scripts/straighten-run.ts --write` is the edit and prints the
+                 two numbers it moved; `npx tsx scripts/preview-run-posture.ts`
+                 is the picture, and it reads that same record so it draws the
+                 retarget against the correction whichever state the bytes are
+                 in -- without that it silently applied the posture twice the
+                 moment the file was written.
                  pig-strike.ts is the
                  pig's swing itself: seven full-body poses over 800ms, contact at
                  500ms because that is `melee.slash`'s wind-up and the frame the
