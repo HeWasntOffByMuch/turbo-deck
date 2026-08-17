@@ -4,7 +4,8 @@ Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
 auras as drawn sigils (spec 124), impacts as crystals (spec 125), the shockwave
 combined and the counts made tunable (spec 126), blood lit and bent (spec 139),
 and a painted vocabulary added beside all of it (spec 158), corrected (159) and
-given two lingering variants (160) — the last at its review gate.**
+given two lingering variants (160) and a second way for a mark to end (161) —
+the last at its review gate.**
 
 | Phase | State |
 |---|---|
@@ -22,7 +23,8 @@ given two lingering variants (160) — the last at its review gate.**
 | blood: lit stains, and streaks that bend (spec 139) | done |
 | art direction: a painted vocabulary (spec 158) | superseded in place by 159 |
 | the painted vocabulary, corrected (spec 159) | done |
-| two variants that linger (spec 160) | **at the review gate** |
+| two variants that linger (spec 160) | done |
+| a mark that comes apart (spec 161) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1592,3 +1594,40 @@ naming here because they are general:
 
 Both sit outside the duration windows spec 158 wrote down, deliberately, and the
 two tests that assert those windows now name the exemption rather than widening.
+
+
+---
+
+## 9. Two ways a mark can end (spec 161)
+
+Spec 159 gave every brush mark one ending -- retract it from its own root -- and
+called that a virtue, because the flecks past the tip are then the last thing
+left and a flick reads as having finished. That is true at the speed a hit runs
+at, and it stops being true the moment a mark is held.
+
+Slowed to a second, retract is the brush retracing its own path backwards: the
+mark is drawn out from its root and taken back in at its root, which is the
+animation in reverse. Spec 160's mist inherited it and dissipated by
+**un-painting itself**. Shrinking and fading on top only made it fainter while
+it rewound.
+
+So `strokeDecay` is now a field on the emitter with two values:
+
+| | what it does | who wants it |
+|---|---|---|
+| `retract` | an eroding threshold walks from the root, pulling the spine after it | a hit: it is over in a third of a second and reads as finishing |
+| `fizzle` | the spine is untouched; a field varying *along* the mark opens gaps through it, and it comes apart into islands that shrink where they stand | anything held long enough to be watched |
+
+Two notes worth carrying forward.
+
+**The smoke had the fault worse, and nobody had reported it.** A cloud lobe is a
+lens with no root the eye can point at, so retract does not read as finishing --
+it reads as the mass being eaten from one side -- and the smoke is the
+longest-lived mark in the library by a distance. Every explosion's smoke fizzles
+now, and it separates into clumps as it clears, which is what the original brief
+asked smoke to do and what it had never quite done.
+
+**The frequency of the break-up field is an art decision, not a detail.** About
+one and a half cycles over the mark's length gives two or three islands. A high
+one takes it apart into a dotted line, which is the stipple spec 159 exists
+without -- the same failure arriving through a different door.

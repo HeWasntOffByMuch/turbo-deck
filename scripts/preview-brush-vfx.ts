@@ -394,7 +394,7 @@ async function main(): Promise<void> {
     bloodRows.push({
       title: 'the mist variant over its life: nothing falls, it thins away',
       tiles: await series(
-        [3, 9, 17, 27, 39, 52].map((tick) => ({
+        [6, 16, 24, 31, 38, 46].map((tick) => ({
           label: `mist t=${tick}`,
           kind: 'blood' as const,
           seed: SEEDS[0] ?? 1,
@@ -450,7 +450,7 @@ async function main(): Promise<void> {
     boomRows.push({
       title: 'the smoulder variant: smoke at once, and long after the fire',
       tiles: await series(
-        [4, 10, 20, 44, 76, 110].map((tick) => ({
+        [4, 10, 22, 52, 84, 106].map((tick) => ({
           label: `smoulder t=${tick}`,
           kind: 'explosion' as const,
           seed: SEEDS[0] ?? 1,

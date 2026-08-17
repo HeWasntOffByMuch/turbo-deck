@@ -251,7 +251,10 @@ export class VfxLayer {
       const emitter = this.system.emitterAt(i);
       if (!emitter) continue;
       const at = this.cursors[batchIndex] ?? 0;
-      if (batch instanceof MeshParticleBatch) batch.write(at, pool, i);
+      // The decay mode travels with the emitter rather than the particle, the
+      // same way `modeCode` and `stretch` do for the quad batches below: it is a
+      // property of what was authored, not of how far through its life a mark is.
+      if (batch instanceof MeshParticleBatch) batch.write(at, pool, i, emitter.strokeDecay);
       else if (this.families[batchIndex] === FAMILY.ribbon) {
         this.cursors[batchIndex] = at + this.writeRibbon(batch, pool, i, at, emitter.ribbonTaper);
         continue;

@@ -300,22 +300,31 @@ describe('the blood hit', () => {
     };
 
     for (const id of ['primary', 'secondary', 'fragments']) {
-      // (3) It shrinks to almost nothing, where paint holds its size to the last
-      // tick because paint dries where it lands.
-      expect(endsAt(mist, id), id).toBeLessThan(0.4);
+      // (3) It comes apart WHERE IT LIES rather than being pulled back toward
+      // its own root (spec 161). This is the claim, and it is the one the other
+      // two support rather than replace: retract played over a second is the
+      // brush retracing its own path backwards, which reads as the stroke being
+      // un-painted, not as a spatter thinning away.
+      expect(mist.emitters.find((entry) => entry.id === id)?.strokeDecay, id).toBe('fizzle');
+      expect(standard.emitters.find((entry) => entry.id === id)?.strokeDecay ?? 'retract', id).toBe('retract');
+
+      // (4) It shrinks as it goes, where paint holds its size to the last tick
+      // because paint dries where it lands. Relative, because the break-up is
+      // what ends it now -- a hard shrink on top took the whole mark faint at
+      // once, which is the effect being turned down rather than coming apart.
+      expect(endsAt(mist, id), id).toBeLessThan(endsAt(standard, id) * 0.6);
       expect(endsAt(standard, id), id).toBeGreaterThan(0.75);
-      // (4) And it starts going long before the end, so it thins from both ends
-      // at once while the geometry retracts from its root.
-      expect(fadesFrom(mist, id), id).toBeLessThan(0.65);
-      expect(fadesFrom(standard, id), id).toBeGreaterThan(0.7);
+
+      // (5) And it starts fading before the standard hit does.
+      expect(fadesFrom(mist, id), id).toBeLessThan(fadesFrom(standard, id));
     }
 
-    // (5) And it hangs about while it does it -- longer than a paint hit, which
+    // (6) And it hangs about while it does it -- longer than a paint hit, which
     // dries where it lands and has no reason to.
     expect(windowTicks(mist)).toBeGreaterThan(windowTicks(standard) * 1.4);
     expect(windowTicks(mist) / TICK_HZ).toBeLessThan(1.2);
 
-    // (6) With all three layers alive for most of it. The fizzle is the thing
+    // (7) With all three layers alive for most of it. The fizzle is the thing
     // being watched, so there has to be something in the air while it happens --
     // a primary that dies at two thirds leaves one straggling dab to do it.
     const shortest = Math.min(...mist.emitters.map((entry) => entry.lifetimeTicks[0]));
@@ -323,7 +332,7 @@ describe('the blood hit', () => {
     const standardShortest = Math.min(...standard.emitters.map((entry) => entry.lifetimeTicks[0]));
     expect(standardShortest / windowTicks(standard)).toBeLessThan(0.55);
 
-    // (7) Still the same gesture, and still aimed: a spatter that dissipates
+    // (8) Still the same gesture, and still aimed: a spatter that dissipates
     // still has to say where the blow came from.
     expect(mist.emitters.map((entry) => entry.id)).toEqual(standard.emitters.map((entry) => entry.id));
     for (const emitter of mist.emitters) expect(emitter.shape.kind, emitter.id).toBe('fan');

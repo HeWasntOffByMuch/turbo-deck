@@ -430,6 +430,10 @@ attribute vec4 aStroke;
 // Which gesture in the bank this vertex belongs to. An instance draws one of
 // them and clips the rest (spec 159).
 attribute float aVariant;
+// 0 retracts toward the root, 1 breaks up in place (spec 161). Per instance
+// rather than per batch, because two effects using the same mark end it
+// differently and a batch is keyed by the mark.
+attribute float iDecay;
 uniform float uVariants;
 uniform float uRootShade;
 varying float vAlong;
@@ -608,18 +612,45 @@ void main() {
 
     // (1) The gesture draws out along its own path over the first few ticks.
     float extend = mix(0.44, 1.0, smoothstep(0.0, 0.15, iAge));
-    // (2) Then it retracts from the root. Geometric, never an alpha fade: the
-    // flecks past the tip are the last thing left, which is how a flick reads,
-    // and a dissolve made of discarded pixels is the screen-door transparency
-    // this whole spec exists to remove.
-    float erode = smoothstep(0.58, 1.0, iAge) * 0.98;
-    float alive = smoothstep(0.0, 0.09, along - erode);
-    // (3) And it thins as it dries, a little, so the last frames are a narrower
-    // mark rather than the same mark going quiet.
-    float dry = mix(1.0, 0.72, smoothstep(0.45, 1.0, iAge));
+    // (2) Then it leaves, one of two ways (spec 161). Geometric either way,
+    // never an alpha fade: a dissolve made of discarded pixels is the
+    // screen-door transparency spec 159 removed.
+    float leaving = smoothstep(0.58, 1.0, iAge);
+    float alive;
+    float lift;
+    if (iDecay < 0.5) {
+      // RETRACT. The mark is pulled back toward its own root, so the flecks
+      // past the tip are the last thing left -- which is how a flick reads, and
+      // it is over in a few ticks.
+      float erode = leaving * 0.98;
+      alive = smoothstep(0.0, 0.09, along - erode);
+      lift = max(position.y, erode);
+    } else {
+      // FIZZLE. Gaps open THROUGH the mark and it comes apart into shrinking
+      // islands where it lies.
+      //
+      // The distinction only shows up on a mark held long enough to watch.
+      // Retract played slowly is the brush retracing its own path backwards --
+      // the stroke being un-painted, which is the one thing a spatter that is
+      // supposed to be thinning away must not look like. So nothing here moves
+      // the mark's own extent -- the spine is left exactly where it was, and the
+      // whole ending happens in the width. (No backticks in here: this is a
+      // template literal and one closes it.)
+      //
+      // A field that varies ALONG the mark decides which parts go first, and
+      // varies per instance, so two marks come apart in different places. It is
+      // low frequency on purpose -- about one and a half cycles over the length
+      // -- because a high one takes the mark apart into a dotted line, which is
+      // the stipple this vocabulary exists without.
+      float field = 0.5 + 0.5 * strokeWave(along, iSeed, 9.7, 11.0);
+      alive = smoothstep(0.0, 0.18, field - leaving);
+      lift = position.y;
+    }
+    // (3) And it thins as it goes, so the last frames are a narrower mark rather
+    // than the same mark going quiet.
+    float dry = mix(1.0, iDecay < 0.5 ? 0.72 : 0.62, smoothstep(0.45, 1.0, iAge));
 
     float gain = max(0.0, envelope * ripple * alive * dry);
-    float lift = max(position.y, erode);
 
     shape = vec3(position.x + side.x * (bend + aStroke.y * gain),
                  lift * stretch * extend + side.y * (bend + aStroke.y * gain),
@@ -700,6 +731,7 @@ export class MeshParticleBatch {
   private alpha!: THREE.InstancedBufferAttribute;
   private seed!: THREE.InstancedBufferAttribute;
   private age!: THREE.InstancedBufferAttribute;
+  private decay!: THREE.InstancedBufferAttribute;
   /** Only a shape that aims itself pays for a velocity upload. */
   private readonly aims: boolean;
   /** A brush mark, whose outline is rebuilt per instance in the shader. */
@@ -777,6 +809,7 @@ export class MeshParticleBatch {
     this.alpha = instanced(1);
     this.seed = instanced(1);
     this.age = instanced(1);
+    this.decay = instanced(1);
 
     geometry.setAttribute('iOffset', this.offset);
     geometry.setAttribute('iVelocity', this.velocity);
@@ -786,6 +819,7 @@ export class MeshParticleBatch {
     geometry.setAttribute('iAlpha', this.alpha);
     geometry.setAttribute('iSeed', this.seed);
     geometry.setAttribute('iAge', this.age);
+    geometry.setAttribute('iDecay', this.decay);
     geometry.instanceCount = 0;
     return geometry;
   }
@@ -805,7 +839,7 @@ export class MeshParticleBatch {
     this.ensureCapacity(count);
   }
 
-  write(at: number, pool: ParticlePool, i: number): void {
+  write(at: number, pool: ParticlePool, i: number, decay = 0): void {
     const o = at * 3;
     this.offset.array[o] = pool.x[i] ?? 0;
     this.offset.array[o + 1] = pool.y[i] ?? 0;
@@ -826,6 +860,7 @@ export class MeshParticleBatch {
     // the transform (spec 159). One float, and it is what buys the gesture
     // drawing out along its own path and then retracting from its root.
     this.age.array[at] = Math.min(1, (pool.age[i] ?? 0) / Math.max(1, pool.life[i] ?? 1));
+    this.decay.array[at] = decay;
   }
 
   end(count: number): void {
@@ -836,7 +871,7 @@ export class MeshParticleBatch {
       attribute.addUpdateRange(0, count * 3);
       attribute.needsUpdate = true;
     }
-    for (const attribute of [this.size, this.rotation, this.alpha, this.seed, this.age]) {
+    for (const attribute of [this.size, this.rotation, this.alpha, this.seed, this.age, this.decay]) {
       attribute.addUpdateRange(0, count);
       attribute.needsUpdate = true;
     }

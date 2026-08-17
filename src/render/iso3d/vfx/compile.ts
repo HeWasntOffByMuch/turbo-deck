@@ -30,6 +30,8 @@ export const RENDER = {
   mesh: 5,
 } as const;
 export const BLEND = { alpha: 0, additive: 1, 'dither-cutout': 2 } as const;
+/** How a brush mark ends (spec 161). The shader branches on this per instance. */
+export const DECAY = { retract: 0, fizzle: 1 } as const;
 
 /** Which family of draw call a render mode belongs to. */
 export const FAMILY = { quad: 0, ribbon: 1, mesh: 2 } as const;
@@ -77,6 +79,8 @@ export interface CompiledEmitter {
 
   readonly render: number;
   readonly blend: number;
+  /** 0 retracts toward the root, 1 breaks up in place. Only brush marks read it. */
+  readonly strokeDecay: number;
   readonly family: number;
   /** Index into the registry's batch table. One draw call per distinct value. */
   readonly batch: number;
@@ -239,6 +243,7 @@ function compileEmitter(
 
     render,
     blend,
+    strokeDecay: DECAY[emitter.strokeDecay ?? 'retract'],
     family,
     batch: batchOf(family, blend, sheet, emitter.mesh?.shape ?? ''),
 

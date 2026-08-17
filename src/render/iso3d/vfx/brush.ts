@@ -33,7 +33,7 @@
  */
 
 import type { Curve } from './curve.js';
-import type { EffectDefinition, Emitter, Priority } from './types.js';
+import type { EffectDefinition, Emitter, Priority, StrokeDecay } from './types.js';
 import type { PaletteKey } from './palette.js';
 
 // --- the blood hit -----------------------------------------------------------
@@ -98,6 +98,16 @@ export interface BloodHitParams {
    * where it lands; well under it for something that thins away to nothing.
    */
   readonly shrinkTo?: number;
+  /**
+   * How a mark leaves (spec 161): pulled back toward its own root, or broken up
+   * where it lies.
+   *
+   * `retract` for a hit, which is over in a few ticks and reads as a flick.
+   * `fizzle` for anything held long enough to be watched -- retract played
+   * slowly is the brush retracing its own path backwards, which reads as the
+   * stroke being un-painted rather than as anything thinning away.
+   */
+  readonly decay?: StrokeDecay;
   /**
    * How much the shorter-lived layers are held toward the full lifetime, 0..1.
    *
@@ -176,6 +186,7 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
   const turbulence = params.turbulence ?? 0;
   const shrinkTo = Math.max(0.02, params.shrinkTo ?? 0.94);
   const linger = Math.min(1, Math.max(0, params.linger ?? 0));
+  const decay = params.decay ?? 'retract';
   /** A layer's lifetime, in ticks, with `linger` pulling it toward the full span. */
   const lives = (from: number, to: number): readonly [number, number] => [
     Math.round(life * (from + (1 - from) * linger)),
@@ -260,6 +271,7 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
       render: 'mesh',
       mesh: { shape: 'brush-slash' },
       blend: 'alpha',
+      strokeDecay: decay,
     },
     // (b) The medium marks: within about 35 degrees of the bearing, so they
     // reinforce the gesture instead of arguing with it.
@@ -284,6 +296,7 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
       render: 'mesh',
       mesh: { shape: 'brush-flick' },
       blend: 'alpha',
+      strokeDecay: decay,
     },
     // (c) The dabs. Chunky, dark, tumbling in *world* space rather than held to
     // the camera -- which is where this effect's sense of depth comes from, and
@@ -308,6 +321,7 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
       render: 'mesh',
       mesh: { shape: 'brush-dab' },
       blend: 'alpha',
+      strokeDecay: decay,
     },
   ];
 
@@ -629,6 +643,13 @@ export function brushExplosion(params: BrushExplosionParams): EffectDefinition {
       render: 'mesh',
       mesh: { shape: 'brush-blot' },
       blend: 'alpha',
+      // Broken up where it lies, like the mist (spec 161), and for a stronger
+      // reason: retract shortens a mark from one end, and on a cloud lobe --
+      // which is a lens rather than a flick, and has no root the eye can point
+      // at -- that reads as the mass being eaten from one side. It is also the
+      // longest-lived mark in the library by a distance, so it is the one with
+      // the most time to be noticed doing it.
+      strokeDecay: 'fizzle',
     });
   }
 
@@ -702,11 +723,20 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     gravity: 0,
     drift: 26,
     turbulence: 62,
+    // Broken up where it lies rather than pulled back toward its root (spec
+    // 161). Retract is what a fast hit wants; held over a second it is the
+    // brush retracing its own path backwards, and a spatter that dissipates by
+    // un-painting itself is a spatter running in reverse.
+    decay: 'fizzle',
     // All three layers held near the full span, so there is something in the air
     // for the whole of the fizzle rather than one straggling dab at the end.
     linger: 0.6,
-    shrinkTo: 0.28,
-    fadeFrom: 0.6,
+    // Both gentler than they were, because the break-up is doing the work now.
+    // Stacking a hard shrink and an early fade on top of it took the whole mark
+    // faint at once, which reads as the effect being turned down rather than as
+    // paint coming apart.
+    shrinkTo: 0.42,
+    fadeFrom: 0.74,
   }),
 
   bloodHit({

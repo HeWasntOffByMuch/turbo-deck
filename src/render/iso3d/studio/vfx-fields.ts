@@ -33,6 +33,8 @@ export interface FieldSpec {
 
 export const RENDER_MODES = ['billboard', 'stretched', 'axis-billboard', 'ground-quad', 'ribbon', 'mesh'] as const;
 export const BLEND_MODES = ['alpha', 'additive', 'dither-cutout'] as const;
+/** How a brush mark ends (spec 161). Ignored by every shape that is not one. */
+export const STROKE_DECAYS = ['retract', 'fizzle'] as const;
 export const SHAPE_KINDS = ['point', 'sphere', 'hemisphere', 'cone', 'box', 'circle', 'mesh', 'arc', 'fan'] as const;
 export const EMISSION_KINDS = ['burst', 'rate', 'ramp'] as const;
 /** The solids a `mesh` particle can be (spec 123). */
@@ -108,6 +110,7 @@ export const EMITTER_FIELDS: readonly FieldSpec[] = [
   { path: 'render', label: 'Render as', kind: 'enum', options: RENDER_MODES },
   { path: 'blend', label: 'Blend', kind: 'enum', options: BLEND_MODES },
   { path: 'mesh.shape', label: 'Solid', kind: 'enum', options: MESH_SHAPES, tip: 'Which solid, when rendering as a mesh. Ignored otherwise.' },
+  { path: 'strokeDecay', label: 'Ends by', kind: 'enum', options: STROKE_DECAYS, tip: 'Retract pulls a brush mark back to its root; fizzle breaks it up where it lies.' },
   { path: 'stretch', label: 'Stretch', kind: 'number', min: 0, max: 0.4, step: 0.005, tip: 'Length per unit of screen speed, for stretched billboards.' },
   { path: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'number', min: 0.5, max: 60, step: 0.5, tip: 'World units between trail samples. Distance, never time.' },
   { path: 'ribbonTaper', label: 'Ribbon taper', kind: 'number', min: 0, max: 1, step: 0.01, tip: "The tail's width as a fraction of the head's." },

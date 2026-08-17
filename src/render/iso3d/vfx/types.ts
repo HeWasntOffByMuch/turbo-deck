@@ -94,6 +94,9 @@ export type RenderMode =
  */
 export type Blend = 'alpha' | 'additive' | 'dither-cutout';
 
+/** The two ways a brush mark can end (spec 161). See `Emitter.strokeDecay`. */
+export type StrokeDecay = 'retract' | 'fizzle';
+
 /** A runtime-generated sprite sheet. Nothing is ever fetched. */
 export interface SpriteSpec {
   readonly sheet: string;
@@ -201,6 +204,21 @@ export interface Emitter {
    * where geometry that narrows simply narrows.
    */
   readonly ribbonTaper?: number;
+
+  /**
+   * How a brush mark leaves, when the shape is one (spec 161).
+   *
+   * `retract` pulls it back toward its own root, so the flecks past the tip are
+   * the last thing left. Right for a hit -- fast, and it reads as having been
+   * flicked.
+   *
+   * `fizzle` opens gaps *through* it instead, and the mark comes apart into
+   * shrinking islands where it lies. The distinction only shows up when a mark
+   * is held long enough to be watched: retract played slowly is the brush
+   * retracing its own path backwards, which reads as the stroke being
+   * un-painted rather than as anything dissipating.
+   */
+  readonly strokeDecay?: StrokeDecay;
 
   readonly render: RenderMode;
   readonly blend: Blend;
