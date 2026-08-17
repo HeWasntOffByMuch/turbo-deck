@@ -56,7 +56,7 @@ import { isHandheldDevice } from '../device.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
-import { bottomEdge, errorStackBottom, hudLayout, stripWidth } from './hud-layout.js';
+import { bottomEdge, errorStackBottom, hudLayout, poolBottom, stripWidth } from './hud-layout.js';
 import { slotIconSvg, systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
 import { ACTION_BAR, type ActionSlot } from './action-bar.js';
 import { deathOverlay } from './death.js';
@@ -395,7 +395,7 @@ export function createHud(
   const bar = document.createElement('div');
   bar.style.cssText =
     `position:absolute;left:50%;bottom:${bottom};transform:translateX(-50%);display:flex;` +
-    `gap:${layout.slotGap}px;font:${layout.slotFontPx}px ui-monospace,Menlo,monospace;pointer-events:auto;`;
+    `gap:${layout.slotGap}px;pointer-events:auto;`;
   root.append(bar);
 
   /**
@@ -431,14 +431,16 @@ export function createHud(
     const ability = entry.abilityId === null ? null : abilityById(entry.abilityId);
     const button = document.createElement('button');
     button.style.cssText =
-      `width:${layout.slot.width}px;border-radius:6px;border:1px solid #33405a;background:#182130;` +
-      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:center;' +
-      // Square and centred on a finger: the label is whatever fits inside the
-      // target rather than the target being whatever the label needs.
-      (layout.compact
-        ? `height:${layout.slot.height}px;padding:2px;line-height:1.15;display:flex;` +
-          'align-items:center;justify-content:center;'
-        : 'padding:6px 4px;line-height:1.5;');
+      `width:${layout.slot.width}px;height:${layout.slot.height}px;border-radius:6px;` +
+      'border:1px solid #33405a;background:#182130;cursor:pointer;box-sizing:border-box;' +
+      'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+      // A *stated* height on both, since spec 163. It used to be the compact
+      // square and, on a desktop, whatever the padding and the line height added
+      // up to -- which was 46 by coincidence and stopped being 46 the moment the
+      // label became a glyph path. The pool block beside it is centred against
+      // `layout.slot.height`, so a slot whose real height is decided by its
+      // contents is a slot the block cannot be centred on.
+      (layout.compact ? 'padding:2px;' : 'padding:4px;gap:3px;');
     button.style.position = 'relative';
     button.style.overflow = 'hidden';
     // Says which slot this is, and what is in it. Nothing in the game reads
@@ -454,19 +456,48 @@ export function createHud(
     // has been on the bar as the word "Hearthdraught" since spec 156 -- eleven
     // characters in a 92px box, which wrapped. An empty slot is a dashed square:
     // "something goes here" without a caption claiming there is a plan for what.
-    const key = layout.showsKeyNumber ? `<b>${entry.keyNumber}</b><br>` : '';
+    // The key number and the name are drawn in the game's own 5x7 face rather
+    // than set in the browser's monospace (spec 163). The bar sits over a
+    // posterized, low-resolution world and system text over it reads like a
+    // debug overlay somebody left on -- the same argument spec 065 made about
+    // the damage numbers and 143 about the refusals.
+    //
+    // Two scales, because they are two different jobs: the digit is the key you
+    // press and is read at a glance, the name is a label you read once. At the
+    // name's scale the longest ability in the table still fits a 92px slot,
+    // which is the reason it is 1 and the sum that keeps it honest is in
+    // `hud-layout.test.ts`.
+    const key = layout.showsKeyNumber
+      ? `<span style="display:flex;justify-content:center;">` +
+        `${pixelTextSvg(String(entry.keyNumber), { scale: layout.slotKeyScale, fill: '#dfe7f2', outline: '#0a0d14' })}</span>`
+      : '';
+    const centred = (body: string): string =>
+      `<span style="display:flex;justify-content:center;">${body}</span>`;
     if (entry.kind === 'vial') {
-      button.innerHTML =
-        `${key}<span style="display:flex;justify-content:center;">` +
-        `${slotIconSvg('vial', { size: layout.compact ? 26 : 22 })}</span>`;
+      button.innerHTML = key + centred(slotIconSvg('vial', { size: layout.compact ? 26 : 22 }));
       button.setAttribute('aria-label', ability?.name ?? 'Vial');
       button.title = ability ? `${ability.name} -- ${ability.description}` : 'Vial';
     } else if (ability) {
-      button.innerHTML = `${key}${ability.name}`;
+      // An icon on a finger and a name on a desktop, the same way the weapon
+      // switch and the window buttons answer it: no name in the table fits a
+      // 46px square in this font, and the compact HUD is icons.
+      button.innerHTML =
+        key +
+        centred(
+          layout.slotIconOnly
+            ? weaponIconSvg(ability.id, { size: 24 })
+            : pixelTextSvg(ability.name.toUpperCase(), {
+                scale: layout.slotNameScale,
+                fill: '#cfd6e0',
+                outline: '#0a0d14',
+              }),
+        );
+      button.setAttribute('aria-label', ability.name);
       button.title = ability.description;
     } else {
       button.innerHTML =
-        `${key}<span style="display:flex;justify-content:center;opacity:.5;">` +
+        key +
+        `<span style="display:flex;justify-content:center;opacity:.5;">` +
         `${slotIconSvg('empty', { size: layout.compact ? 24 : 22 })}</span>`;
       button.setAttribute('aria-label', `Empty slot ${entry.keyNumber}`);
       button.title = 'Empty — no skill assigned';
@@ -491,8 +522,7 @@ export function createHud(
     const remaining = document.createElement('span');
     remaining.style.cssText =
       'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
-      `font:700 ${layout.slotCountdownPx}px ui-monospace,Menlo,monospace;color:#e8eef6;` +
-      'text-shadow:0 1px 2px #000;pointer-events:none;';
+      'pointer-events:none;';
     button.append(remaining);
 
     /**
@@ -505,9 +535,7 @@ export function createHud(
      * standing still.
      */
     const charges = document.createElement('span');
-    charges.style.cssText =
-      'position:absolute;right:2px;bottom:1px;font:700 10px ui-monospace,Menlo,monospace;' +
-      'color:#ffd489;text-shadow:0 1px 2px #000;pointer-events:none;';
+    charges.style.cssText = 'position:absolute;right:2px;bottom:1px;pointer-events:none;';
     if (entry.kind === 'vial') button.append(charges);
 
     bar.append(button);
@@ -520,45 +548,103 @@ export function createHud(
    * Placed off the *bar's* half-width rather than from the frame's left edge,
    * because the bar is centred: pinning the pool to the left would leave a gap
    * between them that grew with the window, and the two are one group.
+   *
+   * Sat at `poolBottom` rather than at the same floor as the slots, so the two
+   * are centred on one another. The first cut shared the floor, which put a
+   * 40px block against the bottom of a 46px row: all the daylight above it and
+   * none below, which reads as a mistake because everything else along that edge
+   * lines up.
    */
   const poolBlock = document.createElement('div');
   poolBlock.style.cssText =
-    `position:absolute;left:50%;bottom:${bottom};display:flex;flex-direction:column;` +
+    `position:absolute;left:50%;` +
+    `bottom:calc(${poolBottom(layout)}px + env(safe-area-inset-bottom));` +
+    `display:flex;flex-direction:column;` +
     `gap:${layout.poolGap}px;width:${layout.pool.width}px;pointer-events:none;` +
-    `margin-left:${-(stripWidth(layout.slot, layout.slotGap, slotPlan.length) / 2 + layout.poolGap + layout.pool.width)}px;` +
-    `font:${layout.poolFontPx}px ui-monospace,Menlo,monospace;`;
+    `margin-left:${-(stripWidth(layout.slot, layout.slotGap, slotPlan.length) / 2 + layout.poolGap + layout.pool.width)}px;`;
   root.append(poolBlock);
 
-  function makePool(fillColor: string, name: string): {
+  interface Pool {
     readonly fill: HTMLElement;
+    /**
+     * The white band behind the fill, or null on a bar that has none.
+     *
+     * Only health has one: the chunk is what a *blow* took, and nothing takes
+     * resource off you -- you spend it, and a white chunk marking your own cast
+     * would be the bar objecting to being used.
+     */
+    readonly ghost: HTMLElement | null;
     readonly label: HTMLElement;
-  } {
+  }
+
+  function makePool(fillColor: string, name: string, ghosted: boolean): Pool {
     const track = document.createElement('div');
     track.dataset['pool'] = name;
     track.style.cssText =
       `position:relative;height:${layout.pool.height}px;background:${BAR_EMPTY};border-radius:3px;` +
       'overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.7);';
+    // Two bands in one track, the white underneath -- laid out exactly as the
+    // floating bar's are (spec 145), so the fill's width is still just health
+    // and the chunk is whatever the white is left showing past it. Stacked
+    // rather than end to end, so the two can never disagree about where the
+    // fill ends.
+    const ghost = ghosted ? document.createElement('div') : null;
+    if (ghost) {
+      ghost.style.cssText =
+        `position:absolute;left:0;top:0;height:100%;width:0;background:${BAR_LOST};`;
+      track.append(ghost);
+    }
     const fill = document.createElement('div');
     fill.style.cssText = `position:absolute;left:0;top:0;height:100%;width:0;background:${fillColor};`;
     // Over the bar rather than beside it: the numbers are what you read when you
     // want to know, and the length is what you read when you are fighting. Two
     // rows for that would double the height of a block that has to stay under
-    // one slot.
+    // one slot. In the game's own face, like everything else in this band.
     const label = document.createElement('div');
     label.style.cssText =
       'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
-      'color:#f2f6fb;text-shadow:0 1px 2px rgba(0,0,0,.9);letter-spacing:.02em;';
+      'pointer-events:none;';
     track.append(fill, label);
     poolBlock.append(track);
-    return { fill, label };
+    return { fill, ghost, label };
   }
 
   // Green for health, matching the player's own floating bar (spec 145), because
   // "green is you" is already true in this game and a second colour for the same
   // quantity would be a second thing to learn. Blue for the pool, which is the
   // one thing on screen that is spent rather than lost.
-  const healthPool = makePool(BAR_SELF, 'health');
-  const resourcePool = makePool(POOL_RESOURCE, 'resource');
+  const healthPool = makePool(BAR_SELF, 'health', true);
+  const resourcePool = makePool(POOL_RESOURCE, 'resource', false);
+
+  /**
+   * The white chunk and the flinch, for the pool bar (specs 145/146, 163).
+   *
+   * The *same* class the floating bars are read through, on an instance of its
+   * own: one bar is placed by an anchor over a body and the other is pinned to
+   * the frame, and the floating one is only read on frames the body is on
+   * screen. Sharing one instance would make the chunk on the pool bar depend on
+   * whether the camera happened to be looking at the player -- which is exactly
+   * the frames a hit is most worth marking.
+   */
+  const poolFlashes = new HealthFlashes();
+
+  /**
+   * A pool bar's numbers, in the game's own face.
+   *
+   * Rewritten only when the string changes. Health moves on almost every frame
+   * of a fight and resource regenerates continuously, so this is the one label
+   * in the band that would genuinely be rebuilt sixty times a second -- and the
+   * *rounded* string changes far less often than the number behind it does.
+   */
+  function writePoolLabel(element: HTMLElement, text: string): void {
+    if (element.dataset['text'] === text) return;
+    element.dataset['text'] = text;
+    element.innerHTML = pixelTextSvg(text, {
+      scale: layout.poolScale,
+      fill: '#f2f6fb',
+      outline: '#0a0d14',
+    });
+  }
 
   /**
    * The experience strip (spec 163), pinned to the very bottom, full width.
@@ -604,8 +690,8 @@ export function createHud(
   const xpDetail = document.createElement('div');
   xpDetail.style.cssText =
     `position:absolute;left:8px;bottom:${layout.xpBarHeight + 4}px;display:none;` +
-    'font:11px ui-monospace,Menlo,monospace;color:#ffe6a8;background:rgba(10,14,20,.85);' +
-    'padding:3px 8px;border-radius:4px;border:1px solid #000;pointer-events:none;white-space:nowrap;';
+    'background:rgba(10,14,20,.85);padding:4px 8px;border-radius:4px;border:1px solid #000;' +
+    'pointer-events:none;white-space:nowrap;';
   xpDetail.dataset['xpDetail'] = 'true';
   root.append(xpDetail);
   xpStrip.addEventListener('pointerenter', () => {
@@ -644,9 +730,15 @@ export function createHud(
   const respawnButton = document.createElement('button');
   respawnButton.style.cssText =
     'padding:10px 26px;border-radius:6px;border:1px solid #000;background:#7a1a1a;' +
-    'color:#ffe2e2;cursor:pointer;font:600 15px ui-monospace,Menlo,monospace;' +
-    'letter-spacing:.08em;box-shadow:0 2px 0 #000;';
-  respawnButton.textContent = 'RESPAWN';
+    'cursor:pointer;box-shadow:0 2px 0 #000;display:flex;align-items:center;';
+  respawnButton.innerHTML = pixelTextSvg('RESPAWN', {
+    scale: layout.respawnScale,
+    fill: '#ffe2e2',
+    outline: '#000000',
+  });
+  // The word is a glyph path, so the button has no text of its own to be found
+  // or read out by.
+  respawnButton.setAttribute('aria-label', 'Respawn');
   respawnButton.dataset['respawn'] = 'true';
   respawnButton.addEventListener('click', () => respawnHandler());
   deathLayer.append(deathBanner, respawnButton);
@@ -675,8 +767,12 @@ export function createHud(
 
   if (!layout.weaponIconOnly) {
     const weaponCaption = document.createElement('div');
-    weaponCaption.style.cssText = 'color:#8b97a8;letter-spacing:.08em;padding-left:2px;';
-    weaponCaption.textContent = 'WEAPON';
+    weaponCaption.style.cssText = 'padding-left:2px;';
+    weaponCaption.innerHTML = pixelTextSvg('WEAPON', {
+      scale: layout.captionScale,
+      fill: '#8b97a8',
+      outline: '#0a0d14',
+    });
     weapons.append(weaponCaption);
   }
 
@@ -706,8 +802,16 @@ export function createHud(
     // is the honest version of that, and it survives the button having no text.
     button.dataset['weapon'] = weapon.itemId;
     if (!layout.weaponIconOnly) {
+      // In the game's own face like the rest of the band (spec 163). The button
+      // still carries the name as an `aria-label` above, which is what a screen
+      // reader reads and what `preview-touch.ts` finds it by -- a drawn glyph
+      // path is not text and cannot be either.
       const name = document.createElement('span');
-      name.textContent = weapon.name;
+      name.innerHTML = pixelTextSvg(weapon.name.toUpperCase(), {
+        scale: layout.captionScale,
+        fill: '#cfd6e0',
+        outline: '#0a0d14',
+      });
       button.append(name);
     }
     button.title = ability ? `${ability.name} -- ${ability.description}` : weapon.itemId;
@@ -743,7 +847,11 @@ export function createHud(
     button.dataset['window'] = entry.id;
     if (!layout.systemIconOnly) {
       const name = document.createElement('span');
-      name.textContent = entry.name;
+      name.innerHTML = pixelTextSvg(entry.name.toUpperCase(), {
+        scale: layout.captionScale,
+        fill: '#cfd6e0',
+        outline: '#0a0d14',
+      });
       button.append(name);
     }
     button.addEventListener('click', () => openHandler(entry.id));
@@ -1077,7 +1185,15 @@ export function createHud(
 
       // How many draughts are left, on the vial itself.
       if (slot.kind === 'vial') {
-        slot.charges.textContent = `${view.restoration.charges}/${view.restoration.maxCharges}`;
+        const count = `${view.restoration.charges}/${view.restoration.maxCharges}`;
+        if (slot.charges.dataset['text'] !== count) {
+          slot.charges.dataset['text'] = count;
+          slot.charges.innerHTML = pixelTextSvg(count, {
+            scale: layout.slotCountScale,
+            fill: '#ffd489',
+            outline: '#0a0d14',
+          });
+        }
       }
 
       // The sweep is the server's cooldown, played back (spec 065). Its *length*
@@ -1096,22 +1212,60 @@ export function createHud(
           ? attackTimingFor(slot.ability, { stats: view.stats }).intervalTicks
           : slot.ability.cooldownTicks,
       );
-      if (left > 0) {
-        slot.sweep.style.height = `${Math.min(1, left / total) * 100}%`;
-        slot.remaining.textContent = formatSeconds(left / SERVER_TICK_RATE);
-      } else {
-        slot.sweep.style.height = '0';
-        slot.remaining.textContent = '';
+      const countdown = left > 0 ? formatSeconds(left / SERVER_TICK_RATE) : '';
+      slot.sweep.style.height = left > 0 ? `${Math.min(1, left / total) * 100}%` : '0';
+      // Only when it changes: this is markup rather than a text node now, and
+      // rebuilding a glyph path sixty times a second for a number that ticks ten
+      // times would be a lot of parsing for nothing.
+      if (slot.remaining.dataset['text'] !== countdown) {
+        slot.remaining.dataset['text'] = countdown;
+        slot.remaining.innerHTML =
+          countdown === ''
+            ? ''
+            : pixelTextSvg(countdown, {
+                scale: layout.slotCountdownScale,
+                fill: '#e8eef6',
+                outline: '#0a0d14',
+              });
       }
     }
 
     // The two pools, left of the slots (spec 163). Both numbers have been on the
     // wire since spec 069 and both were text in a hidden readout.
+    //
+    // Health goes through `HealthFlashes` -- the same reading the bar over a
+    // body gets (specs 145/146), so the white chunk a blow leaves and the kick
+    // it lands with are the ones already on screen rather than a second
+    // implementation of them. Absolute health rather than the fraction, because
+    // that is what stops a changing maximum reading as a blow.
+    //
+    // Only once the maximum is known: reading 0-of-0 for the opening frames
+    // would put a track at zero and draw the first `Stats` message as a heal,
+    // which is harmless but is a state worth not creating.
     const pools = poolBars(view);
-    healthPool.fill.style.width = `${pools.health.fraction * 100}%`;
-    healthPool.label.textContent = pools.health.text;
+    if (pools.health.known) {
+      const fill = poolFlashes.read(
+        view.selfEntityId,
+        pools.health.current,
+        pools.health.max,
+        tick * TICK_MS,
+      );
+      healthPool.fill.style.width = `${fill.health * 100}%`;
+      if (healthPool.ghost) healthPool.ghost.style.width = `${fill.ghost * 100}%`;
+      // The kick moves the whole block rather than one bar: the two pools are one
+      // group and half of it flinching would read as a layout bug.
+      poolBlock.style.transform = `translate(${fill.shakeX.toFixed(2)}px,${fill.shakeY.toFixed(2)}px)`;
+    } else {
+      healthPool.fill.style.width = '0';
+      if (healthPool.ghost) healthPool.ghost.style.width = '0';
+    }
+    // Only ever the local body, and only the current one: an id changes on a
+    // reconnect, and a map that only grew would be a leak with one entry a
+    // session in it.
+    poolFlashes.retain(new Set([view.selfEntityId]));
     resourcePool.fill.style.width = `${pools.resource.fraction * 100}%`;
-    resourcePool.label.textContent = pools.resource.text;
+    writePoolLabel(healthPool.label, pools.health.text);
+    writePoolLabel(resourcePool.label, pools.resource.text);
 
     // The experience strip along the very bottom (spec 163). Written only when
     // it moves: a per-frame style write is a per-frame layout, and experience
@@ -1121,7 +1275,14 @@ export function createHud(
       xpFill.dataset['detail'] = xp.detail;
       xpFill.style.width = `${xp.fraction * 100}%`;
       xpStrip.title = xp.detail;
-      xpDetail.textContent = xp.detail;
+      xpDetail.innerHTML = pixelTextSvg(xp.detail, {
+        scale: layout.xpDetailScale,
+        fill: '#ffe6a8',
+        outline: '#0a0d14',
+      });
+      // What `scripts/probe-bottom-hud.ts` reads: the line is a path now and has
+      // no text content to ask for.
+      xpDetail.dataset['text'] = xp.detail;
     }
 
     // "YOU ARE DEAD", and the way back up (spec 163). The overlay is derived

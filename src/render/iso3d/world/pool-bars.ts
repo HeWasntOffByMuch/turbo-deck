@@ -7,10 +7,17 @@
  * in the middle of the fight, it moves with the body, and it is the same bar
  * every enemy wears.
  *
- * Pure, and it holds one judgement rather than none: **an unknown maximum is not
- * a maximum of zero.** Before the first `Stats` message there is no stat block
- * at all, and dividing by the zero that stands in for it paints an empty health
- * bar over a player at full health for the first frames of every session.
+ * The health bar here is the *same* bar mechanically -- `HealthFlashes` from
+ * spec 145 reads it, so the white chunk a blow leaves and the flinch it kicks
+ * with (spec 146) are the ones already on screen rather than a second
+ * implementation that would drift. This module answers what the numbers are;
+ * that one answers what a blow does to them, and `hud.ts` owns the elements.
+ * The same division the floating bars and the damage numbers already have.
+ *
+ * Pure, and it holds one judgement: **an unknown maximum is not a maximum of
+ * zero.** Before the first `Stats` message there is no stat block at all, and
+ * dividing by the zero that stands in for it paints an empty health bar over a
+ * player at full health for the first frames of every session.
  */
 
 import type { ClientView } from '../../../server/client/game-client.js';
@@ -18,9 +25,23 @@ import type { ClientView } from '../../../server/client/game-client.js';
 export interface PoolBar {
   readonly current: number;
   readonly max: number;
-  /** 0..1, clamped. Zero when the maximum is not known yet. */
+  /**
+   * 0..1, clamped. Zero when the maximum is not known yet.
+   *
+   * What the *resource* bar is drawn from directly. The health bar's fill comes
+   * from `HealthFlashes` instead, which needs `current` and `max` rather than
+   * the ratio -- health kept in health units is what stops a changing maximum
+   * reading as a blow.
+   */
   readonly fraction: number;
-  /** "84 / 120", rounded -- the bar's own label. */
+  /**
+   * "179 / 218", rounded -- the bar's own label.
+   *
+   * Every character in it has a glyph in `pixel-font.ts` (the digits, the space
+   * and, since spec 163, the slash), because this is drawn in the game's own
+   * font and anything else comes out as a solid block. That is why an unknown
+   * maximum is dashes rather than an em dash.
+   */
   readonly text: string;
   /** Whether the maximum is known. False before the first `Stats` message. */
   readonly known: boolean;
@@ -39,7 +60,7 @@ function bar(current: number, max: number): PoolBar {
     current: safeCurrent,
     max: safeMax,
     fraction: known ? safeCurrent / safeMax : 0,
-    text: known ? `${Math.round(safeCurrent)} / ${Math.round(safeMax)}` : '—',
+    text: known ? `${Math.round(safeCurrent)} / ${Math.round(safeMax)}` : '-- / --',
     known,
   };
 }

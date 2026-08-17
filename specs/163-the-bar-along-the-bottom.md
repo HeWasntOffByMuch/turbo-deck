@@ -76,7 +76,8 @@ come to different answers about how far along a character is.
 
 Drawn as a strip at the very bottom of the frame, full width, six pixels tall,
 gold on black with nine hairlines cutting it into ten. Hovering it shows the
-`detail` line above it. The subdivisions are `XP_SUBDIVISIONS` hairlines and not
+`detail` line above it, in capitals, because everything in this band is drawn
+in the game's own face. The subdivisions are `XP_SUBDIVISIONS` hairlines and not
 ten separate elements, because a subdivision is a mark on one bar rather than a
 segment with its own state.
 
@@ -174,20 +175,59 @@ first `Stats` message there is no stat block, and dividing by the zero standing
 in for it paints an empty health bar over a player at full health for the opening
 frames of every session.
 
+The health bar is the **same bar mechanically** as the one over a body:
+`HealthFlashes` (specs 145/146) reads it, so the white chunk a blow leaves and
+the flinch it kicks with are the ones already on screen rather than a second
+implementation to keep in step. Two departures, each for a stated reason — the
+pool gets a `HealthFlashes` instance of its own, because sharing the floating
+bars' would make the chunk depend on whether the camera happened to be looking
+at the player; and the kick moves the whole two-bar block, because half a group
+flinching reads as a layout bug. Resource has no chunk: the chunk marks what a
+*blow* took, and nothing takes resource off you — you spend it.
+
+#### Everything in the band is drawn in the game's own font
+
+`pixel-font.ts` (spec 065), not the browser's monospace: the slot key numbers
+and names, the cooldown countdown, the vial's charges, both pool labels, the
+hover line, the weapon and window captions, and the respawn button. The band
+sits over a posterized, low-resolution world and system type over it reads like
+a debug overlay somebody left on — the same argument spec 065 made about the
+damage numbers and 143 about the refusals.
+
+Three consequences, and none of them is cosmetic:
+
+- The face has **one case and a fixed set of symbols**, so a character with no
+  glyph draws as a solid block. `/`, `%`, `(` and `)` are added for the
+  quantities this band shows, and every string it can produce is asserted
+  drawable rather than eyeballed once.
+- A label is **drawn, not typeset**: nothing reflows, and a glyph a pixel taller
+  than its track is silently clipped. So each label's size is a *scale* in the
+  layout table and its fit is a sum (`poolLabelFits`), like every other number
+  in that file.
+- No name in the ability table fits a 46px square at any scale, so a filled slot
+  on a phone draws an **icon** — the answer the compact HUD already gives for
+  the weapon switch and the window buttons.
+
 #### Sized in the layout table, like everything else in the band
 
 ```ts
 // src/render/iso3d/world/hud-layout.ts
 readonly pool: BoxSize;      // one of the two bars
 readonly poolGap: number;    // between them, and between the block and the slots
-readonly poolFontPx: number;
+readonly poolScale: number;  // font pixels, not a point size
 readonly xpBarHeight: number;
 export function poolClearance(layout: HudLayout, slots: number, frameWidth: number): number;
 export function bottomEdge(layout: HudLayout): number;   // edge + xpBarHeight
+export function poolBlockHeight(layout: HudLayout): number;
+export function poolBottom(layout: HudLayout): number;   // centred on the slot row
+export function poolLabelFits(layout: HudLayout, longest: string): boolean;
 ```
 
-Health over resource, immediately left of the centred slots, each with its
-absolute numbers over it. Sized in the layout table like every other piece of
+Health over resource, immediately left of the centred slots and *centred on
+them* rather than sharing their floor, each with its absolute numbers over it.
+Centring is what `poolBottom` is for, and it needs the slot to have a stated
+height: the desktop slot used to be as tall as its padding and line height made
+it, which was 46 by coincidence until the label became a glyph path. Sized in the layout table like every other piece of
 HUD furniture, so *whether the pool block still clears the weapon switch on a
 phone* fails in Node rather than in a screenshot — which is the whole reason
 that table exists.
@@ -220,6 +260,16 @@ pinned to the frame's bottom and everything else has to clear it.
   on a phone in landscape.
 - `poolBars` reports an unknown maximum as unknown rather than as empty, clamps a
   negative health to zero and a resource past its ceiling to full.
+- Every string this band can draw has a glyph for every character in it -- the
+  pool labels at both ends of their range, and the hover line at every level
+  including the cap.
+- Every label fits its box at its scale: the longest pool label inside a pool
+  bar, and the longest ability name in the table inside a desktop slot.
+- The pool block's middle and the slot row's middle are the same line, in the
+  layout table and again in a real browser.
+- The pool's health bar holds the white chunk a blow left, starting where the
+  fill was -- the same reading the floating bar gets, checked on painted pixels
+  rather than on the model.
 - `?slots=` fills the slots it names in order, leaves an empty entry empty rather
   than shifting the rest along, and cannot take the vial off the bar however many
   names it is given.

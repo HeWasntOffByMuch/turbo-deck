@@ -158,7 +158,11 @@ async function main(): Promise<void> {
     await page.waitForTimeout(50);
     const detail = await box(page, '[data-xp-detail]');
     check(detail !== null, 'hovering shows it');
-    const detailText = (await page.textContent('[data-xp-detail]')) ?? '';
+    // `data-text` rather than `textContent`: the line is drawn in the game's own
+    // font (spec 163), so it is a glyph path and has no text to read.
+    const detailText = await page.evaluate(
+      () => (document.querySelector('[data-xp-detail]') as HTMLElement | null)?.dataset['text'] ?? '',
+    );
     check(detailText.includes(expected.percentText), `it says the exact percentage: ${detailText}`);
     await page.mouse.move(VIEWPORT.width / 2, 200);
 
@@ -231,10 +235,68 @@ async function main(): Promise<void> {
         weapons === null || weapons.x + weapons.width <= health.x,
         'it clears the weapon switch',
       );
-      const label = (await page.textContent('[data-pool="health"]')) ?? '';
-      check(label.includes('96 / 140'), `health says its numbers (${label})`);
+      const label = await page.evaluate(
+        () =>
+          (document.querySelector('[data-pool="health"] div:last-child') as HTMLElement | null)
+            ?.dataset['text'] ?? '',
+      );
+      check(label === '96 / 140', `health says its numbers (${label})`);
+
+      // Centred on the slot row rather than sharing its floor -- the thing that
+      // was wrong on the first cut, and a thing only a browser can settle
+      // because it is where two independently-positioned groups ended up.
+      const slotTop = Math.min(...slotBoxes.map((slot) => slot.y));
+      const slotBottom = Math.max(...slotBoxes.map((slot) => slot.bottom));
+      const blockMiddle = (health.y + resource.y + resource.height) / 2;
+      check(
+        Math.abs(blockMiddle - (slotTop + slotBottom) / 2) <= 1.5,
+        `the pool block is centred on the slots (off by ${(blockMiddle - (slotTop + slotBottom) / 2).toFixed(1)}px)`,
+      );
     }
     void stripWidth;
+
+    // --- the white chunk -------------------------------------------------
+    //
+    // The same mechanic the bar over a body has (spec 145): the fill retreats at
+    // once and the ground it gave up stays lit for a beat. Only a browser can
+    // say whether the band is actually painted -- a white bar stacked behind an
+    // opaque fill passes every test in Node and draws nothing, which is exactly
+    // what `probe-health-flash.ts` was written for on the floating bars.
+    console.log('the white chunk on the pool bar');
+    const bandWidths = async (): Promise<{ fill: number; ghost: number }> =>
+      page.evaluate(() => {
+        const track = document.querySelector('[data-pool="health"]');
+        const ghost = track?.children[0] as HTMLElement | undefined;
+        const fill = track?.children[1] as HTMLElement | undefined;
+        return {
+          ghost: ghost?.getBoundingClientRect().width ?? -1,
+          fill: fill?.getBoundingClientRect().width ?? -1,
+        };
+      });
+
+    const before = await bandWidths();
+    check(
+      Math.abs(before.ghost - before.fill) < 1,
+      'no chunk while nothing is happening',
+    );
+
+    // A blow: same maximum, less health, and a tick clock that has moved on.
+    await set(page, {
+      entities: [
+        { id: 1, kind: 0, typeId: 'player', x: 0, y: 0, z: 0, health: 40, maxHealth: 140, poise: 1 },
+      ],
+    });
+    await page.waitForTimeout(30);
+    const struck = await bandWidths();
+    check(struck.fill < before.fill - 10, `the fill retreats at once (${Math.round(struck.fill)}px)`);
+    check(
+      struck.ghost > struck.fill + 10,
+      `the white holds the ground it gave up (${Math.round(struck.ghost)}px behind ${Math.round(struck.fill)}px)`,
+    );
+    check(Math.abs(struck.ghost - before.fill) < 2, 'the chunk starts where the fill was');
+
+    await set(page, {});
+    await page.waitForTimeout(30);
 
     await page.screenshot({ path: join(outDir, 'bottom-hud.png') });
     console.log('  wrote bottom-hud.png');
@@ -252,6 +314,21 @@ async function main(): Promise<void> {
     check(overlay !== null, 'the overlay is up at zero health');
     const banner = await page.evaluate(
       () => (document.querySelector('[data-death] div') as HTMLElement | null)?.dataset['text'] ?? '',
+    );
+    // Every word on screen is the game's own face now, so nothing in the band
+    // has text content at all -- a `textContent` check here would pass on an
+    // empty string.
+    const strayText = await page.evaluate(() => {
+      const band = Array.from(
+        document.querySelectorAll('[data-slot],[data-pool],[data-respawn],[data-xp-detail]'),
+      );
+      return band
+        .map((node) => (node as HTMLElement).innerText.trim())
+        .filter((text) => text.length > 0);
+    });
+    check(
+      strayText.length === 0,
+      `nothing in the band is set in the browser's font (${strayText.join(' | ') || 'none'})`,
     );
     check(banner === 'YOU ARE DEAD', `it says so: "${banner}"`);
     const bannerBox = await box(page, '[data-death] > div:first-child');

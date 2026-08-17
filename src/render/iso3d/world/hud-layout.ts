@@ -12,7 +12,7 @@
  * desktop and a desktop with a narrow window is still driven by a mouse.
  */
 
-import { textWidth } from './pixel-font.js';
+import { GLYPH_HEIGHT, textWidth } from './pixel-font.js';
 
 /** A phone held sideways -- the frame `scripts/preview-touch.ts` drives. */
 export const PHONE_LANDSCAPE = { width: 844, height: 390 } as const;
@@ -36,9 +36,14 @@ export interface HudLayout {
   /** One hotbar slot. Square when compact, so it is a target before it is a label. */
   readonly slot: BoxSize;
   readonly slotGap: number;
-  readonly slotFontPx: number;
-  /** The countdown drawn over a slot on cooldown. */
-  readonly slotCountdownPx: number;
+  /**
+   * The countdown drawn over a slot on cooldown, in font pixels (spec 163).
+   *
+   * A scale rather than a point size since the whole bottom band moved to the
+   * game's own 5x7 face -- there is no `slotFontPx` beside it any more, because
+   * nothing in a slot is set in the browser's type.
+   */
+  readonly slotCountdownScale: number;
   /** Whether a slot shows the keyboard number that casts it. */
   readonly showsKeyNumber: boolean;
   /** Whether the diagnostic readout is drawn (it is written either way). */
@@ -105,7 +110,46 @@ export interface HudLayout {
   readonly pool: BoxSize;
   /** Between the two pool bars, and between the block and the slots. */
   readonly poolGap: number;
-  readonly poolFontPx: number;
+  /**
+   * Screen pixels per font pixel in a pool bar's label.
+   *
+   * A *scale* rather than a font size, because the label is drawn in the game's
+   * own 5x7 face (spec 065) like the damage numbers and the refusal stack. Which
+   * is also why the bar's height is a number and not a guess: a glyph is
+   * `GLYPH_HEIGHT * poolScale` tall and has to fit inside `pool.height` with a
+   * pixel to spare either side -- `poolLabelFits` below is that sum.
+   */
+  readonly poolScale: number;
+  /** The vial's charge count, and the slot's key number, in font pixels. */
+  readonly slotCountScale: number;
+  readonly slotKeyScale: number;
+  /** The ability name on a slot. One, because a name has to fit the box. */
+  readonly slotNameScale: number;
+  /**
+   * Whether a filled slot draws an icon instead of the ability's name.
+   *
+   * True on a finger, where the slot is a 46px square and no name in the table
+   * fits it in the game's own font at any scale -- "THROWING STAR" is 79 font
+   * pixels wide and the box has 42. The compact HUD already answers this
+   * question the same way everywhere else it is asked: the weapon switch and the
+   * window buttons are icons there and captions on a desktop.
+   */
+  readonly slotIconOnly: boolean;
+  /** The hover line under the experience strip. */
+  readonly xpDetailScale: number;
+  /**
+   * Every caption along the bottom edge: the weapon names, the window buttons
+   * and the WEAPON heading over them.
+   *
+   * One scale for all of them and it is the smallest, because the constraint is
+   * the longest of them -- "WEIGHTED STARS" beside a 16px icon inside a 152px
+   * button. Raising it means widening two boxes, and a band where the buttons
+   * are captioned at different sizes because their words are different lengths
+   * reads worse than one where they are all small.
+   */
+  readonly captionScale: number;
+  /** The word on the respawn button, which has a whole screen to itself. */
+  readonly respawnScale: number;
   /** The gap between the HUD and the edge of the frame, before any safe-area inset. */
   readonly edge: number;
 }
@@ -114,8 +158,7 @@ const DESKTOP: HudLayout = {
   compact: false,
   slot: { width: 92, height: 46 },
   slotGap: 6,
-  slotFontPx: 11,
-  slotCountdownPx: 15,
+  slotCountdownScale: 3,
   showsKeyNumber: true,
   showsReadout: true,
   showsTuningMenus: true,
@@ -143,9 +186,19 @@ const DESKTOP: HudLayout = {
   // Wide enough for "1240 / 1240" at 10px and short enough that two of them
   // stacked are no taller than one slot -- the pool sits beside the bar, not
   // over it.
-  pool: { width: 132, height: 14 },
+  // Wide and tall enough for "9999 / 9999" at `poolScale` -- the sum is
+  // `poolLabelFits`, and the label is drawn rather than typeset, so a box a
+  // pixel too short clips the glyphs instead of shrinking them.
+  pool: { width: 150, height: 20 },
   poolGap: 4,
-  poolFontPx: 10,
+  poolScale: 2,
+  slotCountScale: 1,
+  slotKeyScale: 2,
+  slotNameScale: 1,
+  slotIconOnly: false,
+  xpDetailScale: 2,
+  captionScale: 1,
+  respawnScale: 3,
   edge: 16,
 };
 
@@ -162,8 +215,7 @@ const COMPACT: HudLayout = {
   compact: true,
   slot: { width: 46, height: 46 },
   slotGap: 5,
-  slotFontPx: 9,
-  slotCountdownPx: 13,
+  slotCountdownScale: 2,
   showsKeyNumber: false,
   showsReadout: false,
   showsTuningMenus: false,
@@ -187,9 +239,19 @@ const COMPACT: HudLayout = {
   // Narrower on a phone, and the numbers go with it: the block has to fit
   // between the frame's edge and a hotbar that is centred on a 844px frame, and
   // `poolClearance` below is what checks that it does.
-  pool: { width: 104, height: 13 },
+  // A phone gets the same label one scale down: at 2 it would be 134 font
+  // pixels wide against a block that has to fit beside a centred bar on an
+  // 844px frame.
+  pool: { width: 104, height: 14 },
   poolGap: 4,
-  poolFontPx: 9,
+  poolScale: 1,
+  slotCountScale: 1,
+  slotKeyScale: 2,
+  slotNameScale: 1,
+  slotIconOnly: true,
+  xpDetailScale: 2,
+  captionScale: 1,
+  respawnScale: 2,
   edge: 12,
 };
 
@@ -231,6 +293,45 @@ export function centredClearance(layout: HudLayout, slots: number, frameWidth: n
  */
 export function poolClearance(layout: HudLayout, slots: number, frameWidth: number): number {
   return centredClearance(layout, slots, frameWidth) - layout.poolGap - layout.pool.width;
+}
+
+/**
+ * How tall the whole pool block is: two bars and the gap between them.
+ *
+ * Its own function because two callers need it and they need it for opposite
+ * reasons -- the layout check below asks whether it fits beside a slot, and
+ * `hud.ts` asks where to put it so that its middle and the slots' middle are the
+ * same line.
+ */
+export function poolBlockHeight(layout: HudLayout): number {
+  return stripHeight(layout.pool, layout.poolGap, 2);
+}
+
+/**
+ * How far the pool block sits above the bottom edge, so that it is *centred* on
+ * the slot row rather than sharing its floor (spec 163).
+ *
+ * The first cut bottom-aligned both, which put a 40px block against the floor of
+ * a 46px row -- six pixels of daylight above it and none below, which reads as a
+ * mistake rather than as a decision because everything else along that edge
+ * lines up.
+ */
+export function poolBottom(layout: HudLayout): number {
+  return bottomEdge(layout) + Math.round((layout.slot.height - poolBlockHeight(layout)) / 2);
+}
+
+/**
+ * Whether a pool bar's label fits inside it, in the game's own font.
+ *
+ * The label is drawn rather than typeset, so its height is `GLYPH_HEIGHT` plus
+ * the font pixel of margin the outline lives in, times the scale -- there is no
+ * line box to absorb a bad number, and a glyph taller than its track is simply
+ * clipped. The width is the longest label a real character can produce.
+ */
+export function poolLabelFits(layout: HudLayout, longest: string): boolean {
+  const height = (GLYPH_HEIGHT + 2) * layout.poolScale;
+  const width = (textWidth(longest) + 2) * layout.poolScale;
+  return height <= layout.pool.height && width <= layout.pool.width;
 }
 
 /**

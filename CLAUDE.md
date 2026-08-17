@@ -1055,7 +1055,34 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  just stop trusting the bar. pool-bars.ts holds one judgement:
                  **an unknown maximum is not a maximum of zero**, or the opening
                  frames of every session paint an empty health bar over a player
-                 at full health. death.ts returns null rather than
+                 at full health -- and its health bar is the *same bar
+                 mechanically* as the one over a body, read through spec 145's
+                 `HealthFlashes`, so the white chunk a blow leaves and the kick
+                 it lands with are the ones already on screen rather than a
+                 second implementation to keep in step. Two departures with
+                 reasons: the pool gets a `HealthFlashes` of its own, because
+                 sharing the floating bars' would make the chunk depend on
+                 whether the camera happened to be looking at the player, and the
+                 kick moves the whole two-bar block, because half a group
+                 flinching reads as a layout bug. Resource has no chunk -- the
+                 chunk marks what a blow *took*, and nothing takes resource off
+                 you.
+                 The whole band is drawn in the game's own 5x7 face
+                 (`pixel-font.ts`), which is not a style choice so much as three
+                 constraints: the face has one case and a fixed symbol set, so a
+                 character with no glyph draws as a solid block and every string
+                 the band can produce is asserted drawable; a label is *drawn*
+                 rather than typeset, so nothing reflows and a glyph a pixel
+                 taller than its track is silently clipped, which is why each
+                 size is a scale in `hud-layout.ts` and each fit is a sum; and no
+                 name in the ability table fits a 46px square at any scale, so a
+                 filled slot on a phone draws an icon -- the answer the compact
+                 HUD already gives for the weapon switch and the window buttons.
+                 The two things still set in the browser's type are the developer
+                 readout (which is debug output four harnesses parse) and the
+                 compact aim hint, which is a 75-character *sentence*: this face
+                 is for shouts and quantities, and a sentence in it reads worse
+                 rather than better. death.ts returns null rather than
                  `{ dead: false }`, since a shape that can be present and false
                  is a shape with an extra way to be wrong, and it says nothing
                  for a body that is not in the replicated set at all -- what a

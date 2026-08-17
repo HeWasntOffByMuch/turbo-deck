@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { ALL_ABILITIES } from '../../../server/data/abilities.js';
 import {
   bottomEdge,
   centredClearance,
@@ -15,10 +16,14 @@ import {
   hudLayout,
   MIN_TAP_PX,
   PHONE_LANDSCAPE,
+  poolBlockHeight,
+  poolBottom,
   poolClearance,
+  poolLabelFits,
   stripHeight,
   stripWidth,
 } from './hud-layout.js';
+import { textWidth } from './pixel-font.js';
 import { ACTION_BAR } from './action-bar.js';
 import { SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
 
@@ -34,6 +39,52 @@ describe('the HUD layout', () => {
     expect(desktop.weaponDirection).toBe('column');
     expect(desktop.showsTuningMenus).toBe(true);
     expect(desktop.systemIconOnly).toBe(false);
+  });
+
+  /**
+   * The whole bottom band is drawn in the game's own 5x7 face since spec 163, so
+   * every label in it is a *scale* and a sum rather than a point size the
+   * browser will reflow. A glyph that does not fit its box is clipped, silently.
+   */
+  it('fits every pool label inside its bar, in the game’s own font', () => {
+    // The longest a real character can produce: five digits either side, which
+    // is past `MAX_PLAYER_LEVEL`'s health by a wide margin.
+    for (const layout of [desktop, compact]) {
+      // Four digits either side: past anything the level cap can produce, and
+      // the realistic worst case rather than an arbitrary one -- the box is
+      // sized to this number, so an unreachable one would only ever be an
+      // argument for a wider bar.
+      expect(poolLabelFits(layout, '9999 / 9999')).toBe(true);
+      expect(poolLabelFits(layout, '-- / --')).toBe(true);
+    }
+  });
+
+  it('fits the longest ability name inside a slot, in the game’s own font', () => {
+    const longest = ALL_ABILITIES.reduce(
+      (worst, ability) => (ability.name.length > worst.length ? ability.name : worst),
+      '',
+    );
+    // Only where a slot draws a name at all: on a finger it draws an icon,
+    // because no name in the table fits a 46px square in this font.
+    for (const layout of [desktop, compact].filter((it) => !it.slotIconOnly)) {
+      const width = (textWidth(longest.toUpperCase()) + 2) * layout.slotNameScale;
+      expect(width, `"${longest}" at scale ${layout.slotNameScale}`).toBeLessThanOrEqual(
+        layout.slot.width,
+      );
+    }
+    expect(compact.slotIconOnly, 'a phone draws icons in its slots').toBe(true);
+  });
+
+  it('centres the pool block on the slot row rather than sharing its floor', () => {
+    for (const layout of [desktop, compact]) {
+      const block = poolBlockHeight(layout);
+      expect(block).toBeLessThanOrEqual(layout.slot.height);
+      // The daylight above the block and the daylight below it are the same,
+      // give or take the odd pixel a rounding leaves.
+      const below = poolBottom(layout) - bottomEdge(layout);
+      const above = layout.slot.height - block - below;
+      expect(Math.abs(above - below)).toBeLessThanOrEqual(1);
+    }
   });
 
   it('drops the readout and the key numbers on a finger, and switches weapons to icons', () => {

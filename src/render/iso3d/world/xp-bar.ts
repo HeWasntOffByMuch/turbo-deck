@@ -34,7 +34,14 @@ export interface XpBar {
   readonly fraction: number;
   /** The exact percentage, to one decimal -- what hovering the strip says. */
   readonly percentText: string;
-  /** The whole hover line. */
+  /**
+   * The whole hover line, in capitals.
+   *
+   * Capitals because it is drawn in the game's own font, which has one case
+   * (`pixel-font.ts`) -- an interface that shouted here and used the browser's
+   * face everywhere else would be two interfaces. Every character in it has a
+   * glyph: the brackets, the slash and the percent were added for this line.
+   */
   readonly detail: string;
 }
 
@@ -57,7 +64,7 @@ export function xpBar(level: number, experience: number): XpBar {
   const fraction = capped ? 1 : Math.min(1, toNext > 0 ? current / toNext : 0);
   const percentText = `${(fraction * 100).toFixed(1)}%`;
   const detail = capped
-    ? `Level ${safeLevel} — maximum`
-    : `Level ${safeLevel} — ${percentText} (${current} / ${toNext} xp)`;
+    ? `LEVEL ${safeLevel} - MAXIMUM`
+    : `LEVEL ${safeLevel} - ${percentText} (${current} / ${toNext} XP)`;
   return { level: safeLevel, current, toNext, fraction, percentText, detail };
 }

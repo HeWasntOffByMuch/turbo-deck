@@ -734,7 +734,12 @@ async function main(): Promise<void> {
     // proof it took is that the *server's* stat block came back naming the new
     // attack -- which is what lights the button. Photographed with a bow in
     // hand so the ranged auto-attack is on screen at all.
-    const bow = page.locator('button', { hasText: 'Hunting Bow' }).first();
+    // By `aria-label` rather than by text: since spec 163 the caption is drawn
+    // in the game's own font, so the button is a glyph path and has no text
+    // content to match on. The label is what a screen reader reads out and what
+    // `litWeapon` already reads back, so this and the assertion below are now
+    // asking about the same string.
+    const bow = page.locator('button[aria-label="Hunting Bow"]').first();
     if ((await bow.count()) > 0) {
       await bow.click();
       // Polled, not slept on. A fixed 400ms was reading the switch *before* the

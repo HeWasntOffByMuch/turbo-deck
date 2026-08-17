@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ClientView } from '../../../server/client/game-client.js';
+import { hasGlyph } from './pixel-font.js';
 import { poolBars } from './pool-bars.js';
 
 function viewFixture(overrides: Record<string, unknown> = {}): ClientView {
@@ -28,7 +29,7 @@ describe('the pool bars', () => {
     const bars = poolBars(viewFixture({ stats: null }));
     expect(bars.health.known).toBe(false);
     expect(bars.health.fraction).toBe(0);
-    expect(bars.health.text).toBe('—');
+    expect(bars.health.text).toBe('-- / --');
   });
 
   it('is empty at zero health rather than negative', () => {
@@ -42,6 +43,19 @@ describe('the pool bars', () => {
   it('never overflows its track', () => {
     const bars = poolBars(viewFixture({ resource: 999 }));
     expect(bars.resource.fraction).toBe(1);
+  });
+
+  it('says nothing the game’s font cannot draw', () => {
+    // Drawn in `pixel-font.ts`, which has one case and a fixed set of symbols --
+    // the em dash the unknown label used to be came out as a solid block.
+    for (const view of [viewFixture(), viewFixture({ stats: null })]) {
+      const bars = poolBars(view);
+      for (const bar of [bars.health, bars.resource]) {
+        for (const character of bar.text) {
+          expect(hasGlyph(character), `${JSON.stringify(character)} in "${bar.text}"`).toBe(true);
+        }
+      }
+    }
   });
 
   it('is empty for a client with no body yet', () => {
