@@ -29,7 +29,7 @@ import * as THREE from 'three';
 import { RetroPass } from '../retro-pass.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
 import { internalRenderSize } from '../view-frame.js';
-import { CAMERA_FAR, CAMERA_NEAR } from '../view-settings.js';
+import { CAMERA_FAR, CAMERA_NEAR, DEFAULT_VIEW_HALF_WIDTH } from '../view-settings.js';
 import { VfxLayer } from '../vfx/layer.js';
 import { compileRegistry } from '../vfx/compile.js';
 import { EFFECTS } from '../vfx/registry.js';
@@ -704,11 +704,24 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     retro.setSize(size.width, size.height);
     canvas.style.height = `${height}px`;
     const aspect = size.width / size.height;
-    // Never tighter than the effect needs. The zoom slider still zooms *out*,
-    // and a hundred-unit aura is no longer cropped the moment the camera is
-    // raised -- which it was, because a ring seen from above is twice as tall on
-    // screen as one seen edge-on and the box was a fixed multiple of the zoom.
-    const span = Math.max(cameraSpan, fit.span);
+    // The cog is a ZOOM on the measured frame, not a floor under it.
+    //
+    // `previewFrame` measures how big a box this effect actually needs, and this
+    // line used to take `Math.max` of that and the cog's own span -- which is the
+    // Play tab's world zoom, 640 units across by default. So every effect smaller
+    // than the game's zoom was drawn at the game's zoom rather than at its own
+    // size: a blood hit came out about a tenth of the viewport wide, which is
+    // honest about gameplay scale and useless for judging a shape. It is also
+    // what made a *field* look broken -- one that only changes the last third of
+    // a mark's life moves a few dozen pixels at that size, so switching it read
+    // as doing nothing at all.
+    //
+    // As a ratio the measured frame is honoured, the effect fills the viewport at
+    // the default zoom, and the cog still works in both directions -- including
+    // the case the old line was protecting, since a hundred-unit aura's own
+    // measured span is a hundred units whatever the cog says.
+    const zoom = cameraSpan / (DEFAULT_VIEW_HALF_WIDTH * 2);
+    const span = Math.max(20, fit.span * zoom);
     camera.left = -span * aspect * 0.5;
     camera.right = span * aspect * 0.5;
     camera.top = span * 0.5;

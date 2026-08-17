@@ -736,7 +736,10 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     // faint at once, which reads as the effect being turned down rather than as
     // paint coming apart.
     shrinkTo: 0.42,
-    fadeFrom: 0.74,
+    // Late, so alpha is not racing the break-up. The geometry coming apart is
+    // the thing being watched; a fade that outruns it turns a decomposition into
+    // the effect being turned down.
+    fadeFrom: 0.86,
   }),
 
   bloodHit({

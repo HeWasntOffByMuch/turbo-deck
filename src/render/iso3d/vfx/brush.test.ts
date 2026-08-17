@@ -315,8 +315,13 @@ describe('the blood hit', () => {
       expect(endsAt(mist, id), id).toBeLessThan(endsAt(standard, id) * 0.6);
       expect(endsAt(standard, id), id).toBeGreaterThan(0.75);
 
-      // (5) And it starts fading before the standard hit does.
-      expect(fadesFrom(mist, id), id).toBeLessThan(fadesFrom(standard, id));
+      // (5) And it does NOT lean on alpha to end. Its hold is at least as long
+      // as the standard hit's, deliberately: the break-up is the ending, and a
+      // fade that outruns it turns a decomposition into the effect being turned
+      // down. The mist held its alpha *less* long at first and that was the bug
+      // -- the geometry came apart entirely inside the last two barely-visible
+      // frames.
+      expect(fadesFrom(mist, id), id).toBeGreaterThanOrEqual(fadesFrom(standard, id));
     }
 
     // (6) And it hangs about while it does it -- longer than a paint hit, which

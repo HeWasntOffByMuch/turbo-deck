@@ -4,8 +4,8 @@ Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
 auras as drawn sigils (spec 124), impacts as crystals (spec 125), the shockwave
 combined and the counts made tunable (spec 126), blood lit and bent (spec 139),
 and a painted vocabulary added beside all of it (spec 158), corrected (159) and
-given two lingering variants (160) and a second way for a mark to end (161) —
-the last at its review gate.**
+given two lingering variants (160), a second way for a mark to end (161) and a
+preview that can actually show it (162) — the last at its review gate.**
 
 | Phase | State |
 |---|---|
@@ -24,7 +24,8 @@ the last at its review gate.**
 | art direction: a painted vocabulary (spec 158) | superseded in place by 159 |
 | the painted vocabulary, corrected (spec 159) | done |
 | two variants that linger (spec 160) | done |
-| a mark that comes apart (spec 161) | **at the review gate** |
+| a mark that comes apart (spec 161) | done |
+| the tab could not show what it was editing (spec 162) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1631,3 +1632,43 @@ asked smoke to do and what it had never quite done.
 one and a half cycles over the mark's length gives two or three islands. A high
 one takes it apart into a dotted line, which is the stipple spec 159 exists
 without -- the same failure arriving through a different door.
+
+
+---
+
+## 10. The tab could not show what it was editing (spec 162)
+
+`Ends by` was reported as doing nothing in the VFX tab. The wiring was correct
+end to end and every existing check was green; three separate things were wrong
+and none of them was the wiring.
+
+**The preview never zoomed in.** `resize()` framed with
+`Math.max(cameraSpan, fit.span)`, and `cameraSpan` is the cog's world zoom --
+640 units, because that is the *Play tab's*. Every effect smaller than the game's
+zoom was drawn at the game's zoom, so a blood hit covered about **1% of the
+canvas**. A field that changes the last third of a mark's life then moves a few
+dozen pixels. The cog is a ratio on the measured frame now.
+
+**The ending was partly applied at birth.** Both decays tested
+`smoothstep(0, band, x - leaving)`, which at `leaving = 0` is already under 1
+wherever `x` is under the band -- so retract pinched the first 9% of every mark
+from its first frame and fizzle was permanently *full of* holes rather than
+coming apart into them. Both sweep from `-band` now.
+
+**And the fizzle had no room.** It shared retract's window, so it finished at the
+same moment the alpha fade reached zero. It has its own now, and the mist stopped
+racing it with alpha.
+
+### The gap this closed
+
+The VFX tab had **no browser check on its editing path at all** -- `preview-studio`
+proves it mounts, `vfx-panels.test.ts` proves the table partitions and the JSON
+round-trips, and between them a row can be missing or wired to nothing forever.
+`scripts/probe-vfx-studio.ts` drives the real controls under a virtual clock and
+asserts an edit reaches the definition *and* the pixels, with a control edit
+beside it so a broken harness cannot pass as a broken product.
+
+Its measure is **piece count**, not pixel churn, and that is the transferable
+part: a broken stroke and an intact one overlap everywhere except the gap, so the
+obvious measurement is small when the read is completely different. Gating on it
+would have got the shader retuned to satisfy a number rather than the picture.

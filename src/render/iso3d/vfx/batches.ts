@@ -615,16 +615,36 @@ void main() {
     // (2) Then it leaves, one of two ways (spec 161). Geometric either way,
     // never an alpha fade: a dissolve made of discarded pixels is the
     // screen-door transparency spec 159 removed.
-    float leaving = smoothstep(0.58, 1.0, iAge);
+    //
+    // Both sweep a threshold from BELOW whatever they are testing to above it,
+    // rather than from zero. Written the obvious way -- smoothstep(0, band, x -
+    // leaving) -- the threshold starts at 0 and the smoothstep is already under
+    // 1 wherever x is under the band, so the mark is born with the ending
+    // partly applied: retract pinched the first 9% of every mark from its first
+    // frame, and fizzle was permanently full of holes rather than coming apart
+    // into them. That second one is why switching the two looked like it did
+    // almost nothing -- most of the difference was baked in at birth instead of
+    // happening over the life, so there was very little left to watch.
+    // The two endings need different room, which is why this is not one curve.
+    //
+    // A retract is a FINISH: fast, at the very end, the last beat of a mark that
+    // has already done its job. A fizzle is a DECOMPOSITION, and it has to be
+    // most of the way through while the mark is still opaque or nobody sees it
+    // -- run over the same window as the retract it completes at the same moment
+    // the alpha fade reaches zero, so the coming-apart happens entirely inside
+    // the last two or three barely-visible frames and switching the two looks
+    // like it changes nothing.
+    float leaving = iDecay < 0.5 ? smoothstep(0.58, 1.0, iAge) : smoothstep(0.42, 0.92, iAge);
     float alive;
     float lift;
     if (iDecay < 0.5) {
       // RETRACT. The mark is pulled back toward its own root, so the flecks
       // past the tip are the last thing left -- which is how a flick reads, and
       // it is over in a few ticks.
-      float erode = leaving * 0.98;
-      alive = smoothstep(0.0, 0.09, along - erode);
-      lift = max(position.y, erode);
+      float band = 0.09;
+      float cut = leaving * (1.0 + band) - band;
+      alive = smoothstep(0.0, band, along - cut);
+      lift = max(position.y, max(cut, 0.0));
     } else {
       // FIZZLE. Gaps open THROUGH the mark and it comes apart into shrinking
       // islands where it lies.
@@ -642,8 +662,10 @@ void main() {
       // low frequency on purpose -- about one and a half cycles over the length
       // -- because a high one takes the mark apart into a dotted line, which is
       // the stipple this vocabulary exists without.
+      float band = 0.18;
       float field = 0.5 + 0.5 * strokeWave(along, iSeed, 9.7, 11.0);
-      alive = smoothstep(0.0, 0.18, field - leaving);
+      float cut = leaving * (1.0 + band) - band;
+      alive = smoothstep(0.0, band, field - cut);
       lift = position.y;
     }
     // (3) And it thins as it goes, so the last frames are a narrower mark rather
