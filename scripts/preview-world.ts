@@ -39,6 +39,19 @@ const PORT = 4319;
 const GAP_OFFSET = 70;
 
 /**
+ * What this harness puts in the four skill slots (spec 163).
+ *
+ * The bar ships empty -- four slots a skill will go into and the vial -- so
+ * without this there is nothing on it to press and the aim, the cooldown refusal
+ * and the ground telegraph have no way into the page at all. `?slots=` is the
+ * developer path for exactly that; see `world/action-bar.ts`.
+ *
+ * Order matters and is what the `Digit` presses below name:
+ * 1 Heavy Blow, 2 Seeking Bolt, 3 Quake, 4 Mend.
+ */
+const PROBE_SLOTS = 'melee.heavy,bolt.seek,ground.quake,self.mend';
+
+/**
  * How far a candidate pixel must be from every *other* body's bar, in CSS
  * pixels, for a pick there to mean anything.
  *
@@ -410,7 +423,9 @@ async function main(): Promise<void> {
     // checks that depend on where bodies happen to stand -- the forgiving pick
     // most of all -- passed or failed by the clock. A harness whose answer moves
     // between runs cannot tell a regression from a Tuesday.
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=${PROBE_SLOTS}`, {
+      waitUntil: 'load',
+    });
     await page.waitForSelector('canvas');
     // Two waits, because they are two different facts.
     //
@@ -533,11 +548,11 @@ async function main(): Promise<void> {
     // until a click answers it.
     await page.mouse.move(820, 330);
     await page.waitForTimeout(200);
-    await page.keyboard.press('Digit2');
+    await page.keyboard.press('Digit1');
     const aimed = await waitForAim(page, /^aiming Heavy Blow/);
     await shoot(page, 'world-aim-cone');
     if (!/^aiming Heavy Blow/.test(aimed)) {
-      problems.push(`pressing 2 did not start an aim (readout: ${aimed})`);
+      problems.push(`pressing 1 did not start an aim (readout: ${aimed})`);
     }
 
     // Right-click over an aim means *no*, and only that: it goes away, and
@@ -559,7 +574,7 @@ async function main(): Promise<void> {
     // ...and again, answered this time. Placed close to the body so the confirm
     // is a commitment rather than a walk, which is what this frame is of: the
     // bar, and the body turning into the blow at its own turn rate.
-    await page.keyboard.press('Digit2');
+    await page.keyboard.press('Digit1');
     await waitForAim(page, /^aiming Heavy Blow/);
     await page.mouse.click(700, 430);
     // Confirming consumes the aim, so the question comes off the readout --
@@ -765,7 +780,7 @@ async function main(): Promise<void> {
     const settled = seekAt ? await settledBar(page, seekAt.id) : null;
     if (settled) {
       await page.mouse.move(bodyPoint(settled).x, bodyPoint(settled).y);
-      await page.keyboard.press('Digit5');
+      await page.keyboard.press('Digit2');
       const asking = await waitForAim(page, /^aiming Seeking Bolt/);
       if (!/^aiming Seeking Bolt/.test(asking)) {
         problems.push(`pressing 5 did not start a unit aim (readout: ${asking})`);
@@ -806,7 +821,7 @@ async function main(): Promise<void> {
     // A ground-targeted blast: the aim circle first, then the telegraph ring
     // the cast puts on the terrain.
     await page.mouse.move(760, 340);
-    await page.keyboard.press('Digit6');
+    await page.keyboard.press('Digit3');
     await waitForAim(page, /^aiming Quake/);
     await shoot(page, 'world-aim-circle');
     await page.mouse.click(760, 340);
@@ -817,7 +832,7 @@ async function main(): Promise<void> {
     // must start nothing. An aim that cannot be thrown is a place to park a
     // press until the timer comes back, which is the queue this refuses.
     await page.mouse.move(700, 500);
-    await page.keyboard.press('Digit6');
+    await page.keyboard.press('Digit3');
     const refused = await waitForAim(page, /^aiming Quake/, 900);
     if (/^aiming Quake/.test(refused)) {
       problems.push('a skill on cooldown could still be aimed');
@@ -1640,7 +1655,7 @@ async function escapeGoesToTheWindowFirst(page: Page, problems: string[]): Promi
     return;
   }
   await page.mouse.move(760, 340);
-  await page.keyboard.press('Digit6');
+  await page.keyboard.press('Digit3');
   if (!/^aiming/.test(await waitForAim(page, /^aiming/, 1200))) {
     console.log('  no measurement: nothing was off cooldown to aim');
     await page.keyboard.press('Escape');

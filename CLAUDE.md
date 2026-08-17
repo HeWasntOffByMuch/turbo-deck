@@ -1026,6 +1026,48 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  ground and against the terrain triangles the renderer actually
                  draws -- rasterised in software, because what is being looked at
                  is a shape rather than something that happens over time),
+                 action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
+                 band, spec 163 -- everything the HUD grew along the edge of the
+                 frame, each pure and each about one number). action-bar.ts is
+                 what the bar *holds*: four empty slots and the vial, replacing
+                 the nine-entry `HOTBAR` that had been every ability in the
+                 table laid out in authoring order since spec 062 -- a debug
+                 affordance that survived into the shipped interface. The
+                 emptiness is the feature: a slot with nothing in it is a place
+                 a skill will go, which is a thing an interface can show and a
+                 nine-wide list of everything cannot. `abilityForSlot` is the
+                 only way a slot index becomes an ability, so a key and a button
+                 cannot come to different answers and neither can cast out of a
+                 slot that holds nothing -- and the bar is built *once* in
+                 view.ts and handed to both, because a bar built twice is two
+                 answers about what is in slot 3. `?slots=` fills them, in the
+                 same register as `?seed=` and `?wire=` and for a stated reason:
+                 with the bar empty every ability but the auto-attack and the
+                 flask is unreachable from the shipped page, and the browser
+                 harnesses that check the aim, the cooldown refusal and the
+                 ground telegraph had nothing left to press. Deleting those
+                 checks would have been the change quietly taking the coverage
+                 with it. The vial can never be one of them.
+                 xp-bar.ts measures against the server's own
+                 `experienceForLevel` rather than a copy of the curve, because
+                 the strip and the character sheet disagreeing about how far
+                 along somebody is is the kind of bug nobody reports -- they
+                 just stop trusting the bar. pool-bars.ts holds one judgement:
+                 **an unknown maximum is not a maximum of zero**, or the opening
+                 frames of every session paint an empty health bar over a player
+                 at full health. death.ts returns null rather than
+                 `{ dead: false }`, since a shape that can be present and false
+                 is a shape with an extra way to be wrong, and it says nothing
+                 for a body that is not in the replicated set at all -- what a
+                 reconnect looks like for a frame or two, and where guessing
+                 "dead" would put a respawn button in front of a live player.
+                 `npx tsx scripts/probe-bottom-hud.ts` is the half no headless
+                 test can see: the real `createHud` over a fabricated view in a
+                 real browser, reading the boxes back off the DOM. It exists
+                 because none of the three questions can be reached in a real
+                 session without a fight -- the strip only moves when something
+                 dies, the overlay only appears when you lose, and the button
+                 only after that.
                  inventory-model.ts, character-model.ts and shop-model.ts (what
                  the bag, the sheet and the shop are handed -- `src/ui/` may not
                  reach the sim, so the replicated facts and the content tables

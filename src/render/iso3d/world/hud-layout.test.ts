@@ -8,16 +8,19 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  bottomEdge,
   centredClearance,
   errorLineWidth,
   errorStackBottom,
   hudLayout,
   MIN_TAP_PX,
   PHONE_LANDSCAPE,
+  poolClearance,
   stripHeight,
   stripWidth,
 } from './hud-layout.js';
-import { HOTBAR, SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
+import { ACTION_BAR } from './action-bar.js';
+import { SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
 
 const compact = hudLayout(true);
 const desktop = hudLayout(false);
@@ -92,25 +95,60 @@ describe('the HUD layout', () => {
    * against the *same* clearance: the day somebody puts it back, the sum should
    * already say whether it fits rather than being discovered on a device.
    */
-  it('fits eight compact slots across a phone in landscape, clear of both corners', () => {
-    const clearance = centredClearance(compact, HOTBAR.length, PHONE_LANDSCAPE.width);
+  it('fits the compact slots across a phone in landscape, clear of both corners', () => {
+    const slots = ACTION_BAR.length;
+    const clearance = centredClearance(compact, slots, PHONE_LANDSCAPE.width);
     const weapons = stripWidth(compact.weapon, compact.weaponGap, WEAPON_SWITCH.length);
     const windows = stripWidth(compact.systemButton, compact.systemGap, SYSTEM_BUTTONS.length);
-    expect(stripWidth(compact.slot, compact.slotGap, HOTBAR.length)).toBeLessThan(
-      PHONE_LANDSCAPE.width,
-    );
+    expect(stripWidth(compact.slot, compact.slotGap, slots)).toBeLessThan(PHONE_LANDSCAPE.width);
     expect(clearance).toBeGreaterThanOrEqual(compact.edge + windows + compact.slotGap);
     expect(clearance).toBeGreaterThanOrEqual(compact.edge + weapons + compact.slotGap);
   });
 
-  it('leaves the desktop hotbar too wide for that frame, which is why compact exists', () => {
-    expect(stripWidth(desktop.slot, desktop.slotGap, HOTBAR.length)).toBeGreaterThan(
-      centredClearance(compact, HOTBAR.length, PHONE_LANDSCAPE.width) * 2,
+  /**
+   * The pool block is the newest thing in the bottom band (spec 163) and the
+   * one most likely to be the thing that stops fitting: it sits between the
+   * frame's left edge and a centred bar, in the corner the weapon switch is
+   * already in on a desktop.
+   */
+  it('fits the pool block left of the slots, clear of the weapon switch', () => {
+    const slots = ACTION_BAR.length;
+    // The desktop switch is a *column* (`weaponDirection`), so what it occupies
+    // across the frame is one button plus the panel padding it is backed with --
+    // not three of them side by side.
+    const weapons = desktop.weapon.width + 16;
+    expect(poolClearance(desktop, slots, 1280)).toBeGreaterThanOrEqual(desktop.edge + weapons);
+    // On a phone the switch is not drawn at all, so clearing the frame's own
+    // edge is the whole requirement -- and it is a narrower frame.
+    expect(poolClearance(compact, slots, PHONE_LANDSCAPE.width)).toBeGreaterThanOrEqual(
+      compact.edge,
     );
+    // Two bars stacked are no taller than one slot, so the block sits beside the
+    // bar rather than raising the whole band.
+    expect(stripHeight(compact.pool, compact.poolGap, 2)).toBeLessThanOrEqual(compact.slot.height);
   });
 
   it('keeps the compact bottom band to a quarter of the frame', () => {
-    expect(compact.edge + compact.slot.height).toBeLessThanOrEqual(PHONE_LANDSCAPE.height / 4);
+    expect(bottomEdge(compact) + compact.slot.height).toBeLessThanOrEqual(
+      PHONE_LANDSCAPE.height / 4,
+    );
+  });
+
+  /**
+   * The experience strip is pinned to the very bottom and spans the whole width
+   * (spec 163), so it is not something the other furniture can sit beside --
+   * only above. Anything still pinned to the bare `edge` has a gold line
+   * through it.
+   */
+  it('lifts every other bottom-pinned group clear of the experience strip', () => {
+    for (const layout of [desktop, compact]) {
+      expect(layout.xpBarHeight).toBeGreaterThan(0);
+      expect(bottomEdge(layout)).toBe(layout.edge + layout.xpBarHeight);
+      expect(errorStackBottom(layout, SYSTEM_BUTTONS.length)).toBeGreaterThan(bottomEdge(layout));
+    }
+    // A few pixels: it is a readout glanced at between fights, and the one thing
+    // it must not do is take a band of the world away.
+    expect(desktop.xpBarHeight).toBeLessThanOrEqual(8);
   });
 
   it('measures a strip as boxes plus the gaps between them, and nothing as zero', () => {
@@ -135,7 +173,7 @@ describe('the HUD layout', () => {
       const group = layout.systemIconOnly
         ? layout.systemButton.height
         : stripHeight(layout.systemButton, layout.systemGap, buttons);
-      expect(errorStackBottom(layout, buttons)).toBeGreaterThan(layout.edge + group);
+      expect(errorStackBottom(layout, buttons)).toBeGreaterThan(bottomEdge(layout) + group);
     }
     // A captioned column is three buttons tall; an icon row is one.
     expect(errorStackBottom(desktop, buttons)).toBeGreaterThan(

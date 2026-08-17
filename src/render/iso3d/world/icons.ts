@@ -60,6 +60,31 @@ export const WEAPON_ICONS: Readonly<Record<string, string>> = {
  */
 export const FALLBACK_ICON = '<path d="M12 3.5 L20.5 12 L12 20.5 L3.5 12 Z"/>';
 
+/**
+ * The action bar's own icons (spec 163): the vial, and the mark an empty slot
+ * carries.
+ *
+ * Separate from {@link WEAPON_ICONS} because these are keyed by what a *slot*
+ * is rather than by an ability -- the empty one has no ability to be keyed by,
+ * which is the point of it.
+ */
+export const SLOT_ICONS: Readonly<Record<'vial' | 'empty', string>> = {
+  // A flask: a narrow neck, a stopper, a round body and a level of liquid in it.
+  // The level is drawn as a solid chord rather than a fill, so a slot that is
+  // dimmed for having no charges left still reads as a flask rather than as a
+  // circle.
+  vial:
+    '<path d="M10 3 h4"/>' +
+    '<path d="M10.5 3.5 v4.4 a6.5 6.5 0 1 0 3 0 V3.5"/>' +
+    '<path d="M7.1 14.5 h9.8" stroke-width="1.4"/>' +
+    '<path fill="currentColor" stroke="none" ' +
+    'd="M7.1 14.9 a6.4 6.4 0 0 0 9.8 0 a6.5 6.5 0 0 1 -9.8 0 Z"/>',
+  // An empty slot: a dashed square, which is the shape every interface uses for
+  // "something goes here". Not a question mark and not a plus -- a plus is a
+  // button that adds something and there is nothing here to press.
+  empty: '<rect x="5" y="5" width="14" height="14" rx="2" stroke-dasharray="3 2.6"/>',
+};
+
 /** Which window a HUD button opens, as far as the icon table is concerned. */
 export type SystemIconId = 'inventory' | 'character' | 'options';
 
@@ -92,6 +117,11 @@ export const SYSTEM_ICONS: Readonly<Record<SystemIconId, string>> = {
 /** The icon for an attack, as markup ready to drop into a button. */
 export function weaponIconSvg(abilityId: string, options: IconOptions = {}): string {
   return iconSvg(WEAPON_ICONS[abilityId] ?? FALLBACK_ICON, options);
+}
+
+/** The icon for an action-bar slot: the vial, or an empty slot's dashed square. */
+export function slotIconSvg(id: 'vial' | 'empty', options: IconOptions = {}): string {
+  return iconSvg(SLOT_ICONS[id] ?? FALLBACK_ICON, options);
 }
 
 /** The icon for a window button. */

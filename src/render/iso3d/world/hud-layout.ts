@@ -89,6 +89,23 @@ export interface HudLayout {
    */
   readonly errorScale: number;
   readonly errorGap: number;
+  /**
+   * How tall the experience strip along the very bottom is (spec 163).
+   *
+   * Every other bottom-edge offset in the HUD is `edge + this`, because the
+   * strip is pinned to the frame's bottom and spans its whole width -- so it is
+   * not a thing anything else can sit beside, only above.
+   *
+   * A few pixels, deliberately. It is a progress readout somebody glances at
+   * between fights, not a gauge they play off, and the thing it must never do is
+   * take a band of the world away.
+   */
+  readonly xpBarHeight: number;
+  /** The health/resource block, left of the slots (spec 163). One bar's box. */
+  readonly pool: BoxSize;
+  /** Between the two pool bars, and between the block and the slots. */
+  readonly poolGap: number;
+  readonly poolFontPx: number;
   /** The gap between the HUD and the edge of the frame, before any safe-area inset. */
   readonly edge: number;
 }
@@ -122,6 +139,13 @@ const DESKTOP: HudLayout = {
   // as the numbers floating over the fight it came out of.
   errorScale: 3,
   errorGap: 4,
+  xpBarHeight: 6,
+  // Wide enough for "1240 / 1240" at 10px and short enough that two of them
+  // stacked are no taller than one slot -- the pool sits beside the bar, not
+  // over it.
+  pool: { width: 132, height: 14 },
+  poolGap: 4,
+  poolFontPx: 10,
   edge: 16,
 };
 
@@ -159,6 +183,13 @@ const COMPACT: HudLayout = {
   // the longest message has to cross it whole -- see `errorLineWidth`.
   errorScale: 2,
   errorGap: 3,
+  xpBarHeight: 5,
+  // Narrower on a phone, and the numbers go with it: the block has to fit
+  // between the frame's edge and a hotbar that is centred on a 844px frame, and
+  // `poolClearance` below is what checks that it does.
+  pool: { width: 104, height: 13 },
+  poolGap: 4,
+  poolFontPx: 9,
   edge: 12,
 };
 
@@ -190,6 +221,19 @@ export function centredClearance(layout: HudLayout, slots: number, frameWidth: n
 }
 
 /**
+ * How far the pool block's left edge is from the frame's, given a centred bar.
+ *
+ * The pool sits immediately left of the slots (spec 163), so where it starts is
+ * a sum of three things that live in three different places -- the frame, the
+ * bar's width and the block's. Negative means it has run off the left edge;
+ * anything less than the weapon switch's width means the two overlap, which is
+ * the same failure {@link centredClearance} exists to catch one group over.
+ */
+export function poolClearance(layout: HudLayout, slots: number, frameWidth: number): number {
+  return centredClearance(layout, slots, frameWidth) - layout.poolGap - layout.pool.width;
+}
+
+/**
  * How wide one line of the refusal stack is drawn, in CSS px (spec 143).
  *
  * The `+ 2` is the font pixel of margin `pixelTextSvg` leaves on each side for
@@ -214,5 +258,17 @@ export function errorStackBottom(layout: HudLayout, systemButtons: number): numb
   const group = layout.systemIconOnly
     ? layout.systemButton.height
     : stripHeight(layout.systemButton, layout.systemGap, systemButtons);
-  return layout.edge + group + 6;
+  return bottomEdge(layout) + group + 6;
+}
+
+/**
+ * The bottom of everything that is not the experience strip (spec 163).
+ *
+ * One function rather than `edge` written out with a `+ xpBarHeight` at each of
+ * the four places furniture is pinned to the bottom -- the strip spans the whole
+ * width, so every one of them has to clear it and any that forgot would have a
+ * button with a gold line through it.
+ */
+export function bottomEdge(layout: HudLayout): number {
+  return layout.edge + layout.xpBarHeight;
 }

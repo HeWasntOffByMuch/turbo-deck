@@ -61,7 +61,8 @@ import { Rng } from '../../../shared/prng.js';
 import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
-import { createHud, HOTBAR } from './hud.js';
+import { createHud } from './hud.js';
+import { abilityForSlot, actionBarFromQuery } from './action-bar.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
@@ -430,7 +431,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiFrames'] = frames;
   }
 
-  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
+  /**
+   * What the bar holds (spec 163): four empty slots and the vial, unless
+   * `?slots=` says otherwise.
+   *
+   * Built once, here, and handed to both readers -- the HUD draws it and the
+   * key handler below presses it. Two copies would be two answers about what is
+   * in slot 3, which is exactly the kind of disagreement `abilityForSlot` exists
+   * to make impossible.
+   */
+  const actionBar = actionBarFromQuery(location.search);
+  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift), actionBar);
   /** The overlay's current box, so it is only rewritten when the letterbox moves. */
   let hudBox = { x: -1, y: -1, width: -1, height: -1 };
   hud.onUse((abilityId) => pressAbility(abilityId));
@@ -439,6 +450,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // `Stats`. Nothing here decides what the right-click then does -- the next
   // frame simply reads the stat and asks for whatever it names.
   hud.onEquip((itemId) => client.equip('mainHand', itemId));
+  // The way back up (spec 163). The overlay is drawn from replicated health and
+  // this is the only thing it does -- nothing on this side decides that a player
+  // is alive again.
+  hud.onRespawn(() => client.respawn());
   // The same call a key binding makes (spec 140). The button knows which window
   // it names and nothing else about what opening one costs.
   hud.onOpen((id) => ui.toggle(id));
@@ -901,7 +916,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
 
     for (const slot of decision.skillbar) {
-      const ability = HOTBAR[slot];
+      // The one gate (spec 163). An empty slot and a key past the last slot are
+      // the same nothing here as they are on the button, because both ends ask
+      // the same function -- a key that could cast out of a slot the bar draws
+      // as empty would be a second answer about what the bar holds.
+      const ability = abilityForSlot(actionBar, slot);
       if (!ability) continue;
       pressAbility(ability);
       event.preventDefault();
