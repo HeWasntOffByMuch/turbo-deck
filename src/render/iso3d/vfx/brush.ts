@@ -45,11 +45,17 @@ export interface BloodHitParams {
    * `play(id, { scale })` is the one knob that makes a hit bigger.
    */
   readonly scale: number;
-  /** Primary flicks. Two reads as one gesture; above three it is a firework. */
+  /**
+   * Dominant strokes. **One**, almost always.
+   *
+   * This is the number the corrective pass turned down hardest. A hit is one
+   * gesture; two competing marks read as two hits and a dozen small ones read as
+   * confetti.
+   */
   readonly strokes?: number;
-  /** Secondary fragments thrown outward. */
+  /** Medium marks that agree with the primary. 2-5. */
   readonly splashes?: number;
-  /** Chunky dabs of paint. */
+  /** Chunky dabs of paint. 3-8. */
   readonly droplets?: number;
   /** Length of the primary stroke, as a multiple of `scale`. */
   readonly strokeLength?: number;
@@ -71,20 +77,26 @@ export interface BloodHitParams {
   readonly drag?: number;
   /** Downward acceleration on the droplets, world units per second squared. */
   readonly gravity?: number;
+  /** Bright saturated crimson, for the smaller fresh marks. */
   readonly bright?: PaletteKey;
+  /** The strong middle red the primary body is drawn in. */
+  readonly mid?: PaletteKey;
+  /** Dark burgundy, where a mark dries. */
   readonly deep?: PaletteKey;
+  /** Darkest, for the dabs' tails. */
   readonly ink?: PaletteKey;
   readonly priority?: Priority;
 }
 
 /**
- * A blow that throws paint (spec 158).
+ * A blow that throws paint (specs 158, 159).
  *
- * Three layers, at three speeds, and the speeds are the point. The primary
- * stroke is gone in a fifth of a second and is the only thing carrying the
- * direction; the secondaries outlive it by half again and say the blow was
- * violent; the droplets fall out of the bottom of it and are what stops the
- * whole thing reading as a decal that was switched on and off.
+ * **One gesture, then a few more, then a scatter.** Spec 158 built this as three
+ * emitters of a dozen small marks and it read as a cloud of red chips; the
+ * correction is that a hit is a *composition*, and the composition is dominated
+ * by a single stroke. One primary that carries the whole direction and most of
+ * the visual mass, two to four medium marks that agree with it, and a handful of
+ * dabs. Nine pieces in total, each of them big enough to read.
  *
  * ## Everything is thrown through a `fan`
  *
@@ -93,133 +105,120 @@ export interface BloodHitParams {
  * `hit_blood` has always done, and it works there because a *ribbon* of drops
  * falling under gravity reads as a spray from any angle. A mark, though, points
  * where it was thrown, and a mark pointing up when the blow came from the left
- * is a mark that is simply wrong. `fan` is local +X, biased toward the middle,
- * lifted a little out of the ground plane (`shapes.ts`).
+ * is simply wrong. `fan` is local +X, biased toward the middle, lifted a little
+ * out of the ground plane (`shapes.ts`).
  *
- * ## The motion is one shape used three times
+ * The angles are the brief's and they are tight on purpose: the primary within a
+ * few degrees of the bearing, the secondaries inside about 35, and only the
+ * dabs allowed to stray. Randomness modifies a composition here; it does not
+ * replace one.
  *
- * `velocityScale` falling from 1 to about a tenth over the first third of a
- * life, on top of real drag. That is the "rapid initial movement followed by
- * drag" the brief asks for, and it is authored rather than physical on purpose:
- * a drag coefficient large enough to stop paint this fast also makes the first
- * two ticks a blur, and the curve lets the mark arrive at full extension and
- * *hold* there while it dries.
+ * ## The motion is in the shape, not in the transform
+ *
+ * The primary mark *draws out along its own path* over the first three ticks and
+ * then *retracts from its root*, both in the vertex shader off the particle's
+ * age (`batches.ts`). What the size curve does is far less than it looks: a mark
+ * animated by scaling alone is a decal being switched on, which is the single
+ * most reliable tell of cheap procedural VFX.
  */
 export function bloodHit(params: BloodHitParams): EffectDefinition {
   const s = params.scale;
   const bias = Math.min(1, Math.max(0, params.bias ?? 0.72));
-  const spread = params.spread ?? 0.95;
-  const life = params.lifetimeTicks ?? 40;
-  const velocity = params.velocity ?? s * 9;
+  const spread = params.spread ?? 0.62;
+  const life = params.lifetimeTicks ?? 34;
+  const velocity = params.velocity ?? s * 7;
   const drag = params.drag ?? 5.5;
   const gravity = params.gravity ?? -900;
   const strokeLength = params.strokeLength ?? 1;
   const strokeWidth = params.strokeWidth ?? 1;
   const bright = params.bright ?? 'bloodBright';
+  const mid = params.mid ?? 'bloodFresh';
   const deep = params.deep ?? 'bloodDeep';
   const ink = params.ink ?? 'bloodInk';
 
-  // A tight fan for the primary, a loose one for everything else. `bias` moves
-  // both together, so one number is "how much does this hit point somewhere".
-  const aimed = spread * (1 - bias * 0.75);
-  const scattered = spread * (1 - bias * 0.35);
+  // A tight fan for the primary, a looser one for the medium marks, and only the
+  // dabs allowed to go wide. `bias` moves all three together, so one number is
+  // "how much does this hit point somewhere".
+  const aimed = spread * (1 - bias * 0.82);
+  const scattered = spread * (1 - bias * 0.3);
+  const loose = spread * (1.6 - bias * 0.3);
 
-  // The brush's own width lives in the mesh (`brush-slash` is authored at 0.15
-  // of its length); `strokeWidth` scales the *drawn* mark, which is the only
-  // width a person tuning this can see. It reaches the size curve as a
-  // proportion, because a stroke's size IS its length and the shape carries the
-  // ratio -- so a wider mark is a shorter one drawn at the same size.
-  const primary = s * strokeLength;
-  const primaryWidth = 1 / Math.max(0.2, strokeWidth);
+  // A stroke's size IS its length; the mesh carries the width as a proportion of
+  // it, so a wider mark is a shorter one drawn at the same size. `strokeWidth` is
+  // therefore a divisor, and it is expressed that way rather than as a second
+  // length because width is the number a person tuning this can actually see.
+  const primary = s * 3.1 * strokeLength;
+  const narrow = 1 / Math.max(0.25, strokeWidth);
 
   const emitters: Emitter[] = [
-    // (a) The flick. One violent mark, along the blow, and the whole read.
+    // (a) THE mark. One. It carries the direction and most of the visual mass,
+    // and every other layer here exists to keep it company.
     {
-      id: 'stroke',
-      shape: { kind: 'fan', angle: aimed * 0.45, radius: s * 0.05, rise: 0.2 },
-      emission: { kind: 'burst', count: params.strokes ?? 2 },
-      lifetimeTicks: [Math.round(life * 0.34), Math.round(life * 0.5)],
-      speed: [velocity * 0.55, velocity],
-      spreadRadians: aimed * 0.3,
-      gravity: gravity * 0.25,
+      id: 'primary',
+      shape: { kind: 'fan', angle: aimed * 0.28, radius: s * 0.04, rise: 0.12 },
+      emission: { kind: 'burst', count: Math.max(1, params.strokes ?? 1) },
+      lifetimeTicks: [Math.round(life * 0.46), Math.round(life * 0.6)],
+      speed: [velocity * 0.9, velocity * 1.3],
+      spreadRadians: aimed * 0.14,
+      gravity: gravity * 0.14,
       drag,
-      // Out of the gate at full speed and stopped inside the first third: paint
-      // leaves a brush fast and does not coast.
-      velocityScale: { keys: [[0, 1], [0.3, 0.18], [1, 0.05]] },
-      // Grows *through* the first three ticks rather than arriving at length.
-      // A mark that is full length on the tick it is born is a decal; one that
-      // draws out is a gesture.
-      size: {
-        keys: [
-          [0, primary * 0.3 * primaryWidth],
-          [0.16, primary * 1.08 * primaryWidth],
-          [0.6, primary * primaryWidth],
-          [1, primary * 0.86 * primaryWidth],
-        ],
-      },
-      alpha: { keys: [[0, 1], [0.62, 1], [1, 0]] },
-      color: { stops: [[0, bright], [0.55, bright], [1, deep]] },
+      velocityScale: { keys: [[0, 1], [0.3, 0.16], [1, 0.04]] },
+      // Nearly flat: the *shape* extends and retracts (spec 159), so a size curve
+      // that also swung about would be two animations fighting.
+      size: { keys: [[0, primary * 0.92 * narrow], [0.35, primary * narrow], [1, primary * 0.94 * narrow]] },
+      // Opaque while it matters. Overlapping translucent marks make a third
+      // colour at every crossing that is in neither of them, which is the
+      // watercolour look this is not; and the fade at the end is short because
+      // the geometry is already retracting by then.
+      alpha: { keys: [[0, 1], [0.86, 1], [1, 0]] },
+      color: { stops: [[0, bright], [0.55, bright], [0.8, mid], [1, deep]] },
       render: 'mesh',
       mesh: { shape: 'brush-slash' },
-      blend: 'dither-cutout',
+      blend: 'alpha',
     },
-    // (b) The scatter. Short thick marks and long thin ones from one emitter --
-    // the shader's per-instance envelope and stretch are independent, so all
-    // four combinations come out of a single burst.
+    // (b) The medium marks: within about 35 degrees of the bearing, so they
+    // reinforce the gesture instead of arguing with it.
     {
-      id: 'splashes',
-      shape: { kind: 'fan', angle: scattered, radius: s * 0.09, rise: 0.3 },
-      emission: { kind: 'burst', count: params.splashes ?? 7 },
-      lifetimeTicks: [Math.round(life * 0.4), Math.round(life * 0.62)],
-      speed: [velocity * 0.5, velocity * 1.5],
-      spreadRadians: scattered * 0.4,
+      id: 'secondary',
+      shape: { kind: 'fan', angle: scattered, radius: s * 0.1, rise: 0.28 },
+      emission: { kind: 'burst', count: params.splashes ?? 3 },
+      lifetimeTicks: [Math.round(life * 0.55), Math.round(life * 0.78)],
+      speed: [velocity * 0.55, velocity * 1.35],
+      spreadRadians: scattered * 0.2,
       // Light. These are aimed marks and their direction is the information they
-      // carry, and at 0.45 of the droplets' pull a splash had turned fully
-      // downward by the middle of its life -- so the last third of the spatter
-      // was a set of vertical marks that said nothing about where the blow came
-      // from. Gravity belongs on the dabs, which have weight; a flick of paint
-      // is over before it falls.
-      gravity: gravity * 0.22,
-      drag: drag * 0.75,
-      velocityScale: { keys: [[0, 1], [0.35, 0.22], [1, 0.06]] },
-      size: {
-        keys: [
-          [0, s * 0.18],
-          [0.2, s * 0.6],
-          [0.7, s * 0.52],
-          [1, s * 0.34],
-        ],
-      },
-      alpha: { keys: [[0, 1], [0.66, 1], [1, 0]] },
-      color: { stops: [[0, bright], [0.4, deep], [1, deep]] },
+      // carry; enough gravity to turn one mid-flight makes it a vertical mark
+      // that says nothing about where the blow came from.
+      gravity: gravity * 0.2,
+      drag: drag * 0.8,
+      velocityScale: { keys: [[0, 1], [0.35, 0.2], [1, 0.05]] },
+      size: { keys: [[0, s * 1.5], [0.4, s * 1.62], [1, s * 1.44]] },
+      alpha: { keys: [[0, 1], [0.84, 1], [1, 0]] },
+      color: { stops: [[0, bright], [0.5, mid], [1, deep]] },
       render: 'mesh',
       mesh: { shape: 'brush-flick' },
-      blend: 'dither-cutout',
+      blend: 'alpha',
     },
-    // (c) The dabs. Chunky, dark, tumbling, and falling out from under the rest
-    // -- which is the layer that says the medium has weight.
-    //
-    // Not a liquid simulation and not spheres: `brush-dab` is a blunt-ended lens
-    // with a torn edge, so a droplet is a blob of *paint* seen flat-on.
+    // (c) The dabs. Chunky, dark, tumbling in *world* space rather than held to
+    // the camera -- which is where this effect's sense of depth comes from, and
+    // which only works because a brush mesh is a shallow shell rather than a
+    // plane (`stroke.ts`).
     {
-      id: 'droplets',
-      shape: { kind: 'fan', angle: scattered * 1.15, radius: s * 0.12, rise: 0.45 },
+      id: 'fragments',
+      shape: { kind: 'fan', angle: loose, radius: s * 0.14, rise: 0.42 },
       emission: { kind: 'burst', count: params.droplets ?? 5 },
-      lifetimeTicks: [Math.round(life * 0.6), life],
-      speed: [velocity * 0.3, velocity * 0.9],
-      spreadRadians: scattered * 0.6,
+      lifetimeTicks: [Math.round(life * 0.68), life],
+      speed: [velocity * 0.3, velocity * 0.95],
+      spreadRadians: loose * 0.35,
       gravity,
-      drag: drag * 0.3,
-      // A slow tumble. Fast enough that two dabs side by side are not one shape
-      // twice, slow enough that nothing spins like a propeller.
-      angularVelocity: [-3.2, 3.2],
-      velocityScale: { keys: [[0, 1], [0.4, 0.4], [1, 0.2]] },
-      size: { keys: [[0, s * 0.1], [0.25, s * 0.2], [1, s * 0.15]] },
-      alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
-      color: { stops: [[0, deep], [1, ink]] },
+      drag: drag * 0.35,
+      angularVelocity: [-4, 4],
+      velocityScale: { keys: [[0, 1], [0.4, 0.4], [1, 0.18]] },
+      size: { keys: [[0, s * 0.34], [0.3, s * 0.42], [1, s * 0.36]] },
+      alpha: { keys: [[0, 1], [0.8, 1], [1, 0]] },
+      color: { stops: [[0, bright], [0.5, mid], [0.85, deep], [1, ink]] },
       render: 'mesh',
       mesh: { shape: 'brush-dab' },
-      blend: 'dither-cutout',
+      blend: 'alpha',
     },
   ];
 
@@ -235,25 +234,23 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
 
 export interface BrushExplosionParams {
   readonly id: string;
-  /** How far the radial strokes reach, in world units. The one size knob. */
+  /** How far the burst reaches, in world units. The one size knob. */
   readonly radius: number;
-  /** Strokes in the radial burst. The brief's 8-20. */
+  /** Major strokes across the whole burst. The brief's 8-14. */
   readonly radialCount?: number;
-  /** Length of a radial stroke, as a fraction of `radius`: [min, max]. */
+  /** Length of a major stroke, as a fraction of `radius`: [min, max]. */
   readonly strokeLength?: readonly [min: number, max: number];
-  /** Thickness of a radial stroke, relative to the authored mark: [min, max]. */
+  /** Thickness of a major stroke, relative to the authored mark: [min, max]. */
   readonly strokeThickness?: readonly [min: number, max: number];
-  /** World units per second the radial strokes leave at, per unit of radius. */
+  /** World units per second the strokes leave at, per unit of radius. */
   readonly expansionSpeed?: number;
-  /** Darker fragments thrown clear. 0 for none. */
+  /** Darker transitional shapes that emerge behind the fire. 0 for none. */
   readonly debris?: number;
-  /** Painted smoke clumps. 0 for none. */
+  /** Painterly smoke masses. 0 for none. */
   readonly smoke?: number;
   /** Ticks the longest-lived mark lasts. The effect's whole duration. */
   readonly lifetimeTicks?: number;
-  /** Half-angle of the burst. `Math.PI` is a ball; less is a directed jet. */
-  readonly spread?: number;
-  /** Pale yellow, warm yellow, orange, dark warm brown, and the soot. */
+  /** Pale yellow, golden, orange, burnt orange, brown, soot. */
   readonly palette?: BrushExplosionPalette;
   /** Drive a real point light off the flash. */
   readonly light?: boolean;
@@ -264,207 +261,266 @@ export interface BrushExplosionPalette {
   readonly hot: PaletteKey;
   readonly warm: PaletteKey;
   readonly mid: PaletteKey;
+  readonly burnt: PaletteKey;
   readonly deep: PaletteKey;
   readonly soot: PaletteKey;
 }
 
 /**
- * The default ramp: pale yellow, warm yellow, orange, dark warm brown, soot.
+ * The ramp, as six named layers rather than a gradient (spec 159).
  *
- * The first three were already in the table under the names the rest of the
- * library uses them by; only the browns were missing (`palette.ts`). Naming this
- * as one object rather than five parameters is what lets a caller say "the same
- * explosion in frost colours" in one substitution.
+ * The brief's scheme: near-white yellow at the centre, golden yellow on the
+ * inner strokes, orange outside them, burnt orange on the transitional shapes,
+ * deep warm brown and soot for the smoke. Six *layers*, and the word is doing
+ * work -- each one is separate geometry drawn at its own time, not a darker
+ * pattern laid over a brighter shape.
  */
 export const EXPLOSION_PALETTE: BrushExplosionPalette = {
   hot: 'fireCore',
   warm: 'boltYellow',
   mid: 'fireBody',
+  burnt: 'paintBurnt',
   deep: 'paintBrown',
   soot: 'paintSoot',
 };
 
 /**
- * An explosion painted rather than simulated (spec 158).
+ * Where the burst's lobes point, in the effect's own frame.
  *
- * Four layers that unfold in order, and the order is the effect:
+ * Irregular on purpose and by construction. The gaps between them are 1.40,
+ * 1.32, 1.55 and 2.01 radians, so the composition has two clusters and one
+ * clear hole in it whichever way the whole thing is turned -- and the whole
+ * thing IS turned, per play, out of the seed (`brushExplosionRequest`).
  *
- *  1. **the flash**, four ticks of short thick near-white marks, additive,
- *     barely moving. It is light, so it is the one thing here that is not
- *     pigment;
- *  2. **the radial burst**, 8-20 tapered marks thrown outward, each a different
- *     length and thickness and each bending its own way, growing far faster than
- *     they travel;
- *  3. **the debris**, darker and smaller, thrown further, spinning, falling;
- *  4. **the smoke**, which is not smoke. Overlapping chunky blots that expand,
- *     rise a little, turn slowly and come apart -- because a soft transparent
- *     puff is the single most reliable way to make a stylized effect look like a
- *     particle system.
+ * This replaces a single `cone`, and the reason is the one failure the previous
+ * version could not be tuned out of: a cone samples directions uniformly, so
+ * however different the individual marks are, twelve of them come out evenly
+ * spaced and the silhouette is a radial star. Asymmetry has to be *composed*.
+ */
+const LOBES = [0.34, 1.74, 3.06, 4.61] as const;
+
+/**
+ * An explosion painted rather than simulated (specs 158, 159).
  *
- * ## Why the strokes grow faster than they move
+ * Six layers, each with its own delay, so the thing unfolds instead of arriving:
  *
- * `burst` found this first (spec 125) and the reason is the same: marks that
- * *travelled* separate from the middle and read as a ring of darts leaving,
- * where a concept-art explosion is one shape flowering. So the strokes are
- * thrown hard, stopped by heavy drag inside four ticks, and what actually reads
- * as the blast opening is the size curve. The difference here is that the size
- * curve does not come back down: paint does not retract, it dries and breaks up,
- * which the cutout does for it.
+ *  1. **flash** -- 4 short thick near-white marks, additive, 3-6 ticks. Light.
+ *  2. **major** -- 3 large dominant strokes out of one lobe, golden.
+ *  3. **mid** -- 4 medium strokes out of a second lobe, low and wide, orange.
+ *  4. **rise** -- 3 medium strokes out of a third, aimed upward.
+ *  5. **ground** -- 3 wide low strokes out of a fourth, burnt orange, spreading.
+ *  6. **transitional** -- darker brown shapes emerging among the fire.
+ *  7. **smoke** -- painted masses that expand, rise, turn and come apart.
+ *
+ * ## Why the lobes rather than a spread
+ *
+ * Because "irregular and asymmetrical" is a property of a *composition* and
+ * cannot be got out of a sampler. Four fans with different bearings, counts,
+ * pitches, lengths and colours give clusters where the lobes are and gaps
+ * between them; a single cone with a wide angle gives an even spray that reads
+ * as a star no matter how good the individual marks are. This is the difference
+ * between painting an explosion and generating one.
+ *
+ * ## Why the darker layers are separate geometry
+ *
+ * Because the alternative is a pattern laid over the bright shapes, and at any
+ * resolution that reads as dirt on the screen rather than as depth in the
+ * picture. `transitional` and `smoke` are their own marks, drawn later, in their
+ * own colours, in front of the fire.
  */
 export function brushExplosion(params: BrushExplosionParams): EffectDefinition {
   const r = params.radius;
   const palette = params.palette ?? EXPLOSION_PALETTE;
-  const spread = params.spread ?? Math.PI * 0.85;
-  const life = params.lifetimeTicks ?? 64;
-  const [lengthMin, lengthMax] = params.strokeLength ?? [0.55, 1.15];
-  const [thickMin, thickMax] = params.strokeThickness ?? [0.7, 1.4];
-  const expansion = params.expansionSpeed ?? 7;
-  const debris = params.debris ?? 8;
-  const smoke = params.smoke ?? 9;
-  // 8..20, the brief's range, clamped rather than trusted: this is the number a
-  // person retunes, and a zero here is an explosion with no explosion in it.
-  const radial = Math.max(8, Math.min(20, Math.round(params.radialCount ?? 14)));
+  const life = params.lifetimeTicks ?? 78;
+  const [lengthShort, lengthMax] = params.strokeLength ?? [0.62, 1.25];
+  const [thickMin, thickMax] = params.strokeThickness ?? [0.75, 1.35];
+  const expansion = params.expansionSpeed ?? 4.5;
+  const debris = params.debris ?? 3;
+  const smoke = params.smoke ?? 6;
+  // 8..14, the brief's range for phase B, clamped rather than trusted: this is
+  // the number a person retunes, and a zero here is an explosion with no
+  // explosion in it.
+  const majors = Math.max(8, Math.min(14, Math.round(params.radialCount ?? 13)));
 
-  // The length range reaches the size curve as its two ends: a mark is at
-  // `lengthMin` when it is born and `lengthMax` at full extension, and the
-  // shader's per-instance stretch spreads the fan out around that. The thickness
-  // range does the same job through the width, which for a stroke is the
-  // reciprocal of its drawn size -- the mesh carries the ratio.
+  // Split across the four lobes, unevenly. The largest lobe gets the dominant
+  // strokes; the rest get progressively less, which is what makes one side of
+  // the burst heavier than the other.
+  const share = (fraction: number): number => Math.max(1, Math.round(majors * fraction));
   const reach = r * lengthMax;
-  const born = r * lengthMin;
   const thickness = 2 / (thickMin + thickMax);
+  // The shortest a lobe is allowed to be, as a fraction of the longest. A lobe's
+  // own `length` multiplier is clamped into [short, 1] so retuning the range
+  // moves every lobe together rather than only the longest.
+  const short = Math.max(0.2, Math.min(1, lengthShort / Math.max(0.01, lengthMax)));
+  const span = (want: number): number => Math.max(short, Math.min(1, want));
+
+  /** One lobe of major strokes. The five differ only in these numbers. */
+  const lobe = (
+    id: string,
+    at: number,
+    count: number,
+    opts: {
+      readonly angle: number;
+      readonly rise: number;
+      readonly delay: number;
+      readonly length: number;
+      readonly from: PaletteKey;
+      readonly to: PaletteKey;
+      readonly life: readonly [number, number];
+      readonly speed?: number;
+    },
+  ): Emitter => ({
+    id,
+    shape: { kind: 'fan', angle: opts.angle, radius: r * 0.13, rise: opts.rise, bearing: at },
+    emission: { kind: 'burst', count, delayTicks: opts.delay },
+    lifetimeTicks: [Math.round(opts.life[0]), Math.round(opts.life[1])],
+    speed: [r * expansion * 0.35 * (opts.speed ?? 1), r * expansion * (opts.speed ?? 1)],
+    spreadRadians: 0.16,
+    // Heavy, but not immovable: the marks are mostly stopped inside a few ticks
+    // and the shape's own extension does the expanding, so what the little
+    // surviving travel buys is separation between marks rather than from the
+    // centre. `burst` (spec 125) found the same thing about spikes.
+    drag: 11,
+    angularVelocity: [-1.1, 1.1],
+    velocityScale: { keys: [[0, 1], [0.28, 0.22], [1, 0.05]] },
+    size: {
+      keys: [
+        [0, reach * opts.length * thickness * 0.86],
+        [0.35, reach * opts.length * thickness],
+        [1, reach * opts.length * thickness * 0.92],
+      ],
+    },
+    // Opaque while it matters. The geometry retracts from the root over the last
+    // third of the life (`batches.ts`), so there is very little for alpha to do.
+    alpha: { keys: [[0, 1], [0.82, 1], [1, 0]] },
+    color: { stops: [[0, opts.from], [0.45, opts.from], [1, opts.to]] },
+    render: 'mesh',
+    mesh: { shape: 'brush-slash' },
+    blend: 'alpha',
+    offset: { x: 0, y: r * 0.05, z: 0 },
+  });
 
   const emitters: Emitter[] = [
-    // (1) The flash. Short, thick, near-white, and over before anything else has
-    // finished being born.
+    // (1) The flash: compact, pale, and gone before anything else is fully born.
     {
       id: 'flash',
-      shape: { kind: 'cone', angle: Math.PI, radius: r * 0.04 },
-      emission: { kind: 'burst', count: 5 },
-      lifetimeTicks: [4, 7],
-      speed: [r * 0.4, r * 1.1],
-      spreadRadians: 0.5,
-      drag: 16,
-      size: { keys: [[0, r * 0.3], [0.35, r * 0.62], [1, r * 0.5]] },
-      alpha: { keys: [[0, 1], [0.5, 0.9], [1, 0]] },
-      color: { stops: [[0, palette.hot], [0.6, palette.hot], [1, palette.warm]] },
+      shape: { kind: 'fan', angle: 2.3, radius: r * 0.05, rise: 0.35 },
+      emission: { kind: 'burst', count: 4 },
+      lifetimeTicks: [3, 6],
+      speed: [r * 0.5, r * 1.4],
+      spreadRadians: 0.6,
+      drag: 18,
+      size: { keys: [[0, r * 0.5], [0.4, r * 0.62], [1, r * 0.5]] },
+      alpha: { keys: [[0, 1], [0.55, 0.95], [1, 0]] },
+      color: { stops: [[0, palette.hot], [0.65, palette.hot], [1, palette.warm]] },
       render: 'mesh',
       mesh: { shape: 'brush-slash' },
-      // The one additive layer. Light, not pigment, and it has four ticks to
-      // say so before the paint takes over.
+      // The one additive layer. Light, not pigment, and it has four ticks to say
+      // so before the paint takes over.
       blend: 'additive',
-      offset: { x: 0, y: r * 0.05, z: 0 },
+      offset: { x: 0, y: r * 0.06, z: 0 },
     },
-    // (2) The radial burst. The whole read.
-    {
-      id: 'radial',
-      // The mouth is a sixth of the radius across rather than a point. Every
-      // mark starting at one place put fourteen butts on top of each other and
-      // the middle of the blast came out as a solid lozenge with spikes on it --
-      // the individual marks, which are the whole read, only existed at the
-      // edges. Spread the roots and the same fourteen strokes read as fourteen.
-      shape: { kind: 'cone', angle: spread, radius: r * 0.16 },
-      emission: { kind: 'burst', count: radial },
-      lifetimeTicks: [Math.round(life * 0.26), Math.round(life * 0.48)],
-      speed: [r * expansion * 0.5, r * expansion],
-      spreadRadians: 0.18,
-      // Heavy, but not immovable: the size curve still does most of the
-      // expanding, and the little travel that survives is what separates the
-      // marks from each other rather than from the centre.
-      drag: 10,
-      angularVelocity: [-1.6, 1.6],
-      velocityScale: { keys: [[0, 1], [0.25, 0.2], [1, 0.04]] },
-      size: {
-        keys: [
-          [0, born * thickness * 0.4],
-          // Extremely quickly: full reach by a fifth of the life, which at these
-          // lifetimes is three or four ticks.
-          [0.2, reach * thickness],
-          [0.7, reach * thickness * 0.95],
-          [1, reach * thickness * 0.8],
-        ],
-      },
-      alpha: { keys: [[0, 1], [0.6, 1], [1, 0]] },
-      color: {
-        stops: [
-          [0, palette.hot],
-          [0.22, palette.warm],
-          [0.55, palette.mid],
-          [1, palette.deep],
-        ],
-      },
-      render: 'mesh',
-      mesh: { shape: 'brush-slash' },
-      blend: 'dither-cutout',
-      offset: { x: 0, y: r * 0.04, z: 0 },
-    },
+
+    // (2)-(5) The burst, as four lobes with nothing in common but the grammar.
+    lobe('major', LOBES[0], share(0.26), {
+      angle: 0.52,
+      rise: 0.42,
+      delay: 2,
+      length: span(1),
+      from: palette.warm,
+      to: palette.mid,
+      life: [Math.round(life * 0.2), Math.round(life * 0.36)],
+    }),
+    lobe('mid', LOBES[1], share(0.32), {
+      angle: 0.74,
+      rise: 0.1,
+      delay: 3,
+      length: span(0.74),
+      from: palette.mid,
+      to: palette.burnt,
+      life: [Math.round(life * 0.24), Math.round(life * 0.4)],
+      speed: 1.25,
+    }),
+    lobe('rise', LOBES[2], share(0.24), {
+      angle: 0.46,
+      rise: 0.92,
+      delay: 4,
+      length: span(0.86),
+      from: palette.warm,
+      to: palette.mid,
+      life: [Math.round(life * 0.24), Math.round(life * 0.38)],
+      speed: 0.85,
+    }),
+    lobe('ground', LOBES[3], share(0.22), {
+      angle: 0.92,
+      rise: -0.04,
+      delay: 5,
+      length: span(0.66),
+      from: palette.mid,
+      to: palette.burnt,
+      life: [Math.round(life * 0.24), Math.round(life * 0.38)],
+      speed: 1.4,
+    }),
   ];
 
   if (debris > 0) {
-    // (3) Rough painted chunks, not rubble. Thrown further than the burst
-    // reaches, turning, and falling out of it.
+    // (6) The transitional layer, and the reason it exists as geometry: the
+    // darker parts of a painted explosion are *shapes*, laid over the bright
+    // ones by a hand that changed brushes. Rendered late, in burnt orange going
+    // to brown, among the fire rather than after it.
     emitters.push({
-      id: 'debris',
-      shape: { kind: 'cone', angle: Math.min(spread, 1.25), radius: r * 0.1 },
-      emission: { kind: 'burst', count: debris },
-      lifetimeTicks: [Math.round(life * 0.45), Math.round(life * 0.8)],
-      // Further than the burst reaches and nowhere near as far as it wants to
-      // go: at the first cut these left at nearly twice the radial speed under
-      // a tenth of the drag, and `previewFrame` measured the large explosion at
-      // 1768 units across -- eighteen radii of mostly empty air with a dozen
-      // specks at the edge of it. Debris that outruns its own explosion stops
-      // reading as part of it.
-      speed: [r * expansion * 0.3, r * expansion * 0.65],
-      spreadRadians: 0.55,
-      gravity: -r * 16,
-      drag: 1.6,
-      angularVelocity: [-7, 7],
-      size: { keys: [[0, r * 0.1], [0.3, r * 0.16], [1, r * 0.11]] },
-      alpha: { keys: [[0, 1], [0.78, 1], [1, 0]] },
-      color: { stops: [[0, palette.mid], [0.4, palette.deep], [1, palette.soot]] },
+      id: 'transitional',
+      shape: { kind: 'fan', angle: 1.5, radius: r * 0.2, rise: 0.12, bearing: LOBES[1] + 0.5 },
+      emission: { kind: 'burst', count: debris, delayTicks: 9 },
+      lifetimeTicks: [Math.round(life * 0.24), Math.round(life * 0.4)],
+      speed: [r * 1.1, r * 2.6],
+      spreadRadians: 0.5,
+      gravity: -r * 7,
+      drag: 2.4,
+      angularVelocity: [-3.5, 3.5],
+      size: { keys: [[0, r * 0.5], [0.4, r * 0.62], [1, r * 0.54]] },
+      alpha: { keys: [[0, 1], [0.8, 1], [1, 0]] },
+      color: { stops: [[0, palette.burnt], [0.5, palette.deep], [1, palette.deep]] },
       render: 'mesh',
-      mesh: { shape: 'brush-dab' },
-      blend: 'dither-cutout',
-      // It lands. Debris that sinks through the floor is the one thing that says
-      // "particle" out loud -- `burst`'s chunks reached the same conclusion --
-      // and without it a chip thrown out of a blast in the air keeps falling for
-      // as long as it lives, which measured 1238 units of empty frame.
-      collision: { restitution: 0.25, friction: 0.7, maxBounces: 2 },
+      mesh: { shape: 'brush-flick' },
+      blend: 'alpha',
     });
   }
 
   if (smoke > 0) {
-    // (4) The mass. Chunky blots, overlapping, expanding, rising a little,
-    // turning slowly, and gone well before anybody starts waiting for them.
-    //
-    // Delayed, because smoke that is already there when the flash goes off is
-    // smoke that was drawn rather than made.
+    // (7) The mass. Each particle is already a lobed cloud -- three broad strokes
+    // crossing in one mesh (`meshes.ts`) -- so a handful of them is a chunky
+    // painted silhouette rather than a bead cluster, and they turn freely in
+    // world space rather than facing the camera.
     emitters.push({
       id: 'smoke',
-      shape: { kind: 'sphere', radius: r * 0.28 },
-      emission: { kind: 'burst', count: smoke, delayTicks: 4 },
-      lifetimeTicks: [Math.round(life * 0.62), life],
-      speed: [r * 0.9, r * 2.4],
+      shape: { kind: 'sphere', radius: r * 0.34 },
+      emission: { kind: 'burst', count: smoke, delayTicks: 16 },
+      offset: { x: 0, y: r * 0.3, z: 0 },
+      lifetimeTicks: [Math.round(life * 0.5), Math.round(life * 0.84)],
+      speed: [r * 0.8, r * 2],
       spreadRadians: 1.5,
-      drag: 3.4,
-      // The rise, and it is deliberately slight: a painted mass that climbs like
-      // a chimney is a chimney. This lifts it about a third of a radius over its
-      // life, which separates the clumps vertically and does nothing more.
-      acceleration: { x: 0, y: r * 0.55, z: 0 },
-      angularVelocity: [-0.9, 0.9],
-      // Turbulence is what makes the clumps *separate* rather than expanding as
-      // one ball -- they are born inside one sphere and pushed apart by a field
-      // that is different at each of their positions.
-      turbulence: { amplitude: r * 0.9, frequency: 0.05 },
-      size: { keys: [[0, r * 0.22], [0.45, r * 0.46], [1, r * 0.62]] },
-      // In and out. The cutout turns the tail into a thinning weave rather than
-      // a translucent smear, which is the difference between a painted mass
-      // drying up and a fog machine being switched off.
-      alpha: { keys: [[0, 0], [0.14, 0.95], [0.6, 0.8], [1, 0]] },
-      color: { stops: [[0, palette.deep], [0.45, palette.soot], [1, palette.soot]] },
+      drag: 3.2,
+      // The rise, and deliberately slight: a painted mass that climbs like a
+      // chimney is a chimney. About a third of a radius over its life.
+      acceleration: { x: 0, y: r * 0.95, z: 0 },
+      // Slow. A cloud that spins reads as a wheel.
+      angularVelocity: [-0.55, 0.55],
+      // What makes the clumps *separate* rather than expand as one ball: they are
+      // born inside one sphere and pushed apart by a field that differs at each
+      // of their positions.
+      turbulence: { amplitude: r * 0.85, frequency: 0.05 },
+      size: { keys: [[0, r * 0.52], [0.4, r * 0.95], [1, r * 1.15]] },
+      // In, hold, out. No dither anywhere: a mass thins by shrinking and by
+      // going quiet, not by having pixels taken out of it.
+      alpha: { keys: [[0, 0], [0.16, 0.96], [0.62, 0.9], [1, 0]] },
+      // Deep warm brown for most of its life and only soot at the very end.
+      // Soot from the start made a black hole in the picture rather than a
+      // painted mass -- a dark shape still has to have a colour.
+      color: { stops: [[0, palette.burnt], [0.3, palette.deep], [1, palette.soot]] },
       render: 'mesh',
       mesh: { shape: 'brush-blot' },
-      blend: 'dither-cutout',
+      blend: 'alpha',
     });
   }
 
@@ -504,25 +560,27 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   bloodHit({ id: 'blood_hit_brush', scale: 26 }),
   bloodHit({
     id: 'blood_hit_brush_heavy',
-    scale: 38,
-    strokes: 3,
-    splashes: 11,
+    scale: 36,
+    // Still ONE dominant mark. A killing blow is a bigger gesture, not two
+    // gestures -- the loud variant grows the primary and adds company to it.
+    strokes: 1,
+    splashes: 5,
     droplets: 8,
-    spread: 1.15,
-    bias: 0.62,
-    lifetimeTicks: 46,
-    velocity: 420,
+    strokeLength: 1.15,
+    spread: 0.78,
+    bias: 0.66,
+    lifetimeTicks: 40,
   }),
 
-  brushExplosion({ id: 'explosion_brush_small', radius: 34, radialCount: 9, debris: 5, smoke: 6, lifetimeTicks: 52 }),
+  brushExplosion({ id: 'explosion_brush_small', radius: 34, radialCount: 8, debris: 2, smoke: 4, lifetimeTicks: 62 }),
   brushExplosion({ id: 'explosion_brush', radius: BRUSH_EXPLOSION_RADIUS, light: true }),
   brushExplosion({
     id: 'explosion_brush_large',
     radius: 96,
-    radialCount: 19,
-    debris: 12,
-    smoke: 12,
-    lifetimeTicks: 82,
+    radialCount: 14,
+    debris: 5,
+    smoke: 8,
+    lifetimeTicks: 86,
     light: true,
     priority: 3,
   }),
@@ -638,6 +696,20 @@ export function bloodHitRequest(input: BloodHitInput): SpawnRequest {
 }
 
 /**
+ * A bearing in [0, 2pi) from a seed, well mixed.
+ *
+ * The same avalanche `VfxRng.reset` uses, and for the same reason it gives:
+ * small, structured seeds have to be spread before any of their bits mean
+ * anything.
+ */
+function bearingFromSeed(seed: number): number {
+  let s = seed >>> 0;
+  s = Math.imul(s ^ (s >>> 16), 0x45d9f3b) >>> 0;
+  s = Math.imul(s ^ (s >>> 16), 0x45d9f3b) >>> 0;
+  return ((s ^ (s >>> 16)) >>> 0) / 4294967296 * Math.PI * 2;
+}
+
+/**
  * `SpawnBrushExplosion`, as a pure request (spec 158).
  *
  * `radius` is honoured as a *length*, not as a multiplier: the preset is
@@ -665,7 +737,14 @@ export function brushExplosionRequest(input: BrushExplosionInput): SpawnRequest 
     x: input.x,
     y: input.y,
     z: input.z,
-    rotation: 0,
+    // The composition is fixed and asymmetric (`LOBES`), so what makes two
+    // explosions look like two explosions rather than one stamped twice is
+    // which way that composition is *facing*. Drawn off the seed, so it is
+    // still a pure function of the call and two clients see the same blast --
+    // and *mixed* rather than shifted, because callers seed from counters and
+    // structured ids, and a plain bit-slice gave six multiples of one number
+    // three bearings between them.
+    rotation: bearingFromSeed(input.seed),
     // Intensity enters through the *cube root*, so doubling it is a visibly
     // bigger blast rather than a blast twice as wide -- a linear intensity makes
     // 2 fill the screen and 0.5 disappear.

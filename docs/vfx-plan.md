@@ -3,8 +3,8 @@
 Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
 auras as drawn sigils (spec 124), impacts as crystals (spec 125), the shockwave
 combined and the counts made tunable (spec 126), blood lit and bent (spec 139),
-and a painted vocabulary added beside all of it (spec 158) — the last at its
-review gate.**
+and a painted vocabulary added beside all of it (spec 158) and then corrected
+(spec 159) — the last at its review gate.**
 
 | Phase | State |
 |---|---|
@@ -20,7 +20,8 @@ review gate.**
 | art direction: impacts as crystals (spec 125) | done |
 | the shockwave, and tunable counts (spec 126) | done |
 | blood: lit stains, and streaks that bend (spec 139) | done |
-| art direction: a painted vocabulary (spec 158) | **at the review gate** |
+| art direction: a painted vocabulary (spec 158) | superseded in place by 159 |
+| the painted vocabulary, corrected (spec 159) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1509,9 +1510,48 @@ Five new batches, so `REGISTRY.batches` moved from 20 to 25 (a ceiling on what
 A hit is 14 marks and an explosion 27–43. Nothing is rebuilt per frame and
 nothing is allocated per spawn.
 
+### What 159 changed, and why
+
+Spec 158's first cut is worth keeping on the record because four of its five
+faults were *technique* choices rather than tuning, and each one has a general
+lesson in it.
+
+| Fault | Cause | Lesson |
+|---|---|---|
+| checkerboards, halftone fills, one-pixel fragments | `dither-cutout` on every painted emitter | ordered dithering is screen-door transparency; it is a pixel-art technique and cannot be borrowed for a painterly look |
+| "the silhouettes are pixelated" | the preview drove `vfx-probe.html`, which is 240×150 upscaled 4× with `image-rendering: pixelated` | a rig built to prove one thing will report that thing about everything; judging art needs its own rig |
+| a fan of twelve marks reading as one mark twelve times | one baked outline per shape | for a *lump*, one mesh is enough; for a mark whose identity is its outline, it is not |
+| the blast was a radial star | a `cone`, which samples directions uniformly | asymmetry cannot be sampled, only composed |
+| the effects read flat | both orientations pinned every piece to the view plane | the hybrid: what carries the composition faces the camera, the small pieces do not |
+
+The structural additions were a **bank** of independently generated gestures
+merged into one geometry (clipped per instance, still one draw call), a
+**crest** vertex per node so a mark is a shell rather than a plane and can
+therefore be turned in world space, an **`iAge`** attribute so the *shape*
+extends and erodes instead of the transform scaling, and a **`bearing`** on the
+`fan` shape so an explosion is four lobes rather than one spray.
+
 ### The picture
 
-`npx tsx scripts/preview-brush-vfx.ts` writes `.claude/screenshots/brush-vfx.png`
-— seven rows of six through the game's own pass — and measures the three claims
-no headless test can make: that the stroke shader compiles at all, that the ink
-holds up across six bearings, and that six seeds produce six different pictures.
+`npx tsx scripts/preview-brush-vfx.ts` drives `brush-scene.html` -- full
+resolution, MSAA, no retro pass -- and writes `brush-blood.png` and
+`brush-explosion.png`, four rows of six each. It measures what a contact sheet
+cannot say: that the stroke shader compiles at all, that isolated pixels stay
+under 20% of ink (a dither fill is ~50%; these run 0.2--0.8%), that the ink
+survives six camera bearings, that six seeds differ and differ by similar
+amounts, and that the blast's ink does not sit on its own origin.
+
+`brush-scene.html` on its own is the thing to open when judging in motion: a lit
+low-poly scene with a dummy, an orbiting camera, blood from any bearing,
+explosions at three sizes, twenty seeds at a click, slow motion to 0.04x, pause
+and single-step.
+
+### One property worth knowing about the whole system
+
+These particle shaders write `gl_FragColor` themselves and include no
+`colorspace_fragment` chunk, so the **linear** value `palette.ts` decodes to is
+what reaches the framebuffer -- there is no encode on the way out. Every colour
+in the table is affected and the bright ones never notice; a brown authored at
+0x63402c arrives as near-black. 159 is the first spec to need dark colours and
+therefore the first to pay for it, and the browns are authored much lighter than
+they look for that reason.

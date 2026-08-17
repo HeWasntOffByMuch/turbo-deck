@@ -1,164 +1,190 @@
-// Dev-only: look at the painted effects, and measure the three claims a picture
-// alone cannot settle (spec 158).
-// `npx tsx scripts/preview-brush-vfx.ts`
+// Dev-only: judge the painted effects, in a 3D scene, at full resolution
+// (spec 159). `npx tsx scripts/preview-brush-vfx.ts`
 //
-// Writes `.claude/screenshots/brush-vfx.png`: seven rows of six, through the
-// game's own `RetroPass` at the game's own virtual resolution.
+// Drives `src/render/brush-scene.html` -- a lit low-poly scene with a dummy in
+// it, MSAA on, no retro pass and no palette -- and writes two sheets:
 //
-//   1  blood over time         does the flick read, and is it gone by 0.4s
-//   2  blood from six bearings  a flat mark held in the view plane, from all round
-//   3  blood, six seeds         is the variation real or is it one mark six times
-//   4  explosion over time      flash, burst, debris, smoke -- in that order
-//   5  explosion from six bearings
-//   6  explosion, six seeds
-//   7  intensity and size       0.6x / 1x / 1.8x, and the three explosion presets
+//   .claude/screenshots/brush-blood.png       the hit: lifecycle, bearings, seeds
+//   .claude/screenshots/brush-explosion.png   the blast: lifecycle, bearings, seeds
 //
-// ## Why a browser, and why measurements rather than just a picture
+// ## Why this replaced the old harness
 //
-// Three of this spec's claims are claims about pixels, and none of them can be
-// made in Node:
+// The first version of this drove `vfx-probe.html`, which renders into a 240x150
+// buffer and lets CSS blow it up four times with `image-rendering: pixelated`.
+// That page exists to prove particles are *inside* the low-resolution buffer, so
+// it reports stair-stepped edges and pixel clusters about anything at all --
+// including the ground. Judging brushwork through it produced a review that was
+// mostly about the harness. This one renders the same effects the way a person
+// looking at the shapes needs to see them.
 //
-//   - **the shader compiles.** The stroke path is a `#define`, an attribute and
-//     a varying that only exist on some batches. three.js logs a failed compile
-//     and carries on drawing nothing, which is why `probe-shading.ts` exists and
-//     why the console is read here.
-//   - **a flat mark reads from every angle.** That is the whole argument for the
-//     two card orientations, and a wrong basis is invisible from the one camera
-//     a fixed shot would use. So: six bearings, and the ink in each is compared.
-//   - **two spawns do not look alike.** Measured as the fraction of pixels that
-//     differ between seeds. A per-instance deformation that silently did nothing
-//     -- an attribute that failed to bind, a hash that collapsed -- would leave
-//     every tile in row 3 identical and a person flicking through a contact
-//     sheet would very likely not notice.
+// ## What it measures
 //
-// The tile is cropped at 1:1 rather than downscaled, for the reason
-// `preview-vfx-library.ts` records: the thing being judged is what a mark *is*,
-// and at three-to-one it is four pixels of one.
+// Four claims a picture makes badly and a number makes well:
+//
+//   - **no stipple.** The fraction of ink pixels that are *isolated* -- a lit
+//     pixel with fewer than two lit neighbours. A dithered fill is roughly half
+//     isolated pixels; a filled silhouette is a few percent, all boundary.
+//   - **mass is in a few big pieces.** The largest connected ink region as a
+//     share of all ink. A cloud of fragments scores low; one dominant stroke
+//     with company scores high.
+//   - **asymmetry.** For the explosion, how far the ink's centre of mass sits
+//     from the blast origin, and how uneven the ink is around it. A radial star
+//     is centred and even.
+//   - **variation, and family.** How much two seeds differ, and that they all
+//     differ by a similar amount -- different paintings by one artist.
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
 import { PNG } from 'pngjs';
-import { PROBE_BACKGROUND, PROBE_GROUND } from '../src/render/iso3d/vfx/probe-config.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4327;
 const CHROMIUM_PATH = process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium';
 const CHROMIUM_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
 
+const VIEW_W = 480;
+const VIEW_H = 360;
 const COLUMNS = 6;
-/** The device-pixel window kept from each canvas. */
-const TILE_W = 300;
-const TILE_H = 230;
-
-/** The bearings row 2 and row 5 walk, evenly round the compass. */
-const BEARINGS = Array.from({ length: COLUMNS }, (_, i) => (i / COLUMNS) * Math.PI * 2);
 
 /** Six seeds that are not consecutive integers, for the reason `rng.ts` gives. */
 const SEEDS = [20260810, 917331, 4242, 60817, 1180339, 271828];
 
-interface Shot {
+interface Tile {
   readonly label: string;
-  readonly id: string;
-  readonly ticks: number;
-  readonly azimuth?: number;
-  readonly seed?: number;
-  readonly scale?: number;
-  readonly rotation?: number;
-  readonly halfHeight: number;
+  readonly png: PNG;
+  /** The identical frame with nothing playing, so the ink can be isolated. */
+  readonly base: PNG;
+  readonly particles: number;
+  readonly draws: number;
 }
 
 interface Row {
   readonly title: string;
-  /** Tiles whose ink is compared against each other, if any. */
-  readonly check?: 'angles' | 'seeds';
-  readonly shots: readonly Shot[];
+  readonly check?: 'seeds' | 'bearings';
+  readonly tiles: Tile[];
 }
 
-const BLOOD_BOX = 66;
-const BOOM_BOX = 130;
+/**
+ * Whether a pixel is the effect rather than the scene.
+ *
+ * Against a **baseline of the same frame with nothing playing**, rather than
+ * against a colour rule. The first version tested "is this pixel warm", which
+ * counted the grass, the trunks and the dummy, and could not see dark smoke at
+ * all -- so every measurement was of the scene plus a bit of effect. A
+ * difference against the identical camera is exact, catches the near-black
+ * smoke, and needs no assumptions about the palette.
+ */
+function isInk(png: PNG, base: PNG, at: number): boolean {
+  const dr = Math.abs((png.data[at] ?? 0) - (base.data[at] ?? 0));
+  const dg = Math.abs((png.data[at + 1] ?? 0) - (base.data[at + 1] ?? 0));
+  const db = Math.abs((png.data[at + 2] ?? 0) - (base.data[at + 2] ?? 0));
+  return Math.max(dr, dg, db) > 14;
+}
 
-/** A blow arriving from the west, so every tile is aimed the same way. */
-const BLOW = 0;
+interface InkStats {
+  readonly ink: number;
+  /** Isolated lit pixels as a share of ink. The stipple detector. */
+  readonly isolated: number;
+  /** Largest connected ink blob as a share of ink. */
+  readonly biggest: number;
+  /** Connected ink regions of at least 24 pixels. */
+  readonly pieces: number;
+  /** Centre of ink mass, in pixels from the middle of the tile. */
+  readonly offsetX: number;
+  readonly offsetY: number;
+}
 
-function bloodOverTime(): Row {
-  // 2 to 24 ticks: the whole of a hit, which is authored to be over by 40.
-  const ticks = [2, 4, 7, 11, 16, 24];
+/**
+ * Measure the ink in a tile.
+ *
+ * One pass to mark, one to count neighbours, one flood fill for the regions.
+ * Slow and completely fine: this runs on a few dozen tiles once.
+ */
+function measure(png: PNG, base: PNG): InkStats {
+  const w = png.width;
+  const h = png.height;
+  const mask = new Uint8Array(w * h);
+  let ink = 0;
+  let sumX = 0;
+  let sumY = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (!isInk(png, base, i * 4)) continue;
+    mask[i] = 1;
+    ink += 1;
+    sumX += i % w;
+    sumY += Math.floor(i / w);
+  }
+  if (ink === 0) return { ink: 0, isolated: 0, biggest: 0, pieces: 0, offsetX: 0, offsetY: 0 };
+
+  // Isolation: a lit pixel with fewer than two lit neighbours in its 4-ring is
+  // either a speck or a hairline. A dither fill is half of them by construction;
+  // a filled shape is only its own boundary, and a boundary is a line rather
+  // than an area, so the fraction stays small.
+  let isolated = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!mask[i]) continue;
+      let neighbours = 0;
+      if (x > 0 && mask[i - 1]) neighbours += 1;
+      if (x < w - 1 && mask[i + 1]) neighbours += 1;
+      if (y > 0 && mask[i - w]) neighbours += 1;
+      if (y < h - 1 && mask[i + w]) neighbours += 1;
+      if (neighbours < 2) isolated += 1;
+    }
+  }
+
+  // Connected regions, iterative so a big blob cannot blow the stack.
+  const seen = new Uint8Array(w * h);
+  const stack: number[] = [];
+  let biggest = 0;
+  let pieces = 0;
+  for (let start = 0; start < w * h; start++) {
+    if (!mask[start] || seen[start]) continue;
+    let size = 0;
+    stack.push(start);
+    seen[start] = 1;
+    while (stack.length > 0) {
+      const at = stack.pop() as number;
+      size += 1;
+      const x = at % w;
+      const y = Math.floor(at / w);
+      const around = [x > 0 ? at - 1 : -1, x < w - 1 ? at + 1 : -1, y > 0 ? at - w : -1, y < h - 1 ? at + w : -1];
+      for (const next of around) {
+        if (next < 0 || seen[next] || !mask[next]) continue;
+        seen[next] = 1;
+        stack.push(next);
+      }
+    }
+    if (size >= 24) pieces += 1;
+    biggest = Math.max(biggest, size);
+  }
+
   return {
-    title: 'blood_hit_brush over time (ticks)',
-    shots: ticks.map((tick) => ({
-      label: `t=${tick}`,
-      id: 'blood_hit_brush',
-      ticks: tick,
-      rotation: BLOW,
-      halfHeight: BLOOD_BOX,
-    })),
+    ink: ink / (w * h),
+    isolated: isolated / ink,
+    biggest: biggest / ink,
+    pieces,
+    offsetX: sumX / ink - w / 2,
+    offsetY: sumY / ink - h / 2,
   };
 }
 
-function explosionOverTime(): Row {
-  const ticks = [3, 6, 10, 17, 28, 44];
-  return {
-    title: 'explosion_brush over time (ticks)',
-    shots: ticks.map((tick) => ({
-      label: `t=${tick}`,
-      id: 'explosion_brush',
-      ticks: tick,
-      halfHeight: BOOM_BOX,
-    })),
-  };
+/** The fraction of pixels where two tiles disagree by more than a hair. */
+function difference(a: PNG, b: PNG): number {
+  const total = Math.min(a.width * a.height, b.width * b.height);
+  let differing = 0;
+  for (let i = 0; i < total; i++) {
+    const at = i * 4;
+    const dr = Math.abs((a.data[at] ?? 0) - (b.data[at] ?? 0));
+    const dg = Math.abs((a.data[at + 1] ?? 0) - (b.data[at + 1] ?? 0));
+    const db = Math.abs((a.data[at + 2] ?? 0) - (b.data[at + 2] ?? 0));
+    if (Math.max(dr, dg, db) > 20) differing += 1;
+  }
+  return differing / total;
 }
-
-function fromEveryBearing(id: string, ticks: number, halfHeight: number): Row {
-  return {
-    title: `${id} from six bearings`,
-    check: 'angles',
-    shots: BEARINGS.map((azimuth) => ({
-      label: `${Math.round((azimuth * 180) / Math.PI)}deg`,
-      id,
-      ticks,
-      azimuth,
-      rotation: BLOW,
-      halfHeight,
-    })),
-  };
-}
-
-function sixSeeds(id: string, ticks: number, halfHeight: number): Row {
-  return {
-    title: `${id} with six seeds`,
-    check: 'seeds',
-    shots: SEEDS.map((seed) => ({
-      label: `#${seed}`,
-      id,
-      ticks,
-      seed,
-      rotation: BLOW,
-      halfHeight,
-    })),
-  };
-}
-
-const ROWS: readonly Row[] = [
-  bloodOverTime(),
-  fromEveryBearing('blood_hit_brush', 9, BLOOD_BOX),
-  sixSeeds('blood_hit_brush', 9, BLOOD_BOX),
-  explosionOverTime(),
-  fromEveryBearing('explosion_brush', 12, BOOM_BOX),
-  sixSeeds('explosion_brush', 12, BOOM_BOX),
-  {
-    title: 'intensity, and the three explosion presets',
-    shots: [
-      { label: 'hit 0.6x', id: 'blood_hit_brush', ticks: 9, scale: 0.6, rotation: BLOW, halfHeight: BLOOD_BOX },
-      { label: 'hit 1.0x', id: 'blood_hit_brush', ticks: 9, scale: 1, rotation: BLOW, halfHeight: BLOOD_BOX },
-      { label: 'hit heavy', id: 'blood_hit_brush_heavy', ticks: 11, rotation: BLOW, halfHeight: BLOOD_BOX },
-      { label: 'boom small', id: 'explosion_brush_small', ticks: 11, halfHeight: BOOM_BOX },
-      { label: 'boom mid', id: 'explosion_brush', ticks: 12, halfHeight: BOOM_BOX },
-      { label: 'boom large', id: 'explosion_brush_large', ticks: 14, halfHeight: BOOM_BOX * 1.55 },
-    ],
-  },
-];
 
 async function waitForServer(url: string, timeoutMs = 40_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -173,52 +199,37 @@ async function waitForServer(url: string, timeoutMs = 40_000): Promise<void> {
   }
 }
 
-/** How close a pixel is to a packed sRGB colour, as a max-channel distance. */
-function near(png: PNG, at: number, packed: number, tolerance: number): boolean {
-  const r = Math.abs((png.data[at] ?? 0) - ((packed >> 16) & 0xff));
-  const g = Math.abs((png.data[at + 1] ?? 0) - ((packed >> 8) & 0xff));
-  const b = Math.abs((png.data[at + 2] ?? 0) - (packed & 0xff));
-  return Math.max(r, g, b) <= tolerance;
-}
-
-/**
- * The fraction of the tile that is neither sky nor ground: the effect's own ink.
- *
- * A tolerance rather than an equality, because the retro pass grades and dithers
- * the whole frame -- the ground is not exactly `PROBE_GROUND` by the time it
- * reaches the canvas, and an equality test would count the entire floor as ink
- * and report every tile as full.
- */
-function inkFraction(png: PNG): number {
-  let ink = 0;
-  const total = png.width * png.height;
-  for (let i = 0; i < total; i++) {
-    const at = i * 4;
-    if (!near(png, at, PROBE_BACKGROUND, 26) && !near(png, at, PROBE_GROUND, 26)) ink += 1;
-  }
-  return ink / total;
-}
-
-/** The fraction of pixels where two tiles disagree by more than a hair. */
-function difference(a: PNG, b: PNG): number {
-  const total = Math.min(a.width * a.height, b.width * b.height);
-  let differing = 0;
-  for (let i = 0; i < total; i++) {
-    const at = i * 4;
-    const dr = Math.abs((a.data[at] ?? 0) - (b.data[at] ?? 0));
-    const dg = Math.abs((a.data[at + 1] ?? 0) - (b.data[at + 1] ?? 0));
-    const db = Math.abs((a.data[at + 2] ?? 0) - (b.data[at + 2] ?? 0));
-    if (Math.max(dr, dg, db) > 18) differing += 1;
-  }
-  return differing / total;
-}
-
-interface Tile {
-  readonly label: string;
-  readonly png: PNG;
-  readonly particles: number;
-  readonly draws: number;
-  readonly ink: number;
+function sheet(rows: readonly Row[]): PNG {
+  const out = new PNG({ width: VIEW_W * COLUMNS, height: VIEW_H * rows.length });
+  rows.forEach((row, rowIndex) => {
+    row.tiles.forEach((tile, column) => {
+      const ox = column * VIEW_W;
+      const oy = rowIndex * VIEW_H;
+      for (let y = 0; y < VIEW_H; y++) {
+        for (let x = 0; x < VIEW_W; x++) {
+          const src = (Math.min(tile.png.height - 1, y) * tile.png.width + Math.min(tile.png.width - 1, x)) * 4;
+          const dst = ((oy + y) * out.width + ox + x) * 4;
+          out.data[dst] = tile.png.data[src] ?? 0;
+          out.data[dst + 1] = tile.png.data[src + 1] ?? 0;
+          out.data[dst + 2] = tile.png.data[src + 2] ?? 0;
+          out.data[dst + 3] = 255;
+        }
+      }
+      for (let x = 0; x < VIEW_W; x++) {
+        const dst = (oy * out.width + ox + x) * 4;
+        out.data[dst] = 12;
+        out.data[dst + 1] = 16;
+        out.data[dst + 2] = 20;
+      }
+      for (let y = 0; y < VIEW_H; y++) {
+        const dst = ((oy + y) * out.width + ox) * 4;
+        out.data[dst] = 12;
+        out.data[dst + 1] = 16;
+        out.data[dst + 2] = 20;
+      }
+    });
+  });
+  return out;
 }
 
 async function main(): Promise<void> {
@@ -234,50 +245,193 @@ async function main(): Promise<void> {
   });
   const browser = await chromium.launch({ executablePath: CHROMIUM_PATH, args: CHROMIUM_ARGS });
 
-  const rows: Tile[][] = [];
   const problems: string[] = [];
+  const bloodRows: Row[] = [];
+  const boomRows: Row[] = [];
 
   try {
-    await waitForServer(`http://localhost:${PORT}/vfx-probe.html`);
-    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+    await waitForServer(`http://localhost:${PORT}/brush-scene.html`);
+    const page = await browser.newPage({ viewport: { width: VIEW_W, height: VIEW_H } });
     const logs: string[] = [];
     page.on('console', (message) => logs.push(`${message.type()}: ${message.text()}`));
     page.on('pageerror', (error) => logs.push(`pageerror: ${error.message}`));
+    await page.goto(`http://localhost:${PORT}/brush-scene.html`, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => window.brushScene !== undefined, undefined, { timeout: 30_000 });
+    // The page's own loop must not advance the sim while a script is scrubbing
+    // it: a screenshot taken between a `step` and a paint would be a different
+    // tick from the one that was asked for.
+    await page.evaluate(() => {
+      window.brushScene?.setPaused(true);
+      // The controls are for a person driving this by hand; a contact sheet of
+      // them is a contact sheet of a toolbar.
+      window.brushScene?.setChrome(false);
+    });
 
-    await page.goto(`http://localhost:${PORT}/vfx-probe.html`, { waitUntil: 'networkidle' });
-    await page.waitForFunction(() => window.vfxProbe !== undefined, undefined, { timeout: 30_000 });
-
-    for (const row of ROWS) {
-      const tiles: Tile[] = [];
-      for (const shot of row.shots) {
-        const report = await page.evaluate(
-          (input) => window.vfxProbe?.brush(input as Parameters<NonNullable<typeof window.vfxProbe>['brush']>[0]),
-          {
-            id: shot.id,
-            ticks: shot.ticks,
-            ...(shot.azimuth === undefined ? {} : { azimuth: shot.azimuth }),
-            ...(shot.seed === undefined ? {} : { seed: shot.seed }),
-            ...(shot.scale === undefined ? {} : { scale: shot.scale }),
-            ...(shot.rotation === undefined ? {} : { rotation: shot.rotation }),
-            halfHeight: shot.halfHeight,
-          },
-        );
-        const buffer = await page.locator('#probe-canvas').screenshot();
-        const png = PNG.sync.read(buffer);
-        const cropped = crop(png);
-        tiles.push({
-          label: shot.label,
-          png: cropped,
-          particles: report?.particles ?? 0,
-          draws: report?.drawCalls ?? 0,
-          ink: inkFraction(cropped),
-        });
-        if ((report?.particles ?? 0) <= 0) {
-          problems.push(`${row.title} / ${shot.label}: no live particles at tick ${shot.ticks}`);
-        }
-      }
-      rows.push(tiles);
+    interface Shot {
+      readonly label: string;
+      readonly kind: 'blood' | 'explosion';
+      readonly seed: number;
+      readonly ticks: number;
+      readonly from?: number;
+      readonly radius?: number;
+      readonly intensity?: number;
+      readonly azimuth?: number;
+      readonly elevation?: number;
+      readonly halfHeight?: number;
     }
+
+    /** Wait for the compositor to have actually drawn what was just rendered. */
+    const painted = async (): Promise<void> => {
+      // Two frames, not one. `page.screenshot` grabs the compositor's surface,
+      // and the first version of this took the shot before the surface had the
+      // new render in it -- which produced forty-eight byte-identical tiles and
+      // a report claiming every seed looked the same. The page's own loop draws
+      // on every animation frame, so waiting two is enough and does not advance
+      // the sim, which is paused.
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      );
+    };
+
+    /** Shots run one at a time: they share one page and one paused clock. */
+    const series = async (shots: readonly Shot[]): Promise<Tile[]> => {
+      const out: Tile[] = [];
+      for (const shot of shots) out.push(await take(shot));
+      return out;
+    };
+
+    const take = async (shot: Shot): Promise<Tile> => {
+      // The empty frame first, from exactly this camera. Everything measured
+      // downstream is a difference against it.
+      await page.evaluate((input) => {
+        const api = window.brushScene;
+        if (!api) return;
+        api.clear();
+        api.look({
+          ...(input.azimuth === undefined ? {} : { azimuth: input.azimuth }),
+          ...(input.elevation === undefined ? {} : { elevation: input.elevation }),
+          halfHeight: input.halfHeight ?? 150,
+        });
+        api.draw();
+      }, shot);
+      await painted();
+      const baseBuffer = await page.locator('#brush-canvas').screenshot();
+
+      const report = await page.evaluate((input) => {
+        const api = window.brushScene;
+        if (!api) return { particles: 0, drawCalls: 0, ticks: 0 };
+        api.clear();
+        if (input.kind === 'blood') {
+          api.blood({
+            seed: input.seed,
+            ...(input.from === undefined ? {} : { from: input.from }),
+            ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
+          });
+        } else {
+          api.explosion({
+            seed: input.seed,
+            ...(input.radius === undefined ? {} : { radius: input.radius }),
+            ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
+          });
+        }
+        return api.step(input.ticks);
+      }, shot);
+      await painted();
+      const buffer = await page.locator('#brush-canvas').screenshot();
+      return {
+        label: shot.label,
+        png: PNG.sync.read(buffer),
+        base: PNG.sync.read(baseBuffer),
+        particles: report.particles,
+        draws: report.drawCalls,
+      };
+    };
+
+    // --- blood ------------------------------------------------------------
+    const bloodTicks = [2, 4, 7, 12, 18, 26];
+    bloodRows.push({
+      title: 'the hit over its own life (ticks; the whole thing is 34)',
+      tiles: await series(
+        bloodTicks.map((tick) => ({ label: `t=${tick}`, kind: 'blood' as const, seed: SEEDS[0] ?? 1, ticks: tick, from: 0.6, halfHeight: 90 })),
+      ),
+    });
+    bloodRows.push({
+      title: 'the same hit from six camera bearings',
+      check: 'bearings',
+      tiles: await series(
+        Array.from({ length: COLUMNS }, (_, i) => ({
+          label: `cam ${Math.round((i / COLUMNS) * 360)}deg`,
+          kind: 'blood' as const,
+          seed: SEEDS[0] ?? 1,
+          ticks: 7,
+          from: 0.6,
+          azimuth: (i / COLUMNS) * Math.PI * 2,
+          halfHeight: 90,
+        })),
+      ),
+    });
+    bloodRows.push({
+      title: 'six attack bearings, the paint following each',
+      tiles: await series(
+        Array.from({ length: COLUMNS }, (_, i) => ({
+          label: `hit ${Math.round((i / COLUMNS) * 360)}deg`,
+          kind: 'blood' as const,
+          seed: SEEDS[i % SEEDS.length] ?? 1,
+          ticks: 7,
+          from: (i / COLUMNS) * Math.PI * 2,
+          halfHeight: 90,
+        })),
+      ),
+    });
+    bloodRows.push({
+      title: 'six seeds, one bearing',
+      check: 'seeds',
+      tiles: await series(
+        SEEDS.map((seed, i) => ({ label: `#${i}`, kind: 'blood' as const, seed, ticks: 7, from: 0.6, halfHeight: 90 })),
+      ),
+    });
+
+    // --- explosion --------------------------------------------------------
+    const boomTicks = [3, 8, 14, 24, 40, 62];
+    boomRows.push({
+      title: 'the blast over its own life (ticks; the whole thing is 86)',
+      tiles: await series(
+        boomTicks.map((tick) => ({ label: `t=${tick}`, kind: 'explosion' as const, seed: SEEDS[0] ?? 1, ticks: tick, radius: 70, halfHeight: 170 })),
+      ),
+    });
+    boomRows.push({
+      title: 'the same blast from six camera bearings',
+      check: 'bearings',
+      tiles: await series(
+        Array.from({ length: COLUMNS }, (_, i) => ({
+          label: `cam ${Math.round((i / COLUMNS) * 360)}deg`,
+          kind: 'explosion' as const,
+          seed: SEEDS[0] ?? 1,
+          ticks: 14,
+          radius: 70,
+          azimuth: (i / COLUMNS) * Math.PI * 2,
+          halfHeight: 170,
+        })),
+      ),
+    });
+    boomRows.push({
+      title: 'six seeds, one camera',
+      check: 'seeds',
+      tiles: await series(
+        SEEDS.map((seed, i) => ({ label: `#${i}`, kind: 'explosion' as const, seed, ticks: 14, radius: 70, halfHeight: 170 })),
+      ),
+    });
+    boomRows.push({
+      title: 'three sizes, and the smoke that outlives them',
+      tiles: await series([
+        { label: 'r=34', kind: 'explosion', seed: SEEDS[1] ?? 1, ticks: 12, radius: 34, halfHeight: 110 },
+        { label: 'r=70', kind: 'explosion', seed: SEEDS[2] ?? 1, ticks: 14, radius: 70, halfHeight: 170 },
+        { label: 'r=110', kind: 'explosion', seed: SEEDS[3] ?? 1, ticks: 16, radius: 110, halfHeight: 240 },
+        { label: 'smoke t=34', kind: 'explosion', seed: SEEDS[2] ?? 1, ticks: 34, radius: 70, halfHeight: 170 },
+        { label: 'smoke t=52', kind: 'explosion', seed: SEEDS[2] ?? 1, ticks: 52, radius: 70, halfHeight: 170 },
+        { label: 'smoke t=72', kind: 'explosion', seed: SEEDS[2] ?? 1, ticks: 72, radius: 70, halfHeight: 170 },
+      ]),
+    });
 
     const shaderProblems = logs.filter((line) => /error|could not compile|shader/i.test(line) && !/favicon|404/i.test(line));
     if (shaderProblems.length > 0) problems.push(...shaderProblems);
@@ -286,109 +440,84 @@ async function main(): Promise<void> {
     server.kill();
   }
 
-  // --- the sheet -----------------------------------------------------------
-  const sheet = new PNG({ width: TILE_W * COLUMNS, height: TILE_H * rows.length });
-  rows.forEach((tiles, rowIndex) => {
-    tiles.forEach((tile, column) => {
-      const ox = column * TILE_W;
-      const oy = rowIndex * TILE_H;
-      for (let y = 0; y < TILE_H; y++) {
-        for (let x = 0; x < TILE_W; x++) {
-          const src = (y * tile.png.width + x) * 4;
-          const dst = ((oy + y) * sheet.width + ox + x) * 4;
-          sheet.data[dst] = tile.png.data[src] ?? 0;
-          sheet.data[dst + 1] = tile.png.data[src + 1] ?? 0;
-          sheet.data[dst + 2] = tile.png.data[src + 2] ?? 0;
-          sheet.data[dst + 3] = 255;
+  writeFileSync(join(shots, 'brush-blood.png'), PNG.sync.write(sheet(bloodRows)));
+  writeFileSync(join(shots, 'brush-explosion.png'), PNG.sync.write(sheet(boomRows)));
+  console.log(`wrote ${join(shots, 'brush-blood.png')}`);
+  console.log(`wrote ${join(shots, 'brush-explosion.png')}`);
+
+  const report = (rows: readonly Row[], what: string): void => {
+    console.log(`\n== ${what} ==`);
+    for (const row of rows) {
+      console.log(`\n  ${row.title}`);
+      const stats = row.tiles.map((tile) => measure(tile.png, tile.base));
+      row.tiles.forEach((tile, i) => {
+        const s = stats[i];
+        if (!s) return;
+        console.log(
+          `    ${tile.label.padEnd(13)} ${String(tile.particles).padStart(3)} marks  ${tile.draws} draws  ` +
+            `ink ${(s.ink * 100).toFixed(2)}%  isolated ${(s.isolated * 100).toFixed(1)}%  ` +
+            `biggest ${(s.biggest * 100).toFixed(0)}%  pieces ${s.pieces}`,
+        );
+      });
+
+      // No stipple, anywhere. A dither fill is about half isolated pixels; a
+      // filled silhouette is its boundary only. 20% is a wide margin either way.
+      const lit = stats.filter((s) => s.ink > 0.0015);
+      const worstIsolated = lit.length > 0 ? Math.max(...lit.map((s) => s.isolated)) : 0;
+      console.log(`    -> most stippled tile: ${(worstIsolated * 100).toFixed(1)}% isolated pixels`);
+      if (worstIsolated > 0.2) problems.push(`${row.title}: ${(worstIsolated * 100).toFixed(0)}% isolated pixels -- stipple`);
+
+      if (row.check === 'bearings') {
+        const inks = stats.map((s) => s.ink);
+        const ratio = Math.max(...inks) > 0 ? Math.min(...inks) / Math.max(...inks) : 0;
+        console.log(`    -> thinnest bearing keeps ${(ratio * 100).toFixed(0)}% of the fattest one's ink`);
+        if (ratio < 0.4) problems.push(`${row.title}: ink varies ${(ratio * 100).toFixed(0)}% across bearings`);
+      }
+
+      if (row.check === 'seeds') {
+        let worst = 1;
+        let best = 0;
+        for (let a = 0; a < row.tiles.length; a++) {
+          for (let b = a + 1; b < row.tiles.length; b++) {
+            const left = row.tiles[a];
+            const right = row.tiles[b];
+            if (!left || !right) continue;
+            const d = difference(left.png, right.png);
+            worst = Math.min(worst, d);
+            best = Math.max(best, d);
+          }
         }
+        console.log(`    -> seeds differ between ${(worst * 100).toFixed(2)}% and ${(best * 100).toFixed(2)}% of the tile`);
+        if (worst < 0.004) problems.push(`${row.title}: two seeds are near-identical`);
+        // The other half of "variation": every pair differing by a similar
+        // amount is what "the same artist" means. One pair ten times more
+        // different than another is a second art style sneaking in.
+        if (best > worst * 12) problems.push(`${row.title}: seed variation is uneven (${(best / worst).toFixed(1)}x)`);
       }
-      // A hairline between tiles, so each reads as its own frame.
-      for (let x = 0; x < TILE_W; x++) {
-        const dst = (oy * sheet.width + ox + x) * 4;
-        sheet.data[dst] = 10;
-        sheet.data[dst + 1] = 10;
-        sheet.data[dst + 2] = 14;
-      }
-      for (let y = 0; y < TILE_H; y++) {
-        const dst = ((oy + y) * sheet.width + ox) * 4;
-        sheet.data[dst] = 10;
-        sheet.data[dst + 1] = 10;
-        sheet.data[dst + 2] = 14;
-      }
-    });
-  });
-  const out = join(shots, 'brush-vfx.png');
-  writeFileSync(out, PNG.sync.write(sheet));
-
-  // --- the numbers ---------------------------------------------------------
-  console.log(`wrote ${out}`);
-  ROWS.forEach((row, index) => {
-    const tiles = rows[index] ?? [];
-    console.log(`\n  row ${index + 1}: ${row.title}`);
-    for (const tile of tiles) {
-      console.log(
-        `    ${tile.label.padEnd(12)} ${String(tile.particles).padStart(4)} marks, ` +
-          `${tile.draws} draw(s), ink ${(tile.ink * 100).toFixed(2)}%`,
-      );
     }
+  };
 
-    if (row.check === 'angles') {
-      // The claim: a flat mark held in the view plane reads from every bearing.
-      // A basis built wrong -- the world velocity instead of its screen
-      // projection, say -- collapses some of these to a sliver.
-      const inks = tiles.map((tile) => tile.ink);
-      const low = Math.min(...inks);
-      const high = Math.max(...inks);
-      const ratio = high > 0 ? low / high : 0;
-      console.log(`    -> thinnest bearing keeps ${(ratio * 100).toFixed(0)}% of the fattest one's ink`);
-      if (ratio < 0.45) problems.push(`${row.title}: ink varies ${(ratio * 100).toFixed(0)}% across bearings`);
-    }
+  report(bloodRows, 'blood');
+  report(boomRows, 'explosion');
 
-    if (row.check === 'seeds') {
-      // The claim: two spawns do not look alike. Every pair, because one pair
-      // differing is what a single working seed and five broken ones look like.
-      let worst = 1;
-      for (let a = 0; a < tiles.length; a++) {
-        for (let b = a + 1; b < tiles.length; b++) {
-          const left = tiles[a];
-          const right = tiles[b];
-          if (!left || !right) continue;
-          worst = Math.min(worst, difference(left.png, right.png));
-        }
-      }
-      console.log(`    -> the two most alike seeds still differ over ${(worst * 100).toFixed(2)}% of the tile`);
-      if (worst < 0.005) problems.push(`${row.title}: two seeds are near-identical (${(worst * 100).toFixed(3)}%)`);
-    }
-  });
-
-  const draws = rows.flat().map((tile) => tile.draws);
-  console.log(`\n  most draw calls any single effect took: ${Math.max(...draws)}`);
+  // The blast must not be a radial star. A star is centred on its own origin and
+  // even all round; a composition of lobes is not.
+  const boomBearings = boomRows.find((row) => row.check === 'bearings');
+  if (boomBearings) {
+    const stats = boomBearings.tiles.map((tile) => measure(tile.png, tile.base));
+    const offsets = stats.map((s) => Math.hypot(s.offsetX, s.offsetY));
+    const mean = offsets.reduce((a, b) => a + b, 0) / offsets.length;
+    console.log(`\n  explosion ink sits ${mean.toFixed(1)}px off centre on average (a radial star sits on it)`);
+    if (mean < 6) problems.push(`the explosion is centred on its own origin (${mean.toFixed(1)}px) -- it may be a radial star`);
+  }
 
   if (problems.length > 0) {
     console.error('\nproblems:');
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exitCode = 1;
+  } else {
+    console.log('\nall checks passed');
   }
-}
-
-/** The middle of a canvas, at 1:1, biased above centre where the effects sit. */
-function crop(png: PNG): PNG {
-  const width = Math.min(png.width, TILE_W);
-  const height = Math.min(png.height, TILE_H);
-  const x0 = Math.max(0, Math.floor((png.width - width) / 2));
-  const y0 = Math.max(0, Math.floor((png.height - height) / 2) - Math.floor(height * 0.08));
-  const out = new PNG({ width: TILE_W, height: TILE_H });
-  for (let y = 0; y < TILE_H; y++) {
-    for (let x = 0; x < TILE_W; x++) {
-      const src = ((Math.min(png.height - 1, y0 + y)) * png.width + Math.min(png.width - 1, x0 + x)) * 4;
-      const dst = (y * TILE_W + x) * 4;
-      out.data[dst] = png.data[src] ?? 0;
-      out.data[dst + 1] = png.data[src + 1] ?? 0;
-      out.data[dst + 2] = png.data[src + 2] ?? 0;
-      out.data[dst + 3] = 255;
-    }
-  }
-  return out;
 }
 
 await main();
