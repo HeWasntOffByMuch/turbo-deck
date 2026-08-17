@@ -56,10 +56,53 @@ export const VFX_PALETTE = {
   dustSnow: 0xf5f5f0,
   dustStone: 0xc6bda9,
   splashWater: 0x4ec3d4,
+  /**
+   * The warm end of the painted explosion's ramp (spec 158).
+   *
+   * The progression the brief asks for is pale yellow, warm yellow, orange, dark
+   * warm brown, and the first three are already here as `fireCore`, `boltYellow`
+   * and `fireBody`. Only the last two were missing: nothing in the table was a
+   * *brown*, and `smokeDark` is a neutral grey that reads as fog rather than as
+   * a painted mass.
+   *
+   * Both were much darker at first (0x4a2a18 and 0x241d19) and the smoke came
+   * out as a black hole punched in the picture rather than as a dark shape in
+   * it. A dark colour still has to be a colour: these have to read as brown
+   * against grass, which is what "deep warm brown" has to mean to be worth
+   * naming.
+   *
+   * ## Why they are authored so much lighter than they look
+   *
+   * Because the particle shaders write `gl_FragColor` themselves and include no
+   * `colorspace_fragment` chunk, so the **linear** value this table decodes to is
+   * what lands in the framebuffer -- there is no encode on the way out. Every
+   * colour here is therefore displayed roughly as its own linear value, which
+   * barely matters for a near-white flash and matters enormously for a brown:
+   * 0x63402c decodes to (0.12, 0.05, 0.03) and shows up as near-black.
+   *
+   * That is a property of the whole system and not of these two entries -- every
+   * fire, dust and smoke colour in the table is subject to it, and the bright
+   * ones simply do not notice. It is written down here because these are the
+   * first *dark* colours the library has needed, and they are the first place it
+   * costs anything.
+   */
+  paintBrown: 0x9a6f52,
+  paintSoot: 0x7a5f4c,
+  /** The burnt orange between the fire and the brown -- the transitional layer. */
+  paintBurnt: 0x8f3d16,
 
   // --- blood and other fluids ---
   bloodFresh: 0xa32a26,
   bloodDeep: 0x5e1414,
+  /**
+   * The red a loaded brush leaves (spec 158) -- brighter and cleaner than
+   * `bloodFresh`, because the painterly hit is a combat *graphic* rather than an
+   * attempt at a fluid, and the mark has to win against grass and stone in three
+   * or four pixels of width.
+   */
+  bloodBright: 0xcf2b33,
+  /** Where a mark dries out. Darker than `bloodDeep` and off toward brown. */
+  bloodInk: 0x3a0d12,
   sapAmber: 0xc98a2b,
   ichorViolet: 0x7b3fa0,
   oilBlack: 0x1a1a20,

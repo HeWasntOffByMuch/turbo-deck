@@ -39,7 +39,17 @@ import * as THREE from 'three';
 import { BLEND, RENDER } from './compile.js';
 import type { ParticlePool } from './pool.js';
 import { sheetFrames, spriteSheet } from './textures.js';
-import { coreGlowShape, needsVelocity, orientOf, particleMesh, shadedShape, type MeshShape } from './meshes.js';
+import {
+  coreGlowShape,
+  needsVelocity,
+  orientOf,
+  particleMesh,
+  rootShadeOf,
+  shadingOf,
+  strokeShape,
+  type MeshShape,
+} from './meshes.js';
+import { STROKE_UV_STRIDE } from './stroke.js';
 
 /** Instances one batch is built to hold. Grown by rebuilding, never per frame. */
 const INITIAL_CAPACITY = 256;
@@ -409,10 +419,81 @@ attribute float iRotation;
 attribute vec3 iColor;
 attribute float iAlpha;
 attribute float iSeed;
+attribute float iAge;
+
+#ifdef VFX_STROKE
+// (along, signedHalfOffset, sideX, sideY) -- see stroke.ts. The position
+// attribute holds the
+// stroke's *spine* rather than its finished vertex, so the outline is rebuilt
+// here with a per-instance twist on top.
+attribute vec4 aStroke;
+// Which gesture in the bank this vertex belongs to. An instance draws one of
+// them and clips the rest (spec 159).
+attribute float aVariant;
+// 0 retracts toward the root, 1 breaks up in place (spec 161). Per instance
+// rather than per batch, because two effects using the same mark end it
+// differently and a batch is keyed by the mark.
+attribute float iDecay;
+uniform float uVariants;
+uniform float uRootShade;
+varying float vAlong;
+#endif
 
 varying vec3 vColor;
 varying float vAlpha;
 varying vec3 vNormal;
+
+/**
+ * A camera-facing card, rolled in the view plane (spec 158).
+ *
+ * (No backticks in here -- this is a template literal and one closes it.)
+ *
+ * The columns of the view matrix are the camera's own axes in world space, the
+ * same read the quad shader makes for its billboards. Works for an orthographic
+ * camera and a perspective one alike, because it is a basis and not a position.
+ */
+mat3 cardBasis(float roll) {
+  vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+  vec3 camUp    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+  vec3 camFwd   = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+  float c = cos(roll);
+  float s = sin(roll);
+  return mat3(camRight * c + camUp * s, camUp * c - camRight * s, camFwd);
+}
+
+/**
+ * The same card, with +Y along the SCREEN projection of a velocity.
+ *
+ * Projecting before aiming is the whole point: a mark thrown at the camera has a
+ * long world-space velocity and no screen-space direction at all, and aiming at
+ * the world vector would draw it full length pointing nowhere. Foreshortening
+ * falls out instead, exactly as it does for a stretched spark.
+ */
+mat3 cardVelocityBasis(vec3 vel) {
+  vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+  vec3 camUp    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+  vec3 camFwd   = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+  vec2 screen = vec2(dot(vel, camRight), dot(vel, camUp));
+  float speed = length(screen);
+  vec2 dir = speed > 0.0001 ? screen / speed : vec2(0.0, 1.0);
+  return mat3(camRight * dir.y - camUp * dir.x, camRight * dir.x + camUp * dir.y, camFwd);
+}
+
+#ifdef VFX_STROKE
+/** Two decorrelated values in [0,1) from one instance seed and a salt. */
+vec2 strokeHash(float seed, float salt) {
+  return vec2(
+    fract(sin(seed * 91.7211 + salt * 13.317) * 47453.1234),
+    fract(sin(seed * 37.1339 + salt * 71.913) * 21783.7231)
+  );
+}
+
+/** A slow wave along the mark, phase and depth per instance, in [-1, 1]. */
+float strokeWave(float along, float seed, float freq, float salt) {
+  vec2 h = strokeHash(seed, salt);
+  return sin(along * freq + h.x * 6.2831853) * (0.6 + 0.4 * h.y);
+}
+#endif
 
 /**
  * A basis whose +Y is the direction given, rolled about itself (spec 125).
@@ -455,6 +536,22 @@ mat3 rotation(vec3 angles) {
 }
 
 void main() {
+#ifdef VFX_STROKE
+  // Pick one gesture out of the bank and clip the others (spec 159).
+  //
+  // This is what makes a fan of a dozen marks a dozen DIFFERENT marks rather
+  // than one silhouette drawn a dozen times -- the failure the first cut of this
+  // vocabulary had, and the one that made a burst read as a radial star of
+  // repeated triangles. The unused vertices are pushed outside the clip volume,
+  // so they cost a vertex shader invocation each and produce no fragments, and
+  // the whole bank is still one draw call.
+  float pick = floor(fract(sin(iSeed * 51.3173 + 7.1329) * 39187.113) * uVariants);
+  if (abs(aVariant - pick) > 0.5) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
+  }
+#endif
+
   // Three answers, picked per batch by uOrient (spec 124). A blob tumbles
   // freely; a flame or a shaft of light stands up and takes a per-seed yaw so
   // two side by side are not one extrusion; a sigil takes the rotation it was
@@ -465,9 +562,131 @@ void main() {
     uOrient < 0.5 ? rotation(tumble(iSeed) + vec3(0.0, iRotation, 0.0)) :
     uOrient < 1.5 ? rotation(vec3(0.0, iRotation + tumble(iSeed).y, 0.0)) :
     uOrient < 2.5 ? rotation(vec3(0.0, iRotation, 0.0)) :
-                    aimedAt(iVelocity, tumble(iSeed).x);
+    uOrient < 3.5 ? aimedAt(iVelocity, tumble(iSeed).x) :
+    // The two card modes (spec 158): a brush mark is flat, so it is held in the
+    // view plane rather than tumbled, and the variety a tumble would have given
+    // comes out of the silhouette instead.
+    uOrient < 4.5 ? cardBasis(iRotation) :
+                    cardVelocityBasis(iVelocity);
 
-  vec3 local = basis * (position * iSize);
+  vec3 shape = position;
+  float tone = 1.0;
+
+#ifdef VFX_STROKE
+  // The second layer of variation, and the animation (specs 158, 159).
+  //
+  // The bank above decides WHICH mark; this perturbs the one it picked, so two
+  // instances of one bank entry still differ, and then moves the shape over the
+  // particle's life. Animating the geometry rather than the transform is the
+  // difference the brief is pointing at: a mark that is drawn out along its own
+  // path and then retracts from its root reads as paint being applied, where the
+  // same mark scaled up and down reads as a decal being switched on.
+  {
+    float along = aStroke.x;
+    vec2 side = aStroke.zw;
+    vec2 h0 = strokeHash(iSeed, 1.0);
+    vec2 h1 = strokeHash(iSeed, 2.0);
+
+    // How fat this instance is, and where along it swells.
+    float envelope = 0.72 + 0.5 * h0.x;
+    float ripple = 1.0 + 0.2 * strokeWave(along, iSeed, 4.1, 3.0);
+
+    // How long, and which way it curls away from its own root.
+    float stretch = 0.72 + 0.62 * h1.x;
+    float bend = (h1.y * 2.0 - 1.0) * 0.16 * along * along;
+
+    // Foreshortening, for a mark that was aimed rather than dropped.
+    //
+    // A stroke thrown straight at the camera has a long world-space velocity and
+    // almost no screen-space direction, so cardVelocityBasis falls back to "up"
+    // -- and without this it is then drawn at FULL LENGTH pointing nowhere,
+    // which is precisely the complaint spec 139 made about stretched blood.
+    // Floored rather than taken to zero: a mark seen end-on should read as a
+    // dab of paint, not vanish.
+    if (uOrient > 4.5) {
+      vec3 camFwd = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+      float speed = length(iVelocity);
+      float depth = speed > 0.0001 ? abs(dot(iVelocity / speed, camFwd)) : 1.0;
+      stretch *= mix(0.34, 1.0, sqrt(max(0.0, 1.0 - depth * depth)));
+    }
+
+    // (1) The gesture draws out along its own path over the first few ticks.
+    float extend = mix(0.44, 1.0, smoothstep(0.0, 0.15, iAge));
+    // (2) Then it leaves, one of two ways (spec 161). Geometric either way,
+    // never an alpha fade: a dissolve made of discarded pixels is the
+    // screen-door transparency spec 159 removed.
+    //
+    // Both sweep a threshold from BELOW whatever they are testing to above it,
+    // rather than from zero. Written the obvious way -- smoothstep(0, band, x -
+    // leaving) -- the threshold starts at 0 and the smoothstep is already under
+    // 1 wherever x is under the band, so the mark is born with the ending
+    // partly applied: retract pinched the first 9% of every mark from its first
+    // frame, and fizzle was permanently full of holes rather than coming apart
+    // into them. That second one is why switching the two looked like it did
+    // almost nothing -- most of the difference was baked in at birth instead of
+    // happening over the life, so there was very little left to watch.
+    // The two endings need different room, which is why this is not one curve.
+    //
+    // A retract is a FINISH: fast, at the very end, the last beat of a mark that
+    // has already done its job. A fizzle is a DECOMPOSITION, and it has to be
+    // most of the way through while the mark is still opaque or nobody sees it
+    // -- run over the same window as the retract it completes at the same moment
+    // the alpha fade reaches zero, so the coming-apart happens entirely inside
+    // the last two or three barely-visible frames and switching the two looks
+    // like it changes nothing.
+    float leaving = iDecay < 0.5 ? smoothstep(0.58, 1.0, iAge) : smoothstep(0.42, 0.92, iAge);
+    float alive;
+    float lift;
+    if (iDecay < 0.5) {
+      // RETRACT. The mark is pulled back toward its own root, so the flecks
+      // past the tip are the last thing left -- which is how a flick reads, and
+      // it is over in a few ticks.
+      float band = 0.09;
+      float cut = leaving * (1.0 + band) - band;
+      alive = smoothstep(0.0, band, along - cut);
+      lift = max(position.y, max(cut, 0.0));
+    } else {
+      // FIZZLE. Gaps open THROUGH the mark and it comes apart into shrinking
+      // islands where it lies.
+      //
+      // The distinction only shows up on a mark held long enough to watch.
+      // Retract played slowly is the brush retracing its own path backwards --
+      // the stroke being un-painted, which is the one thing a spatter that is
+      // supposed to be thinning away must not look like. So nothing here moves
+      // the mark's own extent -- the spine is left exactly where it was, and the
+      // whole ending happens in the width. (No backticks in here: this is a
+      // template literal and one closes it.)
+      //
+      // A field that varies ALONG the mark decides which parts go first, and
+      // varies per instance, so two marks come apart in different places. It is
+      // low frequency on purpose -- about one and a half cycles over the length
+      // -- because a high one takes the mark apart into a dotted line, which is
+      // the stipple this vocabulary exists without.
+      float band = 0.18;
+      float field = 0.5 + 0.5 * strokeWave(along, iSeed, 9.7, 11.0);
+      float cut = leaving * (1.0 + band) - band;
+      alive = smoothstep(0.0, band, field - cut);
+      lift = position.y;
+    }
+    // (3) And it thins as it goes, so the last frames are a narrower mark rather
+    // than the same mark going quiet.
+    float dry = mix(1.0, iDecay < 0.5 ? 0.72 : 0.62, smoothstep(0.45, 1.0, iAge));
+
+    float gain = max(0.0, envelope * ripple * alive * dry);
+
+    shape = vec3(position.x + side.x * (bend + aStroke.y * gain),
+                 lift * stretch * extend + side.y * (bend + aStroke.y * gain),
+                 // The arch across the width follows the width, so a pinched
+                 // mark is a shallow one.
+                 position.z * gain);
+    vAlong = along;
+    // Darker toward the root: value variation inside one mark, out of its own
+    // geometry rather than out of a pattern laid over it.
+    tone *= 1.0 - uRootShade * (1.0 - smoothstep(0.0, 0.5, along));
+  }
+#endif
+
+  vec3 local = basis * (shape * iSize);
   vNormal = normalize(basis * normal);
   // The white-hot middle, baked into the geometry rather than into the colour
   // ramp (spec 125). A gradient over a particle's *life* makes every spike in a
@@ -476,7 +695,7 @@ void main() {
   // Distance from the shape's own origin works for both the spike and the star,
   // because both are authored radiating out of it.
   float hotter = 1.0 + uCoreGlow * 0.9 * (1.0 - clamp(length(position), 0.0, 1.0));
-  vColor = iColor * hotter;
+  vColor = iColor * hotter * tone;
   vAlpha = iAlpha;
   gl_Position = projectionMatrix * viewMatrix * vec4(iOffset + local, 1.0);
 }
@@ -491,14 +710,30 @@ uniform float uShading;
 varying vec3 vColor;
 varying float vAlpha;
 varying vec3 vNormal;
+#ifdef VFX_STROKE
+varying float vAlong;
+#endif
 
 void main() {
   // A cheap wrapped lambert. Without it a semi-transparent blob is a flat
   // silhouette and a cluster of them is a smear; with it each one catches light
   // in planes and the cluster reads as a body with a top and an underside --
-  // which is the entire difference between "smoke" and "grey shapes".
+  // which is the entire difference between "smoke" and "grey shapes". A brush
+  // mark takes a third of it (uShading, spec 159): enough to see the arch in a
+  // world-oriented mark, nowhere near enough to make paint look like plastic.
   float lambert = dot(normalize(vNormal), normalize(uLightDirection)) * 0.5 + 0.5;
   float shade = mix(1.0, 0.45 + 0.75 * lambert, uShading);
+
+  // No dither, and deliberately none (spec 159). Spec 158 gave this shader the
+  // quad batch's ordered Bayer discard so a mark could "dissolve into the
+  // frame's own weave"; what it actually produced was checkerboards, halftone
+  // fills and one-pixel fragments over every painted effect in the game --
+  // screen-door transparency, which is a pixel-art technique and not this art
+  // direction. A brush mark is a filled silhouette with a rough boundary, and
+  // where it needs to come apart it does so in the GEOMETRY, by retracting from
+  // its root (see the vertex shader) rather than by deleting pixels out of a
+  // shape that is still there.
+  if (vAlpha < 0.004) discard;
   gl_FragColor = vec4(vColor * shade, vAlpha);
 }
 `;
@@ -517,25 +752,37 @@ export class MeshParticleBatch {
   private color!: THREE.InstancedBufferAttribute;
   private alpha!: THREE.InstancedBufferAttribute;
   private seed!: THREE.InstancedBufferAttribute;
+  private age!: THREE.InstancedBufferAttribute;
+  private decay!: THREE.InstancedBufferAttribute;
   /** Only a shape that aims itself pays for a velocity upload. */
   private readonly aims: boolean;
+  /** A brush mark, whose outline is rebuilt per instance in the shader. */
+  private readonly stroke: boolean;
 
   constructor(
     readonly blend: number,
     readonly shape: MeshShape,
   ) {
     this.aims = needsVelocity(shape);
+    this.stroke = strokeShape(shape);
+    // The define rather than a uniform: the stroke path declares an attribute
+    // and a varying, and a batch whose geometry has no `aStroke` must not
+    // declare one -- three warns, and some drivers bind whatever was last in
+    // that slot.
+    const defines = this.stroke ? '#define VFX_STROKE\n' : '';
     this.material = new THREE.ShaderMaterial({
-      vertexShader: `uniform float uOrient;\nuniform float uCoreGlow;\n${MESH_VERTEX_SHADER}`,
-      fragmentShader: MESH_FRAGMENT_SHADER,
+      vertexShader: `${defines}uniform float uOrient;\nuniform float uCoreGlow;\n${MESH_VERTEX_SHADER}`,
+      fragmentShader: `${defines}${MESH_FRAGMENT_SHADER}`,
       uniforms: {
         // Roughly the scene's own key light, so a blob is lit like the ground.
         uLightDirection: { value: new THREE.Vector3(0.45, 1, 0.35).normalize() },
         // Light is not lit. A flame, a shaft and a sigil are all their own
         // colour; a blob and a diamond are objects and catch the key.
-        uShading: { value: shadedShape(shape) ? 1 : 0 },
+        uShading: { value: shadingOf(shape) },
         uOrient: { value: orientOf(shape) },
         uCoreGlow: { value: coreGlowShape(shape) ? 1 : 0 },
+        uVariants: { value: Math.max(1, particleMesh(shape).variants ?? 1) },
+        uRootShade: { value: rootShadeOf(shape) },
       },
       transparent: true,
       // Same pair as the quad batches, and the same two jobs: the right blend
@@ -561,6 +808,15 @@ export class MeshParticleBatch {
     geometry.setAttribute('position', new THREE.BufferAttribute(source.positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(source.normals, 3));
     geometry.setIndex(new THREE.BufferAttribute(source.indices, 1));
+    // Not instanced: these are per *vertex* of the shared bank, and they are
+    // what the shader needs to put the outline back around the baked spine and
+    // to know which of the bank's gestures a vertex belongs to.
+    if (source.strokeUv) {
+      geometry.setAttribute('aStroke', new THREE.BufferAttribute(source.strokeUv, STROKE_UV_STRIDE));
+    }
+    if (source.variant) {
+      geometry.setAttribute('aVariant', new THREE.BufferAttribute(source.variant, 1));
+    }
 
     const instanced = (items: number): THREE.InstancedBufferAttribute => {
       const attribute = new THREE.InstancedBufferAttribute(new Float32Array(capacity * items), items);
@@ -574,6 +830,8 @@ export class MeshParticleBatch {
     this.color = instanced(3);
     this.alpha = instanced(1);
     this.seed = instanced(1);
+    this.age = instanced(1);
+    this.decay = instanced(1);
 
     geometry.setAttribute('iOffset', this.offset);
     geometry.setAttribute('iVelocity', this.velocity);
@@ -582,6 +840,8 @@ export class MeshParticleBatch {
     geometry.setAttribute('iColor', this.color);
     geometry.setAttribute('iAlpha', this.alpha);
     geometry.setAttribute('iSeed', this.seed);
+    geometry.setAttribute('iAge', this.age);
+    geometry.setAttribute('iDecay', this.decay);
     geometry.instanceCount = 0;
     return geometry;
   }
@@ -601,7 +861,7 @@ export class MeshParticleBatch {
     this.ensureCapacity(count);
   }
 
-  write(at: number, pool: ParticlePool, i: number): void {
+  write(at: number, pool: ParticlePool, i: number, decay = 0): void {
     const o = at * 3;
     this.offset.array[o] = pool.x[i] ?? 0;
     this.offset.array[o + 1] = pool.y[i] ?? 0;
@@ -618,6 +878,11 @@ export class MeshParticleBatch {
     this.rotation.array[at] = pool.rot[i] ?? 0;
     this.alpha.array[at] = pool.a[i] ?? 0;
     this.seed.array[at] = ((pool.seed[i] ?? 0) & 0xffff) / 0xffff;
+    // How far through its life, so the shader can move the SHAPE rather than
+    // the transform (spec 159). One float, and it is what buys the gesture
+    // drawing out along its own path and then retracting from its root.
+    this.age.array[at] = Math.min(1, (pool.age[i] ?? 0) / Math.max(1, pool.life[i] ?? 1));
+    this.decay.array[at] = decay;
   }
 
   end(count: number): void {
@@ -628,7 +893,7 @@ export class MeshParticleBatch {
       attribute.addUpdateRange(0, count * 3);
       attribute.needsUpdate = true;
     }
-    for (const attribute of [this.size, this.rotation, this.alpha, this.seed]) {
+    for (const attribute of [this.size, this.rotation, this.alpha, this.seed, this.age, this.decay]) {
       attribute.addUpdateRange(0, count);
       attribute.needsUpdate = true;
     }

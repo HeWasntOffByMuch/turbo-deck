@@ -18,7 +18,7 @@
 import type { Curve, Gradient } from '../vfx/curve.js';
 import { isPaletteKey, type PaletteKey } from '../vfx/palette.js';
 import type { EffectDefinition, Emitter } from '../vfx/types.js';
-import { BLEND_MODES, MESH_SHAPES, RENDER_MODES, SHAPE_KINDS } from './vfx-fields.js';
+import { BLEND_MODES, MESH_SHAPES, RENDER_MODES, SHAPE_KINDS, STROKE_DECAYS } from './vfx-fields.js';
 
 /**
  * Serialize an effect.
@@ -181,6 +181,15 @@ function readEmitter(raw: unknown, index: number, errors: string[]): Emitter | u
   for (const key of optionalNumbers) {
     const value = asNumber(raw[key], `${where}.${key}`, errors);
     if (value !== undefined) out[key] = value;
+  }
+  // Checked against its enum rather than passed through, for the same reason
+  // the mesh shape below is: a decay mode that is not one of the two would be
+  // accepted, compiled to `retract` by the fallback in `compile.ts`, and change
+  // how an effect ends with nothing anywhere saying so.
+  if (raw['strokeDecay'] !== undefined) {
+    const value = asEnum(raw['strokeDecay'], STROKE_DECAYS, `${where}.strokeDecay`, errors);
+    if (!value) return undefined;
+    out['strokeDecay'] = value;
   }
   const optionalPairs = ['angularVelocity'] as const;
   for (const key of optionalPairs) {

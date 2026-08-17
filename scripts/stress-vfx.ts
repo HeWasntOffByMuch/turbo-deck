@@ -16,8 +16,25 @@ import { DecalField } from '../src/render/iso3d/vfx/decals.js';
 
 const registry = compileRegistry(EFFECTS);
 
-/** The effects a real fight actually plays, rather than forty at once. */
-const COMBAT = ['hit_blood', 'hit_metal_spark', 'hit_physical', 'hit_critical', 'hit_block', 'impact_physical', 'slash_arc', 'shockwave_ring'];
+/**
+ * The effects a real fight actually plays, rather than forty at once.
+ *
+ * `blood_hit_brush` rather than `hit_blood` since spec 158: this list is meant
+ * to be what a fight costs, and `effectsForBlow` has played the painted hit off
+ * every landed blow since then. Leaving the ribbon spatter here would have
+ * measured a load the game no longer generates.
+ */
+const COMBAT = [
+  'blood_hit_brush',
+  'blood_hit_brush_heavy',
+  'hit_metal_spark',
+  'hit_physical',
+  'hit_critical',
+  'hit_block',
+  'impact_physical',
+  'slash_arc',
+  'shockwave_ring',
+];
 
 interface Result {
   readonly label: string;

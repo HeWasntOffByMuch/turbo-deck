@@ -214,7 +214,19 @@ export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayR
     return out;
   }
 
-  out.push(facts.bleeds ? at(facts.killed ? 'death_blood' : 'hit_blood', 2) : at(DAMAGE_EFFECTS[facts.damageType], 3));
+  // Blood is painted since spec 158: `blood_hit_brush` throws brush marks along
+  // the blow rather than a spray of ribbons. A killing blow gets the loud
+  // variant, and then `death_blood` as well -- the two are doing different jobs
+  // and always were. The brush hit is the *moment*, over inside half a second
+  // and leaving nothing; `death_blood` is the pool, and the stain it puts on the
+  // ground outlives every particle either of them owns (spec 120). Dropping it
+  // would quietly delete the gore setting's whole subject.
+  if (facts.bleeds) {
+    out.push(at(facts.killed ? 'blood_hit_brush_heavy' : 'blood_hit_brush', 2));
+    if (facts.killed) out.push(at('death_blood', 6));
+  } else {
+    out.push(at(DAMAGE_EFFECTS[facts.damageType], 3));
+  }
 
   if (facts.critical) out.push(at('hit_critical', 4));
 

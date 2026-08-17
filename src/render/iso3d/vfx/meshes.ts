@@ -21,10 +21,24 @@
  * tell them from one sphere seen from a hundred angles.
  */
 
+import { brushStrokeBank, variedBank, type StrokeMeshData } from './stroke.js';
+
 export interface MeshData {
   readonly positions: Float32Array;
   readonly normals: Float32Array;
   readonly indices: Uint16Array;
+  /**
+   * `vec4(along, signedHalfOffset, sideX, sideY)` per vertex, for the brush
+   * shapes (spec 158). Present exactly when {@link strokeShape} is true, and its
+   * presence is what switches the mesh batch into the stroke path -- for those
+   * shapes `positions` holds the *spine*, and the outline is put back on the GPU
+   * with a per-instance twist. See `stroke.ts`.
+   */
+  readonly strokeUv?: Float32Array;
+  /** Which bank entry each vertex belongs to (spec 159). One per vertex. */
+  readonly variant?: Float32Array;
+  /** How many independently generated gestures the bank holds. */
+  readonly variants?: number;
 }
 
 export type MeshShape =
@@ -37,7 +51,35 @@ export type MeshShape =
   | 'shard'
   | 'starburst'
   | 'chunk'
-  | 'ring';
+  | 'ring'
+  // --- brush marks (spec 158) ---
+  /** A long tapered flick: the primary slash and the radial burst stroke. */
+  | 'brush-slash'
+  /** Shorter, thinner, more curved: the secondary fragments. */
+  | 'brush-flick'
+  /** A chunky short mark: a droplet, a chip of debris. */
+  | 'brush-dab'
+  /** An irregular blunt mass: the clumps painterly smoke is made of. */
+  | 'brush-blot';
+
+/** The brush marks, in one place, so nothing has to spell the list out twice. */
+export const BRUSH_SHAPES = ['brush-slash', 'brush-flick', 'brush-dab', 'brush-blot'] as const;
+
+/**
+ * Independently generated gestures behind each brush mark (spec 159).
+ *
+ * The number that decides whether a fan of eight strokes reads as eight marks or
+ * as one mark drawn eight times. Eight, because the shader perturbs whichever it
+ * picks -- so this is how many *distinct silhouettes* there are, not how many
+ * distinct instances -- and because the whole bank is drawn per instance with
+ * the unused entries clipped, which costs a vertex each and no draw call.
+ */
+export const BANK_SIZE = 8;
+
+/** Whether a shape is a brush mark, and therefore carries `strokeUv`. */
+export function strokeShape(shape: MeshShape): boolean {
+  return (BRUSH_SHAPES as readonly string[]).includes(shape);
+}
 
 /** A tiny deterministic hash, so a shape is a pure function of its seed. */
 function hash(index: number, seed: number): number {
@@ -540,7 +582,135 @@ export function particleMesh(shape: MeshShape): MeshData {
   return made;
 }
 
+/**
+ * The four brush marks (specs 158, 159).
+ *
+ * Each is a **bank** of independently generated gestures, not one canonical
+ * outline. That is the correction spec 159 makes: the first version baked one
+ * mark per kind and asked the shader to vary it, and a fan of a dozen came out
+ * as one silhouette a dozen times, which is precisely the "obvious repeated
+ * triangles" failure a radial burst must not have. The shader's per-instance
+ * layer is still there and still worth having -- it perturbs whichever entry an
+ * instance picks -- but the *shapes* are now genuinely different shapes.
+ *
+ * The four differ in the way a person would name: how long against how wide,
+ * how hard the profile runs out, how far it bends, and how much of the gesture
+ * is body against how much is thrown off the end.
+ */
+function brushShape(shape: MeshShape): StrokeMeshData {
+  switch (shape) {
+    case 'brush-flick':
+      // The medium marks: shorter, whippier, bent harder, with a streak beside
+      // the body and a couple of pieces off the tip.
+      return variedBank(
+        {
+          segments: 8,
+          // Narrow. At 0.15 of its own length a mark is 1:3 at the shoulder and
+          // reads as a petal or a spearhead rather than as a stroke -- the width
+          // was the single biggest thing wrong with the first pass. A brush mark
+          // dragged fast is nearer 1:8, and the interest comes from the bulge and
+          // the edges rather than from bulk.
+          width: 0.105,
+          curve: 0.26,
+          kink: 0.018,
+          edgeNoise: 0.34,
+          bulge: 0.4,
+          bow: 0.42,
+          companions: 1,
+          flecks: 2,
+          splitTip: 0.7,
+        },
+        BANK_SIZE,
+        0x5f3a,
+      );
+    case 'brush-dab':
+      // A blunt lump of paint, barely longer than it is wide. Not a sphere and
+      // not a circle: this is the shape the brief singles out as the one every
+      // particle system gets wrong.
+      return variedBank(
+        {
+          segments: 6,
+          profile: 'lens',
+          width: 0.3,
+          curve: 0.22,
+          kink: 0.05,
+          // Heavier than the strokes': a dab is short, so its edges are most of
+          // what there is to look at, and a smooth one is an oval.
+          edgeNoise: 0.42,
+          bulge: 0.22,
+          bow: 0.55,
+          companions: 0,
+          flecks: 1,
+          splitTip: 0,
+        },
+        BANK_SIZE,
+        0x2c81,
+      );
+    case 'brush-blot':
+      // A smoke lobe. Not one lens: each entry is a broad curved body with two
+      // more broad strokes laid across it, so a single particle is already a
+      // chunky irregular mass rather than a bead that needs friends to read.
+      return cloudBank(BANK_SIZE, 0x7d13);
+    case 'brush-slash':
+    default:
+      // The dominant mark. Long, broad at the root, swelling once in the first
+      // third, running out to an uneven point with pieces beyond it.
+      return variedBank(
+        {
+          segments: 10,
+          width: 0.085,
+          curve: 0.19,
+          kink: 0.013,
+          edgeNoise: 0.3,
+          bulge: 0.42,
+          bow: 0.38,
+          companions: 1,
+          flecks: 2,
+          splitTip: 0.6,
+        },
+        BANK_SIZE,
+        0x1a4f,
+      );
+  }
+}
+
+/**
+ * A bank of smoke lobes (spec 159).
+ *
+ * Each entry is three broad strokes crossing each other rather than one shape,
+ * because the note the brief makes about smoke is the one that matters most:
+ * a soft round transparent puff is what every particle system produces and it
+ * is the single clearest tell. Three overlapping painted bodies at different
+ * angles give a lumpy, cornered outline that still reads as one mass -- and
+ * because they are in one mesh they turn together, so a lobe is a *form* rather
+ * than a cluster that comes apart when the camera moves.
+ */
+function cloudBank(count: number, seed: number): StrokeMeshData {
+  const entries: Parameters<typeof brushStrokeBank>[0][number][] = [];
+  for (let i = 0; i < count; i++) {
+    const own = seed + i * 7919;
+    entries.push({
+      seed: own,
+      segments: 7,
+      profile: 'lens',
+      width: 0.5 + hash(1, own) * 0.22,
+      curve: (hash(2, own) < 0.5 ? -1 : 1) * (0.24 + hash(3, own) * 0.3),
+      kink: 0.05,
+      edgeNoise: 0.3,
+      bulge: 0.18,
+      bow: 0.6,
+      // Two broad companions held well off the body, which is what turns one
+      // lens into a lobed cloud with corners between the lobes.
+      companions: 2,
+      flecks: hash(4, own) < 0.5 ? 1 : 0,
+      splitTip: 0,
+    });
+  }
+  return brushStrokeBank(entries);
+}
+
 function build(shape: MeshShape): MeshData {
+  if (strokeShape(shape)) return brushShape(shape);
   switch (shape) {
     case 'tongue':
       return tongueMesh();
@@ -576,7 +746,31 @@ function build(shape: MeshShape): MeshData {
  * the angle it was given -- a per-seed jitter on a ring puts its runes somewhere
  * different every time one is stamped.
  */
-export const ORIENT = { tumble: 0, uprightJittered: 1, exact: 2, velocity: 3 } as const;
+export const ORIENT = {
+  tumble: 0,
+  uprightJittered: 1,
+  exact: 2,
+  velocity: 3,
+  /**
+   * A camera-facing card, rolled by the particle's own rotation (spec 158).
+   *
+   * A brush mark is flat, and a flat thing seen edge-on is nothing at all. Free
+   * tumbling would make a third of every spatter vanish depending on where the
+   * player put the camera -- so the mark's plane *is* the screen's plane, and the
+   * variety that a tumble would have given comes out of the silhouette instead.
+   */
+  card: 4,
+  /**
+   * The same card, with the mark's own +Y along the **screen projection** of its
+   * velocity.
+   *
+   * Not the world-space velocity: a stroke thrown at the camera would otherwise
+   * be drawn full length pointing nowhere, which is the exact complaint spec 139
+   * made about `stretched` blood. Projecting first means a mark thrown across
+   * the view is drawn across it and one thrown at it foreshortens to a dab.
+   */
+  cardVelocity: 5,
+} as const;
 
 export function orientOf(shape: MeshShape): number {
   switch (shape) {
@@ -589,6 +783,22 @@ export function orientOf(shape: MeshShape): number {
       return ORIENT.exact;
     case 'shard':
       return ORIENT.velocity;
+    // The hybrid (spec 159). The marks that carry the *composition* are held in
+    // the view plane so the gesture always reads; the small pieces and the smoke
+    // are turned in world space, which is where the effect's sense of depth
+    // comes from. Every piece camera-facing is a decal with a parallax bug; no
+    // piece camera-facing is a gesture you can only read from one seat.
+    //
+    // A world-oriented mark can afford to be one because a brush mesh is a
+    // shallow *shell* rather than a plane (`stroke.ts`), so turning it edge-on
+    // narrows it instead of deleting it.
+    case 'brush-slash':
+    case 'brush-flick':
+      return ORIENT.cardVelocity;
+    case 'brush-dab':
+      return ORIENT.velocity;
+    case 'brush-blot':
+      return ORIENT.tumble;
     default:
       return ORIENT.tumble;
   }
@@ -596,6 +806,11 @@ export function orientOf(shape: MeshShape): number {
 
 /** Whether a shape is lit, or drawn as its own flat colour. Light is not shaded. */
 export function shadedShape(shape: MeshShape): boolean {
+  // Paint is flat by decision, not by omission (spec 158). A lit brush mark has
+  // a bright side and a dark side, which says "a solid seen from an angle" --
+  // and the whole claim of this vocabulary is that these are marks on a surface
+  // that happens to be suspended in the world, not objects in it.
+  if (strokeShape(shape)) return false;
   // The burst's crystal *is* faceted in the reference -- one face of a spike
   // catches the light and the next does not, and that two-tone is most of what
   // makes it read as a solid rather than as a painted ray.
@@ -614,7 +829,46 @@ export function coreGlowShape(shape: MeshShape): boolean {
   return shape === 'shard' || shape === 'starburst';
 }
 
+/**
+ * How hard a shape is lit, 0..1 (spec 159).
+ *
+ * A brush mark is *slightly* lit rather than flat. Spec 158 made it flat on the
+ * argument that paint is pigment and not a solid, which is right about the
+ * material and wrong about the read: a shell turned in world space and drawn in
+ * one flat colour has no form at all, so the depth it was given is invisible.
+ * A third of the usual lambert is enough to see the arch and nowhere near enough
+ * to make paint look like plastic.
+ */
+export function shadingOf(shape: MeshShape): number {
+  if (strokeShape(shape)) return 0.34;
+  return shadedShape(shape) ? 1 : 0;
+}
+
+/**
+ * How much darker a brush mark is at its root, 0..1 (spec 159).
+ *
+ * Value variation inside one mark, out of its own geometry. The alternative --
+ * laying a darker pattern over a lighter shape -- is exactly the stipple this
+ * spec exists to remove, and a mark of one flat colour has no weight to it.
+ * Zero for smoke, which is already the dark layer and would turn to mud.
+ */
+export function rootShadeOf(shape: MeshShape): number {
+  // Gentle. At 0.38 a handful of overlapping marks turned the middle of a hit
+  // into one dark mass with no strokes visible in it -- the root shade was
+  // doing to the composition what it was meant to do inside a single mark.
+  if (shape === 'brush-slash' || shape === 'brush-flick') return 0.2;
+  if (shape === 'brush-dab') return 0.12;
+  return 0;
+}
+
 /** Whether a shape's batch needs the particle's velocity uploaded (spec 125). */
 export function needsVelocity(shape: MeshShape): boolean {
-  return orientOf(shape) === ORIENT.velocity;
+  const orient = orientOf(shape);
+  return orient === ORIENT.velocity || orient === ORIENT.cardVelocity;
+}
+
+/** Every shape, built once and shared -- including the brush banks. */
+export function strokeMesh(shape: MeshShape): StrokeMeshData | null {
+  const mesh = particleMesh(shape);
+  return mesh.strokeUv && mesh.variant ? (mesh as StrokeMeshData) : null;
 }

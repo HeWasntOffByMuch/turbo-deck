@@ -575,8 +575,10 @@ describe('the compiled registry', () => {
     // A ceiling on the *possible* calls; the layer only issues one per batch
     // that has anything in it, and a frame with one aura up draws three.
     // Every solid shape costs a batch per blend it is used with, so this moves
-    // when a shape is added and must be moved deliberately.
-    expect(compiled.batches.length).toBeLessThanOrEqual(20);
+    // when a shape is added and must be moved deliberately. Spec 158 moved it
+    // from 20 to 25 for the four brush marks, one of which is used with two
+    // blends.
+    expect(compiled.batches.length).toBeLessThanOrEqual(25);
   });
 });
 

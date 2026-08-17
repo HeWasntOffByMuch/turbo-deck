@@ -33,7 +33,9 @@ export interface FieldSpec {
 
 export const RENDER_MODES = ['billboard', 'stretched', 'axis-billboard', 'ground-quad', 'ribbon', 'mesh'] as const;
 export const BLEND_MODES = ['alpha', 'additive', 'dither-cutout'] as const;
-export const SHAPE_KINDS = ['point', 'sphere', 'hemisphere', 'cone', 'box', 'circle', 'mesh', 'arc'] as const;
+/** How a brush mark ends (spec 161). Ignored by every shape that is not one. */
+export const STROKE_DECAYS = ['retract', 'fizzle'] as const;
+export const SHAPE_KINDS = ['point', 'sphere', 'hemisphere', 'cone', 'box', 'circle', 'mesh', 'arc', 'fan'] as const;
 export const EMISSION_KINDS = ['burst', 'rate', 'ramp'] as const;
 /** The solids a `mesh` particle can be (spec 123). */
 export const MESH_SHAPES = [
@@ -47,6 +49,14 @@ export const MESH_SHAPES = [
   'starburst',
   'chunk',
   'ring',
+  // The brush marks (spec 158). Listed here as well as in `meshes.ts` because
+  // this is the panel's dropdown and that is the cache's key; a shape missing
+  // from one of the two is a shape that either cannot be authored or cannot be
+  // drawn, and neither failure says so.
+  'brush-slash',
+  'brush-flick',
+  'brush-dab',
+  'brush-blot',
 ] as const;
 
 /**
@@ -59,6 +69,14 @@ export const MESH_SHAPES = [
 export const EMITTER_FIELDS: readonly FieldSpec[] = [
   // --- emission ---
   { path: 'shape.kind', label: 'Shape', kind: 'enum', options: SHAPE_KINDS, tip: 'The volume particles are born in.' },
+  // The shape's own numbers, which the table has never carried -- so the one
+  // thing a painted spatter is tuned by, how wide it throws, could be edited in
+  // the JSON and nowhere else. Inert for a kind that has no such field, which is
+  // this table's standing convention (see the note below).
+  { path: 'shape.radius', label: 'Radius', kind: 'number', min: 0, max: 400, step: 0.5, tip: 'How wide the birth volume is.' },
+  { path: 'shape.angle', label: 'Angle', kind: 'number', min: 0, max: 3.15, step: 0.01, tip: 'Half-angle, for cone and fan.' },
+  { path: 'shape.rise', label: 'Rise', kind: 'number', min: -1.6, max: 1.6, step: 0.01, tip: 'Radians a fan is lifted out of the ground plane.' },
+  { path: 'shape.sweep', label: 'Sweep', kind: 'number', min: 0, max: 6.3, step: 0.01, tip: 'Total angle an arc covers.' },
   // How many, which is the number a person reaches for first while tuning and
   // was the one field the panel would not move (spec 126). A row that does not
   // apply to the current kind is inert rather than hidden: the panel is
@@ -92,6 +110,7 @@ export const EMITTER_FIELDS: readonly FieldSpec[] = [
   { path: 'render', label: 'Render as', kind: 'enum', options: RENDER_MODES },
   { path: 'blend', label: 'Blend', kind: 'enum', options: BLEND_MODES },
   { path: 'mesh.shape', label: 'Solid', kind: 'enum', options: MESH_SHAPES, tip: 'Which solid, when rendering as a mesh. Ignored otherwise.' },
+  { path: 'strokeDecay', label: 'Ends by', kind: 'enum', options: STROKE_DECAYS, tip: 'Retract pulls a brush mark back to its root; fizzle breaks it up where it lies.' },
   { path: 'stretch', label: 'Stretch', kind: 'number', min: 0, max: 0.4, step: 0.005, tip: 'Length per unit of screen speed, for stretched billboards.' },
   { path: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'number', min: 0.5, max: 60, step: 0.5, tip: 'World units between trail samples. Distance, never time.' },
   { path: 'ribbonTaper', label: 'Ribbon taper', kind: 'number', min: 0, max: 1, step: 0.01, tip: "The tail's width as a fraction of the head's." },

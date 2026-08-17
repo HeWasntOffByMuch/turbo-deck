@@ -95,7 +95,13 @@ describe('the registry as a whole', () => {
     // grows without bound the batching has stopped meaning anything. It is a
     // ceiling on what *could* be drawn: only a batch with something in it costs
     // a call, so a frame with one aura up draws three.
-    expect(REGISTRY.batches.length).toBeLessThanOrEqual(20);
+    //
+    // Moved from 20 to 25 by spec 158, deliberately and once: the painted
+    // vocabulary brings four marks, and `brush-slash` is used both additive (the
+    // explosion's flash) and cutout (everything else), so it costs five. What a
+    // *frame* pays is still bounded by the effects actually up -- a painted
+    // explosion is four calls and a painted hit is three.
+    expect(REGISTRY.batches.length).toBeLessThanOrEqual(25);
   });
 });
 

@@ -29,7 +29,7 @@ import * as THREE from 'three';
 import { RetroPass } from '../retro-pass.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
 import { internalRenderSize } from '../view-frame.js';
-import { CAMERA_FAR, CAMERA_NEAR } from '../view-settings.js';
+import { CAMERA_FAR, CAMERA_NEAR, DEFAULT_VIEW_HALF_WIDTH } from '../view-settings.js';
 import { VfxLayer } from '../vfx/layer.js';
 import { compileRegistry } from '../vfx/compile.js';
 import { EFFECTS } from '../vfx/registry.js';
@@ -64,6 +64,9 @@ import { previewFrame, type PreviewFrame } from './vfx-frame.js';
 
 const MONO = "'Courier New',ui-monospace,monospace";
 const PANEL = 'background:#16161e;border:1px solid #2a2a3a;padding:10px;box-sizing:border-box;';
+
+/** The intensities the toolbar cycles through. 1 is the authored effect. */
+const PREVIEW_SCALES: readonly number[] = [0.6, 1, 1.6, 2.4];
 
 /** Ground materials the preview can stand an effect on. */
 const GROUNDS: readonly { readonly name: string; readonly color: number }[] = [
@@ -123,6 +126,19 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
   let groundIndex = 1;
   let handle = 0;
   let looping = true;
+  /**
+   * The seed and the scale the preview plays at (spec 158).
+   *
+   * Both were constants -- seed 20260810 and no scale at all -- which is right
+   * for tuning a curve and useless for judging a *procedural* effect: the whole
+   * claim of the painted vocabulary is that two spawns do not look alike, and a
+   * fixed seed is precisely the setting under which that claim cannot be seen.
+   * `vary` is the switch, and it is off by default because a moving picture is
+   * the wrong thing to drag a curve handle against.
+   */
+  let seed = 20260810;
+  let vary = false;
+  let scaleIndex = 1;
   /** The box the current effect needs, measured off a headless replay of it. */
   let fit: PreviewFrame = { span: 220, centreY: 26 };
 
@@ -241,12 +257,26 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     // Measured once here rather than every frame: the sim is deterministic, so
     // the answer cannot change between frames, and a box recomputed per frame
     // would creep as the effect grew.
-    fit = previewFrame(edited, spawnY);
+    // Measured at 1x and then scaled, because `play`'s scale multiplies every
+    // length in the effect -- a frame measured without it crops the moment the
+    // intensity button is touched, which is the failure this whole measurement
+    // exists to prevent.
+    const played = PREVIEW_SCALES[scaleIndex] ?? 1;
+    const measured = previewFrame(edited, spawnY);
+    fit = { span: measured.span * played, centreY: measured.centreY * played };
+    if (vary) {
+      // A new draw each replay, mixed rather than incremented: consecutive
+      // integers seed `VfxRng` to visibly similar first draws, which is the
+      // exact trap `rng.ts` documents.
+      seed = (Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) ^ 0x9e3779b1) | 0;
+      seedButton.textContent = `Seed: ${seed}`;
+    }
     handle = layer.play(edited.id, {
       x: 0,
       y: attachToSocket ? 0 : 30,
       z: 0,
-      seed: 20260810,
+      seed,
+      scale: PREVIEW_SCALES[scaleIndex] ?? 1,
       ...(attachToSocket ? { attach: { kind: 'entity' as const, entityId: 1 } } : {}),
     });
   }
@@ -306,6 +336,29 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     return node;
   };
   bar.append(button('Replay', () => replay()));
+  // Spec 158's three: a seed you can roll, a switch that rolls it on every
+  // replay, and an intensity. Together they are how somebody looks at a
+  // procedural effect rather than at one sample of it.
+  const seedButton = button(`Seed: ${seed}`, () => {
+    seed = (Math.random() * 0x7fffffff) | 0;
+    seedButton.textContent = `Seed: ${seed}`;
+    replay();
+  });
+  seedButton.title = 'Roll a new seed. The look is a pure function of it, so the same number is the same spatter.';
+  bar.append(seedButton);
+  const varyButton = button('Vary: off', () => {
+    vary = !vary;
+    varyButton.textContent = `Vary: ${vary ? 'on' : 'off'}`;
+  });
+  varyButton.title = 'Draw a fresh seed on every replay. With Loop on, this is the effect firing over and over with real variation.';
+  bar.append(varyButton);
+  const scaleButton = button(`Intensity: ${PREVIEW_SCALES[scaleIndex]?.toFixed(1) ?? '1.0'}x`, () => {
+    scaleIndex = (scaleIndex + 1) % PREVIEW_SCALES.length;
+    scaleButton.textContent = `Intensity: ${PREVIEW_SCALES[scaleIndex]?.toFixed(1) ?? '1.0'}x`;
+    replay();
+  });
+  scaleButton.title = 'The scale the effect is played at, which is what a crit or a bigger blast is.';
+  bar.append(scaleButton);
   const loopButton = button('Loop: on', () => {
     looping = !looping;
     loopButton.textContent = `Loop: ${looping ? 'on' : 'off'}`;
@@ -651,11 +704,24 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     retro.setSize(size.width, size.height);
     canvas.style.height = `${height}px`;
     const aspect = size.width / size.height;
-    // Never tighter than the effect needs. The zoom slider still zooms *out*,
-    // and a hundred-unit aura is no longer cropped the moment the camera is
-    // raised -- which it was, because a ring seen from above is twice as tall on
-    // screen as one seen edge-on and the box was a fixed multiple of the zoom.
-    const span = Math.max(cameraSpan, fit.span);
+    // The cog is a ZOOM on the measured frame, not a floor under it.
+    //
+    // `previewFrame` measures how big a box this effect actually needs, and this
+    // line used to take `Math.max` of that and the cog's own span -- which is the
+    // Play tab's world zoom, 640 units across by default. So every effect smaller
+    // than the game's zoom was drawn at the game's zoom rather than at its own
+    // size: a blood hit came out about a tenth of the viewport wide, which is
+    // honest about gameplay scale and useless for judging a shape. It is also
+    // what made a *field* look broken -- one that only changes the last third of
+    // a mark's life moves a few dozen pixels at that size, so switching it read
+    // as doing nothing at all.
+    //
+    // As a ratio the measured frame is honoured, the effect fills the viewport at
+    // the default zoom, and the cog still works in both directions -- including
+    // the case the old line was protecting, since a hundred-unit aura's own
+    // measured span is a hundred units whatever the cog says.
+    const zoom = cameraSpan / (DEFAULT_VIEW_HALF_WIDTH * 2);
+    const span = Math.max(20, fit.span * zoom);
     camera.left = -span * aspect * 0.5;
     camera.right = span * aspect * 0.5;
     camera.top = span * 0.5;
