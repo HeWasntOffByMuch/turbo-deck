@@ -1092,6 +1092,18 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  finishes inside it) is followed by a climb to a shared hidden
                  peak and then a second climb to the tier's own rest, and
                  nothing deflates at the moment the payoff is meant to land.
+                 Taking one pops it -- grown and faded over `POP_TICKS`, which
+                 needs the rig to outlive the entity, since the drop is gone the
+                 instant it is picked up and a rig disposed on the same frame
+                 has nothing left to animate. It grows rather than shrinking
+                 because enlarging while fading reads as *taken* and shrinking
+                 reads as *lost*. **Whether to pop at all is derived rather than
+                 announced**: there are two ways a drop leaves and the client
+                 tells them apart from the spawn tick and the shared lifetime,
+                 so the pop plays for every observer with no message carrying
+                 it, and the margin runs one way -- a missed pop on an unwatched
+                 expiry costs nothing, a pop on an item that quietly rotted
+                 would be a lie about a reward.
                  `npx tsx scripts/preview-loot.ts` is the picture, and the
                  reason it exists is that the first cut of this feature passed
                  every test it had and did almost nothing on screen -- the

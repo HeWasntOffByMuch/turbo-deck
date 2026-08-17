@@ -21,6 +21,7 @@
 
 import * as THREE from 'three';
 import type { RarityId } from '../../server/data/items.js';
+import type { Pop } from './world/loot-drop.js';
 
 /**
  * A tier's colour, here rather than in `data/loot.ts`.
@@ -93,6 +94,7 @@ export class DropRig {
   private readonly tier: THREE.Color;
   private phase = 0;
   private hovered = false;
+  private pop: Pop = { scale: 1, alpha: 1 };
   /** Last mix written, so three colours are not rebuilt on a frame that is flat. */
   private mixed = -1;
 
@@ -195,6 +197,17 @@ export class DropRig {
    * the object *and* lifts it, because a pulse that only grew would read as
    * breathing rather than as a beat.
    */
+  /**
+   * How far through its pop this drop is, once it has been taken (spec 158).
+   *
+   * The rig is kept alive for a fraction of a second after the entity has gone
+   * so this can play -- see `syncDrops`. Everything it draws is scaled and faded
+   * together, because the object leaving is one movement rather than three.
+   */
+  setPop(pop: Pop): void {
+    this.pop = pop;
+  }
+
   update(dt: number, flare: number, beat = 1): void {
     this.phase += dt;
     const lit = Math.max(0, Math.min(1, flare));
@@ -218,6 +231,20 @@ export class DropRig {
 
     this.ring.scale.setScalar((0.9 + lit * 0.6) * (this.hovered ? 1.15 : 1));
     this.ringMaterial.opacity = (0.18 + lit * 0.35) * (this.hovered ? 1.8 : 1);
+
+    // The pop, applied last so it multiplies everything above rather than
+    // competing with it. The object's own material is opaque and has to be made
+    // transparent to fade at all -- done here rather than at construction so a
+    // drop that is merely lying there pays nothing for a blend mode.
+    const pop = this.pop;
+    this.group.scale.setScalar(pop.scale);
+    if (pop.alpha < 1) {
+      this.itemMaterial.transparent = true;
+      this.itemMaterial.opacity = pop.alpha;
+      this.haloMaterial.opacity *= pop.alpha;
+      this.haloOuterMaterial.opacity *= pop.alpha;
+      this.ringMaterial.opacity *= pop.alpha;
+    }
   }
 
   dispose(): void {

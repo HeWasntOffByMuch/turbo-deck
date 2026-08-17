@@ -22,7 +22,10 @@ import {
   HEARTBEAT_TICKS,
   pickupOrderFor,
   HIDDEN_PEAK_FLARE,
+  popAt,
+  POP_TICKS,
   REVEAL_SETTLE_TICKS,
+  tookRatherThanExpired,
   TIER_BLEND_TICKS,
   tierMixAt,
   tossAt,
@@ -456,6 +459,76 @@ describe('the cues', () => {
     expect(presenter.tracked).toBe(1);
     presenter.retain(new Set());
     expect(presenter.tracked).toBe(0);
+  });
+});
+
+describe('the pop when it is taken', () => {
+  it('starts at the object as it was and ends at nothing', () => {
+    expect(popAt(0)).toEqual({ scale: 1, alpha: 1 });
+    const end = popAt(1);
+    expect(end.alpha).toBe(0);
+    expect(end.scale).toBeGreaterThan(1.5);
+  });
+
+  /** Enlarging while fading reads as "taken"; shrinking reads as "lost". */
+  it('only ever grows, and only ever fades', () => {
+    let scale = -Infinity;
+    let alpha = Infinity;
+    for (let i = 0; i <= POP_TICKS; i++) {
+      const pop = popAt(i / POP_TICKS);
+      expect(pop.scale, `@ ${i}`).toBeGreaterThanOrEqual(scale);
+      expect(pop.alpha, `@ ${i}`).toBeLessThanOrEqual(alpha);
+      scale = pop.scale;
+      alpha = pop.alpha;
+    }
+  });
+
+  it('is committed to its size early and its fade late', () => {
+    const half = popAt(0.5);
+    // Most of the growth is done by halfway...
+    expect(half.scale).toBeGreaterThan(popAt(1).scale * 0.8);
+    // ...and most of the object is still there, so what vanishes is big.
+    expect(half.alpha).toBeGreaterThan(0.2);
+  });
+
+  it('clamps rather than running past either end', () => {
+    expect(popAt(-5)).toEqual(popAt(0));
+    expect(popAt(9)).toEqual(popAt(1));
+  });
+});
+
+describe('taken, or merely rotted', () => {
+  const LIFETIME = 5400;
+
+  /**
+   * The client can tell the two apart without being told, which is what lets
+   * the pop play for every observer rather than only for whoever took it.
+   */
+  it('reads a drop that left early as taken', () => {
+    expect(tookRatherThanExpired(0, LIFETIME, 0)).toBe(true);
+    expect(tookRatherThanExpired(0, LIFETIME, 600)).toBe(true);
+    expect(tookRatherThanExpired(1000, LIFETIME, 1200)).toBe(true);
+  });
+
+  it('reads one that ran its clock out as expired', () => {
+    expect(tookRatherThanExpired(0, LIFETIME, LIFETIME)).toBe(false);
+    expect(tookRatherThanExpired(0, LIFETIME, LIFETIME + 40)).toBe(false);
+    // ...with room before the end, so broadcast jitter cannot make an expiry
+    // look like a pickup. The error runs one way on purpose.
+    expect(tookRatherThanExpired(0, LIFETIME, LIFETIME - 10)).toBe(false);
+  });
+
+  it('leaves a wide margin between the two answers', () => {
+    let flipped = -1;
+    for (let tick = 0; tick <= LIFETIME; tick++) {
+      if (!tookRatherThanExpired(0, LIFETIME, tick)) {
+        flipped = tick;
+        break;
+      }
+    }
+    // Several broadcast intervals of margin, and far under the lifetime.
+    expect(LIFETIME - flipped).toBeGreaterThanOrEqual(BROADCAST_EVERY_N_TICKS * 8);
+    expect(flipped).toBeGreaterThan(LIFETIME * 0.98);
   });
 });
 

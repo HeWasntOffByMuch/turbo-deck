@@ -165,6 +165,41 @@ describe('the drop rig', () => {
     rig.dispose();
   });
 
+  it('grows the whole rig and fades it as the pop runs', () => {
+    const rig = new DropRig('rare');
+    const lit = halo(rig);
+
+    rig.update(0, 0.45, 1);
+    const restingAlpha = (lit.material as THREE.MeshBasicMaterial).opacity;
+    expect(rig.group.scale.x).toBeCloseTo(1, 9);
+
+    rig.setPop({ scale: 1.8, alpha: 0.4 });
+    rig.update(0, 0.45, 1);
+    expect(rig.group.scale.x).toBeCloseTo(1.8, 9);
+    expect((lit.material as THREE.MeshBasicMaterial).opacity).toBeLessThan(restingAlpha);
+
+    // Gone means gone: every surface at zero, the solid one included.
+    rig.setPop({ scale: 2.2, alpha: 0 });
+    rig.update(0, 0.45, 1);
+    for (const child of rig.group.children) {
+      if (!(child instanceof THREE.Mesh)) continue;
+      expect((child.material as THREE.Material & { opacity: number }).opacity).toBe(0);
+    }
+    rig.dispose();
+  });
+
+  /** A drop merely lying there pays nothing for a blend mode it does not use. */
+  it('leaves the object opaque until a pop actually starts', () => {
+    const rig = new DropRig('common');
+    rig.update(0, 0.12, 1);
+    const item = rig.group.children.find(
+      (child): child is THREE.Mesh =>
+        child instanceof THREE.Mesh && child.geometry instanceof THREE.OctahedronGeometry,
+    );
+    expect((item?.material as THREE.Material | undefined)?.transparent).toBe(false);
+    rig.dispose();
+  });
+
   it('disposes everything it made', () => {
     const rig = new DropRig('rare');
     const disposed = new Set<unknown>();

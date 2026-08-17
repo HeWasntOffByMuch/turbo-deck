@@ -101,6 +101,67 @@ const HIDDEN_REST_FLARE = rarityRow('common').restFlare;
  */
 export const HIDDEN_PEAK_FLARE = 0.4;
 
+/**
+ * How long the pop on pickup lasts, in ticks. ~0.2s at 60Hz.
+ *
+ * Quick, because it is a *receipt* rather than an event: the thing that
+ * happened is the item being in your bag, and this only has to say which object
+ * went there. A long one would have the player watching an animation of
+ * something they have already got.
+ */
+export const POP_TICKS = 12;
+
+/** How much bigger the object gets on its way out. */
+const POP_SCALE = 2.2;
+
+export interface Pop {
+  /** Multiplier on the whole rig. Starts at 1 and grows. */
+  readonly scale: number;
+  /** 1 down to 0. Everything the rig draws is faded by it. */
+  readonly alpha: number;
+}
+
+/**
+ * The pop, as a pure function of how far through it is.
+ *
+ * Grows and vanishes at once, and the two curves are deliberately different:
+ * the scale eases *out* so the size is committed almost immediately, and the
+ * alpha runs down faster than linear so what is left at the end is a large,
+ * faint shape rather than a small solid one shrinking away. Enlarging while
+ * fading is what reads as "taken"; shrinking would read as "fell down a hole".
+ */
+export function popAt(through: number): Pop {
+  const t = Math.max(0, Math.min(1, through));
+  const eased = 1 - (1 - t) * (1 - t);
+  return { scale: 1 + (POP_SCALE - 1) * eased, alpha: (1 - t) * (1 - t) };
+}
+
+/**
+ * Whether a drop that has just left the world was **taken** rather than having
+ * run out its clock.
+ *
+ * There are only two ways a drop leaves -- somebody picked it up, or it expired
+ * -- and the client can tell them apart without being told, because it has the
+ * spawn tick and the lifetime is a shared constant. That is what makes the pop
+ * play for *every* observer rather than only for whoever took it: no message
+ * announces the pickup, and none needs to.
+ *
+ * The margin absorbs the broadcast interval and a little clock skew, so a drop
+ * that expires is never mistaken for one that was taken. The error runs one way
+ * on purpose: a missed pop on an expiry nobody was watching costs nothing, and
+ * a pop on an item that quietly rotted would be a lie about a reward.
+ */
+export function tookRatherThanExpired(
+  spawnTick: number,
+  lifetimeTicks: number,
+  tick: number,
+): boolean {
+  return tick < spawnTick + lifetimeTicks - EXPIRY_MARGIN_TICKS;
+}
+
+/** Half a second: several broadcast intervals, and far under the lifetime. */
+const EXPIRY_MARGIN_TICKS = 30;
+
 export interface DropPresentation {
   readonly phase: RevealPhaseValue;
   /**

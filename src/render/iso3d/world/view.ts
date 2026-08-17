@@ -822,6 +822,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     return entity.kind === EntityKind.Drop;
   }
 
+  /** Whether the cursor is over a drop this frame. Nothing else reads it. */
+  function hoveringDrop(view: ReturnType<typeof client.view>, hovered: number | null): boolean {
+    if (hovered === null) return false;
+    const entity = view.entities.find((candidate) => candidate.id === hovered);
+    return entity !== undefined && collectable(entity);
+  }
+
   /**
    * The only place in the game that turns a `KeyboardEvent` into a decision
    * (spec 125).
@@ -1676,6 +1683,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       scene.hoveredEntityId,
       now,
     );
+    // The cursor says what the next click would do (spec 158).
+    //
+    // Only a drop changes it, and only because a drop is the one thing in the
+    // world the cursor *does* something to that has no other affordance: a
+    // monster lights up when hovered, a window has a border, and an item on the
+    // ground has neither -- the pointer is what tells you it can be clicked at
+    // all. Presentation, and the only `if` in this file that touches a style.
+    canvas.style.cursor = hoveringDrop(client.view(), scene.hoveredEntityId) ? 'pointer' : '';
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());

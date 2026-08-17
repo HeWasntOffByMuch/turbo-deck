@@ -236,6 +236,28 @@ again.
 an answer: both are replied to with an `Inventory` at their id, and two counters
 meant a pickup's answer retired a bag move that happened to share its number.
 
+### Taking it is a pop, and the cursor says it can be taken
+
+A drop under the cursor sets `cursor: pointer`. It is the one thing in the world
+the cursor acts on that has no other affordance — a monster lights up, a window
+has a border, an item on the ground has neither.
+
+When one is taken it **grows and fades over `POP_TICKS`**, which needs the rig to
+outlive the entity: the drop is gone from the world the instant it is picked up,
+and a rig disposed on the same frame has nothing left to animate. `scene.ts`
+moves it to a departing set carrying the tick it left on, so the curve reads off
+the drawn clock like everything else here.
+
+It grows rather than shrinking, deliberately: enlarging while fading reads as
+*taken*, shrinking reads as *lost*.
+
+**Whether to pop at all is derived, not announced.** There are two ways a drop
+leaves — somebody took it, or it expired — and the client can tell them apart
+from the spawn tick and the shared lifetime, so the pop plays for every observer
+without a message existing to carry it. The margin runs one way on purpose: a
+missed pop on an expiry nobody watched costs nothing, and a pop on an item that
+quietly rotted would be a lie about a reward.
+
 ### Presentation is a pure function of the drop and the drawn tick
 
 ```ts
@@ -318,6 +340,10 @@ the delay is tunable on a running server from the admin console.
   pickup's answer never retires an unrelated bag move.
 - **`pickupLead` is never zero for a body that can move**, however good the
   connection — the order never asks from the boundary itself.
+- The pop only ever grows and only ever fades, is clamped at both ends, and
+  leaves the object fully invisible when it finishes.
+- A drop that left early reads as taken and one that ran its clock out reads as
+  expired, with several broadcast intervals of margin between the two answers.
 - Presentation cannot change state: the same fight with the drop presentation
   driven and undriven produces identical authoritative state.
 

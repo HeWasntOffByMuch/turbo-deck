@@ -43,7 +43,13 @@ import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
 import { MechRig, defaultMechTuning } from '../rigs.js';
 import { monsterLookFor } from './monster-look.js';
 import { DropRig } from '../drop-rig.js';
-import { DropPresenter } from './loot-drop.js';
+import {
+  DropPresenter,
+  popAt,
+  POP_TICKS,
+  tookRatherThanExpired,
+} from './loot-drop.js';
+import { DROP_LIFETIME_TICKS } from '../../../server/data/loot.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
 import { attachHighlight, type HighlightHandle } from '../highlight.js';
@@ -420,6 +426,21 @@ export class WorldScene {
   private readonly dropRigs = new Map<number, DropRig>();
   /** Which of each drop's cues have already been heard. Pure; see `loot-drop.ts`. */
   private readonly dropPresenter = new DropPresenter();
+  /**
+   * Drops that have been taken and are still playing their pop (spec 158).
+   *
+   * Held past the entity that owned them, which is the only way the effect can
+   * exist at all: the drop is gone from the world the instant it is picked up,
+   * and a rig disposed on the same frame has nothing left to animate. Keyed by
+   * the id it had, and carrying the tick it left on so the curve is read off the
+   * drawn clock like everything else here rather than off a per-rig timer.
+   */
+  /** Each live drop's spawn tick, so a removal can tell taken from expired. */
+  private readonly dropSpawnTicks = new Map<number, number>();
+  private readonly poppingDrops = new Map<
+    number,
+    { readonly rig: DropRig; readonly leftAtTick: number; readonly spawnTick: number }
+  >();
 
   private readonly motion = new EntityMotion();
   /**
@@ -1367,6 +1388,9 @@ export class WorldScene {
         this.dropRigs.set(drop.entityId, rig);
         this.scene.add(rig.group);
       }
+      // Kept beside the rig because the removal pass runs after the drop has
+      // left `view.drops` and can no longer ask it anything.
+      this.dropSpawnTicks.set(drop.entityId, drop.spawnTick);
 
       // The entity's replicated position is where it *landed*; the throw that
       // got it there is drawn between that and the origin the wire carried
@@ -1399,11 +1423,46 @@ export class WorldScene {
 
     for (const [id, rig] of this.dropRigs) {
       if (live.has(id)) continue;
+      this.dropRigs.delete(id);
+      // Taken, or merely rotted? The client can tell without being told: there
+      // are two ways a drop leaves and it has the spawn tick for both (spec
+      // 158). Only a pickup earns the pop -- one on an item that quietly
+      // expired would be a lie about a reward.
+      const spawnTick = this.dropSpawnTicks.get(id);
+      this.dropSpawnTicks.delete(id);
+      if (spawnTick !== undefined && tookRatherThanExpired(spawnTick, DROP_LIFETIME_TICKS, frame.tick)) {
+        this.poppingDrops.set(id, { rig, leftAtTick: frame.tick, spawnTick });
+        continue;
+      }
       this.scene.remove(rig.group);
       rig.dispose();
-      this.dropRigs.delete(id);
     }
     this.dropPresenter.retain(live);
+    this.advancePops(frame, dt);
+  }
+
+  /**
+   * One frame of every drop on its way out.
+   *
+   * Driven off the drawn tick rather than a per-rig clock, so the pop is the
+   * same length at 30fps and at 144 -- the rule every other curve in this
+   * feature follows. The flare is frozen at the tier's rest for the duration:
+   * what is being watched is the object leaving, and a glow still resolving
+   * underneath it would be two things happening at once.
+   */
+  private advancePops(frame: FrameInfo, dt: number): void {
+    for (const [id, popping] of this.poppingDrops) {
+      const through = (frame.tick - popping.leftAtTick) / POP_TICKS;
+      if (through >= 1) {
+        this.scene.remove(popping.rig.group);
+        popping.rig.dispose();
+        this.poppingDrops.delete(id);
+        continue;
+      }
+      popping.rig.setHovered(false);
+      popping.rig.setPop(popAt(through));
+      popping.rig.update(dt, 0, 1);
+    }
   }
 
   /**

@@ -30,7 +30,7 @@ import { rarityRow } from '../src/server/data/loot.js';
 import { anticipationTickFor, revealPhaseAt } from '../src/server/sim/loot.js';
 import type { DropView } from '../src/server/client/game-client.js';
 import { DropRig } from '../src/render/iso3d/drop-rig.js';
-import { DropPresenter } from '../src/render/iso3d/world/loot-drop.js';
+import { DropPresenter, popAt, POP_TICKS } from '../src/render/iso3d/world/loot-drop.js';
 import { glyphRects } from '../src/render/iso3d/world/pixel-font.js';
 
 const CELL = 190;
@@ -66,8 +66,10 @@ interface Tri {
   readonly b: THREE.Vector3;
   readonly c: THREE.Vector3;
   readonly color: THREE.Color;
-  /** Additive and depth-transparent, like the halo and the ring. */
-  readonly glow: number;
+  /** 1 for an opaque surface, less for anything the material fades. */
+  readonly alpha: number;
+  /** True for a surface that *adds* light rather than covering what is behind. */
+  readonly additive: boolean;
 }
 
 /** Every triangle under `root`, in world space, with what it is made of. */
@@ -81,10 +83,16 @@ function collectTriangles(root: THREE.Object3D): Tri[] {
       | (THREE.Material & { color?: THREE.Color; opacity: number; transparent: boolean })
       | undefined;
     if (!material?.color) return;
+    const alpha = material.transparent ? material.opacity : 1;
+    // Faded out entirely. Skipped rather than drawn at zero, because "how
+    // transparent" and "is it transparent at all" are two questions and
+    // conflating them is what made a fully popped drop rasterise as a solid
+    // blue sphere -- the preview lying about the one frame it existed to show.
+    if (alpha <= 0.002) return;
+    const additive = material.blending === THREE.AdditiveBlending;
     const pos = mesh.geometry.getAttribute('position');
     const index = mesh.geometry.getIndex();
     const count = index ? index.count : pos.count;
-    const glow = material.transparent ? material.opacity : 0;
     for (let i = 0; i < count; i += 3) {
       const corners = [0, 1, 2].map((k) => {
         const vi = index ? index.getX(i + k) : i + k;
@@ -95,7 +103,8 @@ function collectTriangles(root: THREE.Object3D): Tri[] {
         b: corners[1] as THREE.Vector3,
         c: corners[2] as THREE.Vector3,
         color: material.color,
-        glow,
+        alpha,
+        additive,
       });
     }
   });
@@ -115,8 +124,8 @@ function groundMark(at: { x: number; y: number }, radius: number, hex: number, a
       [t, radius],
     ] as const) {
       tris.push(
-        { a: p(-ax, -az), b: p(ax, -az), c: p(ax, az), color, glow: 0 },
-        { a: p(-ax, -az), b: p(ax, az), c: p(-ax, az), color, glow: 0 },
+        { a: p(-ax, -az), b: p(ax, -az), c: p(ax, az), color, alpha: 1, additive: false },
+        { a: p(-ax, -az), b: p(ax, az), c: p(-ax, az), color, alpha: 1, additive: false },
       );
     }
     return tris;
@@ -131,8 +140,8 @@ function groundMark(at: { x: number; y: number }, radius: number, hex: number, a
     // Wound so the normal points up -- the rasteriser culls back faces exactly
     // as the renderer does, and a ring wound the other way is drawn and culled.
     tris.push(
-      { a: ring(a0, inner), b: ring(a1, radius), c: ring(a0, radius), color, glow: 0 },
-      { a: ring(a0, inner), b: ring(a1, inner), c: ring(a1, radius), color, glow: 0 },
+      { a: ring(a0, inner), b: ring(a1, radius), c: ring(a0, radius), color, alpha: 1, additive: false },
+      { a: ring(a0, inner), b: ring(a1, inner), c: ring(a1, radius), color, alpha: 1, additive: false },
     );
   }
   return tris;
@@ -175,9 +184,10 @@ function render(tris: readonly Tri[], size: number): Uint8ClampedArray {
   const e1 = new THREE.Vector3();
   const e2 = new THREE.Vector3();
 
-  // Solids first so the additive pass has something to sit on top of, and so
+  // Solids first so the blended passes have something to sit on top of, and so
   // the depth buffer is complete before anything reads it without writing.
-  const ordered = [...tris].sort((a, b) => a.glow - b.glow);
+  const blended = (t: Tri): number => (t.additive || t.alpha < 1 ? 1 : 0);
+  const ordered = [...tris].sort((a, b) => blended(a) - blended(b));
 
   for (const t of ordered) {
     const [ax, ay, az] = project(t.a);
@@ -190,7 +200,7 @@ function render(tris: readonly Tri[], size: number): Uint8ClampedArray {
     // Glow shells are closed spheres: culling their back faces is what stops the
     // far side doubling the brightness of the near one.
     if (normal.dot(forward) > 0) continue;
-    const lambert = t.glow > 0 ? 1 : AMBIENT + (1 - AMBIENT) * Math.max(0, normal.dot(LIGHT));
+    const lambert = t.additive ? 1 : AMBIENT + (1 - AMBIENT) * Math.max(0, normal.dot(LIGHT));
     const rgb = [t.color.r * lambert, t.color.g * lambert, t.color.b * lambert] as const;
 
     const px = (u: number): number => (u / (2 * HALF_EXTENT) + 0.5) * size;
@@ -216,13 +226,24 @@ function render(tris: readonly Tri[], size: number): Uint8ClampedArray {
         if (w0 < 0 || w1 < 0 || w2 < 0) continue;
         const z = w2 * az + w1 * bz + w0 * cz;
         const i = y * size + x;
-        if (t.glow > 0) {
-          // Additive, and depth-*tested* without writing: a glow behind the
-          // object does not paint over it, and two shells do not stack.
+        if (t.additive) {
+          // Depth-*tested* without writing: a glow behind the object does not
+          // paint over it, and two shells do not stack.
           if (z > (depth[i] ?? Infinity)) continue;
           for (let k = 0; k < 3; k++) {
             const was = out[i * 4 + k] ?? 0;
-            out[i * 4 + k] = Math.min(255, was + encode((rgb[k] ?? 0) * t.glow));
+            out[i * 4 + k] = Math.min(255, was + encode((rgb[k] ?? 0) * t.alpha));
+          }
+          continue;
+        }
+        if (t.alpha < 1) {
+          // A fading solid: lit like one, then mixed over whatever is behind it
+          // rather than added to it. Depth-tested and not written, so the faces
+          // behind it in the same mesh do not punch through.
+          if (z > (depth[i] ?? Infinity)) continue;
+          for (let k = 0; k < 3; k++) {
+            const was = out[i * 4 + k] ?? 0;
+            out[i * 4 + k] = was + (encode(rgb[k] ?? 0) - was) * t.alpha;
           }
           continue;
         }
@@ -271,6 +292,60 @@ function stamp(png: PNG, text: string, atX: number, atY: number, scale = 1): voi
       }
     }
   }
+}
+
+/**
+ * The pop, on its own sheet.
+ *
+ * Its own image rather than a fourth row on the one above, because the axis is
+ * different: that sheet's columns are ticks since the drop landed and these are
+ * ticks since it was taken. Sharing the header would have labelled six cells
+ * with numbers that mean something else.
+ */
+function popSheet(): void {
+  const cols = 7;
+  const width = GAP + cols * (CELL + GAP);
+  const height = GAP + LABEL_H * 2 + CELL + GAP;
+  const png = new PNG({ width, height });
+  for (let i = 0; i < width * height; i++) {
+    png.data[i * 4] = SHEET_BG[0];
+    png.data[i * 4 + 1] = SHEET_BG[1];
+    png.data[i * 4 + 2] = SHEET_BG[2];
+    png.data[i * 4 + 3] = 255;
+  }
+  stamp(png, 'picked up - it grows and goes and never shrinks', GAP + 2, GAP, 1);
+
+  for (let c = 0; c < cols; c++) {
+    const through = c / (cols - 1);
+    const tick = Math.round(through * POP_TICKS);
+    stamp(png, `T+${tick}`, GAP + c * (CELL + GAP) + 4, GAP + LABEL_H, 1);
+
+    const rig = new DropRig('rare');
+    // Revealed and at rest, which is what a drop being taken looks like.
+    rig.setTierMix(1);
+    rig.setPop(popAt(through));
+    rig.update(0, rarityRow('rare').restFlare, 1);
+    rig.group.position.set(LANDING.x, LANDING.z, LANDING.y);
+    const pixels = render([...groundMark(LANDING, 7, 0x1e1e1e), ...collectTriangles(rig.group)], CELL);
+    rig.dispose();
+
+    const left = GAP + c * (CELL + GAP);
+    const top = GAP + LABEL_H * 2;
+    for (let y = 0; y < CELL; y++) {
+      for (let x = 0; x < CELL; x++) {
+        const src = (y * CELL + x) * 4;
+        const dst = ((top + y) * width + left + x) * 4;
+        png.data[dst] = pixels[src] ?? 0;
+        png.data[dst + 1] = pixels[src + 1] ?? 0;
+        png.data[dst + 2] = pixels[src + 2] ?? 0;
+        png.data[dst + 3] = 255;
+      }
+    }
+  }
+
+  const out = '.claude/screenshots/loot-pickup.png';
+  writeFileSync(out, PNG.sync.write(png));
+  console.log(`wrote ${out} (${width}x${height})`);
 }
 
 function main(): void {
@@ -336,6 +411,7 @@ function main(): void {
   const out = '.claude/screenshots/loot-reveal.png';
   writeFileSync(out, PNG.sync.write(png));
   console.log(`wrote ${out} (${width}x${height})`);
+  popSheet();
 
   // The numbers behind the picture, so a change that is too subtle to see is
   // still reviewable as a diff.
