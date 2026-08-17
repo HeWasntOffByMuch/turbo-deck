@@ -370,6 +370,16 @@ export interface RestorationView {
 type CombatListener = (result: CombatResultMessage) => void;
 type ChatListener = (message: ServerChatMessage) => void;
 type ErrorListener = (code: number, message: string) => void;
+/**
+ * Told on every welcome, not only the first (spec 157).
+ *
+ * The server mints a fresh `sessionToken` on each one -- a fresh login, a
+ * resume and a takeover alike -- so anything persisting the token has to hear
+ * about all of them. The Play tab wrote it once, in the `.then()` of the
+ * initial connect, which left `sessionStorage` holding a token the server would
+ * refuse the moment a reconnect had happened.
+ */
+type WelcomeListener = (info: WelcomeInfo) => void;
 type CastListener = (cast: CastStateMessage) => void;
 type CastEndListener = (end: CastEndedMessage) => void;
 type EffectListener = (effect: EffectMessage) => void;
@@ -524,6 +534,7 @@ export class GameClient {
   private readonly combatListeners: CombatListener[] = [];
   private readonly chatListeners: ChatListener[] = [];
   private readonly errorListeners: ErrorListener[] = [];
+  private readonly welcomeListeners: WelcomeListener[] = [];
   private readonly castListeners: CastListener[] = [];
   private readonly castEndListeners: CastEndListener[] = [];
   private readonly effectListeners: EffectListener[] = [];
@@ -636,6 +647,8 @@ export class GameClient {
   private serverResourceTick = 0;
   /** Ticks since this client started, which is the only clock it has. */
   private localTick = 0;
+  /** The tick `keepAlive` last saw, so it can tell a stalled loop from a live one. */
+  private lastKeepAliveTick = -1;
   private nextPingNonce = 1;
   /** Nonce -> the local tick it went out on, so a pong measures a round trip. */
   private readonly pingsInFlight = new Map<number, number>();
@@ -1230,6 +1243,34 @@ export class GameClient {
     this.errorListeners.push(listener);
   }
 
+  /** Every welcome, so a caller keeping the resume token keeps the current one. */
+  onWelcome(listener: WelcomeListener): void {
+    this.welcomeListeners.push(listener);
+  }
+
+  /**
+   * A heartbeat for a tick loop that has stopped (spec 157).
+   *
+   * `advanceTick` pings every 30 ticks and is driven by the renderer's
+   * animation frame, which a browser throttles to nothing in a hidden tab. So
+   * ticks stop, pings stop, and the server's ten-second timeout drops a player
+   * whose only crime was looking at a different tab.
+   *
+   * The caller drives this from a wall clock, which is the one place a wall
+   * clock belongs. It stays pure by *detecting* the stall rather than timing
+   * it: two calls with no tick in between mean the loop is not running. While
+   * the tab is visible this sends nothing at all, so the ping rate is unchanged
+   * and the server's heartbeat bucket never sees the difference.
+   */
+  keepAlive(): void {
+    if (!this.connected) return;
+    if (this.localTick !== this.lastKeepAliveTick) {
+      this.lastKeepAliveTick = this.localTick;
+      return;
+    }
+    this.ping();
+  }
+
   /**
    * Advances the estimated clock by one tick. The caller drives this from the
    * same fixed-timestep loop it sends input on, so the estimate keeps time with
@@ -1602,6 +1643,10 @@ export class GameClient {
         this.resolveWelcome?.(this.welcome);
         this.resolveWelcome = null;
         this.rejectWelcome = null;
+        // After the promise, and on every welcome rather than only the first
+        // (spec 157): a resume and a takeover each mint a new token, and
+        // whoever is persisting it has to be told about those too.
+        for (const listener of this.welcomeListeners) listener(this.welcome);
         break;
       }
 
@@ -1734,6 +1779,14 @@ export class GameClient {
 
       case ServerMessageType.Error:
         for (const listener of this.errorListeners) listener(message.code, message.message);
+        // Any error fails a pending handshake, and spec 157 tried to narrow
+        // that to the codes that refuse a connection. It cannot be done by
+        // code: `hello` refuses 'already connected' and 'bad player id' with
+        // `RejectedAction`, which is the same code an ordinary mid-session
+        // refusal carries, and spec 145's hello-twice test rightly waits for
+        // the first of those to fail its `connect()`. Telling them apart needs
+        // a handshake-specific code, which is a protocol change and not this
+        // one -- see the note in specs/157.
         this.rejectWelcome?.(new Error(`server refused connection: ${message.message}`));
         this.rejectWelcome = null;
         this.resolveWelcome = null;
