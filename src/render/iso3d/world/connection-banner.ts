@@ -45,7 +45,11 @@ export function createConnectionBanner(root: HTMLElement): ConnectionBanner {
     'position:absolute',
     'left:8px',
     'top:8px',
-    'z-index:40',
+    // Above the loading overlay (spec 165), which is opaque and covers the whole
+    // frame: the moments this banner exists for -- connecting, refused,
+    // reconnecting -- are exactly the moments the loading screen is up, and a
+    // refusal nobody can read is a hang as far as the player is concerned.
+    'z-index:60',
     'padding:4px 8px',
     'border-radius:3px',
     'font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace',

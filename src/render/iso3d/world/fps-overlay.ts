@@ -38,7 +38,11 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   root.dataset['fps'] = '';
   root.style.cssText = [
     'position:absolute',
-    'top:8px',
+    // Below the connection banner rather than beside it: both want the top-left
+    // corner, the banner is transient and this is not, and a readout that
+    // sometimes has a banner sitting on it is a readout you cannot read at
+    // exactly the moment you went looking for it.
+    'top:40px',
     'left:8px',
     'display:none',
     'flex-direction:column',
@@ -48,7 +52,10 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
     'color:#c8c8d4',
     "font:11px ui-monospace,SFMono-Regular,Menlo,monospace",
     'pointer-events:none',
-    'z-index:30',
+    // Above the loading overlay, deliberately: the frames worth measuring on the
+    // grown map are the loading ones, and a meter that appears once the load is
+    // over cannot say anything about the part that was slow.
+    'z-index:55',
   ].join(';');
 
   const text = document.createElement('div');

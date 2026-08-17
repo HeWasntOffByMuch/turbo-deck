@@ -42,7 +42,12 @@ export function createLoadingOverlay(parent: HTMLElement): LoadingOverlay {
     'text-transform:uppercase',
     `transition:opacity ${FADE_MS}ms ease-out`,
     'opacity:1',
-    'z-index:40',
+    // Above the HUD (5) and the interface layer (40), because a loading screen
+    // that a window can be drawn on top of is not a loading screen. Below the
+    // connection banner, which is the one thing that must still reach the player
+    // while this is up: a refused connection behind an opaque "Connecting" reads
+    // as a hang, and the fix for it is the message this would have hidden.
+    'z-index:50',
   ].join(';');
 
   const label = document.createElement('div');
