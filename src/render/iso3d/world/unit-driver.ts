@@ -21,6 +21,7 @@
  */
 
 import type { UnitDef } from '../../../units/types.js';
+import { abilityById } from '../../../server/data/abilities.js';
 import { EntityActivity, CastPhaseValue } from '../../../server/net/protocol.js';
 import type { FiredEvent, UnitMachine } from '../../../units/machine.js';
 
@@ -56,6 +57,22 @@ export interface UnitFacts {
    * follows -- rather than the animation deciding when anything happens.
    */
   readonly attackRate: number;
+  /**
+   * The ability being cast, as replicated, or null when nothing is (spec 164).
+   *
+   * Here because a body has more than one basic attack and they do not look
+   * alike: the same `Casting` activity is a sword coming over the shoulder or a
+   * bow being drawn, and nothing else on this snapshot can tell them apart. It
+   * is an id rather than a resolved animation name on purpose -- what a given
+   * ability *looks* like is a decision for the renderer, and putting the
+   * decision here would mean the wire had made it.
+   *
+   * Reading the ability table off it is not the sim reaching into animation:
+   * `appearance.ts` already does exactly this for a projectile's look, the
+   * table is content rather than state, and nothing this function returns can
+   * reach a game outcome.
+   */
+  readonly abilityId: string | null;
   readonly dead: boolean;
 }
 
@@ -71,7 +88,31 @@ export const DRIVEN_PARAMETERS = {
   speed: 'speed',
   dead: 'dead',
   attack: 'attack',
+  shoot: 'shoot',
 } as const;
+
+/**
+ * Which trigger an ability's animation is reached by.
+ *
+ * One trigger was enough while `slash` was the only attack clip anybody had
+ * authored, and it stopped being enough the moment a second one existed: the
+ * Hunting Bow is a level-1 weapon a player can equip in the first minute, and
+ * with a single `attack` trigger the pig threw a sword chop at things four
+ * hundred units away.
+ *
+ * The rule is **what the ability sends**, not what it is called. An ability
+ * that puts an arrow in the air is drawn with a bow; a thrown star and an
+ * arcane bolt leave the same way they always have, because nobody has authored
+ * a clip for them and a wrong animation is worse than a generic one. That keeps
+ * this a fact read off the content table rather than a list of ids to keep in
+ * sync with it.
+ */
+export function attackTriggerFor(abilityId: string | null): string {
+  if (abilityId === null) return DRIVEN_PARAMETERS.attack;
+  return abilityById(abilityId)?.projectile?.look === 'arrow'
+    ? DRIVEN_PARAMETERS.shoot
+    : DRIVEN_PARAMETERS.attack;
+}
 
 /**
  * Writes this tick's facts onto the machine and steps it.
@@ -97,8 +138,28 @@ export function driveUnit(
   // Written before the trigger, so the swing that is about to start is entered
   // at the right rate rather than a tick of it playing at the old one.
   machine.setActionRate(facts.attackRate);
-  if (startedCasting(facts, previous)) machine.trigger(DRIVEN_PARAMETERS.attack);
+  if (startedCasting(facts, previous)) machine.trigger(triggerFor(machine, facts.abilityId));
   return machine.step(ticks);
+}
+
+/**
+ * The trigger to raise, given what this particular unit can answer.
+ *
+ * A unitdef with no `shoot` parameter falls back to `attack`, which is what it
+ * did before this existed. That matters because the roster is not uniform: the
+ * fox and the dev mannequin share this family's clip library and neither has a
+ * draw state, and a silently dropped trigger is a body standing perfectly still
+ * through its own attack -- a worse outcome than a generic animation, and a
+ * much harder one to notice.
+ *
+ * `getParameter` is the question to ask, because it returns undefined for a
+ * parameter the document never declared, which is exactly the condition and is
+ * already how `setParameter` decides to ignore one.
+ */
+function triggerFor(machine: UnitMachine, abilityId: string | null): string {
+  const wanted = attackTriggerFor(abilityId);
+  if (wanted === DRIVEN_PARAMETERS.attack) return wanted;
+  return machine.getParameter(wanted) === undefined ? DRIVEN_PARAMETERS.attack : wanted;
 }
 
 /**

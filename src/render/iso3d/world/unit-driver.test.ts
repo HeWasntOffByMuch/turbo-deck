@@ -24,6 +24,7 @@ function facts(patch: Partial<UnitFacts> = {}): UnitFacts {
     activity: EntityActivity.Idle,
     castPhase: null,
     attackRate: 1,
+    abilityId: null,
     dead: false,
     ...patch,
   };

@@ -315,6 +315,43 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  the strain term happens to prefer. Hand and elbow targets are a
                  linkage rather than two wishes -- upper arm 0.178, forearm 0.114
                  -- and a pair 0.071 apart is not a pose.
+                 pig-shot.ts is the bow beside it (spec 164): seven poses over
+                 1150ms with the arrow leaving at 800, which is `ranged.shot`'s
+                 wind-up, so the same rule holds -- the frame the picture shows
+                 the string let go and the frame the arrow exists are the same
+                 frame. It exists because the Hunting Bow is a level-1 weapon
+                 and the pig answered every shot with the sword chop. Three
+                 things in it invert the swing on purpose. **The release is a
+                 velocity discontinuity**: a raise must be one movement, but a
+                 draw is pulled, held still while it is aimed, and let go
+                 instantly, so the anchor is arrived at and left at opposite
+                 speeds -- in a swing that is a dead beat and a whip, in a shot
+                 it is the aim and the loose. **The body does not unwind**,
+                 because what sends an arrow is back tension rather than
+                 rotation; only the string hand travels. And **the stance never
+                 moves** -- every key holds the same hips and the sword's own
+                 guard legs, shared as an object rather than copied, so a foot
+                 cannot slide by construction and none of `plant-foot.ts` is
+                 needed. `npx tsx scripts/aim-bow.ts` is the solver and its
+                 improvement over aim-blade.ts is that **the elbow is derived
+                 rather than wished for**: an author states the hand and a
+                 *roll* -- how far round the shoulder-to-hand axis the elbow
+                 sits -- and the only elbow consistent with the linkage is
+                 computed, so a pose that does not close is impossible to write
+                 rather than visible later. What it prints is the fold, because
+                 the fold is what decides whether an arm reads: on this rig a
+                 hand closer than 0.156 to its own shoulder is past 120 degrees,
+                 which is why the string hand goes outboard round the ribs
+                 instead of straight to the anchor, and why the anchor is behind
+                 the ear rather than at the jaw.
+                 `npx tsx scripts/make-pig-shot.ts` writes the committed bytes
+                 and `npx tsx scripts/preview-shot.ts` photographs them, drawing
+                 a **string** between the two hands rather than a bow: there is
+                 no bow mesh, a proxy invented in a preview is a prop the game
+                 does not have, and what the bar is for is measurement -- a draw
+                 *is* the distance the hands get apart, and it prints that
+                 distance per frame beside the picture because a thumbnail of a
+                 pig cannot settle whether the string hand went back.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and
@@ -937,7 +974,20 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
                  monsters are drawn from an authored unit, the pure function from
                  replicated facts to machine commands -- handed a snapshot and not
-                 the GameClient, so animation has nothing it *could* call -- and
+                 the GameClient, so animation has nothing it *could* call. Since
+                 spec 164 that snapshot carries the **ability id**, because a
+                 body has more than one basic attack and they do not look alike:
+                 a sword coming over the shoulder and a bow being drawn are the
+                 same `Casting` activity on the wire, so one `attack` trigger
+                 could only ever pick one of them. Which animation an ability
+                 gets is read off **what it sends** -- a projectile whose look is
+                 an arrow is drawn with a bow -- rather than off a list of ids to
+                 keep in sync with the content table, and an ability with no clip
+                 authored for it keeps the swing, because a wrong animation is
+                 worse than a generic one. A unit whose document declares no
+                 `shoot` parameter falls back the same way, since a silently
+                 dropped trigger is a body standing perfectly still through its
+                 own attack -- and
                  how often a body's pose is applied; the machine itself is
                  never throttled, because its events are authored on frame indices.
                  The LOD measures how big a body is *drawn*, in pixels of the

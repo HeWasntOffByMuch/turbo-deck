@@ -217,6 +217,7 @@ async function play(animate: boolean): Promise<RunResult> {
         activity: entity.activity,
         castPhase: view.casts.find((cast) => cast.entityId === entity.id)?.phase ?? null,
         attackRate: 1,
+        abilityId: view.casts.find((cast) => cast.entityId === entity.id)?.abilityId ?? null,
         dead: entity.maxHealth > 0 && entity.health <= 0,
       };
       events.push(...driveUnit(machine, facts, previous.get(entity.id) ?? null, 1));
@@ -294,9 +295,11 @@ describe('animation is presentation only', () => {
       activity: 0,
       castPhase: null,
       attackRate: 1,
+      abilityId: null,
       dead: false,
     };
     expect(Object.keys(facts).sort()).toEqual([
+      'abilityId',
       'activity',
       'attackRate',
       'castPhase',

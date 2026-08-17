@@ -472,6 +472,8 @@ export class WorldScene {
    * leaves no entry behind to be read as a swing that never finished.
    */
   private readonly castPhases = new Map<number, number>();
+  /** Which ability each caster is casting, so the driver can pick its clip. */
+  private readonly castAbilities = new Map<number, string>();
   /** Attack-speed factor per casting entity, for the swing's playback rate. */
   private readonly attackRates = new Map<number, number>();
   private hovered: number | null = null;
@@ -1251,9 +1253,13 @@ export class WorldScene {
     const live = new Set<number>();
     this.hoverTargets.length = 0;
     this.castPhases.clear();
+    this.castAbilities.clear();
     this.attackRates.clear();
     for (const cast of view.casts) {
       this.castPhases.set(cast.entityId, cast.phase);
+      // Which ability, not just that there is one (spec 164): a sword swing and
+      // a bow draw are the same activity on the wire and two different clips.
+      this.castAbilities.set(cast.entityId, cast.abilityId);
       // Measured off the ticks the server sent rather than off anyone's stats
       // (spec 144): the ratio of the authored wind-up to the one actually being
       // run is the attack-speed factor, so a hasted body's swing animation
@@ -1528,6 +1534,7 @@ export class WorldScene {
       activity: entity.activity,
       castPhase: this.castPhases.get(entity.id) ?? null,
       attackRate: this.attackRates.get(entity.id) ?? 1,
+      abilityId: this.castAbilities.get(entity.id) ?? null,
       dead,
     };
     driveUnit(unit.machine, facts, unit.previous, frame.ticks);
