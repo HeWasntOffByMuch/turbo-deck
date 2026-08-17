@@ -1028,6 +1028,31 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
     ).toBe(true);
   });
 
+  it('says what died, on an event that outlives the body (spec 163)', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const dummy = withDummy(state, 640, 450);
+    state = dummy.state;
+    // One blow's worth of health, so the first slash finishes it.
+    const body = state.entities.get(dummy.id);
+    if (!body) throw new Error('no dummy');
+    state = replaceEntity(state, { ...body, health: 1 });
+
+    const result = run(state, SERVER_TICK_RATE * 2, {
+      0: [input(player.id, { castAbilityId: 'melee.slash', castTargetX: 640, castTargetY: 450 })],
+    });
+
+    const died = result.events.find((event) => event.kind === 'died');
+    expect(died?.kind === 'died' && died.entityId).toBe(dummy.id);
+    expect(died?.kind === 'died' && died.victimKind).toBe(EntityKindValue.Monster);
+    expect(died?.kind === 'died' && died.victimTypeId).toBe('dummy');
+    // The reason those two fields exist: the same step that emitted the event
+    // swept the body, so every reader downstream of it resolves the id to
+    // nothing. That is what left the experience award unreachable since 062.
+    expect(result.state.entities.get(dummy.id)).toBeUndefined();
+  });
+
   it('still drops the cast when the hit is a killing one, and says so', () => {
     let state = createWorldState(1);
     // A caster frail enough that the stalker's first blow finishes it; it spawns

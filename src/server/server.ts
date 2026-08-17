@@ -45,7 +45,6 @@ import {
   CONNECTION_TIMEOUT_TICKS,
   PROTOCOL_VERSION,
   RESOURCE_EPSILON,
-  RESPAWN_DELAY_TICKS,
   SERVER_TICK_MS,
   SERVER_TICK_RATE,
 } from './config.js';
@@ -181,8 +180,16 @@ interface Connection {
   /** Inputs waiting their turn; one is applied per tick. */
   readonly inputs: ServerInput[];
   lastSeq: number;
-  /** Tick this player is put back on their feet; 0 when they are alive. */
-  respawnAtTick: number;
+  /**
+   * Whether this player has been told they fell (spec 163).
+   *
+   * A latch rather than a countdown, because nothing is counting any more: the
+   * respawn waits for `ClientMessageType.Respawn` and this exists only so the
+   * one line of system chat is sent once per death instead of sixty times a
+   * second for as long as the body lies there. Cleared the moment they are back
+   * up, which is what makes the *next* death announce itself.
+   */
+  toldOfDeath: boolean;
   /**
    * The smallest this connection's input queue has been since the last pong
    * (spec 148). Reset when reported; see the field on `PongMessage`.
@@ -429,7 +436,7 @@ export class GameServer implements AdminHost {
       admin: createAdminConnectionState(),
       inputs: [],
       lastSeq: 0,
-      respawnAtTick: 0,
+      toldOfDeath: false,
       pendingCasts: [],
       pendingCancels: [],
       openVendorId: '',
@@ -557,6 +564,13 @@ export class GameServer implements AdminHost {
         });
         break;
       }
+
+      case ClientMessageType.Respawn:
+        // Ignored outright from a living body (spec 163) -- silently, because a
+        // client that pressed the button twice inside one round trip is not
+        // doing anything wrong and does not need a refusal for it.
+        this.respawn(connection);
+        break;
 
       case ClientMessageType.Goodbye:
         // Meant it. No lingering body (spec 150).
@@ -1799,7 +1813,7 @@ export class GameServer implements AdminHost {
       );
     }
 
-    this.handleRespawns();
+    this.announceDeaths();
     // Positions have just been mirrored back into the records, so this is the
     // one moment in the tick where "how far apart are they" is answerable from
     // the same numbers the sim used (spec 132).
@@ -1918,76 +1932,92 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Puts dead players back on their feet. Their entity is never swept up (see
-   * `sim/world.ts`), so a respawn is a heal and a move rather than a new entity
-   * -- the id the client knows itself by survives, which is what stops a death
-   * from silently orphaning the client's view of itself.
+   * Says so, once, to a player who has just fallen (spec 163).
+   *
+   * All that is left of what used to be `handleRespawns`. Getting back up is
+   * {@link respawn}, which runs when a player asks -- so the passage of time no
+   * longer undoes a death, and the button on the death screen is the only way
+   * back. A timer *and* a button would have meant the wait ended either way and
+   * the button was decoration.
    */
-  private handleRespawns(): void {
+  private announceDeaths(): void {
     for (const connection of this.connections) {
       if (connection.playerId === null || connection.entityId < 0) continue;
       const entity = this.state.entities.get(connection.entityId);
       if (!entity) continue;
 
       if (entity.health > 0) {
-        connection.respawnAtTick = 0;
+        connection.toldOfDeath = false;
         continue;
       }
-
-      if (connection.respawnAtTick === 0) {
-        connection.respawnAtTick = this.state.tick + RESPAWN_DELAY_TICKS;
-        this.send(connection, {
-          type: ServerMessageType.Chat,
-          channel: ChatChannel.System,
-          from: 'World',
-          text: 'You have fallen. Returning to Hearthstead...',
-        });
-        continue;
-      }
-
-      if (this.state.tick < connection.respawnAtTick) continue;
-
-      const session = this.players.get(connection.playerId);
-      if (!session) continue;
-      const at = this.clearSpawnNear(DEFAULT_SPAWN, entity.id);
-      const position: Vec3 = { x: at.x, y: at.y, z: this.terrain.heightAt(at.x, at.y) };
-      this.state = replaceEntity(this.state, {
-        ...entity,
-        position,
-        health: session.stats.maxHealth,
-        // Death is the other reset point (spec 156): you come back at
-        // Hearthstead whole, flask included, and the meter is gone. That is the
-        // shape the whole economy is built around -- a bad run costs the
-        // momentum you had built, and never leaves you unable to start again.
-        fallbackCharges: entity.stats.traits.fallbackCharges,
-        restoration: 0,
-        activity: ActivityValue.Idle,
-        activityUntilTick: 0,
-        targetId: null,
-        path: null,
-        pathIndex: 0,
-        repathAtTick: 0,
-        pathGoal: null,
-        // Cleared, or the first input after respawn is measured against a claim
-        // from wherever they died and reads as crossing the map in one tick.
-        claimedPosition: null,
-        claimedSeq: 0,
-        // The teleport home is pardoned the same way a correction is: the client
-        // is told to be here, so its next claim starting here is not a hack.
-        pardon: { x: position.x, y: position.y, seq: connection.lastSeq },
-      });
-      this.chunks.place(entity.id, position.x, position.y, true);
-      this.players.syncFromEntity(connection.playerId, position, entity.facing, session.stats.maxHealth);
-      connection.respawnAtTick = 0;
-
+      if (connection.toldOfDeath) continue;
+      connection.toldOfDeath = true;
       this.send(connection, {
-        type: ServerMessageType.Correction,
-        inputSeq: connection.lastSeq,
-        position,
-        facing: entity.facing,
-        reason: CorrectionReason.Teleport,
+        type: ServerMessageType.Chat,
+        channel: ChatChannel.System,
+        from: 'World',
+        text: 'You have fallen. Respawn when you are ready.',
       });
     }
+  }
+
+  /**
+   * Puts one dead player back on their feet at the spawn (spec 163). Their entity
+   * is never swept up (see `sim/world.ts`), so a respawn is a heal and a move
+   * rather than a new entity -- the id the client knows itself by survives, which
+   * is what stops a death from silently orphaning the client's view of itself.
+   *
+   * Refuses a living body rather than healing it, and that is the whole of the
+   * message's validation: a respawn is a free full heal and a free trip home, so
+   * "only when dead" is the one rule that keeps it from being a bandage and a
+   * teleport on demand.
+   */
+  private respawn(connection: Connection): boolean {
+    if (connection.playerId === null || connection.entityId < 0) return false;
+    const entity = this.state.entities.get(connection.entityId);
+    if (!entity || entity.health > 0) return false;
+
+    const session = this.players.get(connection.playerId);
+    if (!session) return false;
+    const at = this.clearSpawnNear(DEFAULT_SPAWN, entity.id);
+    const position: Vec3 = { x: at.x, y: at.y, z: this.terrain.heightAt(at.x, at.y) };
+    this.state = replaceEntity(this.state, {
+      ...entity,
+      position,
+      health: session.stats.maxHealth,
+      // Death is the other reset point (spec 156): you come back at
+      // Hearthstead whole, flask included, and the meter is gone. That is the
+      // shape the whole economy is built around -- a bad run costs the
+      // momentum you had built, and never leaves you unable to start again.
+      fallbackCharges: entity.stats.traits.fallbackCharges,
+      restoration: 0,
+      activity: ActivityValue.Idle,
+      activityUntilTick: 0,
+      targetId: null,
+      path: null,
+      pathIndex: 0,
+      repathAtTick: 0,
+      pathGoal: null,
+      // Cleared, or the first input after respawn is measured against a claim
+      // from wherever they died and reads as crossing the map in one tick.
+      claimedPosition: null,
+      claimedSeq: 0,
+      // The teleport home is pardoned the same way a correction is: the client
+      // is told to be here, so its next claim starting here is not a hack.
+      pardon: { x: position.x, y: position.y, seq: connection.lastSeq },
+    });
+    this.chunks.place(entity.id, position.x, position.y, true);
+    this.players.syncFromEntity(connection.playerId, position, entity.facing, session.stats.maxHealth);
+    connection.toldOfDeath = false;
+
+    this.send(connection, {
+      type: ServerMessageType.Correction,
+      inputSeq: connection.lastSeq,
+      position,
+      facing: entity.facing,
+      reason: CorrectionReason.Teleport,
+    });
+    return true;
   }
 
   private dispatchEvents(events: readonly ServerSimEvent[]): void {
@@ -2046,9 +2076,13 @@ export class GameServer implements AdminHost {
           }
           if (event.killerId === null) break;
           const killer = this.players.byEntityId(event.killerId);
-          const victim = this.state.entities.get(event.entityId);
-          if (!killer || !victim || victim.kind !== EntityKindValue.Monster) break;
-          const definition = monsterById(victim.typeId);
+          // Off the event, not out of the state (spec 163). This used to look
+          // the victim up by id, and the sweep in `stepWorld`'s step 4a deletes
+          // a dead monster before this runs -- so the lookup found nothing on
+          // every kill this game has ever resolved and the award below was
+          // unreachable. The event carries what died for exactly this reason.
+          if (!killer || event.victimKind !== EntityKindValue.Monster) break;
+          const definition = monsterById(event.victimTypeId);
           if (!definition) break;
           // Awarded asynchronously; the tick does not wait on the store.
           void this.players
@@ -2313,9 +2347,9 @@ export class GameServer implements AdminHost {
    *
    * Health to zero and nothing else invented: the sim's own sweep marks a
    * zero-health player `Dead` and leaves the body in the world, and
-   * `handleRespawns` already says "You have fallen" and puts them back on their
-   * feet after `RESPAWN_DELAY_TICKS`. So an admin kill and a monster's kill end
-   * the same way.
+   * `announceDeaths` already says "You have fallen" -- after which they get up
+   * when they ask (spec 163). So an admin kill and a monster's kill end the same
+   * way, including in needing the player to decide to come back.
    *
    * The one thing the sweep does not do is cancel a trade -- only the `'died'`
    * event does that, and it is emitted by `abilities.ts` when a blow lands, not

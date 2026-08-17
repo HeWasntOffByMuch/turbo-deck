@@ -247,8 +247,10 @@ export const RESOURCE_EPSILON = 0.05;
  */
 export const MAX_REVEAL_SCALE = 10;
 
-/** How long a dead player lies there before the server puts them back (spec 057). */
-export const RESPAWN_DELAY_TICKS = SERVER_TICK_RATE * 3;
+// There is deliberately no respawn delay here any more (spec 163). A dead player
+// lies there until they ask to get up -- `ClientMessageType.Respawn` -- so the
+// three-second timer this used to hold has no reader, and a constant nothing
+// reads is a claim that something does.
 
 /** Body radius used for server-side movement collision, matching the sim's player. */
 export const SERVER_PLAYER_RADIUS = 16;

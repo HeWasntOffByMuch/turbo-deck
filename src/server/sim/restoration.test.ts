@@ -1191,6 +1191,8 @@ describe('death behaviour is unchanged', () => {
       kind: 'died',
       entityId: 7,
       killerId: 3,
+      victimKind: EntityKindValue.Monster,
+      victimTypeId: 'grazer',
       qualities: NO_QUALITIES,
     };
     expect(event.kind === 'died' && event.entityId).toBe(7);

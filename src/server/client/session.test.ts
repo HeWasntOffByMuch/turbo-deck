@@ -343,7 +343,9 @@ describe('dying', () => {
     // by, and leave it rendering an empty world.
     expect(test.server.world.entities.has(entityId)).toBe(true);
 
-    for (let i = 0; i < SERVER_TICK_RATE * 4; i++) test.server.tick();
+    // The ask, since spec 163: time alone leaves a body where it fell.
+    client.respawn();
+    for (let i = 0; i < 4; i++) test.server.tick();
     await settle();
 
     const revived = test.server.world.entities.get(entityId);
@@ -366,7 +368,10 @@ describe('dying', () => {
     const before = client.correctionCount;
 
     kill(test, entityId);
-    for (let i = 0; i < SERVER_TICK_RATE * 4; i++) test.server.tick();
+    test.server.tick();
+    await settle();
+    client.respawn();
+    for (let i = 0; i < 4; i++) test.server.tick();
     await settle();
 
     // The teleport correction is expected; what must not follow is a speed
