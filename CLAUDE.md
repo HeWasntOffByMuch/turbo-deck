@@ -1021,7 +1021,30 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  settles at a few dozen fresh samples a frame and 0.42ms.
                  Invalidated whenever a chunk streams in, because a height
                  sampled over ground that had not arrived is a height that has to
-                 be thrown away. `npx tsx scripts/preview-aim.ts` is the picture
+                 be thrown away.
+                 Since spec 164 the two rings under a *body* -- the attack target
+                 ring and the aim's unit ring -- are decals too. 153 had left them
+                 on flat meshes on the grounds that they are small, and that
+                 priced the wrong quantity: how far a flat mesh is buried is its
+                 half-width times the **gradient** under it, and only the
+                 half-width had been counted. On the arena's steepest ground a
+                 ring at radius 30 was 34 units into the hill -- five times its
+                 own thickness, so the uphill half was not dimmer, it was absent,
+                 and `depthWrite: false` made the failure clean rather than
+                 obvious. It also brought out the one thing 153's arithmetic could
+                 not do, because nothing it converted was small enough to need it:
+                 **tessellation has two lower bounds.** Deriving segment count
+                 from size is exactly right for following the ground and says
+                 nothing about whether a circle still looks round -- a 420-unit
+                 range ring gets 240 segments out of the ground rule alone, and a
+                 body ring gets eighteen against the twenty-four the flat
+                 `RingGeometry` was authored with. So `MAX_SEGMENT_ANGLE` is the
+                 second bound, stated as an *angle* rather than a minimum count,
+                 since a count is wrong for a sector: a 90-degree cone floored at
+                 24 segments pays four times over for curvature it has not got.
+                 It binds below about 44 units of radius and the ground rule binds
+                 above, so every number in 153's acceptance table still describes
+                 the code. `npx tsx scripts/preview-aim.ts` is the picture
                  and the acceptance numbers, over the arena's real steepest
                  ground and against the terrain triangles the renderer actually
                  draws -- rasterised in software, because what is being looked at

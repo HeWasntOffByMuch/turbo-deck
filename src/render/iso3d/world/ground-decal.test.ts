@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import type { AimShape } from './aim.js';
 import {
+  BODY_RING_INNER,
+  BODY_RING_MIN_RADIUS,
   MAX_RINGS,
   MAX_SEGMENTS,
+  MAX_SEGMENT_ANGLE,
   SAMPLE_STEP,
   SLOPE_LIFT,
   SampledGround,
   aimTemplate,
+  bodyRingRadius,
+  bodyRingTemplate,
   discTemplate,
   laneTemplate,
   projectDecal,
@@ -69,6 +74,11 @@ const SHAPES: readonly (readonly [string, DecalTemplate])[] = [
   ['slash cone', discTemplate(70, -Math.PI / 4, Math.PI / 4)],
   ['bolt lane', laneTemplate(700, 16)],
   ['range ring', ringTemplate(700 * 0.985, 700)],
+  // The smallest decal in the game and the one spec 153 left behind (spec 164).
+  // In this list so that every invariant above holds of it by construction
+  // rather than by a second copy of the assertions further down.
+  ['ravager target ring', bodyRingTemplate(bodyRingRadius(30, 8))],
+  ['grazer aim ring', bodyRingTemplate(bodyRingRadius(12, 10))],
   ['tiny', discTemplate(1)],
 ];
 
@@ -226,6 +236,148 @@ describe('the tessellation bounds what is left uncorrected', () => {
     expect(vertexCount(laneTemplate(700, 16))).toBeLessThanOrEqual(cap);
     // And an absurd one, so the cap is the cap rather than a coincidence.
     expect(vertexCount(discTemplate(100_000))).toBeLessThanOrEqual(cap);
+  });
+});
+
+describe('a curve is also bounded as an angle, not only as a distance', () => {
+  // Spec 164. Sampling derived from size is exactly the right rule for
+  // following the ground and says nothing at all about whether a circle still
+  // looks like a circle -- which never bound on anything spec 153 converted,
+  // because they are all large enough that the ground rule asks for more.
+
+  /**
+   * The angles of the vertices on a template's outer edge, in order.
+   *
+   * The rim is picked with a *relative* tolerance because `local` is a
+   * `Float32Array`: a vertex on a 700-unit ring is a good 4e-5 off the radius it
+   * was computed at, purely from being stored, and an absolute epsilon here
+   * silently keeps four of the two hundred and fifty-seven.
+   */
+  function rimAngles(template: DecalTemplate): number[] {
+    const local = locals(template);
+    const outer = Math.max(...local.map((p) => Math.hypot(p.u, p.v)));
+    return local
+      .filter((p) => Math.hypot(p.u, p.v) > outer * (1 - 1e-4))
+      .map((p) => Math.atan2(p.v, p.u))
+      .sort((a, b) => a - b);
+  }
+
+  /** The widest turn between two neighbouring vertices on that edge. */
+  function widestAngle(template: DecalTemplate): number {
+    const angles = rimAngles(template);
+    let widest = 0;
+    for (let i = 1; i < angles.length; i++) {
+      widest = Math.max(widest, (angles[i] ?? 0) - (angles[i - 1] ?? 0));
+    }
+    return widest;
+  }
+
+  for (const [name, template] of [
+    ['a body ring', bodyRingTemplate(30)],
+    ['a range ring', ringTemplate(420 * 0.985, 420)],
+    ['a quake disc', discTemplate(140)],
+    ['a small aim circle', discTemplate(20)],
+    ['a slash cone', discTemplate(70, -Math.PI / 4, Math.PI / 4)],
+  ] as const) {
+    it(`never lets ${name} turn more than the limit between two vertices`, () => {
+      expect(widestAngle(template)).toBeLessThanOrEqual(MAX_SEGMENT_ANGLE + 1e-6);
+    });
+  }
+
+  it('leaves every shape spec 153 measured exactly as it tessellated them', () => {
+    // Hardcoded rather than re-derived, so that changing the tessellation fails
+    // here and sends somebody to spec 153's acceptance table -- which quotes
+    // 482 vertices for the range ring and "about 1100" for the quake disc, and
+    // would otherwise silently stop describing the code.
+    expect(vertexCount(ringTemplate(420 * 0.985, 420))).toBe(482);
+    expect(vertexCount(ringTemplate(700 * 0.985, 700))).toBe(514);
+    expect(vertexCount(discTemplate(140))).toBe(1134);
+    expect(vertexCount(discTemplate(70, -Math.PI / 4, Math.PI / 4))).toBe(88);
+  });
+
+  it('leaves a lane alone, because a straight edge has no curvature', () => {
+    // The bound is applied by the arc builders rather than inside `segmentsFor`
+    // for exactly this reason: flooring a lane's columns would buy nothing and
+    // cost five height samples per vertex it added.
+    expect(vertexCount(laneTemplate(700, 16))).toBe(195);
+    expect(vertexCount(laneTemplate(60, 16))).toBe(21);
+  });
+
+  it('costs a sector proportionally, which a minimum count would not', () => {
+    // A quarter turn gets a quarter of the segments a full turn does. Stated
+    // because the obvious implementation -- `Math.max(24, ...)` -- gets this
+    // wrong by a factor of four and no other test here would notice.
+    expect(rimAngles(discTemplate(20)).length - 1).toBe(24);
+    expect(rimAngles(discTemplate(20, -Math.PI / 4, Math.PI / 4)).length - 1).toBe(6);
+  });
+});
+
+describe('the ring under a body', () => {
+  // Spec 164: the two indicators spec 153 left on flat meshes, on the grounds
+  // that they are small. What buries a flat mesh is its half-width times the
+  // gradient under it, and only the half-width had been counted.
+
+  it('was buried by its own body-sized flatness on ground this game really has', () => {
+    // The arena's steepest ground falls 430 units within 260 -- a gradient of
+    // about 1.65 -- and this is a slope less than half that steep.
+    const outer = bodyRingRadius(30, 8);
+    const template = bodyRingTemplate(outer);
+    const pinned: HeightAt = () => SLOPE(120, -80);
+    const flat = project(template, pinned, { x: 120, z: -80, heading: 0, lift: 1.6 });
+    let worst = 0;
+    for (const point of points(flat)) worst = Math.max(worst, SLOPE(point.x, point.z) - point.y);
+    // Deep enough to swallow the ring whole at its uphill edge -- the lift plus
+    // the entire thickness of the band, so what is left there is nothing at all
+    // rather than a thinner ring.
+    expect(worst).toBeGreaterThan(1.6 + outer * (1 - BODY_RING_INNER));
+    expect(worst).toBeGreaterThan(12);
+  });
+
+  it('is where the scaled flat geometry drew it, on ground that was level', () => {
+    // The conversion may not move the picture on the terrain the old one was
+    // right about. `RingGeometry(22, 27)` scaled by `(radius + margin) / 27`.
+    for (const [bodyRadius, margin] of [
+      [30, 8],
+      [22, 8],
+      [12, 10],
+      [20, 10],
+    ] as const) {
+      const scale = Math.max(0.6, (bodyRadius + margin) / 27);
+      const outer = bodyRingRadius(bodyRadius, margin);
+      expect(outer).toBeCloseTo(27 * scale, 0);
+
+      const radii = locals(bodyRingTemplate(outer)).map((p) => Math.hypot(p.u, p.v));
+      expect(Math.max(...radii)).toBeCloseTo(27 * scale, 0);
+      expect(Math.min(...radii)).toBeCloseTo(22 * scale, 0);
+    }
+  });
+
+  it('keeps the same proportions however big the body is', () => {
+    for (const outer of [17, 20, 30, 40]) {
+      const radii = locals(bodyRingTemplate(outer)).map((p) => Math.hypot(p.u, p.v));
+      expect(Math.min(...radii) / Math.max(...radii)).toBeCloseTo(BODY_RING_INNER, 6);
+    }
+  });
+
+  it('never draws smaller than the floor the old scale clamped to', () => {
+    // `max(0.6, ...)` was a floor on the scale; here it is a floor on a radius,
+    // so a very small body still gets a ring somebody can see.
+    expect(bodyRingRadius(0, 0)).toBe(Math.round(BODY_RING_MIN_RADIUS));
+    expect(bodyRingRadius(2, 3)).toBe(Math.round(BODY_RING_MIN_RADIUS));
+    expect(bodyRingRadius(30, 8)).toBe(38);
+  });
+
+  it('re-uses its template while a body radius only wanders by a fraction', () => {
+    // What keeps `GroundDecal.lay` from re-tessellating every frame: it holds
+    // one template, keyed by this number.
+    expect(bodyRingRadius(29.98, 8)).toBe(bodyRingRadius(30.02, 8));
+    expect(bodyRingRadius(30, 8)).not.toBe(bodyRingRadius(31, 8));
+  });
+
+  it('stays cheap enough to draw two of, every frame', () => {
+    // Two rings of this size against the 482 vertices the range ring beside
+    // them already costs.
+    expect(vertexCount(bodyRingTemplate(bodyRingRadius(30, 10)))).toBeLessThan(60);
   });
 });
 
