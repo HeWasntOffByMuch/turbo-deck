@@ -65,6 +65,9 @@ import { previewFrame, type PreviewFrame } from './vfx-frame.js';
 const MONO = "'Courier New',ui-monospace,monospace";
 const PANEL = 'background:#16161e;border:1px solid #2a2a3a;padding:10px;box-sizing:border-box;';
 
+/** The intensities the toolbar cycles through. 1 is the authored effect. */
+const PREVIEW_SCALES: readonly number[] = [0.6, 1, 1.6, 2.4];
+
 /** Ground materials the preview can stand an effect on. */
 const GROUNDS: readonly { readonly name: string; readonly color: number }[] = [
   { name: 'Grass', color: 0x86a740 },
@@ -123,6 +126,19 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
   let groundIndex = 1;
   let handle = 0;
   let looping = true;
+  /**
+   * The seed and the scale the preview plays at (spec 158).
+   *
+   * Both were constants -- seed 20260810 and no scale at all -- which is right
+   * for tuning a curve and useless for judging a *procedural* effect: the whole
+   * claim of the painted vocabulary is that two spawns do not look alike, and a
+   * fixed seed is precisely the setting under which that claim cannot be seen.
+   * `vary` is the switch, and it is off by default because a moving picture is
+   * the wrong thing to drag a curve handle against.
+   */
+  let seed = 20260810;
+  let vary = false;
+  let scaleIndex = 1;
   /** The box the current effect needs, measured off a headless replay of it. */
   let fit: PreviewFrame = { span: 220, centreY: 26 };
 
@@ -241,12 +257,26 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     // Measured once here rather than every frame: the sim is deterministic, so
     // the answer cannot change between frames, and a box recomputed per frame
     // would creep as the effect grew.
-    fit = previewFrame(edited, spawnY);
+    // Measured at 1x and then scaled, because `play`'s scale multiplies every
+    // length in the effect -- a frame measured without it crops the moment the
+    // intensity button is touched, which is the failure this whole measurement
+    // exists to prevent.
+    const played = PREVIEW_SCALES[scaleIndex] ?? 1;
+    const measured = previewFrame(edited, spawnY);
+    fit = { span: measured.span * played, centreY: measured.centreY * played };
+    if (vary) {
+      // A new draw each replay, mixed rather than incremented: consecutive
+      // integers seed `VfxRng` to visibly similar first draws, which is the
+      // exact trap `rng.ts` documents.
+      seed = (Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) ^ 0x9e3779b1) | 0;
+      seedButton.textContent = `Seed: ${seed}`;
+    }
     handle = layer.play(edited.id, {
       x: 0,
       y: attachToSocket ? 0 : 30,
       z: 0,
-      seed: 20260810,
+      seed,
+      scale: PREVIEW_SCALES[scaleIndex] ?? 1,
       ...(attachToSocket ? { attach: { kind: 'entity' as const, entityId: 1 } } : {}),
     });
   }
@@ -306,6 +336,29 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     return node;
   };
   bar.append(button('Replay', () => replay()));
+  // Spec 158's three: a seed you can roll, a switch that rolls it on every
+  // replay, and an intensity. Together they are how somebody looks at a
+  // procedural effect rather than at one sample of it.
+  const seedButton = button(`Seed: ${seed}`, () => {
+    seed = (Math.random() * 0x7fffffff) | 0;
+    seedButton.textContent = `Seed: ${seed}`;
+    replay();
+  });
+  seedButton.title = 'Roll a new seed. The look is a pure function of it, so the same number is the same spatter.';
+  bar.append(seedButton);
+  const varyButton = button('Vary: off', () => {
+    vary = !vary;
+    varyButton.textContent = `Vary: ${vary ? 'on' : 'off'}`;
+  });
+  varyButton.title = 'Draw a fresh seed on every replay. With Loop on, this is the effect firing over and over with real variation.';
+  bar.append(varyButton);
+  const scaleButton = button(`Intensity: ${PREVIEW_SCALES[scaleIndex]?.toFixed(1) ?? '1.0'}x`, () => {
+    scaleIndex = (scaleIndex + 1) % PREVIEW_SCALES.length;
+    scaleButton.textContent = `Intensity: ${PREVIEW_SCALES[scaleIndex]?.toFixed(1) ?? '1.0'}x`;
+    replay();
+  });
+  scaleButton.title = 'The scale the effect is played at, which is what a crit or a bigger blast is.';
+  bar.append(scaleButton);
   const loopButton = button('Loop: on', () => {
     looping = !looping;
     loopButton.textContent = `Loop: ${looping ? 'on' : 'off'}`;

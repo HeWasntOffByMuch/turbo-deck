@@ -66,11 +66,15 @@ describe('the contact point', () => {
 describe('effectsForBlow', () => {
   it('draws blood from something that bleeds', () => {
     const played = effectsForBlow(facts(), 500);
-    expect(played.map((request) => request.id)).toEqual(['hit_blood']);
+    expect(played.map((request) => request.id)).toEqual(['blood_hit_brush']);
   });
 
   it('draws the death effect on a killing blow', () => {
-    expect(effectsForBlow(facts({ killed: true }), 500)[0]?.id).toBe('death_blood');
+    // The loud mark and the pool, in that order: the brush hit is the moment and
+    // leaves nothing behind, `death_blood` is the stain that outlives it.
+    const played = effectsForBlow(facts({ killed: true }), 500).map((request) => request.id);
+    expect(played[0]).toBe('blood_hit_brush_heavy');
+    expect(played).toContain('death_blood');
   });
 
   it('draws the damage type off something that does not bleed', () => {
@@ -110,7 +114,7 @@ describe('effectsForBlow', () => {
 
   it('adds the critical on top rather than replacing what happened', () => {
     const played = effectsForBlow(facts({ critical: true }), 1).map((request) => request.id);
-    expect(played).toContain('hit_blood');
+    expect(played).toContain('blood_hit_brush');
     expect(played).toContain('hit_critical');
   });
 
@@ -215,7 +219,7 @@ describe('a heal (spec 157)', () => {
 
   it('treats a blow that did nothing as a blow, not as a heal', () => {
     // The test is the sign, not "not positive". A zero-damage hit is a hit.
-    expect(effectsForBlow(facts({ damage: 0 }), 1)[0]?.id).toBe('hit_blood');
+    expect(effectsForBlow(facts({ damage: 0 }), 1)[0]?.id).toBe('blood_hit_brush');
   });
 });
 

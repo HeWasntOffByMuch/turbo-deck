@@ -56,10 +56,30 @@ export const VFX_PALETTE = {
   dustSnow: 0xf5f5f0,
   dustStone: 0xc6bda9,
   splashWater: 0x4ec3d4,
+  /**
+   * The warm end of the painted explosion's ramp (spec 158).
+   *
+   * The progression the brief asks for is pale yellow, warm yellow, orange, dark
+   * warm brown, and the first three are already here as `fireCore`, `boltYellow`
+   * and `fireBody`. Only the last two were missing: nothing in the table was a
+   * *brown*, and `smokeDark` is a neutral grey that reads as fog rather than as
+   * a painted mass.
+   */
+  paintBrown: 0x4a2a18,
+  paintSoot: 0x241d19,
 
   // --- blood and other fluids ---
   bloodFresh: 0xa32a26,
   bloodDeep: 0x5e1414,
+  /**
+   * The red a loaded brush leaves (spec 158) -- brighter and cleaner than
+   * `bloodFresh`, because the painterly hit is a combat *graphic* rather than an
+   * attempt at a fluid, and the mark has to win against grass and stone in three
+   * or four pixels of width.
+   */
+  bloodBright: 0xc4352c,
+  /** Where a mark dries out. Darker than `bloodDeep` and off toward brown. */
+  bloodInk: 0x3a0d12,
   sapAmber: 0xc98a2b,
   ichorViolet: 0x7b3fa0,
   oilBlack: 0x1a1a20,

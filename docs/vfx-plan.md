@@ -2,7 +2,9 @@
 
 Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
 auras as drawn sigils (spec 124), impacts as crystals (spec 125), the shockwave
-combined and the counts made tunable (spec 126) — the last at its review gate.**
+combined and the counts made tunable (spec 126), blood lit and bent (spec 139),
+and a painted vocabulary added beside all of it (spec 158) — the last at its
+review gate.**
 
 | Phase | State |
 |---|---|
@@ -17,7 +19,8 @@ combined and the counts made tunable (spec 126) — the last at its review gate.
 | art direction: auras as drawn sigils (spec 124) | done |
 | art direction: impacts as crystals (spec 125) | done |
 | the shockwave, and tunable counts (spec 126) | done |
-| blood: lit stains, and streaks that bend (spec 139) | **at the review gate** |
+| blood: lit stains, and streaks that bend (spec 139) | done |
+| art direction: a painted vocabulary (spec 158) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1452,3 +1455,63 @@ No changes to gameplay simulation, networking, or combat resolution. No
 third-party particle library (none is proposed; if one becomes worth it, it comes
 back here with a size and integration cost, and waits). No full-resolution
 post-processing stack.
+
+
+---
+
+## 7. The painted vocabulary (spec 158)
+
+The library up to spec 139 could say exactly one thing about a shape: which of
+nine convex lumps it was. That was the right call for fire and smoke — §3 argues
+it at length, and the argument still holds — and it is also the whole of what the
+format could express. A *brush mark* has none of the properties a lump has: its
+identity is its outline, no two of a handful may match, and a batch of identical
+ones is the failure rather than the saving.
+
+So this is an addition rather than a replacement. Nothing authored before it
+moved.
+
+### What it brings
+
+| Piece | Where | What it is for |
+|---|---|---|
+| the stroke generator | `vfx/stroke.ts` | a spine, a width sampled along it, independent noise per edge |
+| the per-instance layer | `vfx/batches.ts`, under `VFX_STROKE` | one geometry, a hundred silhouettes, no CPU cost |
+| two card orientations | `vfx/meshes.ts` `ORIENT.card` / `cardVelocity` | a flat mark that reads from every bearing |
+| the mesh dissolve | `vfx/batches.ts` | `dither-cutout` reaching solids, ten specs after it was accepted for them |
+| the `fan` emitter shape | `vfx/shapes.ts` | "away from the attacker, and a bit upward", which nothing could say |
+| the two effects | `vfx/brush.ts` | `blood_hit_brush{,_heavy}`, `explosion_brush{_small,,_large}` |
+| the spawn API | `VfxLayer.spawnBloodHit` / `.spawnBrushExplosion` | a point, a surface, a bearing, an intensity |
+
+### The decision worth restating
+
+**The variation is in the shader, not in the mesh.** `meshes.ts` says a hundred
+distinct lumpy spheres would be a hundred draw calls, and it is right; the way
+out is that a stroke splits cleanly into a *spine* and a *width along it*, so the
+geometry can carry one canonical mark and the vertex shader can re-derive the
+outline per instance from `iSeed`. Five things move — how fat, where it swells,
+where the tip gives out, how long, and which way it curls — and the whole
+painted vocabulary costs five batches and nothing per frame.
+
+The second decision is the one a reviewer should push on: **these are camera
+cards.** A brush mark is flat, and free tumbling would make a third of every
+spatter vanish depending on where the player left the camera. The marks are
+still positioned, thrown and depth-tested in three dimensions; only their plane
+is the screen's. `cardVelocity` foreshortens by the component of the throw that
+lies across the view, so a mark aimed at the camera reads as a dab rather than
+as a full-length streak pointing nowhere — the same complaint §139 made about
+`stretched` blood, and it was made again here by the first version of this.
+
+### Cost
+
+Five new batches, so `REGISTRY.batches` moved from 20 to 25 (a ceiling on what
+*could* be drawn; a painted hit is three calls and a painted explosion is four).
+A hit is 14 marks and an explosion 27–43. Nothing is rebuilt per frame and
+nothing is allocated per spawn.
+
+### The picture
+
+`npx tsx scripts/preview-brush-vfx.ts` writes `.claude/screenshots/brush-vfx.png`
+— seven rows of six through the game's own pass — and measures the three claims
+no headless test can make: that the stroke shader compiles at all, that the ink
+holds up across six bearings, and that six seeds produce six different pictures.

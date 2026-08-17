@@ -35,6 +35,13 @@ import { VfxSystem, type VfxHooks, type VfxSystemOptions } from './system.js';
 import { REGISTRY } from './registry.js';
 import { DecalField, type GoreLevel } from './decals.js';
 import { DecalView } from './decal-view.js';
+import {
+  bloodHitRequest,
+  brushExplosionRequest,
+  type BloodHitInput,
+  type BrushExplosionInput,
+  type SpawnRequest,
+} from './brush.js';
 import type { PlayOptions } from './types.js';
 
 /** How many of the sim's lights are actually given a `PointLight`. */
@@ -146,6 +153,35 @@ export class VfxLayer {
   /** Start an effect. The one call a caller ever needs. */
   play(id: string, options: PlayOptions): number {
     return this.system.play(id, options);
+  }
+
+  /**
+   * Throw paint where a blow landed (spec 158).
+   *
+   * The convenience over `play` that the painted vocabulary earns, because its
+   * inputs are the ones a *combat* call site has -- a point, a surface, the
+   * direction the blow was going -- rather than the rotation-about-Y and scale
+   * `PlayOptions` speaks in. The conversion is `bloodHitRequest`, which is pure
+   * and asserted in Node; this is the two lines that cannot be.
+   */
+  spawnBloodHit(input: BloodHitInput): number {
+    return this.playRequest(bloodHitRequest(input));
+  }
+
+  /** The same, for an explosion: a point, how far it should reach, how hard. */
+  spawnBrushExplosion(input: BrushExplosionInput): number {
+    return this.playRequest(brushExplosionRequest(input));
+  }
+
+  private playRequest(request: SpawnRequest): number {
+    return this.system.play(request.id, {
+      x: request.x,
+      y: request.y,
+      z: request.z,
+      rotation: request.rotation,
+      scale: request.scale,
+      seed: request.seed,
+    });
   }
 
   stop(handle: number, hard = false): void {
