@@ -183,7 +183,9 @@ describe('the painted vocabulary', () => {
 
 describe('the blood hit', () => {
   it('reads and is gone inside the window a hit has to read in', () => {
-    // The brief's 0.25-0.8s, at 60Hz.
+    // The brief's 0.25-0.8s, at 60Hz. The mist is exempt and asserted
+    // separately, the same way the smoulder is: both variants exist to linger,
+    // and a fizzle nobody has time to watch is a mark that vanished.
     for (const id of ['blood_hit_brush', 'blood_hit_brush_heavy']) {
       const ticks = windowTicks(byId(id));
       expect(ticks / TICK_HZ, id).toBeGreaterThanOrEqual(0.25);
@@ -269,6 +271,66 @@ describe('the blood hit', () => {
     expect(heavy.emitters.map((e) => e.mesh?.shape)).toEqual(light.emitters.map((e) => e.mesh?.shape));
   });
 
+  it('mists: nothing falls, and it thins away instead of landing', () => {
+    const mist = byId('blood_hit_brush_mist');
+    const standard = byId('blood_hit_brush');
+
+    for (const emitter of mist.emitters) {
+      // (1) Nothing falls. Not "falls slowly" -- there is no downward pull at
+      // all, which is what makes it hang rather than arc.
+      expect(emitter.gravity ?? 0, emitter.id).toBe(0);
+      // (2) It lifts instead, and wanders while it lifts. Without the wander a
+      // set of marks rising at one rate stays a formation, which reads as the
+      // whole spatter being winched upward.
+      expect(emitter.acceleration?.y ?? 0, emitter.id).toBeGreaterThan(0);
+      expect(emitter.turbulence?.amplitude ?? 0, emitter.id).toBeGreaterThan(0);
+    }
+
+    const endsAt = (effect: EffectDefinition, id: string): number => {
+      const emitter = effect.emitters.find((entry) => entry.id === id);
+      const keys = emitter?.size.keys ?? [];
+      const peakSize = Math.max(...keys.map(([, value]) => value));
+      return (keys.at(-1)?.[1] ?? 0) / Math.max(1e-6, peakSize);
+    };
+    const fadesFrom = (effect: EffectDefinition, id: string): number => {
+      const keys = effect.emitters.find((entry) => entry.id === id)?.alpha.keys ?? [];
+      let at = 1;
+      for (const [t, value] of keys) if (value >= 1) at = t;
+      return at;
+    };
+
+    for (const id of ['primary', 'secondary', 'fragments']) {
+      // (3) It shrinks to almost nothing, where paint holds its size to the last
+      // tick because paint dries where it lands.
+      expect(endsAt(mist, id), id).toBeLessThan(0.4);
+      expect(endsAt(standard, id), id).toBeGreaterThan(0.75);
+      // (4) And it starts going long before the end, so it thins from both ends
+      // at once while the geometry retracts from its root.
+      expect(fadesFrom(mist, id), id).toBeLessThan(0.65);
+      expect(fadesFrom(standard, id), id).toBeGreaterThan(0.7);
+    }
+
+    // (5) And it hangs about while it does it -- longer than a paint hit, which
+    // dries where it lands and has no reason to.
+    expect(windowTicks(mist)).toBeGreaterThan(windowTicks(standard) * 1.4);
+    expect(windowTicks(mist) / TICK_HZ).toBeLessThan(1.2);
+
+    // (6) With all three layers alive for most of it. The fizzle is the thing
+    // being watched, so there has to be something in the air while it happens --
+    // a primary that dies at two thirds leaves one straggling dab to do it.
+    const shortest = Math.min(...mist.emitters.map((entry) => entry.lifetimeTicks[0]));
+    expect(shortest / windowTicks(mist)).toBeGreaterThan(0.65);
+    const standardShortest = Math.min(...standard.emitters.map((entry) => entry.lifetimeTicks[0]));
+    expect(standardShortest / windowTicks(standard)).toBeLessThan(0.55);
+
+    // (7) Still the same gesture, and still aimed: a spatter that dissipates
+    // still has to say where the blow came from.
+    expect(mist.emitters.map((entry) => entry.id)).toEqual(standard.emitters.map((entry) => entry.id));
+    for (const emitter of mist.emitters) expect(emitter.shape.kind, emitter.id).toBe('fan');
+    const primary = mist.emitters.find((entry) => entry.id === 'primary');
+    expect(primary?.emission.kind === 'burst' && primary.emission.count).toBe(1);
+  });
+
   it('actually puts marks in the air', () => {
     const most = peak(byId('blood_hit_brush'), 40);
     expect(most).toBeGreaterThanOrEqual(8);
@@ -289,8 +351,12 @@ describe('the blood hit', () => {
 
 describe('the explosion', () => {
   it('unfolds and is over inside the window an explosion has to read in', () => {
-    // The brief's 0.7-1.5s, at 60Hz.
-    for (const effect of BRUSH_EFFECTS.filter((entry) => entry.id.startsWith('explosion_'))) {
+    // The brief's 0.7-1.5s, at 60Hz. The smoulder is exempt and asserted
+    // separately: lingering past that window is the entire point of it, and a
+    // variant that had to fit would not be one.
+    for (const effect of BRUSH_EFFECTS.filter(
+      (entry) => entry.id.startsWith('explosion_') && !entry.id.endsWith('_smoulder'),
+    )) {
       const ticks = windowTicks(effect);
       expect(ticks / TICK_HZ, effect.id).toBeGreaterThanOrEqual(0.7);
       expect(ticks / TICK_HZ, effect.id).toBeLessThanOrEqual(1.5);
@@ -464,6 +530,47 @@ describe('the explosion', () => {
     expect(bare.emitters.map((emitter) => emitter.id)).toEqual(['flash', 'major', 'mid', 'rise', 'ground']);
   });
 
+  it('smoulders: smoke almost at once, and long after the fire', () => {
+    const smoulder = byId('explosion_brush_smoulder');
+    const standard = byId('explosion_brush');
+    const smokeOf = (effect: EffectDefinition): { delay: number; last: number } => {
+      const emitter = effect.emitters.find((entry) => entry.id === 'smoke');
+      const delay = emitter?.emission.kind === 'burst' ? (emitter.emission.delayTicks ?? 0) : 0;
+      return { delay, last: delay + (emitter?.lifetimeTicks[1] ?? 0) };
+    };
+    const fireEndsAt = (effect: EffectDefinition): number =>
+      Math.max(
+        ...effect.emitters
+          .filter((entry) => ['flash', 'major', 'mid', 'rise', 'ground'].includes(entry.id))
+          .map((entry) => {
+            const delay = entry.emission.kind === 'burst' ? (entry.emission.delayTicks ?? 0) : 0;
+            return delay + entry.lifetimeTicks[1];
+          }),
+      );
+
+    // (1) It starts almost at once -- while the major strokes are still
+    // arriving, rather than after they have gone.
+    const smoke = smokeOf(smoulder);
+    expect(smoke.delay).toBeLessThan(smokeOf(standard).delay / 3);
+    const majorArrivesAt = smoulder.emitters.find((entry) => entry.id === 'major');
+    expect(smoke.delay).toBeLessThanOrEqual(
+      majorArrivesAt?.emission.kind === 'burst' ? (majorArrivesAt.emission.delayTicks ?? 0) + 2 : 0,
+    );
+
+    // (2) And it outlives the fire by a long way, where the standard blast's
+    // smoke merely finishes after it.
+    const fire = fireEndsAt(smoulder);
+    expect(smoke.last).toBeGreaterThan(fire * 2.5);
+    expect(smoke.last / fire).toBeGreaterThan(smokeOf(standard).last / fireEndsAt(standard));
+
+    // (3) The fire itself is shorter than the standard blast's, so the bright
+    // phase is a flare rather than a blaze.
+    expect(fire).toBeLessThan(fireEndsAt(standard));
+
+    // (4) It is still the same effect: the same seven layers in the same order.
+    expect(smoulder.emitters.map((entry) => entry.id)).toEqual(standard.emitters.map((entry) => entry.id));
+  });
+
   it('faces a different way every time it is played', () => {
     // The composition is fixed and asymmetric, so what makes two blasts look
     // like two blasts rather than one stamped twice is which way it points.
@@ -538,10 +645,35 @@ describe('SpawnBloodHit', () => {
 
   it('names effects the registry actually holds', () => {
     for (const intensity of [0.5, 1, 2, 6]) {
-      const request = bloodHitRequest({ x: 0, y: 0, z: 0, intensity, seed });
-      expect(REGISTRY.byId.has(request.id), request.id).toBe(true);
-      expect(request.scale).toBeGreaterThan(0);
+      for (const dissipates of [false, true]) {
+        const request = bloodHitRequest({ x: 0, y: 0, z: 0, intensity, dissipates, seed });
+        expect(REGISTRY.byId.has(request.id), request.id).toBe(true);
+        expect(request.scale).toBeGreaterThan(0);
+      }
     }
+  });
+
+  it('asks for the mist when told to, whatever the blow was worth', () => {
+    // One mist rather than two: a harder hit on something that does not bleed is
+    // a *bigger* mist, which `scale` already says.
+    for (const intensity of [0.4, 1, 3]) {
+      const request = bloodHitRequest({ x: 0, y: 0, z: 0, intensity, dissipates: true, seed });
+      expect(request.id).toBe('blood_hit_brush_mist');
+    }
+    expect(bloodHitRequest({ x: 0, y: 0, z: 0, intensity: 3, dissipates: true, seed }).scale).toBeGreaterThan(
+      bloodHitRequest({ x: 0, y: 0, z: 0, intensity: 1, dissipates: true, seed }).scale,
+    );
+    // And the aim survives it: a dissipating spatter still points somewhere.
+    const aimed = bloodHitRequest({
+      x: 0,
+      y: 0,
+      z: 0,
+      dissipates: true,
+      normal: { x: 1, y: 0, z: 0 },
+      incoming: { x: 1, y: 0, z: 0 },
+      seed,
+    });
+    expect(aimed.rotation).toBeCloseTo(0, 6);
   });
 });
 
@@ -571,6 +703,19 @@ describe('SpawnBrushExplosion', () => {
     expect(brushExplosionRequest({ x: 0, y: 0, z: 0, radius: 60, seed }).id).toBe('explosion_brush');
     expect(brushExplosionRequest({ x: 0, y: 0, z: 0, radius: 140, seed }).id).toBe('explosion_brush_large');
     expect(brushExplosionRequest({ x: 0, y: 0, z: 0, seed }).id).toBe('explosion_brush');
+  });
+
+  it('asks for the smoulder when told to, at whatever size', () => {
+    for (const radius of [30, 62, 140]) {
+      const request = brushExplosionRequest({ x: 0, y: 0, z: 0, radius, smoulder: true, seed });
+      expect(request.id).toBe('explosion_brush_smoulder');
+      expect(REGISTRY.byId.has(request.id)).toBe(true);
+    }
+    // Still a length rather than a multiplier: twice the radius is twice the
+    // scale off one authored preset.
+    const small = brushExplosionRequest({ x: 0, y: 0, z: 0, radius: 31, smoulder: true, seed }).scale;
+    const large = brushExplosionRequest({ x: 0, y: 0, z: 0, radius: 62, smoulder: true, seed }).scale;
+    expect(large / small).toBeCloseTo(2, 5);
   });
 
   it('grows with intensity without running away with it', () => {

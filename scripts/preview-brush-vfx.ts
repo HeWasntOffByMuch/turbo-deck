@@ -275,6 +275,8 @@ async function main(): Promise<void> {
       readonly from?: number;
       readonly radius?: number;
       readonly intensity?: number;
+      readonly dissipates?: boolean;
+      readonly smoulder?: boolean;
       readonly azimuth?: number;
       readonly elevation?: number;
       readonly halfHeight?: number;
@@ -326,12 +328,14 @@ async function main(): Promise<void> {
             seed: input.seed,
             ...(input.from === undefined ? {} : { from: input.from }),
             ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
+            ...(input.dissipates === undefined ? {} : { dissipates: input.dissipates }),
           });
         } else {
           api.explosion({
             seed: input.seed,
             ...(input.radius === undefined ? {} : { radius: input.radius }),
             ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
+            ...(input.smoulder === undefined ? {} : { smoulder: input.smoulder }),
           });
         }
         return api.step(input.ticks);
@@ -383,6 +387,25 @@ async function main(): Promise<void> {
         })),
       ),
     });
+    // The variant, over its own life. Its whole claim is about what happens at
+    // the END -- nothing lands, and it thins away in the air -- so it is
+    // photographed further into its life than the standard hit, where by tick 26
+    // there is nothing left to see.
+    bloodRows.push({
+      title: 'the mist variant over its life: nothing falls, it thins away',
+      tiles: await series(
+        [3, 9, 17, 27, 39, 52].map((tick) => ({
+          label: `mist t=${tick}`,
+          kind: 'blood' as const,
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          from: 0.6,
+          dissipates: true,
+          halfHeight: 110,
+        })),
+      ),
+    });
+
     bloodRows.push({
       title: 'six seeds, one bearing',
       check: 'seeds',
@@ -421,6 +444,24 @@ async function main(): Promise<void> {
         SEEDS.map((seed, i) => ({ label: `#${i}`, kind: 'explosion' as const, seed, ticks: 14, radius: 70, halfHeight: 170 })),
       ),
     });
+    // The smoulder, sampled across a window twice as long as the standard
+    // blast's, because that is the difference: the fire is out by tick 46 and
+    // the mass is still going at 110.
+    boomRows.push({
+      title: 'the smoulder variant: smoke at once, and long after the fire',
+      tiles: await series(
+        [4, 10, 20, 44, 76, 110].map((tick) => ({
+          label: `smoulder t=${tick}`,
+          kind: 'explosion' as const,
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          radius: 70,
+          smoulder: true,
+          halfHeight: 190,
+        })),
+      ),
+    });
+
     boomRows.push({
       title: 'three sizes, and the smoke that outlives them',
       tiles: await series([

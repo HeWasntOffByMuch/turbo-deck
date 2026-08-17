@@ -32,6 +32,7 @@
  * it is light rather than pigment and has four ticks to say so.
  */
 
+import type { Curve } from './curve.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 
@@ -77,6 +78,48 @@ export interface BloodHitParams {
   readonly drag?: number;
   /** Downward acceleration on the droplets, world units per second squared. */
   readonly gravity?: number;
+  /**
+   * Upward acceleration, world units per second squared. 0 for paint.
+   *
+   * The knob a spatter that *hangs* is built from: set `gravity` to nothing and
+   * `drift` to a little, and the marks stop falling and start floating apart.
+   */
+  readonly drift?: number;
+  /**
+   * How much the marks wander, world units per second squared. 0 for paint.
+   *
+   * Only worth having beside `drift`: a formation of marks all lifting at the
+   * same rate is a formation, and what makes a cloud come apart is that the
+   * field pushing it differs at each of their positions.
+   */
+  readonly turbulence?: number;
+  /**
+   * The fraction of its peak size a mark ends at. Near 1 for paint, which dries
+   * where it lands; well under it for something that thins away to nothing.
+   */
+  readonly shrinkTo?: number;
+  /**
+   * How much the shorter-lived layers are held toward the full lifetime, 0..1.
+   *
+   * At 0 the three layers die in order -- the flick first, then the medium
+   * marks, then the dabs -- which is right for a hit, where the gesture lands
+   * and the debris outlives it. At 1 they all end together.
+   *
+   * The lever a *dissipating* spatter is actually made of, and the one that was
+   * missing at first: shrinking a mark and fading it early does nothing if the
+   * mark it is happening to is already dead. With the primary living less than
+   * two thirds of the window there was nothing left to watch fizzle by the time
+   * the fizzling started.
+   */
+  readonly linger?: number;
+  /**
+   * When the fade begins, as a fraction of life.
+   *
+   * Late by default and deliberately: paint is opaque, and the geometry is
+   * already retracting from its root by then (spec 159), so alpha has very
+   * little to do. Early is what makes a mark *dissipate* rather than dry.
+   */
+  readonly fadeFrom?: number;
   /** Bright saturated crimson, for the smaller fresh marks. */
   readonly bright?: PaletteKey;
   /** The strong middle red the primary body is drawn in. */
@@ -129,6 +172,16 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
   const velocity = params.velocity ?? s * 7;
   const drag = params.drag ?? 5.5;
   const gravity = params.gravity ?? -900;
+  const drift = params.drift ?? 0;
+  const turbulence = params.turbulence ?? 0;
+  const shrinkTo = Math.max(0.02, params.shrinkTo ?? 0.94);
+  const linger = Math.min(1, Math.max(0, params.linger ?? 0));
+  /** A layer's lifetime, in ticks, with `linger` pulling it toward the full span. */
+  const lives = (from: number, to: number): readonly [number, number] => [
+    Math.round(life * (from + (1 - from) * linger)),
+    Math.round(life * (to + (1 - to) * linger)),
+  ];
+  const fadeFrom = Math.min(0.98, Math.max(0.05, params.fadeFrom ?? 0.85));
   const strokeLength = params.strokeLength ?? 1;
   const strokeWidth = params.strokeWidth ?? 1;
   const bright = params.bright ?? 'bloodBright';
@@ -150,6 +203,36 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
   const primary = s * 3.1 * strokeLength;
   const narrow = 1 / Math.max(0.25, strokeWidth);
 
+  /**
+   * A size curve: born a little under its peak, at it a third of the way in,
+   * and ending at `shrinkTo` of it.
+   *
+   * One helper because the three layers were three hand-written curves that had
+   * to agree about the same two decisions, and a variant that changes how a mark
+   * ends has to change all three or it changes none of them.
+   */
+  const sizeCurve = (peak: number, born: number): Curve => ({
+    keys: [
+      [0, peak * born],
+      [0.35, peak],
+      // A hold before the fall, and it is only visible on a variant that shrinks
+      // hard: with `shrinkTo` near 1 this key is within 3% of the peak. Without
+      // it the mist thinned linearly from a third of the way in and was gone by
+      // half its own life -- which is a mark that vanishes rather than one that
+      // dissipates, and the difference is whether anybody sees it happen.
+      [0.62, peak * (0.55 + 0.45 * shrinkTo)],
+      [1, peak * shrinkTo],
+    ],
+  });
+
+  /** Hold, then go. Where the hold ends is what tells drying from dissipating. */
+  const alphaCurve = (): Curve => ({ keys: [[0, 1], [fadeFrom, 1], [1, 0]] });
+
+  // Always present, and free when they are zero: the sim skips turbulence below
+  // an amplitude of 0 and an acceleration of 0 adds nothing to the step.
+  const wander = { amplitude: turbulence, frequency: 0.055 } as const;
+  const lift = { x: 0, y: drift, z: 0 } as const;
+
   const emitters: Emitter[] = [
     // (a) THE mark. One. It carries the direction and most of the visual mass,
     // and every other layer here exists to keep it company.
@@ -157,7 +240,7 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
       id: 'primary',
       shape: { kind: 'fan', angle: aimed * 0.28, radius: s * 0.04, rise: 0.12 },
       emission: { kind: 'burst', count: Math.max(1, params.strokes ?? 1) },
-      lifetimeTicks: [Math.round(life * 0.46), Math.round(life * 0.6)],
+      lifetimeTicks: lives(0.46, 0.6),
       speed: [velocity * 0.9, velocity * 1.3],
       spreadRadians: aimed * 0.14,
       gravity: gravity * 0.14,
@@ -165,12 +248,14 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
       velocityScale: { keys: [[0, 1], [0.3, 0.16], [1, 0.04]] },
       // Nearly flat: the *shape* extends and retracts (spec 159), so a size curve
       // that also swung about would be two animations fighting.
-      size: { keys: [[0, primary * 0.92 * narrow], [0.35, primary * narrow], [1, primary * 0.94 * narrow]] },
+      size: sizeCurve(primary * narrow, 0.92),
       // Opaque while it matters. Overlapping translucent marks make a third
       // colour at every crossing that is in neither of them, which is the
       // watercolour look this is not; and the fade at the end is short because
       // the geometry is already retracting by then.
-      alpha: { keys: [[0, 1], [0.86, 1], [1, 0]] },
+      alpha: alphaCurve(),
+      acceleration: lift,
+      turbulence: wander,
       color: { stops: [[0, bright], [0.55, bright], [0.8, mid], [1, deep]] },
       render: 'mesh',
       mesh: { shape: 'brush-slash' },
@@ -182,7 +267,7 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
       id: 'secondary',
       shape: { kind: 'fan', angle: scattered, radius: s * 0.1, rise: 0.28 },
       emission: { kind: 'burst', count: params.splashes ?? 3 },
-      lifetimeTicks: [Math.round(life * 0.55), Math.round(life * 0.78)],
+      lifetimeTicks: lives(0.55, 0.78),
       speed: [velocity * 0.55, velocity * 1.35],
       spreadRadians: scattered * 0.2,
       // Light. These are aimed marks and their direction is the information they
@@ -191,8 +276,10 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
       gravity: gravity * 0.2,
       drag: drag * 0.8,
       velocityScale: { keys: [[0, 1], [0.35, 0.2], [1, 0.05]] },
-      size: { keys: [[0, s * 1.5], [0.4, s * 1.62], [1, s * 1.44]] },
-      alpha: { keys: [[0, 1], [0.84, 1], [1, 0]] },
+      size: sizeCurve(s * 1.62, 0.93),
+      alpha: alphaCurve(),
+      acceleration: lift,
+      turbulence: wander,
       color: { stops: [[0, bright], [0.5, mid], [1, deep]] },
       render: 'mesh',
       mesh: { shape: 'brush-flick' },
@@ -206,15 +293,17 @@ export function bloodHit(params: BloodHitParams): EffectDefinition {
       id: 'fragments',
       shape: { kind: 'fan', angle: loose, radius: s * 0.14, rise: 0.42 },
       emission: { kind: 'burst', count: params.droplets ?? 5 },
-      lifetimeTicks: [Math.round(life * 0.68), life],
+      lifetimeTicks: lives(0.68, 1),
       speed: [velocity * 0.3, velocity * 0.95],
       spreadRadians: loose * 0.35,
       gravity,
       drag: drag * 0.35,
       angularVelocity: [-4, 4],
       velocityScale: { keys: [[0, 1], [0.4, 0.4], [1, 0.18]] },
-      size: { keys: [[0, s * 0.34], [0.3, s * 0.42], [1, s * 0.36]] },
-      alpha: { keys: [[0, 1], [0.8, 1], [1, 0]] },
+      size: sizeCurve(s * 0.42, 0.81),
+      alpha: alphaCurve(),
+      acceleration: lift,
+      turbulence: wander,
       color: { stops: [[0, bright], [0.5, mid], [0.85, deep], [1, ink]] },
       render: 'mesh',
       mesh: { shape: 'brush-dab' },
@@ -248,7 +337,24 @@ export interface BrushExplosionParams {
   readonly debris?: number;
   /** Painterly smoke masses. 0 for none. */
   readonly smoke?: number;
-  /** Ticks the longest-lived mark lasts. The effect's whole duration. */
+  /**
+   * Ticks before the smoke starts.
+   *
+   * Late by default, because smoke that is already there when the flash goes off
+   * is smoke that was drawn rather than made. Early is what a *smoulder* is: the
+   * fire barely gets its moment before the mass rolls over it.
+   */
+  readonly smokeDelayTicks?: number;
+  /**
+   * Ticks the smoke lives, [min, max].
+   *
+   * Decoupled from `lifetimeTicks` on purpose, and this is the pair of numbers a
+   * lingering variant is actually made of: `lifetimeTicks` then governs the
+   * fire alone, so the two halves can be moved in opposite directions -- a
+   * shorter blaze under a mass that hangs about long after it.
+   */
+  readonly smokeLifeTicks?: readonly [min: number, max: number];
+  /** Ticks the longest-lived FIRE mark lasts. The smoke has its own. */
   readonly lifetimeTicks?: number;
   /** Pale yellow, golden, orange, burnt orange, brown, soot. */
   readonly palette?: BrushExplosionPalette;
@@ -337,6 +443,8 @@ export function brushExplosion(params: BrushExplosionParams): EffectDefinition {
   const expansion = params.expansionSpeed ?? 4.5;
   const debris = params.debris ?? 3;
   const smoke = params.smoke ?? 6;
+  const smokeDelay = Math.max(0, Math.round(params.smokeDelayTicks ?? 16));
+  const [smokeMin, smokeMax] = params.smokeLifeTicks ?? [Math.round(life * 0.5), Math.round(life * 0.84)];
   // 8..14, the brief's range for phase B, clamped rather than trusted: this is
   // the number a person retunes, and a zero here is an explosion with no
   // explosion in it.
@@ -495,9 +603,9 @@ export function brushExplosion(params: BrushExplosionParams): EffectDefinition {
     emitters.push({
       id: 'smoke',
       shape: { kind: 'sphere', radius: r * 0.34 },
-      emission: { kind: 'burst', count: smoke, delayTicks: 16 },
+      emission: { kind: 'burst', count: smoke, delayTicks: smokeDelay },
       offset: { x: 0, y: r * 0.3, z: 0 },
-      lifetimeTicks: [Math.round(life * 0.5), Math.round(life * 0.84)],
+      lifetimeTicks: [Math.max(1, Math.round(smokeMin)), Math.max(1, Math.round(smokeMax))],
       speed: [r * 0.8, r * 2],
       spreadRadians: 1.5,
       drag: 3.2,
@@ -558,6 +666,49 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // louder -- more marks, thrown further, held a little longer -- never a
   // different one, which is the rule the whole hit vocabulary is authored to.
   bloodHit({ id: 'blood_hit_brush', scale: 26 }),
+  /**
+   * The one that never lands: a spatter that hangs and thins away.
+   *
+   * Nothing falls. `gravity` is off outright and a gentle `drift` replaces it,
+   * so the marks lift instead of dropping, and `turbulence` pushes them apart on
+   * the way -- a formation of marks all rising at one rate is a formation, and
+   * what makes it read as dissipating is that they stop agreeing with each
+   * other.
+   *
+   * The end is where the work is. A paint mark holds its size and its alpha
+   * almost to the last tick, because paint dries where it lands; this one
+   * shrinks to a seventh of its peak and starts fading at a third of its life,
+   * so it thins from both ends at once while the geometry retracts from its root
+   * (spec 159). The result fizzles out in the air rather than arriving anywhere.
+   *
+   * Slower and looser than the standard hit as well: a third off the throwing
+   * speed and much more drag, because something that is going to hang has to
+   * stop first, and a wider spread, since nothing is holding it in line.
+   */
+  bloodHit({
+    id: 'blood_hit_brush_mist',
+    scale: 24,
+    splashes: 4,
+    droplets: 6,
+    spread: 0.86,
+    bias: 0.6,
+    // Longer than a paint hit, and for the same reason the smoulder is longer
+    // than a blast: lingering is the request. At the standard 34 ticks the
+    // primary lives 16 and the whole thing was over before the fizzle could be
+    // watched -- which is a mark that vanishes, not one that dissipates.
+    lifetimeTicks: 58,
+    velocity: 24 * 4.6,
+    drag: 8.5,
+    gravity: 0,
+    drift: 26,
+    turbulence: 62,
+    // All three layers held near the full span, so there is something in the air
+    // for the whole of the fizzle rather than one straggling dab at the end.
+    linger: 0.6,
+    shrinkTo: 0.28,
+    fadeFrom: 0.6,
+  }),
+
   bloodHit({
     id: 'blood_hit_brush_heavy',
     scale: 36,
@@ -573,6 +724,34 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   }),
 
   brushExplosion({ id: 'explosion_brush_small', radius: 34, radialCount: 8, debris: 2, smoke: 4, lifetimeTicks: 62 }),
+
+  /**
+   * The smoulder: smoke almost at once, and long after the fire is out.
+   *
+   * The same six layers in the same order -- this is not a second explosion, it
+   * is this one with its two halves pulled apart. The fire is cut to a little
+   * over half its usual life so the bright phase is a flare rather than a
+   * blaze; the smoke starts on tick 3, while the major strokes are still
+   * arriving, and lives four to six times as long as any of them.
+   *
+   * That overlap is the whole look. Standard, the fire has its moment and the
+   * smoke arrives afterwards to clear up; here the mass rolls over the fire
+   * while it is still burning, which is what a charge going off in something
+   * that catches looks like. It runs about two seconds rather than one and a
+   * quarter, and it is the one preset here that deliberately sits outside the
+   * brief's window -- lingering is the request.
+   */
+  brushExplosion({
+    id: 'explosion_brush_smoulder',
+    radius: 62,
+    radialCount: 11,
+    lifetimeTicks: 46,
+    debris: 4,
+    smoke: 9,
+    smokeDelayTicks: 3,
+    smokeLifeTicks: [74, 116],
+    light: true,
+  }),
   brushExplosion({ id: 'explosion_brush', radius: BRUSH_EXPLOSION_RADIUS, light: true }),
   brushExplosion({
     id: 'explosion_brush_large',
@@ -605,6 +784,15 @@ export interface BloodHitInput {
   readonly incoming?: Vec3Like;
   /** 1 is an ordinary blow. Above {@link HEAVY_HIT_INTENSITY} it is the loud one. */
   readonly intensity?: number;
+  /**
+   * Paint that never lands: the spatter hangs, thins and fizzles out instead of
+   * falling. For anything that does not bleed the way a body does.
+   *
+   * Chosen over the intensity split rather than beside it, so there is one mist
+   * and not two: a heavier hit on something that does not bleed is a *bigger*
+   * mist, which `scale` already says.
+   */
+  readonly dissipates?: boolean;
   readonly seed: number;
 }
 
@@ -615,6 +803,14 @@ export interface BrushExplosionInput {
   /** How far the burst should reach, in world units. */
   readonly radius?: number;
   readonly intensity?: number;
+  /**
+   * Smoke almost at once, and long after the fire is out.
+   *
+   * Its own preset rather than a size, because the counts and the two halves'
+   * lifetimes all move together -- the same reason `radius` picks a preset
+   * rather than scaling one.
+   */
+  readonly smoulder?: boolean;
   readonly seed: number;
 }
 
@@ -656,7 +852,8 @@ export const NORMAL_LIFT = 4;
  */
 export function bloodHitRequest(input: BloodHitInput): SpawnRequest {
   const intensity = input.intensity ?? 1;
-  const heavy = intensity >= HEAVY_HIT_INTENSITY;
+  const mist = input.dissipates === true;
+  const heavy = !mist && intensity >= HEAVY_HIT_INTENSITY;
   const normal = input.normal;
   const incoming = input.incoming;
 
@@ -682,7 +879,7 @@ export function bloodHitRequest(input: BloodHitInput): SpawnRequest {
   const ny = normal?.y ?? 0;
 
   return {
-    id: heavy ? 'blood_hit_brush_heavy' : 'blood_hit_brush',
+    id: mist ? 'blood_hit_brush_mist' : heavy ? 'blood_hit_brush_heavy' : 'blood_hit_brush',
     x: input.x + lx * lift,
     y: input.y + ny * lift,
     z: input.z + lz * lift,
@@ -725,8 +922,12 @@ export function brushExplosionRequest(input: BrushExplosionInput): SpawnRequest 
   // fewer marks rather than the same marks shrunk. Counts do not scale with
   // `scale`, and a nine-stroke burst at a third the size is a different picture
   // from a nineteen-stroke one.
-  const preset =
-    radius < 46
+  const preset = input.smoulder
+    ? // One smoulder at one authored size, scaled to whatever was asked for. A
+      // second and third of them would be three presets whose only difference is
+      // a number `scale` already carries.
+      { id: 'explosion_brush_smoulder', radius: 62 }
+    : radius < 46
       ? { id: 'explosion_brush_small', radius: 34 }
       : radius < 78
         ? { id: 'explosion_brush', radius: BRUSH_EXPLOSION_RADIUS }

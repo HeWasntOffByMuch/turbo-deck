@@ -51,12 +51,16 @@ export interface BloodTrigger {
   /** Radians about Y: which way the attacker was standing. */
   readonly from?: number;
   readonly intensity?: number;
+  /** The variant that hangs and thins away instead of falling. */
+  readonly dissipates?: boolean;
 }
 
 export interface ExplosionTrigger {
   readonly seed: number;
   readonly radius?: number;
   readonly intensity?: number;
+  /** The variant whose smoke arrives at once and outlives the fire. */
+  readonly smoulder?: boolean;
   /** Ground offset from the dummy, world units. */
   readonly x?: number;
   readonly z?: number;
@@ -307,6 +311,7 @@ class BrushScene {
       normal,
       incoming,
       ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
+      ...(input.dissipates === undefined ? {} : { dissipates: input.dissipates }),
       seed: input.seed,
     });
   }
@@ -318,6 +323,7 @@ class BrushScene {
       z: input.z ?? 0,
       radius: input.radius ?? BRUSH_EXPLOSION_RADIUS,
       ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
+      ...(input.smoulder === undefined ? {} : { smoulder: input.smoulder }),
       seed: input.seed,
     });
   }
@@ -452,6 +458,11 @@ function main(): void {
       scene.blood({ seed: roll(), from: bearing, intensity: 1.6 });
       paint();
     }),
+    button('Blood mist', () => {
+      bearing += Math.PI * 0.37;
+      scene.blood({ seed: roll(), from: bearing, dissipates: true });
+      paint();
+    }),
     button('Boom small', () => {
       scene.explosion({ seed: roll(), radius: 34, x: -150, z: 90 });
       paint();
@@ -462,6 +473,10 @@ function main(): void {
     }),
     button('Boom large', () => {
       scene.explosion({ seed: roll(), radius: 110, x: 170, z: 40 });
+      paint();
+    }),
+    button('Boom smoulder', () => {
+      scene.explosion({ seed: roll(), radius: 62, smoulder: true, x: -40, z: -120 });
       paint();
     }),
     button('20 seeds', () => {

@@ -3,8 +3,8 @@
 Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
 auras as drawn sigils (spec 124), impacts as crystals (spec 125), the shockwave
 combined and the counts made tunable (spec 126), blood lit and bent (spec 139),
-and a painted vocabulary added beside all of it (spec 158) and then corrected
-(spec 159) — the last at its review gate.**
+and a painted vocabulary added beside all of it (spec 158), corrected (159) and
+given two lingering variants (160) — the last at its review gate.**
 
 | Phase | State |
 |---|---|
@@ -21,7 +21,8 @@ and a painted vocabulary added beside all of it (spec 158) and then corrected
 | the shockwave, and tunable counts (spec 126) | done |
 | blood: lit stains, and streaks that bend (spec 139) | done |
 | art direction: a painted vocabulary (spec 158) | superseded in place by 159 |
-| the painted vocabulary, corrected (spec 159) | **at the review gate** |
+| the painted vocabulary, corrected (spec 159) | done |
+| two variants that linger (spec 160) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1555,3 +1556,39 @@ in the table is affected and the bright ones never notice; a brown authored at
 0x63402c arrives as near-black. 159 is the first spec to need dark colours and
 therefore the first to pay for it, and the browns are authored much lighter than
 they look for that reason.
+
+
+---
+
+## 8. The variants (spec 160)
+
+Two, and they are the same request in different material: something that
+outstays the thing that made it.
+
+| Preset | What it is |
+|---|---|
+| `explosion_brush_smoulder` | smoke on tick 3, while the major strokes are still arriving, living four to six times as long as any of them over a fire cut to half its usual life |
+| `blood_hit_brush_mist` | a spatter that never lands: no gravity at all, a gentle lift, turbulence pulling the pieces apart, and an ending that thins instead of drying |
+
+Both are parameter calls on the existing builders -- no new geometry, no new
+shapes, no new orientation. That was the point of the builders, and it is the
+first time the claim has been tested by something that wanted genuinely
+different behaviour rather than different numbers.
+
+Six parameters had to be added to make them sayable, and two of them are worth
+naming here because they are general:
+
+- **the explosion's two halves had one clock.** `lifetimeTicks` drove the fire
+  and the smoke together and the smoke's delay was a literal inside the builder,
+  so they could not move in opposite directions -- which is the whole of what a
+  smoulder is. `smokeDelayTicks` and `smokeLifeTicks` split them; `lifetimeTicks`
+  now governs the fire alone.
+- **`linger`, and the finding behind it.** Shrinking a mark and fading it early
+  does nothing if the mark is already dead. The three blood layers are authored
+  to die in order -- flick, then medium marks, then dabs -- which is right for a
+  hit, where the gesture lands and the debris outlives it, and wrong for a
+  fizzle, where the fizzling *is* the effect. The first cut of the mist was over
+  before anybody could watch it go.
+
+Both sit outside the duration windows spec 158 wrote down, deliberately, and the
+two tests that assert those windows now name the exemption rather than widening.
