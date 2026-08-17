@@ -45,7 +45,7 @@ import {
   StatusId,
   type Statuses,
 } from './statuses.js';
-import { ActivityValue, CastPhase, EntityKindValue, type CastState, type ServerEntity } from './types.js';
+import { ActivityValue, AggroValue, CastPhase, EntityKindValue, type CastState, type ServerEntity } from './types.js';
 import { advanceProgression, blankProgression } from './world.js';
 
 // --------------------------------------------------------------------------
@@ -92,6 +92,8 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
     activityUntilTick: 0,
     radius: 16,
     targetId: null,
+    aggro: AggroValue.Calm,
+    aggroUntilTick: 0,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,

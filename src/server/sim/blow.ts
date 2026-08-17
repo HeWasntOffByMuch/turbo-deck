@@ -38,6 +38,7 @@ import { RESTORATION } from '../data/restoration.js';
 import { SCALING } from '../data/scaling.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { applyArmor } from '../player/stats.js';
+import { provoke } from './aggro.js';
 import { applyPoiseDamage, isResolute, poiseDamageOf } from './poise.js';
 import { markAssist } from './restoration.js';
 import {
@@ -203,14 +204,22 @@ export function resolveBlow(
   const killed = health <= 0;
   const overkill = killed && toHealth >= targetIn.health * (1 + SCALING.combat.overkillFraction);
 
-  target = {
-    ...target,
-    health,
-    shield: shieldLive - absorbed,
-    activity: killed ? ActivityValue.Dead : target.activity,
-    targetId: target.targetId ?? attacker.id,
-    stillSinceTick: tick,
-  };
+  // What being hit does to the victim's *mind* is `provoke`'s to say (spec 163)
+  // and not this function's. Until then it was one line here -- `targetId ??
+  // attacker.id` -- which was the entire aggro system, and which could only ever
+  // express "fights back". A grazer that bolts and a spider that calls its nest
+  // are the same event arriving at a different temperament.
+  target = provoke(
+    {
+      ...target,
+      health,
+      shield: shieldLive - absorbed,
+      activity: killed ? ActivityValue.Dead : target.activity,
+      stillSinceTick: tick,
+    },
+    attacker.id,
+    tick,
+  );
 
   events.push({
     kind: 'hit',

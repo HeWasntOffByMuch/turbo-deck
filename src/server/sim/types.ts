@@ -59,6 +59,31 @@ export const ActivityValue = {
   Dead: 4,
 } as const;
 
+/**
+ * What a body has decided about its target (spec 163).
+ *
+ * Deliberately *beside* {@link ActivityValue} rather than folded into it.
+ * `activity` is what a body is doing and this is what it has decided, and the
+ * whole point of the alert phase is that those two come apart: a monster holding
+ * still because it is sizing you up and a monster holding still because it has
+ * nothing to do are the same `Idle`, and they are not the same thing.
+ *
+ * `Calm` and `targetId === null` are one state seen from two sides, and every
+ * transition in `sim/aggro.ts` keeps them that way.
+ */
+export const AggroValue = {
+  /** No business with anybody. */
+  Calm: 0,
+  /** Has noticed somebody and is looking at them. Does not move, does not swing. */
+  Alert: 1,
+  /** Chasing and swinging. */
+  Engaged: 2,
+  /** Running from whatever hit it, and swinging at nothing. */
+  Fleeing: 3,
+} as const;
+
+export type AggroStateValue = (typeof AggroValue)[keyof typeof AggroValue];
+
 /** Where a cast has got to. Drives the client's animation and the cancel rule. */
 export const CastPhase = {
   Windup: 0,
@@ -320,6 +345,17 @@ export interface ServerEntity {
   readonly radius: number;
   /** Homing target for a monster; null when idle or player-controlled. */
   readonly targetId: number | null;
+  /**
+   * What this body has decided about {@link targetId} -- an {@link AggroValue}
+   * (spec 163). `Calm` exactly when `targetId` is null.
+   */
+  readonly aggro: number;
+  /**
+   * When {@link aggro} runs out: an `Alert` becoming `Engaged`, or a `Fleeing`
+   * becoming `Calm`. 0 for the two states that end on an event rather than on a
+   * clock, which is what makes it a comparison and never a sweep.
+   */
+  readonly aggroUntilTick: number;
   /**
    * The route this body is following, when the straight line to its target is
    * blocked (spec 065). Plain data on an immutable entity like everything else,

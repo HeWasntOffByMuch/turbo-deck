@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MapDocument, MapMarker } from '../../terrain/index.js';
-import { monsterById } from '../data/monsters.js';
+import { monsterById, noticeRangeOf } from '../data/monsters.js';
+import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { loadMapFile } from './map-file.js';
 import { spawnPointsFrom, SpawnerError } from './spawners.js';
 
@@ -137,5 +138,38 @@ describe('the shipped map', () => {
   it('survives a round trip through the map serializer', () => {
     const before = spawnPointsFrom(shipped);
     expect(spawnPointsFrom(loadMapFile().doc)).toEqual(before);
+  });
+
+  /**
+   * Spec 163. Nothing on the shipped map can see the tile every character
+   * starts and respawns on.
+   *
+   * Asserted here rather than trusted, because it is a *product* of two numbers
+   * that live in different files and neither of them mentions the other: a
+   * marker's position in `maps/arena.json` and a row's `noticeRange` in
+   * `data/monsters.ts`. It held for free while spec 076 had nothing initiating
+   * at all, and the moment proximity came back it stopped holding -- the spider
+   * nest sits 222 units north of `DEFAULT_SPAWN` and was authored to see 300.
+   *
+   * What that costs if it regresses is the worst failure this feature has: a
+   * fresh character attacked before it has moved, and a killed one respawning
+   * on the same tile into the same enemies. Hearthstead is not protection --
+   * its `pvp: false` gates player-versus-player damage, and no zone flag has
+   * ever gated a monster.
+   *
+   * The margin is deliberate and small. This is not asking for the map to be
+   * empty near town; it is asking that the first move be the player's.
+   */
+  it('places nothing that can see the spawn point before the player has moved', () => {
+    const MARGIN = 40;
+    for (const point of spawnPointsFrom(shipped)) {
+      const row = monsterById(point.monsterId);
+      if (!row) continue;
+      const sight = noticeRangeOf(row.temperament);
+      if (sight <= 0) continue;
+      const away = Math.hypot(point.x - DEFAULT_SPAWN.x, point.y - DEFAULT_SPAWN.y);
+      expect(away, `${point.id} (${point.monsterId}) sees ${sight} and is ${Math.round(away)} out`)
+        .toBeGreaterThan(sight + MARGIN);
+    }
   });
 });
