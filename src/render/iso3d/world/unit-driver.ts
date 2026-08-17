@@ -73,8 +73,36 @@ export interface UnitFacts {
    * reach a game outcome.
    */
   readonly abilityId: string | null;
+  /**
+   * Ticks from now until this cast's own scheduled end, or null when nothing is
+   * casting (spec 166).
+   *
+   * `endTick - tick`, both of which the wire already carries and the cast bar
+   * already reads. It is here to answer one question and only one: when a cast
+   * stops existing, was that because it *finished* or because it was called
+   * off? Nothing else on this snapshot can tell those apart -- a withdrawn
+   * wind-up and a completed blow both end with the cast simply gone.
+   */
+  readonly castTicksLeft: number | null;
   readonly dead: boolean;
 }
+
+/**
+ * How much of a cast may be left when it ends and still count as finishing.
+ *
+ * Six ticks, a tenth of a second, and it is a *sampling* margin rather than a
+ * judgement about the game. `previous` is the last frame that was driven, and a
+ * frame drains as many ticks as it has to -- three at 20fps -- so a cast that
+ * ends exactly on schedule was last seen with a few ticks still on it. Reading
+ * that as a cancellation would cut the tail off every attack anybody ever
+ * completed on a slow machine.
+ *
+ * The error runs the safe way. A cast ending within this of its own end is
+ * treated as finishing, which is what everything did before this existed; and a
+ * withdrawal is never that close, because withdrawing happens in the *wind-up*
+ * and the whole backswing is still ahead of it.
+ */
+const FINISHED_WITHIN_TICKS = 6;
 
 /**
  * The parameter names a driven unit is expected to declare.
@@ -139,6 +167,10 @@ export function driveUnit(
   // at the right rate rather than a tick of it playing at the old one.
   machine.setActionRate(facts.attackRate);
   if (startedCasting(facts, previous)) machine.trigger(triggerFor(machine, facts.abilityId));
+  // Before the step, so a swing called off on this tick cannot fire the impact
+  // it was about to (spec 166) -- the machine leaves the state first and events
+  // are read off whatever it is in afterwards.
+  else if (cancelledCast(facts, previous)) machine.cancelAction();
   return machine.step(ticks);
 }
 
@@ -186,11 +218,21 @@ export function attackRateFrom(
 /**
  * True on the tick a cast begins, and on no other.
  *
- * Two things count as beginning. The obvious one is activity crossing into
- * `Casting`. The other is the phase going *backwards* — from recovery to
+ * Three things count as beginning. The obvious one is activity crossing into
+ * `Casting`. The second is the phase going *backwards* — from recovery to
  * turning or wind-up — which is what a second swing looks like when it starts
  * before the first has finished replicating, and treating it as a continuation
  * would drop every attack after the first in a chain.
+ *
+ * The third is a cast appearing where a moment ago there was none, while the
+ * activity says `Casting` throughout (spec 166). That is a *withdrawal followed
+ * by another attack*, and the two halves are on different clocks: the cast list
+ * is predicted and drops the withdrawn cast at once, while the activity is
+ * replicated at 20Hz and can easily not move between the two. It used to be
+ * unreachable in practice because a withdrawn swing played on regardless and
+ * the next attack was drawn by the first one's leftovers; now that the first is
+ * cancelled, missing this would leave the body standing perfectly still through
+ * an attack it is really making.
  */
 export function startedCasting(facts: UnitFacts, previous: UnitFacts | null): boolean {
   if (facts.dead) return false;
@@ -198,13 +240,43 @@ export function startedCasting(facts: UnitFacts, previous: UnitFacts | null): bo
   if (previous === null || previous.activity !== EntityActivity.Casting) return true;
   const from = previous.castPhase;
   const to = facts.castPhase;
-  if (from === null || to === null) return false;
+  if (to === null) return false;
+  if (from === null) return isOpening(to);
   return isOpening(to) && !isOpening(from);
 }
 
 /** The phases that begin a swing rather than finish one. */
 function isOpening(phase: number): boolean {
   return phase === CastPhaseValue.Turning || phase === CastPhaseValue.Windup;
+}
+
+/**
+ * True on the tick a cast is called off, and on no other (spec 166).
+ *
+ * Two facts and a subtraction: the cast is gone, and the last time it was seen
+ * it had more than a sampling margin of itself left to run. That is the whole
+ * definition of a cancellation from out here -- the sim knows it as
+ * `cancelWindup` and `cancelBackswing`, and neither of those distinctions
+ * changes what the *animation* should do, which is stop.
+ *
+ * Read off the cast being gone rather than off the activity, and that is the
+ * important half. `castPhase` comes from the cast list, which the client
+ * predicts, so a player who withdraws sees their own cast disappear on the frame
+ * they asked; `activity` is replicated and is a round trip behind it. Keying on
+ * the activity would leave the body finishing a blow it had already been
+ * refunded for, for exactly as long as the connection is bad -- and the
+ * connection being bad is when a withdrawal matters most.
+ *
+ * A cast that ran its course is deliberately *not* this. An attack's clip is
+ * authored to fit inside its own cast, so a cast ending on time is one whose
+ * animation has already finished and there would be nothing to cancel; where
+ * that is not true -- an ability borrowing another attack's clip, as the arcane
+ * bolt borrows the sword's -- cutting the tail off every cast of it would be a
+ * regression rather than a fix.
+ */
+export function cancelledCast(facts: UnitFacts, previous: UnitFacts | null): boolean {
+  if (previous === null || facts.castPhase !== null || previous.castPhase === null) return false;
+  return (previous.castTicksLeft ?? 0) > FINISHED_WITHIN_TICKS;
 }
 
 /**

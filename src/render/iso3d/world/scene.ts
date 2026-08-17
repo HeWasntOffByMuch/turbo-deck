@@ -490,6 +490,8 @@ export class WorldScene {
   private readonly castPhases = new Map<number, number>();
   /** Which ability each caster is casting, so the driver can pick its clip. */
   private readonly castAbilities = new Map<number, string>();
+  /** How much of each cast is left, so a cancellation can be told from an end. */
+  private readonly castTicksLeft = new Map<number, number>();
   /** Attack-speed factor per casting entity, for the swing's playback rate. */
   private readonly attackRates = new Map<number, number>();
   private hovered: number | null = null;
@@ -1270,12 +1272,18 @@ export class WorldScene {
     this.hoverTargets.length = 0;
     this.castPhases.clear();
     this.castAbilities.clear();
+    this.castTicksLeft.clear();
     this.attackRates.clear();
     for (const cast of view.casts) {
       this.castPhases.set(cast.entityId, cast.phase);
       // Which ability, not just that there is one (spec 164): a sword swing and
       // a bow draw are the same activity on the wire and two different clips.
       this.castAbilities.set(cast.entityId, cast.abilityId);
+      // And how much of it is left to run (spec 166), so the frame the cast
+      // vanishes can be read as "finished" or "called off". Against the drawn
+      // tick rather than the replicated one, because that is the clock the
+      // machine is being stepped on.
+      this.castTicksLeft.set(cast.entityId, cast.endTick - frame.tick);
       // Measured off the ticks the server sent rather than off anyone's stats
       // (spec 144): the ratio of the authored wind-up to the one actually being
       // run is the attack-speed factor, so a hasted body's swing animation
@@ -1637,6 +1645,7 @@ export class WorldScene {
       castPhase: this.castPhases.get(entity.id) ?? null,
       attackRate: this.attackRates.get(entity.id) ?? 1,
       abilityId: this.castAbilities.get(entity.id) ?? null,
+      castTicksLeft: this.castTicksLeft.get(entity.id) ?? null,
       dead,
     };
     driveUnit(unit.machine, facts, unit.previous, frame.ticks);

@@ -277,6 +277,41 @@ export class UnitMachine {
   }
 
   /**
+   * Leaves the attack that is playing, back to the loop it came from (spec 166).
+   *
+   * The counterpart to the trigger that started it. Without one, a one-shot runs
+   * to the end of its clip whatever the sim does, so a wind-up the player
+   * *withdrew* from -- the decision this whole game is built around -- was still
+   * drawn as a completed blow, impact frame and all, a quarter of a second after
+   * it had been refunded.
+   *
+   * Three things it is careful about.
+   *
+   * **It cross-fades rather than cutting**, over the state's own `blendInMs`,
+   * which is the same fade the natural return uses. A withdrawal that snapped to
+   * the idle pose would replace one wrong picture with a different one.
+   *
+   * **It leaves before the tick is stepped, so the events left in the clip never
+   * fire.** `eventsAt` reads the *incoming* state only, so a swing called off on
+   * tick T cannot emit the `swing.impact` it was three frames from -- and it
+   * must not, because on the sim's side that blow did not happen.
+   *
+   * **It only ever leaves a one-shot.** Called while walking, or in a terminal
+   * state, or in a locking one -- where the refusal to be interrupted is the
+   * whole point of the category -- it does nothing and says so.
+   */
+  cancelAction(blendMs?: number): boolean {
+    const state = this.stateOf(this.current);
+    if (!state || state.category !== 'oneshot') return false;
+    const back = this.returnTo;
+    if (back === null || back === this.current.stateId) return false;
+    this.returnTo = null;
+    this.activeAction = null;
+    this.enter(back, blendMs ?? state.blendInMs);
+    return true;
+  }
+
+  /**
    * Advances by whole ticks.
    *
    * One at a time, deliberately. A closed-form jump would have to reason about

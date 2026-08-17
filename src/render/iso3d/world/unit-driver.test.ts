@@ -25,6 +25,7 @@ function facts(patch: Partial<UnitFacts> = {}): UnitFacts {
     castPhase: null,
     attackRate: 1,
     abilityId: null,
+    castTicksLeft: null,
     dead: false,
     ...patch,
   };

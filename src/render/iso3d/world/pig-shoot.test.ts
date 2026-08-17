@@ -44,6 +44,7 @@ const idle: UnitFacts = {
   castPhase: null,
   attackRate: 1,
   abilityId: null,
+  castTicksLeft: null,
   dead: false,
 };
 
@@ -54,6 +55,7 @@ function casting(abilityId: string): UnitFacts {
     castPhase: CastPhaseValue.Windup,
     attackRate: 1,
     abilityId,
+    castTicksLeft: 60,
     dead: false,
   };
 }

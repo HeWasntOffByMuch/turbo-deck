@@ -53,6 +53,7 @@ describe('the trigger finally reaches a state', () => {
       castPhase: null,
       attackRate: 1,
       abilityId: null,
+      castTicksLeft: null,
       dead: false,
     };
     const casting: UnitFacts = {
@@ -61,6 +62,7 @@ describe('the trigger finally reaches a state', () => {
       castPhase: CastPhaseValue.Windup,
       attackRate: 1,
       abilityId: 'melee.slash',
+      castTicksLeft: 60,
       dead: false,
     };
     driveUnit(machine, standing, null, 10);
@@ -81,6 +83,7 @@ describe('the trigger finally reaches a state', () => {
       castPhase: CastPhaseValue.Windup,
       attackRate: 1,
       abilityId: 'melee.slash',
+      castTicksLeft: 60,
       dead: false,
     };
     const impacts: number[] = [];
@@ -106,6 +109,7 @@ describe('the trigger finally reaches a state', () => {
       castPhase: null,
       attackRate: 1,
       abilityId: null,
+      castTicksLeft: null,
       dead: false,
     };
     driveUnit(machine, running, null, 30);
@@ -117,6 +121,7 @@ describe('the trigger finally reaches a state', () => {
       castPhase: CastPhaseValue.Windup,
       attackRate: 1,
       abilityId: 'melee.slash',
+      castTicksLeft: 60,
       dead: false,
     };
     driveUnit(machine, casting, running, 1);
@@ -134,6 +139,7 @@ describe('the trigger finally reaches a state', () => {
       castPhase: CastPhaseValue.Windup,
       attackRate: 1,
       abilityId: 'melee.slash',
+      castTicksLeft: 60,
       dead: false,
     };
     driveUnit(machine, casting, null, 5);

@@ -435,6 +435,16 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  `npx tsx scripts/probe-facing.ts --job <id>` runs it over a real
                  generation; the reference unit is the control, and the test
                  beside it introduces each of the four faults on purpose.
+                 Since spec 166 it also has a `cancelAction`, which is the
+                 counterpart to the trigger that started an attack: a one-shot
+                 otherwise runs to the end of its clip whatever the sim does, so
+                 a wind-up the player *withdrew* from -- the decision this whole
+                 game is built on -- was still drawn as a completed blow, impact
+                 event and all, a quarter of a second after being refunded. It
+                 cross-fades rather than cutting, it is called *before* the tick
+                 is stepped so the events left in the clip never fire, and it
+                 refuses to leave a `locking` state, because not being
+                 interruptible is that category's whole reason to exist.
                  machine.ts is the state machine BOTH the Studio tab and the game
                  drive (specs 110-111) -- one machine, two callers, which is what
                  makes "the tool and the game read the same files" a fact about
@@ -1025,7 +1035,25 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  worse than a generic one. A unit whose document declares no
                  `shoot` parameter falls back the same way, since a silently
                  dropped trigger is a body standing perfectly still through its
-                 own attack -- and
+                 own attack. Since spec 166 the snapshot also carries how much
+                 of the cast is **left** -- `endTick - tick`, which the cast bar
+                 already reads -- because that is the one thing that separates a
+                 cast which *finished* from one that was *called off*, and both
+                 end with the cast simply gone. A cancellation is read off the
+                 cast list rather than off the activity: the list is predicted,
+                 so a withdrawal lands on the frame the player asked for it,
+                 while the activity is replicated and a round trip behind, and a
+                 bad connection is exactly when a withdrawal matters most. The
+                 margin that decides "finished" is a *sampling* margin -- a
+                 frame at 20fps drains three ticks, so a cast ending on schedule
+                 was last seen with a few left -- and it errs toward leaving an
+                 attack alone, which is what everything did before. Closing that
+                 loop also turned up a case `startedCasting` had always got
+                 wrong and nobody could see: a withdrawal followed straight away
+                 by another attack, where the cast list goes windup / nothing /
+                 windup while the replicated activity never moves. It used to be
+                 invisible because the withdrawn swing played on and the second
+                 attack was drawn by the first one's leftovers -- and
                  how often a body's pose is applied; the machine itself is
                  never throttled, because its events are authored on frame indices.
                  The LOD measures how big a body is *drawn*, in pixels of the
