@@ -739,6 +739,24 @@ export type ServerSimEvent =
       readonly entityId: number;
       readonly killerId: number | null;
       /**
+       * What died, carried rather than looked up (spec 164).
+       *
+       * The rule this states: **a death event outlives the body it is about.**
+       * Step 4a of `stepWorld` sweeps a dead monster out of the state in the
+       * same step that emits this event, so every reader that runs afterwards --
+       * `server.ts`'s experience award among them -- resolves the entity id to
+       * nothing. That award had been dead code since spec 062 for exactly this
+       * reason: the row it needed was gone before it looked, so no kill in the
+       * game's history has ever paid out.
+       *
+       * `world.ts` already knew this and worked around it locally, building a
+       * `killedBy` map from the events *before* the sweep so loot could be
+       * rolled. Two fields on the event is that same fact stated once, for
+       * every reader, instead of reconstructed by each.
+       */
+      readonly victimKind: number;
+      readonly victimTypeId: string;
+      /**
        * How it died (spec 156).
        *
        * On the event that already says *who* killed *whom* rather than as a

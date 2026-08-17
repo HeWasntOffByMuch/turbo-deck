@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>turbo-deck · hud probe</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #2f4a2a; overflow: hidden; }
+      #app { position: fixed; inset: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- Spec 163's measuring rig: the real HUD over a fabricated view, so the
+         bottom band can be photographed and clicked without a fight to lose.
+         Dev-server only -- `vite build` bundles index.html and nothing else, so
+         this never ships. See iso3d/hud-probe.ts. -->
+    <script type="module" src="./iso3d/hud-probe.ts"></script>
+  </body>
+</html>

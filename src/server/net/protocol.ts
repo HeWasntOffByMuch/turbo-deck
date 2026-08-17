@@ -102,6 +102,19 @@ export const ClientMessageType = {
    * hands.
    */
   PickUpItem: 0x19,
+  /**
+   * "Put me back on my feet" (spec 164). No payload.
+   *
+   * Honoured only from a connection whose body is at zero health, and honoured
+   * at once when it is. Before this the server put a dead player back on a
+   * timer, which meant death was a three-second pause rather than a state
+   * somebody leaves on purpose -- and left the respawn button with nothing to be
+   * the button *for*, since the wait would have ended either way.
+   *
+   * Nothing rides on it: a respawn is a fixed destination and a full heal, so a
+   * payload would only be a client asking to arrive somewhere it chose.
+   */
+  Respawn: 0x1a,
 } as const;
 
 export const ServerMessageType = {

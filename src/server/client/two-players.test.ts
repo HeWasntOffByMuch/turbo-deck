@@ -271,7 +271,11 @@ describe('a death is readable from outside', () => {
     // Ana can see that Ben is down, not merely that he stopped moving.
     expect(seen(ana, benId)?.activity).toBe(EntityActivity.Dead);
 
-    // And back up again, as the same body.
+    // And back up again, as the same body -- once he asks. Nothing puts a dead
+    // player back on their feet on a timer since spec 164, which is what makes
+    // the respawn button a button; what this test is about is that the *other*
+    // player watches both halves happen to one entity id.
+    ben.respawn();
     let alive = false;
     for (let i = 0; i < 600 && !alive; i++) {
       await tick();

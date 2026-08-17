@@ -29,6 +29,8 @@ import { PNG } from 'pngjs';
 import {
   SampledGround,
   aimTemplate,
+  bodyRingRadius,
+  bodyRingTemplate,
   projectDecal,
   ringTemplate,
   vertexCount,
@@ -44,13 +46,22 @@ const outDir = join(root, '.claude', 'screenshots');
 const CELL = 420;
 const GAP = 10;
 const LABEL_H = 14;
-/** Half the world-space window a cell is drawn through. */
+/**
+ * Half the widest world-space window a cell is drawn through, and so how much
+ * ground has to be gathered.
+ *
+ * Each row picks its own window (spec 164): the rings under a body are a tenth
+ * of a range ring's size, and drawn through the range ring's window they are
+ * four pixels across and answer nothing.
+ */
 const HALF_EXTENT = 460;
 /** The scene's isometric view direction, and a light roughly where its sun is. */
 const VIEW: readonly [number, number, number] = [-1, -0.82, -1];
 const LIGHT: readonly [number, number, number] = [0.45, 0.8, 0.38];
 const AMBIENT = 0.55;
 const AIM_COLOR: readonly [number, number, number] = [0x7f / 255, 0xd4 / 255, 0xff / 255];
+/** `TARGET_RING_COLOR`: what is already being hit, which is never the aim's blue. */
+const TARGET_COLOR: readonly [number, number, number] = [0xff / 255, 0x6a / 255, 0x5a / 255];
 const GRASS: readonly [number, number, number] = [0.14, 0.2, 0.09];
 const SHEET_BG: readonly [number, number, number] = [0.02, 0.02, 0.025];
 
@@ -194,6 +205,7 @@ function draw(
   color: readonly [number, number, number],
   alpha: number,
   centre: readonly [number, number, number],
+  half: number,
 ): void {
   const midU = dot(centre, right);
   const midV = dot(centre, up);
@@ -216,8 +228,8 @@ function draw(
     const shade: [number, number, number] =
       alpha >= 1 ? [color[0] * lambert, color[1] * lambert, color[2] * lambert] : [...color];
 
-    const px = (u: number): number => ((u - midU) / (2 * HALF_EXTENT) + 0.5) * CELL;
-    const py = (v: number): number => (0.5 - (v - midV) / (2 * HALF_EXTENT)) * CELL;
+    const px = (u: number): number => ((u - midU) / (2 * half) + 0.5) * CELL;
+    const py = (v: number): number => (0.5 - (v - midV) / (2 * half)) * CELL;
     const p0 = [px(ax), py(ay)] as const;
     const p1 = [px(bx), py(by)] as const;
     const p2 = [px(cx), py(cy)] as const;
@@ -328,39 +340,73 @@ const ground = terrainTriangles(spot.x, spot.z, HALF_EXTENT);
 const pinned: HeightAt = () => rawHeight(spot.x, spot.z);
 
 const RANGE = 420;
-const templates: readonly (readonly [string, DecalTemplate, number])[] = [
-  ['range ring, 420', ringTemplate(RANGE * 0.985, RANGE), 1.1],
-  ['quake, radius 140', aimTemplate({ kind: 'circle', radius: 140 }), 1.3],
-  ['bolt lane, 700x16', aimTemplate({ kind: 'line', length: 700, width: 16 }), 1.3],
+
+interface Row {
+  readonly name: string;
+  readonly template: DecalTemplate;
+  readonly lift: number;
+  /** Half the world-space window this row is drawn through. */
+  readonly half: number;
+  readonly color: readonly [number, number, number];
+}
+
+const templates: readonly Row[] = [
+  { name: 'range ring, 420', template: ringTemplate(RANGE * 0.985, RANGE), lift: 1.1, half: HALF_EXTENT, color: AIM_COLOR },
+  { name: 'quake, radius 140', template: aimTemplate({ kind: 'circle', radius: 140 }), lift: 1.3, half: HALF_EXTENT, color: AIM_COLOR },
+  { name: 'bolt lane, 700x16', template: aimTemplate({ kind: 'line', length: 700, width: 16 }), lift: 1.3, half: HALF_EXTENT, color: AIM_COLOR },
+  // The two spec 153 left behind and spec 164 converted. A window of their own,
+  // an order of magnitude tighter, because these are what a player reads at the
+  // scale of one body rather than one battlefield.
+  {
+    name: 'target ring, ravager (r30)',
+    template: bodyRingTemplate(bodyRingRadius(30, 8)),
+    lift: 1.6,
+    half: 70,
+    color: TARGET_COLOR,
+  },
+  {
+    name: 'aim unit ring, grazer (r12)',
+    template: bodyRingTemplate(bodyRingRadius(12, 10)),
+    lift: 1.7,
+    half: 70,
+    color: AIM_COLOR,
+  },
 ];
 
 const columns: Cell[] = [];
 const worst: number[] = [];
-for (const [, template, lift] of templates) {
+for (const row of templates) {
   for (const ground_ of [pinned, heightAt]) {
     const cell = newCell();
-    draw(cell, ground, GRASS, 1, centre);
+    draw(cell, ground, GRASS, 1, centre, row.half);
     draw(
       cell,
-      decalTriangles(template, { x: spot.x, z: spot.z, heading: 0.6, lift }, ground_),
-      AIM_COLOR,
+      decalTriangles(row.template, { x: spot.x, z: spot.z, heading: 0.6, lift: row.lift }, ground_),
+      row.color,
       0.55,
       centre,
+      row.half,
     );
     columns.push(cell);
   }
   // How far off the ground the old indicator was, at its worst.
-  const flat = decalTriangles(template, { x: spot.x, z: spot.z, heading: 0.6, lift }, pinned);
+  const flat = decalTriangles(
+    row.template,
+    { x: spot.x, z: spot.z, heading: 0.6, lift: row.lift },
+    pinned,
+  );
   worst.push(
     flat.reduce((max, t) => {
-      const off = Math.abs(t.a[1] - rawHeight(t.a[0], t.a[2]) - lift);
+      const off = Math.abs(t.a[1] - rawHeight(t.a[0], t.a[2]) - row.lift);
       return Math.max(max, off);
     }, 0),
   );
 }
 
-for (const [i, [name]] of templates.entries()) {
-  console.log(`${name}: the flat mesh was up to ${(worst[i] ?? 0).toFixed(1)} units off the ground`);
+for (const [i, row] of templates.entries()) {
+  console.log(
+    `${row.name}: the flat mesh was up to ${(worst[i] ?? 0).toFixed(1)} units off the ground`,
+  );
 }
 
 /**
@@ -373,7 +419,7 @@ for (const [i, [name]] of templates.entries()) {
  * positive number here is a hole in the indicator.
  */
 {
-  for (const [name, template, lift] of templates) {
+  for (const { name, template, lift } of templates) {
     let buried = -Infinity;
     let flatBuried = -Infinity;
     for (const heading of [0, 0.6, 1.9, 3.4, 4.8]) {
@@ -464,5 +510,5 @@ mkdirSync(outDir, { recursive: true });
 const out = join(outDir, 'aim-indicators.png');
 writeFileSync(out, PNG.sync.write(png));
 console.log(`left column: pinned to one height (the old way). right column: on the ground.`);
-console.log(`rows, top to bottom: ${templates.map(([name]) => name).join(' / ')}`);
+console.log(`rows, top to bottom: ${templates.map((row) => row.name).join(' / ')}`);
 console.log(`wrote ${out}`);

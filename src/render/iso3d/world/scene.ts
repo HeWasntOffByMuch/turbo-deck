@@ -127,6 +127,8 @@ import type { AimShape } from './aim.js';
 import {
   SampledGround,
   aimTemplate,
+  bodyRingRadius,
+  bodyRingTemplate,
   discTemplate,
   projectDecal,
   ringTemplate,
@@ -171,11 +173,22 @@ const RANGE_RING_LIFT = 1.1;
 const AIM_SHAPE_LIFT = 1.3;
 const TELEGRAPH_LIFT = 1.5;
 /**
+ * The two rings drawn under a body, highest of the lot because they are the
+ * ones that say *which* -- and because a body being attacked is often standing
+ * inside the shape of the blow that is about to land on it.
+ */
+const TARGET_RING_LIFT = 1.6;
+const AIM_UNIT_RING_LIFT = 1.7;
+/**
  * How thick the range ring is, as a fraction of the range: the same 1.5% the
  * unit `RingGeometry` scaled to the range gave it, kept so that conforming to
  * the ground is the only thing this change did to the picture.
  */
 const RANGE_RING_THICKNESS = 0.015;
+
+/** How much wider than the body each ring sits. Unchanged from spec 070/080. */
+const TARGET_RING_MARGIN = 8;
+const AIM_UNIT_RING_MARGIN = 10;
 
 /**
  * Where the middle of a body is, as a fraction of the height its health bar
@@ -496,20 +509,23 @@ export class WorldScene {
   private readonly attackRates = new Map<number, number>();
   private hovered: number | null = null;
   /** The ring under the body being attacked (spec 070). */
-  private readonly targetRing: THREE.Mesh;
+  private readonly targetRing: GroundDecal;
   /**
    * The aim indicator (spec 080): the shape of the blow, the range ring that
    * says the confirm will be a walk, and the ring under a named body.
    *
-   * The first two are ground decals since spec 153 -- their vertices are placed
-   * on the heightfield rather than the mesh being moved to one sampled height,
-   * which is the only way a shape a hundred units across can be right anywhere
-   * but its own centre. The third is not: it is body-sized and sits under
-   * something standing on one point.
+   * All three are ground decals -- their vertices are placed on the heightfield
+   * rather than the mesh being moved to one sampled height, which is the only
+   * way a shape drawn across a hillside can be right anywhere but its own
+   * centre. Spec 153 converted the first two and left the ring on a flat mesh
+   * because it is body-sized; spec 164 reversed that, because how far a flat
+   * mesh is buried is its half-width times the *gradient* under it and only the
+   * half-width had been counted. On the arena's steepest ground a ring at
+   * radius 30 was fifty units into the hill.
    */
   private readonly aimShapeDecal: GroundDecal;
   private readonly aimRangeDecal: GroundDecal;
-  private readonly aimUnitRing: THREE.Mesh;
+  private readonly aimUnitRing: GroundDecal;
   /**
    * The ground, as the decals ask about it: memoized, because they ask about
    * thousands of points a frame and `heightAt` is a five-microsecond question
@@ -648,19 +664,8 @@ export class WorldScene {
     });
     this.scene.add(this.vfx.root);
 
-    this.targetRing = new THREE.Mesh(
-      new THREE.RingGeometry(22, 27, 24),
-      new THREE.MeshBasicMaterial({
-        color: TARGET_RING_COLOR,
-        transparent: true,
-        opacity: 0.85,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    this.targetRing.rotation.x = -Math.PI / 2;
-    this.targetRing.visible = false;
-    this.scene.add(this.targetRing);
+    this.targetRing = new GroundDecal(decalMaterial(TARGET_RING_COLOR, 0.85));
+    this.scene.add(this.targetRing.mesh);
 
     // The aim (spec 080). Unlit and never depth-writing, exactly like the ground
     // telegraph and the blast effects it sits among -- and since spec 153 lying
@@ -671,19 +676,8 @@ export class WorldScene {
     this.aimRangeDecal = new GroundDecal(decalMaterial(AIM_COLOR, 0.35));
     this.scene.add(this.aimRangeDecal.mesh);
 
-    this.aimUnitRing = new THREE.Mesh(
-      new THREE.RingGeometry(22, 27, 24),
-      new THREE.MeshBasicMaterial({
-        color: AIM_COLOR,
-        transparent: true,
-        opacity: 0.9,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    this.aimUnitRing.rotation.x = -Math.PI / 2;
-    this.aimUnitRing.visible = false;
-    this.scene.add(this.aimUnitRing);
+    this.aimUnitRing = new GroundDecal(decalMaterial(AIM_COLOR, 0.9));
+    this.scene.add(this.aimUnitRing.mesh);
   }
 
   /**
@@ -1160,6 +1154,10 @@ export class WorldScene {
     this.telegraphs.clear();
     this.aimShapeDecal.dispose();
     this.aimRangeDecal.dispose();
+    // The two body rings, which leaked their geometry and material while they
+    // were hand-built meshes nobody had listed here (spec 164).
+    this.aimUnitRing.dispose();
+    this.targetRing.dispose();
     this.terrainMesh?.dispose();
     this.propField?.dispose();
     this.buffers?.dispose();
@@ -1736,15 +1734,24 @@ export class WorldScene {
       frame.targetEntityId === null
         ? undefined
         : this.hoverTargets.find((candidate) => candidate.id === frame.targetEntityId);
-    this.targetRing.visible = target !== undefined;
     if (target) {
-      this.targetRing.position.set(
-        target.position.x,
-        this.ground(target.position.x, target.position.y) + 1.6,
-        target.position.y,
+      // Sized to the body it is under, so a ravager's ring is not a grazer's --
+      // and built at that radius rather than scaled to it, because a decal has
+      // no transform to scale (spec 164).
+      const outer = bodyRingRadius(target.radius, TARGET_RING_MARGIN);
+      this.targetRing.lay(
+        `body:${outer}`,
+        () => bodyRingTemplate(outer),
+        {
+          x: target.position.x,
+          z: target.position.y,
+          heading: 0,
+          lift: TARGET_RING_LIFT,
+        },
+        this.sampledGround.at,
       );
-      // Sized to the body it is under, so a ravager's ring is not a grazer's.
-      this.targetRing.scale.setScalar(Math.max(0.6, (target.radius + 8) / 27));
+    } else {
+      this.targetRing.hide();
     }
 
     this.syncAim(frame);
@@ -1764,7 +1771,7 @@ export class WorldScene {
     if (!aim) {
       this.aimShapeDecal.hide();
       this.aimRangeDecal.hide();
-      this.aimUnitRing.visible = false;
+      this.aimUnitRing.hide();
       return;
     }
 
@@ -1773,14 +1780,16 @@ export class WorldScene {
       aim.unitId === null
         ? undefined
         : this.hoverTargets.find((candidate) => candidate.id === aim.unitId);
-    this.aimUnitRing.visible = named !== undefined;
     if (named) {
-      this.aimUnitRing.position.set(
-        named.position.x,
-        this.ground(named.position.x, named.position.y) + 1.7,
-        named.position.y,
+      const outer = bodyRingRadius(named.radius, AIM_UNIT_RING_MARGIN);
+      this.aimUnitRing.lay(
+        `body:${outer}`,
+        () => bodyRingTemplate(outer),
+        { x: named.position.x, z: named.position.y, heading: 0, lift: AIM_UNIT_RING_LIFT },
+        this.sampledGround.at,
       );
-      this.aimUnitRing.scale.setScalar(Math.max(0.6, (named.radius + 10) / 27));
+    } else {
+      this.aimUnitRing.hide();
     }
 
     // Out of range is the one thing the picture has to say that the shape

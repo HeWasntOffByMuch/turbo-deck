@@ -8,8 +8,33 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { FALLBACK_ICON, SYSTEM_ICONS, systemIconSvg, WEAPON_ICONS, weaponIconSvg } from './icons.js';
+import {
+  FALLBACK_ICON,
+  SLOT_ICONS,
+  slotIconSvg,
+  SYSTEM_ICONS,
+  systemIconSvg,
+  WEAPON_ICONS,
+  weaponIconSvg,
+} from './icons.js';
 import { SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
+
+describe('the action bar’s slot icons (spec 164)', () => {
+  it('draws the vial and the empty slot as different things', () => {
+    expect(SLOT_ICONS.vial).not.toBe(SLOT_ICONS.empty);
+    expect(slotIconSvg('vial')).toContain(SLOT_ICONS.vial);
+    expect(slotIconSvg('empty')).toContain(SLOT_ICONS.empty);
+  });
+
+  it('paints both in currentColor, so a dimmed slot dims its icon', () => {
+    // Same trick the weapon switch relies on: one string serves the lit and the
+    // unlit button, and nothing has a second opinion about which is which.
+    for (const body of Object.values(SLOT_ICONS)) {
+      expect(body).not.toMatch(/(fill|stroke)="#/);
+    }
+    expect(slotIconSvg('vial')).toContain('stroke="currentColor"');
+  });
+});
 
 describe('the weapon icons', () => {
   it('draws a distinct icon for every attack the switch offers', () => {

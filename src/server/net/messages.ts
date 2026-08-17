@@ -309,6 +309,17 @@ export interface PickUpItemMessage {
   readonly entityId: number;
 }
 
+/**
+ * "Put me back on my feet" (spec 164). See {@link ClientMessageType.Respawn}.
+ *
+ * Payloadless, like {@link GoodbyeMessage}: where a respawn puts you and what it
+ * restores are the server's to decide, so there is nothing here for a client to
+ * name.
+ */
+export interface RespawnMessage {
+  readonly type: typeof ClientMessageType.Respawn;
+}
+
 export type ClientMessage =
   | HelloMessage
   | InputMessage
@@ -334,7 +345,8 @@ export type ClientMessage =
   | CancelCastMessage
   | RequestChunkMessage
   | WatchSpawnersMessage
-  | PickUpItemMessage;
+  | PickUpItemMessage
+  | RespawnMessage;
 
 /**
  * A slot address, as a container byte and a signed index (spec 126).
@@ -461,6 +473,8 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
     case ClientMessageType.PickUpItem:
       writer.varuint(message.requestId).varuint(message.entityId);
       break;
+    case ClientMessageType.Respawn:
+      break;
     case ClientMessageType.OpenVendor:
       writer.str(message.vendorId);
       break;
@@ -571,6 +585,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         requestId: reader.varuint(),
         entityId: reader.varuint(),
       };
+    case ClientMessageType.Respawn:
+      return { type: ClientMessageType.Respawn };
     case ClientMessageType.OpenVendor:
       return { type: ClientMessageType.OpenVendor, vendorId: reader.str() };
     case ClientMessageType.BuyItem:
