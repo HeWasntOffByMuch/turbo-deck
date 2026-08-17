@@ -346,6 +346,7 @@ describe('asking for it', () => {
     const before = held(r, ['ana'], 'sword.keen');
 
     const reach = PICKUP_RANGE + SERVER_PLAYER_RADIUS;
+    let asked = false;
     for (let i = 0; i < 600 && r.server.world.entities.get(drop.entityId); i++) {
       const view = ana.view();
       const self = view.entities.find((e) => e.id === view.selfEntityId);
@@ -362,7 +363,11 @@ describe('asking for it', () => {
         lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
         pending: view.awaitingPickup,
       });
-      if (order.ask) ana.pickUp(drop.entityId);
+      if (order.ask && !asked) {
+        // One order, one request -- `drivePickup` ends the order on the ask.
+        ana.pickUp(drop.entityId);
+        asked = true;
+      }
       // Straight at it, exactly as `moveIntent` would drive the approach.
       const dx = target.x - me.x;
       const dy = target.y - me.y;
@@ -381,6 +386,69 @@ describe('asking for it', () => {
     expect(r.server.world.entities.get(drop.entityId)).toBeUndefined();
     // ...and nothing was said about it. A refusal here is the order's machinery
     // showing through, not something the player did.
+    expect(refusals).toEqual([]);
+  });
+
+  /**
+   * The second report: the item arrives and "there is nothing there" appears.
+   *
+   * `Inventory` is sent straight back from the message handler; the `Delta` that
+   * withdraws the entity rides the 20Hz broadcast. So there is a window of a
+   * tick or two where the answer has landed -- clearing `awaitingPickup` -- and
+   * the drop is *still in the client's replica*. A standing order looking at
+   * both saw a drop it was in reach of and no request in flight, and asked
+   * again for something the server had already given it.
+   */
+  it('asks once per order, even while the replica still shows the drop', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    await r.tick(4);
+
+    const refusals: string[] = [];
+    ana.onError((_code, message) => refusals.push(message));
+
+    const at = positionOf(r, ana.view().selfEntityId);
+    r.server.triggerEvent('drop', at.x + 40, at.y, rarityToByte('common'));
+    await r.tick(4);
+    const drop = ana.view().drops[0];
+    if (!drop) throw new Error('no drop');
+    const target = positionOf(r, drop.entityId);
+    // A common admin drop is the first common row in the table, not a potion.
+    const item = r.server.world.entities.get(drop.entityId)?.drop?.defId ?? '';
+    const before = held(r, ['ana'], item);
+
+    // The order, driven exactly as `view.ts` drives it -- including the part
+    // that matters: it keeps running for as long as the drop is in the view.
+    let asks = 0;
+    let standing: number | null = drop.entityId;
+    const reach = PICKUP_RANGE + SERVER_PLAYER_RADIUS;
+    for (let i = 0; i < 40; i++) {
+      const view = ana.view();
+      const mark = standing === null ? undefined : view.entities.find((e) => e.id === standing);
+      if (standing !== null && !mark) standing = null;
+      if (mark) {
+        const self = view.entities.find((e) => e.id === view.selfEntityId);
+        const order = pickupOrderFor({
+          self: view.self ?? { x: self?.x ?? 0, y: self?.y ?? 0 },
+          selfHealth: self?.health ?? 1,
+          drop: { entityId: mark.id, x: target.x, y: target.y },
+          reach,
+          lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+          pending: view.awaitingPickup,
+        });
+        if (order.ask) {
+          asks += 1;
+          ana.pickUp(mark.id);
+          // One order, one request -- see `drivePickup`.
+          standing = null;
+        }
+      }
+      ana.sendInput({ moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+      await r.tick();
+    }
+
+    expect(held(r, ['ana'], item), 'the item should arrive').toBe(before + 1);
+    expect(asks, 'one right-click is one request').toBe(1);
     expect(refusals).toEqual([]);
   });
 

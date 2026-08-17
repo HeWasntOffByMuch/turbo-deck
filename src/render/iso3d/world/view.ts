@@ -1454,7 +1454,26 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     });
     destination = decision.walkTo;
     if (!decision.walkTo) planner.clear();
-    if (decision.ask) client.pickUp(mark.id);
+    if (!decision.ask) return;
+
+    client.pickUp(mark.id);
+    // **One order, one request.** The order ends here rather than standing until
+    // the drop leaves the view, and that is the whole of the second bug: the
+    // `Inventory` answering a pickup is sent straight back from the handler
+    // while the `Delta` that withdraws the entity rides the 20Hz broadcast, so
+    // there is a window of a tick or two where the request has been answered
+    // and the drop is *still in the replica*. An order that kept standing saw a
+    // drop it was in reach of with nothing in flight, and asked again -- four
+    // times, for something the server had already handed over, three of them
+    // answered "there is nothing there".
+    //
+    // Nothing is lost by stopping. The one refusal walking could have fixed is
+    // the range one, and the order no longer asks from a distance that produces
+    // it (see `pickupLead`); every other refusal -- not yours, bag full, gone --
+    // is one the player has to act on, and asking again would not help.
+    pickupId = null;
+    destination = null;
+    planner.clear();
   }
 
   /**
