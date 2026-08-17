@@ -156,7 +156,11 @@ src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
                  normal, which fixes the roll `point` alone leaves free), plus a
                  `lengthWorld` -- a length rather than a scale factor, because
                  nobody can check a scale and anybody can hold a length up
-                 against the body beside it. grip.ts is the arithmetic and states
+                 against the body beside it. A weapon also names its own
+                 **socket**, which is how the recurve bow (spec 165) goes in the
+                 left hand while both swords go in the right -- an inventory slot
+                 says what a thing is worn in, and which hand a model is held in
+                 is a fact about the model. grip.ts is the arithmetic and states
                  canonical weapon space once: blade +Y, flat +Z, edge +X, origin
                  at the grip. Where a grip sits in a particular palm is a fact
                  about the *body*, so that half lives on the skeleton's socket as
@@ -1479,11 +1483,52 @@ src/render/iso3d/weapon-rig.ts, unit-rig.ts's attach()  a weapon in a hand (spec
                  the pose is on the machine's, and spec 118 throttles how often
                  that pose is applied. The pivot also undoes the host's import
                  scale, so `lengthWorld` is in world units and a sword is one
-                 size whatever holds it. Both of the pig's socket calibrations
-                 were found by sweeping candidates through the offscreen
-                 rasteriser rather than derived: `npx tsx scripts/preview-weapon.ts`
-                 photographs the real mesh at the real pose, and `SWEEP=` puts
-                 four candidate rotations side by side in one strip.
+                 size whatever holds it. The pig's `weapon.main`
+                 calibration was found by sweeping candidates through the
+                 offscreen rasteriser: `npx tsx scripts/preview-weapon.ts`
+                 photographs the real mesh at the real pose, `SWEEP=` puts four
+                 candidate rotations side by side in one strip, and `CLIP=shoot`
+                 poses the draw instead of the swing -- which matters as much as
+                 the numbers, because a calibration is exact at one pose and
+                 approximate everywhere else. `weapon.off` was *solved* instead
+                 (spec 165): `npx tsx scripts/solve-socket.ts` states where the
+                 weapon's own axes should point in the body's axes and answers in
+                 one matrix multiply, `pivot = boneᵀ · target`, because a sweep is
+                 slow and only ever answers "which of these four". Its reportable
+                 half is worth as much as the solve -- run with no `WANT` it
+                 prints where each axis currently goes -- and it was checked
+                 against the sword's known-good numbers before being trusted with
+                 a new socket: the blade at the guard comes back "forward and 20
+                 degrees up", which is what `aim-blade.ts` says it authored.
+                 Since spec 165 the Play tab actually *uses* all of this. It had
+                 not: `scene.ts` built a `UnitRig`, never called `setSockets` and
+                 never built a `WeaponRig`, so every player was drawn
+                 empty-handed while holding a sword -- a complete format with
+                 green tests either side of a game that called none of it.
+                 `world/weapon-look.ts` is the table saying which model an
+                 equipped item is drawn with, and its rule is that **an item with
+                 no row draws empty hands**: the maul and the stars have no mesh,
+                 and drawing the maul as the knotted stick would be a lie the
+                 player reads as a fact about their gear. Only the *local*
+                 player's weapon is drawn, because only the local player's
+                 equipment is on the wire.
+                 Two things make the mount a per-frame call rather than an event.
+                 The body's mesh and the weapon's mesh are independent fetches
+                 and `attach` needs a bone, so it is retried until it takes; and
+                 the wanted model id is written before the load starts and
+                 re-checked after it resolves, so a bow that arrives after the
+                 player has switched back is disposed rather than drawn. Whatever
+                 is held is dropped *unconditionally* when a load lands, because
+                 two loads of the same weapon can be in flight at once -- switch
+                 away and back inside one fetch and both carry the same id, so
+                 both pass the staleness test, and assigning over the first
+                 leaves it attached to the bone with nothing left holding a
+                 reference to detach it.
+                 `npx tsx scripts/probe-held-weapon.ts` is the only thing that can
+                 see any of that: it drives the shipped build, clicks the real
+                 weapon switch and reads `data-held-weapons`, which is published
+                 from **what is attached** rather than from what was wanted, so a
+                 weapon fetched and hung on nothing reads as absent.
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
                  a cloth solve or a turn rate can be watched in isolation.
