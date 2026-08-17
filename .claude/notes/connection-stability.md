@@ -328,12 +328,18 @@ action and asserts no "not logged in" refusal ever reaches a live client.
   spell, making the flood check a rate rather than a lifetime total.
 - **4.5, 4.6 — not taken**, as recommended above; both are noted in the spec's
   Out of scope.
-- **4.7 — attempted and backed out.** Narrowing which errors fail a pending
-  handshake cannot be done by code: `hello` refuses 'already connected' with
-  `RejectedAction`, the same code an ordinary refusal carries, and spec 145's
-  hello-twice test rightly depends on that failing its `connect()`. It needs a
-  handshake-specific error code, which is a protocol change. The takeover fix
-  removes the refusal storm that made it visible, so it is cheaper left alone.
+- **4.7 — withdrawn: it was not a finding.** Narrowing which errors fail a
+  pending handshake broke spec 145's hello-twice test, because `hello` refuses
+  'already connected' with `RejectedAction` — the same code an ordinary refusal
+  carries — so the narrowed rule stopped failing a handshake that really was
+  refused. Backing it out looked like it needed a handshake-specific error code
+  and a `PROTOCOL_VERSION` bump. It needs neither: **a gameplay refusal cannot
+  reach a connection that has not finished its handshake.** All fifteen
+  `reportAction` call sites sit behind `if (connection.playerId === null)
+  return;`, and `playerId` is only set by a successful hello, so the only errors
+  that can arrive before a `Welcome` are the hello refusals and
+  `MalformedFrame` — all of which should fail it. The original report was wrong
+  to call this a defect; the existing code is correct.
 - **The `?name=` rename is deliberately still broken.** Writing the name on
   every login is worse than the bug — a tab loading with `?id=` and no `?name=`
   would silently rename you to `Player 1a2b`, because the wire cannot tell

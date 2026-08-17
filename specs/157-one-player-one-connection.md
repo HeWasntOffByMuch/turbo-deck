@@ -175,17 +175,31 @@ to ~39.5s, past the whole grace with margin.
   *intentional* disconnect, so no body is held. A strike more than
   `STRIKE_DECAY_TICKS` (600) after the last one starts the count again, which
   makes it the rate it was always meant to be.
-- **Not: narrowing what fails the handshake.** `game-client.ts` rejects the
-  pending welcome on *any* `Error` message, so an ordinary mid-session refusal
-  arriving while a `connect()` is in flight — which is precisely what a resume
-  is — fails it for an unrelated reason. This spec tried to narrow that to
-  `BadProtocolVersion` and `Banned`, and backed it out: `hello` refuses 'already
-  connected' and 'bad player id' with `RejectedAction`, which is the same code
-  an ordinary refusal carries, and spec 145's hello-twice test rightly waits for
-  the first of those to fail its `connect()`. Telling a handshake refusal from a
-  gameplay one needs an error code that means it, and that is a protocol change
-  rather than this one. Left as it is, and cheaper than it was, because the
-  takeover removes the refusal storm that made it visible.
+- **Not: narrowing what fails the handshake — because there is nothing to
+  narrow.** `game-client.ts` rejects the pending welcome on *any* `Error`, which
+  looks like it would fail a `connect()` for an unrelated mid-session refusal.
+  This spec tried to restrict it to `BadProtocolVersion` and `Banned`, which
+  broke spec 145's hello-twice test: `hello` refuses 'already connected' and
+  'bad player id' with `RejectedAction`, the same code an ordinary refusal
+  carries, so the narrowed rule stopped failing a handshake that genuinely was
+  refused and the test hung.
+
+  Backing it out sent us looking for a handshake-specific error code and a
+  `PROTOCOL_VERSION` bump to carry it. Neither is needed, and this is the useful
+  finding: **a gameplay refusal cannot reach a connection that has not finished
+  its handshake.** Every one of `reportAction`'s fifteen call sites sits behind
+  `if (connection.playerId === null) return;`, and `playerId` is only set by a
+  *successful* hello. Before a `Welcome`, the only errors reachable are the
+  hello refusals themselves and `MalformedFrame` from a decode failure — all of
+  which should fail the handshake, which is exactly what the current code does.
+  After the welcome, `rejectWelcome` is already null and later refusals reject
+  nothing. A resume does not change this, because a resume always arrives on a
+  fresh `Connection` whose `playerId` is still null.
+
+  So the existing behaviour is correct as written, and the ambiguity the two
+  codes appear to create is unreachable. Recorded here rather than dropped
+  silently, because "these two things share an error code" is exactly the kind
+  of observation that gets re-noticed and re-investigated later.
 
 ## Invariants tested
 
