@@ -39,7 +39,16 @@ import * as THREE from 'three';
 import { BLEND, RENDER } from './compile.js';
 import type { ParticlePool } from './pool.js';
 import { sheetFrames, spriteSheet } from './textures.js';
-import { coreGlowShape, needsVelocity, orientOf, particleMesh, shadedShape, type MeshShape } from './meshes.js';
+import {
+  coreGlowShape,
+  needsVelocity,
+  orientOf,
+  particleMesh,
+  shadedShape,
+  strokeShape,
+  type MeshShape,
+} from './meshes.js';
+import { STROKE_UV_STRIDE } from './stroke.js';
 
 /** Instances one batch is built to hold. Grown by rebuilding, never per frame. */
 const INITIAL_CAPACITY = 256;
@@ -410,9 +419,70 @@ attribute vec3 iColor;
 attribute float iAlpha;
 attribute float iSeed;
 
+#ifdef VFX_STROKE
+// (along, signedHalfOffset, sideX, sideY) -- see stroke.ts. The position
+// attribute holds the
+// stroke's *spine* rather than its finished vertex, so the outline is rebuilt
+// here with a per-instance twist on top.
+attribute vec4 aStroke;
+varying float vAlong;
+#endif
+
 varying vec3 vColor;
 varying float vAlpha;
 varying vec3 vNormal;
+
+/**
+ * A camera-facing card, rolled in the view plane (spec 158).
+ *
+ * (No backticks in here -- this is a template literal and one closes it.)
+ *
+ * The columns of the view matrix are the camera's own axes in world space, the
+ * same read the quad shader makes for its billboards. Works for an orthographic
+ * camera and a perspective one alike, because it is a basis and not a position.
+ */
+mat3 cardBasis(float roll) {
+  vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+  vec3 camUp    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+  vec3 camFwd   = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+  float c = cos(roll);
+  float s = sin(roll);
+  return mat3(camRight * c + camUp * s, camUp * c - camRight * s, camFwd);
+}
+
+/**
+ * The same card, with +Y along the SCREEN projection of a velocity.
+ *
+ * Projecting before aiming is the whole point: a mark thrown at the camera has a
+ * long world-space velocity and no screen-space direction at all, and aiming at
+ * the world vector would draw it full length pointing nowhere. Foreshortening
+ * falls out instead, exactly as it does for a stretched spark.
+ */
+mat3 cardVelocityBasis(vec3 vel) {
+  vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+  vec3 camUp    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+  vec3 camFwd   = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+  vec2 screen = vec2(dot(vel, camRight), dot(vel, camUp));
+  float speed = length(screen);
+  vec2 dir = speed > 0.0001 ? screen / speed : vec2(0.0, 1.0);
+  return mat3(camRight * dir.y - camUp * dir.x, camRight * dir.x + camUp * dir.y, camFwd);
+}
+
+#ifdef VFX_STROKE
+/** Two decorrelated values in [0,1) from one instance seed and a salt. */
+vec2 strokeHash(float seed, float salt) {
+  return vec2(
+    fract(sin(seed * 91.7211 + salt * 13.317) * 47453.1234),
+    fract(sin(seed * 37.1339 + salt * 71.913) * 21783.7231)
+  );
+}
+
+/** A slow wave along the mark, phase and depth per instance, in [-1, 1]. */
+float strokeWave(float along, float seed, float freq, float salt) {
+  vec2 h = strokeHash(seed, salt);
+  return sin(along * freq + h.x * 6.2831853) * (0.6 + 0.4 * h.y);
+}
+#endif
 
 /**
  * A basis whose +Y is the direction given, rolled about itself (spec 125).
@@ -465,9 +535,75 @@ void main() {
     uOrient < 0.5 ? rotation(tumble(iSeed) + vec3(0.0, iRotation, 0.0)) :
     uOrient < 1.5 ? rotation(vec3(0.0, iRotation + tumble(iSeed).y, 0.0)) :
     uOrient < 2.5 ? rotation(vec3(0.0, iRotation, 0.0)) :
-                    aimedAt(iVelocity, tumble(iSeed).x);
+    uOrient < 3.5 ? aimedAt(iVelocity, tumble(iSeed).x) :
+    // The two card modes (spec 158): a brush mark is flat, so it is held in the
+    // view plane rather than tumbled, and the variety a tumble would have given
+    // comes out of the silhouette instead.
+    uOrient < 4.5 ? cardBasis(iRotation) :
+                    cardVelocityBasis(iVelocity);
 
-  vec3 local = basis * (position * iSize);
+  vec3 shape = position;
+
+#ifdef VFX_STROKE
+  // The second layer of procedural variation, and the reason one geometry can
+  // stand in for a hundred distinct marks (spec 158). Four things move, all
+  // hashed out of the instance seed and none of them touching the CPU:
+  //
+  //   envelope  how fat this mark is overall
+  //   ripple    where along it the width swells and pinches
+  //   tip       where it gives out, so no two frays in the same place
+  //   stretch   how long it is, so a radial fan is not a fan of equal darts
+  //   bend      which way and how far it curls away from its own root
+  {
+    float along = aStroke.x;
+    vec2 side = aStroke.zw;
+    vec2 h0 = strokeHash(iSeed, 1.0);
+    vec2 h1 = strokeHash(iSeed, 2.0);
+
+    float envelope = 0.62 + 0.76 * h0.x;
+    float ripple = 1.0 + 0.28 * strokeWave(along, iSeed, 7.3, 3.0);
+    // Where this instance runs out. Never below ~0.62, or the mark is all fray
+    // and no stroke.
+    float breakAt = 0.62 + h0.y * 0.38;
+    float tip = 1.0 - smoothstep(breakAt, 1.0, along);
+    float gain = max(0.0, envelope * ripple * tip);
+
+    // Wide on purpose, and independent of the envelope: what the brief calls
+    // "mix short thick marks with thin elongated marks" is one emitter drawing
+    // all four combinations, not two emitters drawing two of them.
+    float stretch = 0.6 + 0.9 * h1.x;
+
+    // Foreshortening, for a mark that was aimed rather than dropped.
+    //
+    // A stroke thrown straight at the camera has a long world-space velocity and
+    // almost no screen-space direction, so cardVelocityBasis falls back to "up"
+    // -- and without this it is then drawn at FULL LENGTH pointing nowhere,
+    // which is precisely the complaint spec 139 made about stretched blood. Only
+    // the component of the throw that lies across the view is visible, so that
+    // is what the mark is drawn at. Floored rather than taken to zero: a stroke
+    // seen exactly end-on should read as a dab of paint, not vanish.
+    float foreshorten = 1.0;
+    if (uOrient > 4.5) {
+      vec3 camFwd = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+      float speed = length(iVelocity);
+      float depth = speed > 0.0001 ? abs(dot(iVelocity / speed, camFwd)) : 1.0;
+      foreshorten = mix(0.32, 1.0, sqrt(max(0.0, 1.0 - depth * depth)));
+    }
+    stretch *= foreshorten;
+    // Quadratic in the along coordinate, so the mark leaves its root straight
+    // and curls at
+    // the far end -- a constant curvature is an arc, and an arc is a machined
+    // part. (No backticks anywhere in here -- this is a template literal.)
+    float bend = (h1.y * 2.0 - 1.0) * 0.22 * along * along;
+
+    shape = vec3(position.x + side.x * (bend + aStroke.y * gain),
+                 position.y * stretch + side.y * (bend + aStroke.y * gain),
+                 0.0);
+    vAlong = along;
+  }
+#endif
+
+  vec3 local = basis * (shape * iSize);
   vNormal = normalize(basis * normal);
   // The white-hot middle, baked into the geometry rather than into the colour
   // ramp (spec 125). A gradient over a particle's *life* makes every spike in a
@@ -487,10 +623,15 @@ precision mediump float;
 
 uniform vec3 uLightDirection;
 uniform float uShading;
+uniform sampler2D uDither;
+uniform float uCutout;
 
 varying vec3 vColor;
 varying float vAlpha;
 varying vec3 vNormal;
+#ifdef VFX_STROKE
+varying float vAlong;
+#endif
 
 void main() {
   // A cheap wrapped lambert. Without it a semi-transparent blob is a flat
@@ -499,7 +640,31 @@ void main() {
   // which is the entire difference between "smoke" and "grey shapes".
   float lambert = dot(normalize(vNormal), normalize(uLightDirection)) * 0.5 + 0.5;
   float shade = mix(1.0, 0.45 + 0.75 * lambert, uShading);
-  gl_FragColor = vec4(vColor * shade, vAlpha);
+
+  float alpha = vAlpha;
+#ifdef VFX_STROKE
+  // The thin end goes first (spec 158). A mark that fades evenly reads as a
+  // decal being turned down; one that comes apart from the tip reads as paint
+  // running out, which is the same thing the geometry's fray is saying.
+  alpha *= mix(1.0, 0.7, vAlong);
+#endif
+
+  if (uCutout > 0.5) {
+    // The pixel-look blend, finally reaching solids as well as quads. It has
+    // been accepted, compiled and silently ignored for a mesh emitter since spec
+    // 123 -- the same class of stub the ribbon mode was until 139. Ordered
+    // against the same 4x4 Bayer matrix the retro pass dithers the frame with,
+    // so a mark dissolves into the frame's own weave rather than banding
+    // against it.
+    vec2 cell = mod(floor(gl_FragCoord.xy), 4.0);
+    float threshold = texture2D(uDither, (cell + 0.5) / 4.0).r;
+    if (alpha <= threshold) discard;
+    alpha = 1.0;
+  } else if (alpha < 0.004) {
+    discard;
+  }
+
+  gl_FragColor = vec4(vColor * shade, alpha);
 }
 `;
 
@@ -519,15 +684,23 @@ export class MeshParticleBatch {
   private seed!: THREE.InstancedBufferAttribute;
   /** Only a shape that aims itself pays for a velocity upload. */
   private readonly aims: boolean;
+  /** A brush mark, whose outline is rebuilt per instance in the shader. */
+  private readonly stroke: boolean;
 
   constructor(
     readonly blend: number,
     readonly shape: MeshShape,
   ) {
     this.aims = needsVelocity(shape);
+    this.stroke = strokeShape(shape);
+    // The define rather than a uniform: the stroke path declares an attribute
+    // and a varying, and a batch whose geometry has no `aStroke` must not
+    // declare one -- three warns, and some drivers bind whatever was last in
+    // that slot.
+    const defines = this.stroke ? '#define VFX_STROKE\n' : '';
     this.material = new THREE.ShaderMaterial({
-      vertexShader: `uniform float uOrient;\nuniform float uCoreGlow;\n${MESH_VERTEX_SHADER}`,
-      fragmentShader: MESH_FRAGMENT_SHADER,
+      vertexShader: `${defines}uniform float uOrient;\nuniform float uCoreGlow;\n${MESH_VERTEX_SHADER}`,
+      fragmentShader: `${defines}${MESH_FRAGMENT_SHADER}`,
       uniforms: {
         // Roughly the scene's own key light, so a blob is lit like the ground.
         uLightDirection: { value: new THREE.Vector3(0.45, 1, 0.35).normalize() },
@@ -536,6 +709,8 @@ export class MeshParticleBatch {
         uShading: { value: shadedShape(shape) ? 1 : 0 },
         uOrient: { value: orientOf(shape) },
         uCoreGlow: { value: coreGlowShape(shape) ? 1 : 0 },
+        uDither: { value: sharedDither() },
+        uCutout: { value: blend === BLEND['dither-cutout'] ? 1 : 0 },
       },
       transparent: true,
       // Same pair as the quad batches, and the same two jobs: the right blend
@@ -561,6 +736,11 @@ export class MeshParticleBatch {
     geometry.setAttribute('position', new THREE.BufferAttribute(source.positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(source.normals, 3));
     geometry.setIndex(new THREE.BufferAttribute(source.indices, 1));
+    // Not instanced: this is per *vertex* of the one shared mark, and it is what
+    // the shader needs to put the outline back around the baked spine.
+    if (source.strokeUv) {
+      geometry.setAttribute('aStroke', new THREE.BufferAttribute(source.strokeUv, STROKE_UV_STRIDE));
+    }
 
     const instanced = (items: number): THREE.InstancedBufferAttribute => {
       const attribute = new THREE.InstancedBufferAttribute(new Float32Array(capacity * items), items);
