@@ -28,11 +28,14 @@ import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../si
 import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
+import { rarityOf } from '../data/items.js';
+import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
+import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
 import { regenPoise } from './poise.js';
 import {
   applyStatus,
@@ -145,6 +148,7 @@ function blankEntity(id: number): ServerEntity {
     cast: null,
     cooldowns: {},
     projectile: null,
+    drop: null,
     mote: null,
     ...blankProgression(),
   };
@@ -288,6 +292,7 @@ export function spawnEntity(
     cast: null,
     cooldowns: {},
     projectile: null,
+    drop: null,
     mote: null,
     // A body enters the world with a full guard, like it enters with full
     // health: poise is a live resource, not a derived stat. The flask is the
@@ -297,6 +302,66 @@ export function spawnEntity(
     fallbackCharges: spec.fallbackCharges ?? spec.stats.traits.fallbackCharges,
     restoration: spec.restoration ?? 0,
   };
+  const entities = new Map(state.entities);
+  entities.set(entity.id, entity);
+  return { state: { ...state, entities, nextEntityId: state.nextEntityId + 1 }, entity };
+}
+
+/**
+ * How far a player may be from a drop and still take it (spec 158).
+ *
+ * A little past the longest melee reach in the table (95), so a body that just
+ * killed something at arm's length is already standing close enough. It is a
+ * sim rule and lives here for the reason every other reach does: the server
+ * checks it, and the client's own "am I close enough yet" walk is a prediction
+ * of this number rather than a second opinion about it.
+ */
+export const PICKUP_RANGE = 110;
+
+/** Body radius of a drop: what the cursor picks it by, and how big it draws. */
+export const DROP_RADIUS = 10;
+
+/**
+ * A drop as an entity.
+ *
+ * Everything about it is deliberately inert -- no stats to speak of, no
+ * spawner, no anchor, no target. `typeId` is **empty**, and that is the load
+ * bearing part: `typeId` rides the entity delta to every client that can see the
+ * body, and what an unrevealed drop is must not be told to anybody yet. The
+ * item lives on {@link ServerEntity.drop}, which the delta does not carry.
+ *
+ * `health` is left at the blank body's 1 so the death sweep never picks it up.
+ * A drop does not die; it is taken or it expires.
+ */
+function dropEntity(id: number, drop: DropState, position: Vec3, zoneId: string): ServerEntity {
+  const blank = blankEntity(id);
+  return {
+    ...blank,
+    kind: EntityKindValue.Drop,
+    typeId: '',
+    position,
+    zoneId,
+    radius: DROP_RADIUS,
+    drop,
+  };
+}
+
+/**
+ * Put a drop in the world outright, without a body having died for it.
+ *
+ * The developer path (spec 158): `admin:triggerEvent 'drop'` and the tests. It
+ * takes an already-decided item rather than rolling one, so tuning the reveal
+ * needs no monster, no fight and no luck -- which is the whole point of it
+ * existing, since a presentation timed by farming is a presentation nobody
+ * tunes twice.
+ */
+export function spawnDrop(
+  state: ServerWorldState,
+  drop: DropState,
+  position: Vec3,
+  zoneId: string,
+): { readonly state: ServerWorldState; readonly entity: ServerEntity } {
+  const entity = dropEntity(state.nextEntityId, drop, position, zoneId);
   const entities = new Map(state.entities);
   entities.set(entity.id, entity);
   return { state: { ...state, entities, nextEntityId: state.nextEntityId + 1 }, entity };
@@ -365,6 +430,12 @@ export function isHostile(
   // would delete the reward for the kill that made them.
   if (attacker.kind === EntityKindValue.Mote) return false;
   if (target.kind === EntityKindValue.Mote) return false;
+  // A drop is scenery with an owner (spec 158), and gets the same exclusion for
+  // the same reason: it is in the entity map to be replicated, not to be
+  // fought. Nothing swings at it, nothing aggros onto it, and it swings at
+  // nothing.
+  if (attacker.kind === EntityKindValue.Drop) return false;
+  if (target.kind === EntityKindValue.Drop) return false;
   if (attacker.kind === target.kind) {
     if (attacker.kind !== EntityKindValue.Player) return false;
     // Both ends, not just the attacker's (spec 145). Reading the attacker's
@@ -431,6 +502,11 @@ export function step(
     // want to attack.
     if (current.kind === EntityKindValue.Projectile) continue;
     if (current.kind === EntityKindValue.Mote) continue;
+    // A drop lies where it landed and is handled in its own pass (spec 158).
+    // Without this it would fall into the branch below and be handed to
+    // `monsterIntent`, which would give an item on the ground a target and a
+    // path to it.
+    if (current.kind === EntityKindValue.Drop) continue;
 
     const input = inputByEntity.get(current.id) ?? null;
     let rawIntent: ServerInput | null;
@@ -837,6 +913,20 @@ export function step(
   // --- 4: sweep the dead ------------------------------------------------
   /** Spawners whose body left the world this tick; their timers start now. */
   const emptied: string[] = [];
+  /**
+   * Who killed what, this tick (spec 156).
+   *
+   * `died` is emitted by the blow that landed it and the sweep below is the only
+   * place that knows a body is actually leaving, so the two are joined here
+   * rather than the roll being done inside `blow.ts` -- where the body is not
+   * gone yet, and where a second blow on the same tick would roll again.
+   */
+  const killedBy = new Map<number, number>();
+  for (const event of events) {
+    if (event.kind === 'died' && event.killerId !== null) {
+      killedBy.set(event.entityId, event.killerId);
+    }
+  }
   for (const entity of [...working.values()]) {
     if (entity.health > 0) continue;
     // A dead player stays in the world. Sweeping their body away would take
@@ -850,13 +940,73 @@ export function step(
       }
       continue;
     }
-    // Everything else leaves nothing behind (spec 076). A five-second body that
-    // cannot be looted, hit or walked through is not a corpse, it is a monster
-    // you have stopped being able to fight standing in the doorway. Corpses are
-    // their own feature and will arrive as one.
+    // What it leaves is loot or nothing (spec 158). The *body* still leaves
+    // nothing behind (spec 076): a five-second corpse that cannot be looted, hit
+    // or walked through is not a corpse, it is a monster you have stopped being
+    // able to fight standing in the doorway. A drop is a separate, inert entity
+    // at the same spot, which is why this did not have to become a corpse
+    // system to become a loot system.
+    if (entity.kind === EntityKindValue.Monster) {
+      const killerId = killedBy.get(entity.id);
+      const killer = killerId === undefined ? null : (working.get(killerId) ?? null);
+      // Only a player's kill drops, and only onto that player. A monster killing
+      // a monster produces nothing rather than producing an unowned item, which
+      // would be the one drop in the game anybody could take.
+      if (
+        killer !== null &&
+        killer.kind === EntityKindValue.Player &&
+        killer.ownerPlayerId !== null
+      ) {
+        const [stack, afterRoll] = rollLoot(rng, entity.typeId, context.config.dropRateMultiplier);
+        rng = afterRoll;
+        if (stack !== null) {
+          // Thrown clear of the body rather than placed under it (spec 158).
+          // Both ends of the arc are authoritative -- the corpse's spot and the
+          // landing -- so the throw every client draws is the same throw.
+          const [spot, afterScatter] = scatterLanding(rng, entity.position);
+          rng = afterScatter;
+          const landing: Vec3 = {
+            x: spot.x,
+            y: spot.y,
+            z: context.terrain.heightAt(spot.x, spot.y),
+          };
+          const drop = makeDrop(
+            stack.defId,
+            stack.count,
+            rarityOf(stack.defId),
+            killer.ownerPlayerId,
+            entity.position,
+            tick,
+            context.config.lootRevealScale,
+          );
+          const body = dropEntity(nextEntityId, drop, landing, entity.zoneId);
+          nextEntityId += 1;
+          working.set(body.id, body);
+          // `typeId` is empty and stays empty: the identity is exactly what an
+          // unrevealed drop must not put on the entity record.
+          events.push({ kind: 'spawned', entityId: body.id, typeId: '' });
+        }
+      }
+    }
     working.delete(entity.id);
     events.push({ kind: 'despawned', entityId: entity.id });
     if (entity.spawnerId !== null) emptied.push(entity.spawnerId);
+  }
+
+  // --- 4b: drops ---------------------------------------------------------
+  // Two things happen to a drop and neither depends on anyone being near it, so
+  // this runs over every drop in the world rather than over the loaded chunks:
+  // a reveal the server has already promised a tick for must land on that tick
+  // whether or not a player happens to be standing in the chunk.
+  for (const entity of [...working.values()]) {
+    const drop = entity.drop;
+    if (drop === null) continue;
+    if (tick >= drop.expiresTick) {
+      working.delete(entity.id);
+      events.push({ kind: 'despawned', entityId: entity.id });
+      continue;
+    }
+    if (revealsOn(drop, tick)) events.push({ kind: 'lootRevealed', entityId: entity.id });
   }
 
   // --- 5: the map's spawners -------------------------------------------

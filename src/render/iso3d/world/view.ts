@@ -67,6 +67,8 @@ import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
 import { effectsForBlow, REDUNDANT_SERVER_EFFECTS } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
+import { pickupLead, pickupOrderFor } from './loot-drop.js';
+import { PICKUP_RANGE } from '../../../server/sim/world.js';
 import { decideKeyDown, decideKeyUp } from './key-actions.js';
 import { UiLayer } from './ui-layer.js';
 import { nearestVendorTo } from './shop-model.js';
@@ -663,6 +665,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   let targetId: number | null = null;
   /**
+   * The drop being walked over to, or null (spec 158).
+   *
+   * Beside {@link targetId} rather than folded into it because the two end
+   * differently: an attack order stands until the body is down, and this one is
+   * over the instant the server answers. It is also the only order in this file
+   * whose object the client may not be able to name yet, which is exactly the
+   * point of the feature.
+   */
+  let pickupId: number | null = null;
+  /**
    * The skill being aimed but not yet thrown (spec 080).
    *
    * A hotbar press stops being the commitment and becomes this: the shape of
@@ -795,6 +807,26 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (entity.id === selfId) return false;
     if (entity.health <= 0) return false;
     return entity.kind === EntityKind.Monster || entity.kind === EntityKind.Player;
+  }
+
+  /**
+   * Whether a right-click on this body is a pickup rather than an attack or a
+   * walk (spec 158).
+   *
+   * As thin as `attackable` and for the same reason: whether the drop is
+   * *yours*, whether you are close enough, and whether the bag has room are all
+   * the server's to answer, and it answers them on every request. This only
+   * decides which of the three things the button meant.
+   */
+  function collectable(entity: { kind: number }): boolean {
+    return entity.kind === EntityKind.Drop;
+  }
+
+  /** Whether the cursor is over a drop this frame. Nothing else reads it. */
+  function hoveringDrop(view: ReturnType<typeof client.view>, hovered: number | null): boolean {
+    if (hovered === null) return false;
+    const entity = view.entities.find((candidate) => candidate.id === hovered);
+    return entity !== undefined && collectable(entity);
   }
 
   /**
@@ -993,9 +1025,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // change of orders and replaces it, the way a new move order replaces an
     // attack target.
     order = null;
+    pickupId = null;
 
     const hovered = scene.pickUnitAt(cursor.x, cursor.y);
     const picked = hovered === null ? null : client.view().entities.find((e) => e.id === hovered);
+    // A drop under the cursor is the third thing the button can mean, and it is
+    // checked before `attackable` for clarity rather than for precedence -- a
+    // drop is not attackable, so the two can never both be true.
+    if (picked && collectable(picked)) {
+      pickupId = picked.id;
+      targetId = null;
+      destination = null;
+      planner.clear();
+      return;
+    }
     if (picked && attackable(picked, client.view().selfEntityId)) {
       // A new mark withdraws from the blow aimed at the old one (spec 155),
       // through exactly the call the empty-ground branch below makes. The button
@@ -1399,6 +1442,70 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
+   * One tick of a pickup order (spec 158): close the gap, then ask once.
+   *
+   * The same shape as `driveAutoAttack` and `driveCastOrder` -- a destination
+   * into `moveIntent` and a request to the server, which validates it exactly as
+   * it validates the other two. The decision itself is
+   * `pickupOrderFor`, so "does the player stop walking once they are close
+   * enough" is a question answered in Node.
+   *
+   * The order is dropped the moment the drop leaves the view, which covers all
+   * three endings at once: taken by us, taken by its owner, or expired.
+   */
+  function drivePickup(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
+    if (pickupId === null) return;
+    const mark = view.entities.find((entity) => entity.id === pickupId);
+    if (!mark) {
+      pickupId = null;
+      destination = null;
+      planner.clear();
+      return;
+    }
+
+    const self = view.entities.find((entity) => entity.id === view.selfEntityId);
+    const reach = PICKUP_RANGE + SERVER_PLAYER_RADIUS;
+    const decision = pickupOrderFor({
+      self: me,
+      selfHealth: self?.health ?? 1,
+      drop: { entityId: mark.id, x: mark.x, y: mark.y },
+      // The server's own reach, plus our body radius, because it measures from
+      // the same two centres.
+      reach,
+      // ...and how far in front of the server this body's prediction may be,
+      // measured rather than assumed. Without it the walk stopped at the
+      // client's copy of the reach and the server refused from a stride
+      // further back.
+      lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+      // Cleared by whichever `Inventory` answers it, so a refusal is asked
+      // again on the next tick rather than leaving the order standing there.
+      pending: view.awaitingPickup,
+    });
+    destination = decision.walkTo;
+    if (!decision.walkTo) planner.clear();
+    if (!decision.ask) return;
+
+    client.pickUp(mark.id);
+    // **One order, one request.** The order ends here rather than standing until
+    // the drop leaves the view, and that is the whole of the second bug: the
+    // `Inventory` answering a pickup is sent straight back from the handler
+    // while the `Delta` that withdraws the entity rides the 20Hz broadcast, so
+    // there is a window of a tick or two where the request has been answered
+    // and the drop is *still in the replica*. An order that kept standing saw a
+    // drop it was in reach of with nothing in flight, and asked again -- four
+    // times, for something the server had already handed over, three of them
+    // answered "there is nothing there".
+    //
+    // Nothing is lost by stopping. The one refusal walking could have fixed is
+    // the range one, and the order no longer asks from a distance that produces
+    // it (see `pickupLead`); every other refusal -- not yours, bag full, gone --
+    // is one the player has to act on, and asking again would not help.
+    pickupId = null;
+    destination = null;
+    planner.clear();
+  }
+
+  /**
    * Call off a blow whose mark has left the world (spec 155).
    *
    * Here rather than inside `driveAutoAttack` because it is not the attack
@@ -1420,6 +1527,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const me = selfPosition();
     driveCastOrder(view, me);
     driveAutoAttack(view, me);
+    drivePickup(view, me);
     const intent = moveIntent({
       held,
       self: me,
@@ -1571,8 +1679,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
         pending: pendingAim !== null,
       },
+      // What the cursor is over, for the drop's name (spec 158).
+      scene.hoveredEntityId,
       now,
     );
+    // The cursor says what the next click would do (spec 158).
+    //
+    // Only a drop changes it, and only because a drop is the one thing in the
+    // world the cursor *does* something to that has no other affordance: a
+    // monster lights up when hovered, a window has a border, and an item on the
+    // ground has neither -- the pointer is what tells you it can be clicked at
+    // all. Presentation, and the only `if` in this file that touches a style.
+    canvas.style.cursor = hoveringDrop(client.view(), scene.hoveredEntityId) ? 'pointer' : '';
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());

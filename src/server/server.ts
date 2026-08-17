@@ -40,6 +40,7 @@ import {
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
+  MAX_REWIND_TICKS,
   RESUME_GRACE_TICKS,
   CONNECTION_TIMEOUT_TICKS,
   PROTOCOL_VERSION,
@@ -52,7 +53,8 @@ import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
 import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
-import { ALL_ITEMS, maxStackOf } from './data/items.js';
+import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityToByte } from './data/items.js';
+import { isRevealed, makeDrop, type DropState } from './sim/loot.js';
 import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
 import {
   decodeAdminRequest,
@@ -65,6 +67,7 @@ import { DeltaTracker } from './net/delta.js';
 import {
   decodeClientMessage,
   encodeServerMessage,
+  type LootDropMessage,
   type RequestChunkMessage,
   type ServerMessage,
   type SpawnerStatus,
@@ -74,6 +77,7 @@ import {
   ChunkDeniedReason,
   ClientMessageType,
   CorrectionReason,
+  EntityField,
   ErrorCode,
   isAdminRequest,
   ServerMessageType,
@@ -104,9 +108,11 @@ import {
 import {
   asksToMove,
   createWorldState,
+  PICKUP_RANGE,
   PLAYER_BODY_RADIUS,
   removeEntity,
   replaceEntity,
+  spawnDrop,
   spawnEntity,
   step,
 } from './sim/world.js';
@@ -600,6 +606,17 @@ export class GameServer implements AdminHost {
         this.reportAction(connection, result.ok ? null : result.reason);
         // Answered either way, at the id that was asked. A refusal that said
         // nothing but "no" would leave the client's guess standing.
+        this.sendInventory(connection, message.requestId);
+        break;
+      }
+
+      case ClientMessageType.PickUpItem: {
+        if (connection.playerId === null) return;
+        const reason = await this.pickUpDrop(connection, message.entityId);
+        this.reportAction(connection, reason);
+        // Answered at the request id either way, exactly as `MoveItem` is: the
+        // refusal is what takes a client's optimistic guess back, so it has to
+        // arrive on the same channel as the acceptance.
         this.sendInventory(connection, message.requestId);
         break;
       }
@@ -1367,6 +1384,92 @@ export class GameServer implements AdminHost {
    * mechanism: the client replaces its guess with this, so a refused move undoes
    * itself through the same code path an accepted one confirms itself through.
    */
+  /**
+   * Take a drop, or say why not (spec 158). Returns null when it was taken.
+   *
+   * Every check here is the server's and none of them is asked of the client.
+   * The order matters in exactly one place: **the entity is removed before the
+   * grant is awaited**, because `giveItem` writes to the store asynchronously
+   * and two requests for the same drop would otherwise both find it lying there.
+   * Removing first makes the second one's lookup fail, which is what makes "a
+   * drop can be picked up once" a property of the code rather than of the
+   * timing. If the bag turns out to be full the entity goes back, at the same
+   * id, holding the same item -- a refusal must not destroy loot.
+   *
+   * Nothing in here reads the reveal. A drop mid-anticipation is picked up now;
+   * the presentation that was pending simply never happens.
+   */
+  private async pickUpDrop(connection: Connection, entityId: number): Promise<string | null> {
+    if (connection.playerId === null) return 'not logged in';
+    const session = this.players.get(connection.playerId);
+    if (!session) return 'not logged in';
+    const entity = this.state.entities.get(entityId);
+    const drop = entity?.drop ?? null;
+    if (!entity || drop === null) return 'there is nothing there';
+
+    const body = this.state.entities.get(connection.entityId);
+    if (!body || body.health <= 0) return 'you cannot pick that up right now';
+    if (drop.ownerPlayerId !== null && drop.ownerPlayerId !== connection.playerId) {
+      return 'that is not yours';
+    }
+    // The reach, plus however far this body would have got if the server were
+    // not behind on its own inputs (spec 158).
+    //
+    // `PickUpItem` carries no `afterInputSeq`, unlike `UseAbility` -- so it is
+    // handled on the tick it *arrives*, while `body.position` is where the last
+    // *applied* input put it. The client asked from its prediction, which is
+    // that many ticks further along, and the two disagreed by exactly the queue
+    // it had not got to yet: the item was under the player's feet, the refusal
+    // said it was too far away, and the retry a tick later took it. Both
+    // happened, which is what made it look like a message rather than a bug.
+    //
+    // Measured from the server's own queue and the server's own stat block --
+    // nothing here is client-supplied. Bounded by `MAX_REWIND_TICKS` for the
+    // reason spec 149 gives about the rewind: a client that stalls its input
+    // stream on purpose gains at most the compensation an honest player on a
+    // bad connection already gets.
+    const behind = Math.min(connection.inputs.length, MAX_REWIND_TICKS);
+    const slack = (session.stats.moveSpeed * behind) / SERVER_TICK_RATE;
+    const reach = PICKUP_RANGE + body.radius + slack;
+    if (Math.hypot(body.position.x - entity.position.x, body.position.y - entity.position.y) > reach) {
+      return 'that is too far away';
+    }
+
+    this.state = removeEntity(this.state, entityId);
+    this.chunks.remove(entityId);
+    const result = await this.players.giveItem(connection.playerId, drop.defId, drop.count);
+    if (!result.ok) {
+      // Put it back exactly as it was, clock included: a bag that was full is a
+      // refusal, and a refusal that ate the drop would be the worst bug this
+      // whole feature could have.
+      this.state = replaceEntity(this.state, entity);
+      this.chunks.place(entityId, entity.position.x, entity.position.y, false);
+      return result.reason;
+    }
+    return null;
+  }
+
+  /** One `LootDrop`, saying only as much as `tick` permits (spec 158). */
+  private lootDropMessage(entityId: number, drop: DropState, tick: number): LootDropMessage {
+    const revealed = isRevealed(drop, tick);
+    return {
+      type: ServerMessageType.LootDrop,
+      entityId,
+      rarity: rarityToByte(drop.rarity),
+      spawnTick: drop.spawnTick,
+      revealTick: drop.revealTick,
+      // Both ends of the throw. Not withheld with the identity: where a thing
+      // was thrown from says nothing about what it is.
+      originX: drop.origin.x,
+      originY: drop.origin.y,
+      originZ: drop.origin.z,
+      // Absent rather than flagged. There is no branch on the client that could
+      // draw an unrevealed item early, because it was never sent one.
+      defId: revealed ? drop.defId : '',
+      count: revealed ? drop.count : 0,
+    };
+  }
+
   private sendInventory(connection: Connection, requestId: number): void {
     if (connection.playerId === null) return;
     const session = this.players.get(connection.playerId);
@@ -2027,6 +2130,18 @@ export class GameServer implements AdminHost {
           // withdrawn -- the client would keep drawing a corpse that is gone.
           // Dropping out of `this.state.entities` is all the signal it needs.
           break;
+        case 'lootRevealed': {
+          const drop = this.state.entities.get(event.entityId)?.drop;
+          if (!drop) break;
+          // To everyone who can see it, not just to the owner: the flare is in
+          // the world, so a second player watching it resolve sees the same
+          // thing at the same instant.
+          this.sendToWatchersOf(
+            event.entityId,
+            encodeServerMessage(this.lootDropMessage(event.entityId, drop, this.state.tick)),
+          );
+          break;
+        }
         case 'spawned':
         case 'attackMissed':
           break;
@@ -2059,6 +2174,19 @@ export class GameServer implements AdminHost {
       // Silence is meaningful: a client whose world did not change gets nothing.
       if (DeltaTracker.isEmpty(delta)) continue;
       this.send(connection, delta);
+
+      // A drop's identity does not ride the delta (spec 158), so first sight of
+      // one is where its `LootDrop` goes. The `Spawn` bit already means "this
+      // client had never heard of it", so there is no second visibility system
+      // to keep in step -- and a client walking up to a drop that revealed
+      // before it arrived is told the identity here, which is the same code
+      // path as a reconnect and needs no case of its own.
+      for (const record of delta.upserts) {
+        if ((record.fields & EntityField.Spawn) === 0) continue;
+        const drop = this.state.entities.get(record.id)?.drop;
+        if (!drop) continue;
+        this.send(connection, this.lootDropMessage(record.id, drop, this.state.tick));
+      }
     }
   }
 
@@ -2299,6 +2427,13 @@ export class GameServer implements AdminHost {
     return true;
   }
 
+  /**
+   * How far the admin drop throws, in world units (spec 158). Inside the
+   * scatter band the real one draws from, so the arc it exercises is the arc a
+   * kill produces.
+   */
+  private static readonly ADMIN_DROP_THROW = 24;
+
   triggerEvent(eventName: string, x: number, y: number, magnitude: number): string {
     switch (eventName) {
       case 'raid': {
@@ -2321,6 +2456,67 @@ export class GameServer implements AdminHost {
           removed += 1;
         }
         return `cleared ${removed} monsters within ${magnitude} units`;
+      }
+      case 'drop': {
+        // The developer path (spec 158): a drop of a chosen tier, at a chosen
+        // point, with no monster and no luck involved. `magnitude` is the tier's
+        // ordinal, and the item is the first row in the table at that tier so
+        // that the tiers can be put side by side and compared.
+        const rarity = rarityFromByte(Math.max(0, Math.round(magnitude)));
+        const definition = ALL_ITEMS.find((item) => (item.rarity ?? 'common') === rarity);
+        if (!definition) return `no item is authored at rarity ${rarity}`;
+        // A fixed throw rather than the sim's seeded scatter: an admin action
+        // must not draw from `state.rng`, or triggering one would shift every
+        // roll in the world after it and a replay would stop reproducing.
+        const origin: Vec3 = { x, y, z: this.terrain.heightAt(x, y) };
+        const lx = x + GameServer.ADMIN_DROP_THROW;
+        const position: Vec3 = { x: lx, y, z: this.terrain.heightAt(lx, y) };
+        const drop = makeDrop(
+          definition.id,
+          1,
+          rarity,
+          // Unowned, so whoever is testing can walk up to it. A rolled drop is
+          // always owned; this one is not a roll.
+          null,
+          origin,
+          this.state.tick,
+          this.config.get().lootRevealScale,
+        );
+        const spawned = spawnDrop(this.state, drop, position, this.zones.zoneIdAt(x, y));
+        this.state = spawned.state;
+        this.chunks.place(spawned.entity.id, position.x, position.y, false);
+        return `dropped ${definition.name} (${rarity}) at ${Math.round(position.x)}, ${Math.round(position.y)}`;
+      }
+      case 'reveal': {
+        // The other half of the developer path (spec 158): pull every drop
+        // within `magnitude` to its reveal now, so a presentation can be
+        // stepped through without waiting for it or restarting the server.
+        //
+        // The one thing allowed to move a clock that is otherwise snapshotted
+        // for life -- and it is an audited admin action for exactly that reason.
+        // Note what it still cannot do: **it does not change what the item is.**
+        // There is nothing here that could, which is the whole design.
+        let revealed = 0;
+        for (const entity of [...this.state.entities.values()]) {
+          const drop = entity.drop;
+          if (!drop || isRevealed(drop, this.state.tick)) continue;
+          if (Math.hypot(entity.position.x - x, entity.position.y - y) > magnitude) continue;
+          this.state = replaceEntity(this.state, {
+            ...entity,
+            drop: { ...drop, anticipationTick: this.state.tick, revealTick: this.state.tick },
+          });
+          // The sim's own crossing test wants `tick === revealTick`, and the
+          // tick this ran on is already past its own sweep -- so the notice goes
+          // out from here rather than being waited for.
+          this.sendToWatchersOf(
+            entity.id,
+            encodeServerMessage(
+              this.lootDropMessage(entity.id, { ...drop, revealTick: this.state.tick }, this.state.tick),
+            ),
+          );
+          revealed += 1;
+        }
+        return `revealed ${revealed} drop(s) within ${magnitude} units`;
       }
       case 'heal': {
         let healed = 0;

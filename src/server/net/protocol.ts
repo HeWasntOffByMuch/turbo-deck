@@ -88,6 +88,20 @@ export const ClientMessageType = {
   AllocateAttribute: 0x17,
   /** Hand every allocated point back, for coins. Priced and checked server-side. */
   RespecAttributes: 0x18,
+  /**
+   * Take a drop off the ground (spec 158).
+   *
+   * Names the drop's *entity id*, which is the only address it has -- a drop is
+   * not in a container until it is in the bag. Answered with an `Inventory` at
+   * the request id, exactly as `MoveItem` is, so the client's optimistic guess
+   * is rolled back by the same path whether the server took the request or
+   * refused it.
+   *
+   * **Legal before the drop's reveal has finished**, and served immediately when
+   * it is. Anticipation is presentation; it is never a lock on the player's
+   * hands.
+   */
+  PickUpItem: 0x19,
 } as const;
 
 export const ServerMessageType = {
@@ -162,6 +176,21 @@ export const ServerMessageType = {
    * disappear.
    */
   TradeState: 0x54,
+  /**
+   * A drop in the world, and how much of it this client is allowed to know
+   * (spec 158).
+   *
+   * Sent when a drop first enters a connection's interest set -- which the delta
+   * already computes, so there is no second visibility system -- and again on
+   * the tick it reveals.
+   *
+   * **The item's identity is not on it until the reveal**: `defId` is empty and
+   * `count` is zero, so a client that has not been told what the drop is does
+   * not have it to leak. What *is* sent up front is the tier, because the
+   * anticipation cue is tier-shaped and playing it needs the tier. That is the
+   * "notice" step; the payoff is what is being withheld.
+   */
+  LootDrop: 0x56,
   /**
    * The health economy's own two numbers (spec 156): how full the restoration
    * meter is, and how many flask charges are left.
@@ -366,6 +395,12 @@ export const EntityKind = {
    * for a client to check.
    */
   Mote: 4,
+  /**
+   * An item on the ground (spec 158). Its `typeId` is **empty** and stays empty:
+   * what the item is travels on `LootDrop`, not on the entity record every
+   * client in range is handed.
+   */
+  Drop: 5,
 } as const;
 
 export const EntityActivity = {

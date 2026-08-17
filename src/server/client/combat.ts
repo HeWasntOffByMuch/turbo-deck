@@ -101,6 +101,7 @@ export function asEntity(mirror: Mirror): ServerEntity {
     cast: mirror.cast,
     cooldowns: mirror.cooldowns,
     projectile: null,
+    drop: null,
     mote: null,
     claimedPosition: null,
     claimedSeq: 0,

@@ -9,6 +9,42 @@
 import type { EquipSlot } from '../state/types.js';
 import type { StatModifier } from './modifiers.js';
 
+/**
+ * The rarity tiers, in ascending order (spec 158). **Three, and on purpose.**
+ *
+ * Three is what the presentation ladder in `data/loot.ts` needs -- quiet,
+ * delayed, longer -- and a fourth would be a tier with nothing to say. Spec 158
+ * explicitly declines to design a full taxonomy: the ladder grows when
+ * something needs a rung, and until then every tier differs from its neighbours
+ * in how it behaves rather than only in its name.
+ *
+ * It lives here rather than beside the reveal timings because rarity is a fact
+ * about an item, and the timings are a fact about how one is announced. Putting
+ * the vocabulary next to the rows that carry it also keeps the two files
+ * acyclic: `loot.ts` reads this, and nothing here reads `loot.ts`.
+ *
+ * The order is the wire order. A tier is appended, never inserted.
+ */
+export const RARITY_IDS = ['common', 'rare', 'exceptional'] as const;
+
+export type RarityId = (typeof RARITY_IDS)[number];
+
+/** A tier as a byte, for the wire: its index in {@link RARITY_IDS}. */
+export function rarityToByte(id: RarityId): number {
+  return RARITY_IDS.indexOf(id);
+}
+
+/**
+ * A byte back to a tier, total by construction.
+ *
+ * An unknown byte reads as `common` rather than throwing: a client a build
+ * behind should draw a quiet drop, not take the frame down over a tier it has
+ * never heard of.
+ */
+export function rarityFromByte(byte: number): RarityId {
+  return RARITY_IDS[byte] ?? 'common';
+}
+
 export interface ItemDefinition {
   readonly id: string;
   readonly name: string;
@@ -45,6 +81,21 @@ export interface ItemDefinition {
    * is stated once rather than at every call site.
    */
   readonly maxStack?: number;
+  /**
+   * How loudly this announces itself when it drops (spec 158). Absent is
+   * `common`, so most of the table says nothing and means it.
+   *
+   * A property of the *row*, never of a drop: two copies of the same sword are
+   * the same tier forever. A per-drop rarity would only mean something if two
+   * copies could differ in what they do, which needs affixes, which spec 158
+   * deliberately does not build.
+   *
+   * It changes presentation and nothing else -- no price, no stats, no drop
+   * weight. `data/loot.ts` decides how often a row appears and this decides how
+   * the appearance is announced, and keeping those two apart is what makes a
+   * balance change and a presentation change different diffs.
+   */
+  readonly rarity?: RarityId;
 }
 
 const DEFINITIONS: readonly ItemDefinition[] = [
@@ -59,6 +110,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'sword.keen',
+    rarity: 'rare',
     value: 90,
     name: 'Keen Longsword',
     slot: 'mainHand',
@@ -69,6 +121,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'maul.iron',
+    rarity: 'rare',
     value: 110,
     name: 'Iron Maul',
     slot: 'mainHand',
@@ -77,6 +130,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'staff.emberwood',
+    rarity: 'rare',
     value: 95,
     name: 'Emberwood Staff',
     slot: 'mainHand',
@@ -116,6 +170,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'focus.quartz',
+    rarity: 'rare',
     value: 55,
     name: 'Quartz Focus',
     slot: 'offHand',
@@ -133,6 +188,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'helm.plated',
+    rarity: 'rare',
     value: 120,
     name: 'Plated Helm',
     slot: 'head',
@@ -149,6 +205,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'chest.scale',
+    rarity: 'rare',
     value: 160,
     name: 'Scalemail',
     slot: 'chest',
@@ -166,6 +223,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- trinkets ---
   {
     id: 'trinket.swiftband',
+    rarity: 'rare',
     value: 70,
     name: 'Swiftband',
     slot: 'trinket',
@@ -174,6 +232,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'trinket.bloodstone',
+    rarity: 'exceptional',
     value: 210,
     name: 'Bloodstone',
     slot: 'trinket',
@@ -203,6 +262,18 @@ export const ALL_ITEMS: readonly ItemDefinition[] = DEFINITIONS;
 
 export function itemById(id: string): ItemDefinition | null {
   return ITEMS.get(id) ?? null;
+}
+
+/**
+ * An item's tier (spec 158).
+ *
+ * Read off the row, so a drop cannot have a rarity its item does not. An
+ * unknown id is `common`, like everything else about rarity that has to be
+ * total -- a body dropping something this build has never heard of should be a
+ * quiet drop, not a crash.
+ */
+export function rarityOf(defId: string): RarityId {
+  return ITEMS.get(defId)?.rarity ?? 'common';
 }
 
 /** How many of `id` fit in one slot. Unknown ids answer 1, never 0 (spec 126). */

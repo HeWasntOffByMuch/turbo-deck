@@ -69,6 +69,12 @@ const CHUNK_REQUEST_INTERVAL_TICKS = 3;
  */
 const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
 import { abilityById } from '../data/abilities.js';
+import { itemById, rarityFromByte, type RarityId } from '../data/items.js';
+import {
+  anticipationTickFor,
+  revealPhaseAt,
+  type RevealPhaseValue,
+} from '../sim/loot.js';
 import {
   EMPTY_EQUIPMENT,
   type BaseStatKey,
@@ -160,6 +166,42 @@ export interface TradeView {
   readonly reason: string;
 }
 
+/**
+ * A drop as this client knows it (spec 158).
+ *
+ * The withholding is expressed in the *types*: `defId` and `name` are `null`
+ * until the reveal, so a screen that wanted to draw the label early has nothing
+ * to draw rather than a value it was asked politely not to use. There is no
+ * placeholder either -- a made-up name is a lie the player would read as a fact.
+ *
+ * `phase` is recomputed on every `view()` off the client's estimated tick, so it
+ * advances with the clock rather than on the arrival of a message. Nothing on
+ * this side ever decides that a drop has revealed *for the purposes of taking
+ * it*: the pickup is served by the server and the identity arrives in an
+ * `Inventory`, so the worst a wrong local phase can do is draw a glow a frame
+ * early.
+ */
+export interface DropView {
+  readonly entityId: number;
+  readonly rarity: RarityId;
+  readonly spawnTick: number;
+  readonly anticipationTick: number;
+  readonly revealTick: number;
+  /**
+   * Where the body fell (spec 158). The far end of the throw; the near end is
+   * the entity's own replicated position, which is where it landed.
+   */
+  readonly origin: { readonly x: number; readonly y: number; readonly z: number };
+  /** One of `RevealPhase`, at the client's current estimate of the tick. */
+  readonly phase: RevealPhaseValue;
+  /** The item, or null while the server is still withholding it. */
+  readonly defId: string | null;
+  /** Its name, or null. From the content table, never from the wire. */
+  readonly name: string | null;
+  /** How many, or 0 while the identity is withheld. */
+  readonly count: number;
+}
+
 export interface ClientMapView {
   readonly info: MapInfoMessage;
   readonly chunks: readonly HeldChunk[];
@@ -236,6 +278,16 @@ export interface ClientView {
    * one nobody is drawing costs nothing.
    */
   readonly spawners: readonly SpawnerStatus[];
+  /**
+   * Items lying in the world that this client can see (spec 158).
+   *
+   * Beside {@link entities} rather than folded into it, because a drop's
+   * identity does not travel on the entity record -- the two halves arrive on
+   * different messages and joining them here would hide which half is which.
+   * A renderer takes the position from the entity and everything else from
+   * this.
+   */
+  readonly drops: readonly DropView[];
   readonly stats: EffectiveStats | null;
   /**
    * What the player is carrying and wearing (spec 126), with any move still in
@@ -335,6 +387,15 @@ export interface ClientView {
    * reply that never comes cannot wedge an order shut.
    */
   readonly awaitingCast: boolean;
+  /**
+   * True while a `pickUp` of ours is unanswered (spec 158).
+   *
+   * What stops a standing pickup order asking sixty times a second -- and,
+   * because it is cleared by the answer rather than by a timer, what lets the
+   * order ask *again* when the server says no. The client keeps no optimistic
+   * bag state for a pickup, so this is the whole of what it remembers.
+   */
+  readonly awaitingPickup: boolean;
   /**
    * Ability id -> the tick it may next be used (spec 065). Straight from the
    * server; the client subtracts the tick it is drawing to get the sweep, and
@@ -504,6 +565,25 @@ export class GameClient {
   private coins = 0;
   private vendorView: VendorView | null = null;
   /**
+   * Drops by entity id, exactly as the server described them (spec 158).
+   *
+   * Replaced whole by each `LootDrop`, which is the same rule `Inventory` and
+   * `TradeState` follow: the server's last word *is* the state, so a reveal is
+   * an overwrite rather than a field being patched. Nothing here is ever
+   * derived from a previous message, so there is no path by which a stale
+   * identity could survive one.
+   */
+  private readonly drops = new Map<number, Omit<DropView, 'phase'>>();
+  /**
+   * The pickup this client is waiting on, or null (spec 158).
+   *
+   * A request id rather than a boolean, because that is what the answer names.
+   * Cleared by the `Inventory` that settles it -- taken or refused, since both
+   * arrive the same way -- which is what stops a refused pickup wedging an
+   * order that would otherwise never ask again.
+   */
+  private pickUpInFlight: number | null = null;
+  /**
    * How many answers about a shop this client has had (spec 131).
    *
    * A count rather than a flag, because the question it answers is "has the
@@ -519,6 +599,21 @@ export class GameClient {
   /** Moves sent and not yet answered, oldest first. */
   private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
   private moveRequests = 0;
+
+  /**
+   * The next id for anything answered by an `Inventory` (spec 158).
+   *
+   * **One counter for `MoveItem` and `PickUpItem` together**, because they share
+   * an answer: both are replied to with an `Inventory` at their request id, and
+   * two counters meant a pickup's answer could carry an id a move had already
+   * used. `replayMoves` retires everything at or below the id that arrives, so
+   * a pickup answered at 3 was silently throwing away a drag still in flight at
+   * 3 -- a rollback nobody asked for, on a message about something else.
+   */
+  private nextRequestId(): number {
+    this.moveRequests += 1;
+    return this.moveRequests;
+  }
   private shopRequests = 0;
   private level = 1;
   private experience = 0;
@@ -749,8 +844,7 @@ export class GameClient {
    */
   moveItem(from: SlotAddress, to: SlotAddress, count = 0): number {
     if (!this.connected) return 0;
-    this.moveRequests += 1;
-    const requestId = this.moveRequests;
+    const requestId = this.nextRequestId();
     const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
     this.pendingMoves.push({ requestId, request });
     this.replayMoves();
@@ -803,6 +897,28 @@ export class GameClient {
 
   get endedTrade(): TradeView | null {
     return this.lastTrade;
+  }
+
+  /**
+   * Ask for the drop under `entityId` (spec 158).
+   *
+   * Deliberately **not** predicted, where a bag move is. A move is between two
+   * slots this client can both see and the rules for it are pure and local; a
+   * pickup depends on a range check, an ownership check and an item this client
+   * may not have been told the identity of yet. Guessing at that would mean
+   * drawing an item into the bag that the server is about to say is not yours,
+   * and the one thing worse than a slow pickup is a bag that flickers.
+   *
+   * Legal at any phase of the reveal, and the server serves it at any phase.
+   */
+  pickUp(entityId: number): number {
+    if (!this.connected) return 0;
+    const requestId = this.nextRequestId();
+    this.pickUpInFlight = requestId;
+    this.channel.send(
+      encodeClientMessage({ type: ClientMessageType.PickUpItem, requestId, entityId }),
+    );
+    return requestId;
   }
 
   inviteToTrade(entityId: number): void {
@@ -1441,6 +1557,7 @@ export class GameClient {
       worldSeed: this.welcome?.worldSeed ?? null,
       map: this.mapView(),
       spawners: this.spawners,
+      drops: this.visibleDrops(),
       stats: this.stats,
       inventory: this.inventory,
       equipment: this.equipment,
@@ -1461,6 +1578,7 @@ export class GameClient {
       cooldowns: this.visibleCooldowns(),
       selfRoot: this.selfRoot(),
       awaitingCast: this.outstandingCasts.length > 0,
+      awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),
       restoration: {
         meter: this.restorationMeter,
@@ -1468,6 +1586,31 @@ export class GameClient {
         maxCharges: this.maxFallbackCharges,
       },
     };
+  }
+
+  /**
+   * The drops this client knows about, phased against its own clock.
+   *
+   * Built per call rather than stored, for the reason the cast list is: the
+   * phase is a function of the tick, so caching it would mean caching a thing
+   * that changes sixty times a second and inventing an invalidation rule for
+   * something a comparison already answers.
+   *
+   * A drop whose entity has left the replica is skipped -- picked up, expired,
+   * or simply out of interest range -- so a renderer never draws a glow over
+   * ground the server has taken the object back from.
+   */
+  private visibleDrops(): readonly DropView[] {
+    const tick = this.estimated;
+    const out: DropView[] = [];
+    for (const [entityId, known] of this.drops) {
+      if (!this.world.get(entityId)) continue;
+      out.push({
+        ...known,
+        phase: revealPhaseAt(known, tick),
+      });
+    }
+    return out;
   }
 
   private mapView(): ClientMapView | null {
@@ -1614,6 +1757,12 @@ export class GameClient {
 
   resume(): void {
     this.world.clear();
+    // Cleared with the world it describes: a resumed session is told about
+    // every drop still standing on first sight, and holding the old
+    // descriptions would leave a revealed name attached to an id the server may
+    // since have reused.
+    this.drops.clear();
+    this.pickUpInFlight = null;
     this.connected = false;
     void this.connect().catch(() => undefined);
   }
@@ -1690,8 +1839,36 @@ export class GameClient {
         while ((this.pendingMoves[0]?.requestId ?? Infinity) <= message.requestId) {
           this.pendingMoves.shift();
         }
+        // Settled either way -- an `Inventory` is the answer to a pickup whether
+        // it was served or refused, and a refusal that left this set would leave
+        // the order that made it never asking again (spec 158).
+        if (this.pickUpInFlight !== null && message.requestId >= this.pickUpInFlight) {
+          this.pickUpInFlight = null;
+        }
         this.replayMoves();
         break;
+
+      case ServerMessageType.LootDrop: {
+        const rarity = rarityFromByte(message.rarity);
+        // `defId` empty is the wire's way of saying "not yet" -- there is no
+        // flag beside a real value, because the value was never sent.
+        const known = message.defId !== '';
+        this.drops.set(message.entityId, {
+          entityId: message.entityId,
+          rarity,
+          spawnTick: message.spawnTick,
+          anticipationTick: anticipationTickFor(rarity, message.spawnTick, message.revealTick),
+          revealTick: message.revealTick,
+          origin: { x: message.originX, y: message.originY, z: message.originZ },
+          defId: known ? message.defId : null,
+          // From the content table the client already has, never from the wire:
+          // an item's name is not a replicated field and putting one on the
+          // wire is what "an entity only ever stores an id" exists to prevent.
+          name: known ? (itemById(message.defId)?.name ?? message.defId) : null,
+          count: known ? message.count : 0,
+        });
+        break;
+      }
 
       case ServerMessageType.TradeState:
         // Replaced whole, and a `tradeId` of 0 means "you are not in one" --
@@ -1749,6 +1926,10 @@ export class GameClient {
         this.estimated = Math.max(this.estimated, message.tick + this.oneWayTicks());
         this.world.apply(message.tick, message.removed, message.upserts);
         for (const id of message.removed) this.casts.delete(id);
+        // A drop that left the world -- taken, expired, or simply out of range
+        // -- takes its description with it. It is re-sent in full on the next
+        // first sight, so nothing is lost by forgetting it.
+        for (const id of message.removed) this.drops.delete(id);
         this.lastAckedSeq = Math.max(this.lastAckedSeq, message.ackInputSeq);
         if (message.ackInputSeq > 0) {
           this.queueDepths.push(Math.max(0, this.seq - message.ackInputSeq));

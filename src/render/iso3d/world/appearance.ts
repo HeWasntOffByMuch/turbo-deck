@@ -21,7 +21,7 @@ import { VFX_PALETTE } from '../vfx/palette.js';
 import type { FigureTuning } from '../../cloth/params.js';
 import type { CritterId } from '../../critters/index.js';
 
-export type RigKind = 'player' | 'monster' | 'projectile' | 'prop';
+export type RigKind = 'player' | 'monster' | 'projectile' | 'prop' | 'drop';
 
 export interface Appearance {
   readonly rig: RigKind;
@@ -71,6 +71,8 @@ const DEFAULT_PROJECTILE_RADIUS = 6;
 const DEFAULT_PROJECTILE_LOOK: ProjectileLook = 'orb';
 /** Matches `SERVER_PLAYER_RADIUS`; a player's look is not a content-table entry. */
 const PLAYER_RADIUS = 16;
+/** Matches `DROP_RADIUS` on the server: what the cursor picks a drop by. */
+const DROP_RADIUS = 10;
 /**
  * How big a mote is drawn, and in what (spec 156).
  *
@@ -178,6 +180,14 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
     case EntityKind.Prop:
       return { rig: 'prop', typeId: entity.typeId || 'prop', radius: DEFAULT_MONSTER_RADIUS, showsHealth: false, look: null };
 
+    // A drop has no `typeId` and that is deliberate (spec 158): what the item is
+    // arrives on `LootDrop`, not on the entity record. So every drop is one look
+    // here, and the tier that decides how it is *lit* comes from
+    // `ClientView.drops` -- which is also the only place it could come from
+    // without the entity record leaking the identity it exists not to carry.
+    case EntityKind.Drop:
+      return { rig: 'drop', typeId: 'drop', radius: DROP_RADIUS, showsHealth: false, look: null };
+
     default: {
       const monster = monsterById(entity.typeId);
       return {
@@ -200,6 +210,11 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
  */
 export function displayName(entity: AppearanceInput): string {
   if (entity.kind === EntityKind.Player) return entity.name ? entity.name : 'Player';
+  // Never the item's name. A drop's label is `DropPresentation.label`, which is
+  // null until the reveal; answering here off a `typeId` a drop does not carry
+  // would be a second, worse source for the one string this feature exists to
+  // withhold.
+  if (entity.kind === EntityKind.Drop) return 'Item';
   if (entity.kind === EntityKind.Projectile) return abilityById(entity.typeId)?.name ?? entity.typeId;
   return monsterById(entity.typeId)?.name ?? entity.typeId;
 }

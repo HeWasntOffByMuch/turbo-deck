@@ -42,6 +42,14 @@ import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
 import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
 import { MechRig, defaultMechTuning } from '../rigs.js';
 import { monsterLookFor } from './monster-look.js';
+import { DropRig } from '../drop-rig.js';
+import {
+  DropPresenter,
+  popAt,
+  POP_TICKS,
+  tookRatherThanExpired,
+} from './loot-drop.js';
+import { DROP_LIFETIME_TICKS } from '../../../server/data/loot.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
 import { attachHighlight, type HighlightHandle } from '../highlight.js';
@@ -272,6 +280,17 @@ interface DrivenUnit {
   bones: number;
 }
 
+/**
+ * The volume the cursor picks a drop by (spec 158).
+ *
+ * Wider than the object is drawn and taller than it floats, because a drop is a
+ * seven-unit shape at the far end of an isometric camera and a hitbox that
+ * matched the mesh would be a thing the player has to aim at. The *pickup* is
+ * still ranged by the server; this is only what the cursor catches.
+ */
+const DROP_PICK_RADIUS = 16;
+const DROP_PICK_HEIGHT = 26;
+
 /** A body on screen, pooled by entity id. */
 interface Body {
   readonly group: THREE.Group;
@@ -403,6 +422,25 @@ export class WorldScene {
    * else in the repo.
    */
   private readonly vfx: VfxLayer;
+  /** One rig per drop on screen (spec 158), pooled by entity id like a body. */
+  private readonly dropRigs = new Map<number, DropRig>();
+  /** Which of each drop's cues have already been heard. Pure; see `loot-drop.ts`. */
+  private readonly dropPresenter = new DropPresenter();
+  /**
+   * Drops that have been taken and are still playing their pop (spec 158).
+   *
+   * Held past the entity that owned them, which is the only way the effect can
+   * exist at all: the drop is gone from the world the instant it is picked up,
+   * and a rig disposed on the same frame has nothing left to animate. Keyed by
+   * the id it had, and carrying the tick it left on so the curve is read off the
+   * drawn clock like everything else here rather than off a per-rig timer.
+   */
+  /** Each live drop's spawn tick, so a removal can tell taken from expired. */
+  private readonly dropSpawnTicks = new Map<number, number>();
+  private readonly poppingDrops = new Map<
+    number,
+    { readonly rig: DropRig; readonly leftAtTick: number; readonly spawnTick: number }
+  >();
 
   private readonly motion = new EntityMotion();
   /**
@@ -799,6 +837,17 @@ export class WorldScene {
    * is a frame old at best and null at worst. It picked nothing at all the
    * first time a preview run tried to right-click a monster.
    */
+  /**
+   * The entity under the cursor as of this frame's `syncHover`, or null.
+   *
+   * A render-local pick, which is why it is read off the scene rather than off
+   * the view: nothing about which body a cursor is over is replicated, and
+   * nothing about it may reach the sim.
+   */
+  get hoveredEntityId(): number | null {
+    return this.hovered;
+  }
+
   pickUnitAt(cssX: number, cssY: number): number | null {
     const rect = this.canvas.getBoundingClientRect();
     const point = cursorToNdc(cssX, cssY, rect.width || 1, rect.height || 1);
@@ -955,6 +1004,7 @@ export class WorldScene {
 
     this.observe(view);
     this.syncBodies(view, frame, dt);
+    this.syncDrops(view, frame, dt);
     this.carryTorch(view.selfEntityId);
 
     this.syncTelegraphs(view, frame);
@@ -1219,6 +1269,11 @@ export class WorldScene {
     }
 
     for (const entity of view.entities) {
+      // Drops are drawn by `syncDrops` instead (spec 158): what a drop is lit
+      // by comes from `view.drops` rather than from the entity record, and
+      // threading a rarity through `bodyFor` would put the one field this
+      // feature exists to withhold into the pooled-rig key.
+      if (entity.kind === EntityKind.Drop) continue;
       live.add(entity.id);
       const look = appearanceOf(entity);
       const body = this.bodyFor(entity.id, look);
@@ -1297,6 +1352,138 @@ export class WorldScene {
       body.shot?.dispose();
       this.bodies.delete(id);
     }
+  }
+
+  /**
+   * The items lying in the world (spec 158).
+   *
+   * Its own pass rather than a branch in `syncBodies`, because a drop is joined
+   * from two halves that arrive on different messages: the *position* comes off
+   * the entity delta like everything else, and everything else -- the tier, the
+   * clock, and the identity once the server allows it -- comes off `LootDrop`.
+   * Folding it into the body pass would mean `bodyFor` taking a rarity, and the
+   * pooled-rig key is the last place the withheld half should end up.
+   *
+   * Nothing here decides *when*: `DropPresenter` is pure, takes the drawn tick
+   * as an argument, and hands back a flare, a label and the cues that crossed
+   * into this frame.
+   */
+  private syncDrops(view: ClientView, frame: FrameInfo, dt: number): void {
+    const live = new Set<number>();
+    const positions = new Map<number, { x: number; y: number }>();
+    for (const entity of view.entities) {
+      if (entity.kind === EntityKind.Drop) positions.set(entity.id, { x: entity.x, y: entity.y });
+    }
+
+    for (const drop of view.drops) {
+      const at = positions.get(drop.entityId);
+      // Described but not replicated: the `LootDrop` outran its delta, or the
+      // entity has gone. Either way there is nowhere to draw it.
+      if (!at) continue;
+      live.add(drop.entityId);
+
+      let rig = this.dropRigs.get(drop.entityId);
+      if (!rig) {
+        rig = new DropRig(drop.rarity);
+        this.dropRigs.set(drop.entityId, rig);
+        this.scene.add(rig.group);
+      }
+      // Kept beside the rig because the removal pass runs after the drop has
+      // left `view.drops` and can no longer ask it anything.
+      this.dropSpawnTicks.set(drop.entityId, drop.spawnTick);
+
+      // The entity's replicated position is where it *landed*; the throw that
+      // got it there is drawn between that and the origin the wire carried
+      // (spec 158).
+      const landing = { x: at.x, y: at.y, z: this.ground(at.x, at.y) };
+      const shown = this.dropPresenter.read(drop, landing, frame.tick);
+      // Cleared here and turned back on by `syncHover`, the same handshake a
+      // body's highlight uses -- so exactly one thing is ever lit.
+      rig.setHovered(false);
+      rig.group.position.set(shown.position.x, shown.position.z, shown.position.y);
+      rig.setTierMix(shown.tierMix);
+      rig.update(dt, shown.flare, shown.beat);
+      for (const cue of shown.cues) this.playCue(cue, at.x, at.y);
+
+      // Pickable while it is there, at the same footprint the server measures
+      // its reach against, so what the cursor catches and what the pickup
+      // accepts are the same object.
+      this.hoverTargets.push({
+        id: drop.entityId,
+        object: rig.group,
+        // Picked at where it *landed* rather than where it is mid-flight: the
+        // hitbox must not chase a thing through the air, and the pickup the
+        // server checks is measured to the landing spot anyway.
+        position: at,
+        radius: DROP_PICK_RADIUS,
+        base: landing.z,
+        height: DROP_PICK_HEIGHT,
+      });
+    }
+
+    for (const [id, rig] of this.dropRigs) {
+      if (live.has(id)) continue;
+      this.dropRigs.delete(id);
+      // Taken, or merely rotted? The client can tell without being told: there
+      // are two ways a drop leaves and it has the spawn tick for both (spec
+      // 158). Only a pickup earns the pop -- one on an item that quietly
+      // expired would be a lie about a reward.
+      const spawnTick = this.dropSpawnTicks.get(id);
+      this.dropSpawnTicks.delete(id);
+      if (spawnTick !== undefined && tookRatherThanExpired(spawnTick, DROP_LIFETIME_TICKS, frame.tick)) {
+        this.poppingDrops.set(id, { rig, leftAtTick: frame.tick, spawnTick });
+        continue;
+      }
+      this.scene.remove(rig.group);
+      rig.dispose();
+    }
+    this.dropPresenter.retain(live);
+    this.advancePops(frame, dt);
+  }
+
+  /**
+   * One frame of every drop on its way out.
+   *
+   * Driven off the drawn tick rather than a per-rig clock, so the pop is the
+   * same length at 30fps and at 144 -- the rule every other curve in this
+   * feature follows. The flare is frozen at the tier's rest for the duration:
+   * what is being watched is the object leaving, and a glow still resolving
+   * underneath it would be two things happening at once.
+   */
+  private advancePops(frame: FrameInfo, dt: number): void {
+    for (const [id, popping] of this.poppingDrops) {
+      const through = (frame.tick - popping.leftAtTick) / POP_TICKS;
+      if (through >= 1) {
+        this.scene.remove(popping.rig.group);
+        popping.rig.dispose();
+        this.poppingDrops.delete(id);
+        continue;
+      }
+      popping.rig.setHovered(false);
+      popping.rig.setPop(popAt(through));
+      popping.rig.update(dt, 0, 1);
+    }
+  }
+
+  /**
+   * A loot cue, if anything has been authored for it (spec 158).
+   *
+   * A cue is a *name*, and this is the whole of the hook: when the effect
+   * library knows the id it plays it, and when it does not this is silent.
+   * Deliberately not `addEffect`, whose fallback draws a ring for any id it does
+   * not recognise -- a ring under every potion that ever drops is exactly the
+   * noise the restrained-presentation rule exists to prevent, and silence is the
+   * right placeholder for an effect nobody has made yet.
+   */
+  private playCue(cue: string, x: number, y: number): void {
+    if (!this.vfx.system.has(cue)) return;
+    this.vfx.play(cue, {
+      x,
+      y: this.ground(x, y) + 2,
+      z: y,
+      scale: 1,
+      seed: (Math.round(x) * 73856093) ^ (Math.round(y) * 19349663),
+    });
   }
 
   /**
@@ -1405,7 +1592,13 @@ export class WorldScene {
     const cursor = frame.cursor;
     this.hovered = cursor ? this.pickUnitAt(cursor.x, cursor.y) : null;
 
-    if (this.hovered !== null) this.bodies.get(this.hovered)?.highlight?.setHighlighted(true);
+    if (this.hovered !== null) {
+      this.bodies.get(this.hovered)?.highlight?.setHighlighted(true);
+      // A drop is not in `bodies` (spec 158), so it lights itself. Its response
+      // is the ground ring rather than an outline, because the object is already
+      // glowing and a second glow would read as part of the reveal.
+      this.dropRigs.get(this.hovered)?.setHovered(true);
+    }
 
     const target =
       frame.targetEntityId === null

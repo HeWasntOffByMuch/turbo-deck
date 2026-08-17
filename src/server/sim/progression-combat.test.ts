@@ -105,6 +105,7 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
     cast: null,
     cooldowns: {},
     projectile: null,
+    drop: null,
     mote: null,
     ...blankProgression(),
     poise: stats.traits.maxPoise,

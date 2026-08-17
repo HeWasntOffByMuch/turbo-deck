@@ -1,0 +1,363 @@
+# 158 — A drop you notice before you read it
+
+## Problem
+
+Nothing drops. A monster dies, `blow.ts` emits `died`, `server.ts` grants the
+experience off its row, and the body is swept away leaving the world exactly as
+it was. `addToInventory` has carried the comment "the starting kit today, loot
+later" since spec 126 and `LiveConfig.dropRateMultiplier` has been a live knob
+scaling a roll that does not exist since spec 056. This is the roll.
+
+The reason to write it now is not that the game needs a sword generator. It is
+that the *presentation* decision has to be made while there is one drop path
+rather than after there are five. `docs/reward-philosophy.md` states the
+direction this branch commits to: excitement comes from the world responding to
+play, not from a reward card. The concrete form of that for loot is **notice →
+wonder → recognition** rather than **read label → see object**: an unusual thing
+lands, something about it is audibly and visibly not ordinary, and what it
+actually is resolves a beat later.
+
+The trap to avoid is doing that with timers scattered through the renderer. The
+reveal has to be a state with an authoritative clock behind it, or "when does
+the label appear" becomes a different answer per observer, per frame rate and
+per reconnect.
+
+## Shape
+
+### Rarity is a property of the row, not of the drop
+
+```ts
+// src/server/data/items.ts
+readonly rarity?: RarityId;   // absent means 'common'
+```
+
+Three tiers and no more: `common`, `rare`, `exceptional`. Rarity is authored on
+the `ItemDefinition`, which keeps spec 062's contract intact — *an entity only
+ever stores an id* — and means a drop cannot have a rarity its item does not.
+There is no per-drop rarity roll, because a rarity that varied between two
+copies of the same sword would only mean something if affixes existed, and they
+do not.
+
+Three because three is what the presentation ladder needs: quiet, delayed,
+longer. A fourth tier would be a tier with nothing to say.
+
+### The loot table and the reveal timings are content
+
+```ts
+// src/server/data/loot.ts  -- pure, read by both ends
+export const RARITY_IDS = ['common', 'rare', 'exceptional'] as const;
+
+export interface RarityRow {
+  readonly id: RarityId;
+  readonly name: string;
+  /** Ticks from the drop landing to its identity being told. 0 = at once. */
+  readonly revealTicks: number;
+  /** Ticks from landing to the anticipation cue. Always <= revealTicks. */
+  readonly anticipationTicks: number;
+  readonly cues: { readonly spawn: string; readonly anticipation: string; readonly reveal: string };
+}
+
+export function rarityOf(defId: string): RarityId;
+export function rollLoot(rng: Rng, monsterId: string, dropRate: number): [ItemStack | null, Rng];
+```
+
+`cues` are **names** — `'loot.spawn.rare'` — emitted into whatever sink the
+renderer has. No asset is named in core loot logic and the server never learns
+what a cue is.
+
+### The drop is an entity, like a projectile
+
+`EntityKindValue.Drop = 4`, with a `drop: DropState | null` beside
+`projectile: ProjectileState | null` on `ServerEntity`. Interest management,
+delta tracking, despawn and reconnect then apply to it unchanged, which is the
+argument spec 062 made for projectiles and it has not got worse.
+
+```ts
+// src/server/sim/loot.ts -- pure
+export const RevealPhase = { Spawned: 0, Anticipation: 1, Revealed: 2 } as const;
+
+export interface DropState {
+  readonly defId: string;      // authoritative identity, from the tick it landed
+  readonly count: number;
+  readonly rarity: RarityId;
+  readonly ownerPlayerId: string | null;   // whose kill this was
+  readonly spawnTick: number;
+  readonly anticipationTick: number;
+  readonly revealTick: number;
+  readonly expiresTick: number;
+}
+
+export function revealPhaseAt(drop: DropState, tick: number): RevealPhaseValue;
+```
+
+**`defId` is decided on the tick the body is swept and never changes.** The
+reveal is presentation unfolding over a determined fact; it is not a deferred
+roll, and there is nothing about it a player could wait out for a better answer.
+
+The three ticks are stamped at the drop, from the rarity row scaled by the live
+`lootRevealScale`, for the reason spec 144 snapshots attack timing: a knob turned
+mid-reveal must not move a reveal that is already running.
+
+### The entity record carries no item id
+
+A drop replicates through the ordinary `Delta` with `typeId: ''`. Its identity
+travels on one message of its own:
+
+```
+0x55 LootDrop
+varuint entityId · u8 rarity · u32 spawnTick · u32 revealTick ·
+str defId · varuint count
+```
+
+Sent when the drop first enters a connection's interest set — which the delta
+already computes, so there is no second visibility system — and again on the
+tick it reveals. **`defId` is empty and `count` is `0` until the reveal**, so a
+client that has not been told what the item is genuinely does not have it: not
+hidden behind a flag, absent from the wire. A client entering interest after the
+reveal gets the filled version on first sight, so a late observer and a
+reconnecting one need no special case.
+
+The rarity *is* sent up front, and deliberately: the anticipation cue is
+tier-shaped, so playing it needs the tier. That is the "notice" step — the world
+saying *something happened here*. What is withheld is the payoff, which is what
+the thing is.
+
+### Picking it up does not wait for the show
+
+```
+0x19 PickUpItem   varuint requestId · varuint entityId
+```
+
+Answered with `Inventory` at that request id, exactly as `MoveItem` is, plus
+`Error(RejectedAction)` on a refusal. The server checks: the entity is a drop,
+the asker is alive, they own it, they are within `PICKUP_RANGE`, and the bag has
+room. `addToInventory` does the rest.
+
+**A pickup before the reveal is legal and is served immediately.** The item
+arrives in the bag with its real name on it, the entity is removed, and the
+reveal that was pending simply never happens. Anticipation must not be a lock on
+the player's hands; a drop that could not be taken for two seconds would be a
+timer wearing a costume.
+
+### It looks dropped, and it looks dropped to everybody
+
+The item is **thrown clear of the body**, not placed under it. Both ends of the
+arc are authoritative: the drop entity's replicated position is where it
+*landed*, scattered by a seeded draw in `scatterLanding`, and `LootDrop` carries
+the point the body fell at. The client tweens a parabola between them over
+`TOSS_TICKS` and nothing simulates it.
+
+The scatter is server-side for one reason and it is not determinism for its own
+sake: **every player has to see the same throw.** A client-side scatter puts the
+same sword in a different place on every screen, and "did you see where it went"
+stops having an answer.
+
+A rare-or-better drop also has a **heartbeat** — a small scale bump and a lift,
+twice a second, the smaller beat behind the bigger. It is **withheld until the
+reveal and phased off it**, like the tier colour and for the same reason: a
+pulse running during the anticipation announces "rare or better" from the first
+frame, which is a thing the reveal is supposed to be for. Starting the cycle on
+`revealTick` also makes the first beat the reveal's punctuation rather than
+something that had been going on underneath it.
+
+### The tier's colour and its pulse are withheld, not just its name
+
+`tierMixAt` is `0` for the whole of `Spawned` and `Anticipation`. An unrevealed
+drop is drawn in the **same neutral colour ordinary loot wears**, so the tier is
+not readable off it — the swell and the pulse say *something* is unusual and
+nothing says how unusual until the reveal lands.
+
+This is the difference between a rarity reveal and a rarity *brightness* reveal.
+A drop coloured by its tier from the first frame has already answered the
+question the reveal exists to ask.
+
+The rule that falls out of it: **nothing about a tier is legible before its
+reveal, in any channel.** That means the aura too — the flare was `restFlare`
+from the landing tick, so a rare drop's halo was fourteen times a common one's
+and an exceptional's thirty-four before anything had revealed. Every unrevealed
+drop now rests at exactly what ordinary loot rests at and runs up to one shared
+peak, and only the flash at the reveal is tier-scaled.
+
+And the cue names: `spawn` and `anticipation` both fire before the identity is
+known, so neither may name a tier — they are one name each for every tier, and
+`reveal` is the only one that says what it was. A tier in an early cue name is
+the rarity leaking through the audio channel the instant anything is authored
+for it.
+
+The curve those three channels ride on has one shape rule: **the aura never
+decreases.** Half a second of quiet at what ordinary loot rests at — the throw
+is over inside it, so the object lands, settles, and only *then* does something
+begin — then a climb to one shared hidden peak, then at the reveal a second
+climb to the tier's own rest, where it stays. There is deliberately no flash:
+the reveal already has the colour arriving, the pulse's first beat and the name
+becoming available, and a spike that fell away afterwards was the only one of
+the four that ended lower than it started.
+
+What survives is binary: it swells, or it does not. That is the "notice", and it
+has to survive or nothing would draw the eye and the reveal would resolve
+something nobody looked at. **An amount may say "something is unusual"; only a
+kind may say which, and every kind waits.**
+
+### Asking for it accounts for the lead
+
+The client's predicted position runs ahead of the server's by about the one-way
+latency, and while walking *toward* something that lead points straight at it.
+A client that walked to its own copy of `PICKUP_RANGE` and asked was refused by
+a server still holding the body a stride back — and, because the order had
+stopped walking and was waiting on an answer that had already come, it sat
+there. That looked like a broken range check and was two bugs:
+
+```ts
+// src/render/iso3d/world/loot-drop.ts
+export function pickupLead(moveSpeed, roundTripTicks, tickRate, reach): number;
+```
+
+The order closes to `reach - lead` and asks from the same distance, where `lead`
+is how far this body travels in its own *measured* round trip — **floored at a
+broadcast interval**, which is the part that matters. On a fast connection the
+measured round trip rounds to zero, so the lead was zero, so the order asked
+from *exactly* the distance the server refuses past; and a prediction is never
+zero ticks ahead, because the client applies an input the instant it is produced
+and the server applies it at least a tick later. Every pickup on a good
+connection was therefore one refusal and then a retry that worked — which is
+precisely "it says too far away and then picks it up".
+
+The server bends from its end too: `PickUpItem` carries no `afterInputSeq`, so
+it is answered on the tick it *arrives* while `body.position` is where the last
+*applied* input put it. The range check allows for that backlog, measured off
+the server's own queue and its own stat block and bounded by `MAX_REWIND_TICKS`
+for the reason spec 149 gives about the rewind.
+
+And `awaitingPickup` lives on the session and is cleared by the `Inventory` that
+answers it, refusal included, so a request that was refused is simply asked
+again.
+
+**`MoveItem` and `PickUpItem` share one request-id counter**, because they share
+an answer: both are replied to with an `Inventory` at their id, and two counters
+meant a pickup's answer retired a bag move that happened to share its number.
+
+### Taking it is a pop, and the cursor says it can be taken
+
+A drop under the cursor sets `cursor: pointer`. It is the one thing in the world
+the cursor acts on that has no other affordance — a monster lights up, a window
+has a border, an item on the ground has neither.
+
+When one is taken it **grows and fades over `POP_TICKS`**, which needs the rig to
+outlive the entity: the drop is gone from the world the instant it is picked up,
+and a rig disposed on the same frame has nothing left to animate. `scene.ts`
+moves it to a departing set carrying the tick it left on, so the curve reads off
+the drawn clock like everything else here.
+
+It grows rather than shrinking, deliberately: enlarging while fading reads as
+*taken*, shrinking reads as *lost*.
+
+**Whether to pop at all is derived, not announced.** There are two ways a drop
+leaves — somebody took it, or it expired — and the client can tell them apart
+from the spawn tick and the shared lifetime, so the pop plays for every observer
+without a message existing to carry it. The margin runs one way on purpose: a
+missed pop on an expiry nobody watched costs nothing, and a pop on an item that
+quietly rotted would be a lie about a reward.
+
+### Presentation is a pure function of the drop and the drawn tick
+
+```ts
+// src/render/iso3d/world/loot-drop.ts -- pure, no three.js
+export interface DropPresentation {
+  readonly phase: RevealPhaseValue;
+  readonly flare: number;        // 0..1, what the glow is scaled and lit by
+  readonly label: string | null; // null until revealed -- never a placeholder
+  readonly cue: string | null;   // the cue crossing into this tick, or null
+}
+export function presentDrop(drop: DropView, tick: number, seen: SeenCues): DropPresentation;
+```
+
+`flare` for a common drop is a flat, low constant — it has no anticipation
+window at all, `revealTicks` being 0 — so the contrast survives. The scene reads
+`flare` for a glow and forwards `cue` to the vfx/sound sink, and contains no
+timing arithmetic of its own.
+
+### Testing it without farming
+
+`admin:triggerEvent 'drop'` with `magnitude` as the rarity ordinal puts a drop of
+a chosen tier at a chosen point, and `lootRevealScale` is a `LiveConfig` key, so
+the delay is tunable on a running server from the admin console.
+
+## Invariants tested
+
+- The server decides the item: the same seed and the same kills produce the same
+  drops, and a replay reproduces them exactly.
+- **A drop's `defId` and `count` never change between spawn and pickup**,
+  across every phase transition.
+- `revealPhaseAt` is monotone in `tick` and lands on `Revealed` exactly at
+  `revealTick`; a common drop is `Revealed` on the tick it spawns.
+- `LootDrop` sent before the reveal carries `defId: ''` and `count: 0`; sent at
+  or after it, the true pair. Asserted on the encoded frame, not on the object.
+- A client that first sees a drop after its reveal is told the identity on first
+  sight — the late-observer and the reconnect case are the same case.
+- The client cannot change a rarity: a replica told a different `defId` is
+  overwritten by the next authoritative `LootDrop`, and the bag is only ever
+  what the server's `Inventory` says.
+- Pickup before the reveal succeeds and yields the same stack as pickup after
+  it. Pickup out of range, of somebody else's drop, or into a full bag is
+  refused and moves nothing.
+- **A drop can be picked up exactly once**: two pickups of the same entity, from
+  one player or from two, put one stack in one bag and refuse the other. The
+  reveal is not a second grant path — no code path creates an item on reveal.
+- A drop expires on its own tick and is removed like any other entity; an
+  unrevealed drop that expires reveals nothing.
+- Drops are inert: not hostile, not targetable, not hit by projectiles, and they
+  do not walk.
+- Basic loot stays quiet: a `common` drop has `revealTicks === 0`, no
+  anticipation cue, a `flare` below every other tier's at every tick, and no
+  heartbeat at all.
+- The throw starts exactly at the body, ends exactly at the landing, arcs above
+  the line between, and is the same function of the same two replicated points
+  for every observer. Past `TOSS_TICKS` it is the landing, so a late observer
+  needs no case of its own.
+- The landing is inside the scatter band, never under the corpse, spread across
+  every direction, and reproduces from a seed.
+- **`tierMixAt` is 0 at every tick before the reveal**, for every tier that has
+  one, and every rig is built in the same neutral colour whatever its tier.
+- **On the landing tick every tier's flare is identical**, and equal to what
+  ordinary loot rests at. The tiers separate only once each has revealed.
+- No cue that fires before the reveal names a tier, and there is exactly one
+  landing sound for all three.
+- **Nothing changes for the first half-second**, at any tier, and the throw
+  finishes inside that window.
+- **The flare never decreases**, at any tier, at any tick — asserted over the
+  whole curve, plus the table invariant it depends on (`restFlare` at or above
+  the shared hidden peak for every tier with a run-up).
+- The heartbeat is two beats a cycle with the second smaller, rests for most of
+  the cycle, never shrinks the object, and is phased off `spawnTick`.
+- A revealed drop names itself on hover; an unrevealed one shows nothing at all
+  rather than a placeholder.
+- **Before its reveal, a drop's `tierMix` is 0 and its `beat` is exactly 1** —
+  for every tier. Nothing categorical leaks.
+- The order stops walking at exactly the distance it will ask from, at every
+  lead and every gap. A body that stopped at one distance and asked from
+  another is a body standing still being refused.
+- A refused pickup clears `awaitingPickup`, so the next tick asks again; and a
+  pickup's answer never retires an unrelated bag move.
+- **`pickupLead` is never zero for a body that can move**, however good the
+  connection — the order never asks from the boundary itself.
+- The pop only ever grows and only ever fades, is clamped at both ends, and
+  leaves the object fully invisible when it finishes.
+- A drop that left early reads as taken and one that ran its clock out reads as
+  expired, with several broadcast intervals of margin between the two answers.
+- Presentation cannot change state: the same fight with the drop presentation
+  driven and undriven produces identical authoritative state.
+
+## Out of scope
+
+Deliberately not built here, and named because the philosophy document lists
+them as directions rather than as work:
+
+- contextual loot — no combat state biases what drops;
+- bad-luck protection or any pity meter;
+- affixes, instanced item state, or a second rarity axis;
+- shared or rolled loot. A drop belongs to the killer, full stop;
+- persistence. A drop lives in the world state and dies with the process, which
+  is what everything else in the sim already does;
+- consuming, destroying or dropping *from* the bag. Items go one way today;
+- a loot feed, a reward popup, or any screen that interrupts. There is no new
+  window in this spec and there is not meant to be one.

@@ -24,6 +24,12 @@
  * drawn yaw. It is the same claim -- the sim owns the heading, the ease owns only
  * how a body is drawn getting to it -- so it is driven here beside the machines
  * and held to the same assertion.
+ *
+ * Spec 158 added a third: a drop's reveal. That one is worth having here more
+ * than either of the others, because the failure it guards against is not
+ * abstract -- a reveal implemented as client-side state would be a client
+ * deciding when an item becomes real, and the state compared below includes the
+ * drop's authoritative identity on every tick of the run.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -43,6 +49,7 @@ import { driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
 import { TurnEase, lagBound, shortestTurn, type TurnLimits } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { ClientView } from '../../../server/client/game-client.js';
+import { DropPresenter, type DropPresentation } from './loot-drop.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 const TICKS = 240;
@@ -83,7 +90,15 @@ function stateOf(view: ClientView): string {
   const casts = [...view.casts]
     .sort((a, b) => a.entityId - b.entityId)
     .map((cast) => `${cast.entityId}:${cast.abilityId}:${cast.phase}`);
-  return `t${view.tick}|${bodies.join(',')}|${casts.join(',')}`;
+  // What the drop actually is, on every tick (spec 158). The identity is the
+  // field the whole feature withholds, so it is the field a presentation layer
+  // must be shown to be unable to move.
+  const drops = [...view.drops]
+    .sort((a, b) => a.entityId - b.entityId)
+    .map((drop) =>
+      [drop.entityId, drop.rarity, drop.defId ?? '', drop.count, drop.spawnTick, drop.revealTick].join(':'),
+    );
+  return `t${view.tick}|${bodies.join(',')}|${casts.join(',')}|${drops.join(',')}`;
 }
 
 interface RunResult {
@@ -94,6 +109,8 @@ interface RunResult {
    * run that silently stopped easing cannot pass the assertion above.
    */
   readonly yaws: readonly { drawn: number; heading: number; limits: TurnLimits }[];
+  /** Every drop presentation produced, so a run that presented nothing fails. */
+  readonly drops: readonly DropPresentation[];
 }
 
 /**
@@ -136,9 +153,16 @@ async function play(animate: boolean): Promise<RunResult> {
   const states: string[] = [];
   const turnEase = new TurnEase();
   const yaws: { drawn: number; heading: number; limits: TurnLimits }[] = [];
+  const dropPresenter = new DropPresenter();
+  const drops: DropPresentation[] = [];
 
   for (let tick = 0; tick < TICKS; tick += 1) {
     server.tick();
+    // A rare drop, at a fixed point rather than one read off the view, so both
+    // runs put it in the same place for the same reason the inputs are scripted
+    // (spec 158). Rare, because a common one reveals on the tick it lands and
+    // would never exercise the withheld half at all.
+    if (tick === 20) server.triggerEvent('drop', 620, 450, 1);
     client.advanceTick();
     // A fixed script: walk a circle, and swing on a fixed cadence. Nothing here
     // reads the view, so both runs send byte-identical input.
@@ -154,6 +178,15 @@ async function play(animate: boolean): Promise<RunResult> {
     const view = client.view();
     states.push(stateOf(view));
     if (!animate) continue;
+
+    // The reveal presentation, driven exactly as the scene drives it: pure, and
+    // handed the drawn tick.
+    for (const drop of view.drops) {
+      const entity = view.entities.find((body) => body.id === drop.entityId);
+      const landing = { x: entity?.x ?? 0, y: entity?.y ?? 0, z: entity?.z ?? 0 };
+      drops.push(dropPresenter.read(drop, landing, view.estimatedTick));
+    }
+    dropPresenter.retain(new Set(view.drops.map((drop) => drop.entityId)));
 
     // The animation layer, driven exactly as the scene drives it.
     for (const entity of view.entities) {
@@ -192,7 +225,7 @@ async function play(animate: boolean): Promise<RunResult> {
     }
   }
 
-  return { states, events, yaws };
+  return { states, events, yaws, drops };
 }
 
 describe('animation is presentation only', () => {
@@ -237,6 +270,19 @@ describe('animation is presentation only', () => {
     // And it really did trail: an ease that returned the heading unchanged would
     // satisfy the loop above and prove nothing.
     expect(worst).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('was actually revealing a drop, and withheld it first (spec 158)', async () => {
+    // The same guard the yaw gets: a run whose drop presentation did nothing
+    // would satisfy the byte-for-byte assertion above and prove nothing.
+    const animated = await play(true);
+    expect(animated.drops.length).toBeGreaterThan(0);
+    // It was withheld...
+    expect(animated.drops.some((shown) => shown.label === null)).toBe(true);
+    // ...and then it was not.
+    expect(animated.drops.some((shown) => shown.label !== null)).toBe(true);
+    // ...and it announced itself on the way, by name rather than by asset.
+    expect(animated.drops.flatMap((shown) => shown.cues)).toContain('loot.reveal.rare');
   }, 30_000);
 
   it('drives a machine that has nothing it could call', () => {

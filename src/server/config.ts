@@ -113,8 +113,14 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 15: the welcome issues a session token and a hello may present one, so a
  * dropped socket can come back to the same body instead of spawning a new one;
  * and a goodbye says a disconnection was meant (spec 150).
+ * 16, 17: items drop (spec 158). A *sixth* entity kind -- spec 156's mote took
+ * the fifth -- plus a `LootDrop` describing one, with its identity withheld
+ * until an authoritative reveal tick and carrying the point it was thrown from
+ * so every client draws the same arc, and a `PickUpItem` to take it. The bump
+ * also covers spec 156's `Restoration` and its mote kind, which landed without
+ * one.
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 17;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
@@ -230,6 +236,17 @@ export const MAP_CHUNK_REFILL_PER_SECOND = 16;
  */
 export const RESOURCE_EPSILON = 0.05;
 
+/**
+ * Ceiling on {@link LiveConfig.lootRevealScale} (spec 158).
+ *
+ * Picking a drop up is legal throughout its reveal, so a long delay costs
+ * nobody their loot -- but a reveal that outlived `DROP_LIFETIME_TICKS` would
+ * leave an item that expired without ever having said what it was, which is a
+ * bug with a config value in front of it. Ten is far past any tuning pass and
+ * far short of the lifetime.
+ */
+export const MAX_REVEAL_SCALE = 10;
+
 /** How long a dead player lies there before the server puts them back (spec 057). */
 export const RESPAWN_DELAY_TICKS = SERVER_TICK_RATE * 3;
 
@@ -254,6 +271,20 @@ export interface LiveConfig {
   readonly spawnRateMultiplier: number;
   /** Scales drop chance on entity death. Read by the loot roll, not by the sim's shape. */
   readonly dropRateMultiplier: number;
+  /**
+   * Scales how long a drop's rarity takes to resolve (spec 158).
+   *
+   * A presentation knob and only that -- it moves the reveal clock stamped on a
+   * drop at the instant it lands and reaches nothing about what dropped. `0`
+   * reveals everything at once, which is what a load test and the balance
+   * harness want; `1` is the authored timing.
+   *
+   * Snapshotted per drop, so turning it affects the next one rather than the one
+   * already lying in the grass -- the rule spec 144 established for attack
+   * timing, and it matters here for the same reason: a reveal whose finish line
+   * moved while it ran could be put in the past.
+   */
+  readonly lootRevealScale: number;
   /**
    * Ceiling on simulated entities in one chunk, so a raid can't wedge a chunk.
    * A safety valve rather than a density knob -- it moved with `CHUNK_SIZE`,
@@ -284,6 +315,7 @@ export interface LiveConfig {
 export const DEFAULT_LIVE_CONFIG: LiveConfig = {
   spawnRateMultiplier: 1,
   dropRateMultiplier: 1,
+  lootRevealScale: 1,
   maxEntitiesPerChunk: 40,
   correctionThreshold: 48,
   speedTolerance: 1.15,
@@ -296,6 +328,7 @@ export type LiveConfigKey = keyof LiveConfig;
 export const LIVE_CONFIG_KEYS: readonly LiveConfigKey[] = [
   'spawnRateMultiplier',
   'dropRateMultiplier',
+  'lootRevealScale',
   'maxEntitiesPerChunk',
   'correctionThreshold',
   'speedTolerance',
@@ -346,6 +379,11 @@ function clampConfigValue(key: LiveConfigKey, value: number): number {
     case 'spawnRateMultiplier':
     case 'dropRateMultiplier':
       return Math.max(0, Math.min(100, value));
+    // Bounded by `MAX_REVEAL_SCALE` rather than by the 100 above: a reveal that
+    // outlived its drop would leave an item that expired without ever having
+    // said what it was, which is a bug with a config value in front of it.
+    case 'lootRevealScale':
+      return Math.max(0, Math.min(MAX_REVEAL_SCALE, value));
     case 'maxEntitiesPerChunk':
       return Math.max(0, Math.min(1000, Math.floor(value)));
     case 'correctionThreshold':
