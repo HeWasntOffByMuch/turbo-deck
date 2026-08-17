@@ -156,10 +156,11 @@ export function baseContributionOf(victim: ServerEntity): number {
 
   const row = monsterById(victim.typeId);
   if (!row || row.experience <= 0) return 0;
-  // A body that will not fight back is not an economy. Read off the two fields
-  // the row already authors rather than off a new "trivial" flag, which is the
-  // least intrusive form of this rule that still catches the grazer.
-  const threat = row.passive && row.aggroRange <= 0 ? RESTORATION.passiveFactor : 1;
+  // A body that will not fight back is not an economy. Since spec 163 that is
+  // one question rather than the conjunction of two: `skittish` *is* the row
+  // saying it runs instead of fighting, so the rule reads as the sentence it
+  // always meant. Same body caught, same factor -- the grazer.
+  const threat = row.temperament.kind === 'skittish' ? RESTORATION.passiveFactor : 1;
   return row.experience * RESTORATION.progressPerExperience * threat;
 }
 

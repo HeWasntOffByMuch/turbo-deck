@@ -33,6 +33,7 @@ import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
+import { FLEE_DISTANCE, notice, rally, settle } from './aggro.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
@@ -77,6 +78,7 @@ import { resolveMovement, type MovementContext } from './movement.js';
 import { regenerated } from './resource.js';
 import {
   ActivityValue,
+  AggroValue,
   CastEndReason,
   EntityKindValue,
   type MoteState,
@@ -135,6 +137,8 @@ function blankEntity(id: number): ServerEntity {
     activityUntilTick: 0,
     radius: 4,
     targetId: null,
+    aggro: AggroValue.Calm,
+    aggroUntilTick: 0,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -279,6 +283,11 @@ export function spawnEntity(
     activityUntilTick: 0,
     radius: spec.radius,
     targetId: spec.targetId ?? null,
+    // A body handed a target at spawn is already committed to it -- that is
+    // what a test seeding a fight means by it, and what an admin conjuring an
+    // attacker means. Without a target it is calm, which is the same state.
+    aggro: spec.targetId === undefined ? AggroValue.Calm : AggroValue.Engaged,
+    aggroUntilTick: 0,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -910,6 +919,15 @@ export function step(
   // --- 3d: motes drift, are collected, and fade -------------------------
   events.push(...advanceMotes(working, tick, context));
 
+  // --- 3e: the herd answers (spec 163) ----------------------------------
+  // Driven off this tick's `hit` events, which is what bounds it: a body rallied
+  // here was not itself hit, so it raises no call of its own and the shout
+  // carries exactly one hop per blow. Before the sweep below, deliberately --
+  // killing a spider outright still brings the nest, and after the sweep the
+  // victim whose neighbours are answering would no longer be in the map to
+  // measure the distance from.
+  for (const [id, body] of rally(events, working)) working.set(id, body);
+
   // --- 4: sweep the dead ------------------------------------------------
   /** Spawners whose body left the world this tick; their timers start now. */
   const emptied: string[] = [];
@@ -1530,24 +1548,48 @@ function monsterIntent(
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
 
-  // Nothing initiates (spec 076). A monster's only route to a target is the
-  // retaliation `applyDamage` writes when something hits it, so walking past
-  // one is walking past one -- and `aggroRange` sits unread in the table until
-  // a spec turns proximity back on with something more interesting than a
-  // radius. Which leaves the leash as the one thing that can *take* a target
-  // away, and it is checked first because it outranks everything below.
-  if (target && beyondLeash(monster)) target = null;
+  // The leash outranks everything below and so is asked first (spec 076) -- with
+  // one exemption, and it is the whole reason fleeing needed one. The leash
+  // exists to stop a body being *dragged* off its anchor by somebody walking
+  // backwards; a body sprinting away under its own power that got dropped at the
+  // boundary would turn round and walk home straight through the thing chasing
+  // it. When the flight ends the target goes anyway and `walkHome` takes over,
+  // so the leash's job resumes with nothing left to do.
+  if (target && monster.aggro !== AggroValue.Fleeing && beyondLeash(monster)) target = null;
 
-  // Dropped on the entity, not just in this function's head: a grudge nothing
-  // can see is a grudge nothing can test, and it would leave a body walking
-  // home that still reports the player it has given up on.
-  if (!target && monster.targetId !== null) monster = { ...monster, targetId: null };
+  // Proximity is back on (spec 163), as a temperament rather than the radius
+  // spec 076 deleted -- and the mind is settled here, before a step is taken.
+  // `settle` is what a clock running out, a quarry backing off or a target
+  // leaving the world does to a body that already had one; `notice` is what
+  // somebody standing nearby does to a body that does not. Everything below
+  // steers whatever the two of them decided.
+  //
+  // Either way the answer is written onto the *entity*, not kept in this
+  // function's head: a grudge nothing can see is a grudge nothing can test, and
+  // it would leave a body walking home that still reports the player it has
+  // given up on.
+  if (!target) {
+    monster = notice(settle(monster, null, tick), entities, tick);
+    target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
+  } else {
+    // Deliberately no `notice` on this side: a territorial body that has just
+    // let a quarry go must not re-alert on the same tick it released them, or
+    // somebody standing on the boundary is looked at forever with the clock
+    // restarting under them.
+    monster = settle(monster, target, tick);
+    if (monster.targetId === null) target = null;
+  }
 
   if (!target) {
     const home = walkHome(monster, tick, context);
     if (home) return home;
     return { input: null, entity: forgetPath(monster) };
   }
+
+  // Running away, and swinging at nothing whatever it ends up standing next to.
+  // Routed with the same A* a chase uses, so a fleeing grazer goes round a rock
+  // rather than pressing into it.
+  if (monster.aggro === AggroValue.Fleeing) return fleeFrom(monster, target, tick, context);
 
   const dx = target.position.x - monster.position.x;
   const dy = target.position.y - monster.position.y;
@@ -1556,7 +1598,13 @@ function monsterIntent(
   // its throw's range and a stalker at its sword's, off the same two lines.
   const swing = abilityById(monster.stats.basicAttackId);
   const reach = ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
-  const closing = distance > reach;
+  // An alert body has noticed and not yet committed, so it does not close and it
+  // does not swing -- it stands where it is and looks. Expressed as "never in
+  // reach, never wanting to swing" rather than as a fourth movement mode,
+  // because the pose the feature needs is the one this function already has for
+  // "stopped, facing you"; what is withheld is the blow.
+  const alert = monster.aggro === AggroValue.Alert;
+  const closing = !alert && distance > reach;
 
   const steer = closing
     ? routeToward(monster, target.position, tick, context)
@@ -1573,7 +1621,7 @@ function monsterIntent(
   // Monsters use the same ability system players do -- one code path for
   // "something committed to a swing", so a monster's wind-up is as readable
   // and as interruptible as anyone else's.
-  const wantsToSwing = !closing && monster.cast === null && swing !== null;
+  const wantsToSwing = !alert && !closing && monster.cast === null && swing !== null;
   return {
     entity,
     input: {
@@ -1593,6 +1641,60 @@ function monsterIntent(
       // Monsters attack by id like everyone else since spec 070, so a swing
       // aimed at one player cannot catch another who walked through the arc.
       castTargetEntityId: target.id,
+      cancelCast: false,
+    },
+  };
+}
+
+/**
+ * The other way out of a fight (spec 163): away, as fast as this body goes.
+ *
+ * Aimed at a point {@link FLEE_DISTANCE} directly opposite whatever it is
+ * running from, and routed with the same `routeToward` a chase uses -- so the
+ * common case is a straight line that touches no grid at all, and a cornered
+ * body goes round the corner instead of grinding along it. Recomputed every
+ * tick, so a grazer that gets outflanked mid-flight turns rather than committing
+ * to the direction it set off in.
+ *
+ * The intent it returns carries no `castAbilityId` at all, which is the rule
+ * stated once rather than checked at each caller: a fleeing body never swings,
+ * whatever it ends up standing next to on the way.
+ */
+function fleeFrom(
+  monster: ServerEntity,
+  from: ServerEntity,
+  tick: number,
+  context: StepContext,
+): MonsterDecision {
+  const away = unit(monster.position.x - from.position.x, monster.position.y - from.position.y);
+  // Standing exactly on top of its attacker leaves no direction to run in, so it
+  // keeps the one it is already facing rather than dividing by zero.
+  const heading = away ?? { x: Math.cos(monster.facing), y: Math.sin(monster.facing) };
+  const goal: Vec3 = {
+    x: monster.position.x + heading.x * FLEE_DISTANCE,
+    y: monster.position.y + heading.y * FLEE_DISTANCE,
+    z: monster.position.z,
+  };
+
+  const steer = routeToward(monster, goal, tick, context);
+  const direction = steer.direction ?? heading;
+  return {
+    entity: steer.entity,
+    input: {
+      entityId: monster.id,
+      seq: 0,
+      moveX: direction.x,
+      moveY: direction.y,
+      facing: Math.atan2(direction.y, direction.x),
+      buttons: 0,
+      predictedX: monster.position.x,
+      predictedY: monster.position.y,
+      hasPrediction: false,
+      seqSpan: 1,
+      castAbilityId: '',
+      castTargetX: 0,
+      castTargetY: 0,
+      castTargetEntityId: 0,
       cancelCast: false,
     },
   };

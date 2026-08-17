@@ -759,6 +759,40 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 `sim/aggro.ts` is whether one body has business with another
+                 (spec 163), and it exists because until it did, the entire
+                 aggro system was one line in `blow.ts` -- `targetId ??
+                 attacker.id` -- and one proximity scan spec 076 deleted for
+                 being nothing but a radius. What a row authors now is a
+                 **temperament**, and it is a discriminated union so that a
+                 body only carries a number the behaviour it chose actually
+                 reads: `skittish` runs from a blow, `defensive` answers one,
+                 `territorial` notices you and holds an authored alert before
+                 committing, `ferocious` commits on sight and answers a blow
+                 landed on a neighbour. `aggroRange` and `passive` are gone --
+                 two fields for one idea, neither able to say what the body did
+                 about it, one of them unread for eighty specs.
+                 Three rules in it are worth knowing. The mind is **beside** the
+                 body, not folded into it: `AggroValue` is a second pair of
+                 fields in `activity`'s shape, because a monster holding still
+                 during its alert and a monster holding still with nothing to do
+                 are the same `Idle` and the whole feature is that they are not
+                 the same thing. The herd's call is driven off the tick's `hit`
+                 **events** rather than a per-tick scan for an ally who looks
+                 angry, which is what bounds it -- a rallied body was not itself
+                 hit, so it raises no call of its own and the shout carries
+                 exactly one hop per actual blow, where the scan version
+                 cascades through any overlapping pair of ranges for as long as
+                 a fight lasts. And a **fleeing body is exempt from the leash**,
+                 the one place this bends spec 076: the leash stops a body being
+                 *dragged* off its anchor, and a body sprinting away under its
+                 own power that got dropped at the boundary would turn round and
+                 walk home through the thing chasing it. Leaving an alert is an
+                 answer rather than a tidy-up -- a player who backs out of the
+                 notice range before the clock runs out is let go, because a
+                 pause the player cannot act on is not a decision. Nothing of
+                 this rides the wire: the tell is the body turning to face you
+                 and standing still, and facing already replicates.
                  `loot.ts` and `sim/loot.ts` are what a kill leaves behind
                  (spec 158), and the two of them draw one line: **the item is
                  decided when the body falls and its presentation unfolds

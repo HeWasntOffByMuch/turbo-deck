@@ -105,8 +105,10 @@ function withMonster(
   /**
    * Who it is already fighting, and where it considers home.
    *
-   * Nothing initiates since spec 076, so a test that wants a monster to walk
-   * anywhere has to hand it the target being hit would have given it.
+   * Handing a body a bare `targetId` is enough: `settle` commits it on the
+   * first tick (spec 163), because a target arriving with no mood attached is
+   * something outside the sim -- a test, an admin -- saying "fight this". Cases
+   * about *acquiring* a target rather than holding one live in `aggro.test.ts`.
    */
   extra: { targetId?: number; anchor?: { x: number; y: number } } = {},
 ): { state: ServerWorldState; id: number } {
