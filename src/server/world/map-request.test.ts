@@ -29,6 +29,13 @@ function centreOf(cx: number, cz: number): { x: number; z: number } {
   return centre;
 }
 
+/** A chunk coordinate one row north of everything the layer actually baked. */
+const NEVER_BAKED = (() => {
+  const coords = index.layers[0]?.coords ?? [];
+  const cz = Math.min(...coords.map((c) => c.cz)) - 1;
+  return { cx: 0, cz };
+})();
+
 describe('the grid', () => {
   it('puts a chunk centre back in its own chunk', () => {
     for (const coord of index.layers[0]?.coords ?? []) {
@@ -102,7 +109,7 @@ describe('the range check', () => {
     const here = centreOf(0, 0);
     const decision = decideChunkRequest(
       index,
-      { layer: 0, cx: 0, cz: -1 },
+      { layer: 0, ...NEVER_BAKED },
       here.x,
       here.z,
       MAP_CHUNK_REQUEST_RADIUS,
@@ -132,7 +139,7 @@ describe('the range check', () => {
     const here = centreOf(0, 0);
     const budget = freshBudget();
     for (let i = 0; i < 100; i++) {
-      decideChunkRequest(index, { layer: 0, cx: 0, cz: -1 }, here.x, here.z, MAP_CHUNK_REQUEST_RADIUS, budget, 0);
+      decideChunkRequest(index, { layer: 0, ...NEVER_BAKED }, here.x, here.z, MAP_CHUNK_REQUEST_RADIUS, budget, 0);
     }
     expect(budget.available(0)).toBe(MAP_CHUNK_BURST);
   });
@@ -144,7 +151,12 @@ describe('the token bucket', () => {
     const budget = freshBudget();
     let served = 0;
     let throttled = 0;
-    for (let i = 0; i < 100; i++) {
+    // Past the burst rather than a round number: the loop used to be 100, which
+    // was comfortably over a burst of 64 and unreachable once spec 165 derived
+    // the burst from the request radius instead. Asking exactly one bucket's
+    // worth too many is the only count that states what is being tested.
+    const asks = MAP_CHUNK_BURST * 2;
+    for (let i = 0; i < asks; i++) {
       const decision = decideChunkRequest(
         index,
         { layer: 0, cx: 2, cz: 2 },
@@ -158,7 +170,7 @@ describe('the token bucket', () => {
       else if (decision.reason === ChunkDeniedReason.Throttled) throttled++;
     }
     expect(served).toBe(MAP_CHUNK_BURST);
-    expect(throttled).toBe(100 - MAP_CHUNK_BURST);
+    expect(throttled).toBe(asks - MAP_CHUNK_BURST);
   });
 
   it('refills over ticks, and never past the burst', () => {

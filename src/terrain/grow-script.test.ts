@@ -19,11 +19,18 @@ function shipped(): MapDocument {
   return parseMap(readFileSync('maps/arena.json', 'utf8'));
 }
 
+// A single chunk just past the map's own east edge -- free of every existing
+// chunk however far the map itself has grown, so the default rect below never
+// collides with ground the map already has.
+const SHIPPED_CHUNKS = shipped().layers[0]?.chunks ?? [];
+const SHIPPED_EAST_CX = Math.max(...SHIPPED_CHUNKS.map((c) => c.cx)) + 1;
+const SHIPPED_NORTH_CZ = Math.min(...SHIPPED_CHUNKS.map((c) => c.cz));
+
 function args(overrides: Partial<GrowArgs> = {}): GrowArgs {
   return {
     map: 'maps/arena.json',
     recipe: 'maps/recipes/east-shelf.json',
-    rect: { minCx: 8, minCz: 0, maxCx: 8, maxCz: 0 },
+    rect: { minCx: SHIPPED_EAST_CX, minCz: SHIPPED_NORTH_CZ, maxCx: SHIPPED_EAST_CX, maxCz: SHIPPED_NORTH_CZ },
     id: 'test-part',
     seed: 1,
     layer: null,
@@ -63,15 +70,16 @@ describe('parseArgs', () => {
 
 describe('growing the shipped map through the script', () => {
   it('bakes nav for the ground it grew', () => {
-    const grown = grow(shipped(), args({ rect: { minCx: 8, minCz: 0, maxCx: 8, maxCz: 0 }, nav: true }), RECIPE);
-    const fresh = grown.layers[0]?.chunks.find((c) => c.cx === 8 && c.cz === 0);
+    const grown = grow(shipped(), args({ nav: true }), RECIPE);
+    const fresh = grown.layers[0]?.chunks.find((c) => c.cx === SHIPPED_EAST_CX && c.cz === SHIPPED_NORTH_CZ);
     expect(fresh?.nav).not.toBeNull();
     expect(fresh?.nav?.length).toBe((fresh?.cols ?? 0) * (fresh?.rows ?? 0));
   });
 
   it('keeps the parts list through the nav re-bake', () => {
-    const grown = grow(shipped(), args({ nav: true }), RECIPE);
-    expect(grown.parts?.map((p) => p.id)).toEqual(['test-part']);
+    const before = shipped();
+    const grown = grow(before, args({ nav: true }), RECIPE);
+    expect(grown.parts?.map((p) => p.id)).toEqual([...(before.parts?.map((p) => p.id) ?? []), 'test-part']);
   });
 
   it('reports a ragged layer, and a rectangular one as clean', () => {
@@ -80,14 +88,26 @@ describe('growing the shipped map through the script', () => {
     // The shipped map is exactly its own rectangle to begin with.
     expect(unfilledCells(doc, layerId)).toBe(0);
 
-    // Growing the east flank completes that column but extends the bounds
-    // rectangle south past the still-short south row, so the layer is briefly
-    // declaring ground it has not got.
-    const east = grow(doc, args({ rect: { minCx: 7, minCz: 0, maxCx: 9, maxCz: 6 } }), RECIPE);
+    const layer = doc.layers[0];
+    if (!layer) throw new Error('no layer');
+    const hiCx = Math.max(...layer.chunks.map((c) => c.cx));
+    const loCz = Math.min(...layer.chunks.map((c) => c.cz));
+    const hiCz = Math.max(...layer.chunks.map((c) => c.cz));
+    const midCz = loCz + Math.floor((hiCz - loCz) / 2);
+
+    // Growing only the top half of a new east column extends the bounds
+    // rectangle over the bottom half too -- bounds are one rectangle for the
+    // whole layer -- so the layer is briefly declaring ground it has not got.
+    const east = grow(doc, args({ rect: { minCx: hiCx + 1, minCz: loCz, maxCx: hiCx + 1, maxCz: midCz } }), RECIPE);
     expect(unfilledCells(east, layerId)).toBeGreaterThan(0);
 
-    // Completing that row closes it, which is what the warning tells you to do.
-    const both = grow(east, { ...args({ rect: { minCx: 0, minCz: 6, maxCx: 6, maxCz: 6 } }), id: 'south' }, RECIPE);
+    // Completing the rest of that column closes it, which is what the warning
+    // tells you to do.
+    const both = grow(
+      east,
+      { ...args({ rect: { minCx: hiCx + 1, minCz: midCz + 1, maxCx: hiCx + 1, maxCz: hiCz } }), id: 'south' },
+      RECIPE,
+    );
     expect(unfilledCells(both, layerId)).toBe(0);
   });
 
