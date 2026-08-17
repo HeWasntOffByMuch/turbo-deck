@@ -291,7 +291,7 @@ export function resolveBlow(
       entityId: target.id,
       killerId: attacker.id,
       // What died, because in a moment there will be nothing left to ask
-      // (spec 163). Read off the body in hand rather than from its id.
+      // (spec 164). Read off the body in hand rather than from its id.
       victimKind: target.kind,
       victimTypeId: target.typeId,
       qualities: {

@@ -31,7 +31,7 @@ import { ACTION_BAR } from './action-bar.js';
 /**
  * A bar with things on it, for the gallery HUD's own arithmetic.
  *
- * Written out rather than taken from the shipped bar: since spec 163 four of the
+ * Written out rather than taken from the shipped bar: since spec 164 four of the
  * five slots are empty, and a test that fed the real bar in would be asserting
  * about a list of nulls. What `hudViewOf` is being asked is what it does with an
  * ability id it cannot resolve, and that needs ids.
@@ -144,7 +144,7 @@ describe('the HUD view', () => {
 describe('ability art', () => {
   it('names a sprite the atlas actually has, for everything the bar can hold', () => {
     const atlas = bakeAtlas(THEME);
-    // The shipped bar holds one ability today (spec 163: four slots are empty
+    // The shipped bar holds one ability today (spec 164: four slots are empty
     // and the fifth is the vial), so this alone is a weak check -- the test
     // below is the one with teeth, and covers every ability in the table.
     for (const slot of ACTION_BAR) {

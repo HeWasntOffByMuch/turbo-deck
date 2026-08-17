@@ -71,7 +71,7 @@ function startBot(index: number): Bot {
         let angle = (index / count) * Math.PI * 2;
         let frames = 0;
         setInterval(() => {
-          // A bot has to ask to get up (spec 163). Nothing revives a dead player
+          // A bot has to ask to get up (spec 164). Nothing revives a dead player
           // on a timer any more, and a load harness whose bots quietly stop
           // moving after their first death is a load harness measuring corpses.
           // Asked once a second rather than every frame: the answer takes a

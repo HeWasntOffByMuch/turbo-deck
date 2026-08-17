@@ -173,13 +173,13 @@ const BAR_LOST = '#f4f2ee';
  */
 const BAR_GUARD = '#8fa6c8';
 /**
- * The resource pool (spec 163). Blue, and the one bar on screen that is *spent*
+ * The resource pool (spec 164). Blue, and the one bar on screen that is *spent*
  * rather than lost -- health and guard are both taken off you by somebody else.
  */
 const POOL_RESOURCE = '#4f9fe0';
 
 /**
- * The experience strip (spec 163).
+ * The experience strip (spec 164).
  *
  * Gold on black. Nothing else in this HUD is gold except a cast that can still
  * be called off, and the two never share a corner -- a cast bar is over a body
@@ -191,7 +191,7 @@ const XP_GOLD_LIT = '#ffdd80';
 const XP_EMPTY = '#0a0b0d';
 
 /**
- * The death banner (spec 163). Brighter than `BAR_ENEMY` and than the blood: it
+ * The death banner (spec 164). Brighter than `BAR_ENEMY` and than the blood: it
  * is drawn over a world with dark reds already in it, and outlined in black, so
  * anything less saturated reads as part of the scene.
  */
@@ -290,7 +290,7 @@ export interface HudHandle {
    */
   onEquip(handler: (itemId: string) => void): void;
   /**
-   * What to call when the respawn button is pressed (spec 163).
+   * What to call when the respawn button is pressed (spec 164).
    *
    * It hands back nothing, for the same reason the request carries nothing: the
    * server decides where a respawn puts you and what it restores. This end asks.
@@ -307,7 +307,7 @@ export interface HudHandle {
 export function createHud(
   project: Projector,
   /**
-   * What the five slots hold (spec 163). Handed in rather than imported, so the
+   * What the five slots hold (spec 164). Handed in rather than imported, so the
    * HUD's buttons and `view.ts`'s keys are driven by one array -- a bar built
    * twice is two answers about what is in slot 3.
    */
@@ -387,7 +387,7 @@ export function createHud(
   // indicator runs along the bottom and the notch along a side, which is exactly
   // where the hotbar and the weapon switch sit (spec 093).
   //
-  // `bottomEdge` rather than `edge` since spec 163: the experience strip is
+  // `bottomEdge` rather than `edge` since spec 164: the experience strip is
   // pinned to the frame's bottom and spans its whole width, so every other
   // group has to clear it rather than sit beside it.
   const bottom = `calc(${bottomEdge(layout)}px + env(safe-area-inset-bottom))`;
@@ -420,7 +420,7 @@ export function createHud(
   let useHandler: (abilityId: string) => void = () => undefined;
 
   /**
-   * The five slots (spec 163): four a skill will go into, and the vial.
+   * The five slots (spec 164): four a skill will go into, and the vial.
    *
    * An empty slot is built exactly like a full one -- same box, same sweep, same
    * countdown -- and differs only in holding no ability. That is what keeps the
@@ -434,7 +434,7 @@ export function createHud(
       `width:${layout.slot.width}px;height:${layout.slot.height}px;border-radius:6px;` +
       'border:1px solid #33405a;background:#182130;cursor:pointer;box-sizing:border-box;' +
       'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
-      // A *stated* height on both, since spec 163. It used to be the compact
+      // A *stated* height on both, since spec 164. It used to be the compact
       // square and, on a desktop, whatever the padding and the line height added
       // up to -- which was 46 by coincidence and stopped being 46 the moment the
       // label became a glyph path. The pool block beside it is centred against
@@ -457,7 +457,7 @@ export function createHud(
     // characters in a 92px box, which wrapped. An empty slot is a dashed square:
     // "something goes here" without a caption claiming there is a plan for what.
     // The key number and the name are drawn in the game's own 5x7 face rather
-    // than set in the browser's monospace (spec 163). The bar sits over a
+    // than set in the browser's monospace (spec 164). The bar sits over a
     // posterized, low-resolution world and system text over it reads like a
     // debug overlay somebody left on -- the same argument spec 065 made about
     // the damage numbers and 143 about the refusals.
@@ -526,7 +526,7 @@ export function createHud(
     button.append(remaining);
 
     /**
-     * How many draughts are left, in the corner of the vial (spec 163).
+     * How many draughts are left, in the corner of the vial (spec 164).
      *
      * On the slot rather than in the readout because the flask's cost is a
      * charge and not resource -- the dimming rule `affordable` already applies
@@ -543,7 +543,7 @@ export function createHud(
   });
 
   /**
-   * The two pools, immediately left of the slots (spec 163).
+   * The two pools, immediately left of the slots (spec 164).
    *
    * Placed off the *bar's* half-width rather than from the frame's left edge,
    * because the bar is centred: pinning the pool to the left would leave a gap
@@ -647,7 +647,7 @@ export function createHud(
   }
 
   /**
-   * The experience strip (spec 163), pinned to the very bottom, full width.
+   * The experience strip (spec 164), pinned to the very bottom, full width.
    *
    * Not inset by `layout.edge`: it is the frame's own bottom edge, the way a
    * progress bar at the foot of a window is, and an inset one would read as a
@@ -704,7 +704,7 @@ export function createHud(
   let respawnHandler: () => void = () => undefined;
 
   /**
-   * "YOU ARE DEAD", and the way back (spec 163).
+   * "YOU ARE DEAD", and the way back (spec 164).
    *
    * Over everything, and the only part of the HUD that takes the pointer across
    * the whole frame -- deliberately: while it is up, clicking the world would be
@@ -802,7 +802,7 @@ export function createHud(
     // is the honest version of that, and it survives the button having no text.
     button.dataset['weapon'] = weapon.itemId;
     if (!layout.weaponIconOnly) {
-      // In the game's own face like the rest of the band (spec 163). The button
+      // In the game's own face like the rest of the band (spec 164). The button
       // still carries the name as an `aria-label` above, which is what a screen
       // reader reads and what `preview-touch.ts` finds it by -- a drawn glyph
       // path is not text and cannot be either.
@@ -1162,7 +1162,7 @@ export function createHud(
 
     for (const slot of slots) {
       // An empty slot has nothing to be lit by, on cooldown, or unaffordable
-      // (spec 163). Dimmed once, here, rather than being asked every question
+      // (spec 164). Dimmed once, here, rather than being asked every question
       // below with `null` standing in for an ability.
       if (slot.abilityId === null || !slot.ability) {
         slot.button.style.borderColor = '#2a3346';
@@ -1230,7 +1230,7 @@ export function createHud(
       }
     }
 
-    // The two pools, left of the slots (spec 163). Both numbers have been on the
+    // The two pools, left of the slots (spec 164). Both numbers have been on the
     // wire since spec 069 and both were text in a hidden readout.
     //
     // Health goes through `HealthFlashes` -- the same reading the bar over a
@@ -1267,7 +1267,7 @@ export function createHud(
     writePoolLabel(healthPool.label, pools.health.text);
     writePoolLabel(resourcePool.label, pools.resource.text);
 
-    // The experience strip along the very bottom (spec 163). Written only when
+    // The experience strip along the very bottom (spec 164). Written only when
     // it moves: a per-frame style write is a per-frame layout, and experience
     // changes a handful of times a session.
     const xp = xpBar(view.level, view.experience);
@@ -1285,7 +1285,7 @@ export function createHud(
       xpDetail.dataset['text'] = xp.detail;
     }
 
-    // "YOU ARE DEAD", and the way back up (spec 163). The overlay is derived
+    // "YOU ARE DEAD", and the way back up (spec 164). The overlay is derived
     // from replicated health, and the button asks the server -- nothing here
     // decides that a player is alive again.
     const death = deathOverlay(view);

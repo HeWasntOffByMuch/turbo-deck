@@ -37,7 +37,7 @@ export interface HudLayout {
   readonly slot: BoxSize;
   readonly slotGap: number;
   /**
-   * The countdown drawn over a slot on cooldown, in font pixels (spec 163).
+   * The countdown drawn over a slot on cooldown, in font pixels (spec 164).
    *
    * A scale rather than a point size since the whole bottom band moved to the
    * game's own 5x7 face -- there is no `slotFontPx` beside it any more, because
@@ -95,7 +95,7 @@ export interface HudLayout {
   readonly errorScale: number;
   readonly errorGap: number;
   /**
-   * How tall the experience strip along the very bottom is (spec 163).
+   * How tall the experience strip along the very bottom is (spec 164).
    *
    * Every other bottom-edge offset in the HUD is `edge + this`, because the
    * strip is pinned to the frame's bottom and spans its whole width -- so it is
@@ -106,7 +106,7 @@ export interface HudLayout {
    * take a band of the world away.
    */
   readonly xpBarHeight: number;
-  /** The health/resource block, left of the slots (spec 163). One bar's box. */
+  /** The health/resource block, left of the slots (spec 164). One bar's box. */
   readonly pool: BoxSize;
   /** Between the two pool bars, and between the block and the slots. */
   readonly poolGap: number;
@@ -285,7 +285,7 @@ export function centredClearance(layout: HudLayout, slots: number, frameWidth: n
 /**
  * How far the pool block's left edge is from the frame's, given a centred bar.
  *
- * The pool sits immediately left of the slots (spec 163), so where it starts is
+ * The pool sits immediately left of the slots (spec 164), so where it starts is
  * a sum of three things that live in three different places -- the frame, the
  * bar's width and the block's. Negative means it has run off the left edge;
  * anything less than the weapon switch's width means the two overlap, which is
@@ -309,7 +309,7 @@ export function poolBlockHeight(layout: HudLayout): number {
 
 /**
  * How far the pool block sits above the bottom edge, so that it is *centred* on
- * the slot row rather than sharing its floor (spec 163).
+ * the slot row rather than sharing its floor (spec 164).
  *
  * The first cut bottom-aligned both, which put a 40px block against the floor of
  * a 46px row -- six pixels of daylight above it and none below, which reads as a
@@ -363,7 +363,7 @@ export function errorStackBottom(layout: HudLayout, systemButtons: number): numb
 }
 
 /**
- * The bottom of everything that is not the experience strip (spec 163).
+ * The bottom of everything that is not the experience strip (spec 164).
  *
  * One function rather than `edge` written out with a `+ xpBarHeight` at each of
  * the four places furniture is pinned to the bottom -- the strip spans the whole

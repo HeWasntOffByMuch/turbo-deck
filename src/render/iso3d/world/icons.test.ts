@@ -19,7 +19,7 @@ import {
 } from './icons.js';
 import { SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
 
-describe('the action bar’s slot icons (spec 163)', () => {
+describe('the action bar’s slot icons (spec 164)', () => {
   it('draws the vial and the empty slot as different things', () => {
     expect(SLOT_ICONS.vial).not.toBe(SLOT_ICONS.empty);
     expect(slotIconSvg('vial')).toContain(SLOT_ICONS.vial);

@@ -2,13 +2,13 @@ import { createHud } from './world/hud.js';
 import type { ClientView } from '../../server/client/game-client.js';
 
 /**
- * The measuring rig for the bottom band (spec 163).
+ * The measuring rig for the bottom band (spec 164).
  *
  * Dev-server only -- `vite build` bundles `index.html` and nothing else, so this
  * page is never part of a shipped build. Driven by
  * `scripts/probe-bottom-hud.ts`.
  *
- * It exists because the four things spec 163 added to the HUD are only true once
+ * It exists because the four things spec 164 added to the HUD are only true once
  * a browser has laid them out, and the Play tab can answer none of the questions
  * without a fight: the experience strip only moves when a monster dies, the
  * death overlay only appears when the player loses, and the respawn button can

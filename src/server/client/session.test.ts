@@ -343,7 +343,7 @@ describe('dying', () => {
     // by, and leave it rendering an empty world.
     expect(test.server.world.entities.has(entityId)).toBe(true);
 
-    // The ask, since spec 163: time alone leaves a body where it fell.
+    // The ask, since spec 164: time alone leaves a body where it fell.
     client.respawn();
     for (let i = 0; i < 4; i++) test.server.tick();
     await settle();

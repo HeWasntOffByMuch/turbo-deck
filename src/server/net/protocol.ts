@@ -103,7 +103,7 @@ export const ClientMessageType = {
    */
   PickUpItem: 0x19,
   /**
-   * "Put me back on my feet" (spec 163). No payload.
+   * "Put me back on my feet" (spec 164). No payload.
    *
    * Honoured only from a connection whose body is at zero health, and honoured
    * at once when it is. Before this the server put a dead player back on a

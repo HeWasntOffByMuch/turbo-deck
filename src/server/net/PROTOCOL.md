@@ -199,7 +199,7 @@ Anticipation is never a lock on the player's hands.
 ### `0x1a Respawn`
 *(no payload)*
 
-"Put me back on my feet" (spec 163). Honoured only from a connection whose body
+"Put me back on my feet" (spec 164). Honoured only from a connection whose body
 is at zero health, and honoured at once when it is: full health, the flask
 restored and the restoration meter cleared (spec 156's reset), placed at
 `DEFAULT_SPAWN` through the same `clearSpawnNear` the login path uses, and

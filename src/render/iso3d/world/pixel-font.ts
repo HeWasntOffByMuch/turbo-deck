@@ -26,7 +26,7 @@ export const GLYPH_SPACING = 1;
 /**
  * Every character the HUD can emit: the digits, a sign for heals and negatives,
  * a bang for a critical, since spec 143 the capitals, a colon and a full stop,
- * because the refusal stack in the corner draws words, and since spec 163 a
+ * because the refusal stack in the corner draws words, and since spec 164 a
  * slash, a percent and a pair of brackets, because the bottom band draws
  * quantities -- "179 / 218", "62.4%", "(312 / 926 XP)". Anything else falls back
  * to a solid block, which is visibly wrong rather than invisibly missing.

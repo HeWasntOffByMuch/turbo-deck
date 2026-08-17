@@ -39,7 +39,7 @@ const PORT = 4319;
 const GAP_OFFSET = 70;
 
 /**
- * What this harness puts in the four skill slots (spec 163).
+ * What this harness puts in the four skill slots (spec 164).
  *
  * The bar ships empty -- four slots a skill will go into and the vial -- so
  * without this there is nothing on it to press and the aim, the cooldown refusal
@@ -734,7 +734,7 @@ async function main(): Promise<void> {
     // proof it took is that the *server's* stat block came back naming the new
     // attack -- which is what lights the button. Photographed with a bow in
     // hand so the ranged auto-attack is on screen at all.
-    // By `aria-label` rather than by text: since spec 163 the caption is drawn
+    // By `aria-label` rather than by text: since spec 164 the caption is drawn
     // in the game's own font, so the button is a glyph path and has no text
     // content to match on. The label is what a screen reader reads out and what
     // `litWeapon` already reads back, so this and the assertion below are now

@@ -1028,7 +1028,7 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
     ).toBe(true);
   });
 
-  it('says what died, on an event that outlives the body (spec 163)', () => {
+  it('says what died, on an event that outlives the body (spec 164)', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;

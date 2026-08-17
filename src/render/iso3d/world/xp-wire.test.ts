@@ -1,11 +1,11 @@
 /**
- * The strip a player actually reads, off a real session (spec 163).
+ * The strip a player actually reads, off a real session (spec 164).
  *
  * The last link in a chain whose two halves are each pinned down elsewhere: the
  * sim awards the experience (`server/client/death-and-experience.test.ts`) and
  * `xpBar` turns two numbers into a fraction (`xp-bar.test.ts`). Neither can make
  * this claim, because the first never draws anything and the second is handed
- * its numbers -- and the bug spec 163 exists to fix lived exactly in the join,
+ * its numbers -- and the bug spec 164 exists to fix lived exactly in the join,
  * where an award nobody could reach fed a bar nobody had built.
  *
  * On this side of the tree rather than beside the server test, so the dependency

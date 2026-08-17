@@ -1,9 +1,9 @@
 /**
- * The bottom band, in a real browser (spec 163).
+ * The bottom band, in a real browser (spec 164).
  *
  *   npx tsx scripts/probe-bottom-hud.ts
  *
- * Everything spec 163 decides is asserted in Node -- what fraction the strip is
+ * Everything spec 164 decides is asserted in Node -- what fraction the strip is
  * showing, what an empty slot casts, when the overlay is up. What none of those
  * can say is whether any of it was *connected to anything*, which is exactly the
  * failure this repo has shipped before: spec 147's window layout had two green
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
     const detail = await box(page, '[data-xp-detail]');
     check(detail !== null, 'hovering shows it');
     // `data-text` rather than `textContent`: the line is drawn in the game's own
-    // font (spec 163), so it is a glyph path and has no text to read.
+    // font (spec 164), so it is a glyph path and has no text to read.
     const detailText = await page.evaluate(
       () => (document.querySelector('[data-xp-detail]') as HTMLElement | null)?.dataset['text'] ?? '',
     );

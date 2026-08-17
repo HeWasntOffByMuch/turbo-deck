@@ -922,7 +922,7 @@ export class GameClient {
   }
 
   /**
-   * Ask to be put back on our feet (spec 163).
+   * Ask to be put back on our feet (spec 164).
    *
    * Nothing optimistic and nothing remembered: the server answers with a
    * `Correction` and a delta carrying full health, and until it does the body is

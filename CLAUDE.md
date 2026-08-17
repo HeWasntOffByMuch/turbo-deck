@@ -1061,7 +1061,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  draws -- rasterised in software, because what is being looked at
                  is a shape rather than something that happens over time),
                  action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
-                 band, spec 163 -- everything the HUD grew along the edge of the
+                 band, spec 164 -- everything the HUD grew along the edge of the
                  frame, each pure and each about one number). action-bar.ts is
                  what the bar *holds*: four empty slots and the vial, replacing
                  the nine-entry `HOTBAR` that had been every ability in the

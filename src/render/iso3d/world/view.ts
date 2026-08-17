@@ -432,7 +432,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * What the bar holds (spec 163): four empty slots and the vial, unless
+   * What the bar holds (spec 164): four empty slots and the vial, unless
    * `?slots=` says otherwise.
    *
    * Built once, here, and handed to both readers -- the HUD draws it and the
@@ -450,7 +450,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // `Stats`. Nothing here decides what the right-click then does -- the next
   // frame simply reads the stat and asks for whatever it names.
   hud.onEquip((itemId) => client.equip('mainHand', itemId));
-  // The way back up (spec 163). The overlay is drawn from replicated health and
+  // The way back up (spec 164). The overlay is drawn from replicated health and
   // this is the only thing it does -- nothing on this side decides that a player
   // is alive again.
   hud.onRespawn(() => client.respawn());
@@ -916,7 +916,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
 
     for (const slot of decision.skillbar) {
-      // The one gate (spec 163). An empty slot and a key past the last slot are
+      // The one gate (spec 164). An empty slot and a key past the last slot are
       // the same nothing here as they are on the button, because both ends ask
       // the same function -- a key that could cast out of a slot the bar draws
       // as empty would be a second answer about what the bar holds.

@@ -1,5 +1,5 @@
 /**
- * The player's own health and resource, as two bars (spec 163).
+ * The player's own health and resource, as two bars (spec 164).
  *
  * Both numbers have been on the wire since spec 069 and both were text in a
  * `display:none` developer readout. The floating bar over your own head is the
@@ -38,7 +38,7 @@ export interface PoolBar {
    * "179 / 218", rounded -- the bar's own label.
    *
    * Every character in it has a glyph in `pixel-font.ts` (the digits, the space
-   * and, since spec 163, the slash), because this is drawn in the game's own
+   * and, since spec 164, the slash), because this is drawn in the game's own
    * font and anything else comes out as a solid block. That is why an unknown
    * maximum is dashes rather than an em dash.
    */

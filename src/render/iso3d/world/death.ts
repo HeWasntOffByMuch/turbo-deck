@@ -1,5 +1,5 @@
 /**
- * Whether to say you are dead (spec 163).
+ * Whether to say you are dead (spec 164).
  *
  * One line of arithmetic and a module of its own, because the three ways to draw
  * nothing look nothing alike and each of them used to be a screen somebody could
@@ -9,7 +9,7 @@
  * like for a frame or two.
  *
  * The death state is *not* a new field on the wire. The local body's health has
- * been replicated since spec 057; what spec 163 added was the way back up
+ * been replicated since spec 057; what spec 164 added was the way back up
  * (`ClientMessageType.Respawn`), not a way to find out.
  */
 

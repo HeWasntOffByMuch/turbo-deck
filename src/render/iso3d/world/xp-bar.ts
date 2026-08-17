@@ -1,5 +1,5 @@
 /**
- * How far through their level a character is (spec 163).
+ * How far through their level a character is (spec 164).
  *
  * Pure arithmetic over two replicated numbers, split out for the reason
  * `health-bar.ts` is: the strip along the bottom of the frame is inline styles

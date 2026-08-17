@@ -61,7 +61,7 @@ export const WEAPON_ICONS: Readonly<Record<string, string>> = {
 export const FALLBACK_ICON = '<path d="M12 3.5 L20.5 12 L12 20.5 L3.5 12 Z"/>';
 
 /**
- * The action bar's own icons (spec 163): the vial, and the mark an empty slot
+ * The action bar's own icons (spec 164): the vial, and the mark an empty slot
  * carries.
  *
  * Separate from {@link WEAPON_ICONS} because these are keyed by what a *slot*

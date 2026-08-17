@@ -247,7 +247,7 @@ export const RESOURCE_EPSILON = 0.05;
  */
 export const MAX_REVEAL_SCALE = 10;
 
-// There is deliberately no respawn delay here any more (spec 163). A dead player
+// There is deliberately no respawn delay here any more (spec 164). A dead player
 // lies there until they ask to get up -- `ClientMessageType.Respawn` -- so the
 // three-second timer this used to hold has no reader, and a constant nothing
 // reads is a claim that something does.

@@ -133,7 +133,7 @@ async function main(): Promise<void> {
     });
 
     // Pinned seed, for the same reason `preview-world.ts` pins one.
-    // The bar ships empty since spec 163, so Mend has to be put in a slot
+    // The bar ships empty since spec 164, so Mend has to be put in a slot
     // before there is anything here to press. `?slots=` is the developer path
     // for exactly that; slot 1 is what the `Digit1` presses below name.
     await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=self.mend`, {

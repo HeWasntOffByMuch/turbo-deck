@@ -47,7 +47,7 @@ describe('the action bar', () => {
 });
 
 /**
- * The developer path (spec 163).
+ * The developer path (spec 164).
  *
  * It exists because an empty bar left every ability except the auto-attack and
  * the flask unreachable from the shipped page, and the browser harnesses that

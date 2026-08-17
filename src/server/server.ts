@@ -181,7 +181,7 @@ interface Connection {
   readonly inputs: ServerInput[];
   lastSeq: number;
   /**
-   * Whether this player has been told they fell (spec 163).
+   * Whether this player has been told they fell (spec 164).
    *
    * A latch rather than a countdown, because nothing is counting any more: the
    * respawn waits for `ClientMessageType.Respawn` and this exists only so the
@@ -566,7 +566,7 @@ export class GameServer implements AdminHost {
       }
 
       case ClientMessageType.Respawn:
-        // Ignored outright from a living body (spec 163) -- silently, because a
+        // Ignored outright from a living body (spec 164) -- silently, because a
         // client that pressed the button twice inside one round trip is not
         // doing anything wrong and does not need a refusal for it.
         this.respawn(connection);
@@ -1932,7 +1932,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Says so, once, to a player who has just fallen (spec 163).
+   * Says so, once, to a player who has just fallen (spec 164).
    *
    * All that is left of what used to be `handleRespawns`. Getting back up is
    * {@link respawn}, which runs when a player asks -- so the passage of time no
@@ -1962,7 +1962,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Puts one dead player back on their feet at the spawn (spec 163). Their entity
+   * Puts one dead player back on their feet at the spawn (spec 164). Their entity
    * is never swept up (see `sim/world.ts`), so a respawn is a heal and a move
    * rather than a new entity -- the id the client knows itself by survives, which
    * is what stops a death from silently orphaning the client's view of itself.
@@ -2076,7 +2076,7 @@ export class GameServer implements AdminHost {
           }
           if (event.killerId === null) break;
           const killer = this.players.byEntityId(event.killerId);
-          // Off the event, not out of the state (spec 163). This used to look
+          // Off the event, not out of the state (spec 164). This used to look
           // the victim up by id, and the sweep in `stepWorld`'s step 4a deletes
           // a dead monster before this runs -- so the lookup found nothing on
           // every kill this game has ever resolved and the award below was
@@ -2348,7 +2348,7 @@ export class GameServer implements AdminHost {
    * Health to zero and nothing else invented: the sim's own sweep marks a
    * zero-health player `Dead` and leaves the body in the world, and
    * `announceDeaths` already says "You have fallen" -- after which they get up
-   * when they ask (spec 163). So an admin kill and a monster's kill end the same
+   * when they ask (spec 164). So an admin kill and a monster's kill end the same
    * way, including in needing the player to decide to come back.
    *
    * The one thing the sweep does not do is cancel a trade -- only the `'died'`

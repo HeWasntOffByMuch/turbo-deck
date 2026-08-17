@@ -1,5 +1,5 @@
 /**
- * What the bar along the bottom holds (spec 163).
+ * What the bar along the bottom holds (spec 164).
  *
  * Five slots: four empty ones a skill will go into, and the vial. It replaces
  * the nine-entry `HOTBAR`, which was every ability in the table laid out in

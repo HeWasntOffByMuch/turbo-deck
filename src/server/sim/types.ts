@@ -739,7 +739,7 @@ export type ServerSimEvent =
       readonly entityId: number;
       readonly killerId: number | null;
       /**
-       * What died, carried rather than looked up (spec 163).
+       * What died, carried rather than looked up (spec 164).
        *
        * The rule this states: **a death event outlives the body it is about.**
        * Step 4a of `stepWorld` sweeps a dead monster out of the state in the

@@ -42,7 +42,7 @@ describe('the HUD layout', () => {
   });
 
   /**
-   * The whole bottom band is drawn in the game's own 5x7 face since spec 163, so
+   * The whole bottom band is drawn in the game's own 5x7 face since spec 164, so
    * every label in it is a *scale* and a sum rather than a point size the
    * browser will reflow. A glyph that does not fit its box is clipped, silently.
    */
@@ -157,7 +157,7 @@ describe('the HUD layout', () => {
   });
 
   /**
-   * The pool block is the newest thing in the bottom band (spec 163) and the
+   * The pool block is the newest thing in the bottom band (spec 164) and the
    * one most likely to be the thing that stops fitting: it sits between the
    * frame's left edge and a centred bar, in the corner the weapon switch is
    * already in on a desktop.
@@ -187,7 +187,7 @@ describe('the HUD layout', () => {
 
   /**
    * The experience strip is pinned to the very bottom and spans the whole width
-   * (spec 163), so it is not something the other furniture can sit beside --
+   * (spec 164), so it is not something the other furniture can sit beside --
    * only above. Anything still pinned to the bare `edge` has a gold line
    * through it.
    */

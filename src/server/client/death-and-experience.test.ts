@@ -1,5 +1,5 @@
 /**
- * A kill that pays, and a death you get up from (spec 163).
+ * A kill that pays, and a death you get up from (spec 164).
  *
  * The kills are real kills, over a real loopback, for the reason
  * `loot-wire.test.ts` gives about drops: the claim is about the path from a body

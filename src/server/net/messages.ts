@@ -310,7 +310,7 @@ export interface PickUpItemMessage {
 }
 
 /**
- * "Put me back on my feet" (spec 163). See {@link ClientMessageType.Respawn}.
+ * "Put me back on my feet" (spec 164). See {@link ClientMessageType.Respawn}.
  *
  * Payloadless, like {@link GoodbyeMessage}: where a respawn puts you and what it
  * restores are the server's to decide, so there is nothing here for a client to
