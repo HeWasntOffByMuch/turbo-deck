@@ -42,7 +42,7 @@ import {
   type CastRejection,
 } from '../sim/abilities.js';
 import { regenerated } from '../sim/resource.js';
-import { CastPhase, EntityKindValue, type CastState, type ServerEntity } from '../sim/types.js';
+import { AggroValue, CastPhase, EntityKindValue, type CastState, type ServerEntity } from '../sim/types.js';
 import { blankProgression } from '../sim/world.js';
 import type { EffectiveStats } from '../state/types.js';
 
@@ -93,6 +93,8 @@ export function asEntity(mirror: Mirror): ServerEntity {
     activityUntilTick: 0,
     radius: 0,
     targetId: null,
+    aggro: AggroValue.Calm,
+    aggroUntilTick: 0,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,

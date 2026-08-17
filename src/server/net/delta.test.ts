@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ActivityValue, EntityKindValue, type ServerEntity } from '../sim/types.js';
+import { ActivityValue, AggroValue, EntityKindValue, type ServerEntity } from '../sim/types.js';
 import type { EffectiveStats } from '../state/types.js';
 import { DeltaTracker } from './delta.js';
 import { decodeServerMessage, encodeServerMessage } from './messages.js';
@@ -42,6 +42,8 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     activityUntilTick: 0,
     radius: 22,
     targetId: null,
+    aggro: AggroValue.Calm,
+    aggroUntilTick: 0,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
