@@ -49,6 +49,27 @@ export const SAMPLE_STEP = 11;
 export const MAX_SEGMENTS = 256;
 export const MAX_RINGS = 24;
 
+/**
+ * The coarsest a *curved* edge may be, as an angle: 15 degrees, which is 24
+ * segments around a full circle (spec 164).
+ *
+ * {@link SAMPLE_STEP} bounds how far apart two samples may be, which is the
+ * right question for following the ground and no question at all about whether
+ * the shape still looks like the shape. Every indicator spec 153 converted was
+ * large enough that the two never disagreed -- a 420-unit range ring gets 240
+ * segments out of the ground rule alone. A ring drawn under a *body* is thirty
+ * units across and gets eighteen, against the twenty-four the flat
+ * `RingGeometry` it replaces was authored with, so conforming to the ground
+ * would have quietly cost the picture some roundness.
+ *
+ * An angle rather than a minimum count, because a count is wrong for a sector:
+ * a 90-degree cone floored at 24 segments would pay four times over for
+ * curvature it does not have, and the same angular limit gives it six. Below
+ * about 44 units of radius this is the binding bound and above it the ground
+ * is, so nothing spec 153 measured is tessellated differently.
+ */
+export const MAX_SEGMENT_ANGLE = Math.PI / 12;
+
 /** A flat shape in its own frame: +X is the heading, +Z is to its left. */
 export interface DecalTemplate {
   /** Local XZ pairs, x0,z0,x1,z1,... */
@@ -180,6 +201,20 @@ function ringsFor(depth: number): number {
 }
 
 /**
+ * How many segments an *arc* wants: the finer of what the ground asks for and
+ * what {@link MAX_SEGMENT_ANGLE} asks for (spec 164).
+ *
+ * Only the curved builders go through this. A lane has no curvature to bound,
+ * so flooring its columns would buy nothing and cost samples.
+ */
+function arcSegmentsFor(radius: number, sweep: number): number {
+  const span = Math.abs(sweep);
+  const forGround = segmentsFor(span * radius);
+  const forRoundness = Math.ceil(span / MAX_SEGMENT_ANGLE);
+  return Math.min(MAX_SEGMENTS, Math.max(forGround, forRoundness));
+}
+
+/**
  * A grid of `(columns + 1) x (rows + 1)` vertices, triangulated.
  *
  * Every template here is one of these bent into a different frame -- a disc is
@@ -232,7 +267,7 @@ function grid(
 export function discTemplate(radius: number, from = -Math.PI, to = Math.PI): DecalTemplate {
   const r = Math.max(1, radius);
   const sweep = to - from;
-  const segments = segmentsFor(Math.abs(sweep) * r);
+  const segments = arcSegmentsFor(r, sweep);
   const rings = ringsFor(r);
   const step = Math.max((Math.abs(sweep) * r) / segments, r / rings);
   return grid(segments, rings, step, (u, v, out, at) => {
@@ -243,14 +278,16 @@ export function discTemplate(radius: number, from = -Math.PI, to = Math.PI): Dec
 }
 
 /**
- * An annulus: the range ring, which is the indicator this whole spec is most
- * about, since it is the largest thing drawn on the ground and therefore the
- * one that crossed the most hillside while pretending to be level.
+ * An annulus: the range ring, which is the indicator spec 153 was most about,
+ * since it is the largest thing drawn on the ground and therefore the one that
+ * crossed the most hillside while pretending to be level -- and, since spec
+ * 164, the ring under a body, which is the smallest and was buried by the
+ * *gradient* rather than by its own size.
  */
 export function ringTemplate(inner: number, outer: number): DecalTemplate {
   const ro = Math.max(1, outer);
   const ri = Math.min(Math.max(0, inner), ro - 0.001);
-  const segments = segmentsFor(2 * Math.PI * ro);
+  const segments = arcSegmentsFor(ro, 2 * Math.PI);
   const step = Math.max((2 * Math.PI * ro) / segments, ro - ri);
   return grid(segments, 1, step, (u, v, out, at) => {
     const angle = -Math.PI + 2 * Math.PI * u;
@@ -258,6 +295,39 @@ export function ringTemplate(inner: number, outer: number): DecalTemplate {
     out[at] = Math.cos(angle) * radius;
     out[at + 1] = Math.sin(angle) * radius;
   });
+}
+
+/**
+ * The ring under a body (spec 164), as the numbers the flat mesh drew.
+ *
+ * It was one `RingGeometry(22, 27, 24)` scaled by `max(0.6, (radius + margin) /
+ * 27)`, so these two are that scale factor read back as the radii it produced:
+ * the inner edge is 22/27 of the outer, and the `0.6` floor is a radius of
+ * 16.2. Written out rather than left as a scale because a decal is *built* at a
+ * radius -- there is no transform on it to scale -- and because a proportion is
+ * what keeps the ring as thick as it was whatever body it is under.
+ */
+export const BODY_RING_INNER = 22 / 27;
+export const BODY_RING_MIN_RADIUS = 27 * 0.6;
+
+/**
+ * The outer radius of the ring under a body of this size, to the nearest unit.
+ *
+ * Rounded because a `GroundDecal` holds one template at a time and rebuilds it
+ * when the key changes, so a cursor sweeping across bodies would otherwise
+ * re-tessellate on any radius that differed at all -- which was spec 153's
+ * stated objection to converting these ("sized by scaling one shared geometry
+ * rather than built per radius"), and this is the answer to it. Body radii are
+ * a handful of authored values and a unit is invisible on a ring thirty across,
+ * so rounding bounds the key set whatever the monster table does later.
+ */
+export function bodyRingRadius(bodyRadius: number, margin: number): number {
+  return Math.round(Math.max(BODY_RING_MIN_RADIUS, bodyRadius + margin));
+}
+
+/** That ring as a template: the same annulus, at the radius above. */
+export function bodyRingTemplate(outer: number): DecalTemplate {
+  return ringTemplate(outer * BODY_RING_INNER, outer);
 }
 
 /**
