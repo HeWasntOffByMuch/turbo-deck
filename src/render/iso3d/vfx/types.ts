@@ -39,7 +39,17 @@ export type EmitterShape =
    * covered, centred on the emitter's rotation, and particles are laid along it
    * in emission order rather than at random, so a swing reads as a swing.
    */
-  | { readonly kind: 'arc'; readonly radius: number; readonly sweep: number };
+  | { readonly kind: 'arc'; readonly radius: number; readonly sweep: number }
+  /**
+   * Thrown along the emitter's own bearing (spec 158) -- local +X, the axis the
+   * effect's `rotation` turns, biased toward the middle of the spread and lifted
+   * out of the ground plane by `rise`.
+   *
+   * The shape a spatter needs and the one the format could not express: `cone`
+   * is about local +Y and `circle` is radial in the ground plane, so between
+   * them there was no way to say "away from the attacker, and a bit upward".
+   */
+  | { readonly kind: 'fan'; readonly angle: number; readonly radius: number; readonly rise: number };
 
 export type Emission =
   /** All at once, optionally after a delay. The one-shot. */

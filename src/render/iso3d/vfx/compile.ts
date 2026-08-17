@@ -162,6 +162,8 @@ function compileShape(shape: EmitterShape): CompiledShape {
       return { kind: SHAPE.circle, a: shape.radius, b: shape.shell ? 1 : 0, c: 0 };
     case 'arc':
       return { kind: SHAPE.arc, a: shape.radius, b: shape.sweep, c: 0 };
+    case 'fan':
+      return { kind: SHAPE.fan, a: shape.angle, b: shape.radius, c: shape.rise };
     case 'mesh':
       return { kind: SHAPE.mesh, a: 0, b: 0, c: 0 };
     case 'point':

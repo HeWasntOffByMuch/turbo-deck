@@ -23,6 +23,7 @@ export const SHAPE = {
   circle: 5,
   mesh: 6,
   arc: 7,
+  fan: 8,
 } as const;
 
 export type ShapeKind = (typeof SHAPE)[keyof typeof SHAPE];
@@ -38,6 +39,7 @@ export type ShapeKind = (typeof SHAPE)[keyof typeof SHAPE];
  * | box        | halfX      | halfY   | halfZ |
  * | circle     | radius     | shell   |       |
  * | arc        | radius     | sweep   |       |
+ * | fan        | angle      | radius  | rise  |
  */
 export interface CompiledShape {
   readonly kind: ShapeKind;
@@ -164,6 +166,37 @@ export function sampleShape(
       out[dirAt] = -cz;
       out[dirAt + 1] = 0;
       out[dirAt + 2] = cx;
+      return;
+    }
+
+    case SHAPE.fan: {
+      // Thrown *along* the effect's own bearing (spec 158).
+      //
+      // Every other directional shape here is either about local +Y (`cone`) or
+      // radial in the ground plane (`circle`), so "away from the attacker,
+      // mostly, and a bit upward" could not be written down at all -- and that
+      // is exactly the directional bias a spatter needs. Centred on local +X,
+      // the axis `arc` already established as the one the effect's rotation
+      // turns, and lifted by `c` so a flick arcs rather than skidding.
+      //
+      // The yaw is drawn as the *square* of a signed unit draw, which is what
+      // makes the bias a bias: most marks land near the bearing and a few stray
+      // wide, where a flat draw across the same angle gives a fan with as many
+      // marks at its edges as down its middle.
+      const bias = rng.signed(1);
+      const yaw = bias * Math.abs(bias) * shape.a;
+      const pitch = shape.c + rng.signed(shape.a * 0.35);
+      const cosPitch = Math.cos(pitch);
+      out[dirAt] = Math.cos(yaw) * cosPitch;
+      out[dirAt + 1] = Math.sin(pitch);
+      out[dirAt + 2] = Math.sin(yaw) * cosPitch;
+      // Born on a disc across the bearing, so a burst has a mouth rather than a
+      // point: every mark leaving one pixel is the thing that reads as a nozzle.
+      const spawnPhi = rng.float() * Math.PI * 2;
+      const r = shape.b * Math.sqrt(rng.float());
+      out[at] = 0;
+      out[at + 1] = Math.sin(spawnPhi) * r;
+      out[at + 2] = Math.cos(spawnPhi) * r;
       return;
     }
 
