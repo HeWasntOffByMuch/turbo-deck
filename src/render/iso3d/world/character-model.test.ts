@@ -26,7 +26,17 @@ import {
   UNKNOWN_ABILITY_ICON,
   type CharacterSource,
 } from './character-model.js';
-import { HOTBAR } from './hud.js';
+import { ACTION_BAR } from './action-bar.js';
+
+/**
+ * A bar with things on it, for the gallery HUD's own arithmetic.
+ *
+ * Written out rather than taken from the shipped bar: since spec 164 four of the
+ * five slots are empty, and a test that fed the real bar in would be asserting
+ * about a list of nulls. What `hudViewOf` is being asked is what it does with an
+ * ability id it cannot resolve, and that needs ids.
+ */
+const GALLERY_BAR = ['melee.slash', 'melee.heavy', 'bolt.arcane', 'self.mend'];
 import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
 import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
 import { startingBaseStats } from '../../../server/player/attributes.js';
@@ -107,11 +117,11 @@ describe('the HUD view', () => {
       cooldowns: {},
       tick: 0,
       cast: null,
-      hotbar: [...HOTBAR, 'nothing.at.all'],
-      keyLabels: ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
+      hotbar: [...GALLERY_BAR, 'nothing.at.all'],
+      keyLabels: ['1', '2', '3', '4', '5'],
     });
-    expect(view.slots).toHaveLength(HOTBAR.length + 1);
-    expect(view.slots[HOTBAR.length]).toBeNull();
+    expect(view.slots).toHaveLength(GALLERY_BAR.length + 1);
+    expect(view.slots[GALLERY_BAR.length]).toBeNull();
     expect(view.cast).toBeNull();
   });
 
@@ -132,9 +142,15 @@ describe('the HUD view', () => {
 });
 
 describe('ability art', () => {
-  it('names a sprite the atlas actually has, for every ability on the bar', () => {
+  it('names a sprite the atlas actually has, for everything the bar can hold', () => {
     const atlas = bakeAtlas(THEME);
-    for (const id of HOTBAR) expect(atlas.hasSprite(abilityIconFor(id))).toBe(true);
+    // The shipped bar holds one ability today (spec 164: four slots are empty
+    // and the fifth is the vial), so this alone is a weak check -- the test
+    // below is the one with teeth, and covers every ability in the table.
+    for (const slot of ACTION_BAR) {
+      if (slot.abilityId === null) continue;
+      expect(atlas.hasSprite(abilityIconFor(slot.abilityId))).toBe(true);
+    }
   });
 
   it('falls back to the box rather than to nothing', () => {

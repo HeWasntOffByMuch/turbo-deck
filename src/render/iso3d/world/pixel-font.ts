@@ -25,9 +25,11 @@ export const GLYPH_SPACING = 1;
 
 /**
  * Every character the HUD can emit: the digits, a sign for heals and negatives,
- * a bang for a critical, and since spec 143 the capitals, a colon and a full
- * stop, because the refusal stack in the corner draws words. Anything else falls
- * back to a solid block, which is visibly wrong rather than invisibly missing.
+ * a bang for a critical, since spec 143 the capitals, a colon and a full stop,
+ * because the refusal stack in the corner draws words, and since spec 164 a
+ * slash, a percent and a pair of brackets, because the bottom band draws
+ * quantities -- "179 / 218", "62.4%", "(312 / 926 XP)". Anything else falls back
+ * to a solid block, which is visibly wrong rather than invisibly missing.
  *
  * One case, deliberately. A lower case would double the table for the benefit of
  * one screen, and every caller here is a short shout: a damage number, or
@@ -48,6 +50,13 @@ const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   '-': ['.....', '.....', '.....', '#####', '.....', '.....', '.....'],
   '!': ['..#..', '..#..', '..#..', '..#..', '..#..', '.....', '..#..'],
   ':': ['.....', '..#..', '..#..', '.....', '..#..', '..#..', '.....'],
+  // Spec 163's four: the bottom band draws "179 / 218", "62.4%" and
+  // "(312 / 926 XP)", and every character a HUD emits has to have a glyph or it
+  // comes out as the solid block.
+  '/': ['....#', '....#', '...#.', '..#..', '.#...', '#....', '#....'],
+  '%': ['##..#', '##..#', '...#.', '..#..', '.#...', '#..##', '#..##'],
+  '(': ['..##.', '.#...', '#....', '#....', '#....', '.#...', '..##.'],
+  ')': ['.##..', '...#.', '....#', '....#', '....#', '...#.', '.##..'],
   '.': ['.....', '.....', '.....', '.....', '.....', '..#..', '..#..'],
   ' ': ['.....', '.....', '.....', '.....', '.....', '.....', '.....'],
   A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],

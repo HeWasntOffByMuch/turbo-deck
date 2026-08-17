@@ -921,6 +921,20 @@ export class GameClient {
     return requestId;
   }
 
+  /**
+   * Ask to be put back on our feet (spec 164).
+   *
+   * Nothing optimistic and nothing remembered: the server answers with a
+   * `Correction` and a delta carrying full health, and until it does the body is
+   * still dead. A predicted respawn would be the one prediction that could not be
+   * rolled back honestly -- a client that drew itself alive at the spawn and was
+   * refused would have to un-resurrect.
+   */
+  respawn(): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.Respawn }));
+  }
+
   inviteToTrade(entityId: number): void {
     if (!this.connected) return;
     this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeInvite, entityId }));
