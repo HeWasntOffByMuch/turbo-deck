@@ -378,3 +378,62 @@ spec was opened for.
 The lesson worth keeping: **spreading a fixed cost over frames only helps if the
 frames were going to happen anyway.** Behind a loading screen they are not free,
 and a cost that must be paid before play is better paid at once.
+
+---
+
+## Fourth follow-up: a hole that never fills in
+
+Reported from a `?server` session: patches of terrain never rendered, and the
+load showed terrain early while the tab was locked solid, went choppy, and only
+settled after about ten seconds.
+
+Two causes, both mine, and both on the **remote** path -- which is the path
+nothing was driving.
+
+### The holes
+
+`ChunkIngest.takeMesh()` *dequeues* what it returns. The caller was written as
+
+```js
+for (const chunk of ingest.takeMesh()) {
+  scene.addTerrainChunk(chunk);
+  if (spend.spent()) break;      // drops the rest, permanently
+}
+```
+
+A chunk already removed from the queue but not yet drawn was discarded. It is in
+the streamed map, so `streamed.add` never offers it again and nothing re-meshes
+it: a hole at whichever chunk the frame ran out of time on, for the session.
+The list was already bounded by `MESH_BUDGET_PER_FRAME`, so the second check
+bought nothing and cost correctness.
+
+### The lock-up
+
+A remote client has no bundled map, so nothing pre-warms its colliders or its
+nav grid the way `warmRouting` does at a loopback mount. The first
+`warmNavGrids` samples every nav cell over the *declared* map -- about five
+seconds -- and driven by the prop settle it landed a few hundred milliseconds
+**after** the gate opened. Terrain on screen, tab frozen.
+
+The remote path's first ground build now happens before the gate is asked
+whether to open, so it is behind the loading screen. Blocking, not sliced: see
+the third follow-up for why slicing it is the wrong answer.
+
+### Why nothing caught either
+
+`preview-world.ts` drives the *loopback* page, and every bug in these follow-ups
+has been on the remote path. So `scripts/probe-streaming.ts` drives the real
+built page against a real server over `?server`, walks the player, and asserts
+the two things that were wrong:
+
+- `data-chunks-held` and `data-chunks-drawn` converge -- the hole bug as a
+  number. Distinct chunks *drawn*, not meshes built, since a chunk is re-meshed
+  whenever a neighbour lands.
+- the world was covered before it was ready.
+
+Both counts had to be published for this to be checkable at all, which is itself
+the finding: a chunk silently dropped between the queue and the scene is
+invisible to every headless test in the suite.
+
+`chunk-ingest.test.ts` also pins the contract directly -- what `takeMesh` hands
+back, the caller owns, and the queue no longer holds.

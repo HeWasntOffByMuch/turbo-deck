@@ -69,6 +69,27 @@ describe('the meshing budget', () => {
     expect(new Set(seen).size).toBe(21);
   });
 
+  it('hands a taken chunk back exactly once, and never holds it again', () => {
+    // `takeMesh` dequeues what it returns, so a caller that drops part of the
+    // list drops that ground for the session -- a hole in the world that never
+    // fills in, because the chunk is already in the streamed map and will not be
+    // offered a second time. The queue cannot prevent that; what it can do is
+    // make the contract impossible to miss, which is what this pins.
+    const queue = ingest(4);
+    queue.offer([...Array(6)].map((_, i) => chunk(i, 0)), 0);
+
+    const first = queue.takeMesh();
+    expect(first).toHaveLength(4);
+    expect(queue.pending).toBe(2);
+
+    // Nothing taken is still queued: the caller now owns every one of them.
+    const second = queue.takeMesh();
+    const taken = [...first, ...second].map((c) => `${c.coord.cx},${c.coord.cz}`);
+    expect(new Set(taken).size).toBe(6);
+    expect(queue.pending).toBe(0);
+    expect(queue.takeMesh()).toHaveLength(0);
+  });
+
   it('collapses a chunk re-offered because a neighbour arrived', () => {
     // The common case during a burst, not a corner one: chunks arriving along an
     // edge each re-dirty the one before them.

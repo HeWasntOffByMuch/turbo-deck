@@ -370,6 +370,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const navGrowsWithStream = plan.mode === 'remote';
   /** The load as the overlay last drew it, so the DOM is written only on change. */
   let lastLoadLabel = '';
+  /** Whether the remote path has built its collision ground and nav grid once. */
+  let firstGroundBuilt = false;
+  /** The last published mesh readout, so the DOM is written only on change. */
+  let lastMeshState = '';
+  /**
+   * Every chunk coordinate the scene has actually been given.
+   *
+   * Distinct, so it can be compared against the number the streamed map holds.
+   * See the readout in {@link updateLoading} for why that comparison matters.
+   */
+  const drawnChunks = new Set<string>();
 
   /**
    * The frame-time meter and its overlay (spec 165).
@@ -445,9 +456,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       }
     }
 
+    // Every chunk this hands back, without exception.
+    //
+    // `takeMesh` *dequeues* what it returns, so breaking out of this loop early
+    // -- which a second budget check here used to do -- dropped chunks that had
+    // already left the queue and would never be offered again. That is a hole in
+    // the world that never fills in, at whichever chunk the frame happened to
+    // run out of time on. The list is already bounded by MESH_BUDGET_PER_FRAME;
+    // the budget's job was done before it was built.
     for (const chunk of ingest.takeMesh()) {
       scene.addTerrainChunk(chunk);
-      if (spend.spent()) break;
+      drawnChunks.add(`${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`);
     }
 
     // Props wait for the stream to go quiet rather than rebuilding per chunk.
@@ -500,6 +519,36 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const self = view.self ?? null;
     const coverage =
       streamed && self ? streamed.coverage(self.x, self.y, READY_CHUNK_RADIUS) : { held: 0, needed: 0 };
+
+    // The remote path's first ground build, and deliberately *before* the gate
+    // is asked whether to open (spec 165 follow-up 4).
+    //
+    // A remote client has no bundled map, so nothing pre-warms its colliders or
+    // its nav grid the way `warmRouting` does at a loopback mount -- the first
+    // `warmNavGrids` samples every nav cell over the declared map, which is ~5
+    // seconds. Left to the prop settle, that landed a few hundred milliseconds
+    // *after* the world was shown: terrain on screen, and the tab locked solid.
+    // That is what "shows some terrain early, but it's unresponsive" was.
+    //
+    // Blocking rather than sliced, on purpose: this is the cost that has to be
+    // paid before play, and slicing it across frames only makes the wall-clock
+    // wait a function of the frame rate. Every later settle re-samples just the
+    // ground that arrived, which is what makes one blocking pass affordable.
+    if (
+      plan.mode === 'remote' &&
+      !firstGroundBuilt &&
+      streamed &&
+      self &&
+      coverage.needed > 0 &&
+      coverage.held >= coverage.needed &&
+      ingest.pending === 0
+    ) {
+      firstGroundBuilt = true;
+      fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
+      syncPathWorld();
+      if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
+    }
+
     const progress = gate.progress({
       haveMap: view.map !== null,
       located: self !== null,
@@ -509,6 +558,26 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // Only this tab's own sim can stall on it; a remote client's grid is a
       // prediction aid and warms behind the world.
     });
+
+    // How much ground has arrived against how much has actually been drawn
+    // (spec 165 follow-up 4).
+    //
+    // *Distinct* chunks drawn, not meshes built: a chunk is re-meshed whenever a
+    // neighbour lands, so counting rebuilds would sail past the number held and
+    // say nothing. What has to hold is that every chunk the streamed map accepted
+    // has been handed to the scene at least once. When it does not, the symptom
+    // is a hole in the world that never fills in -- invisible to every headless
+    // test, and easy to miss on screen unless you look the right way.
+    //
+    // A readout, not an input: nothing in the game reads these.
+    const streamedCount = streamed?.size ?? 0;
+    const meshState = `${streamedCount}:${drawnChunks.size}:${ingest.pending}`;
+    if (meshState !== lastMeshState) {
+      lastMeshState = meshState;
+      root.dataset['chunksHeld'] = String(streamedCount);
+      root.dataset['chunksDrawn'] = String(drawnChunks.size);
+      root.dataset['chunksPending'] = String(ingest.pending);
+    }
 
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;
     if (label !== lastLoadLabel) {
