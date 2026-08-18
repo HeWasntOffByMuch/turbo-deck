@@ -119,6 +119,20 @@ docs/            durable direction that outlives one spec. vfx-plan.md, ui/, and
                  implemented**, because the risk with a document like that is a
                  direction reading as a backlog item and getting built as a side
                  effect of something else.
+                 vertical-terrain.md is the same for anything that leaves the
+                 ground -- floating islands, arches, overhangs -- and its finding
+                 is that the three are not one feature: a layer you only land on
+                 is nearly free and mostly built already (spec 123 proved the
+                 machinery), an arch you ride under is a prop, and an overhang
+                 you walk under AND over is the one that costs, because
+                 `heightAt` is single-valued and 103 places under src/ read it.
+                 The sleeper it names is that every distance in the sim is
+                 `Math.hypot(dx, dy)` with no z in it, so a monster on a tier can
+                 already hit a player at its foot. `npx tsx
+                 scripts/probe-overhang.ts` is the measurement behind all of it,
+                 and like probe-rock.ts it is meant to be read rather than to
+                 pass -- each of its four "BROKE" lines is a design constraint,
+                 not a defect.
 schemas/         JSON Schema (draft-07) for the three unit documents and the weapon
                  document (spec 140), committed
                  and validated against in CI. additionalProperties is false
