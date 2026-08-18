@@ -55,6 +55,47 @@ No RNG. A kill's scatter draws from `state.rng` because a landing spot nobody
 chose has to come from somewhere; a player pointed at this one, and drawing for
 it would let anybody shift every roll in the world by opening their bag.
 
+### It is aimed, so the body has to come round first
+
+The press carries a world point — where the cursor was — and **the body turns to
+face it before the item leaves the bag**. Not a cast: no cost, no cooldown, no
+wind-up, no backswing, nothing rooted, and no `CastState`, because every one of
+those would put a cast bar over a body putting a potion down. What it borrows
+from a cast is the one part that is about *aiming*: `CastPhase.Turning`'s rule
+that a committed action waits for the heading it committed to.
+
+**`ServerEntity.dropAim`** — a world point, or null. `resolveFacing` reads it
+directly under the cast: `cast ?? dropAim ?? input.facing`, so the turn happens
+at the body's own `turnRate` and is the same turn every other player watches. It
+outranks the input rather than being outranked by it, because a drop is not
+withdrawn from by walking the way a cast is — there is nothing to refund, and a
+player who clicked to put something down and then stepped aside still meant to
+put it down.
+
+**`Connection.pendingDrops`** — the queue, on the server rather than in the sim,
+because what a drop takes out of a bag lives behind an async store and the sim
+cannot reach it. One pass per tick: the head is served the tick the body's
+heading lands on the aim (`facingAim`, the same predicate the cast commit uses),
+and `dropAim` moves on to the next. A queue rather than one slot so that
+emptying four things at the same spot is one turn and four drops, in the order
+they were asked for.
+
+Three bounded ways it ends other than by landing: the body dies, the queue
+overflows `MAX_PENDING_DROPS`, or the turn does not finish inside
+`DROP_TURN_TIMEOUT_TICKS`. All three are refusals with a reason and an
+`Inventory` at the request id, and in all three the item never left the bag.
+
+**The wire** carries `aimX`/`aimY` as f32 beside the slot. The landing is still
+the server's: it takes the *direction* from the body to that point and throws
+`THROW_REACH` along it, so clicking the horizon and clicking two paces away drop
+the same distance away. An aim on top of the body has no direction, and the
+body's own heading stands.
+
+**The client predicts the turn as well as the removal** — `steerFacing` takes the
+same aim and applies it in the same order the server does. Without it the local
+player is the one person who cannot see their own body come round: facing is
+predicted locally and the server's is never adopted after the first seed.
+
 `origin` is the body's own position, so the arc spec 158 draws between the two
 points is the throw — the presentation is inherited whole and this spec adds no
 renderer code at all.
@@ -74,9 +115,16 @@ also issues a move order to walk to it.
   body) changes no container and answers with a reason.
 - A dropped stack becomes exactly one drop entity: unowned, revealed on its
   spawn tick, holding the item and count that left the bag.
-- It lands in front of the body — within `THROW_REACH` of where the dropper
-  stands, on the far side along its facing, and inside `PICKUP_RANGE` so it can
-  be picked straight back up.
+- It lands `THROW_REACH` from the dropper, along the line from the body to the
+  point that was clicked, and inside `PICKUP_RANGE` so it can be picked straight
+  back up. An aim on top of the body falls back to the body's heading.
+- A drop aimed behind the body does not happen until the body has turned: the
+  item is still in the bag on the tick after the press, the heading moves at the
+  body's own `turnRate`, and the drop lands on the tick the heading arrives.
+- Turning for a drop roots nothing and refunds nothing: the body may walk while
+  it comes round, and walking does not call the drop off.
+- A body that cannot come round — dead, or still turning after
+  `DROP_TURN_TIMEOUT_TICKS` — is refused, and the item is still in the bag.
 - The dropper's bag loses it, and the same client can take it back and have it
   return to the bag.
 - Another player can take it: ownership is null, not the dropper's.
@@ -96,5 +144,9 @@ also issues a move order to walk to it.
   potion is the one people stop reading.
 - Any change to how long a drop lasts. A dropped item expires on the same
   `DROP_LIFETIME_TICKS` as a rolled one; ground items are not persistence.
-- Throwing it any distance the player chooses, or dropping at the cursor. The
-  direction is the body's facing and the reach is a constant.
+- Throwing it any distance the player chooses, or dropping *at* the cursor. The
+  cursor gives a direction and the reach is a constant, so the clicked point
+  aims the throw rather than being where it lands.
+- A wind-up, a cost or a cooldown on the turn. It is an action that needs
+  facing, not a skill: the only thing between the press and the item leaving the
+  bag is the body's own turn rate.
