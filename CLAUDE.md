@@ -1303,7 +1303,28 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  reads the boxes back off `data-ui-frames`, reloads the tab and
                  requires the same numbers. Everything the feature decides is
                  asserted in Node; what it could not say is whether any of it
-                 was connected to anything),
+                 was connected to anything.
+                 Since spec 168 it also owns the trade table's *ending*, and the
+                 rule is that the mount reads `view.trade ?? view.endedTrade`:
+                 the server forgets a trade the instant it is over, so by the
+                 time there is a reason to show, the live field is already null
+                 -- a window reading only that froze on its last live frame and
+                 offered a Cancel button for a trade nobody was in. **Closing is
+                 what dismisses the ending**, and it lives in `close` and
+                 `closeTopmost` rather than in the Close button, because Escape
+                 and the title bar shut a window without pressing anything --
+                 the same shape the shop's `onVendor('')` already has, and
+                 without it the mount re-opened the ending on the very next
+                 frame. This is also the one window that is **re-placed when its
+                 content changes shape**: every other screen is roughly one
+                 size, and the trade table opens holding an invitation and then
+                 grows a bag grid, which left Accept 77 pixels below its own
+                 window's bottom edge and the trade unfinishable without
+                 resizing by hand. `npx tsx scripts/probe-trade.ts` is the only
+                 thing that could find either -- two tabs, two players, one
+                 server, the real shift-right-click and the real buttons, with
+                 both bags counted afterwards because a swap that duplicated the
+                 bow leaves each side individually plausible),
                  loot-drop.ts (how a drop looks while it is still withholding
                  itself, spec 158 -- the three.js half is `iso3d/drop-rig.ts`,
                  beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks
