@@ -12,7 +12,7 @@ import { LayerStack } from '../core/layers.js';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
-import type { ItemView } from '../widgets/item-slot.js';
+import type { ItemDetail, ItemView } from '../widgets/item-slot.js';
 import {
   InventoryScreen,
   type ContainerView,
@@ -29,8 +29,22 @@ const SLOTS = [
   { id: 'trinket', label: 'Charm' },
 ];
 
-function item(defId: string, slot: string | null, count = 1, level = 1): ItemView {
-  return { defId, name: defId, count, slot, icon: `item:${defId}`, levelRequirement: level };
+function item(
+  defId: string,
+  slot: string | null,
+  count = 1,
+  level = 1,
+  rarity = 'common',
+  details: readonly ItemDetail[] = [],
+): ItemView {
+  return { defId, name: defId, count, slot, icon: `item:${defId}`, levelRequirement: level, rarity, details };
+}
+
+/** What a cell's tooltip says, as plain text -- the colours are asserted apart. */
+function says(test: { screen: InventoryScreen }, index: number): readonly string[] {
+  const cell = test.screen.cellAt(inv(index));
+  if (!cell) throw new Error(`no cell ${index}`);
+  return test.screen.tooltipFor(cell).map((line) => line.text);
 }
 
 function viewOf(overrides: Partial<ContainerView> = {}): ContainerView {
@@ -292,14 +306,44 @@ describe('layout', () => {
     bag[0] = item('maul', 'mainHand', 1, 9);
     bag[1] = item('potion', null, 6);
     const test = harness(viewOf({ bag }));
-    const says = (index: number): string => {
-      const cell = test.screen.cellAt(inv(index));
-      if (!cell) throw new Error(`no cell ${index}`);
-      return test.screen.tooltipFor(cell);
-    };
-    expect(says(0)).toContain('Requires level 9');
-    expect(says(1)).toBe('potion x6');
-    expect(says(9)).toBe('');
+    expect(says(test, 0)).toContain('Requires level 9');
+    expect(says(test, 1)).toEqual(['potion', 'x6']);
+    expect(says(test, 9)).toEqual([]);
+  });
+
+  /**
+   * The tier reaches the interface as a colour (spec 176).
+   *
+   * Asserted as tokens rather than as bytes, because a token is what the widget
+   * carries and what a theme retune would keep: the day somebody warms the gold
+   * up, this test should not fail.
+   */
+  it('draws an item in its own tier, and everything it was told about it', () => {
+    const bag: (ItemView | null)[] = new Array<ItemView | null>(24).fill(null);
+    bag[0] = item('bloodstone', 'trinket', 1, 1, 'exceptional', [
+      { text: 'Exceptional  Trinket', tone: 'rarity' },
+      { text: '+12% Health', tone: 'good' },
+      { text: '-8 Move Speed', tone: 'bad' },
+      { text: 'Worth 210 coins', tone: 'dim' },
+    ]);
+    bag[1] = item('rock', null, 1, 1, 'nothing-this-build-has-heard-of');
+    const test = harness(viewOf({ bag }));
+    const cell = test.screen.cellAt(inv(0));
+    if (!cell) throw new Error('no cell');
+
+    expect(test.screen.tooltipFor(cell)).toEqual([
+      { text: 'bloodstone', colorToken: 'rarityExceptional' },
+      // The tier line wears the item's own colour rather than a tone's.
+      { text: 'Exceptional  Trinket', colorToken: 'rarityExceptional' },
+      { text: '+12% Health', colorToken: 'success' },
+      { text: '-8 Move Speed', colorToken: 'danger' },
+      { text: 'Worth 210 coins', colorToken: 'textDim' },
+    ]);
+
+    // Total, like `rarityFromByte`: an unknown tier is ordinary loot, not a throw.
+    const unknown = test.screen.cellAt(inv(1));
+    if (!unknown) throw new Error('no cell');
+    expect(test.screen.tooltipFor(unknown)[0]?.colorToken).toBe('rarityCommon');
   });
 
   // --- specs 136 and 137 -------------------------------------------------

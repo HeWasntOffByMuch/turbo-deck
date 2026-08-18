@@ -9,10 +9,10 @@
   "properties": {
     "version": { "type": "integer", "minimum": 1 },
     "palette": {
-      "description": "Named colours. Capped at 16 so the art stays coherent and so the set can sit against the world's own limited palette.",
+      "description": "Named colours. Capped so the art stays coherent and so the set can sit against the world's own limited palette. It was 16 until spec 176 brought in the three rarity tiers -- the cap is against invented colour, and those three are the world's own, already drawn on every drop in the grass.",
       "type": "object",
       "minProperties": 1,
-      "maxProperties": 16,
+      "maxProperties": 19,
       "additionalProperties": { "$ref": "#/definitions/color" }
     },
     "spacing": {
@@ -116,6 +116,12 @@
         "thickness": { "type": "integer", "minimum": 1 },
         "caretWidth": { "type": "integer", "minimum": 1 },
         "gripSize": { "type": "integer", "minimum": 1 },
+        "rarityWashMix": {
+          "description": "How far a cell is mixed from its own fill toward its item's rarity colour (spec 176), 0..255. Composited into an opaque colour before it is drawn, because nothing in this framework blends. Common is never washed at all, so this is the whole of the contrast between ordinary loot and the rest.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
         "states": {
           "type": "object",
           "additionalProperties": false,

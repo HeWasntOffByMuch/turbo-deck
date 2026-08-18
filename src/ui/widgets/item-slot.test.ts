@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { over, type Color } from '../core/color.js';
 import { DrawList } from '../core/draw-list.js';
 import type { DragPayload } from '../core/drag.js';
 import { bakeAtlas } from '../render/atlas.js';
@@ -34,8 +35,8 @@ const PAINT = {
   focused: null,
 };
 
-function item(defId: string, slot: string | null, count = 1, icon = 'item:sword'): ItemView {
-  return { defId, name: defId, count, slot, icon, levelRequirement: 1 };
+function item(defId: string, slot: string | null, count = 1, icon = 'item:sword', rarity = 'common'): ItemView {
+  return { defId, name: defId, count, slot, icon, levelRequirement: 1, rarity, details: [] };
 }
 
 function payloadFrom(cell: ItemSlot, drag: ItemDrag): DragPayload {
@@ -107,6 +108,50 @@ describe('paintItem', () => {
     expect(() => paintItem(list, PAINT, item('mystery', null, 1, 'item:nope'), box)).not.toThrow();
     const unknown = ATLAS.sprite('item:unknown');
     expect(list.finish().some((cmd) => cmd.kind === 'sprite' && cmd.src.x === unknown.x)).toBe(true);
+  });
+
+  /**
+   * The tier, drawn where the sprites cannot fight it (spec 176).
+   *
+   * Asserted against `over` rather than against three literal bytes, because
+   * `over` is the rasterizer's own operator and the property being checked is
+   * that the wash *is* the tier colour laid on the cell -- pre-composited, since
+   * nothing in this framework may blend at draw time.
+   */
+  it('washes a cell in its tier, opaquely, and leaves ordinary loot alone', () => {
+    const wash = (rarity: string): readonly Color[] => {
+      const list = new DrawList();
+      paintItem(list, PAINT, item('thing', null, 1, 'item:sword', rarity), box);
+      return list
+        .finish()
+        .filter((cmd) => cmd.kind === 'solid')
+        .map((cmd) => (cmd as { color: Color }).color);
+    };
+
+    expect(wash('common')).toEqual([]);
+    // ...and so is a tier this build has never heard of, which is what an
+    // unrevealed or a newer drop resolves to.
+    expect(wash('platinum')).toEqual([]);
+
+    const mix = THEME.widget('itemSlot').metric('rarityWashMix', 0);
+    expect(mix).toBeGreaterThan(0);
+    const rare = THEME.color('rarityRare');
+    const fill = THEME.widget('itemSlot').state('normal').fill;
+    expect(wash('rare')).toEqual([over({ r: rare.r, g: rare.g, b: rare.b, a: mix }, fill)]);
+    // Opaque, or `preview-ui-gallery.ts` finds the two backends a byte apart.
+    expect(wash('rare')[0]?.a).toBe(255);
+    expect(wash('exceptional')[0]).not.toEqual(wash('rare')[0]);
+  });
+
+  it('draws the icon in its own colour, whatever the tier', () => {
+    // The wash is behind it precisely so this stays true: an orange trinket is
+    // an orange trinket at every tier, and the cell says which tier it is.
+    const tintsOf = (rarity: string): readonly unknown[] => {
+      const list = new DrawList();
+      paintItem(list, PAINT, item('thing', null, 1, 'item:sword', rarity), box);
+      return list.finish().filter((cmd) => cmd.kind === 'sprite').map((cmd) => (cmd as { tint: unknown }).tint);
+    };
+    expect(tintsOf('exceptional')).toEqual(tintsOf('common'));
   });
 
   it('draws a count only when there is more than one', () => {

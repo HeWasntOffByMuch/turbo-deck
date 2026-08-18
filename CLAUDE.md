@@ -596,6 +596,35 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  position, since `UiLayer.toUi` is deliberately the one
                  conversion between UI pixels and canvas ones and a stale
                  cursor would throw the item somewhere nobody clicked.
+                 Since spec 176 an item also *says* what it is, and the colour it
+                 says it in is the one it was lying in the grass: the three tier
+                 colours moved out of `drop-rig.ts` into the palette, and the drop
+                 reads them back, so the bag and the ground cannot drift and a
+                 test in `drop-rig.test.ts` fails if they do. That took the
+                 palette cap from 16 to 19, which is the cap doing its job rather
+                 than being waived -- it is against *invented* colour, and these
+                 three are the world's own. Three rules came out of drawing it.
+                 The tier goes **behind** the icon rather than on it: the sprites
+                 carry their own colour, so tinting an orange trinket gold and
+                 grey gives two oranges nobody can tell apart, where a wash on a
+                 near-black cell is the same three bytes whatever the icon is
+                 made of. That wash is **composited into an opaque colour before
+                 it is drawn**, with the rasterizer's own `over`, because nothing
+                 in this framework blends -- a source-over is the one operation
+                 the software backend and a browser canvas round differently, and
+                 `budget.test.ts` refuses one at draw time. And **common is not
+                 washed at all**, which is the whole contrast: ordinary loot looks
+                 exactly as it did, so the mark means "this one is not ordinary"
+                 rather than announcing which of three tiers everything is -- the
+                 same argument `restFlare` settles on the ground, where a common
+                 drop's curve is flat at the dimmest value there is. A `Tooltip`
+                 now takes lines as well as prose, wrapped **per line** so a long
+                 name folds without swallowing the stat under it, and what a line
+                 is worth saying is decided outside `src/ui/`: the view-model hands
+                 over a *tone* -- good, bad, dim, the item's own tier -- and this
+                 layer says what a tone looks like. The one line decided here
+                 rather than there is `Requires level N`, because it is the only
+                 thing about an item that depends on who is holding it.
                  One more rule of the same kind, from spec 147's sheet: **a
                  hidden tab still has rectangles in it**. A tab switched away is
                  hidden and never destroyed -- that is what makes a tab keep what

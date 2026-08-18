@@ -19,6 +19,7 @@
  * about game rules.
  */
 
+import { over } from '../core/color.js';
 import type { DragPayload, DropTarget } from '../core/drag.js';
 import type { DrawList } from '../core/draw-list.js';
 import type { Gesture } from '../core/events.js';
@@ -29,11 +30,53 @@ import { fontById, measureText } from '../text/font.js';
 import { StyledWidget } from './base.js';
 
 /**
+ * How a described line reads (spec 176).
+ *
+ * A *tone* rather than a palette token, because the view-model that produces
+ * these lives in `src/render/` and whether a drawback is red is a fact about the
+ * theme. The model says what kind of thing a line is; `inventory.ts` says what
+ * that looks like.
+ *
+ * `rarity` is the item's own tier colour -- the name and the tier line, and the
+ * only two places the colour on the ground is repeated in words.
+ */
+export type DetailTone = 'rarity' | 'good' | 'bad' | 'dim' | 'normal';
+
+/** One line of what an item says about itself (spec 176). */
+export interface ItemDetail {
+  readonly text: string;
+  readonly tone: DetailTone;
+}
+
+/**
+ * A tier's palette token (spec 176).
+ *
+ * A name table rather than a colour: the values are `theme.json`'s, which are
+ * `drop-rig.ts`'s, which is the whole point -- an item is the same colour in the
+ * bag as it was in the grass.
+ *
+ * Unknown answers `common`, the same totality `rarityFromByte` has on the wire
+ * and for the same reason: a client a build behind draws a quiet item rather
+ * than throwing over a tier it has never heard of.
+ */
+const RARITY_TOKENS: Readonly<Record<string, string>> = {
+  common: 'rarityCommon',
+  rare: 'rarityRare',
+  exceptional: 'rarityExceptional',
+};
+
+export const COMMON_RARITY = 'common';
+
+export function rarityToken(rarity: string): string {
+  return RARITY_TOKENS[rarity] ?? (RARITY_TOKENS[COMMON_RARITY] as string);
+}
+
+/**
  * An item as a widget is allowed to know it (spec 127).
  *
  * Deliberately not `ItemStack`: `src/ui/` may not import `server/state`, and
  * that boundary is what keeps layer 1 portable. Every field here is something
- * the cell *draws* -- there is nothing on it a rule would want.
+ * the cell or its tooltip *draws* -- there is nothing on it a rule would want.
  */
 export interface ItemView {
   readonly defId: string;
@@ -44,6 +87,20 @@ export interface ItemView {
   /** An atlas sprite name. The screen never derives one from an id. */
   readonly icon: string;
   readonly levelRequirement: number;
+  /**
+   * The tier id (spec 176). What the icon is tinted with, and what the tooltip's
+   * name is drawn in. A string rather than a union because the vocabulary is the
+   * server's and this layer may not import it -- {@link rarityToken} is total, so
+   * an id from a build this one has never heard of draws as ordinary loot.
+   */
+  readonly rarity: string;
+  /**
+   * What the tooltip says under the name, in display order (spec 176).
+   *
+   * Assembled outside `src/ui/` like everything else here: the stats, the worth
+   * and the level gate are all in the item table, which a widget may not read.
+   */
+  readonly details: readonly ItemDetail[];
 }
 
 /** Which container a cell belongs to, and where in it. */
@@ -217,6 +274,7 @@ export class ItemSlot extends StyledWidget implements DropTarget {
  * drift the first time either changed.
  */
 export function paintItem(out: DrawList, context: PaintContext, item: ItemView, box: Rect, count = item.count): void {
+  paintRarityWash(out, context, item, box);
   const name = context.atlas.hasSprite(item.icon) ? item.icon : 'item:unknown';
   const src = context.atlas.sprite(name);
   out.sprite(
@@ -246,8 +304,60 @@ export function paintItem(out: DrawList, context: PaintContext, item: ItemView, 
   );
 }
 
+/**
+ * The tier, as the cell it sits in (spec 176) -- the colour it was lying in the
+ * grass, behind the same icon it has always had.
+ *
+ * **Behind rather than on.** The obvious version tints the sprite, and the
+ * sprites are not silhouettes: they carry their own colour, so multiplying an
+ * orange trinket by a gold tier and by a grey one gives two oranges nobody can
+ * tell apart, while a blue tier over a warm sprite gives a colour that is not in
+ * the palette at all. A wash under the icon is the same three bytes against a
+ * near-black cell every time, whatever the icon happens to be made of.
+ *
+ * **Common is not washed at all**, which is the whole contrast: ordinary loot
+ * looks exactly as it did, and the wash means "this one is not ordinary" rather
+ * than "here is which of three tiers this is". Same argument as `restFlare` on
+ * the ground, where a common drop's curve is flat at the dimmest value there is.
+ * An unrevealed tier resolves to common's token and is therefore quiet too,
+ * which is the answer spec 158 already settled for a drop nobody has read yet.
+ */
+function paintRarityWash(out: DrawList, context: PaintContext, item: ItemView, box: Rect): void {
+  const token = rarityToken(item.rarity);
+  if (token === rarityToken(COMMON_RARITY)) return;
+  const style = context.theme.widget('itemSlot');
+  const mix = style.metric('rarityWashMix', 0);
+  if (mix <= 0) return;
+  // Composited here and drawn opaque, never blended at draw time: nothing in
+  // this framework is translucent, because a source-over blend is the one
+  // operation the software rasterizer and a browser canvas round differently
+  // (`budget.test.ts`). `over` is the rasterizer's own operator, so the bytes
+  // are the ones a translucent draw would have produced -- computed once,
+  // where both backends can only agree.
+  //
+  // Against the cell's **normal** fill rather than its current one, so a
+  // hovered cell and a carried ghost wash identically: what is in flight has to
+  // look like what was picked up, and the hover already speaks through the frame.
+  const tier = context.theme.color(token);
+  const washed = over({ r: tier.r, g: tier.g, b: tier.b, a: mix }, style.state('normal').fill);
+  // Inset by one, so the wash sits inside the sunken frame rather than over its
+  // edge -- the frame is the cell and this is what is in it.
+  out.solid(
+    { x: box.x + 1, y: box.y + 1, width: Math.max(0, box.width - 2), height: Math.max(0, box.height - 2) },
+    washed,
+  );
+}
+
 function sameItem(a: ItemView | null, b: ItemView | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  return a.defId === b.defId && a.count === b.count && a.icon === b.icon && a.name === b.name;
+  // Rarity is compared because it is *drawn* (spec 176). The details are not:
+  // they are a function of the id, which is compared, and they are a list.
+  return (
+    a.defId === b.defId &&
+    a.count === b.count &&
+    a.icon === b.icon &&
+    a.name === b.name &&
+    a.rarity === b.rarity
+  );
 }

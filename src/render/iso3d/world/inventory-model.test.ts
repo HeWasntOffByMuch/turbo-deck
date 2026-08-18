@@ -12,7 +12,7 @@ import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EMPTY_EQUIPMENT, emptyInventory, EQUIP_SLOTS } from '../../../server/state/types.js';
 import { bakeAtlas } from '../../../ui/render/atlas.js';
 import { THEME } from '../../../ui/theme/theme.js';
-import { containerViewOf, iconFor, itemViewOf, UNKNOWN_ICON } from './inventory-model.js';
+import { containerViewOf, detailsFor, iconFor, itemViewOf, UNKNOWN_ICON } from './inventory-model.js';
 
 describe('containerViewOf', () => {
   it('maps a bag with holes in it, keeping every index', () => {
@@ -82,5 +82,74 @@ describe('icons', () => {
 
   it('gives every item its own name, not its id', () => {
     expect(itemViewOf('helm.leather', 1).name).toBe('Leather Cap');
+  });
+});
+
+/**
+ * What an item says about itself (spec 176).
+ *
+ * Asserted against the real table rather than a fixture, because the thing being
+ * checked is the *mapping*: that a row's modifiers come out as lines somebody
+ * could read, in one order, with a drawback distinguishable from a benefit.
+ */
+describe('detailsFor', () => {
+  const linesOf = (defId: string): readonly string[] => detailsFor(defId).map((line) => line.text);
+
+  it('names the tier and where it is worn, in one line', () => {
+    expect(detailsFor('sword.keen')[0]).toEqual({ text: 'Rare  Main Hand', tone: 'rarity' });
+    // Nothing carried is worn anywhere, so the tier stands on its own rather
+    // than beside an empty half-sentence.
+    expect(detailsFor('potion.minor')[0]).toEqual({ text: 'Common', tone: 'rarity' });
+  });
+
+  it('writes each modifier out, benefits and drawbacks apart', () => {
+    // The maul is the row that has both, which is why it is the one asked.
+    expect(detailsFor('maul.iron')).toEqual([
+      { text: 'Rare  Main Hand', tone: 'rarity' },
+      { text: '+2 Strength', tone: 'good' },
+      { text: '+14 Damage', tone: 'good' },
+      { text: '+10 Range', tone: 'good' },
+      { text: '-20% Attack Speed', tone: 'bad' },
+      { text: 'Worth 110 coins', tone: 'dim' },
+    ]);
+  });
+
+  it('writes a fraction as a percentage, and rounds it like one', () => {
+    // 0.15 * 100 in binary floating point is 15.000000000000002.
+    expect(linesOf('sword.keen')).toContain('+15% Attack Speed');
+    expect(linesOf('shield.oak')).toContain('+6% Armour');
+  });
+
+  it('says an item cannot be sold rather than leaving it unpriced', () => {
+    // Every row is worth something today, so this is asserted on the rule rather
+    // than on a row: it is the branch that would otherwise never be exercised
+    // until somebody authored a quest item and found a blank where a price goes.
+    for (const item of ALL_ITEMS) {
+      const worth = detailsFor(item.id).at(-1);
+      expect(worth?.tone, item.id).toBe('dim');
+      expect(worth?.text, item.id).toBe(
+        item.value > 0 ? `Worth ${item.value} coins` : 'Cannot be sold',
+      );
+    }
+  });
+
+  it('says nothing at all about an id the table has dropped', () => {
+    // A tier and nothing else: there is no row to read stats or a price off, and
+    // inventing either would be a lie about something in somebody's bag.
+    expect(detailsFor('gone.missing')).toEqual([{ text: 'Common', tone: 'rarity' }]);
+  });
+
+  it('draws no line for a stat it has no words for', () => {
+    // Every describable field is in the table; a `traits` grant is deliberately
+    // not (spec 176), and it must produce no line rather than a raw key.
+    const described = detailsFor('trinket.bloodstone').map((line) => line.text);
+    expect(described.some((text) => text.includes('traits'))).toBe(false);
+    expect(described).toContain('+12% Health');
+  });
+
+  it('puts the tier on every view, and common on one it cannot place', () => {
+    expect(itemViewOf('trinket.bloodstone', 1).rarity).toBe('exceptional');
+    expect(itemViewOf('sword.worn', 1).rarity).toBe('common');
+    expect(itemViewOf('gone.missing', 1).rarity).toBe('common');
   });
 });

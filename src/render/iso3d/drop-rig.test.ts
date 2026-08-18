@@ -13,6 +13,8 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { RARITY_IDS } from '../../server/data/items.js';
+import { THEME } from '../../ui/theme/theme.js';
+import { rarityToken } from '../../ui/widgets/item-slot.js';
 import { DropRig } from './drop-rig.js';
 
 /** The halo is the additive sphere: the one mesh whose scale tracks the flare. */
@@ -58,6 +60,26 @@ describe('the drop rig', () => {
       return hex;
     });
     expect(new Set(colors).size).toBe(RARITY_IDS.length);
+  });
+
+  /**
+   * The grass and the bag say the same thing (spec 176).
+   *
+   * The two used to be two tables, and this is the assertion that keeps them one
+   * -- retune the interface's `rarityRare` and this fails until the drop follows,
+   * which is the whole reason the palette grew by three rather than the drop rig
+   * keeping its own copy.
+   */
+  it('is the colour the interface draws the same item in', () => {
+    for (const rarity of RARITY_IDS) {
+      const rig = new DropRig(rarity);
+      rig.setTierMix(1);
+      const { r, g, b } = THEME.color(rarityToken(rarity));
+      expect((halo(rig).material as THREE.MeshBasicMaterial).color.getHex(), rarity).toBe(
+        (r << 16) | (g << 8) | b,
+      );
+      rig.dispose();
+    }
   });
 
   it('blends toward the tier rather than snapping to it', () => {
