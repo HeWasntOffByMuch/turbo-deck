@@ -117,7 +117,7 @@ interface RunResult {
    * one-shot to finish on its own cannot claim to have covered the cancel. */
   readonly cancels: number;
   /**
-   * How many bodies the stagger flinch was actually consulted about (spec 168),
+   * How many bodies the stagger flinch was actually consulted about (spec 169),
    * so a run in which the reader was never driven cannot pass for one in which
    * it was.
    */
@@ -249,7 +249,7 @@ async function play(animate: boolean): Promise<RunResult> {
       // move withdraws from a cast.
       if (cancelledCast(facts, previous.get(entity.id) ?? null)) cancels += 1;
       // The stagger flinch, driven from the same replicated facts and on the
-      // same tick (spec 168). It reads `activity` and `activityUntilTick`, both
+      // same tick (spec 169). It reads `activity` and `activityUntilTick`, both
       // of which are authoritative, and returns two angles nothing here writes
       // back -- which is the whole claim this file exists to make.
       flinches.read(entity.id, entity.activity, entity.activityUntilTick ?? 0, tick);
@@ -324,7 +324,7 @@ describe('animation is presentation only', () => {
     expect(animated.drops.flatMap((shown) => shown.cues)).toContain('loot.reveal.rare');
   }, 30_000);
 
-  it('drives the stagger flinch, and it changes no state (spec 168)', async () => {
+  it('drives the stagger flinch, and it changes no state (spec 169)', async () => {
     // What this covers is the *wiring*: the flinch reader is consulted for every
     // body on every tick, from the same replicated facts the machines get, and
     // the authoritative state still compares equal. Both `activity` and

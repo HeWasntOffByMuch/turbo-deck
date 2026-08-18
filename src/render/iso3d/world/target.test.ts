@@ -35,7 +35,7 @@ function ask(overrides: Partial<AutoAttackInput> = {}): ReturnType<typeof autoAt
     // one of those.
     aligned: true,
     rooted: false,
-    // Holding its own footing, unless a case says otherwise (spec 168).
+    // Holding its own footing, unless a case says otherwise (spec 169).
     staggered: false,
     pending: false,
     readyAtTick: 0,
@@ -73,7 +73,7 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
       // Pointing at the origin, so the answer is about reach and nothing else.
       facing: Math.atan2(-from.y, -from.x),
       fallbackCharges: 0,
-      // Not staggered; this is a question about reach (spec 168).
+      // Not staggered; this is a question about reach (spec 169).
       activity: 0,
       activityUntilTick: 0,
       health: stats.maxHealth,
@@ -392,7 +392,7 @@ describe('a swing waits to be facing its mark (spec 090)', () => {
 /** Close enough to swing, so a refusal below is about the break and nothing else. */
 const IN_REACH = { x: 340, y: 0 };
 
-describe('a broken body holds its order and asks for nothing (spec 168)', () => {
+describe('a broken body holds its order and asks for nothing (spec 169)', () => {
   it('does not ask while staggered', () => {
     // In reach and otherwise ready, so the only thing stopping the swing is the
     // break. `IN_REACH` is the same position the plain in-reach case uses.

@@ -445,7 +445,7 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  is stepped so the events left in the clip never fire, and it
                  refuses to leave a `locking` state, because not being
                  interruptible is that category's whole reason to exist.
-                 Since spec 168 there is a `revive` beside it, for the same
+                 Since spec 169 there is a `revive` beside it, for the same
                  reason in the other direction: a death state is `terminal` and
                  a terminal state has **no exit**, which is the right rule for a
                  corpse and is exactly why a body cannot get up on its own. A
@@ -961,10 +961,10 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  below 1 because a wind-up nothing can answer would make the
                  readable commitment this whole game is built on unreadable.
                  Its `staggered` predicate is what makes a break cost anything
-                 (spec 168), and it is one function because it is asked in three
+                 (spec 169), and it is one function because it is asked in three
                  places: the movement pass roots the legs on it, `startCast`
                  refuses the hands on it, and `blow.ts` reads the same state for
-                 Strength's execute bonus. Until 168 none of that existed -- the
+                 Strength's execute bonus. Until 169 none of that existed -- the
                  flag was written and read twice in the whole server, so a
                  staggered body walked at full speed and ended its own stagger
                  early by casting through it, because a commit writes

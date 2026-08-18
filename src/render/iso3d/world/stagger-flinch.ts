@@ -1,7 +1,7 @@
 /**
- * What a poise break does to the body it broke (spec 168).
+ * What a poise break does to the body it broke (spec 169).
  *
- * Spec 147 built the stagger and spec 168 gave it teeth: for `staggerTicks` the
+ * Spec 147 built the stagger and spec 169 gave it teeth: for `staggerTicks` the
  * body cannot walk, turn or swing. That is a real thing happening to a player,
  * and until this file existed it was drawn exactly like standing still -- the
  * server refused every input and the screen said nothing about why.

@@ -36,7 +36,7 @@ function machine(): UnitMachine {
   return new UnitMachine({ unit: unitDefFixture(), clipLib: clipLibFixture() });
 }
 
-describe('startedStagger (spec 168)', () => {
+describe('startedStagger (spec 169)', () => {
   it('is true on the tick a break lands', () => {
     expect(startedStagger(facts({ activity: EntityActivity.Stunned }), facts())).toBe(true);
   });
