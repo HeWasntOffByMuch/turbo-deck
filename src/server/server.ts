@@ -52,8 +52,14 @@ import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
 import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
-import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityToByte } from './data/items.js';
-import { isRevealed, makeDrop, type DropState } from './sim/loot.js';
+import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
+import {
+  isRevealed,
+  makeDrop,
+  makeDroppedItem,
+  throwLanding,
+  type DropState,
+} from './sim/loot.js';
 import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
 import {
   decodeAdminRequest,
@@ -66,6 +72,7 @@ import { DeltaTracker } from './net/delta.js';
 import {
   decodeClientMessage,
   encodeServerMessage,
+  type DropItemMessage,
   type LootDropMessage,
   type RequestChunkMessage,
   type ServerMessage,
@@ -631,6 +638,16 @@ export class GameServer implements AdminHost {
         // Answered at the request id either way, exactly as `MoveItem` is: the
         // refusal is what takes a client's optimistic guess back, so it has to
         // arrive on the same channel as the acceptance.
+        this.sendInventory(connection, message.requestId);
+        break;
+      }
+
+      case ClientMessageType.DropItem: {
+        if (connection.playerId === null) return;
+        const reason = await this.dropItem(connection, message);
+        this.reportAction(connection, reason);
+        // At the request id either way, like `MoveItem` and `PickUpItem`: the
+        // removal is predicted, so the refusal is what takes the guess back.
         this.sendInventory(connection, message.requestId);
         break;
       }
@@ -1460,6 +1477,53 @@ export class GameServer implements AdminHost {
       this.chunks.place(entityId, entity.position.x, entity.position.y, false);
       return result.reason;
     }
+    return null;
+  }
+
+  /**
+   * Put a stack down in the world, or say why not (spec 168). Null when it went.
+   *
+   * The mirror of {@link pickUpDrop} and it has the same ordering problem the
+   * other way round: `dropItem` writes to the store asynchronously, so the bag
+   * is debited before the entity exists. That is the safe order of the two --
+   * the window between them is a stack that is in nobody's hands, and the
+   * alternative is a window in which it is in two.
+   *
+   * Nothing here is client-supplied but the address and the count. Where it
+   * lands is the body's facing and a constant reach, which is what stops this
+   * being a way to post an item across the map.
+   */
+  private async dropItem(connection: Connection, message: DropItemMessage): Promise<string | null> {
+    if (connection.playerId === null) return 'not logged in';
+    const body = this.state.entities.get(connection.entityId);
+    // A corpse does not empty its pockets. Checked before the containers are
+    // touched, so a refusal here has changed nothing at all.
+    if (!body || body.health <= 0) return 'you cannot drop that right now';
+
+    const result = await this.players.dropItem(
+      connection.playerId,
+      message.at,
+      // 0 on the wire means "the whole stack", which is `undefined` to the
+      // rules -- the same translation `MoveItem` does, for the same reason.
+      message.count === 0 ? undefined : message.count,
+    );
+    if (!result.ok) return result.reason;
+
+    // Both ends of the throw, exactly as a kill's drop has them: the body's own
+    // position is where it was thrown from, and the client draws the arc.
+    const origin: Vec3 = body.position;
+    const spot = throwLanding(origin, body.facing);
+    const landing: Vec3 = { x: spot.x, y: spot.y, z: this.terrain.heightAt(spot.x, spot.y) };
+    const drop = makeDroppedItem(
+      result.taken.defId,
+      result.taken.count,
+      rarityOf(result.taken.defId),
+      origin,
+      this.state.tick,
+    );
+    const spawned = spawnDrop(this.state, drop, landing, this.zones.zoneIdAt(landing.x, landing.y));
+    this.state = spawned.state;
+    this.chunks.place(spawned.entity.id, landing.x, landing.y, false);
     return null;
   }
 

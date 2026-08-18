@@ -87,7 +87,7 @@ import {
 } from '../state/types.js';
 import { ordinalOfAttribute } from '../data/attributes.js';
 import { startingBaseStats } from '../player/attributes.js';
-import { applyMove, type MoveRequest } from '../player/inventory.js';
+import { applyMove, removeFromSlot, type MoveRequest } from '../player/inventory.js';
 import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
@@ -536,6 +536,22 @@ export interface KnownCast {
   readonly targetEntityId: number;
 }
 
+/**
+ * One container edit this client has guessed at and not yet been answered about.
+ *
+ * A drop is in here beside a move because the argument spec 126 made for
+ * predicting a move applies to it unchanged: the rule is pure, it is the same
+ * code the server runs, and what it reads is a slot this client can see. A
+ * pickup is the one that stays unpredicted -- see {@link GameClient.pickUp}.
+ */
+type PendingEdit =
+  | { readonly requestId: number; readonly kind: 'move'; readonly request: MoveRequest }
+  | {
+      readonly requestId: number;
+      readonly kind: 'drop';
+      readonly request: { readonly at: SlotAddress; readonly count?: number };
+    };
+
 export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
@@ -596,8 +612,17 @@ export class GameClient {
   /** The trade this client is in, or null (spec 132). Replaced whole. */
   private tradeView: TradeView | null = null;
   private equipment: Equipment = EMPTY_EQUIPMENT;
-  /** Moves sent and not yet answered, oldest first. */
-  private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
+  /**
+   * Container edits sent and not yet answered, oldest first.
+   *
+   * Two kinds since spec 168, in **one list** rather than two: a move and a drop
+   * can be in flight at the same time and the order they were sent in is the
+   * order they have to be replayed in -- dropping half a stack and then moving
+   * the rest is a different bag from doing it the other way round. Two lists
+   * would have to be merged by request id at every replay, which is this list
+   * with extra steps.
+   */
+  private readonly pendingMoves: PendingEdit[] = [];
   private moveRequests = 0;
 
   /**
@@ -846,11 +871,37 @@ export class GameClient {
     if (!this.connected) return 0;
     const requestId = this.nextRequestId();
     const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
-    this.pendingMoves.push({ requestId, request });
+    this.pendingMoves.push({ requestId, kind: 'move', request });
     this.replayMoves();
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.MoveItem, requestId, from, to, count }),
     );
+    return requestId;
+  }
+
+  /**
+   * Put a stack down in the world (spec 168).
+   *
+   * Predicted like a move and for the same reason -- the removal is a pure rule
+   * over a slot this client can see -- and rolled back by the same `Inventory`
+   * answer, which arrives whether the server took it or refused it.
+   *
+   * What is deliberately *not* predicted is the drop appearing on the ground.
+   * That is an entity, and entities arrive in deltas; a client that invented one
+   * would have to reconcile it against the real one a round trip later.
+   *
+   * `count` of 0 means the whole stack, as on the wire.
+   */
+  dropItem(at: SlotAddress, count = 0): number {
+    if (!this.connected) return 0;
+    const requestId = this.nextRequestId();
+    this.pendingMoves.push({
+      requestId,
+      kind: 'drop',
+      request: { at, ...(count === 0 ? {} : { count }) },
+    });
+    this.replayMoves();
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.DropItem, requestId, at, count }));
     return requestId;
   }
 
@@ -868,7 +919,10 @@ export class GameClient {
     let bag = this.serverInventory;
     let worn = this.serverEquipment;
     for (const pending of this.pendingMoves) {
-      const outcome = applyMove(bag, worn, pending.request, this.level);
+      const outcome =
+        pending.kind === 'move'
+          ? applyMove(bag, worn, pending.request, this.level)
+          : removeFromSlot(bag, worn, pending.request.at, pending.request.count);
       // A guess the local rules refuse is simply not drawn. The server is about
       // to refuse it too, and predicting an illegal move is worse than lagging.
       if (!outcome.ok) continue;
