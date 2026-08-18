@@ -40,13 +40,12 @@ import { createNavView } from './nav-view.js';
 import {
   AUTOSAVE_INTERVAL_MS,
   clearAutosave,
-  mapFilename,
   mapText,
   readAutosave,
   RevisionTracker,
   writeAutosave,
 } from './persistence.js';
-import { bakeEditorMap } from './map-source.js';
+import { openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
 import { buildEditorPanel, type EditorPanel } from './panel.js';
 import { createEditorSettings, cursorColor, cursorRadius, NEW_ROCK_TIER } from './tools.js';
 import {
@@ -75,8 +74,9 @@ import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
  * The map editor tab (spec 049).
  *
  * The fourth view in the shell, and the only one that renders from a **map
- * document** rather than from the generator. The world is baked once at mount and
- * everything below reads exclusively from the result -- the terrain mesh from
+ * document** rather than from the generator. The document is the one the game
+ * plays -- `maps/arena.json`, see `map-source.ts` -- read once at mount, and
+ * everything below reads exclusively from the result: the terrain mesh from
  * `map.chunks`, the props from `map.props`, the ground height from
  * `map.world.heightAt`. That indirection is the whole point of the tab: from the
  * first frame the editor is looking at the data path, so when a brush lands it
@@ -166,8 +166,7 @@ class EditorScene {
 
   constructor(
     readonly canvas: HTMLCanvasElement,
-    seed: number,
-    opened?: { document: MapDocument; map: LoadedMap },
+    opened: { document: MapDocument; map: LoadedMap },
   ) {
     canvas.style.width = '100%';
     canvas.style.height = '100%';
@@ -179,12 +178,14 @@ class EditorScene {
     this.renderer.setPixelRatio(Math.min(2, globalThis.devicePixelRatio || 1));
     this.scene.background = new THREE.Color(PALETTE.sky);
 
-    // Bake the generated world unless a document was handed in -- a restored
-    // autosave, or a file dropped before the first frame. Everything below
-    // reads `map` either way.
-    const baked = opened ?? bakeEditorMap(seed);
-    this.document = baked.document;
-    this.map = baked.map;
+    // Handed the document it edits rather than reaching for one: the shipped
+    // map, a restored autosave, or a file dropped before the first frame. There
+    // used to be a fallback to the generator here, and that one line is what
+    // opened a different world from the clock every session while the game
+    // played `maps/arena.json` (spec 176). A scene that cannot reach the
+    // generator cannot quietly re-open the wrong world.
+    this.document = opened.document;
+    this.map = opened.map;
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, CAMERA_NEAR, CAMERA_FAR);
     this.camera3 = createEditorCamera({
@@ -444,11 +445,20 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
   const help = document.createElement('div');
   help.style.cssText = `${OVERLAY_CSS}position:absolute;left:10px;bottom:10px;z-index:20;`;
-  help.innerHTML =
-    '<b style="color:#f0f0f8;">Map editor</b> &mdash; rendering from a baked map document<br>' +
-    '<b>left-drag</b> applies the armed tool &middot; <b>middle-drag</b> tracks &amp; dollies &middot; ' +
-    '<b>right-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
-    '<span style="color:#7a7a90;">Ctrl+Z undoes a stroke</span>';
+  /**
+   * Filled in once the map is open, because what the top line should say
+   * depends on which map that is: replacing `maps/arena.json` with a generated
+   * world is the mistake spec 176 exists to stop, and telling somebody to do it
+   * would be this tab's own idea.
+   */
+  const showHelp = (): void => {
+    help.innerHTML =
+      `<b style="color:#f0f0f8;">Map editor</b> &mdash; editing <b>${editing}</b>` +
+      `${savedAs === SHIPPED_MAP_NAME ? `, the map the game plays; Save to file, then copy it over <b>maps/${SHIPPED_MAP_NAME}</b>` : ''}<br>` +
+      '<b>left-drag</b> applies the armed tool &middot; <b>middle-drag</b> tracks &amp; dollies &middot; ' +
+      '<b>right-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
+      '<span style="color:#7a7a90;">Ctrl+Z undoes a stroke</span>';
+  };
 
   const readout = document.createElement('div');
   readout.style.cssText = `${OVERLAY_CSS}position:absolute;right:10px;bottom:10px;z-index:20;text-align:right;`;
@@ -460,8 +470,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   container.appendChild(root);
 
   // A refresh must not lose work, so an autosave that still parses is restored
-  // rather than offered. The panel's "Discard autosave" button is how you get a
-  // fresh generated world back, which is one click rather than a trip through
+  // rather than offered. The panel's "Discard autosave" button is how you get
+  // the map back as it is on disk, which is one click rather than a trip through
   // devtools.
   const storage: Storage | null = (() => {
     try {
@@ -472,13 +482,27 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     }
   })();
   const restored = storage ? readAutosave(storage) : null;
+  // What this session is editing: `maps/arena.json` unless `?map=generated`
+  // asks for a world from a seed (spec 176).
+  const source = openEditorMap(globalThis.location?.search ?? '', viewSeed());
   const scene = new EditorScene(
     canvas,
-    viewSeed(),
-    restored ? { document: restored, map: loadMap(restored) } : undefined,
+    restored ? { document: restored, map: loadMap(restored) } : source,
   );
   const revision = new RevisionTracker();
+  /**
+   * The name a save comes back as: whatever was opened.
+   *
+   * Follows a loaded file, so saving after a load round-trips the name rather
+   * than renaming somebody's map after its seed. A *restored autosave* leaves it
+   * alone -- the slot stores text and no name, and the work in it is work on the
+   * map this editor opens, so that is the name it belongs under.
+   */
+  let savedAs = source.name;
+  /** Which map the readout says is being edited. */
+  let editing = restored ? `${source.from} (restored autosave)` : source.from;
   let status = restored ? 'restored autosave' : '';
+  showHelp();
   const input = new EditorInputCapture(canvas);
   const history = new EditHistory();
   const settings = createEditorSettings();
@@ -965,7 +989,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = mapFilename(scene.document);
+    anchor.download = savedAs;
     // In the document rather than detached: some browsers ignore a click on an
     // anchor that was never in the tree.
     anchor.style.display = 'none';
@@ -994,6 +1018,11 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     history.clear();
     rebuildAll();
     revision.reset();
+    // A save goes back under the name it came in as, so loading a map and saving
+    // it again round-trips the file rather than renaming it after its seed.
+    savedAs = from;
+    editing = from;
+    showHelp();
     status = `loaded ${from}`;
   };
 
@@ -1045,7 +1074,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     onLoad: () => fileInput.click(),
     onDiscardAutosave: () => {
       if (storage) clearAutosave(storage);
-      status = 'autosave cleared -- reload for a fresh world';
+      status = `autosave cleared -- reload for ${source.from} as it is on disk`;
     },
     onArmChange: () => {
       cursor.setColor(cursorColor(settings));
@@ -1199,6 +1228,13 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (placed.marker) {
           strokeChangedMarkers = true;
           refreshMarkers();
+        } else {
+          // `addMarker` refuses a point past the layer or over a hole in it, and
+          // this used to drop that on the floor -- a click that did nothing, no
+          // marker and no word about why, which is indistinguishable from a
+          // marker tool that does not work. Said out loud, like the part tool's
+          // "no part under the cursor".
+          status = 'no ground there: a marker has to sit on the map';
         }
       }
     }
@@ -1328,7 +1364,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
-      `<span style="color:#7a7a90;">${chunkCount()} chunks &middot; ` +
+      `<span style="color:#7a7a90;">${editing} &middot; ${chunkCount()} chunks &middot; ` +
       `${scene.map.store.props(layerId).length} props${scene.undrawnProps > 0 ? ` (<b style="color:#e08f8f;">${scene.undrawnProps} not drawn</b>)` : ''} &middot; ` +
       `${scene.map.store.markers(layerId).length} markers &middot; ` +
       `${scene.map.store.parts.length} part${scene.map.store.parts.length === 1 ? '' : 's'} &middot; ` +

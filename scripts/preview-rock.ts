@@ -131,7 +131,11 @@ async function main(): Promise<void> {
       if (message.type() === 'error') pageLog.push(message.text());
     });
 
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    // `map=generated` because these steps are tuned against the small generated
+    // world -- its extent, its empty corners, its part list. The editor opens
+    // `maps/arena.json` by default since spec 176, and the shipped map is
+    // already 210 chunks with six parts in it.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&map=generated`, { waitUntil: 'load' });
     await page.click('button:has-text("Map editor")');
     await page.waitForSelector('canvas:visible', { timeout: 60_000 });
     await page.waitForTimeout(3000);

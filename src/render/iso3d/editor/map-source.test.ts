@@ -1,17 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CHUNK_OPTIONS, MAP_VERSION, sampleLayer, createArenaWorld } from '../../../terrain/index.js';
+import {
+  DEFAULT_CHUNK_OPTIONS,
+  MAP_VERSION,
+  parseMap,
+  sampleLayer,
+  serializeMap,
+  createArenaWorld,
+  loadMap,
+  type MapMarker,
+} from '../../../terrain/index.js';
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
+import { loadMapFile } from '../../../server/world/map-file.js';
 import { buildTerrainMeshFromChunks } from '../terrain-mesh.js';
-import { bakeEditorMap } from './map-source.js';
+import { bakeEditorMap, editorMapChoice, openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
+import { placeMarker } from './markers.js';
 
 /**
  * Spec 049. The editor's one structural claim is that it renders from a document
  * rather than from the generator, so this asserts the handoff: the bake covers
  * the world, the load returns everything the scene consumes, and the terrain
  * mesh really can be built from `map.chunks` with no world in sight.
+ *
+ * Spec 176 adds the claim that was missing under it, and the one the marker bug
+ * turned out to be: *which* document. The editor used to bake a world from
+ * `viewSeed()`, which falls back to the clock, so it opened a different world
+ * every session while the game played `maps/arena.json` -- and everything placed
+ * in it, markers most visibly, was placed in a world nothing else would ever
+ * read. So the shipped map is checked against the file the server boots from,
+ * not against a copy of it.
  */
 
 const SEED = 20250804;
+
+/** Every marker in a document, in world space, as the store hands them over. */
+function markersOf(doc: ReturnType<typeof parseMap>): readonly MapMarker[] {
+  const { store } = loadMap(doc);
+  return doc.layers.flatMap((l) => store.markers(l.id));
+}
+
+/** A marker, ordered and stripped to what a save has to preserve. */
+const asRows = (markers: readonly MapMarker[]): string[] =>
+  markers.map((m) => `${m.kind}:${m.id}:${m.x}:${m.z}:${m.label ?? ''}`).sort();
 
 describe('bakeEditorMap', () => {
   const { document: doc, map } = bakeEditorMap(SEED);
@@ -66,5 +95,85 @@ describe('bakeEditorMap', () => {
     const again = bakeEditorMap(SEED);
     expect(again.map.props).toHaveLength(map.props.length);
     expect(again.document.layers[0]?.chunks[0]?.heights).toEqual(doc.layers[0]?.chunks[0]?.heights);
+  });
+});
+
+describe('which map the editor opens (spec 176)', () => {
+  it('opens the shipped map by default', () => {
+    expect(editorMapChoice('')).toBe('shipped');
+  });
+
+  it('does not let a seed switch sources', () => {
+    // `?seed=` is session-wide and answers *which* generated world, never
+    // *whether* to generate one -- so a harness pinning a seed for the Play tab
+    // cannot take the editor off the game's map as a side effect.
+    expect(editorMapChoice('?seed=20260806')).toBe('shipped');
+    expect(editorMapChoice('?tab=3&seed=7')).toBe('shipped');
+  });
+
+  it('generates a world only when asked to', () => {
+    expect(editorMapChoice('?map=generated')).toBe('generated');
+    expect(editorMapChoice('?map=generated&seed=7')).toBe('generated');
+  });
+
+  it('opens the very document the server boots from', () => {
+    // Against the file on disk, through the server's own reader, rather than
+    // against another bake of the same seed: the shipped map has been grown and
+    // hand-edited since it was baked, and re-baking its seed reproduces neither.
+    const onDisk = loadMapFile().doc;
+    const opened = openEditorMap('', SEED).document;
+    expect(serializeMap(opened)).toBe(serializeMap(onDisk));
+  });
+
+  it('names a save after what was opened', () => {
+    expect(openEditorMap('', SEED).name).toBe(SHIPPED_MAP_NAME);
+    expect(openEditorMap('?map=generated', SEED).name).toBe(`map-${SEED >>> 0}.json`);
+  });
+
+  it('still bakes a generated world when asked', () => {
+    const generated = openEditorMap('?map=generated', SEED);
+    expect(generated.document.seed).toBe(SEED);
+    expect(generated.map.chunks.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the shipped map survives the editor (spec 176)', () => {
+  it('has markers to lose in the first place', () => {
+    // Without this the round-trip tests below would pass over an empty list,
+    // which is exactly the state the bug produced.
+    expect(markersOf(openEditorMap('', SEED).document).length).toBeGreaterThan(0);
+  });
+
+  it('keeps every marker through a save', () => {
+    const opened = openEditorMap('', SEED);
+    const before = markersOf(opened.document);
+    // The editor's own save: the live store re-emitted, serialized, read back.
+    const after = markersOf(parseMap(serializeMap(opened.map.store.toDocument())));
+    expect(asRows(after)).toEqual(asRows(before));
+  });
+
+  it('keeps them when one more is placed on top', () => {
+    const opened = openEditorMap('', SEED);
+    const layerId = opened.document.layers[0]?.id ?? 'ground';
+    const before = markersOf(opened.document);
+    const bounds = opened.map.store.layerInfo(layerId)?.bounds;
+    expect(bounds).toBeDefined();
+    if (!bounds) return;
+
+    const placed = placeMarker(
+      opened.map.store,
+      layerId,
+      'spawner',
+      (bounds.minX + bounds.maxX) / 2,
+      (bounds.minZ + bounds.maxZ) / 2,
+      undefined,
+      'grazer',
+    );
+    expect(placed.marker).not.toBeNull();
+    if (!placed.marker) return;
+
+    const after = markersOf(parseMap(serializeMap(opened.map.store.toDocument())));
+    expect(after).toHaveLength(before.length + 1);
+    expect(asRows(after)).toEqual(asRows([...before, placed.marker]));
   });
 });
