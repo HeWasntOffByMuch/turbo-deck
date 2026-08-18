@@ -783,7 +783,24 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  bag that changed underneath refuses the whole trade instead of
                  trading whatever is in that slot now. The property test counts
                  both players together, because a swap that duplicated a sword
-                 leaves each bag individually plausible. data/ holds
+                 leaves each bag individually plausible.
+                 Two rules from spec 169, both about *which side of the table
+                 you are on*. `setOffer` accepts an offer from the **inviting
+                 side only** while a trade is still an invitation, and leaves
+                 the stage alone: an empty request asks "do you want to trade?"
+                 with no goods and no reason to say yes, but advancing on the
+                 first item would put the invitee at a table they never agreed
+                 to sit at and `respond` -- which only runs at `offered` --
+                 could then never fire. And `exchangeProblem` is `swap` minus
+                 the stage check, so the same arithmetic answers "would this go
+                 through" for a table nobody has accepted yet; the server runs
+                 it on every publish and sends a **per-player** warning that
+                 disables Accept. It names a *side* rather than describing one,
+                 because the single reason string `swap` returned went to both
+                 players and could only ever be true for one: the player whose
+                 own bag was the problem was told "their bag is full", after
+                 both had accepted, which is the one moment neither of them can
+                 do anything about it. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `sim/aggro.ts` is whether one body has business with another
@@ -1324,7 +1341,16 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  thing that could find either -- two tabs, two players, one
                  server, the real shift-right-click and the real buttons, with
                  both bags counted afterwards because a swap that duplicated the
-                 bow leaves each side individually plausible),
+                 bow leaves each side individually plausible.
+                 Since spec 169 **closing a live trade cancels it**, because
+                 leaving the table is what closing means and the alternative is
+                 a player sitting in a trade they cannot see and cannot start
+                 another one from -- before it the mount re-opened the window
+                 every frame a trade was live, so Escape and the title bar did
+                 nothing at all. What that needs is `tradeLeft`, and it is an
+                 **id rather than a flag**: the cancel takes a round trip, the
+                 trade stays live and replicated throughout it, and a flag was
+                 cleared by the very re-open it existed to prevent),
                  loot-drop.ts (how a drop looks while it is still withholding
                  itself, spec 158 -- the three.js half is `iso3d/drop-rig.ts`,
                  beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks

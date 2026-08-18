@@ -123,6 +123,7 @@ interface Readout {
   readonly cells: string;
   readonly you: string;
   readonly them: string;
+  readonly invited: string;
 }
 
 async function readout(page: Page): Promise<Readout> {
@@ -137,6 +138,7 @@ async function readout(page: Page): Promise<Readout> {
       cells: host?.dataset['uiCellNames'] ?? '',
       you: host?.dataset['uiTradeYou'] ?? '',
       them: host?.dataset['uiTradeThem'] ?? '',
+      invited: host?.dataset['uiTradeInvited'] ?? '',
     };
   });
 }
@@ -246,6 +248,11 @@ function offers(line: string, name: string): boolean {
   return (line.split('|')[3] ?? '').includes(name);
 }
 
+/** How many coins a side's line says are on the table. */
+function coinsOf(line: string): number {
+  return Number(line.split('|')[2] ?? '0');
+}
+
 /** Whether a side's line says they have accepted. */
 function accepted(line: string): boolean {
   return (line.split('|')[1] ?? '') === 'yes';
@@ -258,6 +265,16 @@ async function refusals(page: Page): Promise<readonly string[]> {
       .map((el) => el.dataset['text'] ?? '')
       .filter((text) => text !== ''),
   );
+}
+
+/** Poll until the readout satisfies a predicate, or give up. */
+async function waitFor(page: Page, done: (state: Readout) => boolean, timeoutMs = 15_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (done(await readout(page))) return true;
+    await page.waitForTimeout(150);
+  }
+  return false;
 }
 
 /** Poll until the named window is gone, or give up. */
@@ -341,6 +358,10 @@ async function inviteByPointer(page: Page, them: string): Promise<boolean> {
   }, them);
   if (!plate) return false;
 
+  // From nothing to something: without this, a sweep run while the tab is still
+  // in a trade returns true on its first click and reports an invitation that
+  // was refused as "you are already trading".
+  if ((await readout(page)).stage !== '') return false;
   for (let down = 0; down <= 90; down += 6) {
     await page.mouse.move(plate.x, plate.y + down);
     await page.keyboard.down('Shift');
@@ -408,30 +429,49 @@ async function main(): Promise<void> {
     check('Ben is asked, not enrolled', (await readout(ben)).stage === 'offered');
     check('the window opened itself on Ben', (await readout(ben)).windows.includes('trade'));
 
+    // --- the request is furnished before it is answered (spec 169) ----------
+    check('Ana is not asked to accept her own invitation', (await readout(ana)).invited === 'no');
+    check('Ben is the one being asked', (await readout(ben)).invited === 'yes');
+    // The sender gets no Accept and no Decline: they are the invitation's own
+    // buttons, and the server refuses both from this side.
+    const asking = await settleRects(ana);
+    check('the sender has no Accept', boxNamed(asking, 'accept') === null);
+    check('the sender has no Decline', boxNamed(asking, 'decline') === null);
+    check('the sender can still call it off', boxNamed(asking, 'cancel') !== null);
+    // ...and the invited side is a spectator until it has answered.
+    const asked = await settleRects(ben);
+    check('the invited side is offered Accept', boxNamed(asked, 'accept') !== null);
+    check('the invited side is offered Decline', boxNamed(asked, 'decline') !== null);
+    check('the invited side cannot edit the table', boxNamed(asked, 'bag:0') === null);
+
+    const slot = (await bagOf(ana)).indexOf(GOODS);
+    console.log(`Ana puts her ${GOODS} and some coins into the request (bag slot ${slot})`);
+    check(
+      `the ${GOODS} goes into the request`,
+      slot >= 0 && (await pressUntil(ana, `bag:${slot}`, (state) => offers(state.you, GOODS))),
+    );
+    check('coins go in beside it', await pressUntil(ana, 'addCoin', (state) => coinsOf(state.you) > 0));
+    check('it is still an invitation', (await readout(ana)).stage === 'offered');
+    // The whole point: Ben is looking at goods and coins before deciding, and
+    // reads them as items rather than as slot indices into a bag he cannot see.
+    check(
+      `Ben sees the ${GOODS} before answering`,
+      await pressUntil(ben, 'accept', (state) => offers(state.them, GOODS), 0),
+      (await readout(ben)).them,
+    );
+    check('...and the coins with it', coinsOf((await readout(ben)).them) > 0);
+
+    // The picture worth keeping: a request that arrived with something in it.
+    await ben.screenshot({ path: '.claude/screenshots/trade-request.png' });
+
     console.log('Ben accepts the invitation');
     check(
       'Ben accepting opens the table',
       await pressUntil(ben, 'accept', (state) => state.stage === 'open'),
     );
     await waitForStage(ana, 'open', 'Ana');
-    check('Ana is told the invitation was taken', true);
-
-    // --- the offer -----------------------------------------------------------
-    // The trade window lists your bag in its own grid; clicking a cell puts that
-    // stack on the table and re-sends the whole offer.
-    const slot = (await bagOf(ana)).indexOf(GOODS);
-    console.log(`Ana puts her ${GOODS} on the table (bag slot ${slot})`);
-    check(
-      `the ${GOODS} goes on the table`,
-      slot >= 0 && (await pressUntil(ana, `bag:${slot}`, (state) => offers(state.you, GOODS))),
-    );
-    // The other side is told what is on the table, resolved to items -- a bare
-    // slot index would mean nothing in Ben's bag.
-    check(
-      `Ben sees the ${GOODS} on Ana's side`,
-      await pressUntil(ben, 'accept', (state) => offers(state.them, GOODS), 0),
-      (await readout(ben)).them,
-    );
+    // The request survives being answered rather than being cleared by it.
+    check(`the ${GOODS} is still on the table`, offers((await readout(ana)).you, GOODS));
 
     // --- both accept ---------------------------------------------------------
     console.log('both accept');
@@ -449,6 +489,7 @@ async function main(): Promise<void> {
     await waitForStage(ana, 'over', 'Ana');
     check('the ending is drawn rather than the window vanishing', true);
     check('the window is still open on Ana', (await readout(ana)).windows.includes('trade'));
+    await ana.screenshot({ path: '.claude/screenshots/trade-ana.png' });
 
     await ana.waitForTimeout(800);
     const anaAfter = await bagOf(ana);
@@ -474,7 +515,8 @@ async function main(): Promise<void> {
 
     // --- putting the ending away --------------------------------------------
     console.log('Ana closes the ending');
-    check('the ending has exactly one button', await pressTrade(ana, 'cancel'));
+    check('the ending has exactly one button', boxNamed(await settleRects(ana), 'cancel') !== null);
+    check('closing it puts it away', await pressUntil(ana, 'cancel', (state) => state.stage === ''));
     // Waited for rather than snapshotted: this environment paints a real page at
     // a few frames a second under software GL.
     check('the window closed', await waitForWindowGone(ana, 'trade'));
@@ -487,16 +529,51 @@ async function main(): Promise<void> {
     check('and stays closed', !after.windows.split(',').includes('trade'), `windows: ${after.windows}`);
     check('with no trade left to show', after.stage === '', `stage: ${after.stage}`);
 
+    // --- Escape always gets you out (spec 169) -------------------------------
+    // A second trade, left live, and shut with the key rather than the button.
+    console.log('a second trade, closed with Escape');
+    check('a second trade can be opened', await inviteByPointer(ana, 'Ben'));
+    await waitForStage(ben, 'offered', 'Ben');
+    // Shut the bag first. Escape closes the *topmost* window -- that is the
+    // rule, and it is not the one being tested here -- and Ben has had his bag
+    // open since the counting at the top.
+    await ben.keyboard.press('KeyI');
+    await ben.waitForTimeout(500);
+    await ben.keyboard.press('Escape');
+    check('Escape shuts the window', await waitForWindowGone(ben, 'trade'));
+    // Leaving the table cancels it, so Ana is let go rather than left in a trade
+    // she cannot see and unable to start another. She keeps her window, because
+    // she did not close it and the ending is the thing she needs to be told.
+    check('the other side is told', await waitFor(ana, (state) => state.stage === 'over'));
+    check('...with a reason', (await readout(ana)).reason !== '', (await readout(ana)).reason);
+    // Ben closed his own window, so he is not shown the ending he caused.
+    check('the one who left is not shown it again', (await readout(ben)).stage === '');
+
+    check('Ana can close it', await pressUntil(ana, 'cancel', (state) => state.stage === ''));
+    check('and neither is in a trade', (await readout(ana)).stage === '' && (await readout(ben)).stage === '');
+
+    // --- a disconnect ends it and says so ------------------------------------
+    console.log('a third trade, ended by Ben closing his tab');
+    check('a third trade can be opened', await inviteByPointer(ana, 'Ben'));
+    await waitForStage(ben, 'offered', 'Ben');
+    await ben.context().close();
+    // The survivor is told, rather than left holding a window with an Accept in
+    // it for a trade with one player in it.
+    const told = await waitFor(ana, (state) => state.stage === 'over');
+    check('Ana is told the trade ended', told, `stage: ${(await readout(ana)).stage}`);
+    check('...and why', (await readout(ana)).reason !== '', `reason: ${(await readout(ana)).reason}`);
+    // Retried like every other press: the window is re-placed when the stage
+    // changes, so the rect under a close read a moment earlier may have moved.
+    check('and can close it', await pressUntil(ana, 'cancel', (state) => state.stage === ''));
+    check('the window is gone', await waitForWindowGone(ana, 'trade'));
+
     if (failures > 0) {
       // The server's own words for whatever it turned down. A press that missed
       // and a press that was refused look identical from the outside.
       console.log(`  [Ana] refusals: ${(await refusals(ana)).join(' | ')}`);
-      console.log(`  [Ben] refusals: ${(await refusals(ben)).join(' | ')}`);
     }
 
-    await ana.screenshot({ path: '.claude/screenshots/trade-ana.png' });
-    await ben.screenshot({ path: '.claude/screenshots/trade-ben.png' });
-    console.log('wrote .claude/screenshots/trade-{ana,ben}.png');
+    console.log('wrote .claude/screenshots/trade-{request,ana}.png');
   } catch (error) {
     console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
     failures += 1;
