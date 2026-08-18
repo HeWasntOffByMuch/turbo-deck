@@ -37,7 +37,13 @@ export interface FpsOverlay {
    * frame because the world is still arriving look identical in `fps` and are
    * nothing alike, and only one of them is worth fixing here.
    */
-  set(stats: FrameStats | null, workMs?: number, worstStage?: string, worstStageMs?: number): void;
+  set(
+    stats: FrameStats | null,
+    workMs?: number,
+    worstStage?: string,
+    worstStageMs?: number,
+    scene?: { calls: number; triangles: number },
+  ): void;
   dispose(): void;
 }
 
@@ -71,9 +77,14 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   text.dataset['fpsText'] = '';
   root.append(text);
 
+  const draws = document.createElement('div');
+  draws.dataset['fpsDraws'] = '';
+  draws.style.cssText = 'color:#8fa0b8;';
+
   const work = document.createElement('div');
   work.dataset['fpsWork'] = '';
   work.style.cssText = 'color:#e0b45a;';
+  root.append(draws);
   root.append(work);
 
   const canvas = document.createElement('canvas');
@@ -96,7 +107,13 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   };
 
   return {
-    set(stats: FrameStats | null, workMs = 0, worstStage = '', worstStageMs = 0): void {
+    set(
+      stats: FrameStats | null,
+      workMs = 0,
+      worstStage = '',
+      worstStageMs = 0,
+      scene?: { calls: number; triangles: number },
+    ): void {
       if (!stats) {
         root.style.display = 'none';
         return;
@@ -117,6 +134,11 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
             ? `worst since load: ${worstStage} ${worstStageMs.toFixed(0)}ms`
             : '';
       root.dataset['fpsWork'] = workMs.toFixed(1);
+      if (scene) {
+        draws.textContent = `${scene.calls} draws  ${(scene.triangles / 1000).toFixed(0)}k tris`;
+        root.dataset['fpsDrawCalls'] = String(scene.calls);
+        root.dataset['fpsTriangles'] = String(scene.triangles);
+      }
       root.dataset['fpsWorstStage'] = worstStage;
       root.dataset['fpsWorstStageMs'] = worstStageMs.toFixed(1);
       // Published for the harness, which cannot read a canvas but can read this.

@@ -28,7 +28,7 @@
  * cold start by handing it numbers.
  */
 
-import type { TerrainChunk } from '../../../terrain/chunk.js';
+import type { ChunkRef } from '../../../server/client/streamed-map.js';
 
 export interface WorldRect {
   readonly minX: number;
@@ -55,20 +55,10 @@ export interface IngestOptions {
   readonly regionsPerFlush: number;
 }
 
-/** The world rectangle a chunk's cells cover. */
-export function chunkRect(chunk: TerrainChunk): WorldRect {
-  return {
-    minX: chunk.originX,
-    minZ: chunk.originZ,
-    maxX: chunk.originX + chunk.cols * chunk.cellSize,
-    maxZ: chunk.originZ + chunk.rows * chunk.cellSize,
-  };
-}
-
 export class ChunkIngest {
   private readonly options: IngestOptions;
   /** Queued in arrival order, one entry per `(layer, cx, cz)`. */
-  private readonly queue = new Map<string, TerrainChunk>();
+  private readonly queue = new Map<string, ChunkRef>();
   /**
    * Region keys whose props are stale, against when their ground last moved.
    *
@@ -98,14 +88,14 @@ export class ChunkIngest {
    * a burst that is the common case, not the corner one: five chunks arriving in
    * a row along an edge each re-dirty the one before them.
    */
-  offer(chunks: readonly TerrainChunk[], nowMs: number): void {
+  offer(chunks: readonly ChunkRef[], nowMs: number): void {
     if (chunks.length === 0) return;
     this.lastOfferMs = nowMs;
     for (const chunk of chunks) {
-      this.queue.set(`${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`, chunk);
+      this.queue.set(`${chunk.layer}:${chunk.cx},${chunk.cz}`, chunk);
       // Touched on arrival as well as on meshing, so a region with ground still
       // in flight cannot settle just because the queue reached it slowly.
-      this.touch(chunkRect(chunk), nowMs);
+      this.touch(chunk.rect, nowMs);
     }
   }
 
@@ -117,14 +107,14 @@ export class ChunkIngest {
    * that order, so arrival order is distance order, and re-sorting here would
    * only be a second opinion about the same thing.
    */
-  takeMesh(nowMs: number): readonly TerrainChunk[] {
+  takeMesh(nowMs: number, budget = this.options.meshBudget): readonly ChunkRef[] {
     if (this.queue.size === 0) return [];
-    const out: TerrainChunk[] = [];
+    const out: ChunkRef[] = [];
     for (const [key, chunk] of this.queue) {
-      if (out.length >= this.options.meshBudget) break;
+      if (out.length >= budget) break;
       this.queue.delete(key);
       out.push(chunk);
-      this.touch(chunkRect(chunk), nowMs);
+      this.touch(chunk.rect, nowMs);
     }
     this.meshedTotal += out.length;
     return out;
@@ -140,7 +130,7 @@ export class ChunkIngest {
    * rebuilding props over ground about to be re-meshed is work done twice, and
    * trees standing at heights that are about to change.
    */
-  takePropRects(nowMs: number): readonly WorldRect[] {
+  takePropRects(nowMs: number, budget = this.options.regionsPerFlush): readonly WorldRect[] {
     if (this.dirtyRegions.size === 0) return [];
 
     // Regions any queued chunk still touches are not settled, whatever their
@@ -148,13 +138,13 @@ export class ChunkIngest {
     // done twice and trees standing at heights that are about to change.
     const inFlight = new Set<string>();
     for (const chunk of this.queue.values()) {
-      for (const key of this.regionsOf(chunkRect(chunk))) inFlight.add(key);
+      for (const key of this.regionsOf(chunk.rect)) inFlight.add(key);
     }
 
     const size = this.options.regionSize;
     const out: WorldRect[] = [];
     for (const key of [...this.dirtyRegions.keys()].sort()) {
-      if (out.length >= this.options.regionsPerFlush) break;
+      if (out.length >= budget) break;
       if (inFlight.has(key)) continue;
       const touched = this.dirtyRegions.get(key) ?? 0;
       if (nowMs - touched < this.options.settleMs) continue;
@@ -168,6 +158,18 @@ export class ChunkIngest {
   /** Chunks queued and not yet meshed. */
   get pending(): number {
     return this.queue.size;
+  }
+
+  /**
+   * Regions still owed a prop rebuild.
+   *
+   * Read by the load gate, which waits for it: a region rebuilt after the world
+   * is shown is a ~170ms hitch in a world that has told the player it is ready
+   * (spec 165 follow-up 7). Behind the loading screen it is just part of the
+   * load.
+   */
+  get dirtyRegionCount(): number {
+    return this.dirtyRegions.size;
   }
 
   /** Chunks meshed over the session. For the loading gate and the readout. */

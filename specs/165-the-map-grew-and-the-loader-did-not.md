@@ -570,3 +570,60 @@ The remaining ~137ms is one nav-grid build: the obstacle passes and the
 component flood over 797k cells, which the corner memo does not touch because it
 is not sampling. Cutting it means either a smaller grid for the client than the
 server uses, or an incremental flood -- both real changes, neither started.
+
+---
+
+## Seventh follow-up: 15fps for fifteen seconds, then 40
+
+Reported from a real machine: 15fps for the first 15-20s, settling around 40.
+Those are two different problems and only the first is the loader.
+
+### The load was frame-rate-bound, again
+
+`StreamedMap.add` did five `buildChunk` calls inline -- the arrival's own and its
+four edge neighbours', ~2ms each -- so an insert was a **10ms unit nothing could
+subdivide**. The 6ms frame budget therefore admitted exactly one per frame, which
+made the length of the load a count of *frames* rather than an amount of work:
+169 chunks took 169 frames, and every one of those frames wore 10-40ms it could
+not put down. Slow frames made the load long; the long load kept the frames slow.
+
+This is the third time this spec has met the same shape. The rule, now stated
+where it will be read: **spreading a fixed cost across frames only helps if the
+unit of work is small enough to fit in one.** Otherwise the budget does not pace
+the work, it just decides how many frames the work will ruin.
+
+So `add` inserts and returns *coordinates*; the new `build` constructs the
+arrays; and the frame builds as many as it can afford. Same work, same order, in
+~2ms units.
+
+### The world was shown before it was finished
+
+`READY_CHUNK_RADIUS` was 2 -- the chunk under the player and the ring around it
+-- on the grounds that waiting for ground nobody can see is waiting for nothing.
+True about what is *visible*, false about what it costs: the other 144 chunks
+still arrived, just into frames that were being drawn, each carrying an insert,
+five builds, a mesh and eventually a prop rebuild.
+
+It is the whole request window now. Loading is a thing a player understands and
+expects to wait for; a world that keeps hitching for twenty seconds after saying
+it is ready is not. Measured: 89 chunks held when the gate opened before, 182
+after. The gate also waits on outstanding *prop regions*, since one rebuilt after
+the gate is a ~170ms hitch, and behind the screen it is simply part of the load.
+
+The budgets are split by phase for the same reason the nav warm's were not
+allowed to be: generous while the screen is up (24 chunks and 8 prop regions a
+frame), small afterwards (2 and 1).
+
+### The 40fps is not the loader
+
+Once the stream is idle, none of this code runs, and the frame still costs what
+it costs. Per frame, across every pass:
+
+- **~910 draw calls**
+- **~800k triangles**
+
+The world is drawn three times a frame: the shadow map, the hike depth/normal
+buffers (`ink` is on in `HIKE_DEFAULTS`), and the picture. That is the 40fps, and
+it is a rendering problem rather than a streaming one -- so it is where the next
+work goes, not here. The readout carries draws and triangles now, so the next
+person to look does not have to guess which of the two is moving.

@@ -566,6 +566,12 @@ export class WorldScene {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
     this.renderer.setPixelRatio(1);
+    // Counted per *frame* rather than per `render` call (spec 165 follow-up 7).
+    // This frame draws the world more than once -- the shadow maps, the hike
+    // buffers, then the picture -- and three resets its counters at the top of
+    // every `render`, so the default reading is whichever pass happened to go
+    // last. What anybody debugging a frame rate wants is the total.
+    this.renderer.info.autoReset = false;
     // Hard, unfiltered shadows (spec 045): one depth comparison per pixel, so an
     // edge is a step rather than a gradient -- the only kind that belongs in a
     // posterized frame.
@@ -1046,6 +1052,7 @@ export class WorldScene {
   }
 
   render(view: ClientView, frame: FrameInfo): void {
+    this.renderer.info.reset();
     this.resize();
     const dt = Math.min(0.05, Math.max(0, frame.dt));
     this.elapsed += dt;
@@ -1174,6 +1181,21 @@ export class WorldScene {
       if (hike.edges) this.drawEdges(hike, false);
     }
     unsnap?.();
+  }
+
+  /**
+   * What the last frame actually submitted, across every pass.
+   *
+   * For the frame-rate readout and for nothing else. A draw-call count is the
+   * first thing worth knowing when a frame is slow and no loader is running:
+   * it separates "the scene is too big" from "the scene is drawn too often",
+   * and those have nothing in common as problems.
+   */
+  renderStats(): { calls: number; triangles: number } {
+    return {
+      calls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+    };
   }
 
   dispose(): void {

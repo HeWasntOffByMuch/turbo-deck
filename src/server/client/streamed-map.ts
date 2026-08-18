@@ -35,6 +35,20 @@ import type { Rect, WorldColliders } from '../../sim/types.js';
 import { worldBoundsOf } from '../world/build.js';
 import type { CoverageSampler } from '../world/terrain.js';
 
+/**
+ * A chunk that needs meshing, and the ground it covers.
+ *
+ * Coordinates rather than built arrays, so the *building* can be paced by the
+ * caller -- see {@link StreamedMap.build}. The rectangle rides along because the
+ * renderer buckets by ground and would otherwise have to ask the map for it.
+ */
+export interface ChunkRef {
+  readonly layer: number;
+  readonly cx: number;
+  readonly cz: number;
+  readonly rect: { readonly minX: number; readonly minZ: number; readonly maxX: number; readonly maxZ: number };
+}
+
 /** The four a chunk's own mesh reads across. See `add`. */
 const EDGE_NEIGHBOURS: readonly (readonly [number, number])[] = [
   [-1, 0],
@@ -223,7 +237,7 @@ export class StreamedMap {
    * Empty when the layer is unknown or the chunk was already held -- both cases
    * where meshing would be wasted work rather than an error.
    */
-  add(held: HeldChunk): readonly TerrainChunk[] {
+  add(held: HeldChunk): readonly ChunkRef[] {
     const key = `${held.layer}:${held.cx},${held.cz}`;
     if (this.held.has(key)) return [];
     const layerId = this.info.layers[held.layer]?.id;
@@ -231,16 +245,51 @@ export class StreamedMap {
     if (!this.loaded.store.insertChunk(layerId, held.chunk)) return [];
     this.held.add(key);
 
-    const out: TerrainChunk[] = [];
-    const mesh = (cx: number, cz: number): void => {
-      const chunk = this.loaded.store.buildChunk(layerId, cx, cz);
-      if (chunk) out.push(chunk);
-    };
-    mesh(held.cx, held.cz);
+    const out: ChunkRef[] = [ this.refFor(held.layer, held.cx, held.cz) ];
     for (const [dx, dz] of EDGE_NEIGHBOURS) {
-      if (this.has(held.layer, held.cx + dx, held.cz + dz)) mesh(held.cx + dx, held.cz + dz);
+      if (this.has(held.layer, held.cx + dx, held.cz + dz)) {
+        out.push(this.refFor(held.layer, held.cx + dx, held.cz + dz));
+      }
     }
     return out;
+  }
+
+  /**
+   * Turn a reference into geometry-ready arrays.
+   *
+   * Split out of {@link add} in spec 165's seventh follow-up, and the split is
+   * the whole point. `buildChunk` is ~2ms and an arrival needs five of them --
+   * its own and its four edge neighbours' -- so an insert that did them inline
+   * was a 10ms unit of work that nothing could subdivide. One per frame is what
+   * the budget then allowed, which made the *length of the load* a count of
+   * frames rather than an amount of work: 169 chunks took 169 frames, and each
+   * of those frames wore 10ms it could not put down.
+   *
+   * Deferred, the queue holds coordinates and the frame builds as many as it can
+   * afford. Same work, same order, in units small enough to pace.
+   */
+  build(layer: number, cx: number, cz: number): TerrainChunk | null {
+    const layerId = this.info.layers[layer]?.id;
+    if (layerId === undefined) return null;
+    return this.loaded.store.buildChunk(layerId, cx, cz);
+  }
+
+  /** Where a chunk sits, so the renderer's queue can bucket it without the map. */
+  private refFor(layer: number, cx: number, cz: number): ChunkRef {
+    const info = this.info.layers[layer];
+    const originX = (info?.origin.x ?? 0) + cx * this.chunkExtent;
+    const originZ = (info?.origin.z ?? 0) + cz * this.chunkExtent;
+    return {
+      layer,
+      cx,
+      cz,
+      rect: {
+        minX: originX,
+        minZ: originZ,
+        maxX: originX + this.chunkExtent,
+        maxZ: originZ + this.chunkExtent,
+      },
+    };
   }
 
   /**

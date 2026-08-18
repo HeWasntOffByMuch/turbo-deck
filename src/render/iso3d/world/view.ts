@@ -39,6 +39,7 @@ import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
 import { invalidateNavHeights, warmNavGrids } from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
+  MAP_CHUNK_REQUEST_RADIUS,
   SERVER_PLAYER_RADIUS,
   SERVER_TICK_RATE,
 } from '../../../server/config.js';
@@ -63,7 +64,7 @@ import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud } from './hud.js';
-import { ChunkIngest, chunkRect } from './chunk-ingest.js';
+import { ChunkIngest } from './chunk-ingest.js';
 import { FrameBudget } from './frame-budget.js';
 import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
@@ -135,7 +136,18 @@ const PROP_SETTLE_MS = 120;
  * request pass above it does not make the frame worse -- it makes the queue
  * longer, which is the trade this whole spec is about.
  */
-const MESH_BUDGET_PER_FRAME = 4;
+const MESH_BUDGET_PER_FRAME = 2;
+
+/**
+ * ...and how many while the loading screen is still up.
+ *
+ * Far more, because the constraint is different behind the gate: nothing is on
+ * screen but a bar, and the load's *length* is what the player is waiting on.
+ * Spreading a fixed amount of work thinly across frames makes that length a
+ * count of frames rather than an amount of work -- the mistake this spec has now
+ * made twice, so it is written down here as well as in the nav warm.
+ */
+const MESH_BUDGET_LOADING = 24;
 
 /**
  * Milliseconds of a frame the chunk stream may have (spec 165 follow-up).
@@ -156,13 +168,21 @@ const INGEST_BUDGET_MS = 6;
 /**
  * Chunks around the player that must arrive before the world is shown.
  *
- * Smaller than `MAP_CHUNK_REQUEST_RADIUS`, deliberately. The request radius is
- * sized so terrain never runs out at the edge of the widest zoom on the widest
- * monitor; making the player wait for all of it would be making them wait for
- * ground they cannot see. 2 covers the 616-unit chunk they stand in and the ring
- * around it -- 1848 units square, comfortably past the default zoom's frame.
+ * The *whole request window*, deliberately -- everything this client is ever
+ * going to ask for at this position (spec 165 follow-up 7).
+ *
+ * It used to be 2: the chunk the player stands in and the ring around it, on the
+ * grounds that waiting for ground they cannot see is waiting for nothing. That
+ * is true about what is *visible* and false about what it costs. The remaining
+ * 144 chunks still arrived -- they just arrived after the gate lifted, into
+ * frames that were being drawn, and every one of them cost an insert, five
+ * builds, a mesh and eventually a prop rebuild. Fifteen seconds of stutter with
+ * the world on screen, which is the report this follows.
+ *
+ * Loading is a thing a player understands and expects to wait for. A world that
+ * keeps hitching for twenty seconds after it says it is ready is not.
  */
-const READY_CHUNK_RADIUS = 2;
+const READY_CHUNK_RADIUS = MAP_CHUNK_REQUEST_RADIUS;
 
 /**
  * Prop regions rebuilt in one frame.
@@ -173,6 +193,9 @@ const READY_CHUNK_RADIUS = 2;
  * either way, a frame apart.
  */
 const PROP_REGIONS_PER_FRAME = 1;
+
+/** ...and while the loading screen is up, where a lurch costs nothing. */
+const PROP_REGIONS_LOADING = 8;
 
 /** How fast the streaming-cost readout falls back toward nothing. */
 const INGEST_DECAY = 0.92;
@@ -204,6 +227,20 @@ const GROUND_REFRESH_QUIET_MS = 600;
  * a visible hitch every second, that is not a close call.
  */
 const GROUND_REFRESH_MIN_INTERVAL_MS = 5000;
+
+/**
+ * ...and how much new ground it takes to be worth one.
+ *
+ * A rebuild is ~170ms whether one chunk arrived or forty, so the question is
+ * not "has anything changed" but "has enough changed to be worth a visible
+ * hitch". A trickle of one or two late chunks moves almost no collider the
+ * player is anywhere near, and paying a sixth of a second for it -- while they
+ * stand in a world that has told them it is ready -- is the wrong trade.
+ *
+ * The last chunks are not lost, only unhurried: the next rebuild that clears
+ * this bar picks them up with everything else.
+ */
+const GROUND_REFRESH_MIN_CHUNKS = 8;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
 /**
@@ -528,7 +565,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // chunk that arrived while walking cost the sim a fresh nav grid.
       if (navGrowsWithStream && pathWorld && dirty.length > 0) {
         for (const chunk of dirty) {
-          invalidateNavHeights(pathWorld.ground, pathWorld.colliders, chunkRect(chunk));
+          invalidateNavHeights(pathWorld.ground, pathWorld.colliders, chunk.rect);
         }
       }
     }
@@ -543,10 +580,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // the world that never fills in, at whichever chunk the frame happened to
     // run out of time on. The list is already bounded by MESH_BUDGET_PER_FRAME;
     // the budget's job was done before it was built.
+    // Behind the loading screen there are no frames to protect, so the whole
+    // budget goes on getting the world built; afterwards it is deliberately
+    // small, because a player standing in a finished world should not be able
+    // to feel the last chunks arrive.
     const meshStart = performance.now();
-    for (const chunk of ingest.takeMesh(nowMs)) {
+    const meshBudget = gate.open ? MESH_BUDGET_PER_FRAME : MESH_BUDGET_LOADING;
+    for (const ref of ingest.takeMesh(nowMs, meshBudget)) {
+      const chunk = streamed.build(ref.layer, ref.cx, ref.cz);
+      if (!chunk) continue;
       scene.addTerrainChunk(chunk);
-      drawnChunks.add(`${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`);
+      drawnChunks.add(`${ref.layer}:${ref.cx},${ref.cz}`);
     }
     stage('mesh', performance.now() - meshStart);
 
@@ -560,7 +604,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // the queue is drained and the stream has been quiet, so this is a handful
     // of calls across a cold start rather than one per delta.
     const propStart = performance.now();
-    const rects = ingest.takePropRects(nowMs);
+    const rects = ingest.takePropRects(nowMs, gate.open ? PROP_REGIONS_PER_FRAME : PROP_REGIONS_LOADING);
     if (rects.length > 0) scene.refreshPropsWithin(rects);
     stage('props', performance.now() - propStart);
 
@@ -579,7 +623,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (
       plan.mode === 'remote' &&
       streamed &&
-      streamed.size !== chunksAtGroundRefresh &&
+      streamed.size - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS &&
       ingest.idle &&
       ingest.quietForMs(nowMs) >= GROUND_REFRESH_QUIET_MS &&
       nowMs - lastGroundRefreshMs >= GROUND_REFRESH_MIN_INTERVAL_MS
@@ -651,7 +695,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       located: self !== null,
       held: coverage.held,
       needed: coverage.needed,
-      meshPending: ingest.pending,
+      // Prop regions count as outstanding work too: one rebuilt after the gate
+      // opens is a ~170ms hitch in a world that has said it is ready, and behind
+      // the screen it is just part of the load.
+      meshPending: ingest.pending + ingest.dirtyRegionCount,
       // Only this tab's own sim can stall on it; a remote client's grid is a
       // prediction aid and warms behind the world.
     });
@@ -2086,7 +2133,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // computed when somebody is looking -- the sort over the window is cheap but
     // it is not free, and a meter that costs frame time misreports the frame
     // time it costs.
-    fpsOverlay.set(showFps ? frames.stats() : null, worstIngestMs, worstStage, worstStageMs);
+    fpsOverlay.set(
+      showFps ? frames.stats() : null,
+      worstIngestMs,
+      worstStage,
+      worstStageMs,
+      scene.renderStats(),
+    );
 
     // Where the view is looking from and how wide it frames, for the probes.
     // They used to read the Orbit and Zoom sliders, and on a phone the panel

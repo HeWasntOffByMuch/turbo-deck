@@ -118,6 +118,8 @@ async function measure(page: Page, forMs: number, label: string): Promise<Perf> 
   let worstWork = 0;
   let stage = '';
   let stageMs = 0;
+  let calls = 0;
+  let tris = 0;
   while (Date.now() - start < forMs) {
     await sleep(500);
     const now = await page.evaluate(() => {
@@ -129,12 +131,16 @@ async function measure(page: Page, forMs: number, label: string): Promise<Perf> 
         workMs: Number(el?.dataset['fpsWork'] ?? 0),
         stage: String(el?.dataset['fpsWorstStage'] ?? ''),
         stageMs: Number(el?.dataset['fpsWorstStageMs'] ?? 0),
+        calls: Number(el?.dataset['fpsDrawCalls'] ?? 0),
+        tris: Number(el?.dataset['fpsTriangles'] ?? 0),
       };
     });
     fps = now.fps;
     worst = Math.max(worst, now.worstMs);
     stalls = Math.max(stalls, now.stalls);
     worstWork = Math.max(worstWork, now.workMs);
+    calls = now.calls;
+    tris = now.tris;
     if (now.stageMs > stageMs) {
       stageMs = now.stageMs;
       stage = now.stage;
@@ -142,7 +148,8 @@ async function measure(page: Page, forMs: number, label: string): Promise<Perf> 
   }
   console.log(
     `  ${label}: ${fps.toFixed(0)} fps, worst frame ${worst.toFixed(0)}ms, ` +
-      `worst streaming cost ${worstWork.toFixed(0)}ms (${stage} ${stageMs.toFixed(0)}ms), ${stalls} stalls`,
+      `worst streaming cost ${worstWork.toFixed(0)}ms (${stage} ${stageMs.toFixed(0)}ms), ${stalls} stalls, ` +
+      `${calls} draws / ${(tris / 1000).toFixed(0)}k tris`,
   );
   return { fps, worstMs: worst, stalls, worstWorkMs: worstWork };
 }
@@ -244,6 +251,10 @@ async function main(): Promise<void> {
       await sleep(1200);
     }
 
+    // After walking, which re-opens the stream: this is not the idle state and
+    // is not asserted against, but it is what ordinary play looks like.
+    const steady = await measure(page, 15_000, 'after walking');
+
     // Let the queue drain before comparing.
     let final = await counts(page);
     for (let i = 0; i < 40 && final.pending > 0; i++) {
@@ -271,6 +282,9 @@ async function main(): Promise<void> {
       settle.worstWorkMs < 160,
       `worst streaming cost ${settle.worstWorkMs.toFixed(0)}ms`,
     );
+    // Not asserted: `steady` is measured after the walk, when the stream has
+    // legitimately re-opened. The idle claim belongs to `settle`, above.
+    void steady;
 
     if (errors.length > 0) {
       console.log('\npage reported errors:');

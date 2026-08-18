@@ -75,11 +75,12 @@ let meshed = 0;
 for (const at of coords) {
   const chunk = index.chunkAt(0, at.cx, at.cz);
   if (!chunk) continue;
-  const dirty = time('StreamedMap.add', () =>
+  const dirty = time('StreamedMap.add (insert only)', () =>
     streamed.add({ layer: 0, cx: at.cx, cz: at.cz, chunk }),
   );
   for (const d of dirty) {
-    time('terrainMesh.rebuild', () => mesh.rebuild(d));
+    const built = time('StreamedMap.build', () => streamed.build(d.layer, d.cx, d.cz));
+    if (built) time('terrainMesh.rebuild', () => mesh.rebuild(built));
     meshed++;
   }
 }
@@ -136,12 +137,7 @@ const firstChunk = firstDoc ? index.chunkAt(0, firstDoc.cx, firstDoc.cz) : null;
 if (firstChunk && firstDoc) {
   const built = fresh.add({ layer: 0, cx: firstDoc.cx, cz: firstDoc.cz, chunk: firstChunk })[0];
   if (built) {
-    invalidateNavHeights(sampler, colliders, {
-      minX: built.originX,
-      minZ: built.originZ,
-      maxX: built.originX + built.cols * built.cellSize,
-      maxZ: built.originZ + built.rows * built.cellSize,
-    });
+    invalidateNavHeights(sampler, colliders, built.rect);
     const owed = pendingNavHeights(sampler, colliders);
     let reWorst = 0;
     const a = ms();

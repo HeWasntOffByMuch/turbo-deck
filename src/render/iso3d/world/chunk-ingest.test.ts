@@ -10,35 +10,23 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ChunkIngest, chunkRect } from './chunk-ingest.js';
-import type { TerrainChunk } from '../../../terrain/chunk.js';
+import { ChunkIngest } from './chunk-ingest.js';
+import type { ChunkRef } from '../../../server/client/streamed-map.js';
 
 const CELL = 22;
 const CELLS = 28;
 /** 616 units, the shipped chunk edge. */
 const EXTENT = CELL * CELLS;
 
-function chunk(cx: number, cz: number): TerrainChunk {
+function chunk(cx: number, cz: number): ChunkRef {
+  const originX = cx * EXTENT;
+  const originZ = cz * EXTENT;
   return {
-    layerId: 'ground',
-    coord: { cx, cz },
-    originX: cx * EXTENT,
-    originZ: cz * EXTENT,
-    cols: CELLS,
-    rows: CELLS,
-    startCol: cx * CELLS,
-    startRow: cz * CELLS,
-    cellSize: CELL,
-    heights: new Float32Array(0),
-    cornerX: new Float32Array(0),
-    cornerZ: new Float32Array(0),
-    normals: new Float32Array(0),
-    solid: new Uint8Array(0),
-    materials: new Uint8Array(0),
-    tones: new Uint8Array(0),
-    baseY: 0,
-    waterLevel: null,
-  } as TerrainChunk;
+    layer: 0,
+    cx,
+    cz,
+    rect: { minX: originX, minZ: originZ, maxX: originX + EXTENT, maxZ: originZ + EXTENT },
+  };
 }
 
 function ingest(meshBudget = 4, settleMs = 120, regionsPerFlush = 8): ChunkIngest {
@@ -62,7 +50,7 @@ describe('the meshing budget', () => {
 
     const seen: string[] = [];
     while (queue.pending > 0) {
-      for (const c of queue.takeMesh(0)) seen.push(`${c.coord.cx},${c.coord.cz}`);
+      for (const c of queue.takeMesh(0)) seen.push(`${c.cx},${c.cz}`);
     }
 
     expect(seen).toHaveLength(21);
@@ -84,7 +72,7 @@ describe('the meshing budget', () => {
 
     // Nothing taken is still queued: the caller now owns every one of them.
     const second = queue.takeMesh(0);
-    const taken = [...first, ...second].map((c) => `${c.coord.cx},${c.coord.cz}`);
+    const taken = [...first, ...second].map((c) => `${c.cx},${c.cz}`);
     expect(new Set(taken).size).toBe(6);
     expect(queue.pending).toBe(0);
     expect(queue.takeMesh(0)).toHaveLength(0);
@@ -210,13 +198,3 @@ describe('the prop settle', () => {
   });
 });
 
-describe('chunkRect', () => {
-  it('is the ground the chunk covers', () => {
-    expect(chunkRect(chunk(2, 3))).toEqual({
-      minX: 2 * EXTENT,
-      minZ: 3 * EXTENT,
-      maxX: 3 * EXTENT,
-      maxZ: 4 * EXTENT,
-    });
-  });
-});
