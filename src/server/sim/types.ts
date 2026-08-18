@@ -380,6 +380,22 @@ export interface ServerEntity {
   readonly cooldowns: Readonly<Record<string, number>>;
   /** Set only on a projectile entity; null on everything that walks. */
   readonly projectile: ProjectileState | null;
+  /**
+   * Where a drop this body has asked for is aimed, or null (spec 172).
+   *
+   * Putting something down is an action that needs facing rather than a skill:
+   * no cost, no cooldown, no wind-up and nothing rooted, so it is this one field
+   * rather than a {@link CastState}. What it does is exactly what
+   * `CastPhase.Turning` does -- it holds the action until the body is pointing
+   * at what it was aimed at -- and `resolveFacing` reads it directly under the
+   * cast, so the turn runs at the body's own rate and is the same turn every
+   * other player watches.
+   *
+   * The item itself is *not* here: what a drop takes out of a bag lives behind
+   * an async store the sim cannot reach, so the server holds the request and
+   * this is the half the sim needs to turn the body.
+   */
+  readonly dropAim: Vec2 | null;
   /** Set only on a mote entity; null on everything else (spec 156). */
   readonly mote: MoteState | null;
   /**

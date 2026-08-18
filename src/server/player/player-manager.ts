@@ -20,13 +20,16 @@ import {
   type EffectiveStats,
   type Equipment,
   type Inventory,
+  type ItemStack,
   type PersistedPlayer,
+  type SlotAddress,
   type Vec3,
 } from '../state/types.js';
 import {
   addToInventory,
   applyMove,
   equipmentAddress,
+  removeFromSlot,
   sanitizeInventory,
   type MoveRequest,
 } from './inventory.js';
@@ -161,6 +164,16 @@ export interface PlayerSession {
 
 export type PlayerActionResult =
   | { readonly ok: true; readonly session: PlayerSession }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * What a drop took, beside the session it changed (spec 172).
+ *
+ * `taken` is on the success case for the reason `removeFromSlot` returns it: a
+ * removal is half a transaction, and the caller has to put the stack somewhere.
+ */
+export type DropResult =
+  | { readonly ok: true; readonly session: PlayerSession; readonly taken: ItemStack }
   | { readonly ok: false; readonly reason: string };
 
 /**
@@ -353,6 +366,41 @@ export class PlayerManager {
     });
     const updated = await this.recalculate(playerId);
     return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
+  }
+
+  /**
+   * Take a stack out of a slot and hand it back (spec 172).
+   *
+   * The container half of putting something down. It commits and re-derives
+   * through the same funnel `moveItem` does -- dropping the sword you are
+   * holding changes what you hit for, and a removal that skipped
+   * `recalculate` would leave the stats of a player still wearing it.
+   *
+   * It does **not** put anything in the world: that needs the terrain, the
+   * zones and an entity id, none of which live here. The caller gets the stack
+   * and is responsible for it -- which is why this is the second half of a
+   * transaction the server does not await anything between.
+   */
+  async dropItem(playerId: string, at: SlotAddress, count?: number): Promise<DropResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+
+    const outcome = removeFromSlot(
+      session.record.inventory,
+      session.record.equipment,
+      at,
+      count,
+    );
+    if (!outcome.ok) return { ok: false, reason: outcome.reason };
+
+    this.commit({
+      ...session,
+      record: { ...session.record, inventory: outcome.inventory, equipment: outcome.equipment },
+    });
+    const updated = await this.recalculate(playerId);
+    return updated
+      ? { ok: true, session: updated, taken: outcome.taken }
+      : { ok: false, reason: 'not logged in' };
   }
 
   /**

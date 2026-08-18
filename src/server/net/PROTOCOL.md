@@ -196,6 +196,38 @@ rolled back by.
 immediately when it is. The pending presentation simply never happens.
 Anticipation is never a lock on the player's hands.
 
+### `0x1b DropItem`
+`varuint requestId` · `u8 container` · `varint index` · `varint count` ·
+`f32 aimX` · `f32 aimY`
+
+Put a stack down in the world (spec 172). The address and the count read exactly
+as `MoveItem`'s do — `0` is the whole stack — because a drop *is* a move whose
+target is the ground, and the ground has no slot to name.
+
+`aim` is the world point the cursor was over, and it is an **aim rather than a
+landing**. The body turns to face it first, at its own `turnRate` and under the
+server's own `resolveFacing`, and the item is then thrown a constant reach along
+that line — so a point on the horizon and a point two paces away are the same
+request in every respect but direction. A client naming where an item lands is a
+client throwing one across the map.
+
+The turn is not a cast: no cost, no cooldown, no wind-up, no backswing, nothing
+rooted and no `CastState` on the wire. What the other clients see is the body's
+replicated `facing` coming round, which they already draw.
+
+The server checks the asker is alive and that the slot holds that many, at the
+moment the drop actually happens rather than when it was asked for. Answered with
+an `Inventory` at this `requestId` either way, plus `Error(RejectedAction)` on a
+refusal — the same channel `MoveItem` uses, since this edit is predicted and a
+refusal is what takes the guess back. A drop that never gets its turn — the body
+died, the queue overflowed, or the heading did not arrive inside the timeout —
+is one of those refusals, and the item never left the bag.
+
+What appears is an ordinary drop entity with two differences from a kill's: it is
+**unowned**, so anybody who reaches it may take it, and it is **revealed on its
+spawn tick** at every tier, because the reveal withholds an identity from
+somebody who does not know it and the person who emptied their own bag does.
+
 ### `0x1a Respawn`
 *(no payload)*
 
@@ -288,7 +320,8 @@ travels on `LootDrop`, never here: this record goes to every client in interest
 range on first sight, and what an unrevealed drop is must not. Unlike a mote it
 *is* replicated to everyone in range — two players watching the same kill watch
 the same throw — and ownership is a server-side check on `PickUpItem` rather
-than anything on the wire.
+than anything on the wire — and is absent entirely on a drop a player put down
+(spec 172), which belongs to whoever gets there.
 `activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.
 
 A projectile in flight is an ordinary entity (spec 062), so it replicates

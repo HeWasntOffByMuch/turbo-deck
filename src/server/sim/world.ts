@@ -152,6 +152,7 @@ function blankEntity(id: number): ServerEntity {
     cast: null,
     cooldowns: {},
     projectile: null,
+    dropAim: null,
     drop: null,
     mote: null,
     ...blankProgression(),
@@ -301,6 +302,7 @@ export function spawnEntity(
     cast: null,
     cooldowns: {},
     projectile: null,
+    dropAim: null,
     drop: null,
     mote: null,
     // A body enters the world with a full guard, like it enters with full

@@ -123,6 +123,7 @@ async function play(drive: boolean): Promise<RunResult> {
     {
       map: new InputMap(),
       onMove: (from, to, count) => requests.push(`move:${from.container}${from.index}->${to.container}${to.index}x${count}`),
+      onDropItem: (at, count) => requests.push(`drop:${at.container}${at.index}x${count}`),
       onSpend: (skillId) => requests.push(`spend:${skillId}`),
       onAllocate: (key) => requests.push(`allocate:${key}`),
       onRespec: () => requests.push('respec'),
