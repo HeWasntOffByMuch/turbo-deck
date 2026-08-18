@@ -51,7 +51,7 @@ describe('the meshing budget', () => {
     queue.offer([...Array(20)].map((_, i) => chunk(i, 0)), 0);
 
     for (let frame = 0; frame < 5; frame++) {
-      expect(queue.takeMesh().length).toBeLessThanOrEqual(4);
+      expect(queue.takeMesh(0).length).toBeLessThanOrEqual(4);
     }
   });
 
@@ -62,7 +62,7 @@ describe('the meshing budget', () => {
 
     const seen: string[] = [];
     while (queue.pending > 0) {
-      for (const c of queue.takeMesh()) seen.push(`${c.coord.cx},${c.coord.cz}`);
+      for (const c of queue.takeMesh(0)) seen.push(`${c.coord.cx},${c.coord.cz}`);
     }
 
     expect(seen).toHaveLength(21);
@@ -78,16 +78,16 @@ describe('the meshing budget', () => {
     const queue = ingest(4);
     queue.offer([...Array(6)].map((_, i) => chunk(i, 0)), 0);
 
-    const first = queue.takeMesh();
+    const first = queue.takeMesh(0);
     expect(first).toHaveLength(4);
     expect(queue.pending).toBe(2);
 
     // Nothing taken is still queued: the caller now owns every one of them.
-    const second = queue.takeMesh();
+    const second = queue.takeMesh(0);
     const taken = [...first, ...second].map((c) => `${c.coord.cx},${c.coord.cz}`);
     expect(new Set(taken).size).toBe(6);
     expect(queue.pending).toBe(0);
-    expect(queue.takeMesh()).toHaveLength(0);
+    expect(queue.takeMesh(0)).toHaveLength(0);
   });
 
   it('collapses a chunk re-offered because a neighbour arrived', () => {
@@ -98,24 +98,24 @@ describe('the meshing budget', () => {
     queue.offer([chunk(2, 0), chunk(3, 0)], 8);
 
     expect(queue.pending).toBe(3);
-    expect(queue.takeMesh()).toHaveLength(3);
+    expect(queue.takeMesh(0)).toHaveLength(3);
   });
 });
 
 describe('the prop settle', () => {
-  it('does not fire between two deltas', () => {
-    // The bug spec 165 fixes, stated as the cadence that produced it: deltas
-    // 50ms apart, frames 16ms apart. Under the old two-quiet-frames rule this
-    // flushed on every gap.
+  it('does not fire while its own ground is still arriving', () => {
+    // The first rule this replaced fired between every pair of deltas, because
+    // two quiet *frames* always fit in the 50ms between them. Here the same
+    // region is re-touched on every delta, so it must never come up for
+    // rebuild -- whatever the frame cadence is.
     const queue = ingest(8, 120);
     let flushes = 0;
     let now = 0;
 
     for (let delta = 0; delta < 6; delta++) {
-      queue.offer([chunk(delta, 0)], now);
-      // Three frames of quiet before the next delta lands.
+      queue.offer([chunk(0, 0)], now);
       for (let frame = 0; frame < 3; frame++) {
-        queue.takeMesh();
+        queue.takeMesh(now);
         if (queue.takePropRects(now).length > 0) flushes++;
         now += 16;
       }
@@ -124,30 +124,53 @@ describe('the prop settle', () => {
     expect(flushes).toBe(0);
   });
 
-  it('fires once the stream has genuinely stopped', () => {
+  it('fires once that ground has genuinely stopped', () => {
     const queue = ingest(8, 120);
     queue.offer([chunk(0, 0)], 0);
-    queue.takeMesh();
+    queue.takeMesh(0);
 
     expect(queue.takePropRects(100)).toHaveLength(0);
     expect(queue.takePropRects(200).length).toBeGreaterThan(0);
   });
 
-  it('waits for the queue to drain before rebuilding props', () => {
-    // Props standing on ground whose neighbours are still being meshed would be
-    // rebuilt against heights about to change.
-    const queue = ingest(2, 120);
-    queue.offer([chunk(0, 0), chunk(1, 0), chunk(2, 0), chunk(3, 0)], 0);
-    queue.takeMesh();
+  it('draws a settled region while the rest of the map is still streaming', () => {
+    // The whole point of making this per region (spec 165 follow-up 5). Under a
+    // single clock for the map, a cold start is never quiet until its last chunk
+    // lands -- so every tree in the world appeared at once, seconds after its
+    // ground. The near region has finished; its trees should not wait on the far
+    // one.
+    const queue = ingest(8, 120);
+    queue.offer([chunk(0, 0)], 0);
+    queue.takeMesh(0);
 
-    expect(queue.pending).toBe(2);
+    // Ground still arriving far away, in a region of its own.
+    queue.offer([chunk(8, 8)], 200);
+
+    const rects = queue.takePropRects(200);
+    expect(rects).toHaveLength(1);
+    expect(rects[0]?.minX).toBe(0);
+    expect(rects[0]?.minZ).toBe(0);
+  });
+
+  it('will not rebuild a region a queued chunk still overlaps', () => {
+    // Props standing on ground whose neighbours are about to be re-meshed would
+    // be rebuilt against heights that are about to change.
+    const queue = ingest(1, 120);
+    queue.offer([chunk(0, 0), chunk(1, 0)], 0);
+    queue.takeMesh(0);
+
+    expect(queue.pending).toBe(1);
+    // Region 0 is touched by both chunks, and chunk (1,0) is still queued.
     expect(queue.takePropRects(5000)).toHaveLength(0);
+
+    queue.takeMesh(5000);
+    expect(queue.takePropRects(6000).length).toBeGreaterThan(0);
   });
 
   it('hands back the regions the ground covers, not the whole world', () => {
     const queue = ingest(8, 120);
     queue.offer([chunk(0, 0)], 0);
-    queue.takeMesh();
+    queue.takeMesh(0);
     const rects = queue.takePropRects(200);
 
     // 616 units of chunk inside 1100-unit regions: one region, not the map.
@@ -159,7 +182,7 @@ describe('the prop settle', () => {
     const queue = ingest(8, 120);
     // Chunk (1,1) runs 616..1232 on both axes, across the 1100 boundary.
     queue.offer([chunk(1, 1)], 0);
-    queue.takeMesh();
+    queue.takeMesh(0);
 
     expect(queue.takePropRects(200)).toHaveLength(4);
   });
@@ -167,7 +190,7 @@ describe('the prop settle', () => {
   it('empties itself, so the same ground is not rebuilt twice', () => {
     const queue = ingest(8, 120);
     queue.offer([chunk(0, 0)], 0);
-    queue.takeMesh();
+    queue.takeMesh(0);
 
     expect(queue.takePropRects(200)).toHaveLength(1);
     expect(queue.takePropRects(400)).toHaveLength(0);

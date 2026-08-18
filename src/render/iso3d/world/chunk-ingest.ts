@@ -10,16 +10,19 @@
  * cheap enough for that to be invisible, so it is a queue with a per-frame
  * budget now: the work is the same, spread over the frames it needs.
  *
- * **When to rebuild the props.** The old rule was two frames with nothing
+ * **When to rebuild the props.** The first rule was two frames with nothing
  * arriving. Deltas land every 50ms and frames every ~16ms, so *there are always
  * two quiet frames between deltas* -- the settle fired between every pump of the
  * stream rather than once at the end of it, and each firing rebuilt all 6942
- * props in the world. The rule is a wall-clock quiet period now, longer than the
- * gap between deltas, so a stream that is still arriving cannot trip it.
+ * props in the world. The second rule was a wall-clock quiet period over the
+ * whole stream, and it went too far the other way: a cold start is never quiet
+ * until its last chunk lands, so every tree in the world appeared at once,
+ * seconds after the ground beneath it.
  *
- * And what it hands back is a **list of rectangles** rather than "everything":
- * the prop field is bucketed into regions for culling already (spec 086), so the
- * ground a chunk actually covers is the right unit of invalidation.
+ * The rule now is per *region*. The prop field is bucketed into regions for
+ * culling already (spec 086), and a region whose own ground has stopped moving
+ * can have its trees drawn whatever the rest of the map is doing -- which is
+ * both the earliest that is correct and the latest anybody would want.
  *
  * Pure -- no three.js, no DOM, and time is an argument, so a test drives a whole
  * cold start by handing it numbers.
@@ -57,12 +60,19 @@ export class ChunkIngest {
   private readonly options: IngestOptions;
   /** Queued in arrival order, one entry per `(layer, cx, cz)`. */
   private readonly queue = new Map<string, TerrainChunk>();
-  /** Region keys whose props are stale, as `rx,rz`. */
-  private readonly dirtyRegions = new Set<string>();
-  /** When something last arrived. Null before the first arrival. */
-  private lastArrivalMs: number | null = null;
-  /** Whether anything has been meshed since the last prop flush. */
-  private owesProps = false;
+  /**
+   * Region keys whose props are stale, against when their ground last moved.
+   *
+   * Per region rather than one clock for the whole map (spec 165 follow-up 5).
+   * The settle used to be global -- every chunk drained and the *whole stream*
+   * quiet -- and on a cold start the stream is never quiet until the last chunk
+   * of the last pump has landed. So the trees appeared all at once, seconds
+   * after the ground they stand on, which is the "trees show up really late"
+   * report. A region's own ground going quiet is the fact that actually decides
+   * whether its trees can be drawn.
+   */
+  private readonly dirtyRegions = new Map<string, number>();
+  /** Chunks meshed over the session. */
   private meshedTotal = 0;
 
   constructor(options: IngestOptions) {
@@ -81,8 +91,10 @@ export class ChunkIngest {
     if (chunks.length === 0) return;
     for (const chunk of chunks) {
       this.queue.set(`${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`, chunk);
+      // Touched on arrival as well as on meshing, so a region with ground still
+      // in flight cannot settle just because the queue reached it slowly.
+      this.touch(chunkRect(chunk), nowMs);
     }
-    this.lastArrivalMs = nowMs;
   }
 
   /**
@@ -93,40 +105,50 @@ export class ChunkIngest {
    * that order, so arrival order is distance order, and re-sorting here would
    * only be a second opinion about the same thing.
    */
-  takeMesh(): readonly TerrainChunk[] {
+  takeMesh(nowMs: number): readonly TerrainChunk[] {
     if (this.queue.size === 0) return [];
     const out: TerrainChunk[] = [];
     for (const [key, chunk] of this.queue) {
       if (out.length >= this.options.meshBudget) break;
       this.queue.delete(key);
       out.push(chunk);
-      this.markDirty(chunkRect(chunk));
+      this.touch(chunkRect(chunk), nowMs);
     }
     this.meshedTotal += out.length;
-    if (out.length > 0) this.owesProps = true;
     return out;
   }
 
   /**
    * The rectangles owed a prop rebuild, or nothing while the stream is live.
    *
-   * Empties itself: a caller that takes them owns them. Nothing is returned
-   * until the queue is drained *and* the quiet period has passed, so props are
-   * never rebuilt over ground whose neighbours are still in flight.
+   * Empties itself per region: a caller that takes a rectangle owns it.
+   *
+   * A region is handed back once its own ground has been quiet for `settleMs`
+   * and nothing still queued overlaps it -- the second half matters because
+   * rebuilding props over ground about to be re-meshed is work done twice, and
+   * trees standing at heights that are about to change.
    */
   takePropRects(nowMs: number): readonly WorldRect[] {
-    if (!this.owesProps || this.queue.size > 0) return [];
-    if (this.lastArrivalMs === null) return [];
-    if (nowMs - this.lastArrivalMs < this.options.settleMs) return [];
+    if (this.dirtyRegions.size === 0) return [];
+
+    // Regions any queued chunk still touches are not settled, whatever their
+    // clock says: rebuilding props over ground about to be re-meshed is work
+    // done twice and trees standing at heights that are about to change.
+    const inFlight = new Set<string>();
+    for (const chunk of this.queue.values()) {
+      for (const key of this.regionsOf(chunkRect(chunk))) inFlight.add(key);
+    }
 
     const size = this.options.regionSize;
     const out: WorldRect[] = [];
-    for (const key of [...this.dirtyRegions].sort()) {
+    for (const key of [...this.dirtyRegions.keys()].sort()) {
+      if (inFlight.has(key)) continue;
+      const touched = this.dirtyRegions.get(key) ?? 0;
+      if (nowMs - touched < this.options.settleMs) continue;
+      this.dirtyRegions.delete(key);
       const [rx, rz] = key.split(',').map(Number) as [number, number];
       out.push({ minX: rx * size, minZ: rz * size, maxX: (rx + 1) * size, maxZ: (rz + 1) * size });
     }
-    this.dirtyRegions.clear();
-    this.owesProps = false;
     return out;
   }
 
@@ -142,18 +164,25 @@ export class ChunkIngest {
 
   /** Nothing queued and nothing owed -- the stream has caught up. */
   get idle(): boolean {
-    return this.queue.size === 0 && !this.owesProps;
+    return this.queue.size === 0 && this.dirtyRegions.size === 0;
   }
 
-  /** Every region the rectangle touches, inclusive of the far edge. */
-  private markDirty(rect: WorldRect): void {
+  /** Mark every region the rectangle touches as moved at `nowMs`. */
+  private touch(rect: WorldRect, nowMs: number): void {
+    for (const key of this.regionsOf(rect)) this.dirtyRegions.set(key, nowMs);
+  }
+
+  /** Every region key the rectangle touches, inclusive of the far edge. */
+  private regionsOf(rect: WorldRect): readonly string[] {
     const size = this.options.regionSize;
     const lox = Math.floor(rect.minX / size);
     const loz = Math.floor(rect.minZ / size);
     const hix = Math.floor(rect.maxX / size);
     const hiz = Math.floor(rect.maxZ / size);
+    const keys: string[] = [];
     for (let rz = loz; rz <= hiz; rz++) {
-      for (let rx = lox; rx <= hix; rx++) this.dirtyRegions.add(`${rx},${rz}`);
+      for (let rx = lox; rx <= hix; rx++) keys.push(`${rx},${rz}`);
     }
+    return keys;
   }
 }

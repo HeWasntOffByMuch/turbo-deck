@@ -455,3 +455,56 @@ the success one -- a throw on the way in left it resident holding both ports,
 and the *next* run then died on `EADDRINUSE` instead of reporting the original
 fault -- and it must refuse a page port that already answers for the same reason
 `probe-admin-console.ts` refuses a busy game port.
+
+---
+
+## Fifth follow-up: late trees, and the sampler itself
+
+### Trees arrived all at once, at the end
+
+The settle had one clock for the whole map: every chunk drained *and* the stream
+quiet for 120ms. A cold start is never quiet until its last chunk lands, so the
+trees waited for the far edge of the map before any of them could be drawn. The
+first rule (two quiet frames) fired far too often; this one fired far too late.
+
+It is per **region** now. The prop field is bucketed into 1100-unit regions for
+culling already, and a region whose own ground has stopped moving can have its
+trees drawn whatever the rest of the map is doing -- with the one extra
+condition that nothing still queued overlaps it, since props rebuilt over ground
+about to be re-meshed stand at heights that are about to change.
+
+### The sampler
+
+`heightAt` at ~6us was the number every other cost in this spec was arithmetic
+around. Measured rather than guessed, with counters in `bakedLayer`:
+
+- 1.6M samples over the nav lattice
+- **13.5M `corner()` calls** -- 8.4 per sample
+- 24.3% of samples fall outside their nominal cell and run the ring search,
+  which is another four corners per neighbour tried
+
+Four of those 8.4 are the nominal cell; the rest is the search. Each corner is a
+jitter hash plus a chunk lookup. So the sampler's cost is corners, and the reason
+there are so many is that **a lattice re-asks for the same ones**: nav cells are
+10 units and terrain cells 22, so each corner serves about five samples, and the
+ring search re-asks for corners the nominal cell just built.
+
+Memoizing `corner(col, row)` per layer collapses 13.5M calls to the ~165k corners
+the map has:
+
+| | before | after |
+|---|---|---|
+| `heightAt` over the nav lattice | 5055ms | **768ms** |
+| per cell | 6.34us | **0.96us** |
+| one late chunk re-sampled | 36ms | **10ms** |
+
+6.6x, and the summed heights are identical to the digit -- this changes what it
+costs to ask, never the answer.
+
+The memo is keyed on a new `MapChunkStore.revision`, bumped by every mutator.
+One counter for the whole store rather than per layer or per chunk: the only
+consumer is this memo, edits are rare against millions of samples, and a coarse
+counter can only throw away a cache that was still good, never keep one that was
+not. `corner-memo.test.ts` is the question a cache in the deterministic core
+earns -- warm and cold stores agreeing sample for sample, an editor moving a
+corner, and ground streaming in under a point already sampled as a hole.

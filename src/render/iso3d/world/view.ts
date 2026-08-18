@@ -464,7 +464,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // the world that never fills in, at whichever chunk the frame happened to
     // run out of time on. The list is already bounded by MESH_BUDGET_PER_FRAME;
     // the budget's job was done before it was built.
-    for (const chunk of ingest.takeMesh()) {
+    for (const chunk of ingest.takeMesh(nowMs)) {
       scene.addTerrainChunk(chunk);
       drawnChunks.add(`${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`);
     }
