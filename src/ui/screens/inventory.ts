@@ -52,6 +52,20 @@ export interface MoveIntent {
   readonly count: number;
 }
 
+/**
+ * A carry let go of over the world (spec 172).
+ *
+ * The address is where it came from, because that is the only address it has --
+ * the ground is not a container and this screen would not know how to name a
+ * place on it if it were. Where it lands is the sim's business and this layer
+ * never learns, which is the same boundary every other intent here respects.
+ */
+export interface DropIntent {
+  readonly at: SlotRef;
+  /** 0 means the whole stack, exactly as {@link MoveIntent.count} does. */
+  readonly count: number;
+}
+
 export interface InventoryOptions {
   readonly theme: Theme;
   /** How wide the bag is. 24 slots over 6 columns is the server's shape. */
@@ -82,6 +96,8 @@ export class InventoryScreen extends Row {
   readonly tooltip = new Tooltip('itemTooltip');
   readonly drag: DragController;
   onMove: ((intent: MoveIntent) => void) | null = null;
+  /** A carry let go of over the world. Null means there is nowhere to put it. */
+  onDropToWorld: ((intent: DropIntent) => void) | null = null;
 
   private readonly bagCells: ItemSlot[] = [];
   private readonly wornCells: ItemSlot[] = [];
@@ -317,6 +333,35 @@ export class InventoryScreen extends Row {
       return true;
     }
     return this.drag.dropOnTarget(slot);
+  }
+
+  /**
+   * Put what is in hand down in the world (spec 172).
+   *
+   * The other end of the carry, and the one the screen was written without: the
+   * note on {@link placeOn} used to say there is no floor in this game to lose
+   * things on. There is one now, and it is a forgiving one -- the item lands two
+   * paces from the player and anybody, the dropper included, can pick it back
+   * up.
+   *
+   * Emits and ends the carry, and edits nothing. What the cell shows next comes
+   * from the client's own prediction arriving through `setContainers`, like
+   * every other change to this screen.
+   *
+   * Returns whether there was anything in hand, so the caller can decide whether
+   * to let the press through to the world underneath.
+   */
+  dropCarried(): boolean {
+    const data = this.drag.active?.data as ItemDrag | undefined;
+    if (!data) return false;
+    this.drag.cancel();
+    this.onDropToWorld?.({
+      at: data.from,
+      // The wire says 0 for "all of it", and saying `n` when `n` is the whole
+      // stack would make a plain drop look like a split (spec 126's rule).
+      count: data.count >= data.item.count ? 0 : data.count,
+    });
+    return true;
   }
 
   /**

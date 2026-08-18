@@ -61,7 +61,7 @@ export interface AutoAttackInput {
    */
   readonly pending: boolean;
   /**
-   * True while a poise break holds this body (spec 172).
+   * True while a poise break holds this body (spec 173).
    *
    * The third way to be unable to swing, and it needs its own field because it
    * is the only one the player did not cause: {@link rooted} is a cast this
@@ -147,7 +147,7 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
   // one thing the feint has to be is theirs.
   if (input.rooted) return { chaseTo: null, attack: false, drop: false };
 
-  // A broken body holds too, and holds harder (spec 172): it cannot swing and
+  // A broken body holds too, and holds harder (spec 173): it cannot swing and
   // it cannot walk, so there is not even a chase to keep up. The order itself
   // survives -- a stagger is half a second and dropping the mark would make
   // every break cost the player their target as well as their footing.

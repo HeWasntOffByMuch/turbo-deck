@@ -87,7 +87,7 @@ import {
 } from '../state/types.js';
 import { ordinalOfAttribute } from '../data/attributes.js';
 import { startingBaseStats } from '../player/attributes.js';
-import { applyMove, type MoveRequest } from '../player/inventory.js';
+import { applyMove, removeFromSlot, type MoveRequest } from '../player/inventory.js';
 import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
@@ -261,6 +261,13 @@ export interface ClientView {
   readonly entities: readonly import('./replica.js').ReplicatedEntity[];
   /** The local player's predicted position -- what to draw them at. */
   readonly self: { readonly x: number; readonly y: number } | null;
+  /**
+   * Where this client is turning to put something down, or null (spec 172).
+   *
+   * The oldest unanswered drop: the server serves them in the order they were
+   * asked for and turns to one aim at a time.
+   */
+  readonly dropAim: { readonly x: number; readonly y: number } | null;
   readonly selfEntityId: number;
   /**
    * The world the server is running, or null before the welcome lands. A
@@ -389,7 +396,7 @@ export interface ClientView {
    */
   readonly selfRoot: { readonly x: number; readonly y: number } | null;
   /**
-   * True while a poise break holds this body (spec 172).
+   * True while a poise break holds this body (spec 173).
    *
    * Beside {@link selfRoot} and answering the neighbouring question, because
    * the two are different states with the same consequence: one is a commitment
@@ -563,6 +570,30 @@ export interface KnownCast {
   readonly targetEntityId: number;
 }
 
+/**
+ * One container edit this client has guessed at and not yet been answered about.
+ *
+ * A drop is in here beside a move because the argument spec 126 made for
+ * predicting a move applies to it unchanged: the rule is pure, it is the same
+ * code the server runs, and what it reads is a slot this client can see. A
+ * pickup is the one that stays unpredicted -- see {@link GameClient.pickUp}.
+ */
+type PendingEdit =
+  | { readonly requestId: number; readonly kind: 'move'; readonly request: MoveRequest }
+  | {
+      readonly requestId: number;
+      readonly kind: 'drop';
+      readonly request: { readonly at: SlotAddress; readonly count?: number };
+      /**
+       * Where it was aimed, so the predicted body turns to it (spec 172).
+       *
+       * On the edit rather than in a field of its own, because the queue of
+       * edits *is* the queue of drops: the head is what the body is coming
+       * round to, and an answer retires both at once.
+       */
+      readonly aim: { readonly x: number; readonly y: number };
+    };
+
 export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
@@ -623,8 +654,17 @@ export class GameClient {
   /** The trade this client is in, or null (spec 132). Replaced whole. */
   private tradeView: TradeView | null = null;
   private equipment: Equipment = EMPTY_EQUIPMENT;
-  /** Moves sent and not yet answered, oldest first. */
-  private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
+  /**
+   * Container edits sent and not yet answered, oldest first.
+   *
+   * Two kinds since spec 172, in **one list** rather than two: a move and a drop
+   * can be in flight at the same time and the order they were sent in is the
+   * order they have to be replayed in -- dropping half a stack and then moving
+   * the rest is a different bag from doing it the other way round. Two lists
+   * would have to be merged by request id at every replay, which is this list
+   * with extra steps.
+   */
+  private readonly pendingMoves: PendingEdit[] = [];
   private moveRequests = 0;
 
   /**
@@ -836,7 +876,7 @@ export class GameClient {
     // bar still draining for a blow that has been called off.
     if (Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
     // A poise break roots this body and the server has already started
-    // discarding these components (spec 172). The onset cannot be predicted --
+    // discarding these components (spec 173). The onset cannot be predicted --
     // nobody knows they are about to be hit -- so the first round trip's worth
     // of movement is sent, discarded and corrected, and that is the accepted
     // cost. What is not accepted is continuing to send it *after* the stagger
@@ -887,12 +927,61 @@ export class GameClient {
     if (!this.connected) return 0;
     const requestId = this.nextRequestId();
     const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
-    this.pendingMoves.push({ requestId, request });
+    this.pendingMoves.push({ requestId, kind: 'move', request });
     this.replayMoves();
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.MoveItem, requestId, from, to, count }),
     );
     return requestId;
+  }
+
+  /**
+   * Put a stack down in the world (spec 172).
+   *
+   * Predicted like a move and for the same reason -- the removal is a pure rule
+   * over a slot this client can see -- and rolled back by the same `Inventory`
+   * answer, which arrives whether the server took it or refused it.
+   *
+   * What is deliberately *not* predicted is the drop appearing on the ground.
+   * That is an entity, and entities arrive in deltas; a client that invented one
+   * would have to reconcile it against the real one a round trip later.
+   *
+   * `count` of 0 means the whole stack, as on the wire.
+   */
+  dropItem(at: SlotAddress, aim: { readonly x: number; readonly y: number }, count = 0): number {
+    if (!this.connected) return 0;
+    const requestId = this.nextRequestId();
+    this.pendingMoves.push({
+      requestId,
+      kind: 'drop',
+      request: { at, ...(count === 0 ? {} : { count }) },
+      aim,
+    });
+    this.replayMoves();
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.DropItem,
+        requestId,
+        at,
+        count,
+        aimX: aim.x,
+        aimY: aim.y,
+      }),
+    );
+    return requestId;
+  }
+
+  /**
+   * Where the body is turning to put something down, or null (spec 172).
+   *
+   * The oldest unanswered drop, because the server serves them in the order
+   * they were asked for and turns to one aim at a time.
+   */
+  private get dropAim(): { readonly x: number; readonly y: number } | null {
+    for (const pending of this.pendingMoves) {
+      if (pending.kind === 'drop') return pending.aim;
+    }
+    return null;
   }
 
   /**
@@ -909,7 +998,10 @@ export class GameClient {
     let bag = this.serverInventory;
     let worn = this.serverEquipment;
     for (const pending of this.pendingMoves) {
-      const outcome = applyMove(bag, worn, pending.request, this.level);
+      const outcome =
+        pending.kind === 'move'
+          ? applyMove(bag, worn, pending.request, this.level)
+          : removeFromSlot(bag, worn, pending.request.at, pending.request.count);
       // A guess the local rules refuse is simply not drawn. The server is about
       // to refuse it too, and predicting an illegal move is worse than lagging.
       if (!outcome.ok) continue;
@@ -1285,7 +1377,7 @@ export class GameClient {
       // cooldowns above, and for the same reason: the press has to grey the
       // button out now rather than in a round trip.
       fallbackCharges: Math.max(0, this.fallbackCharges - this.predictedCharges),
-      // The stagger window, straight off the replica (spec 172). Not predicted
+      // The stagger window, straight off the replica (spec 173). Not predicted
       // and deliberately not: nobody knows they are about to be hit, so this is
       // the server's word arriving a round trip late and there is nothing
       // honest to guess in the meantime.
@@ -1296,7 +1388,7 @@ export class GameClient {
 
   /**
    * Whether this client can see itself inside a poise break's window
-   * (spec 172).
+   * (spec 173).
    *
    * Asked of the replica rather than of the mirror, because the mirror is built
    * for `startCast` and this is a movement question -- and asked through the
@@ -1527,6 +1619,7 @@ export class GameClient {
       this.wantedFacing,
       this.stats.turnRate,
       this.welcome?.tickRate ?? 60,
+      this.dropAim,
     );
     // A confirmed cast is over when the server's own `endTick` says it is, not
     // when `CastEnded` gets here (spec 069).
@@ -1644,6 +1737,11 @@ export class GameClient {
       commitDelayTicks: this.commitDelayTicks(),
       entities: this.world.all(),
       self: this.prediction?.drawn ?? null,
+      // What the body is turning to put something down at (spec 172). On the
+      // view because the renderer keeps a drawn heading of its own and steps it
+      // from the intent -- so without this the local player is the one person
+      // who does not see their own body come round.
+      dropAim: this.dropAim,
       selfEntityId: this.welcome?.entityId ?? -1,
       worldSeed: this.welcome?.worldSeed ?? null,
       map: this.mapView(),

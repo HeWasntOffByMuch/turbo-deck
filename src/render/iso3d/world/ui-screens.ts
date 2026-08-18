@@ -70,6 +70,13 @@ export interface UiScreensOptions {
   readonly map: InputMap;
   /** A drag that landed: where from, where to, and 0 for the whole stack. */
   readonly onMove: (from: SlotRef, to: SlotRef, count: number) => void;
+  /**
+   * A carry let go of over the world (spec 172): put it on the ground.
+   *
+   * Where it lands is not named here and cannot be -- the server throws it in
+   * front of the body -- so this says which slot it left and how much of it.
+   */
+  readonly onDropItem: (at: SlotRef, count: number) => void;
   readonly onSpend: (skillId: string) => void;
   /** Put one attribute point somewhere, and hand every one of them back (147). */
   readonly onAllocate: (key: string) => void;
@@ -301,6 +308,9 @@ export class UiScreens {
     });
     this.inventory.onMove = (intent) => {
       options.onMove(intent.from, intent.to, intent.count);
+    };
+    this.inventory.onDropToWorld = (intent) => {
+      options.onDropItem(intent.at, intent.count);
     };
     this.layers.place('dragGhost', this.inventory.ghost);
     // Above every window, like the ghost, because a tooltip about a cell in one
@@ -1020,6 +1030,14 @@ export class UiScreens {
    */
   handlePointer(phase: 'down' | 'up' | 'move', pos: Point, button: number, mods: Modifiers): boolean {
     if (phase === 'down') this.focusOnPress(pos);
+    // A press on the world with something in hand puts it down (spec 172), and
+    // is not passed on: the button that drops an item must not also order the
+    // player to walk over to where it landed.
+    //
+    // On the press rather than the release, because that is the half gameplay
+    // acts on -- an order is given on the way down -- so consuming the release
+    // would be consuming an event nothing was going to read.
+    if (phase === 'down' && this.dropOnWorld(pos)) return true;
     const consumed = this.root.handle({ kind: 'pointer', phase, pos, button, mods, time: this.now });
     // A move with no button down reaches no gesture, and two things need it: a
     // carry follows the cursor with nothing held, and a tooltip is by definition
@@ -1027,6 +1045,22 @@ export class UiScreens {
     if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
     if (phase === 'move' && this.isOpen('character')) this.character.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));
+  }
+
+  /**
+   * Put a carried stack down, if the press landed on the world (spec 172).
+   *
+   * "The world" is nothing in the interface at all -- a null hit test through
+   * the layer stack, which is the same question {@link focusOnPress} asks. A
+   * press on a window that is not a cell is not a drop: releasing over the empty
+   * half of the bag has always meant "keep hold of it", and turning that into a
+   * discard would be the one gesture in the screen that destroys something by
+   * being slightly off.
+   */
+  private dropOnWorld(pos: Point): boolean {
+    if (this.inventory.drag.active === null) return false;
+    if (this.layers.hitTest(pos) !== null) return false;
+    return this.inventory.dropCarried();
   }
 
   /**

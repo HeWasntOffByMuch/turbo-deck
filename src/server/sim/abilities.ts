@@ -118,7 +118,7 @@ export type CastRejection =
    */
   | 'withdrawn'
   /**
-   * Inside a poise break's window (spec 172).
+   * Inside a poise break's window (spec 173).
    *
    * Its own reason rather than folding into `alreadyCasting`, because the two
    * have different fixes and different lengths: one is "finish what you
@@ -414,7 +414,7 @@ export function startCast(
   if (!ability) return { ok: false, reason: 'unknownAbility' };
   if (entity.health <= 0) return { ok: false, reason: 'dead' };
   if (entity.cast !== null) return { ok: false, reason: 'alreadyCasting' };
-  // A broken body does not get to swing through its own stagger (spec 172).
+  // A broken body does not get to swing through its own stagger (spec 173).
   //
   // Ordered above the cooldown deliberately: when a body is both staggered and
   // on cooldown, the stagger is the more useful answer, because it is the one

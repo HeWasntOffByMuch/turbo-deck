@@ -152,6 +152,7 @@ function blankEntity(id: number): ServerEntity {
     cast: null,
     cooldowns: {},
     projectile: null,
+    dropAim: null,
     drop: null,
     mote: null,
     ...blankProgression(),
@@ -301,6 +302,7 @@ export function spawnEntity(
     cast: null,
     cooldowns: {},
     projectile: null,
+    dropAim: null,
     drop: null,
     mote: null,
     // A body enters the world with a full guard, like it enters with full
@@ -555,7 +557,7 @@ export function step(
     // a client's aim stays live until the moment of commit, but the movement
     // components are dropped.
     //
-    // A poise break roots harder (spec 172): the movement goes the same way,
+    // A poise break roots harder (spec 173): the movement goes the same way,
     // and the *facing* is pinned to where the body already points. That is the
     // difference between the two states. A caster is still steering -- spec 067
     // holds the aim live right up to the commit and that is the feature --

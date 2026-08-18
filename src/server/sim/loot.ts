@@ -152,6 +152,63 @@ export function scatterLanding(rng: Rng, from: Vec3): [{ x: number; y: number },
 }
 
 /**
+ * How far in front of a body a thing it put down lands, in world units
+ * (spec 172).
+ *
+ * Clear of the body (radius 16) and of the drop's own (radius 10) so the item
+ * is visibly *in front of* the player rather than under them, and far inside
+ * `PICKUP_RANGE` so it can be picked straight back up -- a drop you have to
+ * walk to in order to undo is a drop that punishes a mis-click.
+ */
+export const THROW_REACH = 40;
+
+/**
+ * Where a dropped item lands: in front of the body, along its facing.
+ *
+ * The counterpart to {@link scatterLanding}, and the difference is the whole
+ * point of it being a separate function: a kill's landing spot is nobody's
+ * choice and so it comes from the sim's Rng, while this one was aimed by a
+ * player who was already facing somewhere. Drawing for it would mean a player
+ * could shift every roll in the world after them by emptying their bag, which
+ * is a replay divergence with a bag screen in front of it.
+ *
+ * Ground plane only, like `scatterLanding`: the caller has the terrain.
+ */
+export function throwLanding(
+  from: Vec3,
+  facing: number,
+  reach: number = THROW_REACH,
+): { x: number; y: number } {
+  return { x: from.x + Math.cos(facing) * reach, y: from.y + Math.sin(facing) * reach };
+}
+
+/**
+ * A drop a player put down (spec 172).
+ *
+ * {@link makeDrop} with the two decisions this case makes differently, in one
+ * place rather than at each call site:
+ *
+ * **No owner.** `ownerPlayerId` protects a reward from everybody who did not
+ * earn it, and a thing somebody discarded is not being protected from anybody.
+ *
+ * **No reveal**, at any tier -- a `revealScale` of zero, so both clocks land on
+ * the spawn tick and `revealPhaseAt` answers `Revealed` from the first frame.
+ * The reveal withholds an identity the player does not know; the one who took
+ * it out of their own bag knows exactly what it is, and everybody else can read
+ * it as it lands. `lootRevealScale` is deliberately not consulted: it tunes a
+ * presentation this drop does not have.
+ */
+export function makeDroppedItem(
+  defId: string,
+  count: number,
+  rarity: RarityId,
+  origin: Vec3,
+  tick: number,
+): DropState {
+  return makeDrop(defId, count, rarity, null, origin, tick, 0);
+}
+
+/**
  * The two ticks the phase is read off: everything {@link revealPhaseAt} needs.
  *
  * Structural rather than {@link DropState} so that the client can ask the same

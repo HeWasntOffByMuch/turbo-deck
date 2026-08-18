@@ -310,6 +310,35 @@ export interface PickUpItemMessage {
 }
 
 /**
+ * Put a stack down in the world (spec 172).
+ *
+ * The same shape as a move minus its target, because the target is the ground
+ * and the ground has no address. Where it lands is the server's: the body's
+ * facing and a constant reach, neither of which a client may name.
+ *
+ * Answered with an `Inventory` at this `requestId` either way, like every other
+ * container edit.
+ */
+export interface DropItemMessage {
+  readonly type: typeof ClientMessageType.DropItem;
+  readonly requestId: number;
+  readonly at: SlotAddress;
+  /** How many to put down, or 0 for the whole stack. */
+  readonly count: number;
+  /**
+   * The world point the cursor was over: what the body turns to face, and the
+   * line the throw runs along (spec 172).
+   *
+   * An aim rather than a destination. How far the item goes is the server's
+   * constant, so a point on the horizon and a point two paces away are the same
+   * request in every respect but direction -- and a point on top of the body has
+   * no direction in it, which leaves the body's own heading standing.
+   */
+  readonly aimX: number;
+  readonly aimY: number;
+}
+
+/**
  * "Put me back on my feet" (spec 164). See {@link ClientMessageType.Respawn}.
  *
  * Payloadless, like {@link GoodbyeMessage}: where a respawn puts you and what it
@@ -346,6 +375,7 @@ export type ClientMessage =
   | RequestChunkMessage
   | WatchSpawnersMessage
   | PickUpItemMessage
+  | DropItemMessage
   | RespawnMessage;
 
 /**
@@ -473,6 +503,11 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
     case ClientMessageType.PickUpItem:
       writer.varuint(message.requestId).varuint(message.entityId);
       break;
+    case ClientMessageType.DropItem:
+      writer.varuint(message.requestId);
+      writeAddress(writer, message.at);
+      writer.varint(message.count).f32(message.aimX).f32(message.aimY);
+      break;
     case ClientMessageType.Respawn:
       break;
     case ClientMessageType.OpenVendor:
@@ -584,6 +619,15 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         type: ClientMessageType.PickUpItem,
         requestId: reader.varuint(),
         entityId: reader.varuint(),
+      };
+    case ClientMessageType.DropItem:
+      return {
+        type: ClientMessageType.DropItem,
+        requestId: reader.varuint(),
+        at: readAddress(reader),
+        count: reader.varint(),
+        aimX: reader.f32(),
+        aimY: reader.f32(),
       };
     case ClientMessageType.Respawn:
       return { type: ClientMessageType.Respawn };

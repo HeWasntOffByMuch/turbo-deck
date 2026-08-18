@@ -445,7 +445,7 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  is stepped so the events left in the clip never fire, and it
                  refuses to leave a `locking` state, because not being
                  interruptible is that category's whole reason to exist.
-                 Since spec 172 there is a `revive` beside it, for the same
+                 Since spec 168 there is a `revive` beside it, for the same
                  reason in the other direction: a death state is `terminal` and
                  a terminal state has **no exit**, which is the right rule for a
                  corpse and is exactly why a body cannot get up on its own. A
@@ -580,6 +580,22 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
+                 Since spec 172 that vocabulary has one more word in it, and it
+                 is the one the note on `placeOn` used to say did not exist:
+                 letting go over the **world** puts the thing on the ground.
+                 What counts as the world is a null hit test through the layer
+                 stack -- the empty half of a window is not it, because
+                 releasing there has always meant "keep hold of it" and turning
+                 that into a discard would make the one gesture that gets rid of
+                 something the easiest one to do by accident. Read on the
+                 *press*, because that is the half gameplay acts on, and
+                 consumed, so the button that drops an item does not also order
+                 the player to walk over to where it landed. The press is also
+                 the *aim*: `view.ts` reads the point being offered to the
+                 interface at that instant rather than the cursor's last known
+                 position, since `UiLayer.toUi` is deliberately the one
+                 conversion between UI pixels and canvas ones and a stale
+                 cursor would throw the item somewhere nobody clicked.
                  One more rule of the same kind, from spec 147's sheet: **a
                  hidden tab still has rectangles in it**. A tab switched away is
                  hidden and never destroyed -- that is what makes a tab keep what
@@ -919,6 +935,74 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  refuses past, which made every pickup on a good connection one
                  refusal and a retry -- and the server's own check allows for its
                  input backlog, bounded by `MAX_REWIND_TICKS`.
+                 A player can put one there too (spec 172), and it is an
+                 **action that needs facing**: the press carries the world point
+                 the cursor was over, the body turns to it at its own rate, and
+                 only then does the item leave the bag. Not a cast -- no cost,
+                 no cooldown, no wind-up, no backswing, nothing rooted and no
+                 `CastState`, because every one of those would put a cast bar
+                 over a body putting a potion down. What it borrows is the one
+                 part of a cast that is about aiming: `CastPhase.Turning`'s rule
+                 that a committed action waits for the heading it committed to.
+                 `ServerEntity.dropAim` is that aim and `resolveFacing` reads it
+                 directly under the cast, so the turn is the same turn every
+                 other player watches. It outranks the *input* rather than being
+                 outranked by it, which is where it parts company with a cast: a
+                 step withdraws from a blow because there is a cost to refund,
+                 and there is nothing to refund here, so a player who asked to
+                 put something down and then walked off still asked. The queue
+                 lives on the `Connection` rather than in the sim, because what
+                 a drop takes out of a bag is behind an async store the sim
+                 cannot reach -- and it is a queue rather than a slot so that
+                 emptying four things at one spot is one turn and four drops.
+                 Three bounded ways it ends other than by landing, all of them
+                 refusals that leave the item in the bag: the body dies, the
+                 queue passes `MAX_PENDING_DROPS`, or the heading does not
+                 arrive inside `DROP_TURN_TIMEOUT_TICKS` -- which a body that
+                 cannot turn at all never would. The aim is a **direction and
+                 not a destination**: the reach is the server's constant, so
+                 clicking the horizon and clicking two paces away drop the same
+                 distance away, and an aim on top of the body has no direction
+                 in it and leaves the heading standing (`headingToward`).
+                 Both ends predict the turn -- `steerFacing` on the client and
+                 `moveIntent`'s `dropAim` in the renderer -- because a client
+                 never adopts the server's facing after the first seed, so
+                 without it the local player would be the one person who cannot
+                 see their own body come round.
+                 It differs from a kill's drop in the two ways the presentation
+                 is *about*:
+                 `makeDroppedItem` gives it **no owner**, since a thing somebody
+                 discarded is not being protected from anybody, and **no
+                 reveal** at any tier, since the reveal withholds an identity
+                 from somebody who does not know it and the person who emptied
+                 their own bag does. It also draws nothing from `state.rng`:
+                 `throwLanding` is the body's facing and a constant reach, where
+                 a kill's `scatterLanding` is two seeded draws -- a landing
+                 nobody chose has to come from somewhere, and one that was aimed
+                 must not, or opening a bag would shift every roll in the world
+                 after it. Everything else is inherited whole, the arc included,
+                 because `origin` is the body's own position and the client
+                 already knows how to draw a throw between two replicated
+                 points. `removeFromSlot` is the container half, beside
+                 `applyMove` and separate from it because a move has a target
+                 and this has none; the client predicts it through the same
+                 in-flight list a move replays through, which is the one thing
+                 `pickUp` deliberately does not do -- a drop reads a slot this
+                 client can see, a pickup reads a range check and an identity it
+                 may not have been told. `npx tsx scripts/probe-drop.ts` is the
+                 half no headless test can reach, and the measurement in it that
+                 makes it honest is the **Escape control**: a cell drawn empty
+                 is either an item on the ground or an item still in hand, since
+                 a carry empties the cell it came from, so the probe cancels
+                 with Escape and requires the cell to *stay* empty -- having
+                 first measured on the same build that Escape does put a carry
+                 back. Every wait in it is a *poll*, and that is not tidiness:
+                 this environment paints the page at about five frames a second
+                 under software GL and the bag's readout is published from the
+                 frame, so a fixed 200ms wait is less than one frame and reads
+                 the state before the click it is checking. It reported a
+                 working drop as a failure exactly once, which is how that is
+                 known.
                  `admin:triggerEvent 'drop'`/`'reveal'` and the live
                  `lootRevealScale` are the developer path, so a presentation is
                  tuned without farming for one -- and none of the three can
@@ -991,10 +1075,10 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  below 1 because a wind-up nothing can answer would make the
                  readable commitment this whole game is built on unreadable.
                  Its `staggered` predicate is what makes a break cost anything
-                 (spec 172), and it is one function because it is asked in three
+                 (spec 173), and it is one function because it is asked in three
                  places: the movement pass roots the legs on it, `startCast`
                  refuses the hands on it, and `blow.ts` reads the same state for
-                 Strength's execute bonus. Until 172 none of that existed -- the
+                 Strength's execute bonus. Until 173 none of that existed -- the
                  flag was written and read twice in the whole server, so a
                  staggered body walked at full speed and ended its own stagger
                  early by casting through it, because a commit writes
@@ -1425,7 +1509,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  requires the same numbers. Everything the feature decides is
                  asserted in Node; what it could not say is whether any of it
                  was connected to anything.
-                 Since spec 172 it also owns the trade table's *ending*, and the
+                 Since spec 169 it also owns the trade table's *ending*, and the
                  rule is that the mount reads `view.trade ?? view.endedTrade`:
                  the server forgets a trade the instant it is over, so by the
                  time there is a reason to show, the live field is already null

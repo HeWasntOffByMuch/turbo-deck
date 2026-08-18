@@ -1,5 +1,5 @@
 /**
- * The swirl over a stunned body (spec 172).
+ * The swirl over a stunned body (spec 173).
  *
  * Pure, and stateless, so every case here is one question asked of three
  * numbers. The property that matters most is the last one: two readers handed
@@ -13,7 +13,7 @@ import { FADE_TICKS, stunMark, UNMARKED } from './stun-icon.js';
 
 const STUNNED = EntityActivity.Stunned;
 
-describe('the swirl marks a stunned body (spec 172)', () => {
+describe('the swirl marks a stunned body (spec 173)', () => {
   it('is drawn for a body inside its window', () => {
     expect(stunMark(STUNNED, 30, 0).visible).toBe(true);
   });

@@ -10,7 +10,7 @@
  * dropped, its Flow gone, for `staggerTicks`. The pool then refills whole and
  * cannot be broken again for {@link SCALING.combat.staggerImmuneTicks}.
  *
- * "Rooted" was aspirational until spec 172 and is now true: {@link staggered}
+ * "Rooted" was aspirational until spec 173 and is now true: {@link staggered}
  * is read by the movement pass and by `startCast`, so a broken body neither
  * walks, turns nor swings for the window. Before that the flag was set and read
  * twice in the whole server -- once for Strength's execute bonus, once to slow
@@ -86,7 +86,7 @@ export function poiseArmorOf(
 
 /**
  * Whether this body is inside a poise break's window, and so not its own
- * (spec 172).
+ * (spec 173).
  *
  * The one place "staggered" is defined, because it is asked in three: the
  * movement pass roots the legs on it, `startCast` refuses the hands on it, and

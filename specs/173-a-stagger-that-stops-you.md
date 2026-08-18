@@ -1,4 +1,4 @@
-# 172 — A stagger that stops you
+# 173 — A stagger that stops you
 
 ## Problem
 
@@ -83,7 +83,7 @@ A new refusal, beside the eight that exist:
 ```ts
 export type CastRejection =
   | ...
-  /** Inside a poise break's window (spec 172). */
+  /** Inside a poise break's window (spec 173). */
   | 'staggered'
 ```
 

@@ -472,7 +472,7 @@ describe('a body faces what it was told to attack (spec 090)', () => {
   });
 });
 
-describe('a poise break holds the legs and the heading (spec 172)', () => {
+describe('a poise break holds the legs and the heading (spec 173)', () => {
   const HELD_FACING = 1.2;
 
   it('asks for no movement, whatever is held', () => {
@@ -531,8 +531,64 @@ describe('a poise break holds the legs and the heading (spec 172)', () => {
     expect(result.facing).toBe(HELD_FACING);
   });
 
+  it('outranks the aim of something being put down (spec 172)', () => {
+    // The two features met in this function on the same day. A drop's aim
+    // deliberately turns the body *while it walks*, which is the one branch
+    // here that returns a live direction -- so it is the one most able to
+    // smuggle a turn through a stagger. The server pins `steered.facing`
+    // regardless, so the client must not ask for one.
+    const result = intent({
+      staggered: true,
+      dropAim: { x: 500, y: 500 },
+      held: new Set([MOVE_EAST]),
+      facing: HELD_FACING,
+    });
+    expect(result.facing).toBe(HELD_FACING);
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+  });
+
   it('walks again the moment the window ends', () => {
     const result = intent({ staggered: false, held: new Set([MOVE_EAST]) });
     expect(result.moveX).toBe(1);
+  });
+});
+
+/**
+ * Turning to put something down (spec 172).
+ *
+ * The ranking is what these are about, and it is not the same as the cast's:
+ * walking withdraws from a cast and does not withdraw from a drop, so a drop's
+ * aim outranks a direction where a cast's aim is outranked by one.
+ */
+describe('a body turns to what it is putting down (spec 172)', () => {
+  const AIM = { x: 0, y: -100 };
+
+  it('faces the aim while standing still', () => {
+    expect(intent({ dropAim: AIM }).facing).toBeCloseTo(-Math.PI / 2, 9);
+  });
+
+  it('keeps walking while it comes round', () => {
+    const result = intent({ dropAim: AIM, held: new Set([MOVE_EAST]) });
+    // The legs are the key's...
+    expect(result.moveX).toBe(1);
+    expect(result.moveY).toBe(0);
+    // ...and the head is the drop's.
+    expect(result.facing).toBeCloseTo(-Math.PI / 2, 9);
+  });
+
+  /** A committed blow still owns the body: its aim was captured at the commit. */
+  it('yields to a cast', () => {
+    const result = intent({ dropAim: AIM, castAim: { x: 100, y: 0 } });
+    expect(result.facing).toBeCloseTo(0, 9);
+  });
+
+  it('outranks a standing attack order, which is only a place to look', () => {
+    const result = intent({ dropAim: AIM, targetAim: { x: 100, y: 0 } });
+    expect(result.facing).toBeCloseTo(-Math.PI / 2, 9);
+  });
+
+  it('keeps the heading it had when the aim is where the body stands', () => {
+    expect(intent({ dropAim: { ...ORIGIN }, facing: 1.25 }).facing).toBeCloseTo(1.25, 9);
   });
 });

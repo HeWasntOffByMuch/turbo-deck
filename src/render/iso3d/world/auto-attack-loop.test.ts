@@ -158,7 +158,7 @@ function fight(mainHand: string | null, monsterId: string, startX: number, ticks
       range: swing.range,
       rooted: me.cast !== null,
       // The server's own entity, so this is the authoritative answer rather
-      // than a replicated one (spec 172).
+      // than a replicated one (spec 173).
       staggered: staggered(me, state.tick),
       // No wire here, so a request is answered on the tick it is made and
       // nothing is ever outstanding.

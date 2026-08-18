@@ -590,7 +590,7 @@ Kept honest because a spec that disagrees with its code is worse than no spec.
 12. **No admin path applies a preset.** `npm run balance -- --preset=<id>` builds
    and fights any of the twelve; a wire message that made a character level 20
    is not a thing to ship, and a manager method nothing calls is dead code.
-13. **Momentum grants `momentum`, not `flow`** (corrected in spec 172). The
+13. **Momentum grants `momentum`, not `flow`** (corrected in spec 173). The
    effect string had promised "two Flow stacks and halves the next wind-up" and
    the grant was `momentumTicks`/`momentumWindupScale` all along -- a separate
    status, consumed at a different place. The wind-up half was always true; the

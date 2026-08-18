@@ -15,12 +15,15 @@ import { ALL_RARITIES, DROP_LIFETIME_TICKS, DROP_TABLES, rarityRow, rollLoot } f
 import {
   isRevealed,
   makeDrop,
+  makeDroppedItem,
   RevealPhase,
   revealPhaseAt,
   revealsOn,
   scatterLanding,
   SCATTER_MAX,
   SCATTER_MIN,
+  THROW_REACH,
+  throwLanding,
 } from './loot.js';
 
 /** Where the body fell. Its own value so the landing is visibly not it. */
@@ -209,6 +212,53 @@ describe('where it lands', () => {
   it('remembers where it was thrown from', () => {
     const drop = makeDrop('sword.keen', 1, 'rare', 'ana', ORIGIN, 10, 1);
     expect(drop.origin).toEqual(ORIGIN);
+  });
+});
+
+/**
+ * What a player puts down (spec 172).
+ *
+ * The two departures from a kill's drop, stated as tests rather than as a
+ * comment: it lands where the body is pointing rather than wherever a draw
+ * says, and it is known and unowned from the tick it exists.
+ */
+describe('a drop a player put down', () => {
+  it('lands in front of the body, at the stated reach', () => {
+    for (const facing of [0, Math.PI / 2, Math.PI, -Math.PI / 4, 2.7]) {
+      const spot = throwLanding(ORIGIN, facing);
+      expect(Math.hypot(spot.x - ORIGIN.x, spot.y - ORIGIN.y)).toBeCloseTo(THROW_REACH, 6);
+      // In front, not merely nearby: the component along the facing is the whole
+      // of the distance.
+      const along = (spot.x - ORIGIN.x) * Math.cos(facing) + (spot.y - ORIGIN.y) * Math.sin(facing);
+      expect(along).toBeCloseTo(THROW_REACH, 6);
+    }
+  });
+
+  /**
+   * A kill's scatter draws from the sim's Rng because nobody chose it. This one
+   * was aimed, and drawing for it would let anybody shift every roll in the
+   * world after them by emptying their bag.
+   */
+  it('needs no randomness at all', () => {
+    expect(throwLanding(ORIGIN, 1.1)).toEqual(throwLanding(ORIGIN, 1.1));
+  });
+
+  it('is revealed on the tick it lands, at every tier', () => {
+    for (const id of RARITY_IDS) {
+      const drop = makeDroppedItem('sword.keen', 1, id, ORIGIN, 400);
+      expect(drop.revealTick).toBe(400);
+      expect(drop.anticipationTick).toBe(400);
+      expect(revealPhaseAt(drop, 400)).toBe(RevealPhase.Revealed);
+      // ...and there is no crossing to announce, because it never crosses.
+      expect(revealsOn(drop, 400)).toBe(false);
+    }
+  });
+
+  it('belongs to nobody, and still expires like any other drop', () => {
+    const drop = makeDroppedItem('potion.minor', 4, 'common', ORIGIN, 12);
+    expect(drop.ownerPlayerId).toBeNull();
+    expect(drop.count).toBe(4);
+    expect(drop.expiresTick).toBe(12 + DROP_LIFETIME_TICKS);
   });
 });
 

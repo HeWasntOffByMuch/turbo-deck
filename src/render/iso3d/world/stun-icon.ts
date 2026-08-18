@@ -1,5 +1,5 @@
 /**
- * The swirl over a stunned body (spec 172).
+ * The swirl over a stunned body (spec 173).
  *
  * A poise break roots a body for `staggerTicks` -- it cannot walk, turn or
  * swing. `stagger-flinch.ts` draws the *contact* that put it there, which is a

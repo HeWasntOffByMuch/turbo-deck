@@ -247,6 +247,30 @@ export const RESOURCE_EPSILON = 0.05;
  */
 export const MAX_REVEAL_SCALE = 10;
 
+/**
+ * How many drops one connection may have waiting for a turn (spec 172).
+ *
+ * A drop waits for the body to come round to it, so a player emptying a bag
+ * fast can genuinely have several in flight -- and they should all happen, in
+ * the order they were asked for. What this bounds is the absurd case: a client
+ * queueing a thousand aims is a client making the server turn for a minute.
+ * Well past four clicks inside one turn, which is the most a hand can do.
+ */
+export const MAX_PENDING_DROPS = 8;
+
+/**
+ * How long a drop waits for the heading it asked for, in ticks (spec 172).
+ *
+ * Two seconds, which is several times the longest turn a body in this game can
+ * be asked for -- half a revolution at the slowest authored `turnRate`. It is
+ * not a pacing knob: it is the answer to "what if the heading never arrives",
+ * which a body that cannot turn at all (a `turnRate` of zero) and a body held
+ * facing elsewhere by something longer than itself can both produce. The item
+ * is still in the bag when it fires, so the cost of it being wrong is a refusal
+ * rather than a loss.
+ */
+export const DROP_TURN_TIMEOUT_TICKS = 120;
+
 // There is deliberately no respawn delay here any more (spec 164). A dead player
 // lies there until they ask to get up -- `ClientMessageType.Respawn` -- so the
 // three-second timer this used to hold has no reader, and a constant nothing

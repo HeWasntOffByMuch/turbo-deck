@@ -1,5 +1,5 @@
 /**
- * What a poise break actually stops (spec 172).
+ * What a poise break actually stops (spec 173).
  *
  * Driven through the real `step`, for the reason `attack-cancel.test.ts` gives
  * about the attack point and for a sharper one here: until this file existed
@@ -180,7 +180,7 @@ const rejections = (events: readonly ServerSimEvent[], id: number): readonly str
     .filter((event) => event.kind === 'castRejected' && event.entityId === id)
     .map((event) => (event as { reason: string }).reason);
 
-describe('a poise break stops the body it broke (spec 172)', () => {
+describe('a poise break stops the body it broke (spec 173)', () => {
   it('roots the legs against an input it would otherwise have honoured', () => {
     const { state, playerId, ctx } = brokenPlayer();
     const before = entity(state, playerId).position;
