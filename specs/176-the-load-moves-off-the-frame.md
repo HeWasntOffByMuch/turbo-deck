@@ -272,3 +272,73 @@ is nothing to trade, so both are gone. `GROUND_REFRESH_MIN_CHUNKS` stays,
 because "is there enough new ground to be worth a grid" survives the work
 getting cheaper — cheaper is not free, and a grid per late chunk would keep a
 core busy for the whole of a walk.
+
+---
+
+## Follow-up: the completeness rule, counted
+
+The rule shipped on reasoning rather than on a number, and the reasoning
+predicted a factor of two to four. `npx tsx scripts/bench-walk.ts` counts it: a
+real `GameServer` over the shipped arena, a real `GameClient` asking for chunks
+the way the tab does, and two `ChunkIngest` ledgers fed the identical arrivals on
+the identical clock — one stream, judged twice, so the comparison cannot be two
+runs that streamed differently.
+
+```
+walked 13294 units over 5400 ticks (90.0s), 195 chunk arrivals, 195 chunks held
+the gate opened at tick 253 (4.3s) with 169 chunks; 26 chunks arrived after it
+
+prop region rebuilds over that walk
+  without the completeness rule    81 behind the gate,   36 in front of it
+  with it                          81 behind the gate,   28 in front of it
+```
+
+**1.29x, not 2-4x.** Eight dropped frames saved out of thirty-six. The mechanism
+is real and fires exactly where it was said to — in front of the gate, on the
+leading edge — and behind the gate it does nothing at all, which is right,
+because ground behind the gate is complete by the time it settles.
+
+Why the prediction was wrong is worth more than the number. It assumed the
+stream is *sustained* while walking. It is not, on this map: **the arena is 210
+chunks and the request window is 169**, so the gate opens holding four fifths of
+the world and only 26 more chunks ever arrive. There is no long leading edge for
+the rule to work on. On a map meaningfully larger than the request window --
+which is the direction this map has already moved once, from 56 chunks to 210 --
+the same rule would have far more to bite on. It is kept for that reason and
+because it costs one `rectCovered` per dirty region per frame, not because of the
+eight frames.
+
+### Two things the bench had to be told, both of which reported zero stutter
+
+**A raw held direction is not a walk.** `moveX: 1` walks into the first tree and
+stops -- 413 units and then nothing, on a map with 6942 of them. The bench drives
+the renderer's own `moveIntent` and `RoutePlanner`, which is what a right-click
+does, and then covers 13294 units.
+
+**A walker that sets off during the load measures a scenario no player can
+produce.** Walking from tick one drags the request window across the map before
+the gate opens, so the gate opened at tick 601 holding *all 195 chunks* and
+nothing streamed during play at all -- zero rebuilds in front of the gate, and a
+bench that cheerfully reported no stutter. Held still until the gate lifts, it
+reproduces what `probe-streaming.ts` sees in a browser: 169 chunks at the gate,
+26 after it.
+
+### What is actually left, on this map
+
+Post-gate, over a 90-second walk across most of the world:
+
+| | before spec 176 | after |
+|---|---|---|
+| 26 chunk arrivals | ~0.6s of dropped frames | ~0.04s |
+| ~3 nav grids | ~0.6s | 0 |
+| 28-36 prop regions | ~1.2s | ~1.0s |
+
+So the frame-visible streaming cost went from roughly 2.4s of dropped frames
+across that walk to roughly 1.0s, and what remains is **28 dropped frames over 90
+seconds -- one every 3.2 seconds** while walking into ground that has not been
+seen, after which this map is fully held and nothing streams again for the
+session.
+
+The larger half of the prop cost is not in front of the gate at all: **81 of the
+109 region rebuilds happen during the load**, which is 2.75s of a 4.3s loading
+screen.

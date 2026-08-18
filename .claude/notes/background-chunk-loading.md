@@ -129,7 +129,10 @@ region back while any *queued* chunk overlaps it — but a chunk that has not
 arrived yet is not queued. Walking east, every region on the leading edge settles
 on the half that has arrived, rebuilds, and is dirtied again by the next column.
 A 1100-unit region spans parts of ~4 chunks, so the same 34 ms is plausibly being
-paid 2–4 times per region. `StreamedMap` already knows which chunks are
+paid 2–4 times per region. **Measured afterwards at 1.29x** (spec 176's
+follow-up): the mechanism is real, but this map is 210 chunks against a 169-chunk
+request window, so the gate opens holding four fifths of the world and there is
+almost no leading edge to work on. `StreamedMap` already knows which chunks are
 *declared* against which are *held* (that is what `knows()` and `coverage()` are),
 so the missing condition is "and this region's ground is complete" — with the
 existing timer left in as the backstop for a region whose remaining chunks are
