@@ -125,9 +125,22 @@ schemas/         JSON Schema (draft-07) for the three unit documents and the wea
                  throughout, so a typo'd key in a hand-edited file is an error with
                  a pointer at it rather than a field that silently does nothing.
 maps/            the world, as a map document (spec 072). arena.json is what the
-                 server loads at boot and streams to clients; regenerate it with
-                 `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
-                 and save over it. Checked in so the world reviews as a diff.
+                 server loads at boot and streams to clients, what the Play tab
+                 imports, and -- since spec 176 -- what the Map editor tab opens;
+                 regenerate it with `npx tsx scripts/bake-map.ts`, or edit it in
+                 the editor -- which since spec 177 writes this file directly,
+                 through a `POST /api/map` the dev server answers and a build
+                 has not got, so "save over it" stopped being four steps a
+                 person does by hand and a download nobody could tell had
+                 landed. That last clause was documented
+                 here for a hundred specs and was not true: the editor baked its
+                 own world from `viewSeed()`, which falls back to the clock, so
+                 it opened a different world every session and nothing placed in
+                 it -- a marker least of all -- had anywhere to arrive. Nobody
+                 could see it while the shipped map *was* the generated world
+                 (`bake-map.ts` defaults to seed 1, and the arena was seed 1 with
+                 no parts); spec 165 grew the map and the coincidence went with
+                 it. Checked in so the world reviews as a diff.
                  recipes/ are the feature lists parts are grown from (spec 083) --
                  `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
                  --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
@@ -734,7 +747,67 @@ src/render/iso3d/studio/  the Studio tab (spec 109), the fifth entry in the tab
                  and cannot fail a headless test -- and it is the only thing that
                  can tell whether three's GLTFLoader accepts the .glb we write.
 src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
-                 from a loaded map document, never from the world generator.
+                 from a loaded map document, never from the world generator --
+                 and since spec 176 from *the* document, `maps/arena.json`, the
+                 one the server boots from. map-source.ts is where that is
+                 decided and the only place it may be: it holds the same `?raw`
+                 module the Play tab plays, and `openEditorMap` answers both
+                 halves of the question at once -- which map, and what a save of
+                 it comes back called, since "save over it" is a copy when the
+                 download is named `arena.json` and a rename somebody has to get
+                 right when it is named after a seed. A generated world stays
+                 behind `?map=generated`, because looking at what a seed produces
+                 before `bake-map.ts` commits it is a real thing to want; what it
+                 is not is the default, since a default that is *nearly* the
+                 game's world is worse than one that plainly is not. `?seed=`
+                 deliberately does not switch sources -- it is session-wide and
+                 answers which generated world rather than whether -- so a
+                 harness pinning a seed for the Play tab cannot take the editor
+                 off the map as a side effect. `EditorScene` now *requires* the
+                 document it edits: the fallback to the generator was one line,
+                 and one line is what this cost.
+                 map-write.ts is the other end of the same loop (spec 177): a
+                 download is not a saved map, it is the first of four steps with
+                 nothing confirming any of them, and the autosave saying
+                 "autosaved" while the file on disk was untouched is the same
+                 lie from the other side. The browser half returns four outcomes
+                 rather than ok/failed, because "there is no dev server here"
+                 (a built page -- use the download), "the server said no", and
+                 "nothing answered" have three different fixes and one message
+                 for all three names none of them. `scripts/dev-map-write.ts` is
+                 the disk half, `apply: 'serve'` so a build has no such endpoint,
+                 with every rule about *which* path may be written pure and
+                 tested -- a bare `.json` name resolved under `maps/` and checked
+                 by its resolved parent, since a prefix test passes
+                 `maps-elsewhere/`. The body goes through `parseMap` before
+                 anything is written and the write is a rename, so the map the
+                 server boots from cannot be replaced by something that will not
+                 load or by half a file. The rule that had to be measured rather
+                 than reasoned: **the write must not hot-reload the page**.
+                 `maps/arena.json` is a `?raw` module in the graph, so writing it
+                 made Vite reload the tab -- three seconds after the click the
+                 page went blank and came back on the Play tab, re-streaming 169
+                 chunks, with the editor rebuilt from disk. For a write the
+                 editor *made* that is backwards, since the newest copy is the
+                 one in the tab; so the plugin swallows the reload for its own
+                 writes only, invalidating the module without announcing it so a
+                 later reload by hand still reads the new bytes.
+                 tools.ts holds the one thing 176 and 177 both missed, because
+                 neither was about the panel (spec 178): of the five marker
+                 kinds only `spawner` has a reader anywhere, and the strip
+                 presented all five identically with an always-live monster
+                 dropdown under them. `spawn` and `spawner` differ by two
+                 letters, `spawn` was the default, and picking a monster and
+                 pressing the wrong one of the pair produces a map that saves
+                 correctly, boots correctly and has an empty arena. So the
+                 stored kind does not move -- it is a byte on the wire -- and
+                 the *button* says `monster`, the dropdown is **disabled**
+                 rather than merely present when its kind is not armed (shown
+                 and live are different claims, and the layout argument for
+                 showing it always still holds), a `Does` row says
+                 `nothing reads it yet` for the four that are sockets with
+                 nothing plugged in, and placing one reports what it made:
+                 `placed spawner-2: grazer`.
                  camera.ts, brush.ts, paint.ts, scatter.ts, markers.ts, parts.ts
                  and history.ts are pure and tested headlessly; view.ts, cursor.ts and
                  marker-view.ts are the three.js scene; panel.ts is the lil-gui
@@ -787,7 +860,19 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  part rather than from what it stands on, and a marker sits at a
                  height.
                  `npx tsx scripts/preview-parts.ts` drives the tools in a real
-                 browser, since the drag and the commit live in view.ts.
+                 browser, since the drag and the commit live in view.ts, and
+                 `npx tsx scripts/probe-map-editor.ts` is the one that asks
+                 whether any of it is wired to anything: it places a spawner on
+                 the shipped map and reads it back out of the *file the browser
+                 downloaded*, because a marker the editor draws and does not save
+                 is exactly the bug 176 turned out to be -- every rule about
+                 saving a marker green in Node, beside a tab that called none of
+                 them on the map anybody plays. Since 177 it runs twice -- over
+                 `dist/`, where the write button must *say* there is no dev
+                 server rather than look like a failed save, and over a real
+                 dev server, where it has to change the file on disk. The second
+                 half backs the map up and puts it back, because there is no way
+                 to check that a button writes the map without writing it.
                  `npx tsx scripts/preview-paint.ts` is the same for the material
                  brush, and everything in it is measured off the **pixels**,
                  because the way this feature fails is "the store changed and the

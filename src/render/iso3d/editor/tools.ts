@@ -206,7 +206,10 @@ export function createEditorSettings(): EditorSettings {
     style: DEFAULT_FENCE.style,
     fenceScale: DEFAULT_FENCE.fenceScale,
     variedColor: DEFAULT_FENCE.variedColor,
-    markerKind: 'spawn',
+    // The one kind with a reader, so the first marker somebody places does
+    // something (spec 178). It used to be `spawn`, which is written to the map
+    // and read by nothing.
+    markerKind: 'spawner',
     spawnerMonster: SPAWNER_MONSTER_CHOICES[0]?.value ?? '',
     showArena: true,
     showNav: false,
@@ -312,7 +315,38 @@ export const PART_TOOL_CHOICES = choices(PART_TOOLS);
 export const ROCK_TOOL_CHOICES = choices(ROCK_TOOLS);
 export const TERRAIN_TOOL_CHOICES = choices(TERRAIN_TOOLS);
 export const PAINT_MATERIAL_CHOICES = choices(PAINT_MATERIALS);
-export const MARKER_CHOICES = choices(MARKER_KINDS);
+/**
+ * The marker kinds, labelled by what they *do* (spec 178).
+ *
+ * `spawner` draws as MONSTER, and that is the whole fix for the one mistake
+ * this strip reliably produces: `spawn` and `spawner` differ by two letters, sit
+ * in the same five-button grid, and only one of them has a reader anywhere in
+ * the game. Somebody choosing a monster from the dropdown below and clicking
+ * SPAWN has made a marker nothing will ever look at, and the map they save is
+ * indistinguishable from a working one until the arena turns out to be empty.
+ *
+ * The stored id does not move -- it is a byte on the wire (`MapMarkerKindValue`)
+ * and a string in every saved map -- so this is the same split `FENCE_STYLE_CHOICES`
+ * already makes between what a thing is called and what a button says.
+ */
+export const MARKER_CHOICES = choices(MARKER_KINDS, { spawner: 'monster' });
+
+/**
+ * What placing this kind of marker actually does, in one line.
+ *
+ * Four of the five kinds are sockets with nothing plugged into them: they are
+ * written to the map, replicated to clients, and read by nothing. Saying so is
+ * the same rule the character sheet follows for a stat that changes nothing yet
+ * -- a control that describes an effect it does not have is worse than one that
+ * admits it has none.
+ */
+export function markerKindEffect(kind: MapMarkerKind): string {
+  // Both short enough to fit the panel's own row: this text is drawn in a
+  // fixed-width lil-gui field, and "saved in the map; nothing re..." cut the
+  // half that was worth reading.
+  return kind === 'spawner' ? 'spawns the monster below' : 'nothing reads it yet';
+}
+
 /**
  * What a spawner marker may name, straight from the MONSTERS table (spec 076).
  *
