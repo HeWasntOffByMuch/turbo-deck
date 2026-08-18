@@ -1622,6 +1622,17 @@ export class WorldScene {
     frame: FrameInfo,
   ): void {
     const dead = entity.maxHealth > 0 && entity.health <= 0;
+    // A respawn is a teleport home, and the ground it covered is not travel.
+    // Measured as travel it is thousands of units in one tick, which the slew
+    // then walks the blend parameter up through -- so a body that has just
+    // stood up takes a stride it never made. Forgetting the last drawn position
+    // is the whole fix: the frame the body reappears measures nothing, and the
+    // frame after it measures from where it actually is.
+    if (unit.previous?.dead === true && !dead) {
+      unit.previousPosition = null;
+      unit.speed = STOPPED;
+      unit.blendSpeed = 0;
+    }
     // Distance on the frame clock, the quotient on the tick clock (spec 118).
     // A drawn position only moves when a tick drained, so dividing by the frame
     // delta reported a standing body on every frame that drained none -- which

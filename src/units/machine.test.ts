@@ -281,6 +281,77 @@ describe('state categories', () => {
     expect(machine.stateId).toBe('death');
   });
 
+  it('gets a revived body out of the state that has no exit', () => {
+    // The other half of the rule above. A terminal state is right to refuse
+    // every condition, so getting up cannot be a transition -- it is a command,
+    // and without one a respawned player ran around drawn as their own corpse.
+    const machine = build();
+    machine.setParameter('dead', true);
+    machine.step(1);
+    expect(machine.stateId).toBe('death');
+
+    machine.setParameter('dead', false);
+    expect(machine.revive()).toBe(true);
+    expect(machine.stateId).toBe('idle');
+
+    // And the ordinary transitions have it from there: the body was sprinting
+    // when it died and is sprinting again, so it walks into locomotion by
+    // itself rather than this having had to guess the state.
+    machine.setParameter('speed', 200);
+    machine.step(1);
+    expect(machine.stateId).toBe('locomotion');
+  });
+
+  it('restarts the clip it comes back into', () => {
+    // Coming back holding the playhead the death clip left behind would draw a
+    // body mid-idle at whatever frame it happened to fall on.
+    const machine = build();
+    machine.setParameter('dead', true);
+    run(machine, 30);
+    machine.setParameter('dead', false);
+    machine.revive();
+    machine.step(1);
+    expect(machine.snapshot().ticksInState).toBe(0);
+    expect(machine.snapshot().normalizedTime).toBeLessThan(0.05);
+  });
+
+  it('cuts rather than fading, because every other part of a respawn is a cut', () => {
+    const machine = build();
+    machine.setParameter('dead', true);
+    machine.step(1);
+    machine.setParameter('dead', false);
+    machine.revive();
+    // No outgoing layer, so the corpse is not blended across the teleport home.
+    expect(machine.snapshot().previousStateId).toBeNull();
+    expect(machine.poses().every((pose) => pose.clipId === 'idle')).toBe(true);
+  });
+
+  it('drops a trigger raised while the body was down', () => {
+    // A terminal state consumes nothing, so a trigger raised at a corpse sits
+    // pending forever. Left there, the first thing a revived body does is throw
+    // the blow it was told about while dead.
+    const machine = build();
+    machine.setParameter('dead', true);
+    machine.step(1);
+    machine.trigger('attack');
+
+    machine.setParameter('dead', false);
+    machine.revive();
+    run(machine, 5);
+    expect(machine.stateId).toBe('idle');
+  });
+
+  it('is a no-op for a body that is not down', () => {
+    // Which is what lets the caller hold it as a level on every living tick
+    // rather than having to catch the one edge exactly.
+    const machine = build();
+    machine.setParameter('speed', 200);
+    machine.step(1);
+    expect(machine.stateId).toBe('locomotion');
+    expect(machine.revive()).toBe(false);
+    expect(machine.stateId).toBe('locomotion');
+  });
+
   it('returns a one-shot to where it came from', () => {
     const oneshot = machineOf({
       states: [

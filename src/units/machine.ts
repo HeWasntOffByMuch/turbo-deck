@@ -121,6 +121,15 @@ export interface MachineSnapshot {
 export class UnitMachine {
   private readonly unit: UnitDef;
   private readonly tickMs: number;
+  /**
+   * The state a body that is simply alive stands in, and the one
+   * {@link UnitMachine.revive} comes back to.
+   *
+   * Kept because a terminal state has no transitions out of it by construction,
+   * so there is nothing in the document that could say where a body gets back
+   * up into -- see {@link UnitMachine.revive}.
+   */
+  private readonly entryStateId: string;
   private readonly clips = new Map<string, Clip>();
   private readonly states = new Map<string, State>();
   private readonly trees = new Map<string, BlendTree>();
@@ -175,6 +184,7 @@ export class UnitMachine {
 
     const entry = options.entryStateId ?? options.unit.stateMachine.states[0]?.id;
     if (entry === undefined) throw new Error('a unit needs at least one state');
+    this.entryStateId = entry;
     this.current = { stateId: entry, clipTick: -1, rate: this.states.get(entry)?.timeScale ?? 1, finished: false };
   }
 
@@ -310,6 +320,60 @@ export class UnitMachine {
     this.returnTo = null;
     this.activeAction = null;
     this.enter(back, blendMs ?? state.blendInMs);
+    return true;
+  }
+
+  /**
+   * Puts a body that is alive again back on its feet.
+   *
+   * The counterpart to the `dead` parameter, the same way {@link cancelAction}
+   * is the counterpart to the trigger that starts an attack. A death state is
+   * `terminal` and a terminal state has **no exit** -- that is the category's
+   * whole definition, stated in {@link evaluateTransitions} and enforced by the
+   * validator, which refuses to author a transition out of one. It is the right
+   * rule for a corpse and it is exactly why a body cannot get up on its own:
+   * setting `dead` back to false leaves the machine in `down` forever, so a
+   * respawned player went on running around the arena drawn as the last frame
+   * of the clip it fell in.
+   *
+   * So getting up is a *command* rather than a condition. Nothing in the
+   * document can express it -- which is deliberate, because a transition out of
+   * a terminal state would also be one a stray `speed` reading could take -- and
+   * the only thing that knows a body is alive again is whatever is reading the
+   * wire.
+   *
+   * Three things it is careful about.
+   *
+   * **It comes back to the entry state**, which is where the machine started
+   * and is a loop by construction, and lets the ordinary transitions decide
+   * from there: a body that respawned mid-sprint is in `idle` for one tick and
+   * then walks into locomotion under its own 150ms fade, rather than this
+   * having to guess a state from a parameter it does not own.
+   *
+   * **It cuts rather than fading.** Every other thing a respawn does is a cut
+   * -- the position is a `Teleport` correction, which spec 067 snaps because
+   * easing one is a lie -- and a pose blending up off the floor over 200ms
+   * would be the one part of it lagging behind, drawing a body getting up from
+   * a fall that happened somewhere else entirely.
+   *
+   * **It drops any trigger raised while the body was down.** A terminal state
+   * consumes nothing, so a trigger raised at a corpse sits pending forever;
+   * left there, the first thing a revived body would do is throw the blow it
+   * was told about while it was dead.
+   *
+   * A no-op, and false, for a body that is not in a terminal state -- so it is
+   * safe to call on every living tick, which is what makes "alive bodies are
+   * not in a death state" a level the caller holds rather than an edge it has
+   * to catch exactly once.
+   */
+  revive(): boolean {
+    const state = this.stateOf(this.current);
+    if (!state || state.category !== 'terminal') return false;
+    if (this.entryStateId === this.current.stateId) return false;
+    this.pendingTriggers.clear();
+    this.returnTo = null;
+    this.activeAction = null;
+    this.enter(this.entryStateId, 0);
     return true;
   }
 
