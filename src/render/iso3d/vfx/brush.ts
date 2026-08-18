@@ -32,6 +32,7 @@
  * it is light rather than pigment and has four ticks to say so.
  */
 
+import { MARK_REACH } from './meshes.js';
 import type { Curve } from './curve.js';
 import type { EffectDefinition, Emitter, Priority, StrokeDecay } from './types.js';
 import type { PaletteKey } from './palette.js';
@@ -673,6 +674,145 @@ export function brushExplosion(params: BrushExplosionParams): EffectDefinition {
     emitters,
   };
 }
+
+// --- the placed mark ---------------------------------------------------------
+
+export interface BrushCrossParams {
+  readonly id: string;
+  /** Each stroke's length in world units, tip to tip. The one size knob. */
+  readonly arm: number;
+  /** Ticks the first stroke lasts. The second is held a beat past it. */
+  readonly lifetimeTicks?: number;
+  /** The bright end of the ramp, where a mark is freshest. */
+  readonly bright?: PaletteKey;
+  /** Where it dries. */
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+}
+
+/**
+ * Two rolls, in radians, in the card plane (spec 175).
+ *
+ * A quarter turn apart to within three degrees, and the pair tilted a few off
+ * upright. Exactly 90 and exactly symmetrical is a multiplication sign; what a
+ * person's cross has is two strokes that nearly agree, and the cheapest way to
+ * say so is to author the disagreement rather than hope the bank supplies it --
+ * the bank varies a mark's outline and never its angle.
+ *
+ * The second is past a half turn, which is the same *line* drawn the other way,
+ * and it is the one number here that was arrived at by looking. A mark is broad
+ * at its root and runs out to a point, so two arms rolled to +-45 both put their
+ * weight at the bottom and the cross reads as a bird: a heavy V with two thin
+ * legs above it. Turning one of them over spreads the weight along a diagonal --
+ * one stroke heaviest at the bottom left, the other at the top right -- which is
+ * what two marks made by a hand actually look like, and the whole difference
+ * between a cross and a starburst.
+ */
+export const CROSS_ROLLS = [0.86, Math.PI - 0.66] as const;
+
+/**
+ * A cross where somebody pointed (spec 175).
+ *
+ * Two marks and nothing else. Not a burst with two marks in it: every other
+ * builder here layers a gesture with company, because a hit and a blast are
+ * events with debris, and a *mark* has none -- anything scattered around this
+ * one would be paint that came off the brush, which is the one thing that did
+ * not happen. The whole cue is the two strokes crossing and then leaving.
+ *
+ * ## Both are placed, not thrown
+ *
+ * `speed` is zero and there is no fan, no gravity and no drag. The shape is
+ * `brush-mark`, which is centred on its own origin and takes the roll it is
+ * given, so the two arms actually cross instead of opening out of one point --
+ * and so the cross is the same cross from every seat in the room, where a mark
+ * aimed down its own travel would be a cross the camera's azimuth decided the
+ * angle of.
+ *
+ * ## The stagger is the hand
+ *
+ * The two strokes are born together and the second outlives the first by a
+ * couple of ticks, which is two ticks of one arm still there after the other has
+ * gone. Ending on the same frame is a stamp; ending a beat apart is a hand that
+ * drew one and then the other.
+ */
+export function brushCross(params: BrushCrossParams): EffectDefinition {
+  const arm = params.arm;
+  const life = params.lifetimeTicks ?? 18;
+  const bright = params.bright ?? 'sparkHot';
+  const deep = params.deep ?? 'auraSelected';
+
+  const stroke = (index: number, roll: number, ticks: number): Emitter => ({
+    id: `stroke_${index === 0 ? 'a' : 'b'}`,
+    shape: { kind: 'point' },
+    emission: { kind: 'burst', count: 1 },
+    lifetimeTicks: [ticks, ticks],
+    // It was put there. Nothing about a placed mark travels, and a mark that
+    // drifted off the point would be answering a question about somewhere else.
+    speed: [0, 0],
+    // A constant, which is the whole reason this is a curve at all: `rotation`
+    // is the only channel that reaches `iRotation`, and `iRotation` is the roll
+    // the card mode turns the mark by.
+    rotation: { keys: [[0, roll], [1, roll]] },
+    // Nearly flat, and for the reason every mark in this file has a flat one:
+    // the shape draws itself out and takes itself back (specs 159, 161), and a
+    // size curve swinging about underneath that is two animations fighting.
+    size: { keys: [[0, arm * 0.94], [0.3, arm], [1, arm * 0.96]] },
+    // Opaque nearly to the end. The mark leaves by retracting, and an alpha fade
+    // that outran it would turn a stroke being finished into a stroke being
+    // turned down.
+    alpha: { keys: [[0, 1], [0.72, 1], [1, 0]] },
+    color: { stops: [[0, bright], [0.6, bright], [1, deep]] },
+    render: 'mesh',
+    mesh: { shape: 'brush-mark' },
+    blend: 'alpha',
+    // Fizzle, and it is the one place this parts company with spec 161's rule.
+    // That rule reads "retract for anything fast", and it is a rule about marks
+    // that were *thrown*: a retract walks an eroding threshold from the root to
+    // the tip and pulls the spine after it, which on a mark rooted at its butt
+    // is the flick finishing. On a mark rooted at its middle the same motion
+    // drags it toward its own tip -- so the cross comes apart into two corners
+    // and slides off the point it was put on, in the last four ticks, which is
+    // the one thing a confirmation must not do. A fizzle moves the spine not at
+    // all: the gaps open through the marks and the cross dries where it lies.
+    strokeDecay: 'fizzle',
+  });
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1400,
+    emitters: CROSS_ROLLS.map((roll, index) => stroke(index, roll, life + index * 2)),
+  };
+}
+
+/**
+ * How long each arm of the order cross is, in world units (spec 175).
+ *
+ * Forty: about a body and a quarter across, which at the gameplay zoom is a
+ * mark thirty-odd pixels long and four or five wide. Below about thirty the
+ * stroke's width falls under two pixels and the paint reads as a scratch; above
+ * about forty-five its reach passes the sigil a selected unit stands in, and a
+ * confirmation the size of an ability is a confirmation that looks like one.
+ */
+export const ORDER_MARK_ARM = 40;
+
+/**
+ * The order cross in world units: how far it reaches from where it was put.
+ *
+ * Exported from here because it is a fact about the *effect* rather than about
+ * the terrain -- a call site that has to hold a mark clear of a hillside must not
+ * also have to know how a mark is authored.
+ *
+ * It answers two questions that are not the same question: how wide a patch of
+ * ground the mark covers, and how far it hangs *below* its own origin. A bounding
+ * radius is exactly right for the first and an over-estimate for the second,
+ * since it is the answer for an arm pointing straight down and these two are at
+ * 45 degrees. The over-estimate is five percent at the authored rolls -- `the
+ * cross` in `brush.test.ts` measures the real drop and says so -- which is a
+ * world unit and a half of extra daylight, and nowhere near worth a second
+ * constant that would have to be re-measured every time an angle moved.
+ */
+export const ORDER_MARK_REACH = ORDER_MARK_ARM * MARK_REACH;
 
 // --- the shipped presets -----------------------------------------------------
 

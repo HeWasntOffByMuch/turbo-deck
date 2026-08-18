@@ -16,10 +16,14 @@ import {
   brushExplosion,
   brushExplosionRequest,
   BRUSH_EFFECTS,
+  brushCross,
   BRUSH_EXPLOSION_RADIUS,
+  CROSS_ROLLS,
   EXPLOSION_PALETTE,
   HEAVY_HIT_INTENSITY,
   NORMAL_LIFT,
+  ORDER_MARK_ARM,
+  ORDER_MARK_REACH,
 } from './brush.js';
 import { EFFECTS, REGISTRY } from './registry.js';
 import { compileRegistry } from './compile.js';
@@ -32,10 +36,12 @@ import {
   shadingOf,
   strokeShape,
   BANK_SIZE,
+  MARK_REACH,
   ORIENT,
   BRUSH_SHAPES,
 } from './meshes.js';
 import { paletteInto, VFX_PALETTE, type PaletteKey } from './palette.js';
+import { STROKE_UV_STRIDE } from './stroke.js';
 import type { EffectDefinition } from './types.js';
 
 const TICK_HZ = 60;
@@ -746,5 +752,92 @@ describe('SpawnBrushExplosion', () => {
     expect(request.scale).toBeGreaterThan(0);
     expect(Number.isFinite(request.scale)).toBe(true);
     expect(REGISTRY.byId.has(request.id)).toBe(true);
+  });
+});
+
+describe('the cross (spec 175)', () => {
+  const cross = brushCross({ id: 'test_cross', arm: 40 });
+
+  it('is two marks and no company', () => {
+    // Every other builder in this file layers a gesture with debris, because a
+    // hit and a blast are events that threw something. A mark threw nothing.
+    expect(cross.emitters).toHaveLength(2);
+    for (const emitter of cross.emitters) {
+      expect(emitter.mesh?.shape, emitter.id).toBe('brush-mark');
+      expect(emitter.emission, emitter.id).toEqual({ kind: 'burst', count: 1 });
+      expect(emitter.render, emitter.id).toBe('mesh');
+      // Paint is opaque: two translucent marks crossing make a third colour at
+      // the crossing that is in neither of them, and the crossing is the whole
+      // shape here.
+      expect(emitter.blend, emitter.id).toBe('alpha');
+      // It dries where it lies. A retract on a mark rooted at its own middle
+      // drags the cross toward its tips and off the point it was put on.
+      expect(emitter.strokeDecay, emitter.id).toBe('fizzle');
+      expect(emitter.lifetimeTicks[1], emitter.id).toBeLessThanOrEqual(24);
+    }
+  });
+
+  it('holds each arm at a constant roll rather than letting one be drawn', () => {
+    for (const [index, emitter] of cross.emitters.entries()) {
+      const keys = emitter.rotation?.keys ?? [];
+      expect(keys.length, emitter.id).toBeGreaterThan(0);
+      for (const [, value] of keys) expect(value, emitter.id).toBe(CROSS_ROLLS[index]);
+    }
+  });
+
+  it('ends one arm a beat after the other', () => {
+    // A hand drew one and then the other. Ending on the same frame is a stamp.
+    const [a, b] = cross.emitters;
+    expect(b?.lifetimeTicks[0] ?? 0).toBeGreaterThan(a?.lifetimeTicks[1] ?? 0);
+  });
+
+  it('scales entirely off its arm', () => {
+    const big = brushCross({ id: 'big', arm: 80 });
+    const peak = (effect: EffectDefinition): number =>
+      Math.max(...effect.emitters.flatMap((emitter) => emitter.size.keys.map(([, value]) => value)));
+    expect(peak(big)).toBeCloseTo(peak(cross) * 2, 6);
+  });
+
+  it('hangs below its origin by no more than its own reach, and not much less', () => {
+    // What the ground clearance owes its height to. `MARK_REACH` bounds an arm
+    // in every direction, which is the answer for one pointing straight down --
+    // and these two are at 45 degrees, so using it for the drop is safe rather
+    // than exact. This measures the real drop, at the real rolls and with the
+    // shader's own per-instance maxima applied (`batches.ts`): the spine
+    // stretches by up to 1.34, the width is swelled by 1.22 and rippled by
+    // another 1.2, and the outline bends by up to 0.16 of its length at the tip.
+    //
+    // Both sides matter. Over the reach and the mark goes into the ground; far
+    // under it and every click is answered by a cross hovering above the point
+    // it is marking, which is the moment a second constant would start earning
+    // its keep.
+    const mesh = particleMesh('brush-mark');
+    const STRETCH = 1.34;
+    const GAIN = 1.22 * 1.2;
+    let drop = 0;
+    for (let v = 0; v < mesh.positions.length / 3; v++) {
+      const u = v * STROKE_UV_STRIDE;
+      const along = mesh.strokeUv?.[u] ?? 0;
+      const half = mesh.strokeUv?.[u + 1] ?? 0;
+      const sideX = mesh.strokeUv?.[u + 2] ?? 0;
+      const sideY = mesh.strokeUv?.[u + 3] ?? 0;
+      for (const sign of [-1, 1]) {
+        const lateral = sign * 0.16 * along * along + half * GAIN;
+        const x = (mesh.positions[v * 3] ?? 0) + sideX * lateral;
+        const y = (mesh.positions[v * 3 + 1] ?? 0) * STRETCH + sideY * lateral;
+        // `cardBasis`: the card's up component of a local point at roll r.
+        for (const roll of CROSS_ROLLS) drop = Math.min(drop, x * Math.sin(roll) + y * Math.cos(roll));
+      }
+    }
+    expect(-drop).toBeLessThanOrEqual(MARK_REACH);
+    expect(-drop).toBeGreaterThan(MARK_REACH * 0.9);
+    expect(ORDER_MARK_REACH).toBeCloseTo(ORDER_MARK_ARM * MARK_REACH, 6);
+  });
+
+  it('crosses its arms rather than opening them out of a point', () => {
+    const apart = Math.abs((CROSS_ROLLS[0] ?? 0) - (CROSS_ROLLS[1] ?? 0));
+    expect(apart).toBeGreaterThan(Math.PI / 2 - 0.12);
+    expect(apart).toBeLessThan(Math.PI / 2 + 0.12);
+    expect(apart).not.toBe(Math.PI / 2);
   });
 });
