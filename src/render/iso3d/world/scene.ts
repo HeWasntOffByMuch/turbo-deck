@@ -36,6 +36,7 @@ import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-m
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { PerfFlags } from './perf-flags.js';
+import { MoverTally, ShadowRefresh } from './shadow-refresh.js';
 import {
   buildPropField,
   FLAT_SHADING,
@@ -312,6 +313,20 @@ const DROP_PICK_RADIUS = 16;
 const DROP_PICK_HEIGHT = 26;
 
 /** A body on screen, pooled by entity id. */
+/**
+ * What one frame cost and how often the sun's map was redrawn (spec 165).
+ *
+ * The shadow pair is cumulative rather than a rate, because the caller is the
+ * one that knows what window it wants to average over -- and because two
+ * running totals cannot disagree with each other about the denominator.
+ */
+export interface SceneStats {
+  readonly calls: number;
+  readonly triangles: number;
+  readonly shadowRebuilds: number;
+  readonly shadowFrames: number;
+}
+
 interface Body {
   readonly group: THREE.Group;
   readonly kind: 'player' | 'monster' | 'projectile';
@@ -536,6 +551,24 @@ export class WorldScene {
   private lastHalfWidth = -1;
   private shadowHalfWidth = -1;
   private readonly sunDirection = new THREE.Vector3();
+  /**
+   * Whether the shadow maps are still the right answer (spec 165 follow-up 10).
+   *
+   * `needsUpdate` was set unconditionally once a frame, which redrew every
+   * caster in the world into the sun's map -- 335 of 625 draw calls -- whether
+   * or not anything had moved. This holds what the maps were last built from.
+   */
+  private readonly shadowRefresh = new ShadowRefresh();
+  /** Filled during `syncBodies`, which is the loop that already has the numbers. */
+  private readonly shadowMovers = new MoverTally();
+  /**
+   * Bumped whenever shadow-casting geometry appears, is rebuilt, or is hidden.
+   *
+   * A counter rather than a flag, because the question is "is this the state the
+   * map was built from" and a flag can only answer "has something happened since
+   * somebody last looked".
+   */
+  private shadowGeometry = 0;
 
   private renderW = 0;
   private renderH = 0;
@@ -775,11 +808,20 @@ export class WorldScene {
    * overwritten by the next frame and the measurement would quietly be of the
    * baseline.
    */
-  private perf: PerfFlags = { noShadow: false, noProps: false, noTerrain: false, any: false };
+  private perf: PerfFlags = {
+    noShadow: false,
+    noProps: false,
+    noTerrain: false,
+    eagerShadow: false,
+    any: false,
+  };
 
   /** Take contributors out of the frame. See {@link PerfFlags}. */
   setPerfFlags(flags: PerfFlags): void {
     this.perf = flags;
+    // These hide whole caster groups, which is a change to the map's contents
+    // even though nothing in the world moved.
+    this.shadowGeometry++;
   }
 
   /** Ground height, or 0 before there is any ground to ask about. */
@@ -797,6 +839,9 @@ export class WorldScene {
    */
   addTerrainChunk(chunk: TerrainChunk): void {
     this.terrainMesh?.rebuild(chunk);
+    // Ground is a caster, so the sun's map is one frame out of date the moment
+    // a chunk lands (spec 165 follow-up 10).
+    this.shadowGeometry++;
     // The memo is over the ground this chunk just changed. Everything it holds
     // near here was sampled over a hole (spec 153) -- and a decal drawn from
     // stale heights is drawn on terrain that no longer exists, which is the
@@ -827,6 +872,7 @@ export class WorldScene {
     this.propField = buildPropField(props, heightAt, undefined, this.propShading);
     this.scene.add(this.propField.group);
     this.unwalkableStale = true;
+    this.shadowGeometry++;
   }
 
   /**
@@ -847,6 +893,7 @@ export class WorldScene {
     if (Array.isArray(rects) && rects.length === 0) return;
     this.propField.rebuildWithin(this.map.props(), rects);
     this.unwalkableStale = true;
+    this.shadowGeometry++;
   }
 
   /**
@@ -1189,7 +1236,24 @@ export class WorldScene {
       // that pays for building them (see `autoUpdate` in the constructor).
       // three clears the flag itself once the maps are drawn, which is what
       // keeps the mask pass inside `retro.render` from rebuilding them again.
-      this.renderer.shadowMap.needsUpdate = true;
+      //
+      // Asked for rather than assumed since spec 165 follow-up 10: this used to
+      // be an unconditional `true`, which redrew every caster in the world into
+      // the sun's map on every frame of a world that mostly does not move.
+      const shadowInputs = {
+        sunX: this.sunDirection.x,
+        sunY: this.sunDirection.y,
+        sunZ: this.sunDirection.z,
+        targetX: this.target.x,
+        targetZ: this.target.z,
+        radius: shadowFrame(this.halfWidth).radius,
+        // The sun going dark is a change to what the maps contain, and it is
+        // written by `applySun` from the day/night state rather than held here.
+        geometry: this.shadowGeometry * 2 + (this.sun.castShadow ? 1 : 0),
+        movers: this.shadowMovers.signature,
+      };
+      this.renderer.shadowMap.needsUpdate =
+        this.shadowRefresh.needed(shadowInputs) || this.perf.eagerShadow;
       this.retro.render(this.renderer, this.scene, this.camera);
       // Over the finished frame, which is where a line belongs: the fills are
       // settled, so the outline is a constant dark value rather than something
@@ -1207,10 +1271,13 @@ export class WorldScene {
    * it separates "the scene is too big" from "the scene is drawn too often",
    * and those have nothing in common as problems.
    */
-  renderStats(): { calls: number; triangles: number } {
+  renderStats(): SceneStats {
+    const shadows = this.shadowRefresh.stats;
     return {
       calls: this.renderer.info.render.calls,
       triangles: this.renderer.info.render.triangles,
+      shadowRebuilds: shadows.rebuilds,
+      shadowFrames: shadows.frames,
     };
   }
 
@@ -1344,6 +1411,9 @@ export class WorldScene {
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
     const live = new Set<number>();
+    // Every body is a shadow caster, so this loop is also where the frame's
+    // answer to "did any caster move" is accumulated (spec 165 follow-up 10).
+    this.shadowMovers.reset();
     this.hoverTargets.length = 0;
     this.castPhases.clear();
     this.attackRates.clear();
@@ -1415,7 +1485,9 @@ export class WorldScene {
       // size for the whole of its collapse.
       const dead = entity.maxHealth > 0 && entity.health <= 0;
       const fallen = body.unit !== undefined && hasDeathAnimation(body.unit.def);
-      body.group.scale.setScalar(dead && !fallen ? 0.6 : 1);
+      const squash = dead && !fallen ? 0.6 : 1;
+      body.group.scale.setScalar(squash);
+      this.shadowMovers.add(x, ground, y, facing, squash);
       // Cleared here and turned back on by `syncHover`, so exactly one body is
       // ever lit however many frames ago the cursor last moved.
       body.highlight?.setHighlighted(false);
@@ -2307,6 +2379,13 @@ export class WorldScene {
     if (settings.torchOn) {
       const flame = torchFlicker(this.elapsed, (this.map?.seed ?? 0), settings.torchFlicker);
       this.torch.castShadow = settings.torchShadows;
+      // A second shadow map, and `needsUpdate` is renderer-wide: a torch that
+      // casts and flickers is six cube faces a frame, so its own sway has to be
+      // part of the frame's signature or it would freeze mid-swing.
+      if (settings.torchShadows) {
+        const t = this.torch.position;
+        this.shadowMovers.add(t.x, t.y, t.z, settings.torchRange);
+      }
       this.torch.distance = settings.torchRange;
       this.torch.intensity =
         pointIntensity(settings.torchBrightness, settings.torchRange) * flame.intensity;
