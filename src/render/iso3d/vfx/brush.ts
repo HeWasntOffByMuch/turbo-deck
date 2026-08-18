@@ -691,24 +691,27 @@ export interface BrushCrossParams {
 }
 
 /**
- * Two rolls, in radians, in the card plane (spec 175).
+ * Which way the two arms run, in radians of yaw in the ground plane (spec 175).
  *
- * A quarter turn apart to within three degrees, and the pair tilted a few off
- * upright. Exactly 90 and exactly symmetrical is a multiplication sign; what a
- * person's cross has is two strokes that nearly agree, and the cheapest way to
- * say so is to author the disagreement rather than hope the bank supplies it --
- * the bank varies a mark's outline and never its angle.
+ * A quarter turn apart to within three degrees. Exactly 90 and exactly
+ * symmetrical is a multiplication sign; what a person's cross has is two strokes
+ * that nearly agree, and the cheapest way to say so is to author the
+ * disagreement rather than hope the bank supplies it -- the bank varies a mark's
+ * outline and never its angle.
  *
- * The second is past a half turn, which is the same *line* drawn the other way,
- * and it is the one number here that was arrived at by looking. A mark is broad
- * at its root and runs out to a point, so two arms rolled to +-45 both put their
- * weight at the bottom and the cross reads as a bird: a heavy V with two thin
- * legs above it. Turning one of them over spreads the weight along a diagonal --
- * one stroke heaviest at the bottom left, the other at the top right -- which is
- * what two marks made by a hand actually look like, and the whole difference
- * between a cross and a starburst.
+ * Near the world axes, and that is the part decided by the *camera*. A flat mark
+ * is squashed along the view's own horizontal bearing and untouched across it,
+ * which for two arms at a right angle means one of them can be squashed to a
+ * third of the other. The default camera looks along 45 degrees, so arms near 0
+ * and 90 sit at 45 degrees either side of it and foreshorten by the same amount
+ * -- the cross stays a cross. Arms authored at +-45 are the same cross rotated,
+ * and at the default seat they are a long stroke with a stub across it.
+ *
+ * A few degrees off the axes rather than on them, because the heightfield's own
+ * cells run along those axes and a mark laid exactly on them reads as snapped to
+ * the terrain grid.
  */
-export const CROSS_ROLLS = [0.86, Math.PI - 0.66] as const;
+export const CROSS_YAWS = [0.13, 1.66] as const;
 
 /**
  * A cross where somebody pointed (spec 175).
@@ -722,11 +725,10 @@ export const CROSS_ROLLS = [0.86, Math.PI - 0.66] as const;
  * ## Both are placed, not thrown
  *
  * `speed` is zero and there is no fan, no gravity and no drag. The shape is
- * `brush-mark`, which is centred on its own origin and takes the roll it is
- * given, so the two arms actually cross instead of opening out of one point --
- * and so the cross is the same cross from every seat in the room, where a mark
- * aimed down its own travel would be a cross the camera's azimuth decided the
- * angle of.
+ * `brush-mark`, which lies flat in the ground plane, is centred on its own
+ * origin and takes the yaw it is given -- so the two arms actually cross instead
+ * of opening out of one point, and the mark is painted on the floor the player
+ * clicked rather than suspended over it.
  *
  * ## The stagger is the hand
  *
@@ -741,7 +743,7 @@ export function brushCross(params: BrushCrossParams): EffectDefinition {
   const bright = params.bright ?? 'sparkHot';
   const deep = params.deep ?? 'auraSelected';
 
-  const stroke = (index: number, roll: number, ticks: number): Emitter => ({
+  const stroke = (index: number, yaw: number, ticks: number): Emitter => ({
     id: `stroke_${index === 0 ? 'a' : 'b'}`,
     shape: { kind: 'point' },
     emission: { kind: 'burst', count: 1 },
@@ -750,9 +752,9 @@ export function brushCross(params: BrushCrossParams): EffectDefinition {
     // drifted off the point would be answering a question about somewhere else.
     speed: [0, 0],
     // A constant, which is the whole reason this is a curve at all: `rotation`
-    // is the only channel that reaches `iRotation`, and `iRotation` is the roll
-    // the card mode turns the mark by.
-    rotation: { keys: [[0, roll], [1, roll]] },
+    // is the only channel that reaches `iRotation`, and `iRotation` is the yaw
+    // the ground mode turns the mark by.
+    rotation: { keys: [[0, yaw], [1, yaw]] },
     // Nearly flat, and for the reason every mark in this file has a flat one:
     // the shape draws itself out and takes itself back (specs 159, 161), and a
     // size curve swinging about underneath that is two animations fighting.
@@ -781,20 +783,20 @@ export function brushCross(params: BrushCrossParams): EffectDefinition {
     id: params.id,
     priority: params.priority ?? 2,
     cullDistance: 1400,
-    emitters: CROSS_ROLLS.map((roll, index) => stroke(index, roll, life + index * 2)),
+    emitters: CROSS_YAWS.map((yaw, index) => stroke(index, yaw, life + index * 2)),
   };
 }
 
 /**
  * How long each arm of the order cross is, in world units (spec 175).
  *
- * Forty: about a body and a quarter across, which at the gameplay zoom is a
- * mark thirty-odd pixels long and four or five wide. Below about thirty the
- * stroke's width falls under two pixels and the paint reads as a scratch; above
- * about forty-five its reach passes the sigil a selected unit stands in, and a
- * confirmation the size of an ability is a confirmation that looks like one.
+ * Twenty-eight: a bit under a body across, and comfortably inside the sigil a
+ * selected unit already stands in -- this is a confirmation, not an ability. The
+ * lower bound is the *stroke*, which is a bit over two world units wide at this
+ * length: the game's default zoom puts two or three pixels on a world unit, so
+ * much under this and the paint is a scratch rather than a mark.
  */
-export const ORDER_MARK_ARM = 40;
+export const ORDER_MARK_ARM = 28;
 
 /**
  * The order cross in world units: how far it reaches from where it was put.
@@ -803,14 +805,13 @@ export const ORDER_MARK_ARM = 40;
  * the terrain -- a call site that has to hold a mark clear of a hillside must not
  * also have to know how a mark is authored.
  *
- * It answers two questions that are not the same question: how wide a patch of
- * ground the mark covers, and how far it hangs *below* its own origin. A bounding
- * radius is exactly right for the first and an over-estimate for the second,
- * since it is the answer for an arm pointing straight down and these two are at
- * 45 degrees. The over-estimate is five percent at the authored rolls -- `the
- * cross` in `brush.test.ts` measures the real drop and says so -- which is a
- * world unit and a half of extra daylight, and nowhere near worth a second
- * constant that would have to be re-measured every time an angle moved.
+ * How wide a patch of ground it covers, and nothing about height: the mark is
+ * horizontal and its arch bulges upward, so it cannot reach below its own origin
+ * at all. That is the whole simplification the flat version buys -- the upright
+ * one owed a second length for how far it hung below itself, and a camera vector
+ * to scale it by. `the cross` in `brush.test.ts` is what holds the claim: no
+ * vertex of the mark, at either authored yaw and with every per-instance maximum
+ * the shader can apply, is below the plane it is laid in.
  */
 export const ORDER_MARK_REACH = ORDER_MARK_ARM * MARK_REACH;
 

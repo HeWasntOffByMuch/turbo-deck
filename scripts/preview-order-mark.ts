@@ -1,26 +1,34 @@
-// Dev-only: the cross a click leaves, frame by frame (spec 175).
-// `npx tsx scripts/preview-order-mark.ts`
+// Dev-only: the cross a click leaves, frame by frame and from several seats
+// (spec 175). `npx tsx scripts/preview-order-mark.ts`
 //
-// Writes .claude/screenshots/order-mark.png -- one row per zoom, one column per
-// tick, through the game's own RetroPass at the game's own virtual resolution.
+// Writes .claude/screenshots/order-mark.png -- columns are ticks, rows are
+// framings and camera bearings, all through the game's own RetroPass at the
+// game's own virtual resolution.
 //
 // ## Why a strip and not a tile
 //
 // This effect is a *third of a second*, and everything about whether it works is
 // in how it arrives and how it leaves: the two marks draw themselves out over
-// the first few ticks and retract over the last few, both in the vertex shader
-// off the particle's age. `preview-vfx-library.ts` photographs every effect at
-// the single tick that holds the most particles, which for a two-particle effect
-// is the first tick it tries -- a picture of the middle of the life and nothing
-// about the shape of it. The contact sheet is still the right place to check
-// that this sits beside its neighbours; this is the only place the *motion* can
-// be looked at without a browser open beside a stopwatch.
+// the first few ticks and come apart over the last few, both in the vertex
+// shader off the particle's age. `preview-vfx-library.ts` photographs every
+// effect at the single tick that holds the most particles, which for a
+// two-particle effect is the first tick it tries -- a picture of the middle of
+// the life and nothing about the shape of it.
 //
-// Two rows, and the top one is the one that matters: the gameplay framing, where
-// the whole question is whether a mark four pixels wide still reads as paint.
-// The bottom row is the same frames close up, where the silhouette can actually
-// be judged -- a stroke that has gone stubby or bent into a comma is invisible
-// at 28 pixels long and obvious at four times that.
+// ## Why more than one bearing
+//
+// Because the mark is flat. A mark painted on the floor is squashed along the
+// camera's own horizontal bearing and untouched across it, so two arms at a
+// right angle foreshorten by different amounts depending where you stand -- and
+// at one bearing in four, one arm lies along that axis and is drawn as a stub
+// beside a full-length stroke. The yaws are authored 45 degrees either side of
+// the default camera so the ordinary case is symmetric; the last row is the
+// camera turned onto one of the arms, which is what the worst case actually
+// looks like and the only honest way to decide it is acceptable.
+//
+// It uses the probe's `brush` entry rather than its `shot` entry for exactly
+// that reason: `shot` fixes the camera so the library's forty tiles stay
+// comparable, and this needs to move it.
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +36,8 @@ import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
 import { PNG } from 'pngjs';
 import { PROBE_BACKGROUND } from '../src/render/iso3d/vfx/probe-config.js';
+import { DEFAULT_CAMERA_ORBIT, DEFAULT_VIEW_HALF_WIDTH } from '../src/render/iso3d/view-settings.js';
+import { PROBE_VIRTUAL_H, PROBE_VIRTUAL_W } from '../src/render/iso3d/vfx/probe-config.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4329;
@@ -38,24 +48,44 @@ const CHROMIUM_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-un
  * The ticks worth a column, out of the twenty the effect lives.
  *
  * Dense at both ends and sparse in the middle, because that is where the change
- * is: the marks are drawn out over the first three ticks and taken back over the
- * last seven, and the eight in between are one held pose.
+ * is: the marks are drawn out over the first three ticks and taken apart over
+ * the last seven, and the eight in between are one held pose.
  */
 const TICKS = [1, 2, 3, 5, 8, 11, 13, 15, 17, 19, 21];
 
-/** World half-heights the two rows are framed at: as played, and close up. */
-const ZOOMS = [90, 46];
+/** The game's own seat, so every row is a bearing a player can actually be at. */
+const SEAT = DEFAULT_CAMERA_ORBIT.azimuth;
+const PITCH = DEFAULT_CAMERA_ORBIT.elevation;
 
 /**
- * How wide a column is, cropped out of the probe canvas.
+ * The two framings, and they answer different questions.
  *
- * Biased below centre, because the probe plays an effect at y = 24 and this one
- * hangs half its length below where it is played -- the crop that fits every
- * other effect in the library cuts the bottom two arms off this one.
+ * `FIELD` is the game's own orthographic box -- how much of the world is on
+ * screen at the default zoom -- so the first row says how *prominent* the mark
+ * is. `PIXELS` is the game's world-units-per-pixel on a middling window, so the
+ * rest say how it *reads*: whether a stroke a couple of world units wide is
+ * still paint once it is a handful of pixels. A sheet with only the first is a
+ * sheet of dots; a sheet with only the second flatters everything.
  */
-const COLUMN_W = 240;
-const COLUMN_H = 240;
-const COLUMN_DROP = 40;
+const FIELD = (DEFAULT_VIEW_HALF_WIDTH * PROBE_VIRTUAL_H) / PROBE_VIRTUAL_W;
+const PIXELS = 34;
+
+interface Row {
+  readonly label: string;
+  readonly halfHeight: number;
+  readonly azimuth: number;
+}
+
+const ROWS: readonly Row[] = [
+  { label: "the game's field of view", halfHeight: FIELD, azimuth: SEAT },
+  { label: 'at the size it is drawn', halfHeight: PIXELS, azimuth: SEAT },
+  { label: 'a quarter turn round', halfHeight: PIXELS, azimuth: SEAT + Math.PI / 2 },
+  { label: 'the camera on one arm', halfHeight: PIXELS, azimuth: SEAT + Math.PI / 4 },
+];
+
+/** How much of the probe canvas a column keeps, in device pixels. */
+const COLUMN_W = 250;
+const COLUMN_H = 170;
 
 async function waitForServer(url: string, timeoutMs = 40_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -70,7 +100,7 @@ async function waitForServer(url: string, timeoutMs = 40_000): Promise<void> {
   }
 }
 
-/** Pixels that are neither the probe's sky nor its ground: the mark itself. */
+/** The mark's own pixels: brighter than both the probe's sky and its ground. */
 function inkBox(png: PNG): { count: number; width: number; height: number } {
   let count = 0;
   let minX = Infinity;
@@ -84,11 +114,10 @@ function inkBox(png: PNG): { count: number; width: number; height: number } {
       const r = png.data[at] ?? 0;
       const g = png.data[at + 1] ?? 0;
       const b = png.data[at + 2] ?? 0;
-      // The mark is the brightest thing in a dark scene by a mile, so a
-      // luminance floor separates it from both the sky and the grey ground with
-      // no assumption about which palette entry it landed on.
-      const bright = (r + g + b) / 3;
-      if (bright < 110 || (r === sky[0] && g === sky[1] && b === sky[2])) continue;
+      // A luminance floor rather than a palette test: the mark is the brightest
+      // thing in a dark scene by a mile, and this needs no assumption about
+      // which quantized level it happened to land on.
+      if ((r + g + b) / 3 < 110 || (r === sky[0] && g === sky[1] && b === sky[2])) continue;
       count += 1;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
@@ -109,7 +138,7 @@ async function main(): Promise<void> {
     stdio: 'ignore',
   });
   const browser = await chromium.launch({ executablePath: CHROMIUM_PATH, args: CHROMIUM_ARGS });
-  const rows: PNG[][] = [];
+  const grid: PNG[][] = [];
   const measured: string[] = [];
 
   try {
@@ -121,25 +150,24 @@ async function main(): Promise<void> {
     await page.goto(`http://localhost:${PORT}/vfx-probe.html`, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => window.vfxProbe !== undefined, undefined, { timeout: 30_000 });
 
-    for (const halfHeight of ZOOMS) {
-      const row: PNG[] = [];
+    for (const row of ROWS) {
+      const frames: PNG[] = [];
       for (const ticks of TICKS) {
         const report = await page.evaluate(
-          ([count, half]) => window.vfxProbe?.shot('order_move', count as number, half as number),
-          [ticks, halfHeight] as const,
+          (input) => window.vfxProbe?.brush(input),
+          { id: 'order_move', ticks, azimuth: row.azimuth, elevation: PITCH, halfHeight: row.halfHeight },
         );
-        const buffer = await page.locator('#probe-canvas').screenshot();
-        const png = PNG.sync.read(buffer);
-        row.push(png);
-        if (halfHeight === ZOOMS[0]) {
+        const png = PNG.sync.read(await page.locator('#probe-canvas').screenshot());
+        frames.push(png);
+        if (row.halfHeight === PIXELS && row.azimuth === SEAT) {
           const ink = inkBox(png);
           measured.push(
-            `  tick ${String(ticks).padStart(2)}  ${String(report?.particles ?? 0)} particles` +
+            `  tick ${String(ticks).padStart(2)}  ${report?.particles ?? 0} particles` +
               `  ${String(ink.count).padStart(5)} px of ink  ${ink.width}x${ink.height}`,
           );
         }
       }
-      rows.push(row);
+      grid.push(frames);
     }
 
     const shaderProblems = logs.filter((line) => /error|could not compile/i.test(line) && !/favicon|404/i.test(line));
@@ -149,13 +177,13 @@ async function main(): Promise<void> {
     server.kill();
   }
 
-  const first = rows[0]?.[0];
+  const first = grid[0]?.[0];
   if (!first) throw new Error('no frames were captured');
   const cropX = Math.floor((first.width - COLUMN_W) / 2);
-  const cropY = Math.floor((first.height - COLUMN_H) / 2) + COLUMN_DROP;
-  const sheet = new PNG({ width: COLUMN_W * TICKS.length, height: COLUMN_H * rows.length });
-  rows.forEach((row, r) => {
-    row.forEach((png, c) => {
+  const cropY = Math.floor((first.height - COLUMN_H) / 2);
+  const sheet = new PNG({ width: COLUMN_W * TICKS.length, height: COLUMN_H * grid.length });
+  grid.forEach((frames, r) => {
+    frames.forEach((png, c) => {
       for (let y = 0; y < COLUMN_H; y++) {
         for (let x = 0; x < COLUMN_W; x++) {
           const from = ((cropY + y) * png.width + cropX + x) * 4;
@@ -172,9 +200,10 @@ async function main(): Promise<void> {
   const out = join(shots, 'order-mark.png');
   writeFileSync(out, PNG.sync.write(sheet));
   console.log(`wrote ${out}`);
-  console.log(`\n  order_move, at the gameplay framing (${ZOOMS[0]} units of half-height):\n`);
+  console.log(`\n  order_move, at the size the game draws it (${PIXELS} units of half-height):\n`);
   for (const line of measured) console.log(line);
-  console.log('\n  top row as played, bottom row close up. Ticks:', TICKS.join(', '));
+  console.log(`\n  ticks across: ${TICKS.join(', ')}`);
+  console.log(`  rows down:    ${ROWS.map((row) => row.label).join(' / ')}`);
 }
 
 main().catch((error: unknown) => {

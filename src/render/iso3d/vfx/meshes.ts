@@ -813,6 +813,20 @@ export const ORIENT = {
    * the view is drawn across it and one thrown at it foreshortens to a dab.
    */
   cardVelocity: 5,
+  /**
+   * Flat in the ground plane, yawed by the particle's own rotation (spec 175).
+   *
+   * A mark somebody *painted on the floor*, which is a different thing from a
+   * mark suspended in the air: a card holds its size from every seat in the room
+   * and is therefore never quite in the world, where this one foreshortens with
+   * the ground it is lying on and is the same object the terrain is.
+   *
+   * Its useful side effect is the clearance: local +Z becomes world up and a
+   * stroke's arch is never negative, so a horizontal mark cannot reach below its
+   * own origin and holding it clear of a hillside needs the ground and nothing
+   * about the camera at all.
+   */
+  ground: 6,
 } as const;
 
 export function orientOf(shape: MeshShape): number {
@@ -842,13 +856,12 @@ export function orientOf(shape: MeshShape): number {
       return ORIENT.velocity;
     case 'brush-blot':
       return ORIENT.tumble;
-    // The one shape that finally uses the card mode spec 158 defined (spec 175).
-    // A placed mark has no velocity to be aimed by, and a cross whose arms were
-    // decided by the camera's azimuth is a cross that closes to a line at some
-    // seat in the room -- so it takes the roll it was given, exactly, the way a
-    // sigil takes its rotation.
+    // Painted on the floor (spec 175). A placed mark has no velocity to be aimed
+    // by, so like a sigil it takes the angle it was given and nothing else -- and
+    // unlike a sigil it is a brush mark, so it takes it in the ground plane where
+    // a mark on the ground actually lies.
     case 'brush-mark':
-      return ORIENT.card;
+      return ORIENT.ground;
     default:
       return ORIENT.tumble;
   }

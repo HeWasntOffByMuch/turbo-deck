@@ -18,7 +18,7 @@ import {
   BRUSH_EFFECTS,
   brushCross,
   BRUSH_EXPLOSION_RADIUS,
-  CROSS_ROLLS,
+  CROSS_YAWS,
   EXPLOSION_PALETTE,
   HEAVY_HIT_INTENSITY,
   NORMAL_LIFT,
@@ -777,11 +777,11 @@ describe('the cross (spec 175)', () => {
     }
   });
 
-  it('holds each arm at a constant roll rather than letting one be drawn', () => {
+  it('holds each arm at a constant yaw rather than letting one be drawn', () => {
     for (const [index, emitter] of cross.emitters.entries()) {
       const keys = emitter.rotation?.keys ?? [];
       expect(keys.length, emitter.id).toBeGreaterThan(0);
-      for (const [, value] of keys) expect(value, emitter.id).toBe(CROSS_ROLLS[index]);
+      for (const [, value] of keys) expect(value, emitter.id).toBe(CROSS_YAWS[index]);
     }
   });
 
@@ -798,23 +798,35 @@ describe('the cross (spec 175)', () => {
     expect(peak(big)).toBeCloseTo(peak(cross) * 2, 6);
   });
 
-  it('hangs below its origin by no more than its own reach, and not much less', () => {
-    // What the ground clearance owes its height to. `MARK_REACH` bounds an arm
-    // in every direction, which is the answer for one pointing straight down --
-    // and these two are at 45 degrees, so using it for the drop is safe rather
-    // than exact. This measures the real drop, at the real rolls and with the
-    // shader's own per-instance maxima applied (`batches.ts`): the spine
-    // stretches by up to 1.34, the width is swelled by 1.22 and rippled by
-    // another 1.2, and the outline bends by up to 0.16 of its length at the tip.
-    //
-    // Both sides matter. Over the reach and the mark goes into the ground; far
-    // under it and every click is answered by a cross hovering above the point
-    // it is marking, which is the moment a second constant would start earning
-    // its keep.
+  it('never reaches below the plane it is laid in', () => {
+    // What the ground clearance rests on, and the reason it needs no camera:
+    // `groundBasis` sends the mark's local +Z to world up, and a stroke's arch
+    // across its width is never negative, so a horizontal mark cannot dip under
+    // its own origin. Measured with the shader's own per-instance maxima applied
+    // (`batches.ts`), since the arch is scaled by the same gain the width is.
+    const mesh = particleMesh('brush-mark');
+    const GAIN = 1.22 * 1.2;
+    let lowest = Infinity;
+    for (let v = 0; v < mesh.positions.length / 3; v++) {
+      lowest = Math.min(lowest, (mesh.positions[v * 3 + 2] ?? 0) * GAIN);
+    }
+    expect(lowest).toBeGreaterThanOrEqual(0);
+    // And it has some body to it: a mark with a flat arch is a decal, and the
+    // shading that makes paint read as paint would have nothing to catch.
+    let highest = 0;
+    for (let v = 0; v < mesh.positions.length / 3; v++) {
+      highest = Math.max(highest, mesh.positions[v * 3 + 2] ?? 0);
+    }
+    expect(highest).toBeGreaterThan(0.005);
+  });
+
+  it('covers no more ground than its own reach says it does', () => {
+    // The footprint the clearance asks the terrain about, bounded against the
+    // real bank with the shader's stretch, swell, ripple and bend applied.
     const mesh = particleMesh('brush-mark');
     const STRETCH = 1.34;
     const GAIN = 1.22 * 1.2;
-    let drop = 0;
+    let worst = 0;
     for (let v = 0; v < mesh.positions.length / 3; v++) {
       const u = v * STROKE_UV_STRIDE;
       const along = mesh.strokeUv?.[u] ?? 0;
@@ -823,21 +835,39 @@ describe('the cross (spec 175)', () => {
       const sideY = mesh.strokeUv?.[u + 3] ?? 0;
       for (const sign of [-1, 1]) {
         const lateral = sign * 0.16 * along * along + half * GAIN;
-        const x = (mesh.positions[v * 3] ?? 0) + sideX * lateral;
-        const y = (mesh.positions[v * 3 + 1] ?? 0) * STRETCH + sideY * lateral;
-        // `cardBasis`: the card's up component of a local point at roll r.
-        for (const roll of CROSS_ROLLS) drop = Math.min(drop, x * Math.sin(roll) + y * Math.cos(roll));
+        worst = Math.max(
+          worst,
+          Math.hypot(
+            (mesh.positions[v * 3] ?? 0) + sideX * lateral,
+            (mesh.positions[v * 3 + 1] ?? 0) * STRETCH + sideY * lateral,
+          ),
+        );
       }
     }
-    expect(-drop).toBeLessThanOrEqual(MARK_REACH);
-    expect(-drop).toBeGreaterThan(MARK_REACH * 0.9);
+    expect(worst).toBeLessThanOrEqual(MARK_REACH);
+    expect(worst).toBeGreaterThan(MARK_REACH * 0.85);
     expect(ORDER_MARK_REACH).toBeCloseTo(ORDER_MARK_ARM * MARK_REACH, 6);
   });
 
   it('crosses its arms rather than opening them out of a point', () => {
-    const apart = Math.abs((CROSS_ROLLS[0] ?? 0) - (CROSS_ROLLS[1] ?? 0));
+    const apart = Math.abs((CROSS_YAWS[0] ?? 0) - (CROSS_YAWS[1] ?? 0));
     expect(apart).toBeGreaterThan(Math.PI / 2 - 0.12);
     expect(apart).toBeLessThan(Math.PI / 2 + 0.12);
     expect(apart).not.toBe(Math.PI / 2);
+  });
+
+  it('keeps both arms clear of the world axes and of the camera bearing', () => {
+    // Two different constraints on the same pair of numbers. Off the axes,
+    // because the heightfield's cells run along them and a mark snapped to the
+    // terrain grid reads as part of the terrain. And well off 45 degrees, which
+    // is where the default camera looks: a flat mark is squashed along the
+    // view's bearing and untouched across it, so an arm lying on that bearing is
+    // a stub beside a full-length stroke.
+    for (const yaw of CROSS_YAWS) {
+      const fromAxis = Math.min(...[0, Math.PI / 2, Math.PI].map((axis) => Math.abs(yaw - axis)));
+      expect(fromAxis, String(yaw)).toBeGreaterThan(0.05);
+      const fromView = Math.min(...[Math.PI / 4, (3 * Math.PI) / 4].map((axis) => Math.abs(yaw - axis)));
+      expect(fromView, String(yaw)).toBeGreaterThan(0.5);
+    }
   });
 });

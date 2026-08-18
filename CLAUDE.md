@@ -1431,21 +1431,24 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  order-mark.ts (how high a *placed* mark goes so it never enters
                  the ground, spec 175, and the other answer to the question
                  ground-decal.ts answers by following the hill: the cross a click
-                 leaves is a card in the view plane, small, and gone in a third of
-                 a second, so it is held clear rather than draped. Two halves that
-                 cannot answer each other's question -- what the mark hangs over
-                 is decided by the terrain and not the camera, how far it hangs is
-                 decided by the camera and not the terrain. The clearance takes
-                 the **highest** ground within the mark's own reach rather than
-                 the ground under its middle, because a click at the foot of a
-                 bank has ordinary ground under its centre and a wall a few units
-                 away. And the lift is a *bound* rather than an estimate: camera
-                 right has no y in it at all, this camera never rolls, so a point
-                 of the card is `b * camUp.y` high and no point's `b` is past the
-                 mark's reach. It falls out of that, rather than out of anything
-                 anybody authored, that the mark lies down as the camera does --
-                 all but on the ground at the pitch slider's top-down end, upright
-                 and owing the whole reach at the shallow one),
+                 leaves is small and gone in a third of a second, so it is laid
+                 over the ground rather than draped on it. The clearance takes the
+                 **highest** ground within the mark's own reach rather than the
+                 ground under its middle, because a click at the foot of a bank
+                 has ordinary ground under its centre and a wall a few units away.
+                 There is no camera in the file, and that is the whole return on
+                 laying the mark flat: `ORIENT.ground` sends a stroke's arch along
+                 world up and a stroke's arch is never negative, so nothing is
+                 below its own origin from any seat, and a plane at
+                 `max(ground) + margin` clears everything under it *by
+                 construction* -- no gradient term, no sampling fudge, nothing to
+                 be right about between the samples. The upright version this
+                 replaced owed a second length for how far it hung below itself
+                 and a camera vector to scale that by. What it costs is the other
+                 side of the same coin: on a hillside the mark sits on the ground
+                 at its uphill edge and floats over the downhill one by whatever
+                 the ground fell across it, which for a mark this size is a couple
+                 of units on anything walkable),
                  action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
                  band, spec 164 -- everything the HUD grew along the edge of the
                  frame, each pure and each about one number). action-bar.ts is

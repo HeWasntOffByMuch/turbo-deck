@@ -471,6 +471,24 @@ mat3 cardBasis(float roll) {
  * the world vector would draw it full length pointing nowhere. Foreshortening
  * falls out instead, exactly as it does for a stretched spark.
  */
+/**
+ * Flat in the ground plane, turned by the particle's own rotation (spec 175).
+ *
+ * The mark's local XY becomes the world's XZ and its local +Z becomes world up,
+ * so the shallow arch a stroke is given across its width bulges *upward* -- which
+ * is what makes a horizontal mark unable to reach below its own origin, and is
+ * the whole reason its ground clearance needs nothing about the camera.
+ *
+ * Right-handed on purpose: the obvious mapping (+Y to world +Z) has a
+ * determinant of -1, which turns every face normal over, and a paint mark takes
+ * a third of the key light. It would have been lit from underneath.
+ */
+mat3 groundBasis(float yaw) {
+  float c = cos(yaw);
+  float s = sin(yaw);
+  return mat3(vec3(c, 0.0, s), vec3(s, 0.0, -c), vec3(0.0, 1.0, 0.0));
+}
+
 mat3 cardVelocityBasis(vec3 vel) {
   vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
   vec3 camUp    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
@@ -569,7 +587,8 @@ void main() {
     // view plane rather than tumbled, and the variety a tumble would have given
     // comes out of the silhouette instead.
     uOrient < 4.5 ? cardBasis(iRotation) :
-                    cardVelocityBasis(iVelocity);
+    uOrient < 5.5 ? cardVelocityBasis(iVelocity) :
+                    groundBasis(iRotation);
 
   vec3 shape = position;
   float tone = 1.0;
@@ -605,7 +624,7 @@ void main() {
     // which is precisely the complaint spec 139 made about stretched blood.
     // Floored rather than taken to zero: a mark seen end-on should read as a
     // dab of paint, not vanish.
-    if (uOrient > 4.5) {
+    if (uOrient > 4.5 && uOrient < 5.5) {
       vec3 camFwd = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
       float speed = length(iVelocity);
       float depth = speed > 0.0001 ? abs(dot(iVelocity / speed, camFwd)) : 1.0;

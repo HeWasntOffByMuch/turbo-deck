@@ -509,11 +509,11 @@ describe('orientation is a property of the shape', () => {
     expect(orientOf('diamond')).toBe(ORIENT.tumble);
   });
 
-  it('a placed mark takes the roll it was given and asks for no velocity', () => {
-    // Spec 175, and the one shape that uses the card mode spec 158 defined. A
-    // cross whose arms were aimed down their own travel would be a cross the
-    // camera's azimuth decided the angle of.
-    expect(orientOf('brush-mark')).toBe(ORIENT.card);
+  it('a placed mark lies on the floor and asks for no velocity', () => {
+    // Spec 175. A mark somebody painted on the ground: it takes the angle it was
+    // given, the way a sigil does, and it takes it in the ground plane. Nothing
+    // aims it, because nothing threw it.
+    expect(orientOf('brush-mark')).toBe(ORIENT.ground);
     expect(needsVelocity('brush-mark')).toBe(false);
     // And it is still paint: flat-ish, not a lit solid.
     expect(shadedShape('brush-mark')).toBe(false);
@@ -699,11 +699,11 @@ describe('the placed mark (spec 175)', () => {
   });
 
   it('reaches no further from its origin than MARK_REACH says it does', () => {
-    // The bound the ground clearance rests on, so it is checked against what the
-    // SHADER can do to the geometry rather than against the geometry alone: the
-    // spine is stretched by up to 1.34 per instance, the width is swelled by up
-    // to 1.22 and rippled by another 1.2, and the outline is bent by up to 0.16
-    // of its own length at the tip (`batches.ts`).
+    // The bound the ground clearance's footprint rests on, so it is checked
+    // against what the SHADER can do to the geometry rather than against the
+    // geometry alone: the spine is stretched by up to 1.34 per instance, the
+    // width is swelled by up to 1.22 and rippled by another 1.2, and the outline
+    // is bent by up to 0.16 of its own length at the tip (`batches.ts`).
     const STRETCH = 1.34;
     const GAIN = 1.22 * 1.2;
     let worst = 0;
