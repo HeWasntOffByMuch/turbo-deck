@@ -412,9 +412,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // and a readout that did not watch it would report the old box forever,
     // which is exactly the state the whole feature is a claim about.
     const frames = boxes(readout.windowRects);
+    // The trade table (spec 134). In the key as well as the attributes: a trade
+    // can change stage without moving a window or touching the bag, and the
+    // ending changes only the reason.
+    const tradeRects = boxes(readout.tradeRects);
+    const trade =
+      `${readout.tradeStage}|${readout.tradeReason}|${readout.tradeYou}|${readout.tradeThem}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
-      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}`;
+      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
+      `|${trade}|${tradeRects}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
@@ -430,6 +437,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiBinds'] = binds;
     root.dataset['uiResets'] = resets;
     root.dataset['uiFrames'] = frames;
+    root.dataset['uiTradeStage'] = readout.tradeStage;
+    root.dataset['uiTradeReason'] = readout.tradeReason;
+    root.dataset['uiTradeYou'] = readout.tradeYou;
+    root.dataset['uiTradeThem'] = readout.tradeThem;
+    root.dataset['uiTradeRects'] = tradeRects;
   }
 
   /**
@@ -641,6 +653,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     onTradeAccept: (revision) => client.acceptTrade(revision),
     onTradeRespond: (accept) => client.respondToTrade(accept),
     onTradeCancel: () => client.cancelTrade(),
+    onTradeDismiss: () => client.dismissEndedTrade(),
     // Written straight through, because a key the player just changed and then
     // lost to a refresh is worse than one that never saved at all.
     onBindingsChanged: () => saveBindings(bindingStorage, inputMap),

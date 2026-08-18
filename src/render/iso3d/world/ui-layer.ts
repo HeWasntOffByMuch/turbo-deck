@@ -71,6 +71,16 @@ export interface UiReadout {
   readonly resetRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Every window's placement, open or not, in UI pixels (spec 147). */
   readonly windowRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /**
+   * What the trade table is showing and where its controls are (spec 134).
+   * Empty when there is no trade; only visible controls are listed.
+   */
+  readonly tradeStage: string;
+  readonly tradeReason: string;
+  /** Each side as `name|accepted|coins|item xN/item xN`. */
+  readonly tradeYou: string;
+  readonly tradeThem: string;
+  readonly tradeRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };
