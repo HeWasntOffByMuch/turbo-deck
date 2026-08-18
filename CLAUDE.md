@@ -792,6 +792,22 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  one in the tab; so the plugin swallows the reload for its own
                  writes only, invalidating the module without announcing it so a
                  later reload by hand still reads the new bytes.
+                 tools.ts holds the one thing 176 and 177 both missed, because
+                 neither was about the panel (spec 178): of the five marker
+                 kinds only `spawner` has a reader anywhere, and the strip
+                 presented all five identically with an always-live monster
+                 dropdown under them. `spawn` and `spawner` differ by two
+                 letters, `spawn` was the default, and picking a monster and
+                 pressing the wrong one of the pair produces a map that saves
+                 correctly, boots correctly and has an empty arena. So the
+                 stored kind does not move -- it is a byte on the wire -- and
+                 the *button* says `monster`, the dropdown is **disabled**
+                 rather than merely present when its kind is not armed (shown
+                 and live are different claims, and the layout argument for
+                 showing it always still holds), a `Does` row says
+                 `nothing reads it yet` for the four that are sockets with
+                 nothing plugged in, and placing one reports what it made:
+                 `placed spawner-2: grazer`.
                  camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
                  history.ts are pure and tested headlessly; view.ts, cursor.ts and
                  marker-view.ts are the three.js scene; panel.ts is the lil-gui

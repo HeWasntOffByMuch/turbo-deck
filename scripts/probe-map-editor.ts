@@ -95,6 +95,54 @@ async function readout(page: Page): Promise<string> {
   return (await page.textContent('body')) ?? '';
 }
 
+/** Which marker kind the strip shows as armed: the filled button (bold). */
+async function armedMarkerKind(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const kinds = ['spawn', 'objective', 'campfire', 'trigger', 'monster'];
+    for (const button of Array.from(document.querySelectorAll('button'))) {
+      const text = (button.textContent ?? '').trim();
+      if (kinds.includes(text) && button.style.fontWeight === '700') return text;
+    }
+    return '(none armed)';
+  });
+}
+
+/**
+ * One row of the panel, by the label it shows.
+ *
+ * lil-gui's classes are `lil-` prefixed in this build (`lil-controller`,
+ * `lil-name`), which is worth stating because the obvious selectors match
+ * nothing at all and a probe that finds no row reports every question about it
+ * as a failure.
+ */
+async function panelRow(page: Page, label: string): Promise<{ value: string; enabled: boolean } | null> {
+  return page.evaluate((wanted) => {
+    for (const row of Array.from(document.querySelectorAll('.lil-controller'))) {
+      if (row.querySelector('.lil-name')?.textContent?.trim() !== wanted) continue;
+      const select = row.querySelector('select');
+      const input = row.querySelector('input');
+      const field = select ?? input;
+      return {
+        value: field?.value ?? '',
+        // A lil-gui row that is disabled says so on the row *and* on the field;
+        // either is enough to answer "can this be used".
+        enabled: field !== null && !field.disabled && !row.classList.contains('lil-disabled'),
+      };
+    }
+    return null;
+  }, label);
+}
+
+/** Whether the Monster dropdown is live. */
+async function monsterEnabled(page: Page): Promise<boolean> {
+  return (await panelRow(page, 'Monster'))?.enabled ?? false;
+}
+
+/** What the panel says the armed marker kind does. A text row, so not in the page's text. */
+async function markerEffect(page: Page): Promise<string> {
+  return (await panelRow(page, 'Does'))?.value ?? '(no row)';
+}
+
 const markerCount = async (page: Page): Promise<number> =>
   Number(/(\d+) markers/.exec(await readout(page))?.[1] ?? -1);
 
@@ -254,15 +302,43 @@ async function main(): Promise<void> {
       `${before} markers on screen, ${shipped.length} in maps/arena.json`,
     );
 
-    // Arm the spawner and drop one on the ground.
+    // Arm the marker tool. The monster kind is the default now, so this is what
+    // somebody gets without choosing anything (spec 178).
     await page.getByRole('button', { name: 'marker', exact: true }).click();
-    await page.waitForTimeout(300);
-    await page.getByRole('button', { name: 'spawner', exact: true }).click();
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
+    check(
+      'the monster kind is armed without anybody choosing it',
+      await armedMarkerKind(page) === 'monster',
+      await armedMarkerKind(page),
+    );
+    check('the monster dropdown is live for it', await monsterEnabled(page), 'enabled');
+    const effect = await markerEffect(page);
+    check('the panel says what the armed kind does', /spawns the monster below/.test(effect), effect);
+
+    // The kind that caused this: `spawn` is two letters away and read by
+    // nothing, and the dropdown must go dead rather than look like its own.
+    await page.getByRole('button', { name: 'spawn', exact: true }).click();
+    await page.waitForTimeout(400);
+    check(
+      'the monster dropdown goes dead for a kind that does not spawn one',
+      !(await monsterEnabled(page)),
+      'disabled',
+    );
+    const inertEffect = await markerEffect(page);
+    check(
+      'and the panel says that kind is read by nothing',
+      /nothing reads it yet/.test(inertEffect),
+      inertEffect,
+    );
+
+    await page.getByRole('button', { name: 'monster', exact: true }).click();
+    await page.waitForTimeout(400);
     await clickGround(page, 540, 400);
 
     const placed = await markerCount(page);
     check('placing one adds it to the map', placed === before + 1, `${before} -> ${placed}`);
+    const said = /placed (spawner-\d+: \w+|spawn-\d+)/.exec(await readout(page))?.[1] ?? '';
+    check('the editor names what it just placed, with its monster', /^spawner-\d+: \w+$/.test(said), said || 'said nothing');
 
     // The picture, once, and of the shipped map: the billboards on screen are
     // the arena's own spawners, which is the change in one frame.

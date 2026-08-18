@@ -456,7 +456,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const showHelp = (): void => {
     help.innerHTML =
       `<b style="color:#f0f0f8;">Map editor</b> &mdash; editing <b>${editing}</b>` +
-      `${savedAs === SHIPPED_MAP_NAME ? `, the map the game plays; Save to file, then copy it over <b>maps/${SHIPPED_MAP_NAME}</b>` : ''}<br>` +
+      // Kept to one short clause: this box sits beside the readout, and the
+      // four-step copy it used to describe is one button now.
+      `${savedAs === SHIPPED_MAP_NAME ? ', the map the game plays' : ''}<br>` +
       '<b>left-drag</b> applies the armed tool &middot; <b>middle-drag</b> tracks &amp; dollies &middot; ' +
       '<b>right-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
       '<span style="color:#7a7a90;">Ctrl+Z undoes a stroke</span>';
@@ -1294,6 +1296,15 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (placed.marker) {
           strokeChangedMarkers = true;
           refreshMarkers();
+          // Named on the way in (spec 178). A marker's kind is a colour and a
+          // letter on a billboard, and `spawn` and `spawner` are two letters
+          // apart in the panel -- so what was actually placed is said in words,
+          // with the monster when there is one, because a spawner without its
+          // label is the failure this line exists to make visible.
+          status =
+            placed.marker.label === undefined
+              ? `placed ${placed.marker.id}`
+              : `placed ${placed.marker.id}: ${placed.marker.label}`;
         } else {
           // `addMarker` refuses a point past the layer or over a hole in it, and
           // this used to drop that on the floor -- a click that did nothing, no
