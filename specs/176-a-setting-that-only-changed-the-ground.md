@@ -105,9 +105,22 @@ unchanged.
   add.
 - **`npx tsx scripts/probe-vfx-settings.ts`**: on the shipped page, over a real
   fight — Effect detail Off draws no particles and Low draws fewer than Full;
-  Blood Off lays no stains and plays no blood effect; Blood Less holds fewer
-  stains than Full. This is the half no test can reach, because every half of
-  it is already green.
+  Blood Off lays no stains, plays no blood effect and still draws the impact
+  flash; Blood Less keeps the brush hit and plays neither the heavy variant nor
+  the pool. This is the half no test can reach, because every half of it is
+  already green.
+
+  Every check in it is an *absence*, so each window carries its own positive
+  control and a window that fails to produce one is a failure rather than a
+  pass. Three things had to be got right before it measured anything, each of
+  them found by measuring wrong first. It reads what has **started**, not what
+  is live: a burst instance is retired on the tick it fires, so a blood hit
+  exists for one 60Hz tick against a browser painting five frames a second, and
+  the live version reported "no blood was ever played" for a window that had
+  laid twenty-one blood stains. It fights something **unarmoured**, for the
+  `blocked` reason below. And it re-targets on a **stalemate** as well as on a
+  death, because the failure mode is not an empty arena, it is a body that
+  cannot teach this window anything.
 
 ## Out of scope
 
@@ -119,5 +132,14 @@ unchanged.
 - A gore level that reads the *fluid*: every decal in the registry today is
   blood, so refusing on the level alone and refusing on `fluid === 'blood'` are
   the same code. The day sap or oil stains something, that is the change.
+- **What `blocked` means.** Found while building the probe, and worth writing
+  down because it looks like this bug and is not: the wire's `blocked` is
+  `armor > 0 && damage < raw` (`server/sim/blow.ts`) -- "armour reduced this
+  blow" -- and `effectsForBlow` has read it since spec 120 as "the guard stopped
+  it", drawing `hit_block` and no blood at all. So the stalker (armour 0.05) and
+  the ravager (0.18) never bleed, at any gore setting, and never have. Fixing it
+  changes what every armoured blow in the game looks like, which is a design
+  call rather than a wiring one, so this spec only routes around it: the probe
+  picks something unarmoured to measure blood on, and says why.
 - Making Effect detail do more than it does. It works; this only makes it
   possible to see that it does.
