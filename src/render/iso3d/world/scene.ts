@@ -85,6 +85,8 @@ import {
 import { RetroPass } from '../retro-pass.js';
 import { HikeBuffers } from '../hike-buffers.js';
 import { VfxLayer } from '../vfx/layer.js';
+import { ORDER_MARK_REACH } from '../vfx/brush.js';
+import { markOriginY } from './order-mark.js';
 import type { GoreLevel } from '../vfx/decals.js';
 import type { PlayRequest } from './vfx-wire.js';
 import { HikeEdges } from '../hike-edges.js';
@@ -938,17 +940,24 @@ export class WorldScene {
   }
 
   /**
-   * A walk order was given here (spec 127).
+   * A walk order was given here (specs 127, 175).
    *
-   * The whole picture of a move order: a wave on the ground where the click
-   * landed, half a second, gone. Nothing is left behind and nothing draws the
+   * The whole picture of a move order: a cross painted where the click landed, a
+   * third of a second, gone. Nothing is left behind and nothing draws the
    * standing order afterwards -- the answer a player wants is *did that land*,
    * and it is answered while they are still looking at the cursor.
+   *
+   * The height is the one thing decided out here, because it is the one thing
+   * the effect table cannot know: `order-mark.ts` lays it over the highest
+   * ground it covers, so a mark on a hillside is on the hillside rather than in
+   * it. The memoized ground rather than the raw heightfield, for the reason spec
+   * 153 measured -- nine `heightAt` calls at 5.6us each is a click that costs
+   * more than the frame it lands on.
    */
   playMoveOrder(x: number, z: number): void {
     this.vfx.play('order_move', {
       x,
-      y: this.ground(x, z) + 2,
+      y: markOriginY(x, z, ORDER_MARK_REACH, this.sampledGround.at),
       z,
       // Derived from where it landed, like a blast's, so nothing about this
       // reaches for a clock or a random number.

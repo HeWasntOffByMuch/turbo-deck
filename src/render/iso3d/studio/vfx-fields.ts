@@ -57,6 +57,9 @@ export const MESH_SHAPES = [
   'brush-flick',
   'brush-dab',
   'brush-blot',
+  // The placed mark (spec 175), which is the one that arrives centred on its own
+  // origin and takes the roll it is given rather than being aimed by its travel.
+  'brush-mark',
 ] as const;
 
 /**

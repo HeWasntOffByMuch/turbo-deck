@@ -8,14 +8,19 @@ import {
   particleMesh,
   ringMesh,
   runeRingMesh,
+  MARK_REACH,
   needsVelocity,
   shadedShape,
+  strokeRootOf,
   shaftMesh,
   shardMesh,
   starburstMesh,
   tongueMesh,
   type MeshData,
+  type MeshShape,
 } from './meshes.js';
+import { BRUSH_SHAPES } from './meshes.js';
+import { STROKE_CENTRE_SHIFT, STROKE_UV_STRIDE } from './stroke.js';
 import { depthOrder } from './depth-sort.js';
 import { REGISTRY } from './registry.js';
 import { FAMILY, familyOf, RENDER } from './compile.js';
@@ -504,6 +509,16 @@ describe('orientation is a property of the shape', () => {
     expect(orientOf('diamond')).toBe(ORIENT.tumble);
   });
 
+  it('a placed mark lies on the floor and asks for no velocity', () => {
+    // Spec 175. A mark somebody painted on the ground: it takes the angle it was
+    // given, the way a sigil does, and it takes it in the ground plane. Nothing
+    // aims it, because nothing threw it.
+    expect(orientOf('brush-mark')).toBe(ORIENT.ground);
+    expect(needsVelocity('brush-mark')).toBe(false);
+    // And it is still paint: flat-ish, not a lit solid.
+    expect(shadedShape('brush-mark')).toBe(false);
+  });
+
   it('light is not lit', () => {
     expect(shadedShape('tongue')).toBe(false);
     expect(shadedShape('shaft')).toBe(false);
@@ -644,5 +659,76 @@ describe('the transparency sort', () => {
     // 500 sorts of 512 particles. Anything that allocated per particle would be
     // megabytes; the slack is for whatever else the runtime did meanwhile.
     expect(after - before).toBeLessThan(256 * 1024);
+  });
+});
+
+describe('the placed mark (spec 175)', () => {
+  const mesh = particleMesh('brush-mark');
+
+  it('is the only shape whose spine does not start at its own root', () => {
+    for (const shape of BRUSH_SHAPES) {
+      expect(strokeRootOf(shape), shape).toBe(shape === 'brush-mark' ? -STROKE_CENTRE_SHIFT : 0);
+    }
+    // Every solid too, so the shader expression the retract is written as stays
+    // exactly the one it has always been for all of them.
+    for (const [name] of SHAPES) expect(strokeRootOf(name as MeshShape), name).toBe(0);
+  });
+
+  it('straddles its own origin, where a thrown mark stands on it', () => {
+    const ys: number[] = [];
+    for (let v = 1; v < mesh.positions.length; v += 3) ys.push(mesh.positions[v] ?? 0);
+    expect(Math.min(...ys)).toBeLessThan(-0.4);
+    expect(Math.max(...ys)).toBeGreaterThan(0.4);
+    const thrown = particleMesh('brush-slash');
+    const theirs: number[] = [];
+    for (let v = 1; v < thrown.positions.length; v += 3) theirs.push(thrown.positions[v] ?? 0);
+    expect(Math.min(...theirs)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('throws no flecks, so an arm is the same length at both ends', () => {
+    // A fleck is paint that left the brush, which is a fact about a mark that
+    // was *thrown*; and a fleck is the one part of a gesture that sits past the
+    // tip, so an arm carrying them is longer at one end than the other -- on a
+    // cross, the one asymmetry that reads as a fault rather than as a hand.
+    // Nothing past the tip is exactly the assertion, and it is the only one that
+    // finds them: a fleck keeps its gesture's `along`, so the outline coordinate
+    // cannot see it.
+    for (let v = 1; v < mesh.positions.length; v += 3) {
+      expect(mesh.positions[v] ?? 0).toBeLessThanOrEqual(STROKE_CENTRE_SHIFT + 1e-6);
+    }
+  });
+
+  it('reaches no further from its origin than MARK_REACH says it does', () => {
+    // The bound the ground clearance's footprint rests on, so it is checked
+    // against what the SHADER can do to the geometry rather than against the
+    // geometry alone: the spine is stretched by up to 1.34 per instance, the
+    // width is swelled by up to 1.22 and rippled by another 1.2, and the outline
+    // is bent by up to 0.16 of its own length at the tip (`batches.ts`).
+    const STRETCH = 1.34;
+    const GAIN = 1.22 * 1.2;
+    let worst = 0;
+    for (let v = 0; v < mesh.positions.length / 3; v++) {
+      const u = v * STROKE_UV_STRIDE;
+      const along = mesh.strokeUv?.[u] ?? 0;
+      const half = mesh.strokeUv?.[u + 1] ?? 0;
+      const sideX = mesh.strokeUv?.[u + 2] ?? 0;
+      const sideY = mesh.strokeUv?.[u + 3] ?? 0;
+      for (const sign of [-1, 1]) {
+        const lateral = sign * 0.16 * along * along + half * GAIN;
+        worst = Math.max(
+          worst,
+          Math.hypot(
+            (mesh.positions[v * 3] ?? 0) + sideX * lateral,
+            (mesh.positions[v * 3 + 1] ?? 0) * STRETCH + sideY * lateral,
+            (mesh.positions[v * 3 + 2] ?? 0) * GAIN,
+          ),
+        );
+      }
+    }
+    expect(worst).toBeLessThanOrEqual(MARK_REACH);
+    // And not far under it either: a bound that drifted well above the truth is
+    // a mark held further off the ground than it needs to be, which is the same
+    // fault as clipping, seen from the other side.
+    expect(worst).toBeGreaterThan(MARK_REACH * 0.85);
   });
 });

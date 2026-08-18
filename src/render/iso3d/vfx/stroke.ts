@@ -437,6 +437,38 @@ export function variedBank(base: Partial<StrokeSpec>, count: number, seed: numbe
   return brushStrokeBank(entries);
 }
 
+/**
+ * How far along its own +Y a mark is shifted to sit on its origin (spec 175).
+ *
+ * Half its length, because a gesture is authored one unit long from its butt.
+ */
+export const STROKE_CENTRE_SHIFT = 0.5;
+
+/**
+ * The same bank, moved so its middle is at the origin rather than its butt
+ * (spec 175).
+ *
+ * Every mark in this vocabulary is rooted at the point it left the brush,
+ * because that is what a *thrown* mark is and because the shader's endings are
+ * written against a spine running 0..1 from that root. A mark somebody *placed*
+ * has no such point -- and two placed marks rooted together are a V, where a
+ * cross needs its two marks to actually cross.
+ *
+ * Only `position` moves. `strokeUv` carries `along`, which is the gesture
+ * coordinate the extend and both endings are driven by, and it still runs 0..1
+ * over the same geometry -- so nothing about how the mark is animated changes,
+ * and the one thing that has to be told is the shader's retract, which clamps
+ * the spine toward a root it assumes sits at zero. `strokeRootOf` in
+ * `meshes.ts` is that telling.
+ */
+export function centreStrokes(mesh: StrokeMeshData): StrokeMeshData {
+  const positions = new Float32Array(mesh.positions);
+  for (let v = 0; v < positions.length; v += 3) {
+    positions[v + 1] = (positions[v + 1] ?? 0) - STROKE_CENTRE_SHIFT;
+  }
+  return { ...mesh, positions };
+}
+
 // --- measurement, for the tests ---------------------------------------------
 
 /**

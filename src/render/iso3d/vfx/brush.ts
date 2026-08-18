@@ -32,6 +32,7 @@
  * it is light rather than pigment and has four ticks to say so.
  */
 
+import { MARK_REACH } from './meshes.js';
 import type { Curve } from './curve.js';
 import type { EffectDefinition, Emitter, Priority, StrokeDecay } from './types.js';
 import type { PaletteKey } from './palette.js';
@@ -673,6 +674,146 @@ export function brushExplosion(params: BrushExplosionParams): EffectDefinition {
     emitters,
   };
 }
+
+// --- the placed mark ---------------------------------------------------------
+
+export interface BrushCrossParams {
+  readonly id: string;
+  /** Each stroke's length in world units, tip to tip. The one size knob. */
+  readonly arm: number;
+  /** Ticks the first stroke lasts. The second is held a beat past it. */
+  readonly lifetimeTicks?: number;
+  /** The bright end of the ramp, where a mark is freshest. */
+  readonly bright?: PaletteKey;
+  /** Where it dries. */
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+}
+
+/**
+ * Which way the two arms run, in radians of yaw in the ground plane (spec 175).
+ *
+ * A quarter turn apart to within three degrees. Exactly 90 and exactly
+ * symmetrical is a multiplication sign; what a person's cross has is two strokes
+ * that nearly agree, and the cheapest way to say so is to author the
+ * disagreement rather than hope the bank supplies it -- the bank varies a mark's
+ * outline and never its angle.
+ *
+ * Near the world axes, and that is the part decided by the *camera*. A flat mark
+ * is squashed along the view's own horizontal bearing and untouched across it,
+ * which for two arms at a right angle means one of them can be squashed to a
+ * third of the other. The default camera looks along 45 degrees, so arms near 0
+ * and 90 sit at 45 degrees either side of it and foreshorten by the same amount
+ * -- the cross stays a cross. Arms authored at +-45 are the same cross rotated,
+ * and at the default seat they are a long stroke with a stub across it.
+ *
+ * A few degrees off the axes rather than on them, because the heightfield's own
+ * cells run along those axes and a mark laid exactly on them reads as snapped to
+ * the terrain grid.
+ */
+export const CROSS_YAWS = [0.13, 1.66] as const;
+
+/**
+ * A cross where somebody pointed (spec 175).
+ *
+ * Two marks and nothing else. Not a burst with two marks in it: every other
+ * builder here layers a gesture with company, because a hit and a blast are
+ * events with debris, and a *mark* has none -- anything scattered around this
+ * one would be paint that came off the brush, which is the one thing that did
+ * not happen. The whole cue is the two strokes crossing and then leaving.
+ *
+ * ## Both are placed, not thrown
+ *
+ * `speed` is zero and there is no fan, no gravity and no drag. The shape is
+ * `brush-mark`, which lies flat in the ground plane, is centred on its own
+ * origin and takes the yaw it is given -- so the two arms actually cross instead
+ * of opening out of one point, and the mark is painted on the floor the player
+ * clicked rather than suspended over it.
+ *
+ * ## The stagger is the hand
+ *
+ * The two strokes are born together and the second outlives the first by a
+ * couple of ticks, which is two ticks of one arm still there after the other has
+ * gone. Ending on the same frame is a stamp; ending a beat apart is a hand that
+ * drew one and then the other.
+ */
+export function brushCross(params: BrushCrossParams): EffectDefinition {
+  const arm = params.arm;
+  const life = params.lifetimeTicks ?? 18;
+  const bright = params.bright ?? 'sparkHot';
+  const deep = params.deep ?? 'auraSelected';
+
+  const stroke = (index: number, yaw: number, ticks: number): Emitter => ({
+    id: `stroke_${index === 0 ? 'a' : 'b'}`,
+    shape: { kind: 'point' },
+    emission: { kind: 'burst', count: 1 },
+    lifetimeTicks: [ticks, ticks],
+    // It was put there. Nothing about a placed mark travels, and a mark that
+    // drifted off the point would be answering a question about somewhere else.
+    speed: [0, 0],
+    // A constant, which is the whole reason this is a curve at all: `rotation`
+    // is the only channel that reaches `iRotation`, and `iRotation` is the yaw
+    // the ground mode turns the mark by.
+    rotation: { keys: [[0, yaw], [1, yaw]] },
+    // Nearly flat, and for the reason every mark in this file has a flat one:
+    // the shape draws itself out and takes itself back (specs 159, 161), and a
+    // size curve swinging about underneath that is two animations fighting.
+    size: { keys: [[0, arm * 0.94], [0.3, arm], [1, arm * 0.96]] },
+    // Opaque nearly to the end. The mark leaves by retracting, and an alpha fade
+    // that outran it would turn a stroke being finished into a stroke being
+    // turned down.
+    alpha: { keys: [[0, 1], [0.72, 1], [1, 0]] },
+    color: { stops: [[0, bright], [0.6, bright], [1, deep]] },
+    render: 'mesh',
+    mesh: { shape: 'brush-mark' },
+    blend: 'alpha',
+    // Fizzle, and it is the one place this parts company with spec 161's rule.
+    // That rule reads "retract for anything fast", and it is a rule about marks
+    // that were *thrown*: a retract walks an eroding threshold from the root to
+    // the tip and pulls the spine after it, which on a mark rooted at its butt
+    // is the flick finishing. On a mark rooted at its middle the same motion
+    // drags it toward its own tip -- so the cross comes apart into two corners
+    // and slides off the point it was put on, in the last four ticks, which is
+    // the one thing a confirmation must not do. A fizzle moves the spine not at
+    // all: the gaps open through the marks and the cross dries where it lies.
+    strokeDecay: 'fizzle',
+  });
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1400,
+    emitters: CROSS_YAWS.map((yaw, index) => stroke(index, yaw, life + index * 2)),
+  };
+}
+
+/**
+ * How long each arm of the order cross is, in world units (spec 175).
+ *
+ * Twenty-eight: a bit under a body across, and comfortably inside the sigil a
+ * selected unit already stands in -- this is a confirmation, not an ability. The
+ * lower bound is the *stroke*, which is a bit over two world units wide at this
+ * length: the game's default zoom puts two or three pixels on a world unit, so
+ * much under this and the paint is a scratch rather than a mark.
+ */
+export const ORDER_MARK_ARM = 28;
+
+/**
+ * The order cross in world units: how far it reaches from where it was put.
+ *
+ * Exported from here because it is a fact about the *effect* rather than about
+ * the terrain -- a call site that has to hold a mark clear of a hillside must not
+ * also have to know how a mark is authored.
+ *
+ * How wide a patch of ground it covers, and nothing about height: the mark is
+ * horizontal and its arch bulges upward, so it cannot reach below its own origin
+ * at all. That is the whole simplification the flat version buys -- the upright
+ * one owed a second length for how far it hung below itself, and a camera vector
+ * to scale it by. `the cross` in `brush.test.ts` is what holds the claim: no
+ * vertex of the mark, at either authored yaw and with every per-instance maximum
+ * the shader can apply, is below the plane it is laid in.
+ */
+export const ORDER_MARK_REACH = ORDER_MARK_ARM * MARK_REACH;
 
 // --- the shipped presets -----------------------------------------------------
 

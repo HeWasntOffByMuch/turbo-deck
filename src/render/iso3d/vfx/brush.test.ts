@@ -16,10 +16,14 @@ import {
   brushExplosion,
   brushExplosionRequest,
   BRUSH_EFFECTS,
+  brushCross,
   BRUSH_EXPLOSION_RADIUS,
+  CROSS_YAWS,
   EXPLOSION_PALETTE,
   HEAVY_HIT_INTENSITY,
   NORMAL_LIFT,
+  ORDER_MARK_ARM,
+  ORDER_MARK_REACH,
 } from './brush.js';
 import { EFFECTS, REGISTRY } from './registry.js';
 import { compileRegistry } from './compile.js';
@@ -32,10 +36,12 @@ import {
   shadingOf,
   strokeShape,
   BANK_SIZE,
+  MARK_REACH,
   ORIENT,
   BRUSH_SHAPES,
 } from './meshes.js';
 import { paletteInto, VFX_PALETTE, type PaletteKey } from './palette.js';
+import { STROKE_UV_STRIDE } from './stroke.js';
 import type { EffectDefinition } from './types.js';
 
 const TICK_HZ = 60;
@@ -746,5 +752,122 @@ describe('SpawnBrushExplosion', () => {
     expect(request.scale).toBeGreaterThan(0);
     expect(Number.isFinite(request.scale)).toBe(true);
     expect(REGISTRY.byId.has(request.id)).toBe(true);
+  });
+});
+
+describe('the cross (spec 175)', () => {
+  const cross = brushCross({ id: 'test_cross', arm: 40 });
+
+  it('is two marks and no company', () => {
+    // Every other builder in this file layers a gesture with debris, because a
+    // hit and a blast are events that threw something. A mark threw nothing.
+    expect(cross.emitters).toHaveLength(2);
+    for (const emitter of cross.emitters) {
+      expect(emitter.mesh?.shape, emitter.id).toBe('brush-mark');
+      expect(emitter.emission, emitter.id).toEqual({ kind: 'burst', count: 1 });
+      expect(emitter.render, emitter.id).toBe('mesh');
+      // Paint is opaque: two translucent marks crossing make a third colour at
+      // the crossing that is in neither of them, and the crossing is the whole
+      // shape here.
+      expect(emitter.blend, emitter.id).toBe('alpha');
+      // It dries where it lies. A retract on a mark rooted at its own middle
+      // drags the cross toward its tips and off the point it was put on.
+      expect(emitter.strokeDecay, emitter.id).toBe('fizzle');
+      expect(emitter.lifetimeTicks[1], emitter.id).toBeLessThanOrEqual(24);
+    }
+  });
+
+  it('holds each arm at a constant yaw rather than letting one be drawn', () => {
+    for (const [index, emitter] of cross.emitters.entries()) {
+      const keys = emitter.rotation?.keys ?? [];
+      expect(keys.length, emitter.id).toBeGreaterThan(0);
+      for (const [, value] of keys) expect(value, emitter.id).toBe(CROSS_YAWS[index]);
+    }
+  });
+
+  it('ends one arm a beat after the other', () => {
+    // A hand drew one and then the other. Ending on the same frame is a stamp.
+    const [a, b] = cross.emitters;
+    expect(b?.lifetimeTicks[0] ?? 0).toBeGreaterThan(a?.lifetimeTicks[1] ?? 0);
+  });
+
+  it('scales entirely off its arm', () => {
+    const big = brushCross({ id: 'big', arm: 80 });
+    const peak = (effect: EffectDefinition): number =>
+      Math.max(...effect.emitters.flatMap((emitter) => emitter.size.keys.map(([, value]) => value)));
+    expect(peak(big)).toBeCloseTo(peak(cross) * 2, 6);
+  });
+
+  it('never reaches below the plane it is laid in', () => {
+    // What the ground clearance rests on, and the reason it needs no camera:
+    // `groundBasis` sends the mark's local +Z to world up, and a stroke's arch
+    // across its width is never negative, so a horizontal mark cannot dip under
+    // its own origin. Measured with the shader's own per-instance maxima applied
+    // (`batches.ts`), since the arch is scaled by the same gain the width is.
+    const mesh = particleMesh('brush-mark');
+    const GAIN = 1.22 * 1.2;
+    let lowest = Infinity;
+    for (let v = 0; v < mesh.positions.length / 3; v++) {
+      lowest = Math.min(lowest, (mesh.positions[v * 3 + 2] ?? 0) * GAIN);
+    }
+    expect(lowest).toBeGreaterThanOrEqual(0);
+    // And it has some body to it: a mark with a flat arch is a decal, and the
+    // shading that makes paint read as paint would have nothing to catch.
+    let highest = 0;
+    for (let v = 0; v < mesh.positions.length / 3; v++) {
+      highest = Math.max(highest, mesh.positions[v * 3 + 2] ?? 0);
+    }
+    expect(highest).toBeGreaterThan(0.005);
+  });
+
+  it('covers no more ground than its own reach says it does', () => {
+    // The footprint the clearance asks the terrain about, bounded against the
+    // real bank with the shader's stretch, swell, ripple and bend applied.
+    const mesh = particleMesh('brush-mark');
+    const STRETCH = 1.34;
+    const GAIN = 1.22 * 1.2;
+    let worst = 0;
+    for (let v = 0; v < mesh.positions.length / 3; v++) {
+      const u = v * STROKE_UV_STRIDE;
+      const along = mesh.strokeUv?.[u] ?? 0;
+      const half = mesh.strokeUv?.[u + 1] ?? 0;
+      const sideX = mesh.strokeUv?.[u + 2] ?? 0;
+      const sideY = mesh.strokeUv?.[u + 3] ?? 0;
+      for (const sign of [-1, 1]) {
+        const lateral = sign * 0.16 * along * along + half * GAIN;
+        worst = Math.max(
+          worst,
+          Math.hypot(
+            (mesh.positions[v * 3] ?? 0) + sideX * lateral,
+            (mesh.positions[v * 3 + 1] ?? 0) * STRETCH + sideY * lateral,
+          ),
+        );
+      }
+    }
+    expect(worst).toBeLessThanOrEqual(MARK_REACH);
+    expect(worst).toBeGreaterThan(MARK_REACH * 0.85);
+    expect(ORDER_MARK_REACH).toBeCloseTo(ORDER_MARK_ARM * MARK_REACH, 6);
+  });
+
+  it('crosses its arms rather than opening them out of a point', () => {
+    const apart = Math.abs((CROSS_YAWS[0] ?? 0) - (CROSS_YAWS[1] ?? 0));
+    expect(apart).toBeGreaterThan(Math.PI / 2 - 0.12);
+    expect(apart).toBeLessThan(Math.PI / 2 + 0.12);
+    expect(apart).not.toBe(Math.PI / 2);
+  });
+
+  it('keeps both arms clear of the world axes and of the camera bearing', () => {
+    // Two different constraints on the same pair of numbers. Off the axes,
+    // because the heightfield's cells run along them and a mark snapped to the
+    // terrain grid reads as part of the terrain. And well off 45 degrees, which
+    // is where the default camera looks: a flat mark is squashed along the
+    // view's bearing and untouched across it, so an arm lying on that bearing is
+    // a stub beside a full-length stroke.
+    for (const yaw of CROSS_YAWS) {
+      const fromAxis = Math.min(...[0, Math.PI / 2, Math.PI].map((axis) => Math.abs(yaw - axis)));
+      expect(fromAxis, String(yaw)).toBeGreaterThan(0.05);
+      const fromView = Math.min(...[Math.PI / 4, (3 * Math.PI) / 4].map((axis) => Math.abs(yaw - axis)));
+      expect(fromView, String(yaw)).toBeGreaterThan(0.5);
+    }
   });
 });

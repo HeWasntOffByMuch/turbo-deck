@@ -21,6 +21,7 @@
  * here departs from it, the reason is in a comment.
  */
 
+import { ORDER_MARK_ARM, brushCross } from './brush.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
@@ -472,9 +473,11 @@ export interface BurstParams {
  * them rather than one because a single ring is a hoop, where the reference has
  * an edge with a glow trailing it.
  *
- * Its own function rather than a block inside {@link burst} because spec 127
- * plays the wave with nothing around it, and a wave authored twice is two waves
- * that drift apart the first time one of them is tuned.
+ * Its own function rather than a block inside {@link burst} because the heal
+ * (spec 157) plays the wave with none of the burst around it, and a wave
+ * authored twice is two waves that drift apart the first time one is tuned.
+ * The walk order was its third caller until spec 175 answered a click with a
+ * cross instead; what that changed is the number of callers and nothing here.
  */
 export function waveEmitters(s: number, hot: PaletteKey, warm: PaletteKey): Emitter[] {
   return [
@@ -911,21 +914,23 @@ export const LIBRARY: readonly EffectDefinition[] = [
   },
 
   // --- orders ----------------------------------------------------------------
-  // Where a walk order landed (spec 127). The wavefront on its own: no crystal,
-  // no rock, nothing thrown -- an order threw nothing. Small enough to sit
-  // inside a selected unit's own sigil, because it answers "my click landed
-  // there" and then stops existing; the standing order it began is drawn by
-  // nothing at all.
+  // Where a walk order landed (specs 127, 175). Two brush marks crossing, and
+  // nothing else -- an order threw nothing, so there is nothing scattered around
+  // it. Small enough to sit inside a selected unit's own sigil, because it
+  // answers "my click landed there" and then stops existing; the standing order
+  // it began is drawn by nothing at all.
+  //
+  // It was the shockwave's wavefront until spec 175, and it stopped being one
+  // for two reasons. A ring says something arrived and *pushed*, which is a
+  // statement about the world, where a click is a statement about the player's
+  // own input and the mark a person makes to say "there" is a cross. And a flat
+  // ring laid at `ground + 2` is spec 153's fault exactly -- right at one point
+  // of itself, and inside the hill everywhere else.
   //
   // Priority 3 for the same reason a telegraph is: it is information about your
   // own input, two particles cost nothing, and a click whose answer was dropped
   // under budget pressure reads as a click that missed.
-  {
-    id: 'order_move',
-    priority: 3,
-    cullDistance: 1400,
-    emitters: waveEmitters(6.5, 'sparkHot', 'auraSelected'),
-  },
+  brushCross({ id: 'order_move', arm: ORDER_MARK_ARM, priority: 3 }),
 
   // --- explosions ------------------------------------------------------------
   // The reference, at full size: a crystal that opens, throws rock and leaves a

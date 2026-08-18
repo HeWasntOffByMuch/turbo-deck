@@ -16,6 +16,7 @@ import { sampleCurve, compileCurve, sampleGradient, compileGradient } from './cu
 import { VfxSystem } from './system.js';
 import { DAMAGE_EFFECTS, DAMAGE_DEBRIS } from '../world/vfx-wire.js';
 import { spriteSheet, sheetFrames } from './textures.js';
+import { MARK_REACH } from './meshes.js';
 
 const ids = new Set(EFFECTS.map((effect) => effect.id));
 
@@ -528,21 +529,43 @@ describe('the hit vocabulary', () => {
     }
   });
 
-  it('answers a walk order with the wavefront and nothing else', () => {
-    // Spec 127. An order threw no rock, lit no fire and left no mark, so the
-    // only thing here is the wave the shockwave shares.
+  it('answers a walk order with two crossed marks and nothing else', () => {
+    // Spec 175. An order threw no rock, lit no fire and scattered nothing, so
+    // there are two brush marks here and no company for them -- anything around
+    // them would be paint that came off the brush, which is the one thing that
+    // did not happen.
     const order = LIBRARY.find((effect) => effect.id === 'order_move');
-    expect(order?.emitters.map((emitter) => emitter.id)).toEqual(['wave', 'wave_halo']);
-    // The same two the shockwave's ring is, to the number: one wavefront in the
-    // library, not two that drift.
-    const shock = LIBRARY.find((effect) => effect.id === 'shockwave_ring');
-    for (const id of ['wave', 'wave_halo']) {
-      const mine = order?.emitters.find((emitter) => emitter.id === id);
-      const theirs = shock?.emitters.find((emitter) => emitter.id === id);
-      expect(mine?.lifetimeTicks, id).toEqual(theirs?.lifetimeTicks);
-      expect(mine?.blend, id).toBe(theirs?.blend);
-      expect(mine?.mesh?.shape, id).toBe(theirs?.mesh?.shape);
+    expect(order?.emitters.map((emitter) => emitter.id)).toEqual(['stroke_a', 'stroke_b']);
+    for (const emitter of order?.emitters ?? []) {
+      expect(emitter.mesh?.shape, emitter.id).toBe('brush-mark');
+      // One mark each. A second particle in either emitter is a third stroke in
+      // a cross, which is a scribble.
+      expect(emitter.emission, emitter.id).toEqual({ kind: 'burst', count: 1 });
+      // It was placed. Nothing about it travels, or the answer drifts off the
+      // point the question was asked about.
+      expect(emitter.speed, emitter.id).toEqual([0, 0]);
     }
+  });
+
+  it('crosses the two marks rather than opening them out of a point', () => {
+    // The whole geometry of a cross, as the two numbers it actually rests on:
+    // the arms are a quarter turn apart, and neither of them is upright.
+    const order = LIBRARY.find((effect) => effect.id === 'order_move');
+    const rolls = (order?.emitters ?? []).map((emitter) => {
+      const keys = emitter.rotation?.keys ?? [];
+      // Constant over the life: a mark that turned while it was being read is a
+      // mark somebody is still drawing.
+      expect(new Set(keys.map(([, value]) => value)).size, emitter.id).toBe(1);
+      return keys[0]?.[1] ?? 0;
+    });
+    expect(rolls).toHaveLength(2);
+    const apart = Math.abs((rolls[0] ?? 0) - (rolls[1] ?? 0));
+    expect(apart).toBeGreaterThan(Math.PI / 2 - 0.12);
+    expect(apart).toBeLessThan(Math.PI / 2 + 0.12);
+    // And never exactly 90 apart, nor either arm on an axis: a cross drawn by a
+    // person is two strokes that nearly agree.
+    expect(apart).not.toBe(Math.PI / 2);
+    for (const roll of rolls) expect(Math.abs(roll)).toBeGreaterThan(0.1);
   });
 
   it('makes the order cue small, brief and undroppable', () => {
@@ -552,18 +575,22 @@ describe('the hit vocabulary', () => {
       ...(order?.emitters.flatMap((emitter) => emitter.size.keys.map(([, value]) => value)) ?? [0]),
     );
     // Inside the sigil a selected unit already stands on: this is a
-    // confirmation, not an ability.
+    // confirmation, not an ability. Its REACH against that radius, because a
+    // stroke's size is its length where a ring's is its half-width, and the
+    // version of this that compared the two raw numbers was comparing a span
+    // against half of one.
     const sigil = Math.max(
       ...(selected?.emitters
         .find((emitter) => emitter.id === 'ring')
         ?.size.keys.map(([, value]) => value) ?? [0]),
     );
-    expect(peak).toBeLessThan(sigil);
+    expect(peak * MARK_REACH).toBeLessThan(sigil);
     // It ends on its own, and nothing about it is a rate: an order's cue that
-    // outlived the click would be the marker again by another name.
+    // outlived the click would be the marker again by another name. Quicker
+    // than the wavefront it replaced, which ran to 34 ticks.
     for (const emitter of order?.emitters ?? []) {
       expect(emitter.emission.kind, emitter.id).toBe('burst');
-      expect(emitter.lifetimeTicks[1], emitter.id).toBeLessThanOrEqual(40);
+      expect(emitter.lifetimeTicks[1], emitter.id).toBeLessThanOrEqual(24);
     }
     // Information about your own input, so never the thing dropped when the
     // budget is tight.
@@ -591,12 +618,14 @@ describe('the heal (spec 157)', () => {
   });
 
   it('shares the one wavefront rather than authoring a second one', () => {
-    // The same two emitters an order and a shockwave use, so a tuning pass on
-    // the wave moves all three instead of leaving this one behind.
-    const order = LIBRARY.find((effect) => effect.id === 'order_move');
+    // The same two emitters the shockwave's ring is, so a tuning pass on the
+    // wave moves both instead of leaving this one behind. Measured against the
+    // shockwave rather than against the walk order, which is where the wave is
+    // authored -- the order was the copy, and since spec 175 it is a cross.
+    const shock = LIBRARY.find((effect) => effect.id === 'shockwave_ring');
     for (const id of ['wave', 'wave_halo']) {
-      expect(emitter(id)?.mesh?.shape, id).toBe(order?.emitters.find((entry) => entry.id === id)?.mesh?.shape);
-      expect(emitter(id)?.blend, id).toBe(order?.emitters.find((entry) => entry.id === id)?.blend);
+      expect(emitter(id)?.mesh?.shape, id).toBe(shock?.emitters.find((entry) => entry.id === id)?.mesh?.shape);
+      expect(emitter(id)?.blend, id).toBe(shock?.emitters.find((entry) => entry.id === id)?.blend);
     }
   });
 

@@ -1428,6 +1428,27 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  ground and against the terrain triangles the renderer actually
                  draws -- rasterised in software, because what is being looked at
                  is a shape rather than something that happens over time),
+                 order-mark.ts (how high a *placed* mark goes so it never enters
+                 the ground, spec 175, and the other answer to the question
+                 ground-decal.ts answers by following the hill: the cross a click
+                 leaves is small and gone in a third of a second, so it is laid
+                 over the ground rather than draped on it. The clearance takes the
+                 **highest** ground within the mark's own reach rather than the
+                 ground under its middle, because a click at the foot of a bank
+                 has ordinary ground under its centre and a wall a few units away.
+                 There is no camera in the file, and that is the whole return on
+                 laying the mark flat: `ORIENT.ground` sends a stroke's arch along
+                 world up and a stroke's arch is never negative, so nothing is
+                 below its own origin from any seat, and a plane at
+                 `max(ground) + margin` clears everything under it *by
+                 construction* -- no gradient term, no sampling fudge, nothing to
+                 be right about between the samples. The upright version this
+                 replaced owed a second length for how far it hung below itself
+                 and a camera vector to scale that by. What it costs is the other
+                 side of the same coin: on a hillside the mark sits on the ground
+                 at its uphill edge and floats over the downhill one by whatever
+                 the ground fell across it, which for a mark this size is a couple
+                 of units on anything walkable),
                  action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
                  band, spec 164 -- everything the HUD grew along the edge of the
                  frame, each pure and each about one number). action-bar.ts is
