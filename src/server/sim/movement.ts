@@ -101,6 +101,23 @@ export function turnToward(
   return from + Math.sign(delta) * step;
 }
 
+/**
+ * The heading from one point to another, or `fallback` when there is no
+ * direction to take.
+ *
+ * The degenerate case is the reason this is a function rather than an `atan2`
+ * at each call site: an aim on top of the body -- a self cast, a click at your
+ * own feet -- has no direction in it, and `atan2(0, 0)` is zero, which is a
+ * heading, and a wrong one. Every reader of this wants "keep looking where you
+ * were looking" there instead.
+ */
+export function headingToward(from: Vec2, to: Vec2, fallback: number): number {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.hypot(dx, dy) < 1e-6) return fallback;
+  return Math.atan2(dy, dx);
+}
+
 function distance(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(ax - bx, ay - by);
 }
@@ -197,11 +214,18 @@ export function resolveMovement(
  * snapping to it the instant the key went down. That turn is visible and it is
  * the readable half of committing -- and it changes no outcome, because a melee
  * cone is measured from `cast.targetX/Y`, not from where the body is looking.
+ *
+ * A pending drop outranks the input for the same reason and is outranked by the
+ * cast for the obvious one (spec 168). The difference from a cast is that a step
+ * does not withdraw from it: there is nothing to refund and nothing rooted, so a
+ * player who asked to put something down and then walked still asked to put it
+ * down, and the body comes round while it walks.
  */
 function resolveFacing(entity: ServerEntity, input: ServerInput | null): number {
   const cast = entity.cast;
-  const wanted = cast
-    ? Math.atan2(cast.targetY - entity.position.y, cast.targetX - entity.position.x)
+  const aim = cast ? { x: cast.targetX, y: cast.targetY } : entity.dropAim;
+  const wanted = aim
+    ? headingToward(entity.position, aim, entity.facing)
     : input && Number.isFinite(input.facing)
       ? input.facing
       : entity.facing;

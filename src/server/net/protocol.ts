@@ -126,9 +126,11 @@ export const ClientMessageType = {
    * Answered with an `Inventory` at the request id whether it was taken or
    * refused, which is what rolls a client's optimistic guess back.
    *
-   * Where the item lands is **not** on it. The direction is the body's facing
-   * and the reach is a constant, both of which the server already has -- a
-   * client naming a landing spot is a client throwing an item across the map.
+   * It also carries the point the cursor was over, and that is an *aim* rather
+   * than a landing (spec 168): the body turns to face it first, at its own turn
+   * rate, and the item is thrown a constant reach along that line whether the
+   * point clicked was two paces away or on the horizon. A client naming where an
+   * item lands is a client throwing one across the map.
    */
   DropItem: 0x1b,
 } as const;

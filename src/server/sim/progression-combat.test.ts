@@ -107,6 +107,7 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
     cast: null,
     cooldowns: {},
     projectile: null,
+    dropAim: null,
     drop: null,
     mote: null,
     ...blankProgression(),

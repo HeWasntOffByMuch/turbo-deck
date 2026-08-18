@@ -325,6 +325,17 @@ export interface DropItemMessage {
   readonly at: SlotAddress;
   /** How many to put down, or 0 for the whole stack. */
   readonly count: number;
+  /**
+   * The world point the cursor was over: what the body turns to face, and the
+   * line the throw runs along (spec 168).
+   *
+   * An aim rather than a destination. How far the item goes is the server's
+   * constant, so a point on the horizon and a point two paces away are the same
+   * request in every respect but direction -- and a point on top of the body has
+   * no direction in it, which leaves the body's own heading standing.
+   */
+  readonly aimX: number;
+  readonly aimY: number;
 }
 
 /**
@@ -495,7 +506,7 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
     case ClientMessageType.DropItem:
       writer.varuint(message.requestId);
       writeAddress(writer, message.at);
-      writer.varint(message.count);
+      writer.varint(message.count).f32(message.aimX).f32(message.aimY);
       break;
     case ClientMessageType.Respawn:
       break;
@@ -615,6 +626,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         requestId: reader.varuint(),
         at: readAddress(reader),
         count: reader.varint(),
+        aimX: reader.f32(),
+        aimY: reader.f32(),
       };
     case ClientMessageType.Respawn:
       return { type: ClientMessageType.Respawn };

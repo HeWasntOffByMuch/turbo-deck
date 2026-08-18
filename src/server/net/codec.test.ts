@@ -183,6 +183,8 @@ describe('game message round-trip', () => {
       requestId: 9,
       at: { container: 'inventory', index: 3 },
       count: 0,
+      aimX: 512,
+      aimY: -344,
     },
     {
       // A worn item goes on the ground the same way a carried one does, and an
@@ -192,6 +194,8 @@ describe('game message round-trip', () => {
       requestId: 10,
       at: { container: 'equipment', index: -1 },
       count: 2,
+      aimX: 0,
+      aimY: 0,
     },
   ];
 
