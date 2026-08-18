@@ -98,15 +98,18 @@ import { attributeByOrdinal } from './data/attributes.js';
 import { resolveProgression } from './player/progression.js';
 import { DEFAULT_SPAWN, experienceForLevel, PlayerManager } from './player/player-manager.js';
 import {
+  exchangeProblem,
   inTradeRange,
+  isLive,
   isSwappable,
   partiesOf,
   TradeRegistry,
+  type MovedStacks,
   type Trade,
 } from './player/trades.js';
 import { MemoryDataStore } from './state/memory-store.js';
 import type { DataStore } from './state/store.js';
-import type { SlotAddress, Vec3 } from './state/types.js';
+import type { ItemStack, SlotAddress, Vec3 } from './state/types.js';
 import {
   ActivityValue,
   EntityKindValue,
@@ -272,7 +275,7 @@ interface Connection {
   /** Cancels, stamped the same way. */
   readonly pendingCancels: PendingCancel[];
   /**
-   * Drops asked for and not yet turned to (spec 168), oldest first.
+   * Drops asked for and not yet turned to (spec 172), oldest first.
    *
    * Here rather than in the sim because what a drop takes out of a bag lives
    * behind an async store the sim cannot reach; what the sim holds is
@@ -300,7 +303,7 @@ interface Connection {
 }
 
 /**
- * A drop waiting for the body to come round to it (spec 168).
+ * A drop waiting for the body to come round to it (spec 172).
  *
  * `aim` is a world point rather than a heading, because the body may walk while
  * it turns: a heading captured at the press would send the item off at an angle
@@ -685,7 +688,7 @@ export class GameServer implements AdminHost {
         if (connection.playerId === null) return;
         const reason = this.queueDrop(connection, message);
         // A queued drop is answered when it lands, not now: the body has to turn
-        // to face it first (spec 168). Only a refusal answers here, and it
+        // to face it first (spec 172). Only a refusal answers here, and it
         // answers at the request id like `MoveItem` and `PickUpItem` do,
         // because the removal is predicted and the refusal is what takes the
         // guess back.
@@ -1186,7 +1189,7 @@ export class GameServer implements AdminHost {
       if (ended) this.endTrade(ended);
     }
     connection.openVendorId = '';
-    // A drop waiting for a turn goes with the connection (spec 168). The body
+    // A drop waiting for a turn goes with the connection (spec 172). The body
     // may linger for its grace period and a lingering body still resolves its
     // facing, so an aim left behind is a corpse-in-waiting turning toward
     // something nobody is going to throw.
@@ -1531,7 +1534,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Take a drop request, or refuse it outright (spec 168). Null when it queued.
+   * Take a drop request, or refuse it outright (spec 172). Null when it queued.
    *
    * Nothing leaves the bag here. Putting something down is an action that needs
    * facing, so what this does is write the aim onto the body -- `resolveFacing`
@@ -1585,7 +1588,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * One pass over every connection's pending drops (spec 168).
+   * One pass over every connection's pending drops (spec 172).
    *
    * Run after the sim has stepped, so the heading being tested is this tick's.
    * The head is served the tick its aim is reached and the rest wait behind it,
@@ -1790,7 +1793,11 @@ export class GameServer implements AdminHost {
    * player is offering; it is told, and what it draws is what the server would
    * swap.
    */
-  private publishTrade(trade: Trade): void {
+  private publishTrade(trade: Trade, moved?: MovedStacks): void {
+    // Asked once for both players rather than per message: it is the same
+    // question about the same two bags, and the only thing that differs between
+    // the two sends is which side of the answer is "yours" (spec 170).
+    const problem = this.tradeProblem(trade);
     for (const playerId of partiesOf(trade)) {
       const connection = this.connectionForPlayer(playerId);
       if (!connection) continue;
@@ -1800,11 +1807,42 @@ export class GameServer implements AdminHost {
         tradeId: trade.id,
         stage: GameServer.TRADE_STAGES[trade.stage],
         revision: trade.revision,
-        you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision),
-        them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision),
+        you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision, moved?.[mine ? 'a' : 'b']),
+        them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision, moved?.[mine ? 'b' : 'a']),
         reason: trade.reason,
+        // `a` is the side that opened the trade, so `b` is the side being asked.
+        invited: !mine,
+        warning: GameServer.warningFor(problem, mine ? 'a' : 'b'),
       });
     }
+  }
+
+  /**
+   * Whose bag would stop this trade, right now.
+   *
+   * Run on every publish rather than only at settle time, so a full bag is
+   * something a player is told about while the table is still open and can be
+   * fixed -- it used to arrive after both sides had accepted, as the reason the
+   * trade had been cancelled. Null while either player has no session, because
+   * a trade with a missing side is about to be cancelled for that reason
+   * instead, and a bag warning would be the wrong thing to say about it.
+   */
+  private tradeProblem(trade: Trade): { readonly side: 'a' | 'b'; readonly reason: string } | null {
+    if (!isLive(trade)) return null;
+    const [aId, bId] = partiesOf(trade);
+    const a = this.players.holdingsOf(aId);
+    const b = this.players.holdingsOf(bId);
+    if (!a || !b) return null;
+    return exchangeProblem(trade, a, b);
+  }
+
+  /** The problem as the named side reads it: theirs, yours, or nothing. */
+  private static warningFor(
+    problem: { readonly side: 'a' | 'b'; readonly reason: string } | null,
+    mine: 'a' | 'b',
+  ): string {
+    if (!problem) return '';
+    return problem.side === mine ? `your bag: ${problem.reason}` : `their bag: ${problem.reason}`;
   }
 
   /**
@@ -1818,13 +1856,23 @@ export class GameServer implements AdminHost {
   private tradeSideView(
     side: Trade['a'],
     revision: number,
+    moved?: readonly ItemStack[],
   ): { playerId: string; displayName: string; offer: { defId: string; count: number }[]; coins: number; accepted: boolean } {
     const session = this.players.get(side.playerId);
     const bag = session?.record.inventory ?? [];
     const offer: { defId: string; count: number }[] = [];
-    for (const entry of side.offer) {
-      const stack = bag[entry.index];
-      if (stack) offer.push({ defId: stack.defId, count: Math.min(entry.count, stack.count) });
+    // What actually changed hands, when the swap has already run (spec 171).
+    // The resolve below cannot answer this any more: the bags have been
+    // written, so the slot an offer names holds whatever landed in it -- which,
+    // for a side whose own offer emptied that slot, is what it just *received*.
+    // The ending read as the trade reversed.
+    if (moved) {
+      for (const stack of moved) offer.push({ defId: stack.defId, count: stack.count });
+    } else {
+      for (const entry of side.offer) {
+        const stack = bag[entry.index];
+        if (stack) offer.push({ defId: stack.defId, count: Math.min(entry.count, stack.count) });
+      }
     }
     return {
       playerId: side.playerId,
@@ -1868,7 +1916,7 @@ export class GameServer implements AdminHost {
       return;
     }
 
-    this.endTrade(this.trades.finish(trade));
+    this.endTrade(this.trades.finish(trade), result.moved);
     for (const playerId of [aId, bId]) {
       const connection = this.connectionForPlayer(playerId);
       if (!connection) continue;
@@ -1877,9 +1925,15 @@ export class GameServer implements AdminHost {
     }
   }
 
-  /** Tell both sides a trade is over, then stop holding it. */
-  private endTrade(trade: Trade): void {
-    this.publishTrade(trade);
+  /**
+   * Tell both sides a trade is over, then stop holding it.
+   *
+   * `moved` is present only for a trade that actually settled. A cancellation
+   * goes on resolving against the bag, and is right to: nothing was written, so
+   * the bag it resolves against is the bag the offer was made from.
+   */
+  private endTrade(trade: Trade, moved?: MovedStacks): void {
+    this.publishTrade(trade, moved);
     this.trades.forget(trade.id);
   }
 
@@ -2043,7 +2097,7 @@ export class GameServer implements AdminHost {
     this.chunks.refreshActive();
 
     // Bodies that have finished turning to what they were asked to put down
-    // (spec 168). After the step, so the heading it reads is this tick's.
+    // (spec 172). After the step, so the heading it reads is this tick's.
     this.serveDrops();
 
     for (const connection of this.connections) {

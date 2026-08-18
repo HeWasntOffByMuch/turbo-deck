@@ -229,7 +229,7 @@ export type RemoveOutcome =
   | { readonly ok: false; readonly reason: string };
 
 /**
- * Take `count` (or all) of what is at `at` out of the containers (spec 168).
+ * Take `count` (or all) of what is at `at` out of the containers (spec 172).
  *
  * Beside {@link applyMove} because it is the same kind of thing -- an address, a
  * count, and both containers back whole or a reason and nothing touched -- and

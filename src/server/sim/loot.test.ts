@@ -216,7 +216,7 @@ describe('where it lands', () => {
 });
 
 /**
- * What a player puts down (spec 168).
+ * What a player puts down (spec 172).
  *
  * The two departures from a kill's drop, stated as tests rather than as a
  * comment: it lands where the body is pointing rather than wherever a draw

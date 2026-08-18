@@ -53,7 +53,7 @@ export interface MoveIntent {
 }
 
 /**
- * A carry let go of over the world (spec 168).
+ * A carry let go of over the world (spec 172).
  *
  * The address is where it came from, because that is the only address it has --
  * the ground is not a container and this screen would not know how to name a
@@ -336,7 +336,7 @@ export class InventoryScreen extends Row {
   }
 
   /**
-   * Put what is in hand down in the world (spec 168).
+   * Put what is in hand down in the world (spec 172).
    *
    * The other end of the carry, and the one the screen was written without: the
    * note on {@link placeOn} used to say there is no floor in this game to lose

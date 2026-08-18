@@ -1,5 +1,5 @@
 /**
- * An item taken out of a bag and left in the world (spec 168).
+ * An item taken out of a bag and left in the world (spec 172).
  *
  * Everything the feature decides is asserted in Node: the container rule
  * (`player/inventory.test.ts`), where it lands and what it is

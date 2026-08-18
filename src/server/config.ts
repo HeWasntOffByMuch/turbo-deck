@@ -248,7 +248,7 @@ export const RESOURCE_EPSILON = 0.05;
 export const MAX_REVEAL_SCALE = 10;
 
 /**
- * How many drops one connection may have waiting for a turn (spec 168).
+ * How many drops one connection may have waiting for a turn (spec 172).
  *
  * A drop waits for the body to come round to it, so a player emptying a bag
  * fast can genuinely have several in flight -- and they should all happen, in
@@ -259,7 +259,7 @@ export const MAX_REVEAL_SCALE = 10;
 export const MAX_PENDING_DROPS = 8;
 
 /**
- * How long a drop waits for the heading it asked for, in ticks (spec 168).
+ * How long a drop waits for the heading it asked for, in ticks (spec 172).
  *
  * Two seconds, which is several times the longest turn a body in this game can
  * be asked for -- half a revolution at the slowest authored `turnRate`. It is

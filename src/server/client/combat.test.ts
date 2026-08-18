@@ -240,7 +240,7 @@ describe('the local facing', () => {
   });
 
   /**
-   * The same order `resolveFacing` reads them in on the server (spec 168), which
+   * The same order `resolveFacing` reads them in on the server (spec 172), which
    * is the whole requirement: this client never adopts the server's facing after
    * the first seed, so a rule that differed here would leave the local player
    * watching a body that turns at a different time from everybody else's copy of

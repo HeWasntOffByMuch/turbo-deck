@@ -135,6 +135,7 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeAccept: (revision) => requests.push(`tradeAccept:${revision}`),
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
+      onTradeDismiss: () => requests.push('tradeDismiss'),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
       // Counted apart from `requests`, deliberately. Everything in that array is

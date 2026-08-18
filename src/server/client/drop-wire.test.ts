@@ -1,5 +1,5 @@
 /**
- * Putting something down, over the real wire (spec 168).
+ * Putting something down, over the real wire (spec 172).
  *
  * Two features in one message since the aim landed: the container half, and the
  * fact that a drop is an *action that needs facing* -- the body turns to the
@@ -296,7 +296,7 @@ describe('a player putting something down', () => {
 });
 
 /**
- * The turn (spec 168).
+ * The turn (spec 172).
  *
  * Everything here is about the gap between the press and the item existing --
  * that the gap is a turn rather than a delay, that it ends where it was aimed,
@@ -402,7 +402,7 @@ describe('the body turns to what it was asked to put down', () => {
   });
 
   /**
-   * The client turns its own body too (spec 168).
+   * The client turns its own body too (spec 172).
    *
    * It has to: this client never adopts the server's facing after the first
    * seed, so the aim it is holding is the only thing that makes the local

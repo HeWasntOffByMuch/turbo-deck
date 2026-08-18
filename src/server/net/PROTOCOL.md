@@ -200,7 +200,7 @@ Anticipation is never a lock on the player's hands.
 `varuint requestId` · `u8 container` · `varint index` · `varint count` ·
 `f32 aimX` · `f32 aimY`
 
-Put a stack down in the world (spec 168). The address and the count read exactly
+Put a stack down in the world (spec 172). The address and the count read exactly
 as `MoveItem`'s do — `0` is the whole stack — because a drop *is* a move whose
 target is the ground, and the ground has no slot to name.
 
@@ -321,7 +321,7 @@ range on first sight, and what an unrevealed drop is must not. Unlike a mote it
 *is* replicated to everyone in range — two players watching the same kill watch
 the same throw — and ownership is a server-side check on `PickUpItem` rather
 than anything on the wire — and is absent entirely on a drop a player put down
-(spec 168), which belongs to whoever gets there.
+(spec 172), which belongs to whoever gets there.
 `activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.
 
 A projectile in flight is an ordinary entity (spec 062), so it replicates

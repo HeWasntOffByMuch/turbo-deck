@@ -167,7 +167,7 @@ export type PlayerActionResult =
   | { readonly ok: false; readonly reason: string };
 
 /**
- * What a drop took, beside the session it changed (spec 168).
+ * What a drop took, beside the session it changed (spec 172).
  *
  * `taken` is on the success case for the reason `removeFromSlot` returns it: a
  * removal is half a transaction, and the caller has to put the stack somewhere.
@@ -369,7 +369,7 @@ export class PlayerManager {
   }
 
   /**
-   * Take a stack out of a slot and hand it back (spec 168).
+   * Take a stack out of a slot and hand it back (spec 172).
    *
    * The container half of putting something down. It commits and re-derives
    * through the same funnel `moveItem` does -- dropping the sword you are

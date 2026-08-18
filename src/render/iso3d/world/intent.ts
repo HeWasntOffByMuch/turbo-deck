@@ -108,7 +108,7 @@ export interface IntentInput {
    */
   readonly castAim: Point | null;
   /**
-   * Where a drop this client has asked for is aimed, or null (spec 168).
+   * Where a drop this client has asked for is aimed, or null (spec 172).
    *
    * Ranked under {@link castAim} and over everything else, including a
    * direction -- which is the one place this list is not simply "the most
@@ -166,7 +166,7 @@ export function moveIntent(input: IntentInput): MoveIntent {
     return { moveX: 0, moveY: 0, facing, arrived };
   }
 
-  // Turning to put something down (spec 168). Over the direction rather than
+  // Turning to put something down (spec 172). Over the direction rather than
   // under it: the walk still happens -- `direction` is what moves the body --
   // and only the heading is the drop's. See the field.
   if (input.dropAim) {

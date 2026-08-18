@@ -531,7 +531,7 @@ describe('layout', () => {
   });
 });
 /**
- * Putting a carry down in the world (spec 168).
+ * Putting a carry down in the world (spec 172).
  *
  * The screen's half of it is small on purpose: it says which slot the thing came
  * out of and lets go. Where it lands, whether the server allows it and what the

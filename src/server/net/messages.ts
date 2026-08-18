@@ -310,7 +310,7 @@ export interface PickUpItemMessage {
 }
 
 /**
- * Put a stack down in the world (spec 168).
+ * Put a stack down in the world (spec 172).
  *
  * The same shape as a move minus its target, because the target is the ground
  * and the ground has no address. Where it lands is the server's: the body's
@@ -327,7 +327,7 @@ export interface DropItemMessage {
   readonly count: number;
   /**
    * The world point the cursor was over: what the body turns to face, and the
-   * line the throw runs along (spec 168).
+   * line the throw runs along (spec 172).
    *
    * An aim rather than a destination. How far the item goes is the server's
    * constant, so a point on the horizon and a point two paces away are the same
@@ -905,6 +905,25 @@ export interface TradeStateMessage {
   readonly them: TradeSideView;
   /** Why it ended, when it ended badly. Empty otherwise. */
   readonly reason: string;
+  /**
+   * You are the side being asked (spec 170). Only meaningful while `stage` is
+   * offered.
+   *
+   * On the wire because it cannot be derived: `you` and `them` are symmetric by
+   * construction, so nothing in this message says which of the two opened the
+   * trade -- which left the sender being shown "Accept invitation" for their
+   * own invitation.
+   */
+  readonly invited: boolean;
+  /**
+   * What would stop this trade going through right now, from *your* point of
+   * view. Empty when nothing would.
+   *
+   * Per player, because "your bag is full" and "their bag is full" are
+   * different sentences and a single shared string is wrong for one of the two
+   * people reading it.
+   */
+  readonly warning: string;
 }
 
 export interface ServerChatMessage {
@@ -1477,7 +1496,7 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writer.varuint(message.tradeId).u8(message.stage).varuint(message.revision);
       writeTradeSide(writer, message.you);
       writeTradeSide(writer, message.them);
-      writer.str(message.reason);
+      writer.str(message.reason).u8(message.invited ? 1 : 0).str(message.warning);
       break;
     case ServerMessageType.Chat:
       writer.u8(message.channel).str(message.from).str(message.text);
@@ -1659,7 +1678,18 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       const revision = reader.varuint();
       const you = readTradeSide(reader);
       const them = readTradeSide(reader);
-      return { type: ServerMessageType.TradeState, tradeId, stage, revision, you, them, reason: reader.str() };
+      const reason = reader.str();
+      return {
+        type: ServerMessageType.TradeState,
+        tradeId,
+        stage,
+        revision,
+        you,
+        them,
+        reason,
+        invited: reader.u8() !== 0,
+        warning: reader.str(),
+      };
     }
     case ServerMessageType.Chat:
       return {

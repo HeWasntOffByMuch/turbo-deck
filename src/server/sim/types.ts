@@ -381,7 +381,7 @@ export interface ServerEntity {
   /** Set only on a projectile entity; null on everything that walks. */
   readonly projectile: ProjectileState | null;
   /**
-   * Where a drop this body has asked for is aimed, or null (spec 168).
+   * Where a drop this body has asked for is aimed, or null (spec 172).
    *
    * Putting something down is an action that needs facing rather than a skill:
    * no cost, no cooldown, no wind-up and nothing rooted, so it is this one field

@@ -309,7 +309,7 @@ export function steerFacing(
   turnRate: number,
   tickRate: number,
   /**
-   * Where a drop this client has asked for is aimed, or null (spec 168).
+   * Where a drop this client has asked for is aimed, or null (spec 172).
    *
    * Under the cast and over the input, which is the order `resolveFacing` reads
    * them in on the server. It is here rather than left to the server for one

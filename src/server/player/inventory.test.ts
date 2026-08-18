@@ -402,7 +402,7 @@ describe('sanitizeInventory', () => {
 });
 
 /**
- * Taking something out of a slot with nowhere to put it (spec 168).
+ * Taking something out of a slot with nowhere to put it (spec 172).
  *
  * The half of a drop that is a container rule. Where the item goes afterwards is
  * the world's problem and is tested over a real wire in `drop-wire.test.ts`;

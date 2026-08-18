@@ -164,6 +164,10 @@ export interface TradeView {
   readonly you: TradeSideView;
   readonly them: TradeSideView;
   readonly reason: string;
+  /** You are the side being asked (spec 170). Only meaningful while offered. */
+  readonly invited: boolean;
+  /** What would stop this going through, in your terms. Empty when nothing. */
+  readonly warning: string;
 }
 
 /**
@@ -257,7 +261,7 @@ export interface ClientView {
   /** The local player's predicted position -- what to draw them at. */
   readonly self: { readonly x: number; readonly y: number } | null;
   /**
-   * Where this client is turning to put something down, or null (spec 168).
+   * Where this client is turning to put something down, or null (spec 172).
    *
    * The oldest unanswered drop: the server serves them in the order they were
    * asked for and turns to one aim at a time.
@@ -331,6 +335,17 @@ export interface ClientView {
    * an exchange happened when it may not have.
    */
   readonly trade: TradeView | null;
+  /**
+   * The last trade to end, until the player dismisses it (spec 134).
+   *
+   * Beside {@link trade} rather than folded into it, because they are different
+   * questions: one is an exchange the server is still running, the other is a
+   * sentence about an exchange that is over. Folding them would mean a screen
+   * had to read the stage to know whether its buttons still mean anything, and
+   * the window would have no way to tell "no trade" from "a trade just ended"
+   * -- which is exactly the difference the ending exists to say.
+   */
+  readonly endedTrade: TradeView | null;
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
@@ -558,7 +573,7 @@ type PendingEdit =
       readonly kind: 'drop';
       readonly request: { readonly at: SlotAddress; readonly count?: number };
       /**
-       * Where it was aimed, so the predicted body turns to it (spec 168).
+       * Where it was aimed, so the predicted body turns to it (spec 172).
        *
        * On the edit rather than in a field of its own, because the queue of
        * edits *is* the queue of drops: the head is what the body is coming
@@ -630,7 +645,7 @@ export class GameClient {
   /**
    * Container edits sent and not yet answered, oldest first.
    *
-   * Two kinds since spec 168, in **one list** rather than two: a move and a drop
+   * Two kinds since spec 172, in **one list** rather than two: a move and a drop
    * can be in flight at the same time and the order they were sent in is the
    * order they have to be replayed in -- dropping half a stack and then moving
    * the rest is a different bag from doing it the other way round. Two lists
@@ -895,7 +910,7 @@ export class GameClient {
   }
 
   /**
-   * Put a stack down in the world (spec 168).
+   * Put a stack down in the world (spec 172).
    *
    * Predicted like a move and for the same reason -- the removal is a pure rule
    * over a slot this client can see -- and rolled back by the same `Inventory`
@@ -931,7 +946,7 @@ export class GameClient {
   }
 
   /**
-   * Where the body is turning to put something down, or null (spec 168).
+   * Where the body is turning to put something down, or null (spec 172).
    *
    * The oldest unanswered drop, because the server serves them in the order
    * they were asked for and turns to one aim at a time.
@@ -989,6 +1004,18 @@ export class GameClient {
 
   get endedTrade(): TradeView | null {
     return this.lastTrade;
+  }
+
+  /**
+   * Forget the last ending, because the player has read it (spec 134).
+   *
+   * The one piece of trade state a client is allowed to drop on its own, and it
+   * is allowed precisely because it is not state: the trade is already gone at
+   * the server, so there is nothing here that could disagree with it. Every
+   * other trade fact stays the server's to retract.
+   */
+  dismissEndedTrade(): void {
+    this.lastTrade = null;
   }
 
   /**
@@ -1660,7 +1687,7 @@ export class GameClient {
       commitDelayTicks: this.commitDelayTicks(),
       entities: this.world.all(),
       self: this.prediction?.drawn ?? null,
-      // What the body is turning to put something down at (spec 168). On the
+      // What the body is turning to put something down at (spec 172). On the
       // view because the renderer keeps a drawn heading of its own and steps it
       // from the intent -- so without this the local player is the one person
       // who does not see their own body come round.
@@ -1677,6 +1704,7 @@ export class GameClient {
       vendor: this.vendorView,
       vendorRevision: this.vendorReplies,
       trade: this.tradeView,
+      endedTrade: this.lastTrade,
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
@@ -1996,12 +2024,20 @@ export class GameClient {
                 you: message.you,
                 them: message.them,
                 reason: message.reason,
+                invited: message.invited,
+                warning: message.warning,
               };
         // A finished trade is told once and then forgotten, so what is left is
         // the inventory the server has already sent alongside it.
         if (message.stage === TradeStageValue.Done || message.stage === TradeStageValue.Cancelled) {
           this.lastTrade = this.tradeView;
           this.tradeView = null;
+        } else {
+          // A live trade clears the ending behind it. Without this, an ending
+          // the player never dismissed outlives the *next* trade and is what
+          // the window falls back to the moment that one ends -- the previous
+          // reason, on a trade it does not describe.
+          this.lastTrade = null;
         }
         break;
 

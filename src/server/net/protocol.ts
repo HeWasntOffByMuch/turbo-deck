@@ -116,7 +116,7 @@ export const ClientMessageType = {
    */
   Respawn: 0x1a,
   /**
-   * Put a stack down in the world (spec 168).
+   * Put a stack down in the world (spec 172).
    *
    * Names a slot address and a count, exactly as `MoveItem` does -- a drop is a
    * move whose target is the ground, and the ground has no slot to name. `0`
@@ -127,7 +127,7 @@ export const ClientMessageType = {
    * refused, which is what rolls a client's optimistic guess back.
    *
    * It also carries the point the cursor was over, and that is an *aim* rather
-   * than a landing (spec 168): the body turns to face it first, at its own turn
+   * than a landing (spec 172): the body turns to face it first, at its own turn
    * rate, and the item is thrown a constant reach along that line whether the
    * point clicked was two paces away or on the horizon. A client naming where an
    * item lands is a client throwing one across the map.

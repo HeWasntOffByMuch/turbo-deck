@@ -473,13 +473,13 @@ describe('a body faces what it was told to attack (spec 090)', () => {
 });
 
 /**
- * Turning to put something down (spec 168).
+ * Turning to put something down (spec 172).
  *
  * The ranking is what these are about, and it is not the same as the cast's:
  * walking withdraws from a cast and does not withdraw from a drop, so a drop's
  * aim outranks a direction where a cast's aim is outranked by one.
  */
-describe('a body turns to what it is putting down (spec 168)', () => {
+describe('a body turns to what it is putting down (spec 172)', () => {
   const AIM = { x: 0, y: -100 };
 
   it('faces the aim while standing still', () => {

@@ -153,7 +153,7 @@ export function scatterLanding(rng: Rng, from: Vec3): [{ x: number; y: number },
 
 /**
  * How far in front of a body a thing it put down lands, in world units
- * (spec 168).
+ * (spec 172).
  *
  * Clear of the body (radius 16) and of the drop's own (radius 10) so the item
  * is visibly *in front of* the player rather than under them, and far inside
@@ -183,7 +183,7 @@ export function throwLanding(
 }
 
 /**
- * A drop a player put down (spec 168).
+ * A drop a player put down (spec 172).
  *
  * {@link makeDrop} with the two decisions this case makes differently, in one
  * place rather than at each call site:

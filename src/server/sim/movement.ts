@@ -216,7 +216,7 @@ export function resolveMovement(
  * cone is measured from `cast.targetX/Y`, not from where the body is looking.
  *
  * A pending drop outranks the input for the same reason and is outranked by the
- * cast for the obvious one (spec 168). The difference from a cast is that a step
+ * cast for the obvious one (spec 172). The difference from a cast is that a step
  * does not withdraw from it: there is nothing to refund and nothing rooted, so a
  * player who asked to put something down and then walked still asked to put it
  * down, and the body comes round while it walks.
