@@ -335,6 +335,8 @@ describe('the trade window (spec 134)', () => {
     you: { playerId: 'you', displayName: 'You', offer: [], coins: 0, accepted: false },
     them: { playerId: 'ben', displayName: 'Ben', offer: [], coins: 0, accepted: false },
     reason: '',
+    invited: false,
+    warning: '',
   };
 
   /**
@@ -453,6 +455,55 @@ describe('the trade window (spec 134)', () => {
     const lastCell = open.tradeRects.filter((box) => box.id.startsWith('bag:')).at(-1)?.rect;
     expect(lastCell).toBeDefined();
     if (lastCell) expect(lastCell.y + lastCell.height).toBeLessThanOrEqual(frame.y + frame.height);
+  });
+
+  /**
+   * The window can always be shut (spec 169).
+   *
+   * The mount re-opens it every frame while a trade is live, so Escape and the
+   * title bar did nothing at all and Cancel was the only exit. Closing a live
+   * trade means leaving the table, so it cancels -- a window that shut while
+   * the trade went on would leave the player in a trade they cannot see and
+   * unable to start another.
+   */
+  it('closes a live trade by leaving the table', () => {
+    const { screens, requests } = harness();
+    screens.update(viewFixture({ trade: openTrade }), 0);
+    expect(screens.isOpen('trade')).toBe(true);
+
+    expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
+    expect(screens.isOpen('trade')).toBe(false);
+    expect(requests).toContain('tradeCancel');
+
+    // For the whole round trip the trade is still live and still replicated,
+    // and it must not re-open the window the player just shut. This is the case
+    // a flag could not hold: re-opening here is also what cleared it.
+    for (let frame = 1; frame <= 6; frame += 1) {
+      screens.update(viewFixture({ trade: openTrade }), frame * 16);
+      expect(screens.isOpen('trade')).toBe(false);
+    }
+
+    // ...and then the cancellation arrives as an ending. One action, not two.
+    screens.update(viewFixture({ trade: null, endedTrade }), 112);
+    expect(screens.isOpen('trade')).toBe(false);
+    expect(requests).toContain('tradeDismiss');
+  });
+
+  /** ...but the *next* trade's ending is still shown. */
+  it('shows the ending of a trade the player did not close', () => {
+    const { screens } = harness();
+    screens.update(viewFixture({ trade: openTrade }), 0);
+    screens.handleKey('Escape', 'down', NONE);
+    screens.update(viewFixture({ trade: null, endedTrade }), 16);
+    expect(screens.isOpen('trade')).toBe(false);
+
+    // A second trade, ended by somebody else. A new id, because the registry
+    // never reuses one -- and it is the id that says which table was left.
+    const second = { ...openTrade, id: openTrade.id + 1 };
+    screens.update(viewFixture({ trade: second }), 32);
+    screens.update(viewFixture({ trade: null, endedTrade: { ...endedTrade, id: second.id } }), 48);
+    expect(screens.isOpen('trade')).toBe(true);
+    expect(screens.shownTrade?.stage).toBe('over');
   });
 
   /** A live trade wins over an ending the player has not put away yet. */

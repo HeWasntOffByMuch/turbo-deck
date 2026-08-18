@@ -77,6 +77,8 @@ export interface UiReadout {
    */
   readonly tradeStage: string;
   readonly tradeReason: string;
+  /** Whether you are the side being asked: 'yes', 'no', or '' for no trade. */
+  readonly tradeInvited: string;
   /** Each side as `name|accepted|coins|item xN/item xN`. */
   readonly tradeYou: string;
   readonly tradeThem: string;

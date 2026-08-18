@@ -232,6 +232,22 @@ export class UiScreens {
    * unfinishable without resizing the window by hand.
    */
   private tradeStagePlaced: string | null = null;
+  /** Which trade the window is about, live or ended. Identity for the below. */
+  private tradeShowingId: number | null = null;
+  /**
+   * A trade the player has walked away from by closing the window (spec 169).
+   *
+   * Neither it nor its ending is drawn again. It has to be an **id** rather
+   * than a flag, and it has to outlast the whole cancellation: closing a live
+   * trade sends a cancel, and for the round trip that follows the trade is
+   * still live and still replicated, so a mount that only remembered "an ending
+   * is coming" re-opened the window it had just been told to shut -- and, in
+   * re-opening it, cleared the very flag that was meant to keep it closed.
+   *
+   * Cleared when the trade is gone, so the *next* trade and the next ending are
+   * shown normally.
+   */
+  private tradeLeft: number | null = null;
   private now = 0;
   /** The shop the server says is open. What a Buy is addressed to. */
   private openVendorId = '';
@@ -565,7 +581,17 @@ export class UiScreens {
       inventory: view.inventory,
       coins: view.coins,
     });
-    if (tradeView) {
+    // Which trade this is, so leaving one can be remembered by identity rather
+    // than by a flag a later frame could clear.
+    const replicated = view.trade ?? view.endedTrade;
+    this.tradeShowingId = replicated?.id ?? null;
+    if (replicated === null) this.tradeLeft = null;
+
+    if (tradeView !== null && replicated !== null && this.tradeLeft === replicated.id) {
+      // Walked away from. Not drawn, live or ended -- and once the ending has
+      // arrived there is something to forget, which is what finally clears it.
+      if (view.trade === null) this.options.onTradeDismiss();
+    } else if (tradeView) {
       if (!this.isOpen('trade')) this.show('trade');
       this.trade.setTrade(tradeView);
       // Re-sized when the stage changes, because the stage is exactly what
@@ -688,6 +714,7 @@ export class UiScreens {
     readonly windowRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly tradeStage: string;
     readonly tradeReason: string;
+    readonly tradeInvited: string;
     readonly tradeYou: string;
     readonly tradeThem: string;
     readonly tradeRects: readonly { readonly id: string; readonly rect: Rect }[];
@@ -739,7 +766,10 @@ export class UiScreens {
       // nothing. Reporting the stale stage here would make "the ending was put
       // away" indistinguishable from "the ending is still up".
       tradeStage: shownTrade?.stage ?? '',
-      tradeReason: shownTrade?.reason ?? '',
+      // The reason an ending gives, or the warning a live table carries -- the
+      // same one thing the screen puts in that line.
+      tradeReason: shownTrade === null ? '' : shownTrade.stage === 'over' ? shownTrade.reason : shownTrade.warning,
+      tradeInvited: shownTrade === null ? '' : shownTrade.invited ? 'yes' : 'no',
       // What is actually on each side of the table. The stage says how far the
       // trade has got; these say what it is *about*, which is the half a
       // harness needs to tell "the click landed" from "the click missed".
@@ -884,14 +914,11 @@ export class UiScreens {
     // re-open would show the stale list for a frame, and the server would go on
     // replicating a vendor nobody is looking at.
     if (id === 'shop') this.options.onVendor('');
-    // Closing an ended trade is what puts it away (spec 134). Here rather than
-    // in the Close button's handler, because Escape and the title bar shut a
-    // window without pressing anything -- and an ending still remembered is an
-    // ending the mount re-opens on the very next frame.
-    if (id === 'trade') {
-      this.options.onTradeDismiss();
-      this.tradeStagePlaced = null;
-    }
+    // Closing the trade window is what puts it away (spec 134). Here rather
+    // than in the Close button's handler, because Escape and the title bar shut
+    // a window without pressing anything -- and an ending still remembered is
+    // an ending the mount re-opens on the very next frame.
+    if (id === 'trade') this.leaveTrade();
     this.syncContext();
   }
 
@@ -1081,12 +1108,30 @@ export class UiScreens {
     const tradeWasOpen = this.isOpen('trade');
     if (!this.windows.closeTopmost()) return false;
     if (shopWasOpen && !this.isOpen('shop')) this.options.onVendor('');
-    if (tradeWasOpen && !this.isOpen('trade')) {
-      this.options.onTradeDismiss();
-      this.tradeStagePlaced = null;
-    }
+    if (tradeWasOpen && !this.isOpen('trade')) this.leaveTrade();
     this.syncContext();
     return true;
+  }
+
+  /**
+   * Shutting the trade window, however it was shut.
+   *
+   * **Closing a live trade cancels it**, because leaving the table is what
+   * closing means and there is no other honest reading: a window that shut
+   * while the trade went on would leave the player in a trade they cannot see
+   * and unable to start another. Before this the mount re-opened the window
+   * every frame while a trade was live, so Escape and the title bar did nothing
+   * at all and the Cancel button was the only way out.
+   *
+   * An ending is simply forgotten -- there is nothing left to tell the server
+   * about a trade it has already dropped.
+   */
+  private leaveTrade(): void {
+    const showing = this.trade.view;
+    if (showing !== null && showing.stage !== 'over') this.options.onTradeCancel();
+    this.tradeLeft = this.tradeShowingId;
+    this.options.onTradeDismiss();
+    this.tradeStagePlaced = null;
   }
 
   private routingOf(consumed: boolean, kind: UiEvent['kind']): Routing {

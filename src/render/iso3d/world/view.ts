@@ -417,7 +417,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // ending changes only the reason.
     const tradeRects = boxes(readout.tradeRects);
     const trade =
-      `${readout.tradeStage}|${readout.tradeReason}|${readout.tradeYou}|${readout.tradeThem}`;
+      `${readout.tradeStage}|${readout.tradeReason}|${readout.tradeInvited}` +
+      `|${readout.tradeYou}|${readout.tradeThem}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
       `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
@@ -439,6 +440,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiFrames'] = frames;
     root.dataset['uiTradeStage'] = readout.tradeStage;
     root.dataset['uiTradeReason'] = readout.tradeReason;
+    root.dataset['uiTradeInvited'] = readout.tradeInvited;
     root.dataset['uiTradeYou'] = readout.tradeYou;
     root.dataset['uiTradeThem'] = readout.tradeThem;
     root.dataset['uiTradeRects'] = tradeRects;
