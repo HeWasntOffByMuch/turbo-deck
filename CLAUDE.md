@@ -445,6 +445,27 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  is stepped so the events left in the clip never fire, and it
                  refuses to leave a `locking` state, because not being
                  interruptible is that category's whole reason to exist.
+                 Since spec 168 there is a `revive` beside it, for the same
+                 reason in the other direction: a death state is `terminal` and
+                 a terminal state has **no exit**, which is the right rule for a
+                 corpse and is exactly why a body cannot get up on its own. A
+                 respawn keeps the entity -- the server heals and moves the body
+                 it already has, so the renderer keeps the same machine -- so
+                 `dead` going back to false reached a machine incapable of
+                 acting on it, and a respawned player ran, swung and shot around
+                 the arena drawn as the last frame of the clip they fell in.
+                 Getting up is therefore a *command* rather than a condition,
+                 the way cancelling is: a transition out of a terminal state is
+                 the thing that category exists to forbid. It comes back to the
+                 entry state and lets the ordinary transitions take it from
+                 there, and it **cuts rather than fading**, because every other
+                 part of a respawn is a cut -- the position arrives as a
+                 `Teleport` correction, which spec 067 snaps -- and a pose easing
+                 up off the floor at the spawn point draws a body getting up
+                 from a fall that happened somewhere else. Held by `driveUnit`
+                 as a *level* on every living tick rather than as an edge off
+                 `previous`, since a dropped frame would otherwise cost a whole
+                 session.
                  Two rules about the *fade* live there too (spec 167). Going
                  back to the state a fade is in the middle of leaving is a
                  **reversal** and keeps that state as the thing it fades from,

@@ -162,6 +162,15 @@ export function attackTriggerFor(abilityId: string | null): string {
  * raised whenever the activity says casting: a cast lasts many ticks, and a
  * trigger raised on each of them would restart the swing every frame of its own
  * wind-up.
+ *
+ * Being *alive*, by contrast, is a level rather than an edge, and is asserted on
+ * every tick rather than on the one the health crossed back: `dead` going false
+ * cannot get a body up by itself, because the state it is in is `terminal` and
+ * that category has no exit (see {@link UnitMachine.revive}). Reading it as an
+ * edge off `previous` would be one dropped frame away from a player spending
+ * the rest of the session drawn as a corpse -- and this is the one fact where
+ * the machine's own state answers the question better than the last snapshot
+ * does, since a machine that is not down has nothing to get up from.
  */
 export function driveUnit(
   machine: UnitMachine,
@@ -171,6 +180,11 @@ export function driveUnit(
 ): readonly FiredEvent[] {
   machine.setParameter(DRIVEN_PARAMETERS.speed, facts.speed);
   machine.setParameter(DRIVEN_PARAMETERS.dead, facts.dead);
+  // Before the trigger below, so an attack ordered on the same tick a player
+  // respawns is thrown by the body that stood up rather than dropped by the
+  // corpse it replaced -- `revive` clears what a terminal state could never
+  // consume.
+  if (!facts.dead) machine.revive();
   // Written before the trigger, so the swing that is about to start is entered
   // at the right rate rather than a tick of it playing at the old one.
   machine.setActionRate(facts.attackRate);

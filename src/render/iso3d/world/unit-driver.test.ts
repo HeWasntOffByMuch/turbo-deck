@@ -568,3 +568,78 @@ describe('hasDeathAnimation', () => {
     expect(hasDeathAnimation(noDeath)).toBe(false);
   });
 });
+
+describe('the pig, respawned', () => {
+  /**
+   * The bug this is about, end to end: the real unitdef, the real machine, a
+   * real death and a real respawn.
+   *
+   * A death state is `terminal` and a terminal state has no exit, so `dead`
+   * going false left the machine in `down` forever -- and since the player is
+   * the body drawn from this document, a respawned player went on running
+   * around the arena drawn as the last frame of the clip they fell in.
+   */
+  const DIR = 'assets/units/pig_a_pose_full';
+  const read = (name: string): unknown => JSON.parse(readFileSync(join(process.cwd(), DIR, name), 'utf8'));
+  const readFamily = (name: string): unknown =>
+    JSON.parse(readFileSync(join(process.cwd(), 'assets/units', name), 'utf8'));
+  const bundle = loadUnitBundle(read('pig_a_pose_full.unitdef.json'), readFamily('biped.core.cliplib.json'));
+
+  /** A machine that has been killed, and left down long enough to settle. */
+  function fallen(): { machine: UnitMachine; previous: UnitFacts } {
+    const loaded = bundle.value;
+    if (!loaded) throw new Error(bundleErrorText(bundle));
+    const machine = new UnitMachine({ unit: loaded.unit, clipLib: loaded.clipLib });
+    let previous: UnitFacts = facts({ speed: MOVE_SPEED });
+    for (let tick = 0; tick < 30; tick += 1) driveUnit(machine, previous, previous, 1);
+    const dead = facts({ dead: true });
+    for (let tick = 0; tick < 60; tick += 1) {
+      driveUnit(machine, dead, previous, 1);
+      previous = dead;
+    }
+    expect(machine.stateId).toBe('down');
+    return { machine, previous };
+  }
+
+  it('gets up instead of running around as its own corpse', () => {
+    const { machine, previous } = fallen();
+    const alive = facts({ speed: MOVE_SPEED });
+    driveUnit(machine, alive, previous, 1);
+    expect(machine.stateId).not.toBe('down');
+
+    // And is back to drawing the gait it is actually moving at.
+    let last = alive;
+    for (let tick = 0; tick < 60; tick += 1) driveUnit(machine, last, (last = alive), 1);
+    expect(machine.stateId).toBe('locomotion');
+    expect(machine.poses().some((pose) => pose.clipId === 'run' && pose.weight > 0.9)).toBe(true);
+  });
+
+  it('does not blend the corpse across the trip home', () => {
+    // The respawn is a `Teleport` correction, which the client snaps rather
+    // than eases (spec 067). A pose easing up off the floor at the spawn point
+    // would be the one part of it drawing a body getting up from a fall that
+    // happened somewhere else.
+    const { machine, previous } = fallen();
+    driveUnit(machine, facts(), previous, 1);
+    expect(machine.snapshot().previousStateId).not.toBe('down');
+    expect(machine.poses().some((pose) => pose.clipId === 'hurt')).toBe(false);
+  });
+
+  it('gets up on a tick that dropped the edge', () => {
+    // Level rather than edge: `previous` is the last frame that was driven, and
+    // a client that missed the frame the health crossed back must not spend the
+    // rest of the session drawn as a corpse.
+    const { machine } = fallen();
+    const alive = facts({ speed: MOVE_SPEED });
+    driveUnit(machine, alive, alive, 1);
+    expect(machine.stateId).not.toBe('down');
+  });
+
+  it('leaves a corpse lying down', () => {
+    // The other direction still has to hold: nothing here revives a body the
+    // wire still says is dead.
+    const { machine, previous } = fallen();
+    for (let tick = 0; tick < 60; tick += 1) driveUnit(machine, previous, previous, 1);
+    expect(machine.stateId).toBe('down');
+  });
+});
