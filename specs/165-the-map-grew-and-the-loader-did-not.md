@@ -242,3 +242,21 @@ cut it, and that is a change to how `buildPropField` is organised rather than to
 when it is called. And `collider-paging.test.ts`'s nav-grid test now carries an
 explicit 30s timeout: it builds the full 924x863 grid over mostly-unarrived
 ground, measured 4.8s against vitest's 5s default, and was passing on luck.
+
+### The trap in deferring it
+
+Making the warm incremental moves a cost; it does not remove one. `navGridFor`
+still builds the whole grid on demand, so a move order given before the
+background sweep finished would have sampled every outstanding cell inside that
+one frame -- the freeze relocated from the load to the first click, which is
+exactly the failure `warmRouting`'s own comment was written about.
+
+So `pathWorld` -- the world a move order routes through -- is now non-null
+*only* while the grid behind it is current. It is withdrawn when the colliders
+change and when a chunk dirties the heights under it (on the loopback path the
+colliders never change at all, so the second case is the only one there), and
+restored by `stepNavWarm` once the grid has been rebuilt. A null `pathWorld` is
+`RoutePlanner`'s existing "walk straight at it", the same fail-safe the flat
+predictor is, and the server routes authoritatively regardless -- so the cost of
+the fallback is a few seconds of slightly worse *prediction* rather than a
+visible stall.

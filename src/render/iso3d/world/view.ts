@@ -355,11 +355,27 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * would cache a grid of the world as it was and never notice.
    */
   let pathWorld: { colliders: WorldColliders; radius: number; ground: TerrainSampler } | null = null;
+  /**
+   * The ground the nav warm is working on, which is *not* the same thing as the
+   * ground a move order may route through (spec 165 follow-up).
+   *
+   * `pathWorld` is only set once the grid behind it has actually been built.
+   * Before that a route request would reach `navGridFor`, find heights it has
+   * not sampled yet, and pay for all 797k of them inside that one frame -- which
+   * is the freeze this whole change removes, moved from the load to the first
+   * click. A null world is `RoutePlanner`'s existing "walk straight at it", the
+   * same fail-safe the flat predictor is, and the server is authoritative about
+   * routing anyway.
+   */
+  let navSource: { colliders: WorldColliders; ground: TerrainSampler } | null = null;
+  /** The colliders the nav grid has been built against. See {@link stepNavWarm}. */
+  let navWarmed: WorldColliders | null = null;
   function syncPathWorld(): void {
     const { colliders, terrain } = ground;
+    navSource = colliders && terrain ? { colliders, ground: terrain } : null;
     pathWorld =
-      colliders && terrain
-        ? { colliders, radius: SERVER_PLAYER_RADIUS, ground: terrain }
+      navSource && navWarmed === navSource.colliders
+        ? { colliders: navSource.colliders, radius: SERVER_PLAYER_RADIUS, ground: navSource.ground }
         : null;
   }
   syncPathWorld();
@@ -463,10 +479,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // The nav heights over this ground are now answerable, and were not
       // before (spec 165). Marking the rectangle is what keeps the re-sample to
       // this chunk instead of the whole 797k-cell grid.
-      if (pathWorld) {
+      if (navSource && dirty.length > 0) {
         for (const chunk of dirty) {
-          invalidateNavHeights(pathWorld.ground, pathWorld.colliders, chunkRect(chunk));
+          invalidateNavHeights(navSource.ground, navSource.colliders, chunkRect(chunk));
         }
+        // Ground can go stale without the *colliders* changing -- on the
+        // loopback path they never change at all -- so the routed world is
+        // withdrawn here rather than only when a settle mints new ones. Left
+        // standing, the next move order would rebuild the grid inside its own
+        // frame, which is the cost this is all about not paying.
+        navWarmed = null;
+        syncPathWorld();
       }
     }
 
@@ -515,7 +538,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * doing it at boot rather than at the first move order.
    */
   function stepNavWarm(nowMs: number): void {
-    const world = pathWorld;
+    const world = navSource;
     if (!world) return;
     // Not while the stream is still working. Nothing can use the grid until the
     // world around the player is there anyway, and the two jobs competing for
@@ -535,10 +558,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // the settle -- so this is a handful of times across a load, not a cadence.
     navWarmed = world.colliders;
     warmNavGrids(world.colliders, world.ground, [SERVER_PLAYER_RADIUS]);
+    // Only now may a move order route through it.
+    syncPathWorld();
   }
-
-  /** The colliders the nav grid was last built against, so it is built once. */
-  let navWarmed: WorldColliders | null = null;
 
   /**
    * Whether to show the world yet, and what the bar says while we do not
