@@ -35,6 +35,20 @@ import type { Rect, WorldColliders } from '../../sim/types.js';
 import { worldBoundsOf } from '../world/build.js';
 import type { CoverageSampler } from '../world/terrain.js';
 
+/**
+ * A chunk that needs meshing, and the ground it covers.
+ *
+ * Coordinates rather than built arrays, so the *building* can be paced by the
+ * caller -- see {@link StreamedMap.build}. The rectangle rides along because the
+ * renderer buckets by ground and would otherwise have to ask the map for it.
+ */
+export interface ChunkRef {
+  readonly layer: number;
+  readonly cx: number;
+  readonly cz: number;
+  readonly rect: { readonly minX: number; readonly minZ: number; readonly maxX: number; readonly maxZ: number };
+}
+
 /** The four a chunk's own mesh reads across. See `add`. */
 const EDGE_NEIGHBOURS: readonly (readonly [number, number])[] = [
   [-1, 0],
@@ -54,6 +68,8 @@ export class StreamedMap {
   private readonly chunkExtent: number;
   /** The declared extent of the whole map, fixed before the first chunk. */
   private readonly bounds: Rect;
+  /** The one sampler handed out. See {@link sampler}. */
+  private liveSampler: CoverageSampler | null = null;
 
   constructor(info: MapInfoMessage) {
     this.info = info;
@@ -130,12 +146,59 @@ export class StreamedMap {
     return true;
   }
 
-  /** `heightAt` through the live world, plus the coverage query above. */
+  /**
+   * How much of the ground within `radius` chunks of a point has arrived
+   * (spec 165).
+   *
+   * `needed` counts only chunks the map actually *declares*, so a player near
+   * the edge of the world is not left waiting on ground that was never going to
+   * be sent -- which is the difference between a progress bar that fills and one
+   * that stops at 80% forever on every map with a coastline.
+   *
+   * Chebyshev, matching the server's own `MAP_CHUNK_REQUEST_RADIUS` test: the
+   * question is about the square window the camera frames, not a circle.
+   */
+  coverage(x: number, z: number, radius: number): { held: number; needed: number } {
+    let held = 0;
+    let needed = 0;
+    for (let layer = 0; layer < this.info.layers.length; layer++) {
+      const info = this.info.layers[layer];
+      if (!info) continue;
+      const cx0 = Math.floor((x - info.origin.x) / this.chunkExtent);
+      const cz0 = Math.floor((z - info.origin.z) / this.chunkExtent);
+      for (let cz = cz0 - radius; cz <= cz0 + radius; cz++) {
+        for (let cx = cx0 - radius; cx <= cx0 + radius; cx++) {
+          if (!this.declared.has(`${layer}:${cx},${cz}`)) continue;
+          needed++;
+          if (this.has(layer, cx, cz)) held++;
+        }
+      }
+    }
+    return { held, needed };
+  }
+
+  /**
+   * `heightAt` through the live world, plus the coverage query above.
+   *
+   * **One object for the session**, and that is load-bearing rather than tidy
+   * (spec 165). Everything downstream memoizes on this object's identity --
+   * `navGridFor` on it and on the colliders, and the nav height samples on it
+   * alone -- so a fresh sampler per call is a fresh cache per call, and the
+   * client re-sampled 797k ground heights on every settle: 4.8 seconds of
+   * frozen page, once per burst of chunks.
+   *
+   * Returning the same object is safe for exactly the reason the whole streamed
+   * map is built the way it is: this closes over the live store, so it answers
+   * for ground that has only just arrived without being rebuilt. What it cannot
+   * do on its own is tell a cache *which* answers changed -- that is
+   * `invalidateNavHeights`, called as each chunk lands.
+   */
   sampler(): CoverageSampler {
-    return {
+    this.liveSampler ??= {
       heightAt: (x, y) => this.loaded.world.heightAt(x, y),
       knows: (x, y) => this.knows(x, y),
     };
+    return this.liveSampler;
   }
 
   /** What the mesher needs to know about each layer. Also live. */
@@ -174,7 +237,7 @@ export class StreamedMap {
    * Empty when the layer is unknown or the chunk was already held -- both cases
    * where meshing would be wasted work rather than an error.
    */
-  add(held: HeldChunk): readonly TerrainChunk[] {
+  add(held: HeldChunk): readonly ChunkRef[] {
     const key = `${held.layer}:${held.cx},${held.cz}`;
     if (this.held.has(key)) return [];
     const layerId = this.info.layers[held.layer]?.id;
@@ -182,16 +245,51 @@ export class StreamedMap {
     if (!this.loaded.store.insertChunk(layerId, held.chunk)) return [];
     this.held.add(key);
 
-    const out: TerrainChunk[] = [];
-    const mesh = (cx: number, cz: number): void => {
-      const chunk = this.loaded.store.buildChunk(layerId, cx, cz);
-      if (chunk) out.push(chunk);
-    };
-    mesh(held.cx, held.cz);
+    const out: ChunkRef[] = [ this.refFor(held.layer, held.cx, held.cz) ];
     for (const [dx, dz] of EDGE_NEIGHBOURS) {
-      if (this.has(held.layer, held.cx + dx, held.cz + dz)) mesh(held.cx + dx, held.cz + dz);
+      if (this.has(held.layer, held.cx + dx, held.cz + dz)) {
+        out.push(this.refFor(held.layer, held.cx + dx, held.cz + dz));
+      }
     }
     return out;
+  }
+
+  /**
+   * Turn a reference into geometry-ready arrays.
+   *
+   * Split out of {@link add} in spec 165's seventh follow-up, and the split is
+   * the whole point. `buildChunk` is ~2ms and an arrival needs five of them --
+   * its own and its four edge neighbours' -- so an insert that did them inline
+   * was a 10ms unit of work that nothing could subdivide. One per frame is what
+   * the budget then allowed, which made the *length of the load* a count of
+   * frames rather than an amount of work: 169 chunks took 169 frames, and each
+   * of those frames wore 10ms it could not put down.
+   *
+   * Deferred, the queue holds coordinates and the frame builds as many as it can
+   * afford. Same work, same order, in units small enough to pace.
+   */
+  build(layer: number, cx: number, cz: number): TerrainChunk | null {
+    const layerId = this.info.layers[layer]?.id;
+    if (layerId === undefined) return null;
+    return this.loaded.store.buildChunk(layerId, cx, cz);
+  }
+
+  /** Where a chunk sits, so the renderer's queue can bucket it without the map. */
+  private refFor(layer: number, cx: number, cz: number): ChunkRef {
+    const info = this.info.layers[layer];
+    const originX = (info?.origin.x ?? 0) + cx * this.chunkExtent;
+    const originZ = (info?.origin.z ?? 0) + cz * this.chunkExtent;
+    return {
+      layer,
+      cx,
+      cz,
+      rect: {
+        minX: originX,
+        minZ: originZ,
+        maxX: originX + this.chunkExtent,
+        maxZ: originZ + this.chunkExtent,
+      },
+    };
   }
 
   /**

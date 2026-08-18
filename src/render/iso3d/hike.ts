@@ -489,11 +489,18 @@ export const HIKE_OFF: HikeSettings = {
  * are off *by choice* (spec 104's fold darkening doubles what the outlines
  * already say; spec 105's penumbra is the one smooth gradient in a posterized
  * frame), not because nobody got to them.
+ *
+ * `ink` was the third and is off now, on price rather than on taste (spec 165
+ * follow-up 8). It is the only default that needs the depth-and-normal buffers,
+ * and those are a **second geometry pass over the whole world** -- the frame
+ * already draws it for the shadow map and again for the picture, so this was a
+ * third. On the grown map that is ~300 draw calls and ~260k triangles a frame
+ * bought for a distance haze that a locked camera never shows off. The switch is
+ * still there; it is the default that changed.
  */
 export const HIKE_DEFAULTS: HikeSettings = {
   ...HIKE_OFF,
   smoothNormals: true,
-  ink: true,
 };
 
 // --- the colour transfer ----------------------------------------------------

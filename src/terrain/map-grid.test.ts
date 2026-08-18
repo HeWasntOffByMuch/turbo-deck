@@ -69,9 +69,18 @@ describe('the shipped map', () => {
   });
 
   it('anchors its grid at the layer origin, so chunk 0,0 sits on it', () => {
+    // `origin` need not equal `bounds.min` -- the map has grown west and north
+    // of the chunk it was first baked from, which is exactly what moves bounds
+    // past an origin that stays put (spec 083). What must always hold is the
+    // thing the title says: chunk (0, 0)'s own corner sits exactly on it.
     const { doc } = shipped();
     const layer = doc.layers[0];
-    expect(layer?.origin).toEqual({ x: layer?.bounds.minX, z: layer?.bounds.minZ });
+    expect(layer).toBeDefined();
+    if (!layer) return;
+    expect(layer.chunks.some((c) => c.cx === 0 && c.cz === 0)).toBe(true);
+    const built = new MapChunkStore(doc).buildChunk(layer.id, 0, 0);
+    expect(built?.originX).toBe(layer.origin.x);
+    expect(built?.originZ).toBe(layer.origin.z);
   });
 
   it('is at the current version and round-trips to identical text', () => {
@@ -94,15 +103,24 @@ describe('reading a v1 document', () => {
   it('fills the origin in from the bounds, changing no index in the file', () => {
     const v1 = parseMap(asV1());
     const { doc } = shipped();
-    expect(v1.layers[0]?.origin).toEqual({ x: -1600, z: -1600 });
+    expect(v1.layers[0]?.origin).toEqual({ x: doc.layers[0]?.bounds.minX, z: doc.layers[0]?.bounds.minZ });
     // The migration is a no-op on the numbers: same chunks, same coordinates,
     // same heights. Only the version and the new field differ.
     expect(v1.layers[0]?.chunks).toEqual(doc.layers[0]?.chunks);
   });
 
   it('re-serializes as a current-version document', () => {
-    const { text } = shipped();
-    expect(serializeMap(parseMap(asV1()))).toBe(text);
+    // Not the shipped map: it has grown west and north of its own origin, so
+    // `bounds.min` is no longer the corner the migration would have to guess
+    // at for a genuine v1 file, and stripping its origin is lossy on purpose.
+    // A one-chunk doc that has never grown past its own origin is what a real
+    // v1 file always looked like, and round-tripping it must be exact.
+    const doc = tinyDoc([chunkAt(0, 0, CHUNK_CELLS, CHUNK_CELLS, 5)]);
+    const text = serializeMap(doc);
+    const raw = JSON.parse(text) as Record<string, unknown>;
+    raw['version'] = 1;
+    for (const layer of raw['layers'] as Record<string, unknown>[]) delete layer['origin'];
+    expect(serializeMap(parseMap(JSON.stringify(raw)))).toBe(text);
   });
 
   it('still refuses a version it has no migration for', () => {

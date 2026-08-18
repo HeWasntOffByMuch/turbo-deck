@@ -36,9 +36,10 @@ import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
 import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
-import { warmNavGrids } from '../../../sim/pathfinding.js';
+import { invalidateNavHeights, warmNavGrids } from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
+  MAP_CHUNK_REQUEST_RADIUS,
   SERVER_PLAYER_RADIUS,
   SERVER_TICK_RATE,
 } from '../../../server/config.js';
@@ -51,6 +52,7 @@ import { ASSET_MANIFEST_HASH } from './unit-assets.js';
 import mapText from '../../../../maps/arena.json?raw';
 import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
+import type { HeldChunk } from '../../../server/client/map-cache.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { createVfxControls } from '../vfx-controls.js';
@@ -62,6 +64,14 @@ import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud } from './hud.js';
+import { ChunkIngest } from './chunk-ingest.js';
+import { parsePerfFlags } from './perf-flags.js';
+import { FrameBudget } from './frame-budget.js';
+import { LoadGate } from './loading.js';
+import { createLoadingOverlay } from './loading-overlay.js';
+import { FrameMeter } from './fps-meter.js';
+import { createFpsOverlay } from './fps-overlay.js';
+import { PROP_REGION_SIZE } from '../props.js';
 import { abilityForSlot, actionBarFromQuery } from './action-bar.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
@@ -75,7 +85,13 @@ import { UiLayer } from './ui-layer.js';
 import { nearestVendorTo } from './shop-model.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
 import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
-import { loadScale, saveScale } from '../../../ui/input/display-store.js';
+import {
+  DEFAULT_SHOW_FPS,
+  loadScale,
+  loadShowFps,
+  saveScale,
+  saveShowFps,
+} from '../../../ui/input/display-store.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
@@ -91,14 +107,141 @@ import { castRefusalText } from './error-log.js';
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
 /**
- * Frames of quiet before the prop field is rebuilt (spec 072 follow-up).
+ * Wall-clock quiet before the prop field is rebuilt (spec 165).
  *
- * Small: the point is only to coalesce a burst of arrivals into one rebuild,
- * not to defer the trees until the player notices they are missing. Two frames
- * of nothing arriving is enough to know a burst has ended, and at the tail of a
- * cold start the whole field appears within ~30ms of the last chunk.
+ * This was two *frames* (spec 072), and that number was wrong in a way nothing
+ * noticed until the map grew. Deltas arrive every 50ms and frames every ~16ms,
+ * so two quiet frames is a condition that is *always* met between one delta and
+ * the next: the settle fired on every pump of the stream rather than once at the
+ * end of a burst, and every firing rebuilt every prop in the world.
+ *
+ * Measured in milliseconds and set above the broadcast interval, so a stream
+ * that is still arriving cannot trip it. 120ms is a little over two deltas --
+ * enough slack that one late delta does not read as the end of the load, and
+ * short enough that the trees appear while the ground they stand on is still the
+ * thing the player is looking at.
  */
-const PROP_SETTLE_FRAMES = 2;
+const PROP_SETTLE_MS = 120;
+
+/**
+ * Chunks meshed per frame (spec 165).
+ *
+ * Meshing a chunk disposes and rebuilds its surface, wall and water geometry and
+ * re-bakes its neighbours' shore quads. One arrival can dirty five chunks, and a
+ * pump of arrivals used to mesh all of them between one paint and the next --
+ * up to forty rebuilds in a frame, which is a visible lurch however fast the
+ * stream is.
+ *
+ * 4 holds a frame inside its budget on the machine this was measured on while
+ * still clearing a full pump in under two deltas. It is a *rate*, so raising the
+ * request pass above it does not make the frame worse -- it makes the queue
+ * longer, which is the trade this whole spec is about.
+ */
+const MESH_BUDGET_PER_FRAME = 2;
+
+/**
+ * ...and how many while the loading screen is still up.
+ *
+ * Far more, because the constraint is different behind the gate: nothing is on
+ * screen but a bar, and the load's *length* is what the player is waiting on.
+ * Spreading a fixed amount of work thinly across frames makes that length a
+ * count of frames rather than an amount of work -- the mistake this spec has now
+ * made twice, so it is written down here as well as in the nav warm.
+ */
+const MESH_BUDGET_LOADING = 24;
+
+/**
+ * Milliseconds of a frame the chunk stream may have (spec 165 follow-up).
+ *
+ * A count was not enough. `MESH_BUDGET_PER_FRAME` bounded the *meshing* and left
+ * the insert that produces it unbounded -- `StreamedMap.add` rebuilds the
+ * arrival's baked cells and its four edge neighbours', ~10ms each on this map,
+ * and a pump of 24 arrivals ran all of them in one frame. 6ms is a little over a
+ * third of a 60Hz frame, which keeps the stream moving without ever being the
+ * reason one is missed.
+ */
+const INGEST_BUDGET_MS = 6;
+
+
+
+
+
+/**
+ * Chunks around the player that must arrive before the world is shown.
+ *
+ * The *whole request window*, deliberately -- everything this client is ever
+ * going to ask for at this position (spec 165 follow-up 7).
+ *
+ * It used to be 2: the chunk the player stands in and the ring around it, on the
+ * grounds that waiting for ground they cannot see is waiting for nothing. That
+ * is true about what is *visible* and false about what it costs. The remaining
+ * 144 chunks still arrived -- they just arrived after the gate lifted, into
+ * frames that were being drawn, and every one of them cost an insert, five
+ * builds, a mesh and eventually a prop rebuild. Fifteen seconds of stutter with
+ * the world on screen, which is the report this follows.
+ *
+ * Loading is a thing a player understands and expects to wait for. A world that
+ * keeps hitching for twenty seconds after it says it is ready is not.
+ */
+const READY_CHUNK_RADIUS = MAP_CHUNK_REQUEST_RADIUS;
+
+/**
+ * Prop regions rebuilt in one frame.
+ *
+ * One. A region is ~60ms of geometry construction, and the measured worst
+ * streaming frame after load was 154ms with several landing together -- which is
+ * a lurch a player feels while standing still. They settle in the same order
+ * either way, a frame apart.
+ */
+const PROP_REGIONS_PER_FRAME = 1;
+
+/** ...and while the loading screen is up, where a lurch costs nothing. */
+const PROP_REGIONS_LOADING = 8;
+
+/** How fast the streaming-cost readout falls back toward nothing. */
+const INGEST_DECAY = 0.92;
+
+/**
+ * How long the whole stream must be quiet before the colliders and nav grid are
+ * rebuilt (spec 165 follow-up 6).
+ *
+ * Far longer than `PROP_SETTLE_MS`, and for a reason worth stating: the trees
+ * want the *earliest* moment that is correct, and this wants the *cheapest*.
+ * Rebuilding is ~100ms of grid whatever has changed, so doing it once when the
+ * stream stops is worth waiting for; doing it per burst is the stutter this
+ * number exists to remove.
+ */
+const GROUND_REFRESH_QUIET_MS = 600;
+
+/**
+ * The least time between two collider-and-nav rebuilds.
+ *
+ * Measured: one of these is ~286ms -- the obstacle passes and the component
+ * flood over 797k cells, plus re-sampling whatever ground arrived since the
+ * last one. It was firing on every lull in a stream that has lulls all through
+ * it, which is a quarter-second hitch every second or so for the half-minute
+ * the far chunks take. That is the "not smooth even standing still" report.
+ *
+ * The client's grid is a *prediction* aid -- the server routes authoritatively
+ * -- so the cost of it being a few seconds stale is a predicted path that walks
+ * at a tree the server routes around, corrected the moment it matters. Against
+ * a visible hitch every second, that is not a close call.
+ */
+const GROUND_REFRESH_MIN_INTERVAL_MS = 5000;
+
+/**
+ * ...and how much new ground it takes to be worth one.
+ *
+ * A rebuild is ~170ms whether one chunk arrived or forty, so the question is
+ * not "has anything changed" but "has enough changed to be worth a visible
+ * hitch". A trickle of one or two late chunks moves almost no collider the
+ * player is anywhere near, and paying a sixth of a second for it -- while they
+ * stand in a world that has told them it is ready -- is the wrong trade.
+ *
+ * The last chunks are not lost, only unhurried: the next rebuild that clears
+ * this bar picks them up with everything else.
+ */
+const GROUND_REFRESH_MIN_CHUNKS = 8;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
 /**
@@ -165,6 +308,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // start-up rather than in the frame where the first move order is given. The
   // streaming client's equivalent is on the settle in `ingestChunks`, which is
   // the earliest moment it could possibly be done.
+  //
+  // Blocking, and deliberately back to blocking (spec 165 follow-up 3). Slicing
+  // this across frames was worse in every way that mattered: the sim reaches
+  // `navGridFor` on its own inside `routeToward`, so the grid has to exist
+  // before the first tick rather than eventually -- and a budget spent *per
+  // frame* makes the wall-clock cost of loading a function of the frame rate,
+  // which on a slow machine turned five seconds of work into thirty of waiting.
+  //
+  // What made it affordable was never the slicing. It is the per-cell height
+  // cache below: this pass is the only one that pays for the whole map, and the
+  // chunk arrivals that used to re-pay for it now cost their own ground.
   if (local) warmRouting(local);
 
   /**
@@ -274,20 +428,100 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // never rebuilt -- see streamed-map.ts for why rebuilding it per arrival cost
   // ten seconds of frozen page.
   const scene = new WorldScene(canvas);
+  // `?perf=noshadow,noprops,noterrain` -- a measuring affordance, not a setting.
+  // See perf-flags.ts for why the frame is being taken apart this way.
+  scene.setPerfFlags(parsePerfFlags(location.search));
   let streamed: StreamedMap | null = null;
-  /** Props lag the terrain; this is whether they owe a rebuild, and for how long. */
-  let propsDirty = false;
-  let settledFrames = 0;
+  /**
+   * The meshing queue and the prop-region bookkeeping (spec 165).
+   *
+   * Both used to be implicit in the loop below -- mesh everything that arrived,
+   * rebuild every prop after two quiet frames -- and both were sized for a map a
+   * quarter of this one's size. See chunk-ingest.ts.
+   */
+  const ingest = new ChunkIngest({
+    meshBudget: MESH_BUDGET_PER_FRAME,
+    settleMs: PROP_SETTLE_MS,
+    regionSize: PROP_REGION_SIZE,
+    regionsPerFlush: PROP_REGIONS_PER_FRAME,
+  });
+  /**
+   * Chunks the server has sent that this client has not inserted yet.
+   *
+   * Keyed by coordinate, because `client.view()` hands back the whole held set
+   * every frame: without this the same arrival would be queued again on every
+   * frame until the budget got to it.
+   */
+  const pendingInserts = new Map<string, HeldChunk>();
+  const gate = new LoadGate();
+  const loading = createLoadingOverlay(root);
+  /** Whether the routing ground grows as chunks arrive. See the invalidation below. */
+  const navGrowsWithStream = plan.mode === 'remote';
+  /** The load as the overlay last drew it, so the DOM is written only on change. */
+  let lastLoadLabel = '';
+  /** Whether the remote path has built its collision ground and nav grid once. */
+  let firstGroundBuilt = false;
+  /** Chunks held when the colliders and nav grid were last rebuilt. */
+  let chunksAtGroundRefresh = -1;
+  /** When that last happened, so it cannot run on every lull. */
+  let lastGroundRefreshMs = 0;
+  /** The last published mesh readout, so the DOM is written only on change. */
+  let lastMeshState = '';
+  /**
+   * Every chunk coordinate the scene has actually been given.
+   *
+   * Distinct, so it can be compared against the number the streamed map holds.
+   * See the readout in {@link updateLoading} for why that comparison matters.
+   */
+  const drawnChunks = new Set<string>();
 
   /**
-   * Take whatever landed since the last frame.
+   * The frame-time meter and its overlay (spec 165).
    *
-   * Only chunks the streamed map has not already seen are meshed, so a frame
-   * costs the number of chunks that *arrived* in it rather than the number
-   * held. That is the whole difference between a cold start that streams in and
-   * one that blocks the main thread for its entire duration.
+   * Always measuring, drawn only when asked. The measurement is two numbers and
+   * an array push per frame, so a session with the readout off pays nothing
+   * worth naming -- and the alternative, starting the meter when the switch is
+   * thrown, would mean the first two seconds after you go looking for a stutter
+   * are the two seconds with no history in them.
    */
-  function ingestChunks(view: ReturnType<typeof client.view>): void {
+  const frames = new FrameMeter();
+  /**
+   * The streaming cost of recent frames, decayed rather than averaged.
+   *
+   * A spike has to stay legible long enough to read -- at the frame rates this
+   * is diagnosing, an instantaneous number is gone before the eye lands on it --
+   * and it has to fall back to nothing once the world has settled, or the
+   * readout would claim the loader is still working when it is not.
+   */
+  let worstIngestMs = 0;
+  /**
+   * Which stage of the ingest was the worst one recently, and how bad.
+   *
+   * Named rather than summed, because "the loader cost you 150ms" and "the
+   * *props* cost you 150ms" are one question apart, and guessing which stage it
+   * was cost three build-and-measure rounds that a label would have answered
+   * outright.
+   */
+  let worstStage = '';
+  let worstStageMs = 0;
+  function stage(name: string, ms: number): void {
+    if (ms <= worstStageMs) return;
+    worstStageMs = ms;
+    worstStage = name;
+  }
+  const fpsOverlay = createFpsOverlay(root);
+  let showFps = DEFAULT_SHOW_FPS;
+
+  /**
+   * Take whatever landed since the last frame, and mesh what the frame can afford.
+   *
+   * Only chunks the streamed map has not already seen are queued, so a frame
+   * costs the number of chunks that *arrived* in it rather than the number
+   * held. What is new in spec 165 is that arriving and meshing are no longer the
+   * same event: arrivals go into a queue and the frame drains a bounded number of
+   * them, so a burst is spread over frames instead of landing in one.
+   */
+  function ingestChunks(view: ReturnType<typeof client.view>, nowMs: number): void {
     const map = view.map;
     if (!map) return;
 
@@ -303,47 +537,208 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       }
     }
 
-    let arrived = 0;
+    // Inserting a chunk is not free either -- it rebuilds the arrival's own
+    // baked cells plus its four edge neighbours', ~10ms each on the grown map --
+    // so the *insert* is budgeted alongside the mesh rather than run over every
+    // arrival in the frame it lands. Before this, one pump of 24 arrivals was a
+    // quarter-second frame before a single triangle had been rebuilt.
     for (const held of map.chunks) {
+      if (streamed.has(held.layer, held.cx, held.cz)) continue;
+      pendingInserts.set(`${held.layer}:${held.cx},${held.cz}`, held);
+    }
+
+    const insertStart = performance.now();
+    const spend = new FrameBudget(nowMs, INGEST_BUDGET_MS);
+    for (const [key, held] of pendingInserts) {
+      if (spend.spent()) break;
+      pendingInserts.delete(key);
       // One arrival, but up to five chunks to draw: a neighbour's mesh was baked
       // against ground this chunk has only now supplied (spec 078).
       const dirty = streamed.add(held);
-      if (dirty.length === 0) continue;
-      for (const chunk of dirty) scene.addTerrainChunk(chunk);
-      arrived++;
+      if (dirty.length > 0) ingest.offer(dirty, nowMs);
+      // The nav heights over this ground are now answerable, and were not
+      // before (spec 165). Marking the rectangle keeps the re-sample to this
+      // chunk instead of the whole 797k-cell grid -- but only when the routing
+      // world is the one that *grows*.
+      //
+      // On the loopback path it is not: the routing world is the bundled map's
+      // own sampler, complete since mount, and a streamed chunk tells it nothing
+      // it did not already know. Dirtying it there was worse than useless -- it
+      // re-sampled ground that had not changed AND bumped the height version,
+      // which invalidates the grid the *in-tab server* is pathing against. Every
+      // chunk that arrived while walking cost the sim a fresh nav grid.
+      if (navGrowsWithStream && pathWorld && dirty.length > 0) {
+        for (const chunk of dirty) {
+          invalidateNavHeights(pathWorld.ground, pathWorld.colliders, chunk.rect);
+        }
+      }
     }
+
+    stage('insert', performance.now() - insertStart);
+
+    // Every chunk this hands back, without exception.
+    //
+    // `takeMesh` *dequeues* what it returns, so breaking out of this loop early
+    // -- which a second budget check here used to do -- dropped chunks that had
+    // already left the queue and would never be offered again. That is a hole in
+    // the world that never fills in, at whichever chunk the frame happened to
+    // run out of time on. The list is already bounded by MESH_BUDGET_PER_FRAME;
+    // the budget's job was done before it was built.
+    // Behind the loading screen there are no frames to protect, so the whole
+    // budget goes on getting the world built; afterwards it is deliberately
+    // small, because a player standing in a finished world should not be able
+    // to feel the last chunks arrive.
+    const meshStart = performance.now();
+    const meshBudget = gate.open ? MESH_BUDGET_PER_FRAME : MESH_BUDGET_LOADING;
+    for (const ref of ingest.takeMesh(nowMs, meshBudget)) {
+      const chunk = streamed.build(ref.layer, ref.cx, ref.cz);
+      if (!chunk) continue;
+      scene.addTerrainChunk(chunk);
+      drawnChunks.add(`${ref.layer}:${ref.cx},${ref.cz}`);
+    }
+    stage('mesh', performance.now() - meshStart);
 
     // Props wait for the stream to go quiet rather than rebuilding per chunk.
     // One instanced mesh per species over the whole map is a few draw calls;
-    // one per chunk would be fifty-odd of them on every frame from then on, so
+    // one per chunk would be two hundred of them on every frame from then on, so
     // per-chunk props would trade a startup cost for a permanent one.
-    if (arrived > 0) {
-      propsDirty = true;
-      settledFrames = 0;
-    } else if (propsDirty && ++settledFrames >= PROP_SETTLE_FRAMES) {
-      propsDirty = false;
-      scene.refreshProps();
-      // And the ground the *predictor* stands on, on the same settle and for
-      // the same reason (spec 146). A fresh colliders object costs a nav grid,
-      // because `navGridFor` memoizes on its identity -- so this must happen
-      // once per burst of arrivals rather than once per arrival. Warmed here
-      // too, since the alternative is paying for it inside the frame that gives
-      // the first move order.
-      if (plan.mode === 'remote' && streamed) {
-        fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
-        syncPathWorld();
-        if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
-      }
-      // The world is now drawn: terrain meshed and props standing on it.
-      //
-      // Announced because streaming took that fact away from anyone watching
-      // from outside. It used to be implied -- the world was built before the
-      // first frame, so any frame at all meant a finished world, and
-      // `preview-world.ts` waited on the HUD's tick counter accordingly. Now
-      // ticks advance while chunks are still arriving, and a harness that
-      // clicked at tick 150 was clicking into a half-drawn field.
-      root.dataset['worldReady'] = 'true';
+    //
+    // What changed in 165 is the *unit*: the regions the arrived ground actually
+    // covers, not the whole field. `takePropRects` returns nothing at all until
+    // the queue is drained and the stream has been quiet, so this is a handful
+    // of calls across a cold start rather than one per delta.
+    const propStart = performance.now();
+    const rects = ingest.takePropRects(nowMs, gate.open ? PROP_REGIONS_PER_FRAME : PROP_REGIONS_LOADING);
+    if (rects.length > 0) scene.refreshPropsWithin(rects);
+    stage('props', performance.now() - propStart);
+
+    // The ground the *predictor* stands on is a different question from the
+    // trees, and on a different clock (spec 165 follow-up 6).
+    //
+    // It used to ride the prop settle. That was fine while the settle was one
+    // event at the end of the stream; once the settle became per region it fired
+    // dozens of times, and each one rebuilt the whole nav grid -- ~100ms, over
+    // and over, for the half-minute the far chunks take to arrive. Standing
+    // still was not smooth, and this is why.
+    //
+    // So it waits for the *world* to go quiet rather than a region, and only
+    // runs when the collider set has actually grown since it last ran. A fresh
+    // colliders object costs a grid, because `navGridFor` memoizes on identity.
+    if (
+      plan.mode === 'remote' &&
+      streamed &&
+      streamed.size - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS &&
+      ingest.idle &&
+      ingest.quietForMs(nowMs) >= GROUND_REFRESH_QUIET_MS &&
+      nowMs - lastGroundRefreshMs >= GROUND_REFRESH_MIN_INTERVAL_MS
+    ) {
+      const groundStart = performance.now();
+      lastGroundRefreshMs = nowMs;
+      chunksAtGroundRefresh = streamed.size;
+      fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
+      syncPathWorld();
+      if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
+      stage('nav', performance.now() - groundStart);
     }
+  }
+
+  /**
+   * Whether to show the world yet, and what the bar says while we do not
+   * (spec 165).
+   *
+   * `view.self` is the *predicted* position, and it is nonetheless the right
+   * thing to gate on: `startPredictingIfReady` builds the prediction buffer only
+   * once the server's `Welcome` has named an entity, that entity is in the
+   * replicated world and its stats have arrived. So "there is a predicted
+   * position at all" is exactly the fact this gate wants -- the server has
+   * placed this body and said where. Before that there is no position to centre
+   * a load on, and no honest world to draw.
+   *
+   * `worldReady` is written here rather than on the first prop settle, which is
+   * what it used to mean and what made it wrong -- the first settle is the end of
+   * the first pump of the stream, not the end of the load. Harnesses wait on it,
+   * so it now means what they always read it as meaning.
+   */
+  function updateLoading(view: ReturnType<typeof client.view>): void {
+    const self = view.self ?? null;
+    const coverage =
+      streamed && self ? streamed.coverage(self.x, self.y, READY_CHUNK_RADIUS) : { held: 0, needed: 0 };
+
+    // The remote path's first ground build, and deliberately *before* the gate
+    // is asked whether to open (spec 165 follow-up 4).
+    //
+    // A remote client has no bundled map, so nothing pre-warms its colliders or
+    // its nav grid the way `warmRouting` does at a loopback mount -- the first
+    // `warmNavGrids` samples every nav cell over the declared map, which is ~5
+    // seconds. Left to the prop settle, that landed a few hundred milliseconds
+    // *after* the world was shown: terrain on screen, and the tab locked solid.
+    // That is what "shows some terrain early, but it's unresponsive" was.
+    //
+    // Blocking rather than sliced, on purpose: this is the cost that has to be
+    // paid before play, and slicing it across frames only makes the wall-clock
+    // wait a function of the frame rate. Every later settle re-samples just the
+    // ground that arrived, which is what makes one blocking pass affordable.
+    if (
+      plan.mode === 'remote' &&
+      !firstGroundBuilt &&
+      streamed &&
+      self &&
+      coverage.needed > 0 &&
+      coverage.held >= coverage.needed &&
+      ingest.pending === 0
+    ) {
+      firstGroundBuilt = true;
+      chunksAtGroundRefresh = streamed.size;
+      fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
+      syncPathWorld();
+      if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
+    }
+
+    const progress = gate.progress({
+      haveMap: view.map !== null,
+      located: self !== null,
+      held: coverage.held,
+      needed: coverage.needed,
+      // Prop regions count as outstanding work too: one rebuilt after the gate
+      // opens is a ~170ms hitch in a world that has said it is ready, and behind
+      // the screen it is just part of the load.
+      meshPending: ingest.pending + ingest.dirtyRegionCount,
+      // Only this tab's own sim can stall on it; a remote client's grid is a
+      // prediction aid and warms behind the world.
+    });
+
+    // How much ground has arrived against how much has actually been drawn
+    // (spec 165 follow-up 4).
+    //
+    // *Distinct* chunks drawn, not meshes built: a chunk is re-meshed whenever a
+    // neighbour lands, so counting rebuilds would sail past the number held and
+    // say nothing. What has to hold is that every chunk the streamed map accepted
+    // has been handed to the scene at least once. When it does not, the symptom
+    // is a hole in the world that never fills in -- invisible to every headless
+    // test, and easy to miss on screen unless you look the right way.
+    //
+    // A readout, not an input: nothing in the game reads these.
+    const streamedCount = streamed?.size ?? 0;
+    const meshState = `${streamedCount}:${drawnChunks.size}:${ingest.pending}`;
+    if (meshState !== lastMeshState) {
+      lastMeshState = meshState;
+      root.dataset['chunksHeld'] = String(streamedCount);
+      root.dataset['chunksDrawn'] = String(drawnChunks.size);
+      root.dataset['chunksPending'] = String(ingest.pending);
+    }
+
+    const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;
+    if (label !== lastLoadLabel) {
+      lastLoadLabel = label;
+      loading.set(progress);
+      if (progress.phase === 'ready') root.dataset['worldReady'] = 'true';
+    }
+    // The canvas is what is hidden, not the whole root: the overlay draws over
+    // it and the HUD's own elements are already hidden behind the overlay's
+    // backdrop. Hiding the canvas rather than pausing the renderer is deliberate
+    // -- the frames still run, so the world that appears when the gate lifts is
+    // a settled one rather than one that starts warming up at that moment.
+    canvas.style.visibility = gate.open ? 'visible' : 'hidden';
   }
 
   /**
@@ -630,6 +1025,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     removeItem: () => undefined,
   };
   loadBindings(bindingStorage, inputMap);
+  // The saved answer, before the first frame draws anything -- so a session that
+  // asked for the readout last time has it from frame one rather than from
+  // whenever the options window is next opened.
+  showFps = loadShowFps(bindingStorage);
 
   /**
    * The framework's interface, over the world (spec 131).
@@ -678,8 +1077,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       ui.setScaleChoice(choice);
       saveScale(bindingStorage, choice);
     },
+    // Same three steps as the scale, in the same order and for the same reason
+    // (spec 165): honour it, tell the page so its tick matches what is drawn,
+    // and save it before the frame that could lose it.
+    onShowFpsChosen: (show) => {
+      showFps = show;
+      ui.setShowFps(show);
+      saveShowFps(bindingStorage, show);
+    },
     // The one place the platform is asked, beside the media queries.
     scale: loadScale(bindingStorage),
+    showFps: loadShowFps(bindingStorage),
     // Where the windows were (spec 147). Read here and written back here, for
     // the third time and the third reason: the mount is pure, so the document
     // arrives as a value and leaves as a callback. `saveLayout` cannot throw --
@@ -1659,6 +2067,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
     last = now;
+    // Before anything this frame does, so what is measured is the whole frame's
+    // period rather than the part of it that happens to come after the work.
+    frames.push(now);
     // Steered by the server's own count of what it has not consumed yet
     // (spec 148). This is the render loop doing the job CLAUDE.md gives it --
     // turning real time into a number of fixed ticks -- and not an `if` that
@@ -1703,7 +2114,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (swing !== 0) scene.controls.orbitBy(swing);
 
     const view = client.view();
-    ingestChunks(view);
+    // Timed, because "is this frame slow because of the loader or because of
+    // the machine" is the first question anybody debugging the cold start has,
+    // and the frame time alone cannot tell them (spec 165 follow-up 6).
+    const ingestStart = performance.now();
+    ingestChunks(view, now);
+    const ingestMs = performance.now() - ingestStart;
+    worstIngestMs = Math.max(worstIngestMs * INGEST_DECAY, ingestMs);
+    updateLoading(view);
     seedTheField(view);
     // A new delta resets the interpolation window. Measuring it from the delta's
     // own tick rather than from a wall-clock guess keeps the alpha honest when
@@ -1781,6 +2199,19 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());
+
+    // Last, so what it reports is a whole frame's work rather than the part of
+    // one that happens before the world is drawn (spec 165). `stats()` is only
+    // computed when somebody is looking -- the sort over the window is cheap but
+    // it is not free, and a meter that costs frame time misreports the frame
+    // time it costs.
+    fpsOverlay.set(
+      showFps ? frames.stats() : null,
+      worstIngestMs,
+      worstStage,
+      worstStageMs,
+      scene.renderStats(),
+    );
 
     // Where the view is looking from and how wide it frames, for the probes.
     // They used to read the Orbit and Zoom sliders, and on a phone the panel
@@ -1895,6 +2326,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // A tab switched away mid-pinch must not leave fingers down.
       gestures.clear();
       interfaceFingers.clear();
+      // The window that was hidden is not the window that comes back: every gap
+      // across the pause would otherwise be averaged in as a frame that took a
+      // minute (spec 165).
+      frames.reset();
     },
   };
 }

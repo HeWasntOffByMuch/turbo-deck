@@ -397,7 +397,12 @@ describe('a map that streams in draws the same land', () => {
   const stream = (order: HeldChunk[]): { map: StreamedMap; handle: TerrainMeshHandle } => {
     const map = new StreamedMap(info);
     const handle = buildTerrainMeshFromChunks(map.meshLayers, []);
-    for (const held of order) for (const chunk of map.add(held)) handle.rebuild(chunk);
+    for (const held of order) {
+      for (const ref of map.add(held)) {
+        const built = map.build(ref.layer, ref.cx, ref.cz);
+        if (built) handle.rebuild(built);
+      }
+    }
     return { map, handle };
   };
 
@@ -448,7 +453,10 @@ describe('a map that streams in draws the same land', () => {
     const handle = buildTerrainMeshFromChunks(map.meshLayers, []);
     let first = 0;
     for (const held of arrivals()) {
-      for (const chunk of map.add(held)) handle.rebuild(chunk);
+      for (const ref of map.add(held)) {
+        const built = map.build(ref.layer, ref.cx, ref.cz);
+        if (built) handle.rebuild(built);
+      }
       if (first === 0) first = wallTriangles(handle.group);
       expect(wallTriangles(handle.group)).toBeLessThanOrEqual(target);
     }

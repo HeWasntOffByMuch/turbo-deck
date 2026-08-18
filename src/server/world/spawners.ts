@@ -42,9 +42,12 @@ export function spawnPointsFrom(doc: MapDocument): readonly SpawnPoint[] {
   for (const layer of doc.layers) {
     for (const chunk of layer.chunks) {
       // Chunk-local to world space, the same conversion `MapChunkStore` makes
-      // when it loads one: a marker's stored x is an offset inside its chunk.
-      const originX = layer.bounds.minX + chunk.cx * extent;
-      const originZ = layer.bounds.minZ + chunk.cz * extent;
+      // when it loads one: a marker's stored x is an offset inside its chunk,
+      // and chunk indices are counted from the layer's *origin* -- not from
+      // `bounds.min`, which moves independently once the map has grown west
+      // or north of where it was first baked (spec 083).
+      const originX = layer.origin.x + chunk.cx * extent;
+      const originZ = layer.origin.z + chunk.cz * extent;
       for (const marker of chunk.markers) {
         if (marker.kind !== 'spawner') continue;
         const monsterId = marker.label ?? '';

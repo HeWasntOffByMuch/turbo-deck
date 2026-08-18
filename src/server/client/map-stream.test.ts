@@ -109,8 +109,11 @@ describe('the map arrives', () => {
     if (!ground) throw new Error('the map announced no layers');
 
     const extent = map.info.cellSize * map.info.chunkCells;
-    const atCx = Math.floor((self.x - ground.bounds.minX) / extent);
-    const atCz = Math.floor((self.y - ground.bounds.minZ) / extent);
+    // Chunk indices are measured from the layer's origin, not from
+    // `bounds.min` -- the two move independently once the map has grown west
+    // or north of where it was first baked (spec 083).
+    const atCx = Math.floor((self.x - ground.origin.x) / extent);
+    const atCz = Math.floor((self.y - ground.origin.z) / extent);
 
     const held = new Set(map.chunks.map((c) => `${c.cx},${c.cz}`));
     const announced = new Set(ground.coords.map((c) => `${c.cx},${c.cz}`));
@@ -137,12 +140,12 @@ describe('both ends agree on the ground', () => {
     // else -- no access to the server's document.
     const rebuilt = loadMap(chunksToDocument(map.info, map.chunks));
 
-    const bounds = ground.bounds;
     const extent = map.info.cellSize * map.info.chunkCells;
     let sampled = 0;
     for (const chunk of map.chunks) {
-      const originX = bounds.minX + chunk.cx * extent;
-      const originZ = bounds.minZ + chunk.cz * extent;
+      // Measured from origin, not `bounds.min` -- see the comment above.
+      const originX = ground.origin.x + chunk.cx * extent;
+      const originZ = ground.origin.z + chunk.cz * extent;
       for (let i = 1; i <= 7; i++) {
         const x = originX + (extent * i) / 8;
         const z = originZ + (extent * i) / 8;
@@ -169,8 +172,9 @@ describe('the range check on a live server', () => {
     const ground = test.built.index.layers[0];
     if (!self || !ground) throw new Error('no player or no layer');
     const extent = test.built.index.chunkExtent;
-    const atCx = Math.floor((self.x - ground.bounds.minX) / extent);
-    const atCz = Math.floor((self.y - ground.bounds.minZ) / extent);
+    // Measured from origin, not `bounds.min` -- see the comment above.
+    const atCx = Math.floor((self.x - ground.origin.x) / extent);
+    const atCz = Math.floor((self.y - ground.origin.z) / extent);
 
     // A chunk that exists but is outside the window from where the player is.
     const far = coords.find(

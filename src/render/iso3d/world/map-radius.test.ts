@@ -14,7 +14,11 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-import { MAP_CHUNK_REQUEST_RADIUS } from '../../../server/config.js';
+import {
+  MAP_CHUNK_BURST,
+  MAP_CHUNK_REFILL_PER_SECOND,
+  MAP_CHUNK_REQUEST_RADIUS,
+} from '../../../server/config.js';
 import { parseMap } from '../../../terrain/map.js';
 import { cameraFrustum, internalRenderSize } from '../view-frame.js';
 import {
@@ -65,5 +69,28 @@ describe('the chunk request radius covers the camera', () => {
     const reach = groundReach(MAX_VIEW_HALF_WIDTH, 3840, 1080);
     expect(GUARANTEED_REACH).toBeGreaterThan(reach.x);
     expect(GUARANTEED_REACH).toBeGreaterThan(reach.y);
+  });
+});
+
+describe('the chunk budget covers the request radius', () => {
+  /**
+   * The relationship spec 165 restored, asserted rather than typed in.
+   *
+   * The burst has to cover every chunk the radius is *allowed* to ask for, or a
+   * cold start spends the difference at the refill rate -- which is what a
+   * 64-chunk burst did the moment the map grew past it, and what the constant's
+   * own comment had predicted it would. Sized off the map, this would break
+   * again on the next map; sized off the radius, only widening the radius can
+   * re-open it, and that fails here.
+   */
+  it('bursts at least the whole request window', () => {
+    const window = (2 * MAP_CHUNK_REQUEST_RADIUS + 1) ** 2;
+    expect(MAP_CHUNK_BURST).toBeGreaterThanOrEqual(window);
+  });
+
+  it('would still bound a client asking for one chunk forever', () => {
+    // The case the bucket was written for. It is only a guard if the sustained
+    // rate stays far below what a burst costs.
+    expect(MAP_CHUNK_REFILL_PER_SECOND).toBeLessThan(MAP_CHUNK_BURST);
   });
 });

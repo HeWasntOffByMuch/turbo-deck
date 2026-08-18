@@ -18,7 +18,7 @@
 
 import { Column, Row } from '../core/containers.js';
 import { uniformInsets, type Rect } from '../core/geom.js';
-import { SCALE_CHOICES, scaleLabel, type ScaleChoice } from '../input/display-store.js';
+import { DEFAULT_SHOW_FPS, SCALE_CHOICES, scaleLabel, type ScaleChoice } from '../input/display-store.js';
 import type { Theme } from '../theme/theme.js';
 import { Checkbox } from '../widgets/checkbox.js';
 import { Label } from '../widgets/label.js';
@@ -30,10 +30,14 @@ export interface DisplayOptions {
 export class DisplayScreen extends Column {
   /** What the player picked. The mount answers with {@link setChoice}. */
   onScaleChosen: ((choice: ScaleChoice) => void) | null = null;
+  /** Whether to draw the frame-time readout (spec 165). Answered by `setShowFps`. */
+  onShowFpsChosen: ((show: boolean) => void) | null = null;
 
   private readonly boxes = new Map<ScaleChoice, Checkbox>();
   private readonly effective: Label;
+  private readonly fpsBox: Checkbox;
   private choice: ScaleChoice = 'auto';
+  private showFps = DEFAULT_SHOW_FPS;
 
   constructor(options: DisplayOptions) {
     super('display');
@@ -65,7 +69,24 @@ export class DisplayScreen extends Column {
     this.effective = new Label('', 'body');
     this.add(this.effective);
 
+    // A plain toggle rather than a member of the exclusive row above: this one
+    // genuinely is a checkbox, in the sense the header comment draws the
+    // distinction -- it belongs to no group and has an off state that means
+    // something.
+    this.add(new Label('Performance', 'body'));
+    this.fpsBox = new Checkbox('Show frame rate', 'showFps');
+    this.fpsBox.onToggle = (checked) => {
+      // Same contract as the scale row: emit the wish, put the tick back to what
+      // is actually true, and let the mount confirm with `setShowFps`. The
+      // widget flips itself before it calls this, so without the second line the
+      // page would be showing a preference nobody had honoured yet.
+      this.fpsBox.setChecked(this.showFps);
+      this.onShowFpsChosen?.(checked);
+    };
+    this.add(this.fpsBox);
+
     this.setChoice('auto');
+    this.setShowFps(DEFAULT_SHOW_FPS);
   }
 
   /** The preference as it actually stands. Ticks exactly one box. */
@@ -76,6 +97,16 @@ export class DisplayScreen extends Column {
 
   get selected(): ScaleChoice {
     return this.choice;
+  }
+
+  /** The frame-rate preference as it actually stands. */
+  setShowFps(show: boolean): void {
+    this.showFps = show;
+    this.fpsBox.setChecked(show);
+  }
+
+  get frameRateShown(): boolean {
+    return this.showFps;
   }
 
   /** The scale the interface is being drawn at, whoever decided it. */

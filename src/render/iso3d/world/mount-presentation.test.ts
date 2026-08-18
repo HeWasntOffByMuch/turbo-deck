@@ -138,6 +138,7 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeDismiss: () => requests.push('tradeDismiss'),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
+      onShowFpsChosen: (show) => requests.push(`showFps:${String(show)}`),
       // Counted apart from `requests`, deliberately. Everything in that array is
       // something asked of the *server*; a layout write is a local preference,
       // and the three windows this test opens legitimately cause one. What is

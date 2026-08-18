@@ -7,12 +7,15 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_SHOW_FPS,
   DISPLAY_KEY,
   DISPLAY_VERSION,
   loadScale,
+  loadShowFps,
   migrateDisplay,
   parseDisplay,
   saveScale,
+  saveShowFps,
   scaleLabel,
   SCALE_CHOICES,
   type ScaleChoice,
@@ -53,6 +56,7 @@ describe('the scale preference across a reload', () => {
     expect(JSON.parse(store.map.get(DISPLAY_KEY) ?? '')).toEqual({
       version: DISPLAY_VERSION,
       scale: 3,
+      showFps: DEFAULT_SHOW_FPS,
     });
   });
 });
@@ -89,7 +93,68 @@ describe('what the store refuses', () => {
     expect(parseDisplay(store.getItem(DISPLAY_KEY))).toEqual({
       version: DISPLAY_VERSION,
       scale: 'auto',
+      showFps: DEFAULT_SHOW_FPS,
     });
+  });
+});
+
+describe('the frame-rate preference (spec 165)', () => {
+  it('is on unless somebody turned it off', () => {
+    // It shipped off, behind a checkbox two pages in, and the first thing
+    // anybody asked was where it was.
+    expect(loadShowFps(storage())).toBe(true);
+  });
+
+  it('reads back what was written', () => {
+    const store = storage();
+    saveShowFps(store, true);
+    expect(loadShowFps(store)).toBe(true);
+    saveShowFps(store, false);
+    expect(loadShowFps(store)).toBe(false);
+  });
+
+  it('does not lose the scale when the readout is toggled, or the reverse', () => {
+    // The reason `saveScale` became a read-modify-write. Two preferences in one
+    // document, set from two rows of one page: a writer that rebuilt the whole
+    // document from its own field alone would silently clear the other.
+    const store = storage();
+    saveScale(store, 3);
+    saveShowFps(store, true);
+
+    expect(loadScale(store)).toBe(3);
+    expect(loadShowFps(store)).toBe(true);
+
+    saveScale(store, 2);
+    expect(loadShowFps(store)).toBe(true);
+  });
+
+  it('reads a version 1 document as having no preference', () => {
+    // What every profile written before this spec looks like. It has a scale in
+    // it that the player chose, and throwing that away over a missing field
+    // would be the migration doing more damage than the upgrade.
+    const store = storage();
+    store.setItem(DISPLAY_KEY, JSON.stringify({ version: 1, scale: 4 }));
+
+    expect(loadScale(store)).toBe(4);
+    // Absent means the default, not "the player turned it off".
+    expect(loadShowFps(store)).toBe(DEFAULT_SHOW_FPS);
+  });
+
+  it('treats a non-boolean as off rather than as a broken document', () => {
+    const store = storage();
+    store.setItem(DISPLAY_KEY, JSON.stringify({ version: DISPLAY_VERSION, scale: 2, showFps: 'yes' }));
+
+    expect(loadScale(store)).toBe(2);
+    expect(loadShowFps(store)).toBe(false);
+  });
+
+  it('survives a storage that refuses to answer', () => {
+    const hostile: StorageLike = {
+      getItem: () => '{{{',
+      setItem: () => undefined,
+      removeItem: () => undefined,
+    };
+    expect(loadShowFps(hostile)).toBe(DEFAULT_SHOW_FPS);
   });
 });
 

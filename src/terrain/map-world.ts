@@ -225,6 +225,27 @@ export class MapChunkStore {
    */
   private partList: readonly MapPart[];
 
+  /**
+   * Bumped by every mutation, so anything derived from the store can tell that
+   * what it cached is stale (spec 165 follow-up 5).
+   *
+   * Deliberately one counter for the whole store rather than one per layer or
+   * per chunk. The only consumer is `bakedLayer`'s corner memo, edits are rare
+   * against the millions of samples the memo exists for, and a coarse counter
+   * cannot be wrong in the direction that matters -- it can only throw away a
+   * cache that was still good, never keep one that was not.
+   */
+  private mutations = 0;
+
+  /** See {@link mutations}. */
+  get revision(): number {
+    return this.mutations;
+  }
+
+  private touched(): void {
+    this.mutations++;
+  }
+
   constructor(private readonly doc: MapDocument) {
     this.cellSize = doc.grid.cellSize;
     this.chunkCells = doc.grid.chunkCells;
@@ -296,6 +317,7 @@ export class MapChunkStore {
    * layer would drop every chunk it held, and no caller wants that by accident.
    */
   addLayer(layer: MapLayer): boolean {
+    this.touched();
     if (this.layers.has(layer.id)) return false;
     const chunks = new Map<string, StoredChunk>();
     for (const chunk of layer.chunks) chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
@@ -320,6 +342,7 @@ export class MapChunkStore {
    * in the file. Returns false if there was no such layer.
    */
   removeLayer(layerId: string): boolean {
+    this.touched();
     return this.layers.delete(layerId);
   }
 
@@ -342,6 +365,7 @@ export class MapChunkStore {
    * the document this was constructed from; `toDocument()` is the live view.
    */
   insertChunk(layerId: string, chunk: MapChunk): boolean {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return false;
     layer.chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
@@ -361,6 +385,7 @@ export class MapChunkStore {
    * from its edge.
    */
   removeChunk(layerId: string, cx: number, cz: number): boolean {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer?.chunks.delete(key(cx, cz))) return false;
     layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
@@ -389,6 +414,7 @@ export class MapChunkStore {
    * rectangle they want rather than a rectangle to union in.
    */
   setBounds(layerId: string, bounds: MapRect): boolean {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return false;
     layer.bounds = bounds;
@@ -435,6 +461,7 @@ export class MapChunkStore {
   }
 
   setParts(parts: readonly MapPart[]): void {
+    this.touched();
     this.partList = [...parts];
   }
 
@@ -520,6 +547,7 @@ export class MapChunkStore {
    * inside ground that exists.
    */
   declareBounds(layerId: string, bounds: MapRect): boolean {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return false;
     layer.bounds = {
@@ -556,6 +584,7 @@ export class MapChunkStore {
    * of `heights`, so the seam duplication cannot drift apart.
    */
   setCornerHeight(layerId: string, col: number, row: number, y: number): void {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return;
     // No range test: `chunksAtCorner` finds nothing for a corner no chunk holds,
@@ -617,6 +646,7 @@ export class MapChunkStore {
 
   /** Store a chunk's baked walkability. Rejects an array of the wrong size. */
   setChunkNav(layerId: string, cx: number, cz: number, nav: Uint8Array | null): boolean {
+    this.touched();
     const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
     if (!chunk) return false;
     if (nav !== null && nav.length !== chunk.cols * chunk.rows) return false;
@@ -626,6 +656,7 @@ export class MapChunkStore {
 
   /** Set a global cell's material index. Leaves solidity and tone alone. */
   setCellMaterial(layerId: string, col: number, row: number, material: number): void {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return;
     const slot = this.cellSlot(layer, col, row);
@@ -642,6 +673,7 @@ export class MapChunkStore {
    * shape and wants the other writer.
    */
   setCellSolid(layerId: string, col: number, row: number, solid: boolean): void {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return;
     const slot = this.cellSlot(layer, col, row);
@@ -651,6 +683,7 @@ export class MapChunkStore {
 
   /** Set one cell's tone variant, the second half of its colour (spec 125). */
   setCellTone(layerId: string, col: number, row: number, tone: number): void {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return;
     const slot = this.cellSlot(layer, col, row);
@@ -697,6 +730,7 @@ export class MapChunkStore {
 
   /** Put a snapshot back. Silently does nothing if the chunk has gone. */
   restoreChunk(snapshot: ChunkSnapshot): void {
+    this.touched();
     const chunk = this.layers.get(snapshot.layerId)?.chunks.get(key(snapshot.cx, snapshot.cz));
     if (!chunk) return;
     chunk.heights.set(snapshot.heights);
@@ -729,6 +763,7 @@ export class MapChunkStore {
    * point lies outside every layer.
    */
   addProp(layerId: string, prop: Prop): ChunkCoord | null {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer || !Number.isFinite(prop.x) || !Number.isFinite(prop.y)) return null;
     const chunk = this.chunkAtPoint(layer, prop.x, prop.y);
@@ -891,6 +926,7 @@ export class MapChunkStore {
    * chunk's coordinate, or null if the point lies outside the layer.
    */
   addMarker(layerId: string, marker: MapMarker): ChunkCoord | null {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer || !Number.isFinite(marker.x) || !Number.isFinite(marker.z)) return null;
     const inside =
@@ -1231,13 +1267,49 @@ function bakedLayer(store: MapChunkStore, layerId: string): TerrainLayer | null 
   // (spec 083).
   const g = (): LayerGrid => info.grid;
 
+  /**
+   * Corners, memoized (spec 165 follow-up 5).
+   *
+   * `sample` costs 8.4 `corner` calls on average -- four for the nominal cell,
+   * and the rest from the ring search that 24% of points need because jittered
+   * corners put them in a neighbour's quad. Each one is a hash and a chunk
+   * lookup. Sampling the nav lattice over the arena is 1.6M samples and 13.5M
+   * corners, which is where the five seconds went.
+   *
+   * The saving is that a lattice re-asks for the *same* corners: nav cells are
+   * 10 units and terrain cells 22, so each corner serves about five samples,
+   * and the ring search re-asks for corners the nominal cell already built.
+   * Memoized, the 13.5M collapse to the ~165k corners the map actually has.
+   *
+   * Keyed on the store's revision, so any edit throws the memo away. It is a
+   * pure function of `(col, row, seed, cell, origin)` and the stored heights --
+   * every one of which is either fixed for the layer's life or covered by that
+   * revision, so a hit is the same value the miss would have computed.
+   */
+  const corners = new Map<number, CornerPoint>();
+  let cachedAt = -1;
+
   const corner = (col: number, row: number): CornerPoint => {
+    if (cachedAt !== store.revision) {
+      corners.clear();
+      cachedAt = store.revision;
+    }
+    // Packed rather than a template string: this is the hottest line in the
+    // sampler and a string key would put allocation back into it. The offset
+    // covers the negative coordinates a grown map has (spec 083); the arena's
+    // grid is ~420 by ~390, so nothing comes near the bound.
+    const memoKey = (col + 0x8000) * 0x10000 + (row + 0x8000);
+    const hit = corners.get(memoKey);
+    if (hit) return hit;
+
     const [jx, jz] = cornerJitter(col, row, info.seed, cell);
-    return [
+    const made: CornerPoint = [
       origin.x + col * cell + jx,
       store.cornerHeight(layerId, col, row),
       origin.z + row * cell + jz,
     ];
+    corners.set(memoKey, made);
+    return made;
   };
 
   const minArea = cell * cell * MIN_TRIANGLE_AREA;

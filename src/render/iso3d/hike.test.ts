@@ -86,14 +86,24 @@ describe('the hike settings', () => {
 });
 
 describe('the hike defaults', () => {
-  it('turns on smooth normals and the distance treatment, and nothing else', () => {
+  it('turns on smooth normals and nothing else', () => {
     // Walked rather than listed, the same way `HIKE_OFF`'s own test is: a switch
     // that starts defaulting on has to be a decision made here, not something
     // that arrives with an unrelated commit.
     const on = Object.entries(HIKE_DEFAULTS)
       .filter(([, value]) => value === true)
       .map(([name]) => name);
-    expect(on.sort()).toEqual(['ink', 'smoothNormals']);
+    expect(on.sort()).toEqual(['smoothNormals']);
+  });
+
+  it('asks for no offscreen buffers, which is what makes it one geometry pass', () => {
+    // The reason `ink` came off (spec 165 follow-up 8). `buffers`, `edges` and
+    // `ink` are the three switches that make `scene.ts` capture depth and
+    // normals, and that capture is a whole extra draw of the world -- on top of
+    // the shadow map and the picture. Asserted as the *set* rather than as
+    // `ink === false`, so turning any of the three on by default has to be a
+    // decision taken with this number in view.
+    expect(HIKE_DEFAULTS.buffers || HIKE_DEFAULTS.edges || HIKE_DEFAULTS.ink).toBe(false);
   });
 
   it('leaves the two steps that were declined off', () => {

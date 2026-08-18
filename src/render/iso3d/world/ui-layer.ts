@@ -34,12 +34,14 @@ import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import type { WindowId } from './key-actions.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
-import type { ScaleChoice } from '../../../ui/input/display-store.js';
+import { DEFAULT_SHOW_FPS, type ScaleChoice } from '../../../ui/input/display-store.js';
 
 export type { WindowId } from './key-actions.js';
 export interface UiLayerOptions extends UiScreensOptions {
   /** The saved scale preference, read at the DOM edge. `'auto'` by default. */
   readonly scale?: ScaleChoice;
+  /** The saved frame-rate preference (spec 165), read at the same edge. On by default. */
+  readonly showFps?: boolean;
 }
 
 /**
@@ -147,6 +149,7 @@ export class UiLayer {
     this.frame = this.measureFrame();
     this.screens = new UiScreens(options, { width: this.frame.width, height: this.frame.height });
     this.screens.setScale(this.scaleChoice, this.frame.scale);
+    this.screens.setShowFps(options.showFps ?? DEFAULT_SHOW_FPS);
     this.surface = new Canvas2dSurface(
       this.element,
       this.screens.atlas,
@@ -201,6 +204,18 @@ export class UiLayer {
     this.scaleChoice = choice;
     this.frameDirty = true;
     this.screens.setScale(choice, this.frame.scale);
+  }
+
+  /**
+   * Take a new frame-rate preference (spec 165).
+   *
+   * Beside `setScaleChoice` and unlike it in one way: nothing re-frames, because
+   * this changes what an overlay outside the interface draws rather than how big
+   * the interface is. All it does is keep the page's tick in step with what the
+   * mount decided.
+   */
+  setShowFps(show: boolean): void {
+    this.screens.setShowFps(show);
   }
 
   get scale(): number {

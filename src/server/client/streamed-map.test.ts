@@ -147,8 +147,8 @@ describe('what it refuses', () => {
 
 describe('what an arrival makes dirty (spec 078)', () => {
   /** `cx,cz` of each chunk handed back. */
-  const coords = (chunks: readonly { coord: { cx: number; cz: number } }[]): string[] =>
-    chunks.map((c) => `${c.coord.cx},${c.coord.cz}`).sort();
+  const coords = (chunks: readonly { cx: number; cz: number }[]): string[] =>
+    chunks.map((c) => `${c.cx},${c.cz}`).sort();
 
   it('re-meshes the neighbours already held, and only those', () => {
     // A chunk's walls and its corner normals are read across its edges, so a

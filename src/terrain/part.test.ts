@@ -344,12 +344,15 @@ describe('growing does not move the world that was already there', () => {
 
 describe('growing the shipped map', () => {
   /**
-   * The real thing, not a fixture: 56 chunks of hand-checked terrain with a sea
-   * in it. If the stitch works anywhere it has to work here.
+   * The real thing, not a fixture: a hand-checked terrain with a sea in it. If
+   * the stitch works anywhere it has to work here.
    *
-   * Its east column is also *short* -- 4 cells wide against a 28-cell chunk,
-   * because its bounds are not a whole number of chunks across -- so growing
-   * east exercises the completion path rather than the clean-join one.
+   * Its footprint is currently a full rectangle -- every (cx, cz) inside its
+   * declared chunk bounds is baked at the layer's own `chunkCells`, none of
+   * them short -- so this describe block exercises the clean-join path against
+   * real data. The short-edge completion path (a chunk whose bounds do not
+   * land on a whole number of chunks) is exercised below with a small built
+   * fixture instead of depending on the shipped map happening to have one.
    */
   const shipped = (): MapDocument => parseMap(readFileSync('maps/arena.json', 'utf8'));
 
@@ -365,11 +368,11 @@ describe('growing the shipped map', () => {
       before,
       span,
       doc: growMap(before, {
-        id: 'east-shelf',
+        id: 'east-shelf-probe',
         layerId: layer.id,
-        // Starts *on* the short column so it is completed rather than orphaned,
-        // and spans every chunk row the map has.
-        rect: { minCx: eastCx, minCz: Math.min(...rows), maxCx: eastCx + 2, maxCz: Math.max(...rows) },
+        // One column clear of the map's own east edge -- nothing there to
+        // collide with -- spanning every chunk row the map has.
+        rect: { minCx: eastCx + 1, minCz: Math.min(...rows), maxCx: eastCx + 2, maxCz: Math.max(...rows) },
         recipe: { features: [{ kind: 'rolling', amplitude: 40 }] },
         seed: 4242,
       }),
@@ -380,22 +383,85 @@ describe('growing the shipped map', () => {
     expect(seamMismatches(grownEast().doc)).toEqual([]);
   });
 
-  it('completes the short east column instead of leaving a gap beside it', () => {
-    const { doc, before, span } = grownEast();
-    const layer = doc.layers[0];
-    const wasShort = before.layers[0]?.chunks.filter((c) => c.cols < before.grid.chunkCells) ?? [];
-    expect(wasShort.length).toBeGreaterThan(0);
+  /**
+   * A short trailing chunk, built rather than borrowed from the shipped map --
+   * whether the shipped map happens to have one is incidental to the layer
+   * format, and the map growing past having one must not cost this coverage.
+   * Chunk (1, 0) is 4 cells wide against an 8-cell `chunkCells`, the same
+   * shape a layer gets when its bounds are not a whole number of chunks
+   * across.
+   */
+  function shortEdgeDoc(): MapDocument {
+    const full = CHUNK_CELLS;
+    const short = 4;
+    const fullHeights: number[] = [];
+    for (let j = 0; j <= full; j++) for (let i = 0; i <= full; i++) fullHeights.push(0);
+    const shortHeights: number[] = [];
+    for (let j = 0; j <= full; j++) for (let i = 0; i <= short; i++) shortHeights.push(0);
+    return {
+      version: MAP_VERSION,
+      seed: 3,
+      grid: { cellSize: CELL, chunkCells: full },
+      arena: { minX: 0, minZ: 0, maxX: SPAN + short * CELL, maxZ: SPAN },
+      layers: [
+        {
+          id: LAYER,
+          seed: 3,
+          origin: { x: 0, z: 0 },
+          bounds: { minX: 0, minZ: 0, maxX: SPAN + short * CELL, maxZ: SPAN },
+          baseY: -100,
+          waterLevel: null,
+          chunks: [
+            {
+              cx: 0,
+              cz: 0,
+              cols: full,
+              rows: full,
+              heights: fullHeights,
+              solid: [1, full * full],
+              materials: [0, full * full],
+              tones: [0, full * full],
+              props: [],
+              markers: [],
+              nav: null,
+            },
+            {
+              cx: 1,
+              cz: 0,
+              cols: short,
+              rows: full,
+              heights: shortHeights,
+              solid: [1, short * full],
+              materials: [0, short * full],
+              tones: [0, short * full],
+              props: [],
+              markers: [],
+              nav: null,
+            },
+          ],
+        },
+      ],
+    };
+  }
 
-    // Every chunk that was short on the east flank is now full width, so the
-    // ground is contiguous rather than ending mid-chunk.
-    for (const old of wasShort) {
-      const now = layer?.chunks.find((c) => c.cx === old.cx && c.cz === old.cz);
-      expect(now?.cols).toBe(before.grid.chunkCells);
-    }
-    // And the declared bounds moved out to match: two whole chunks past the
+  it('completes a short trailing chunk instead of leaving a gap beside it', () => {
+    const before = shortEdgeDoc();
+    const doc = growMap(before, {
+      id: 'east',
+      layerId: LAYER,
+      // Starts *on* the short column so it is completed rather than orphaned.
+      rect: { minCx: 1, minCz: 0, maxCx: 2, maxCz: 0 },
+      recipe: HILL,
+      seed: 9,
+    });
+    const layer = doc.layers[0];
+    const completedChunk = layer?.chunks.find((c) => c.cx === 1 && c.cz === 0);
+    expect(completedChunk?.cols).toBe(CHUNK_CELLS);
+
+    // The declared bounds moved out to match: two whole chunks past the
     // column that was completed.
-    const eastCx = Math.max(...(before.layers[0]?.chunks.map((c) => c.cx) ?? [0]));
-    expect(layer?.bounds.maxX).toBe((before.layers[0]?.origin.x ?? 0) + (eastCx + 3) * span);
+    expect(layer?.bounds.maxX).toBe(3 * SPAN);
+    expect(seamMismatches(doc)).toEqual([]);
   });
 
   /** The biggest height change over four world units along a sweep of rows. */
@@ -416,40 +482,37 @@ describe('growing the shipped map', () => {
   }
 
   it('leaves no sliver of missing ground when the drag clears the short edge', () => {
-    // The shipped map's bounds are 7.14 x 6.66 chunks, so its east column is 4
-    // cells wide against a 28-cell chunk: its ground stops 528 units short of
-    // its own footprint. A full-size part starting at the *next* coordinate --
-    // which is what a drag over open space gives you -- would leave that 528
-    // units empty, inside a chunk too narrow to select and impossible to fill.
-    const before = shipped();
+    // A layer whose bounds are not a whole number of chunks across ends in a
+    // short column (`shortEdgeDoc`'s chunk 1 is 4 cells wide against 8). A
+    // full-size part starting at the *next* coordinate -- which is what a drag
+    // over open space gives you -- would leave that width empty, inside a
+    // chunk too narrow to select and impossible to fill.
+    const before = shortEdgeDoc();
     const layer = before.layers[0];
     if (!layer) throw new Error('no layer');
     const cells = before.grid.chunkCells;
-    const shortCx = Math.max(...layer.chunks.map((c) => c.cx));
+    const shortCx = 1;
 
     const grown = growMap(before, {
       id: 'east',
       layerId: layer.id,
       // Starts one chunk clear of the short column, as a drag in open space does.
-      rect: { minCx: shortCx + 1, minCz: 0, maxCx: shortCx + 2, maxCz: 2 },
-      recipe: { features: [{ kind: 'rolling', amplitude: 40 }] },
+      rect: { minCx: shortCx + 1, minCz: 0, maxCx: shortCx + 2, maxCz: 0 },
+      recipe: HILL,
       seed: 4242,
     });
 
-    // The short column was absorbed and completed for exactly the rows the part
-    // spans, and recorded as such.
+    // The short column was absorbed and completed, and recorded as such.
     const completed = grown.parts?.[0]?.completed?.map((c) => `${c.cx},${c.cz}`) ?? [];
-    expect(completed).toEqual([`${shortCx},0`, `${shortCx},1`, `${shortCx},2`]);
-    for (const cz of [0, 1, 2]) {
-      expect(grown.layers[0]?.chunks.find((c) => c.cx === shortCx && c.cz === cz)?.cols).toBe(cells);
-    }
+    expect(completed).toEqual([`${shortCx},0`]);
+    expect(grown.layers[0]?.chunks.find((c) => c.cx === shortCx && c.cz === 0)?.cols).toBe(cells);
 
     // And there is ground under every cell from the old map out to the new
-    // part's far edge, across every row the part covers.
+    // part's far edge.
     const mesh = loadMap(grown).meshLayers[0];
     const lastCol = (shortCx + 3) * cells;
     let holes = 0;
-    for (let row = 0; row < 3 * cells; row++) {
+    for (let row = 0; row < cells; row++) {
       for (let col = 0; col < lastCol; col++) if (mesh?.solidAt(col, row) !== true) holes++;
     }
     expect(holes).toBe(0);
@@ -458,10 +521,11 @@ describe('growing the shipped map', () => {
 
   it('joins on all four sides with no crack, whichever edge it grows from', () => {
     // A chunk is a rectangle, so a map whose bounds do not land on a cell
-    // boundary stores a last row or column that is *outside* them. The original
-    // bake marked those cells hollow -- `arena.json`'s south edge cuts through
-    // row 186 -- and carrying them over when completing a short chunk preserved
-    // a one-cell crack along the entire join.
+    // boundary stores a last row or column that is *outside* them. A short
+    // chunk carried that hollow edge over when it was completed, which
+    // preserved a one-cell crack along the entire join -- exercised on
+    // `arena.json` while its own bounds had a short edge; whichever side is
+    // grown from must still meet cleanly regardless.
     const before = shipped();
     const layer = before.layers[0];
     if (!layer) throw new Error('no layer');

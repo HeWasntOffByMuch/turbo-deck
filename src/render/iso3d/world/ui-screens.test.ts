@@ -78,6 +78,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       onTradeDismiss: () => requests.push('tradeDismiss'),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
+      onShowFpsChosen: (show) => requests.push(`showFps:${String(show)}`),
       onLayoutChanged: (layout) => {
         saved.push(layout);
         requests.push('layout');

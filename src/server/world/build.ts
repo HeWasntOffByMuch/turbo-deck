@@ -37,7 +37,7 @@ import { spawnPointsFrom, type SpawnPoint } from './spawners.js';
  * in the table. Deduplicated, because three of the four monsters are within a
  * couple of units of each other and a grid is per radius.
  */
-const ROUTING_RADII: readonly number[] = Array.from(
+export const ROUTING_RADII: readonly number[] = Array.from(
   new Set<number>([SERVER_PLAYER_RADIUS, ...ALL_MONSTERS.map((m) => m.radius)]),
 );
 

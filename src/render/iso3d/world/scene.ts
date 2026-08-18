@@ -36,7 +36,14 @@ import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-m
 import { StaggerFlinches } from './stagger-flinch.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
-import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
+import type { PerfFlags } from './perf-flags.js';
+import {
+  buildPropField,
+  FLAT_SHADING,
+  type PropFieldHandle,
+  type PropRect,
+  type PropShading,
+} from '../props.js';
 import { type HikeSettings } from '../hike.js';
 import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
 import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
@@ -585,6 +592,12 @@ export class WorldScene {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
     this.renderer.setPixelRatio(1);
+    // Counted per *frame* rather than per `render` call (spec 165 follow-up 7).
+    // This frame draws the world more than once -- the shadow maps, the hike
+    // buffers, then the picture -- and three resets its counters at the top of
+    // every `render`, so the default reading is whichever pass happened to go
+    // last. What anybody debugging a frame rate wants is the total.
+    this.renderer.info.autoReset = false;
     // Hard, unfiltered shadows (spec 045): one depth comparison per pixel, so an
     // edge is a step rather than a gradient -- the only kind that belongs in a
     // posterized frame.
@@ -779,6 +792,21 @@ export class WorldScene {
     DETAIL_UNIFORMS.uBlendNoise.value = hike.blendNoise;
   }
 
+  /**
+   * Contributors taken out of the frame for measuring (spec 165 follow-up 9).
+   *
+   * Held rather than applied once, because `applySun` rewrites `castShadow`
+   * every frame from the day/night state -- a one-shot assignment would be
+   * overwritten by the next frame and the measurement would quietly be of the
+   * baseline.
+   */
+  private perf: PerfFlags = { noShadow: false, noProps: false, noTerrain: false, any: false };
+
+  /** Take contributors out of the frame. See {@link PerfFlags}. */
+  setPerfFlags(flags: PerfFlags): void {
+    this.perf = flags;
+  }
+
   /** Ground height, or 0 before there is any ground to ask about. */
   private ground(x: number, z: number): number {
     return this.map?.world.heightAt(x, z) ?? 0;
@@ -805,10 +833,14 @@ export class WorldScene {
    * Rebuild the instanced prop field from everything held.
    *
    * Deliberately *not* per chunk. One instanced mesh per species over the whole
-   * map is a handful of draw calls; one per chunk would be 56 times that, every
-   * frame, forever -- trading a startup cost for a permanent one. So the caller
-   * calls this when the chunk stream goes quiet, which costs one pass over
-   * ~1150 props, the same single pass the pre-streaming build did.
+   * map is a handful of draw calls; one per chunk would be 210 times that, every
+   * frame, forever -- trading a startup cost for a permanent one.
+   *
+   * This is the whole-field version, and it is now the *rare* one: it is for a
+   * shading change, which rebakes every normal in the world and so genuinely has
+   * no smaller unit. A chunk arriving wants {@link refreshPropsWithin} instead.
+   * On the grown map a full pass is ~6900 props and the streaming client used to
+   * pay for one between every pair of deltas (spec 165).
    */
   refreshProps(): void {
     if (!this.map || !this.propField) return;
@@ -819,9 +851,58 @@ export class WorldScene {
     this.propField.dispose();
     this.propField = buildPropField(props, heightAt, undefined, this.propShading);
     this.scene.add(this.propField.group);
+    this.unwalkableStale = true;
+  }
 
+  /**
+   * Rebuild only the batching regions overlapping a world rectangle (spec 165).
+   *
+   * The seam is spec 086's: the prop field is already grouped into 1100-unit
+   * regions so the camera can cull them, and `rebuildWithin` makes that grouping
+   * the unit of invalidation too. The editor's brush has used it since 086; the
+   * streaming client is what never did, and rebuilt the world's trees on every
+   * pump of the chunk stream instead.
+   *
+   * The props list handed down is the full current one -- the region re-buckets
+   * itself from it, so the caller only has to know which *ground* changed, which
+   * is the one thing a chunk arrival actually knows.
+   */
+  refreshPropsWithin(rects: PropRect | readonly PropRect[]): void {
+    if (!this.map || !this.propField) return;
+    if (Array.isArray(rects) && rects.length === 0) return;
+    this.propField.rebuildWithin(this.map.props(), rects);
+    this.unwalkableStale = true;
+  }
+
+  /**
+   * Whether the unwalkable overlay owes a rebuild before it is next shown.
+   *
+   * The overlay is a debug switch in the tuning panel and is off in every played
+   * session, but it used to be rebuilt inside `refreshProps` regardless: two
+   * `InstancedMesh`es over every vegetation collider in the world, one `heightAt`
+   * apiece at 5.6us a call. On the grown map that is ~78ms per refresh spent
+   * drawing something nobody asked to see (spec 165).
+   *
+   * So it is built on the frame it is first shown and not before. The flag is
+   * what carries "the world moved under it while you were not looking" across to
+   * that frame.
+   */
+  private unwalkableStale = true;
+
+  /**
+   * Build the unwalkable overlay if it is being shown and owes a rebuild.
+   *
+   * Called from the frame, after the panel has been read. Costs two comparisons
+   * in the session where the switch is off, which is all of them.
+   */
+  private syncUnwalkable(visible: boolean): void {
+    this.unwalkable.visible = visible;
+    if (!visible || !this.unwalkableStale || !this.map) return;
+    this.unwalkableStale = false;
     this.unwalkable.clear();
-    this.unwalkable.add(makeUnwalkableField(vegetationColliders(props), heightAt));
+    this.unwalkable.add(
+      makeUnwalkableField(vegetationColliders(this.map.props()), (x, z) => this.ground(x, z)),
+    );
   }
 
   /**
@@ -1019,6 +1100,7 @@ export class WorldScene {
   }
 
   render(view: ClientView, frame: FrameInfo): void {
+    this.renderer.info.reset();
     this.resize();
     const dt = Math.min(0.05, Math.max(0, frame.dt));
     this.elapsed += dt;
@@ -1147,6 +1229,21 @@ export class WorldScene {
       if (hike.edges) this.drawEdges(hike, false);
     }
     unsnap?.();
+  }
+
+  /**
+   * What the last frame actually submitted, across every pass.
+   *
+   * For the frame-rate readout and for nothing else. A draw-call count is the
+   * first thing worth knowing when a frame is slow and no loader is running:
+   * it separates "the scene is too big" from "the scene is drawn too often",
+   * and those have nothing in common as problems.
+   */
+  renderStats(): { calls: number; triangles: number } {
+    return {
+      calls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+    };
   }
 
   dispose(): void {
@@ -2305,12 +2402,17 @@ export class WorldScene {
     }
 
     this.applySun();
-    this.unwalkable.visible = this.controls.showUnwalkable();
+    this.syncUnwalkable(this.controls.showUnwalkable());
+    // Applied per frame, beside the switches that own these objects the rest of
+    // the time: the prop field is replaced whenever a region rebuilds, and the
+    // terrain group outlives every chunk, so a one-shot hide would come back.
+    if (this.perf.noProps && this.propField) this.propField.group.visible = false;
+    if (this.perf.noTerrain && this.terrainMesh) this.terrainMesh.group.visible = false;
   }
 
   private applySun(): void {
     const shadow = this.controls.dayNightEnabled() ? this.applyCycleSun() : this.applyManualSun();
-    this.sun.castShadow = shadow.casting;
+    this.sun.castShadow = shadow.casting && !this.perf.noShadow;
 
     const frame = shadowFrame(this.halfWidth);
     this.sun.target.position.copy(this.target);

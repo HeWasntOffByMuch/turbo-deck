@@ -134,8 +134,14 @@ describe('the world edge follows the map', () => {
   it('spans the shipped map rather than the old constant', () => {
     const shipped = parseMap(readFileSync('maps/arena.json', 'utf8'));
     const bounds = worldBoundsOf(shipped);
-    expect(bounds.x).toBe(-1600);
-    expect(bounds.w).toBe(4400);
-    expect(bounds.h).toBe(4100);
+    const declared = shipped.layers[0]?.bounds;
+    expect(declared).toBeDefined();
+    if (!declared) return;
+    expect(bounds.x).toBe(declared.minX);
+    expect(bounds.y).toBe(declared.minZ);
+    expect(bounds.w).toBe(declared.maxX - declared.minX);
+    expect(bounds.h).toBe(declared.maxZ - declared.minZ);
+    // And it is not just the old constant carried forward unread.
+    expect(bounds).not.toEqual(WORLD_BOUNDS);
   });
 });

@@ -83,13 +83,20 @@ export class MapChunkCache {
     return this.chunks.size;
   }
 
-  /** The chunk coordinates a world point falls in, within one layer's grid. */
+  /**
+   * The chunk coordinates a world point falls in, within one layer's grid.
+   *
+   * Measured from the layer's `origin`, not `bounds.min` -- the two move
+   * independently once the map has grown west or north of where it was first
+   * baked (spec 083), and `origin` is exactly what was sent so a client would
+   * not have to guess.
+   */
   coordsAt(layer: number, x: number, z: number): { cx: number; cz: number } | null {
     const info = this.info.layers[layer];
     if (!info) return null;
     return {
-      cx: Math.floor((x - info.bounds.minX) / this.chunkExtent),
-      cz: Math.floor((z - info.bounds.minZ) / this.chunkExtent),
+      cx: Math.floor((x - info.origin.x) / this.chunkExtent),
+      cz: Math.floor((z - info.origin.z) / this.chunkExtent),
     };
   }
 

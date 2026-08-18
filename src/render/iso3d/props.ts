@@ -1482,6 +1482,14 @@ export function crownRadius(species: TreeSpecies): number {
   return shape.tiers.reduce((wide, [radius]) => Math.max(wide, radius), 0);
 }
 
+/** A world-space rectangle, as {@link PropFieldHandle.rebuildWithin} reads one. */
+export interface PropRect {
+  readonly minX: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxZ: number;
+}
+
 export interface PropFieldHandle {
   readonly group: THREE.Group;
   /**
@@ -1506,8 +1514,15 @@ export interface PropFieldHandle {
    *
    * `props` is the full, current list: the region is re-bucketed from it, so a
    * caller never has to work out which props belong where.
+   *
+   * Several rectangles may be given at once (spec 165). That is not a
+   * convenience: re-bucketing is a pass over every prop in the world, so a
+   * streaming client with eight scattered regions to redraw would pay for eight
+   * of them -- and merging them into one bounding box instead would redraw every
+   * region in between, which on a cold start is the whole map. One pass, the
+   * union of the regions the rectangles touch.
    */
-  rebuildWithin(props: readonly Prop[], rect: { minX: number; minZ: number; maxX: number; maxZ: number }): void;
+  rebuildWithin(props: readonly Prop[], rect: PropRect | readonly PropRect[]): void;
   dispose(): void;
 }
 
@@ -1884,14 +1899,33 @@ export function buildPropField(
     group,
     undrawn: countUndrawn(props),
     rebuildWithin(next, rect): void {
-      const lo = propRegionKey(rect.minX, rect.minZ).split(',').map(Number) as [number, number];
-      const hi = propRegionKey(rect.maxX, rect.maxZ).split(',').map(Number) as [number, number];
+      const rects = Array.isArray(rect) ? (rect as readonly PropRect[]) : [rect as PropRect];
       const wanted = new Set<string>();
-      for (let rz = lo[1]; rz <= hi[1]; rz++) {
-        for (let rx = lo[0]; rx <= hi[0]; rx++) wanted.add(`${rx},${rz}`);
+      for (const one of rects) {
+        const lo = propRegionKey(one.minX, one.minZ).split(',').map(Number) as [number, number];
+        const hi = propRegionKey(one.maxX, one.maxZ).split(',').map(Number) as [number, number];
+        for (let rz = lo[1]; rz <= hi[1]; rz++) {
+          for (let rx = lo[0]; rx <= hi[0]; rx++) wanted.add(`${rx},${rz}`);
+        }
+      }
+      if (wanted.size === 0) return;
+
+      // Bucketed over the *wanted* regions only (spec 165 follow-up). A full
+      // `bucketize` builds a list for all 66 regions of the grown map to read
+      // the handful being rebuilt, and pays it again for `countUndrawn` -- which
+      // is the fixed cost that made rebuilding one region nearly as expensive as
+      // rebuilding four.
+      const fresh = new Map<string, Prop[]>();
+      let undrawn = 0;
+      for (const prop of next) {
+        if (!DRAWN_KINDS.has(prop.kind)) undrawn++;
+        const key = propRegionKey(prop.x, prop.y);
+        if (!wanted.has(key)) continue;
+        const bucket = fresh.get(key);
+        if (bucket) bucket.push(prop);
+        else fresh.set(key, [prop]);
       }
 
-      const fresh = bucketize(next);
       for (const key of [...wanted].sort()) {
         const region = regions.get(key);
         if (region) {
@@ -1903,7 +1937,7 @@ export function buildPropField(
         // rebuilt as nothing, so the scene graph does not fill with empty groups.
         if (bucket && bucket.length > 0) buildRegion(key, bucket);
       }
-      handle.undrawn = countUndrawn(next);
+      handle.undrawn = undrawn;
     },
     dispose(): void {
       for (const region of regions.values()) disposeRegion(region);
