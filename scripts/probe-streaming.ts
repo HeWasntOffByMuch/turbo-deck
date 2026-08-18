@@ -27,6 +27,16 @@
 import { chromium, type Page } from 'playwright';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
+import { existsSync } from 'node:fs';
+
+/** The container's browser, and software GL: there is no GPU here. */
+const CHROMIUM_PATH = process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium';
+const CHROMIUM_ARGS = [
+  '--use-gl=angle',
+  '--use-angle=swiftshader',
+  '--enable-unsafe-swiftshader',
+  '--ignore-gpu-blocklist',
+];
 
 const PORT = Number(process.env['PORT'] ?? 8811);
 const PAGE_PORT = Number(process.env['PAGE_PORT'] ?? 4321);
@@ -67,6 +77,8 @@ function stop(child: ChildProcess | null): void {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 async function refuseIfTaken(port: number): Promise<void> {
+  // Checked for the page server as well as the game server: a leaked page
+  // server is just as capable of making a run measure the previous build.
   // The lesson probe-admin-console.ts records: a run that connects to the
   // previous run's leaked server reports green while measuring older code.
   const alive = await fetch(`http://127.0.0.1:${port}/`).then(
@@ -98,6 +110,7 @@ async function counts(page: Page): Promise<Counts> {
 
 async function main(): Promise<void> {
   await refuseIfTaken(PORT);
+  await refuseIfTaken(PAGE_PORT);
   const server = run('src/server/index.ts', { PORT: String(PORT), TICK_RATE: '60' });
 
   // Serve the built page, exactly as preview-world.ts does: what is measured
@@ -128,7 +141,10 @@ async function main(): Promise<void> {
   });
   await new Promise<void>((resolve) => pages.listen(PAGE_PORT, resolve));
 
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({
+    args: CHROMIUM_ARGS,
+    ...(existsSync(CHROMIUM_PATH) ? { executablePath: CHROMIUM_PATH } : {}),
+  });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -141,6 +157,7 @@ async function main(): Promise<void> {
     await sleep(9000);
 
     const url = `http://127.0.0.1:${PAGE_PORT}/?server=ws://127.0.0.1:${PORT}`;
+    console.log(`  loading ${url}`);
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     // While the gate is shut the canvas must not be showing the world.
@@ -156,6 +173,7 @@ async function main(): Promise<void> {
       await sleep(500);
     }
     check('the loading screen covered the world before it was ready', sawOverlayBeforeReady);
+    console.log(`  counts at the gate: ${JSON.stringify(await counts(page))}`);
 
     await page.waitForSelector('[data-world-ready]', { timeout: 90_000 });
     console.log('  world ready');
@@ -186,15 +204,25 @@ async function main(): Promise<void> {
     }
   } finally {
     await browser.close();
+    // `close()` alone waits for keep-alive sockets the browser left behind, and
+    // a probe that has finished its checks but will not exit reads exactly like
+    // a probe that hung -- which is how the first run of this one was read.
+    pages.closeAllConnections();
     pages.close();
     stop(server);
   }
 
   console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);
-  process.exitCode = failures === 0 ? 0 : 1;
+  // Explicit, for the same reason: neither the server child nor a stray handle
+  // may hold this process open once the answer is known.
+  process.exit(failures === 0 ? 0 : 1);
 }
 
 main().catch((error: unknown) => {
   console.error(error);
-  process.exitCode = 1;
+  // Hard exit on the failure path too. The page server and the spawned game
+  // server are both live handles, so a probe that throws on its way in stays
+  // resident holding its ports -- and the *next* run then dies on EADDRINUSE
+  // instead of telling anybody what went wrong the first time.
+  process.exit(1);
 });

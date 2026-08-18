@@ -437,3 +437,21 @@ invisible to every headless test in the suite.
 
 `chunk-ingest.test.ts` also pins the contract directly -- what `takeMesh` hands
 back, the caller owns, and the queue no longer holds.
+
+### The probe, verified against the bug it exists for
+
+A harness nobody has watched fail is a harness nobody should trust, so the drop
+was put back on purpose and the probe run against it:
+
+| | chunks held | chunks drawn |
+|---|---|---|
+| with the `break` restored | 40 | **26** |
+| with it removed | 39 | 39 |
+
+Fourteen chunks of ground silently absent, which is what the report looked like
+on screen. Two other things the probe learned about itself in the same session,
+both recorded in its header: it must hard-exit on the failure path as well as
+the success one -- a throw on the way in left it resident holding both ports,
+and the *next* run then died on `EADDRINUSE` instead of reporting the original
+fault -- and it must refuse a page port that already answers for the same reason
+`probe-admin-console.ts` refuses a busy game port.
