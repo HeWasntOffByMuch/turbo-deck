@@ -22,6 +22,13 @@
  * runs the negative case first, so "Escape restores a carry" is measured on this
  * build rather than assumed.
  *
+ * Since the drop became an *aimed* action it proves one more thing, and it
+ * proves it by waiting: the item leaves the bag only once the body has turned to
+ * the point that was clicked, and a turn that never lands is refused after
+ * `DROP_TURN_TIMEOUT_TICKS` with the item put back. So the last look here is
+ * taken well past that timeout -- a cell still empty three seconds later is a
+ * body that came round and a server that agreed, and nothing else.
+ *
  * Serves `dist/` rather than the dev server, so what is probed is what ships.
  * Prints a summary and exits non-zero on any problem.
  */
@@ -141,6 +148,25 @@ async function filledCell(page: Page): Promise<number> {
   return (await cellNames(page)).findIndex((name) => name !== '');
 }
 
+/**
+ * Wait until cell `index` reads `want`, and say whether it ever did.
+ *
+ * Polled rather than slept against, and that is not tidiness: this environment
+ * paints the real page at about five frames a second under software GL, and the
+ * bag's readout is published from the frame. A fixed 200ms wait is *less than
+ * one frame* here, so a check made against it reads the state before the click
+ * it is checking -- which is exactly how the first version of this probe
+ * reported a working drop as a failure.
+ */
+async function waitForCell(page: Page, index: number, want: string, timeoutMs = 6000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (((await cellNames(page))[index] ?? '') === want) return true;
+    await page.waitForTimeout(120);
+  }
+  return false;
+}
+
 async function main(): Promise<void> {
   const problems: string[] = [];
 
@@ -191,12 +217,11 @@ async function main(): Promise<void> {
 
     // --- the control: a carry Escape puts back -----------------------------
     await clickUi(page, onCell);
-    if (((await cellNames(page))[index] ?? '') !== '') {
+    if (!(await waitForCell(page, index, ''))) {
       problems.push('clicking a cell did not take the item out of it');
     }
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
-    if (((await cellNames(page))[index] ?? '') !== held) {
+    if (!(await waitForCell(page, index, held))) {
       problems.push(`Escape did not put ${held} back in cell ${index}`);
     } else {
       console.log('  a carry cancelled with Escape goes back in its cell');
@@ -204,27 +229,32 @@ async function main(): Promise<void> {
 
     // --- the measurement ---------------------------------------------------
     await clickUi(page, onCell);
+    if (!(await waitForCell(page, index, ''))) {
+      problems.push('the second pick-up never happened');
+    }
     await clickUi(page, onWorld);
-    // Escape after the drop: if it were still in hand this would put it back,
-    // and the cell would fill. It must not.
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(600);
 
+    // Past the turn timeout with the bag still open, because everything that
+    // would undo this arrives as an `Inventory` from the server: a refusal read
+    // too early reads exactly like an acceptance, and a drop whose turn never
+    // landed is refused two seconds after the press rather than at it.
+    await page.waitForTimeout(2600);
+    if (((await cellNames(page))[index] ?? '') !== '') {
+      problems.push(`the server put ${held} back -- the drop was refused, or its turn never landed`);
+    } else {
+      console.log(`  a press on the world put ${held} down, and the server agreed`);
+    }
+
+    // Escape last, and this is the control doing its work: an item still in hand
+    // goes back in its cell -- whether Escape cancels the carry or closing the
+    // bag does -- and an item on the ground cannot come back.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(1200);
     const after = (await cellNames(page))[index] ?? '';
     if (after !== '') {
       problems.push(`${held} came back to cell ${index} -- it was never put down (cell holds "${after}")`);
     } else {
-      console.log(`  a press on the world put ${held} down: cell ${index} is empty and stays empty`);
-    }
-
-    // A second look a moment later, because the rollback that would undo this is
-    // an `Inventory` from the server and it travels at the speed of the wire: a
-    // refusal read too early reads exactly like an acceptance.
-    await page.waitForTimeout(1200);
-    if (((await cellNames(page))[index] ?? '') !== '') {
-      problems.push(`the server put ${held} back a moment later -- the drop was refused`);
-    } else {
-      console.log('  ...and the server agreed: a second later it is still gone');
+      console.log('  ...and it was not simply still in hand: cell stays empty through Escape');
     }
   } finally {
     await browser.close();
