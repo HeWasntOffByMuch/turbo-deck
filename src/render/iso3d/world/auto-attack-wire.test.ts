@@ -25,7 +25,7 @@ import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../../../server/config.j
 import { abilityById } from '../../../server/data/abilities.js';
 import { CastPhaseValue } from '../../../server/net/protocol.js';
 import { castBar } from './cast.js';
-import { facesAim } from '../../../server/sim/abilities.js';
+import { attackTimingFor, facesAim } from '../../../server/sim/abilities.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
 import { turnToward } from '../../../server/sim/movement.js';
@@ -510,8 +510,16 @@ async function twoShots(): Promise<{
       targetId = [...live.values()].find((e) => e.id !== view.selfEntityId)?.id ?? null;
       orderedAt = ticks;
       facing = self.facing;
-      windupTicks = abilityById('ranged.shot')?.windupTicks ?? 0;
-      delayTicks = view.stats.baseAttackTimeTicks;
+      // Both budgets come from the *resolved* timing rather than from the
+      // ability's authored wind-up and the bare BAT (spec 173). The bow says
+      // `attackSpeedPct: -0.1` and that now reaches the factor, which divides
+      // the interval and the attack point alike -- so reading either number raw
+      // is measuring the body against a clock it is not running on. Through
+      // `attackTimingFor`, so this asks the same function the sim answers with.
+      const shot = abilityById('ranged.shot');
+      const timing = shot ? attackTimingFor(shot, { stats: view.stats }) : null;
+      windupTicks = timing?.attackPointTicks ?? 0;
+      delayTicks = timing?.intervalTicks ?? view.stats.baseAttackTimeTicks;
       // Half a revolution at this body's own rate, in ticks.
       turnTicks = Math.ceil(180 / (view.stats.turnRate / SERVER_TICK_RATE));
       continue;

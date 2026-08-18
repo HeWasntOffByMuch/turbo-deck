@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { MemoryDataStore } from '../state/memory-store.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { abilityById, ALL_ABILITIES } from '../data/abilities.js';
-import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../state/types.js';
+import { ALL_ITEMS } from '../data/items.js';
+import {
+  EMPTY_EQUIPMENT,
+  emptyInventory,
+  type EffectiveStats,
+  type PersistedPlayer,
+} from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { CHARACTERS, type Character } from '../../sim/characters.js';
 import {
@@ -11,7 +17,14 @@ import {
   TURN_RATE_PER_AGILITY,
 } from '../../sim/constants.js';
 import { PlayerManager, STARTER_EQUIPMENT } from './player-manager.js';
-import { resolveAttackTiming, NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import {
+  MAX_ATTACK_SPEED_FACTOR,
+  MIN_ATTACK_SPEED_FACTOR,
+  NO_ATTACK_SPEED,
+  resolveAttackTiming,
+  type AttackTiming,
+} from '../sim/attack-timing.js';
+import { attackTimingFor } from '../sim/abilities.js';
 import {
   baseAttackTimeTicksFrom,
   BASE_ATTACK_TIME_TICKS,
@@ -45,17 +58,45 @@ function computeDelayWith(pct: number): number {
   ).intervalTicks;
 }
 
-/** The attack interval a set of effective stats resolves to, at base. */
-function intervalOf(stats: { readonly baseAttackTimeTicks: number }): number {
+/**
+ * The attack interval a set of effective stats resolves to.
+ *
+ * Takes the stats' own attack-speed inputs rather than `NO_ATTACK_SPEED`
+ * (spec 173). It used to hardcode the latter, which was harmless while nothing
+ * fed the three fields and would have quietly made every "this does not change
+ * the cadence" assertion below vacuous the moment something did.
+ */
+function intervalOf(stats: EffectiveStats): number {
   return resolveAttackTiming(
     {
       baseAttackTimeTicks: stats.baseAttackTimeTicks,
       baseAttackPointTicks: 1,
       baseAttackBackswingTicks: 0,
     },
-    NO_ATTACK_SPEED,
+    stats,
     SERVER_TICK_RATE,
   ).intervalTicks;
+}
+
+/**
+ * Every span of the basic attack these stats actually swing with (spec 173).
+ *
+ * Through `attackTimingFor` and the *equipped* weapon's ability, because the
+ * whole point of the feature is that one factor reaches the interval, the
+ * wind-up and the backswing together -- a helper that only returned the
+ * interval could not tell that apart from a cadence change.
+ */
+function timingOf(stats: EffectiveStats): AttackTiming {
+  const ability = abilityById(stats.basicAttackId);
+  if (!ability) throw new Error(`no such basic attack: ${stats.basicAttackId}`);
+  return attackTimingFor(ability, { stats });
+}
+
+/** The stats of a body holding `mainHand`, or of a bare one when absent. */
+function statsHolding(mainHand?: string): EffectiveStats {
+  return computeEffectiveStats(
+    player(mainHand ? { equipment: { ...EMPTY_EQUIPMENT, mainHand } } : {}),
+  );
 }
 
 function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
@@ -213,7 +254,13 @@ describe('effective stats', () => {
       player({ baseStats: { strength: 5, agility: 500, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 } }),
     );
     expect(quick.baseAttackTimeTicks).toBe(slow.baseAttackTimeTicks);
+    // All three inputs, not just the flat one (spec 173). Now that content can
+    // move them, "no attribute reaches the cadence" has to be checked against
+    // every field the factor is built from.
     expect(quick.attackSpeed).toBe(slow.attackSpeed);
+    expect(quick.attackSpeedMultiplier).toBe(slow.attackSpeedMultiplier);
+    expect(quick.attackSpeedSlowMultiplier).toBe(slow.attackSpeedSlowMultiplier);
+    expect(intervalOf(quick)).toBe(intervalOf(slow));
     // Unhooked from cadence rather than deleted: it still does everything else
     // it did, which is what makes this a change of meaning and not a nerf.
     expect(quick.armor).toBeGreaterThan(slow.armor);
@@ -234,18 +281,117 @@ describe('effective stats', () => {
     expect(quick.traits.backswingScale).toBeLessThan(slow.traits.backswingScale);
   });
 
-  it('does not let the weapon change the attack cadence (spec 091)', () => {
-    const bare = computeEffectiveStats(player());
-    const delayWith = (mainHand: string): number =>
-      intervalOf(computeEffectiveStats(player({ equipment: { ...EMPTY_EQUIPMENT, mainHand } })));
-
-    // The cadence is a property of attacking, not of what is held: a bow, a
-    // maul and a bare hand are all on the same clock. `attackSpeedPct` still
-    // exists and still means percent faster -- nothing reads it for *this*.
-    for (const weapon of ['sword.keen', 'stars.weighted', 'maul.iron', 'bow.hunting']) {
-      expect(delayWith(weapon), weapon).toBe(intervalOf(bare));
+  it('lets the weapon set the attack speed again (spec 173)', () => {
+    // Spec 091 took this off the weapon and spec 144 rebuilt the socket without
+    // plugging anything into it, which left four rows in `data/items.ts`
+    // authoring an `attackSpeedPct` that reached nothing at all. The factor is
+    // exactly what the row says, in the bucket its sign belongs to.
+    for (const [weapon, pct] of [
+      ['sword.keen', 0.15],
+      ['stars.weighted', 0.2],
+      ['maul.iron', -0.2],
+      ['bow.hunting', -0.1],
+    ] as const) {
+      const stats = statsHolding(weapon);
+      expect(timingOf(stats).factor, weapon).toBeCloseTo(1 + pct, 9);
+      expect(stats.attackSpeedMultiplier, weapon).toBeCloseTo(pct > 0 ? 1 + pct : 1, 9);
+      expect(stats.attackSpeedSlowMultiplier, weapon).toBeCloseTo(pct < 0 ? 1 + pct : 1, 9);
+      // The BAT itself never moves -- the factor divides it (spec 144).
+      expect(stats.baseAttackTimeTicks, weapon).toBe(BASE_ATTACK_TIME_TICKS);
     }
+
+    // And a weapon that says nothing about speed still says nothing.
+    const bare = computeEffectiveStats(player());
     expect(bare.baseAttackTimeTicks).toBe(BASE_ATTACK_TIME_TICKS);
+    for (const quiet of ['sword.worn', 'staff.emberwood']) {
+      expect(timingOf(statsHolding(quiet)).factor, quiet).toBe(1);
+      expect(intervalOf(statsHolding(quiet)), quiet).toBe(intervalOf(bare));
+    }
+  });
+
+  it('scales the wind-up and the recovery with the interval, not just the wait (spec 173)', () => {
+    // The property the whole feature rests on. A faster weapon that only came
+    // round again sooner would make the *pause* the stat rather than the blow,
+    // which is the opposite of what spec 065 built the commitment around.
+    const bare = timingOf(computeEffectiveStats(player()));
+
+    const keen = timingOf(statsHolding('sword.keen'));
+    expect(keen.intervalTicks).toBeLessThan(bare.intervalTicks);
+    expect(keen.attackPointTicks).toBeLessThan(bare.attackPointTicks);
+    expect(keen.backswingTicks).toBeLessThan(bare.backswingTicks);
+    expect(keen.attacksPerSecond).toBeGreaterThan(bare.attacksPerSecond);
+
+    const maul = timingOf(statsHolding('maul.iron'));
+    expect(maul.intervalTicks).toBeGreaterThan(bare.intervalTicks);
+    expect(maul.attackPointTicks).toBeGreaterThan(bare.attackPointTicks);
+    expect(maul.backswingTicks).toBeGreaterThan(bare.backswingTicks);
+
+    // All three divided by the *same* factor, each landing on its own tick.
+    // Stated as the rounding rather than as a tolerance, because "within one
+    // tick" is also true of two spans scaled by two different numbers.
+    for (const timing of [keen, maul]) {
+      expect(timing.intervalTicks).toBe(Math.round(bare.intervalTicks / timing.factor));
+      expect(timing.attackPointTicks).toBe(Math.round(bare.attackPointTicks / timing.factor));
+      expect(timing.backswingTicks).toBe(Math.round(bare.backswingTicks / timing.factor));
+    }
+
+    // The numbers spec 173 quotes, so a retune of the four rows shows up here
+    // as a diff rather than as a table that silently stopped describing them.
+    expect(keen.intervalTicks).toBe(63);
+    expect(keen.attackPointTicks).toBe(26);
+    expect(keen.backswingTicks).toBe(21);
+    expect(maul.intervalTicks).toBe(90);
+    expect(maul.attackPointTicks).toBe(38);
+    expect(maul.backswingTicks).toBe(30);
+  });
+
+  it('leaves a non-basic ability alone however fast the weapon is (spec 173)', () => {
+    // `attackTimingFor` passes NO_ATTACK_SPEED for anything without
+    // `basicAttack`, so a quick weapon buys a quick swing and never a quick
+    // heavy blow: a heavy ability is slow because it is slow (spec 144).
+    const heavy = ALL_ABILITIES.find((ability) => !ability.basicAttack && ability.windupTicks > 0);
+    if (!heavy) throw new Error('the table needs a non-basic ability for this to mean anything');
+    const bare = attackTimingFor(heavy, { stats: computeEffectiveStats(player()) });
+    const quick = attackTimingFor(heavy, { stats: statsHolding('stars.weighted') });
+    expect(quick.factor).toBe(1);
+    expect(quick.attackPointTicks).toBe(bare.attackPointTicks);
+    expect(quick.intervalTicks).toBe(bare.intervalTicks);
+  });
+
+  it('keeps every row in the table on a sane factor (spec 173)', () => {
+    // Swept over the real table rather than over one weapon, because this is
+    // the check that a row added tomorrow cannot put a NaN on the wire or an
+    // absurd number past the clamp. The three inputs are replicated, so a
+    // non-finite one is a client dividing durations by it.
+    for (const item of ALL_ITEMS) {
+      if (!item.slot) continue;
+      const stats = computeEffectiveStats(
+        player({ equipment: { ...EMPTY_EQUIPMENT, [item.slot]: item.id } }),
+      );
+      for (const value of [
+        stats.attackSpeed,
+        stats.attackSpeedMultiplier,
+        stats.attackSpeedSlowMultiplier,
+      ]) {
+        expect(Number.isFinite(value), item.id).toBe(true);
+      }
+      const factor = timingOf(stats).factor;
+      expect(factor, item.id).toBeGreaterThanOrEqual(MIN_ATTACK_SPEED_FACTOR);
+      expect(factor, item.id).toBeLessThanOrEqual(MAX_ATTACK_SPEED_FACTOR);
+      // Only a row that says something about speed moves it.
+      expect(factor === 1, item.id).toBe((item.modifiers.attackSpeedPct ?? 0) === 0);
+    }
+  });
+
+  it('lets a flat cooldown modifier reach the base attack time (spec 173)', () => {
+    // `baseAttackTimeTicksFrom` exists to take this argument and every caller
+    // was passing a literal 0, which is what let the whole socket sit unread.
+    // Nothing authors the field yet, so the check is on the function.
+    expect(baseAttackTimeTicksFrom(30)).toBe(BASE_ATTACK_TIME_TICKS + 30);
+    expect(baseAttackTimeTicksFrom(-30)).toBe(BASE_ATTACK_TIME_TICKS - 30);
+    // And it changes the interval without touching the swing, which is the
+    // difference between it and `attackSpeedPct`.
+    expect(computeEffectiveStats(player()).baseAttackTimeTicks).toBe(BASE_ATTACK_TIME_TICKS);
   });
 
   it('does not let a skill change it either (specs 091, 147)', () => {
