@@ -238,6 +238,44 @@ describe('a trade over the wire', () => {
     expect(h.ben.endedTrade?.reason).toContain('too far apart');
   });
 
+  /**
+   * The ending has to reach the *view*, because the view is all the interface
+   * reads (spec 134). `endedTrade` existed as a getter for two specs and no
+   * screen could see it -- so the window sat frozen on the last live frame with
+   * a Cancel button for a trade the server had already forgotten.
+   */
+  it('carries the ending in the view, until it is dismissed', async () => {
+    const h = await harness();
+    await open(h);
+    h.ben.cancelTrade();
+    await settle();
+
+    const view = h.ana.view();
+    expect(view.trade).toBeNull();
+    expect(view.endedTrade?.stage).toBe(TradeStageValue.Cancelled);
+
+    // The one piece of trade state a client may drop on its own: the trade is
+    // already gone at the server, so there is nothing here to disagree with.
+    h.ana.dismissEndedTrade();
+    expect(h.ana.view().endedTrade).toBeNull();
+  });
+
+  /**
+   * ...and a new trade clears the last one's ending, or the window falls back
+   * to the previous reason the moment this trade ends.
+   */
+  it('clears a stale ending when a new trade starts', async () => {
+    const h = await harness();
+    await open(h);
+    h.ben.cancelTrade();
+    await settle();
+    expect(h.ana.view().endedTrade).not.toBeNull();
+
+    await open(h);
+    expect(h.ana.view().endedTrade).toBeNull();
+    expect(h.ana.view().trade?.stage).toBe(TradeStageValue.Open);
+  });
+
   it('is still open while they are still close', async () => {
     const h = await harness();
     await open(h);
