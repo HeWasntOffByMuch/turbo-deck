@@ -100,6 +100,7 @@ import {
 } from './combat.js';
 import { attackTimingFor } from '../sim/abilities.js';
 import { NO_ATTACK_SPEED, resolveAttackTiming } from '../sim/attack-timing.js';
+import { staggered } from '../sim/poise.js';
 import type { CastState } from '../sim/types.js';
 
 export interface WelcomeInfo {
@@ -372,6 +373,17 @@ export interface ClientView {
    * a player choosing to stand still.
    */
   readonly selfRoot: { readonly x: number; readonly y: number } | null;
+  /**
+   * True while a poise break holds this body (spec 168).
+   *
+   * Beside {@link selfRoot} and answering the neighbouring question, because
+   * the two are different states with the same consequence: one is a commitment
+   * this client made and can call off, the other is something done to it that
+   * it can only wait out. Published rather than recomputed by the renderer, so
+   * the rule lives once in the sim's own `staggered` and a screen cannot come
+   * to a different answer than the server about whether a button should ask.
+   */
+  readonly selfStaggered: boolean;
   /**
    * True while a request of ours has been sent and not yet answered (spec 080).
    *
@@ -808,7 +820,21 @@ export class GameClient {
     // server moved them -- a correction on every tick of the step away, and a
     // bar still draining for a blow that has been called off.
     if (Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
-    const input: PredictedInput = { ...intent, seq: this.seq };
+    // A poise break roots this body and the server has already started
+    // discarding these components (spec 168). The onset cannot be predicted --
+    // nobody knows they are about to be hit -- so the first round trip's worth
+    // of movement is sent, discarded and corrected, and that is the accepted
+    // cost. What is not accepted is continuing to send it *after* the stagger
+    // has been replicated: from that point on the client agrees with the
+    // server, and the divergence is bounded by the round trip rather than by
+    // how long the player keeps holding the key.
+    //
+    // Zeroed here rather than at the call site so it covers every caller, and
+    // the facing is left alone because the server holds it anyway -- the intent
+    // it drops is dropped whole.
+    const rooted = this.staggeredNow();
+    const intended = rooted ? { ...intent, moveX: 0, moveY: 0 } : intent;
+    const input: PredictedInput = { ...intended, seq: this.seq };
     const predicted = this.prediction.apply(input);
     this.channel.send(
       encodeClientMessage({
@@ -1232,7 +1258,31 @@ export class GameClient {
       // cooldowns above, and for the same reason: the press has to grey the
       // button out now rather than in a round trip.
       fallbackCharges: Math.max(0, this.fallbackCharges - this.predictedCharges),
+      // The stagger window, straight off the replica (spec 168). Not predicted
+      // and deliberately not: nobody knows they are about to be hit, so this is
+      // the server's word arriving a round trip late and there is nothing
+      // honest to guess in the meantime.
+      activity: self.activity,
+      activityUntilTick: self.activityUntilTick,
     };
+  }
+
+  /**
+   * Whether this client can see itself inside a poise break's window
+   * (spec 168).
+   *
+   * Asked of the replica rather than of the mirror, because the mirror is built
+   * for `startCast` and this is a movement question -- and asked through the
+   * sim's own {@link staggered}, so the client and the server cannot disagree
+   * about where the window ends.
+   */
+  private staggeredNow(): boolean {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    if (!self) return false;
+    return staggered(
+      { activity: self.activity, activityUntilTick: self.activityUntilTick },
+      this.estimated,
+    );
   }
 
   /** The cast this client will still be in at `tick`, or null if it is over. */
@@ -1591,6 +1641,7 @@ export class GameClient {
       requestedAbilityId: this.requestedAbilityId,
       cooldowns: this.visibleCooldowns(),
       selfRoot: this.selfRoot(),
+      selfStaggered: this.staggeredNow(),
       awaitingCast: this.outstandingCasts.length > 0,
       awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),

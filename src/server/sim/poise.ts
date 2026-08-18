@@ -10,6 +10,13 @@
  * dropped, its Flow gone, for `staggerTicks`. The pool then refills whole and
  * cannot be broken again for {@link SCALING.combat.staggerImmuneTicks}.
  *
+ * "Rooted" was aspirational until spec 168 and is now true: {@link staggered}
+ * is read by the movement pass and by `startCast`, so a broken body neither
+ * walks, turns nor swings for the window. Before that the flag was set and read
+ * twice in the whole server -- once for Strength's execute bonus, once to slow
+ * a regen that the break had already refilled -- so a staggered body kept
+ * walking at full speed and ended its own stagger early by casting through it.
+ *
  * That immunity window is the single most important number here. Without it two
  * Strength characters between them hold anything permanently, which is not a
  * build, it is a removal -- and a mechanic whose best use is to delete a player
@@ -28,7 +35,7 @@
 
 import { SCALING } from '../data/scaling.js';
 import type { EffectiveStats } from '../state/types.js';
-import { CastPhase, type CastState, type ServerEntity } from './types.js';
+import { ActivityValue, CastPhase, type CastState, type ServerEntity } from './types.js';
 
 export const STAGGER_IMMUNE_TICKS = SCALING.combat.staggerImmuneTicks;
 
@@ -75,6 +82,27 @@ export function poiseArmorOf(
   }
 
   return traits.windupPoiseArmor;
+}
+
+/**
+ * Whether this body is inside a poise break's window, and so not its own
+ * (spec 168).
+ *
+ * The one place "staggered" is defined, because it is asked in three: the
+ * movement pass roots the legs on it, `startCast` refuses the hands on it, and
+ * `blow.ts` reads the same state for Strength's execute bonus. Two gates that
+ * each spelled the comparison out would be two gates free to disagree about
+ * whether the last tick of the window counts.
+ *
+ * It is the same pair `expireActivity` uses to decide when the stagger is over,
+ * in the same direction, so the tick a body is let go is the tick it stops
+ * being refused rather than one either side of it.
+ */
+export function staggered(
+  entity: Pick<ServerEntity, 'activity' | 'activityUntilTick'>,
+  tick: number,
+): boolean {
+  return entity.activity === ActivityValue.Stunned && tick < entity.activityUntilTick;
 }
 
 /** Whether this body is currently immune to being broken again. */

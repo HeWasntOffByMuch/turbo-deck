@@ -1321,6 +1321,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         ? { id: entity.id, x: entity.x, y: entity.y, radius: targetRadius, health: entity.health }
         : null,
       range: swing?.range ?? 0,
+      // Something done to this body rather than by it (spec 168): while it
+      // holds, the order stands and asks for nothing.
+      staggered: view.selfStaggered,
       // Both halves of "am I committed": the server's cast and the one this
       // client has only asked for. `selfRoot` is already the union of the two.
       rooted: view.selfRoot !== null,

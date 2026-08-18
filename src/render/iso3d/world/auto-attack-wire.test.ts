@@ -199,6 +199,7 @@ async function play(options: {
           : null,
         range: swing?.range ?? 0,
         rooted: view.selfRoot !== null,
+        staggered: view.selfStaggered,
         pending: view.awaitingCast,
         readyAtTick: view.cooldowns[swingId] ?? 0,
         // The local heading, as the shipped client asks it (spec 090).
@@ -384,7 +385,28 @@ describe('a standing attack order, over a real session (spec 080)', () => {
       expect(result.kills, seen).toBeGreaterThan(2);
       expect(result.cancels, seen).toBe(result.withdrawals);
       expect(result.withdrawals, seen).toBeLessThanOrEqual(result.kills);
-      expect(result.rejects, seen).toEqual([]);
+      // Nothing refused except the one refusal that cannot be predicted
+      // (spec 168).
+      //
+      // The grazer runs above still assert `rejects` is empty outright, and
+      // this one cannot, because a stalker breaks your poise: a stagger is
+      // something done *to* this body, so the client learns about it when the
+      // next delta arrives and may ask inside that window. The gate in
+      // `target.ts` closes the window it can see -- 146 refusals per fight
+      // before it existed, a couple after -- and what is left is the broadcast
+      // interval itself, which no client-side rule can shorten.
+      //
+      // Asserted as a *reason* rather than relaxed to a count, because the
+      // property worth keeping is the original one: no ask of this loop is ever
+      // refused for a reason the client could have worked out for itself.
+      // `alreadyCasting`, `onCooldown` or `outOfRange` appearing here would be
+      // the mirror going stale, which is exactly what this guard is for.
+      expect([...new Set(result.rejects)], seen).toEqual(
+        result.rejects.length > 0 ? ['staggered'] : [],
+      );
+      // And bounded by the breaks themselves: one leaked ask per stagger is the
+      // round trip, many would mean the gate is not being consulted.
+      expect(result.rejects.length, seen).toBeLessThan(result.commits);
       // A bar for every blow, and no walking through one.
       expect(result.missing / result.ticks, seen).toBeLessThan(0.01);
       expect(result.unrooted / result.ticks, seen).toBeLessThan(0.01);
@@ -533,6 +555,7 @@ async function twoShots(): Promise<{
         : null,
       range: swing?.range ?? 0,
       rooted: view.selfRoot !== null,
+      staggered: view.selfStaggered,
       pending: view.awaitingCast,
       readyAtTick: view.cooldowns[view.stats.basicAttackId] ?? 0,
       aligned: !entity ? true : facesAim(view.self, facing, { x: entity.x, y: entity.y }),

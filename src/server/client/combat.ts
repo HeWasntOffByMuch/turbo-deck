@@ -63,6 +63,18 @@ export interface Mirror {
   /** Replicated, so the mirror may claim them. Statuses are not (spec 147). */
   readonly poise: number;
   readonly shield: number;
+  /**
+   * The stagger window, replicated on `FIELD_ACTIVITY` (spec 168).
+   *
+   * Real rather than assumed, for the same reason `fallbackCharges` is: the
+   * gate this mirror exists to ask is `startCast`, and since 168 a poise break
+   * is one of the refusals it can give. A mirror that claimed to be idle would
+   * light a button the server is about to refuse -- the mispredicted press this
+   * file exists to prevent -- and it is the one refusal the player did not
+   * cause, so it is also the one they are least ready for.
+   */
+  readonly activity: number;
+  readonly activityUntilTick: number;
   /** Replicated on its own message (spec 156), so the flask gate is predictable. */
   readonly fallbackCharges: number;
 }
@@ -89,8 +101,8 @@ export function asEntity(mirror: Mirror): ServerEntity {
     level: 1,
     zoneId: '',
     stats: mirror.stats,
-    activity: 0,
-    activityUntilTick: 0,
+    activity: mirror.activity,
+    activityUntilTick: mirror.activityUntilTick,
     radius: 0,
     targetId: null,
     aggro: AggroValue.Calm,

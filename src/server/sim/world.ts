@@ -37,7 +37,7 @@ import { FLEE_DISTANCE, notice, rally, settle } from './aggro.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
-import { regenPoise } from './poise.js';
+import { regenPoise, staggered } from './poise.js';
 import {
   applyStatus,
   clearStatus,
@@ -554,10 +554,29 @@ export function step(
     // A committed cast roots the caster. The intent still carries the facing so
     // a client's aim stays live until the moment of commit, but the movement
     // components are dropped.
-    const intent =
-      rawIntent && steered.cast !== null
-        ? { ...rawIntent, moveX: 0, moveY: 0 }
-        : rawIntent;
+    //
+    // A poise break roots harder (spec 168): the movement goes the same way,
+    // and the *facing* is pinned to where the body already points. That is the
+    // difference between the two states. A caster is still steering -- spec 067
+    // holds the aim live right up to the commit and that is the feature --
+    // where a staggered body is aiming at nothing, and one that kept tracking
+    // you through its own stagger would read as unaffected.
+    //
+    // Pinned rather than dropped, and the distinction is not cosmetic: a null
+    // intent is how this loop says "no request arrived", and `casters` below is
+    // built from exactly that. Nulling it hid the *cast request* along with the
+    // movement, so a staggered body's swing was never refused -- it was never
+    // considered, the client was never answered, and it sat waiting out
+    // `PREDICTED_CAST_TIMEOUT_TICKS` on every blow it tried to throw. Spec 080's
+    // rule covers this case too: a request that cannot be honoured still gets an
+    // answer, and the answer is `startCast`'s `'staggered'`.
+    const intent = !rawIntent
+      ? rawIntent
+      : staggered(steered, tick)
+        ? { ...rawIntent, moveX: 0, moveY: 0, facing: steered.facing }
+        : steered.cast !== null
+          ? { ...rawIntent, moveX: 0, moveY: 0 }
+          : rawIntent;
     if (intent && current.kind !== EntityKindValue.Player) monsterIntentCache.set(current.id, intent);
 
     const outcome = resolveMovement(steered, intent, movement);
