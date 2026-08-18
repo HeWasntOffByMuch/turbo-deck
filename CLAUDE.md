@@ -559,6 +559,17 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
+                 Since spec 168 that vocabulary has one more word in it, and it
+                 is the one the note on `placeOn` used to say did not exist:
+                 letting go over the **world** puts the thing on the ground.
+                 What counts as the world is a null hit test through the layer
+                 stack -- the empty half of a window is not it, because
+                 releasing there has always meant "keep hold of it" and turning
+                 that into a discard would make the one gesture that gets rid of
+                 something the easiest one to do by accident. Read on the
+                 *press*, because that is the half gameplay acts on, and
+                 consumed, so the button that drops an item does not also order
+                 the player to walk over to where it landed.
                  One more rule of the same kind, from spec 147's sheet: **a
                  hidden tab still has rectangles in it**. A tab switched away is
                  hidden and never destroyed -- that is what makes a tab keep what
@@ -868,6 +879,34 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  refuses past, which made every pickup on a good connection one
                  refusal and a retry -- and the server's own check allows for its
                  input backlog, bounded by `MAX_REWIND_TICKS`.
+                 A player can put one there too (spec 168), and it differs
+                 from a kill's in the two ways the presentation is *about*:
+                 `makeDroppedItem` gives it **no owner**, since a thing somebody
+                 discarded is not being protected from anybody, and **no
+                 reveal** at any tier, since the reveal withholds an identity
+                 from somebody who does not know it and the person who emptied
+                 their own bag does. It also draws nothing from `state.rng`:
+                 `throwLanding` is the body's facing and a constant reach, where
+                 a kill's `scatterLanding` is two seeded draws -- a landing
+                 nobody chose has to come from somewhere, and one that was aimed
+                 must not, or opening a bag would shift every roll in the world
+                 after it. Everything else is inherited whole, the arc included,
+                 because `origin` is the body's own position and the client
+                 already knows how to draw a throw between two replicated
+                 points. `removeFromSlot` is the container half, beside
+                 `applyMove` and separate from it because a move has a target
+                 and this has none; the client predicts it through the same
+                 in-flight list a move replays through, which is the one thing
+                 `pickUp` deliberately does not do -- a drop reads a slot this
+                 client can see, a pickup reads a range check and an identity it
+                 may not have been told. `npx tsx scripts/probe-drop.ts` is the
+                 half no headless test can reach, and the measurement in it that
+                 makes it honest is the **Escape control**: a cell drawn empty
+                 is either an item on the ground or an item still in hand, since
+                 a carry empties the cell it came from, so the probe cancels
+                 with Escape and requires the cell to *stay* empty -- having
+                 first measured on the same build that Escape does put a carry
+                 back.
                  `admin:triggerEvent 'drop'`/`'reveal'` and the live
                  `lootRevealScale` are the developer path, so a presentation is
                  tuned without farming for one -- and none of the three can
