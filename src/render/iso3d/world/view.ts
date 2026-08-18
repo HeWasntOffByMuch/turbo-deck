@@ -36,7 +36,7 @@ import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
 import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
-import { invalidateNavHeights, warmNavGrids } from '../../../sim/pathfinding.js';
+import { adoptNavGrid } from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
   MAP_CHUNK_REQUEST_RADIUS,
@@ -67,6 +67,8 @@ import { createHud } from './hud.js';
 import { ChunkIngest } from './chunk-ingest.js';
 import { parsePerfFlags } from './perf-flags.js';
 import { FrameBudget } from './frame-budget.js';
+import { createMapWorker } from './map-worker-client.js';
+import type { MapWorkerReply } from './map-worker-protocol.js';
 import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { FrameMeter } from './fps-meter.js';
@@ -124,31 +126,25 @@ const TICK_MS = 1000 / SERVER_TICK_RATE;
 const PROP_SETTLE_MS = 120;
 
 /**
- * Chunks meshed per frame (spec 165).
+ * Finished chunks drawn into the scene per frame (spec 176).
  *
- * Meshing a chunk disposes and rebuilds its surface, wall and water geometry and
- * re-bakes its neighbours' shore quads. One arrival can dirty five chunks, and a
- * pump of arrivals used to mesh all of them between one paint and the next --
- * up to forty rebuilds in a frame, which is a visible lurch however fast the
- * stream is.
- *
- * 4 holds a frame inside its budget on the machine this was measured on while
- * still clearing a full pump in under two deltas. It is a *rate*, so raising the
- * request pass above it does not make the frame worse -- it makes the queue
- * longer, which is the trade this whole spec is about.
+ * This used to bound the *meshing*, which was 3.4ms a chunk and the reason a
+ * pump of arrivals was a visible lurch. Meshing is on the worker now and what is
+ * left is 0.025ms of `BufferGeometry` per chunk plus a water quad -- so the
+ * budget is no longer really about time. It is about the shape of the delivery:
+ * a worker's replies arrive as one task on this thread's event loop, and one
+ * arrival dirties five chunks, so a pump can hand back forty payloads between
+ * two frames. This is what stops that being one frame's work.
  */
-const MESH_BUDGET_PER_FRAME = 2;
+const ADOPT_BUDGET_PER_FRAME = 8;
 
 /**
  * ...and how many while the loading screen is still up.
  *
  * Far more, because the constraint is different behind the gate: nothing is on
  * screen but a bar, and the load's *length* is what the player is waiting on.
- * Spreading a fixed amount of work thinly across frames makes that length a
- * count of frames rather than an amount of work -- the mistake this spec has now
- * made twice, so it is written down here as well as in the nav warm.
  */
-const MESH_BUDGET_LOADING = 24;
+const ADOPT_BUDGET_LOADING = 64;
 
 /**
  * Milliseconds of a frame the chunk stream may have (spec 165 follow-up).
@@ -202,44 +198,31 @@ const PROP_REGIONS_LOADING = 8;
 const INGEST_DECAY = 0.92;
 
 /**
- * How long the whole stream must be quiet before the colliders and nav grid are
- * rebuilt (spec 165 follow-up 6).
+ * How long a prop region whose ground is still arriving waits before its trees
+ * are drawn anyway (spec 176).
  *
- * Far longer than `PROP_SETTLE_MS`, and for a reason worth stating: the trees
- * want the *earliest* moment that is correct, and this wants the *cheapest*.
- * Rebuilding is ~100ms of grid whatever has changed, so doing it once when the
- * stream stops is worth waiting for; doing it per burst is the stutter this
- * number exists to remove.
+ * The completeness rule handles the common case -- a leading-edge region
+ * rebuilt once its whole ground is in, rather than once per column that reaches
+ * it. What it cannot decide is ground that is declared and never coming: a chunk
+ * outside the request radius arrives when the player walks toward it and not
+ * before, and a region straddling that boundary would hold its trees for as long
+ * as they stayed away. Four seconds is long enough that the rule wins every race
+ * it can win and short enough that nobody stands in a bare field wondering.
  */
-const GROUND_REFRESH_QUIET_MS = 600;
+const PROP_INCOMPLETE_HOLD_MS = 4000;
 
 /**
- * The least time between two collider-and-nav rebuilds.
+ * How much new ground it takes to be worth asking for a fresh nav grid.
  *
- * Measured: one of these is ~286ms -- the obstacle passes and the component
- * flood over 797k cells, plus re-sampling whatever ground arrived since the
- * last one. It was firing on every lull in a stream that has lulls all through
- * it, which is a quarter-second hitch every second or so for the half-minute
- * the far chunks take. That is the "not smooth even standing still" report.
+ * A grid is ~190ms of obstacle passes and component flood whatever has changed,
+ * so the question is not "has anything changed" but "has enough changed to be
+ * worth building". That question survives moving the work off the thread --
+ * cheaper is not free, and a grid per late chunk would keep one core busy for
+ * the whole of a walk.
  *
- * The client's grid is a *prediction* aid -- the server routes authoritatively
- * -- so the cost of it being a few seconds stale is a predicted path that walks
- * at a tree the server routes around, corrected the moment it matters. Against
- * a visible hitch every second, that is not a close call.
- */
-const GROUND_REFRESH_MIN_INTERVAL_MS = 5000;
-
-/**
- * ...and how much new ground it takes to be worth one.
- *
- * A rebuild is ~170ms whether one chunk arrived or forty, so the question is
- * not "has anything changed" but "has enough changed to be worth a visible
- * hitch". A trickle of one or two late chunks moves almost no collider the
- * player is anywhere near, and paying a sixth of a second for it -- while they
- * stand in a world that has told them it is ready -- is the wrong trade.
- *
- * The last chunks are not lost, only unhurried: the next rebuild that clears
- * this bar picks them up with everything else.
+ * The last chunks are not lost, only unhurried: the next grid that clears this
+ * bar picks them up with everything else, and until then the standing one is a
+ * prediction aid that the server's routing corrects.
  */
 const GROUND_REFRESH_MIN_CHUNKS = 8;
 /** Never advance more than this many ticks in one frame, after a long pause. */
@@ -428,9 +411,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // never rebuilt -- see streamed-map.ts for why rebuilding it per arrival cost
   // ten seconds of frozen page.
   const scene = new WorldScene(canvas);
-  // `?perf=noshadow,noprops,noterrain` -- a measuring affordance, not a setting.
-  // See perf-flags.ts for why the frame is being taken apart this way.
-  scene.setPerfFlags(parsePerfFlags(location.search));
+  // `?perf=noshadow,noprops,noterrain,noworker` -- a measuring affordance, not a
+  // setting. See perf-flags.ts for why the frame is being taken apart this way.
+  const perfFlags = parsePerfFlags(location.search);
+  scene.setPerfFlags(perfFlags);
   let streamed: StreamedMap | null = null;
   /**
    * The meshing queue and the prop-region bookkeeping (spec 165).
@@ -440,11 +424,29 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * quarter of this one's size. See chunk-ingest.ts.
    */
   const ingest = new ChunkIngest({
-    meshBudget: MESH_BUDGET_PER_FRAME,
     settleMs: PROP_SETTLE_MS,
     regionSize: PROP_REGION_SIZE,
     regionsPerFlush: PROP_REGIONS_PER_FRAME,
+    incompleteHoldMs: PROP_INCOMPLETE_HOLD_MS,
   });
+  /**
+   * Where the load actually happens (spec 176).
+   *
+   * Replies land in an inbox rather than being acted on where they arrive: a
+   * message is delivered as a task on this thread's event loop, so adopting
+   * inside the handler would put an unbounded amount of scene-graph work
+   * between two frames -- the exact shape spec 165 spent ten follow-ups
+   * removing, rebuilt on the other side of the boundary.
+   *
+   * `?perf=noworker` runs the identical core on this thread, which is how the
+   * two are compared on one machine.
+   */
+  const meshInbox: MapWorkerReply[] = [];
+  const navInbox: MapWorkerReply[] = [];
+  const mapWorker = createMapWorker(
+    (reply) => (reply.kind === 'mesh' ? meshInbox : navInbox).push(reply),
+    { threaded: !perfFlags.noWorker },
+  );
   /**
    * Chunks the server has sent that this client has not inserted yet.
    *
@@ -455,16 +457,22 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const pendingInserts = new Map<string, HeldChunk>();
   const gate = new LoadGate();
   const loading = createLoadingOverlay(root);
-  /** Whether the routing ground grows as chunks arrive. See the invalidation below. */
-  const navGrowsWithStream = plan.mode === 'remote';
   /** The load as the overlay last drew it, so the DOM is written only on change. */
   let lastLoadLabel = '';
   /** Whether the remote path has built its collision ground and nav grid once. */
   let firstGroundBuilt = false;
-  /** Chunks held when the colliders and nav grid were last rebuilt. */
+  /** Chunks held when a nav grid was last asked for. */
   let chunksAtGroundRefresh = -1;
-  /** When that last happened, so it cannot run on every lull. */
-  let lastGroundRefreshMs = 0;
+  /** Whether a grid is being built right now, so only one is ever in flight. */
+  let navRequested = false;
+  /**
+   * The chunk count of the newest grid adopted.
+   *
+   * A grid takes long enough that chunks keep arriving while it is built, so a
+   * reply answers for the world as it was. Without this a slow grid lands on
+   * top of a newer one and the client routes against ground that has changed.
+   */
+  let navGeneration = -1;
   /** The last published mesh readout, so the DOM is written only on change. */
   let lastMeshState = '';
   /**
@@ -528,6 +536,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (!streamed) {
       streamed = new StreamedMap(map.info);
       scene.setMap(streamed);
+      // The worker builds its own store from the same `MapInfo` (spec 176).
+      // Both sides are then fed the same chunks in the same order, and neither
+      // is authoritative over the other -- this side answers `heightAt` now,
+      // that side answers what the ground looks like later.
+      mapWorker.send({ kind: 'map', info: map.info });
       // Reported, not acted on (spec 146). Under 144 a mismatch turned
       // prediction off, because the alternative was colliding against a forest
       // the server did not have; now the colliders come from the stream either
@@ -537,11 +550,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       }
     }
 
-    // Inserting a chunk is not free either -- it rebuilds the arrival's own
-    // baked cells plus its four edge neighbours', ~10ms each on the grown map --
-    // so the *insert* is budgeted alongside the mesh rather than run over every
-    // arrival in the frame it lands. Before this, one pump of 24 arrivals was a
-    // quarter-second frame before a single triangle had been rebuilt.
+    // Still budgeted, even though this side no longer builds anything: the
+    // insert is 0.1ms and forwarding is a `postMessage`, but `client.view()`
+    // hands back the whole held set every frame and a cold start delivers 169
+    // of them. A budget here is what keeps that a stream rather than one frame.
     for (const held of map.chunks) {
       if (streamed.has(held.layer, held.cx, held.cz)) continue;
       pendingInserts.set(`${held.layer}:${held.cx},${held.cz}`, held);
@@ -553,93 +565,116 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       if (spend.spent()) break;
       pendingInserts.delete(key);
       // One arrival, but up to five chunks to draw: a neighbour's mesh was baked
-      // against ground this chunk has only now supplied (spec 078).
+      // against ground this chunk has only now supplied (spec 078). The worker
+      // works the same dirty set out from its own store; this side computes it
+      // to keep the ledger and the prop regions, which is 0.1ms against the
+      // 3.4ms a build is (spec 176).
       const dirty = streamed.add(held);
-      if (dirty.length > 0) ingest.offer(dirty, nowMs);
-      // The nav heights over this ground are now answerable, and were not
-      // before (spec 165). Marking the rectangle keeps the re-sample to this
-      // chunk instead of the whole 797k-cell grid -- but only when the routing
-      // world is the one that *grows*.
-      //
-      // On the loopback path it is not: the routing world is the bundled map's
-      // own sampler, complete since mount, and a streamed chunk tells it nothing
-      // it did not already know. Dirtying it there was worse than useless -- it
-      // re-sampled ground that had not changed AND bumped the height version,
-      // which invalidates the grid the *in-tab server* is pathing against. Every
-      // chunk that arrived while walking cost the sim a fresh nav grid.
-      if (navGrowsWithStream && pathWorld && dirty.length > 0) {
-        for (const chunk of dirty) {
-          invalidateNavHeights(pathWorld.ground, pathWorld.colliders, chunk.rect);
-        }
-      }
+      if (dirty.length === 0) continue;
+      ingest.offer(dirty, nowMs);
+      // The memo is over the ground this chunk just changed. Everything it
+      // holds near here was sampled over a hole (spec 153), and it is
+      // invalidated on the *insert* rather than when the triangles come back,
+      // because the memo is about the store and the store has this ground now.
+      scene.invalidateGroundSamples();
+      mapWorker.send({ kind: 'chunk', held });
     }
 
     stage('insert', performance.now() - insertStart);
 
-    // Every chunk this hands back, without exception.
+    // Whatever the worker has finished, up to a budget.
     //
-    // `takeMesh` *dequeues* what it returns, so breaking out of this loop early
-    // -- which a second budget check here used to do -- dropped chunks that had
-    // already left the queue and would never be offered again. That is a hole in
-    // the world that never fills in, at whichever chunk the frame happened to
-    // run out of time on. The list is already bounded by MESH_BUDGET_PER_FRAME;
-    // the budget's job was done before it was built.
-    // Behind the loading screen there are no frames to protect, so the whole
-    // budget goes on getting the world built; afterwards it is deliberately
-    // small, because a player standing in a finished world should not be able
-    // to feel the last chunks arrive.
+    // Budgeted even though adopting is 0.025ms of three.js: a burst arrives as
+    // one task on this thread's event loop, and one chunk dirties five, so a
+    // pump of arrivals can hand back forty payloads at once. What is *not* done
+    // here is dropping the overflow -- the inbox keeps it. `takeMesh` used to
+    // dequeue what it returned, and a caller that dropped part of that list
+    // left a hole in the world that never filled in (spec 165 follow-up 4);
+    // this is the same trap on the other side of a thread boundary.
     const meshStart = performance.now();
-    const meshBudget = gate.open ? MESH_BUDGET_PER_FRAME : MESH_BUDGET_LOADING;
-    for (const ref of ingest.takeMesh(nowMs, meshBudget)) {
-      const chunk = streamed.build(ref.layer, ref.cx, ref.cz);
-      if (!chunk) continue;
-      scene.addTerrainChunk(chunk);
-      drawnChunks.add(`${ref.layer}:${ref.cx},${ref.cz}`);
+    const adoptBudget = gate.open ? ADOPT_BUDGET_PER_FRAME : ADOPT_BUDGET_LOADING;
+    let adopted = 0;
+    while (meshInbox.length > 0 && adopted < adoptBudget) {
+      const reply = meshInbox.shift();
+      if (!reply || reply.kind !== 'mesh') continue;
+      adopted++;
+      if (!scene.adoptTerrainChunk(reply.footprint, reply.arrays)) continue;
+      ingest.complete(reply.layer, reply.cx, reply.cz, nowMs);
+      drawnChunks.add(`${reply.layer}:${reply.cx},${reply.cz}`);
     }
     stage('mesh', performance.now() - meshStart);
 
     // Props wait for the stream to go quiet rather than rebuilding per chunk.
     // One instanced mesh per species over the whole map is a few draw calls;
-    // one per chunk would be two hundred of them on every frame from then on, so
-    // per-chunk props would trade a startup cost for a permanent one.
+    // one per chunk would be two hundred of them on every frame from then on.
     //
-    // What changed in 165 is the *unit*: the regions the arrived ground actually
-    // covers, not the whole field. `takePropRects` returns nothing at all until
-    // the queue is drained and the stream has been quiet, so this is a handful
-    // of calls across a cold start rather than one per delta.
+    // What changed in 165 is the *unit*: the regions the arrived ground
+    // actually covers, not the whole field. What changed in 176 is the
+    // *condition*: a region also waits until every chunk the map declares over
+    // it has arrived, because a leading-edge region was otherwise rebuilt once
+    // per column that reached it -- the same 34ms two to four times over.
     const propStart = performance.now();
-    const rects = ingest.takePropRects(nowMs, gate.open ? PROP_REGIONS_PER_FRAME : PROP_REGIONS_LOADING);
+    const held = streamed;
+    const rects = ingest.takePropRects(
+      nowMs,
+      gate.open ? PROP_REGIONS_PER_FRAME : PROP_REGIONS_LOADING,
+      (rect) => held.rectCovered(rect),
+    );
     if (rects.length > 0) scene.refreshPropsWithin(rects);
     stage('props', performance.now() - propStart);
 
     // The ground the *predictor* stands on is a different question from the
-    // trees, and on a different clock (spec 165 follow-up 6).
+    // trees, and it is now somebody else's work (spec 176).
     //
-    // It used to ride the prop settle. That was fine while the settle was one
-    // event at the end of the stream; once the settle became per region it fired
-    // dozens of times, and each one rebuilt the whole nav grid -- ~100ms, over
-    // and over, for the half-minute the far chunks take to arrive. Standing
-    // still was not smooth, and this is why.
+    // It used to ride the prop settle, which fired dozens of times once the
+    // settle became per region -- each one a ~190ms `createNavGrid` over 797k
+    // cells, which is what "not smooth even standing still" was. Spec 165
+    // answered that with three clocks: the whole world quiet, at least eight new
+    // chunks, and at most one rebuild every five seconds. Two of those existed
+    // only because the rebuild was a hitch on this thread, and the five-second
+    // one was a stated compromise -- "a few seconds of staleness costs a
+    // predicted path that walks at a tree". Off the thread there is nothing to
+    // trade, so what is left is the one condition that was ever about
+    // correctness: enough new ground to be worth a grid, and only one in flight.
     //
-    // So it waits for the *world* to go quiet rather than a region, and only
-    // runs when the collider set has actually grown since it last ran. A fresh
-    // colliders object costs a grid, because `navGridFor` memoizes on identity.
+    // Not before the first one, which `updateLoading` asks for once the request
+    // window is covered. Without that clause this fires the moment eight chunks
+    // exist and spends the worker on a grid of a map that is one twentieth
+    // arrived -- and then again at sixteen, and again at twenty-four, each one
+    // queued behind the last, so the grid that matters arrives last.
     if (
       plan.mode === 'remote' &&
-      streamed &&
-      streamed.size - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS &&
-      ingest.idle &&
-      ingest.quietForMs(nowMs) >= GROUND_REFRESH_QUIET_MS &&
-      nowMs - lastGroundRefreshMs >= GROUND_REFRESH_MIN_INTERVAL_MS
+      firstGroundBuilt &&
+      !navRequested &&
+      streamed.size - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS
     ) {
-      const groundStart = performance.now();
-      lastGroundRefreshMs = nowMs;
+      navRequested = true;
       chunksAtGroundRefresh = streamed.size;
-      fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
-      syncPathWorld();
-      if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
-      stage('nav', performance.now() - groundStart);
+      mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
     }
+
+    // ...and adopting what comes back, which is the whole of what it costs here.
+    const navStart = performance.now();
+    while (navInbox.length > 0) {
+      const reply = navInbox.shift();
+      if (!reply || reply.kind !== 'nav') continue;
+      navRequested = false;
+      // A grid answers for the world as it was when it started, and chunks kept
+      // arriving. Older than what is already installed is not a smaller
+      // improvement, it is a worse world: it would route around trees that have
+      // since been joined by others and over ground that has since turned into a
+      // hill.
+      if (reply.generation <= navGeneration) continue;
+      navGeneration = reply.generation;
+      // The worker's colliders, not a fresh snapshot of our own: `navGridFor`
+      // memoizes on identity, so the set the grid was graded against and the set
+      // it is filed under have to be the same object. The *sampler* stays ours,
+      // because the predictor asks it for heights synchronously.
+      fillGround(ground, reply.colliders, streamed.sampler());
+      syncPathWorld();
+      adoptNavGrid(reply.colliders, streamed.sampler(), reply.grid);
+    }
+    stage('nav', performance.now() - navStart);
   }
 
   /**
@@ -664,20 +699,21 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const coverage =
       streamed && self ? streamed.coverage(self.x, self.y, READY_CHUNK_RADIUS) : { held: 0, needed: 0 };
 
-    // The remote path's first ground build, and deliberately *before* the gate
-    // is asked whether to open (spec 165 follow-up 4).
+    // The remote path's first grid, asked for as soon as the ground is in.
     //
     // A remote client has no bundled map, so nothing pre-warms its colliders or
     // its nav grid the way `warmRouting` does at a loopback mount -- the first
-    // `warmNavGrids` samples every nav cell over the declared map, which is ~5
-    // seconds. Left to the prop settle, that landed a few hundred milliseconds
-    // *after* the world was shown: terrain on screen, and the tab locked solid.
-    // That is what "shows some terrain early, but it's unresponsive" was.
+    // build samples every nav cell over the declared map and then floods it,
+    // which is ~5 seconds. Spec 165 found that landing a few hundred
+    // milliseconds *after* the world was shown, and moved it in front of the
+    // gate: terrain on screen and the tab locked solid was what "shows some
+    // terrain early, but it's unresponsive" had been.
     //
-    // Blocking rather than sliced, on purpose: this is the cost that has to be
-    // paid before play, and slicing it across frames only makes the wall-clock
-    // wait a function of the frame rate. Every later settle re-samples just the
-    // ground that arrived, which is what makes one blocking pass affordable.
+    // The gate no longer waits for it (spec 176). It is on the worker, so the
+    // five seconds are not a freeze and not a bar the player watches -- and
+    // until it lands `RoutePlanner` reads a null world as "walk straight at it",
+    // which is the same fail-safe the flat predictor is and is wrong only in the
+    // direction the server quietly corrects.
     if (
       plan.mode === 'remote' &&
       !firstGroundBuilt &&
@@ -689,9 +725,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     ) {
       firstGroundBuilt = true;
       chunksAtGroundRefresh = streamed.size;
-      fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
-      syncPathWorld();
-      if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
+      navRequested = true;
+      mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
     }
 
     const progress = gate.progress({

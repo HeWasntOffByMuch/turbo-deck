@@ -721,6 +721,114 @@ export function navGridFor(
 }
 
 /**
+ * A grid's data, without the three things that belong to a thread (spec 176).
+ *
+ * `NavGrid` holds `world` and `ground` by reference and shares a `scratch` with
+ * every other grid of its cell count; everything else about it is four typed
+ * arrays and six numbers. So a grid built somewhere else does not need
+ * translating on arrival -- it needs the arrays, and the receiving side supplies
+ * the three references out of what it already has.
+ */
+export interface NavGridArrays {
+  readonly cellSize: number;
+  readonly cols: number;
+  readonly rows: number;
+  readonly originX: number;
+  readonly originY: number;
+  readonly radius: number;
+  readonly cells: Uint8Array;
+  readonly heights: Float32Array;
+  readonly components: Int32Array;
+  readonly componentSizes: Int32Array;
+}
+
+/** The transferable half of a grid. */
+export function navGridArrays(grid: NavGrid): NavGridArrays {
+  return {
+    cellSize: grid.cellSize,
+    cols: grid.cols,
+    rows: grid.rows,
+    originX: grid.originX,
+    originY: grid.originY,
+    radius: grid.radius,
+    cells: grid.cells,
+    heights: grid.heights,
+    components: grid.components,
+    componentSizes: grid.componentSizes,
+  };
+}
+
+/**
+ * Install a grid built elsewhere, so `navGridFor` hands it back instead of
+ * building a second one (spec 176).
+ *
+ * The `world` and `ground` given here are the *caller's* -- whatever objects it
+ * is going to ask with -- because the cache is keyed on their identity and a
+ * grid filed under anything else would never be found. What must be true is
+ * that the arrays describe those objects, which on a streaming client they do
+ * by construction: both sides hold the same chunks, and the same code over the
+ * same chunks gives the same grid.
+ *
+ * The version stamped is the caller's current height version rather than zero,
+ * so an adopted grid is discarded by exactly the thing that discards a built
+ * one -- ground arriving under it. A caller whose heights are somebody else's
+ * business never moves that number and keeps the grid until it adopts another.
+ *
+ * Refuses a grid of the wrong shape rather than filing it: a mismatch means the
+ * two sides disagree about the world's extent, and a grid that answers for a
+ * different rectangle is worse than no grid, which is merely "walk straight at
+ * it".
+ */
+export function adoptNavGrid(
+  world: WorldColliders,
+  ground: NavGround,
+  arrays: NavGridArrays,
+): NavGrid | null {
+  const shape = navShapeOf(world, arrays.cellSize);
+  if (
+    shape.cols !== arrays.cols ||
+    shape.rows !== arrays.rows ||
+    shape.originX !== arrays.originX ||
+    shape.originY !== arrays.originY ||
+    arrays.cells.length !== arrays.cols * arrays.rows
+  ) {
+    return null;
+  }
+
+  const grid: NavGrid = {
+    cellSize: arrays.cellSize,
+    cols: arrays.cols,
+    rows: arrays.rows,
+    originX: arrays.originX,
+    originY: arrays.originY,
+    radius: arrays.radius,
+    world,
+    ground,
+    cells: arrays.cells,
+    heights: arrays.heights,
+    components: arrays.components,
+    componentSizes: arrays.componentSizes,
+    scratch: scratchFor(arrays.cols * arrays.rows),
+  };
+
+  let byGround = GRID_CACHE.get(world);
+  if (!byGround) {
+    byGround = new WeakMap();
+    GRID_CACHE.set(world, byGround);
+  }
+  let byRadius = byGround.get(ground);
+  if (!byRadius) {
+    byRadius = new Map();
+    byGround.set(ground, byRadius);
+  }
+  byRadius.set(arrays.radius, {
+    grid,
+    version: heightVersionOf(ground, world, arrays.cellSize),
+  });
+  return grid;
+}
+
+/**
  * Build the grids a world is going to need, now, rather than when something
  * first asks for a route (spec 130).
  *

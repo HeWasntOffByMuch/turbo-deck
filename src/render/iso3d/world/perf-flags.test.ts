@@ -10,6 +10,7 @@ describe('parsePerfFlags', () => {
       noShadow: false,
       noProps: false,
       noTerrain: false,
+      noWorker: false,
       any: false,
     });
     expect(parsePerfFlags('?seed=7').any).toBe(false);
@@ -22,6 +23,16 @@ describe('parsePerfFlags', () => {
     expect(both.noTerrain).toBe(true);
     expect(both.noShadow).toBe(false);
     expect(both.any).toBe(true);
+  });
+
+  it('reads the one switch that moves work rather than hiding it (spec 176)', () => {
+    // `noworker` changes neither the sim nor the picture, only which thread
+    // builds it -- but it is a measuring switch like the rest, and it counts
+    // toward `any` so the readout still says the frame is not the shipped one.
+    const flags = parsePerfFlags('?perf=noworker');
+    expect(flags.noWorker).toBe(true);
+    expect(flags.noShadow).toBe(false);
+    expect(flags.any).toBe(true);
   });
 
   it('ignores spacing, case and names it does not know', () => {

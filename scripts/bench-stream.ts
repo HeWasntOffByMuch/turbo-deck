@@ -6,6 +6,15 @@
  * client-side pieces -- StreamedMap.add, the terrain remesh, the regional prop
  * rebuild, and the predictor's ground/nav warm -- over the real map, in Node.
  *
+ * Since spec 176 it also splits them by *thread*. The rows are tagged `[main]`
+ * where the work is still on the thread that draws and `[worker]` where it is
+ * not, because that distinction is now the whole point and a flat table hides
+ * it. The browser cannot answer this question: `probe-streaming.ts` paints at
+ * about four frames a second under software GL, so a per-frame cost measured
+ * there is measured over 250ms frames and says nothing about a real machine.
+ * Main-thread *work* is the same work everywhere, which is why it is measured
+ * here.
+ *
  *   npx tsx scripts/bench-stream.ts
  */
 
@@ -14,6 +23,7 @@ import { readFileSync } from 'node:fs';
 import { parseMap } from '../src/terrain/map.js';
 import { StreamedMap } from '../src/server/client/streamed-map.js';
 import { buildTerrainMeshFromChunks } from '../src/render/iso3d/terrain-mesh.js';
+import { MapWorkerCore } from '../src/render/iso3d/world/map-worker-core.js';
 import { buildPropField } from '../src/render/iso3d/props.js';
 import {
   invalidateNavHeights,
@@ -129,6 +139,61 @@ console.log(`routing radii: ${ROUTING_RADII.join(', ')}`);
 time('warmNavGrids(all radii, heights in hand)', () =>
   warmNavGrids(colliders, sampler, ROUTING_RADII),
 );
+
+// --- what a chunk arriving while walking costs, split by thread (spec 176) ---
+//
+// The case the frame rate is actually about: the cold start is behind a loading
+// screen, and this is not.
+{
+  const walkInfo = info;
+  const core = new MapWorkerCore();
+  core.setMap(walkInfo);
+  const mine = new StreamedMap(walkInfo);
+  const drawn = buildTerrainMeshFromChunks(mine.meshLayers, []);
+  const all = coords
+    .map((at) => ({ layer: 0, cx: at.cx, cz: at.cz, chunk: index.chunkAt(0, at.cx, at.cz) }))
+    .filter((h): h is { layer: 0; cx: number; cz: number; chunk: NonNullable<typeof h.chunk> } =>
+      h.chunk !== null,
+    );
+  // Everything but the last chunk, so the last one is a genuine late arrival.
+  for (const held of all.slice(0, -1)) {
+    core.addChunk(held);
+    for (const ref of mine.add(held)) {
+      const built = mine.build(ref.layer, ref.cx, ref.cz);
+      if (built) drawn.rebuild(built);
+    }
+  }
+
+  const late = all[all.length - 1];
+  if (late) {
+    // This side: insert only. It keeps a store so `heightAt` can be answered
+    // inside a frame, and stops building anything.
+    const insertAt = ms();
+    const dirty = mine.add(late);
+    const insertMs = ms() - insertAt;
+
+    // That side: the same dirty set, built and meshed.
+    const workerAt = ms();
+    const replies = core.addChunk(late);
+    const workerMs = ms() - workerAt;
+
+    // And back on this side: wrapping the arrays and laying the water.
+    const adoptAt = ms();
+    for (const reply of replies) {
+      if (reply.kind === 'mesh') drawn.adopt(reply.footprint, reply.arrays);
+    }
+    const adoptMs = ms() - adoptAt;
+
+    console.log(
+      `\none chunk arriving while walking (${dirty.length} chunks dirtied):\n` +
+        `  [main]   insert                 ${insertMs.toFixed(1)} ms\n` +
+        `  [worker] build + mesh           ${workerMs.toFixed(1)} ms\n` +
+        `  [main]   adopt (geometry+water) ${adoptMs.toFixed(1)} ms\n` +
+        `  -> the frame pays ${(insertMs + adoptMs).toFixed(1)} ms of the ` +
+        `${(insertMs + workerMs + adoptMs).toFixed(1)} ms it used to pay`,
+    );
+  }
+}
 
 // What walking into one fresh chunk costs, which is the case that froze.
 const fresh = new StreamedMap(info);

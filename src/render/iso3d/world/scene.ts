@@ -24,7 +24,6 @@
 import * as THREE from 'three';
 import type { Vec2 } from '../../../sim/types.js';
 import type { StreamedMap } from '../../../server/client/streamed-map.js';
-import type { TerrainChunk } from '../../../terrain/chunk.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { abilityById } from '../../../server/data/abilities.js';
@@ -33,6 +32,7 @@ import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
+import type { ChunkFootprint, ChunkMeshArrays } from '../terrain-arrays.js';
 import { StaggerFlinches } from './stagger-flinch.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
@@ -800,7 +800,13 @@ export class WorldScene {
    * overwritten by the next frame and the measurement would quietly be of the
    * baseline.
    */
-  private perf: PerfFlags = { noShadow: false, noProps: false, noTerrain: false, any: false };
+  private perf: PerfFlags = {
+    noShadow: false,
+    noProps: false,
+    noTerrain: false,
+    noWorker: false,
+    any: false,
+  };
 
   /** Take contributors out of the frame. See {@link PerfFlags}. */
   setPerfFlags(flags: PerfFlags): void {
@@ -820,14 +826,29 @@ export class WorldScene {
    * stroke and a streamed chunk want exactly the same thing, so this is not a
    * second meshing path; it is the one that already existed.
    */
-  addTerrainChunk(chunk: TerrainChunk): void {
-    this.terrainMesh?.rebuild(chunk);
-    // The memo is over the ground this chunk just changed. Everything it holds
-    // near here was sampled over a hole (spec 153) -- and a decal drawn from
-    // stale heights is drawn on terrain that no longer exists, which is the
-    // fault this whole spec is about, arrived at from the other side.
+  /**
+   * Draw a chunk whose triangles were built on the worker (spec 176).
+   *
+   * The counterpart to `invalidateGroundSamples` below, and split from it on
+   * purpose: the *store* gained this ground when the chunk was inserted, which
+   * is a frame or more before its triangles come back, and the memo is about
+   * the store rather than about the picture.
+   */
+  adoptTerrainChunk(footprint: ChunkFootprint, arrays: ChunkMeshArrays): boolean {
+    return this.terrainMesh?.adopt(footprint, arrays) ?? false;
+  }
+
+  /**
+   * Forget the sampled-ground memo, because the ground under it moved.
+   *
+   * Everything it holds near an arriving chunk was sampled over a hole
+   * (spec 153) -- and a decal drawn from stale heights is drawn on terrain that
+   * no longer exists.
+   */
+  invalidateGroundSamples(): void {
     this.sampledGround.invalidate();
   }
+
 
   /**
    * Rebuild the instanced prop field from everything held.

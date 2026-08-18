@@ -1,14 +1,17 @@
 /**
- * What to mesh this frame, and what ground owes its trees (spec 165).
+ * What ground is still owed a mesh, and what ground owes its trees (spec 165).
  *
  * Two decisions used to be taken implicitly inside `view.ts`'s ingest loop, and
  * the grown map turned both of them into stutter.
  *
  * **How much to mesh.** Every chunk that arrived in a frame was meshed in that
  * frame, plus up to four edge neighbours each -- a pump of arrivals is up to
- * forty full geometry rebuilds between one paint and the next. Meshing is not
- * cheap enough for that to be invisible, so it is a queue with a per-frame
- * budget now: the work is the same, spread over the frames it needs.
+ * forty full geometry rebuilds between one paint and the next. Spec 165 made
+ * that a queue with a per-frame budget; spec 176 took the meshing off the
+ * thread entirely, so what is left here is the *ledger* -- offered when the
+ * ground lands, completed when its triangles come back. `pending` therefore
+ * means "offered and not yet on screen", which is what the load gate always
+ * read it as meaning and not what it meant.
  *
  * **When to rebuild the props.** The first rule was two frames with nothing
  * arriving. Deltas land every 50ms and frames every ~16ms, so *there are always
@@ -38,12 +41,24 @@ export interface WorldRect {
 }
 
 export interface IngestOptions {
-  /** Chunks meshed per frame at most. */
-  readonly meshBudget: number;
   /** Wall-clock quiet before the props are rebuilt. Must exceed the delta gap. */
   readonly settleMs: number;
   /** The prop field's own bucketing step, so a rect lands on region bounds. */
   readonly regionSize: number;
+  /**
+   * How long a region whose ground is *incomplete* waits before its trees are
+   * drawn anyway (spec 176).
+   *
+   * The completeness rule is a rule about the common case: a leading-edge
+   * region rebuilt once its whole ground is in is rebuilt once instead of two
+   * to four times. What it cannot decide is ground that is declared and is
+   * never coming -- a chunk outside the request radius arrives when the player
+   * walks toward it and not before, and a region straddling that boundary would
+   * hold its trees for as long as they stayed away. So the settle timer stays,
+   * lengthened: completeness wins a race it can win quickly, and the clock ends
+   * one it cannot.
+   */
+  readonly incompleteHoldMs: number;
   /**
    * Regions handed back per flush.
    *
@@ -71,7 +86,7 @@ export class ChunkIngest {
    * whether its trees can be drawn.
    */
   private readonly dirtyRegions = new Map<string, number>();
-  /** Chunks meshed over the session. */
+  /** Chunks drawn over the session. */
   private meshedTotal = 0;
   /** When a chunk was last offered. See {@link quietForMs}. */
   private lastOfferMs = 0;
@@ -100,24 +115,29 @@ export class ChunkIngest {
   }
 
   /**
-   * The chunks to mesh this frame, oldest first, at most the budget.
+   * Mark one chunk drawn, and say whether it was owed (spec 176).
    *
-   * Oldest first rather than nearest first because the *server* already ordered
-   * the stream by distance -- the client asks nearest-first and gets answers in
-   * that order, so arrival order is distance order, and re-sorting here would
-   * only be a second opinion about the same thing.
+   * This replaces `takeMesh`, and the change of shape is the change of design:
+   * meshing used to be something the frame *did*, so the queue was drained by
+   * whoever was about to do it. It is something another thread does now, so the
+   * queue is drained by the result coming back -- which makes `pending` mean
+   * "offered and not yet on screen" rather than "not yet started", and makes
+   * the load gate's count honest for the first time.
+   *
+   * A chunk re-offered while its mesh was in flight is completed by the first
+   * result and re-completed by the second, which returns false and does
+   * nothing. That is harmless rather than merely tolerable: what a settled
+   * region needs is that the *store* has its ground, and the store had it at
+   * insert -- the mesh is the picture, not the data the trees stand on.
    */
-  takeMesh(nowMs: number, budget = this.options.meshBudget): readonly ChunkRef[] {
-    if (this.queue.size === 0) return [];
-    const out: ChunkRef[] = [];
-    for (const [key, chunk] of this.queue) {
-      if (out.length >= budget) break;
-      this.queue.delete(key);
-      out.push(chunk);
-      this.touch(chunk.rect, nowMs);
-    }
-    this.meshedTotal += out.length;
-    return out;
+  complete(layer: number, cx: number, cz: number, nowMs: number): boolean {
+    const key = `${layer}:${cx},${cz}`;
+    const chunk = this.queue.get(key);
+    if (!chunk) return false;
+    this.queue.delete(key);
+    this.meshedTotal++;
+    this.touch(chunk.rect, nowMs);
+    return true;
   }
 
   /**
@@ -125,12 +145,19 @@ export class ChunkIngest {
    *
    * Empties itself per region: a caller that takes a rectangle owns it.
    *
-   * A region is handed back once its own ground has been quiet for `settleMs`
-   * and nothing still queued overlaps it -- the second half matters because
-   * rebuilding props over ground about to be re-meshed is work done twice, and
-   * trees standing at heights that are about to change.
+   * A region is handed back once its own ground has been quiet for `settleMs`,
+   * nothing still queued overlaps it, and `covered` says every chunk the map
+   * declares over it has arrived. The second matters because rebuilding props
+   * over ground about to be re-meshed is work done twice; the third because a
+   * region on the stream's leading edge is otherwise rebuilt once per column
+   * that reaches it. `incompleteHoldMs` is the backstop for ground that is
+   * declared and never coming.
    */
-  takePropRects(nowMs: number, budget = this.options.regionsPerFlush): readonly WorldRect[] {
+  takePropRects(
+    nowMs: number,
+    budget = this.options.regionsPerFlush,
+    covered: (rect: WorldRect) => boolean = () => true,
+  ): readonly WorldRect[] {
     if (this.dirtyRegions.size === 0) return [];
 
     // Regions any queued chunk still touches are not settled, whatever their
@@ -147,10 +174,17 @@ export class ChunkIngest {
       if (out.length >= budget) break;
       if (inFlight.has(key)) continue;
       const touched = this.dirtyRegions.get(key) ?? 0;
-      if (nowMs - touched < this.options.settleMs) continue;
-      this.dirtyRegions.delete(key);
+      const since = nowMs - touched;
+      if (since < this.options.settleMs) continue;
       const [rx, rz] = key.split(',').map(Number) as [number, number];
-      out.push({ minX: rx * size, minZ: rz * size, maxX: (rx + 1) * size, maxZ: (rz + 1) * size });
+      const rect = { minX: rx * size, minZ: rz * size, maxX: (rx + 1) * size, maxZ: (rz + 1) * size };
+      // Quiet is not the same as finished (spec 176). A region whose ground is
+      // still arriving is rebuilt again the moment it does, so it waits -- but
+      // only until the longer clock, because ground outside the request radius
+      // is declared, absent, and not on its way.
+      if (!covered(rect) && since < this.options.incompleteHoldMs) continue;
+      this.dirtyRegions.delete(key);
+      out.push(rect);
     }
     return out;
   }

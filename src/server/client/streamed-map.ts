@@ -178,6 +178,42 @@ export class StreamedMap {
   }
 
   /**
+   * Whether every chunk the map declares over this rectangle has arrived
+   * (spec 176).
+   *
+   * The question the prop settle could not ask. `takePropRects` holds a region
+   * back while a *queued* chunk overlaps it, and a chunk that has not arrived
+   * yet is not queued -- so walking east, every leading-edge region settles on
+   * the half it has, rebuilds all ~270 of its instances, and is dirtied again by
+   * the next column. A 1100-unit region spans parts of about four 616-unit
+   * chunks, so the same 34ms was being paid two to four times over.
+   *
+   * Declared rather than possible, for the same reason `coverage` counts that
+   * way: a region on the edge of the world is complete as soon as the ground
+   * that exists there has landed, and waiting for chunks the map was never
+   * going to send is waiting forever. What this cannot answer is ground that is
+   * declared but outside the request radius -- that never arrives either, and
+   * the caller's timer is what covers it.
+   */
+  rectCovered(rect: { minX: number; minZ: number; maxX: number; maxZ: number }): boolean {
+    for (let layer = 0; layer < this.info.layers.length; layer++) {
+      const info = this.info.layers[layer];
+      if (!info) continue;
+      const lowCx = Math.floor((rect.minX - info.origin.x) / this.chunkExtent);
+      const highCx = Math.floor((rect.maxX - info.origin.x) / this.chunkExtent);
+      const lowCz = Math.floor((rect.minZ - info.origin.z) / this.chunkExtent);
+      const highCz = Math.floor((rect.maxZ - info.origin.z) / this.chunkExtent);
+      for (let cz = lowCz; cz <= highCz; cz++) {
+        for (let cx = lowCx; cx <= highCx; cx++) {
+          if (!this.declared.has(`${layer}:${cx},${cz}`)) continue;
+          if (!this.has(layer, cx, cz)) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
    * `heightAt` through the live world, plus the coverage query above.
    *
    * **One object for the session**, and that is load-bearing rather than tidy

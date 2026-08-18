@@ -194,3 +194,81 @@ minority of chunks that touch water. The prop rebuild stays where it is.
   the store and every insert broadcast to all of them, and a chunk's mesh reads
   its neighbours' arrays. One worker owning one store is the honest unit.
   Revisit if the load is ever measured to be worker-bound.
+
+---
+
+## What it cost, measured
+
+`npx tsx scripts/bench-stream.ts`, which now splits its rows by thread, because
+that distinction is the whole point and a flat table hides it:
+
+```
+one chunk arriving while walking (3 chunks dirtied):
+  [main]   insert                 0.1 ms
+  [worker] build + mesh           22.0 ms
+  [main]   adopt (geometry+water)  1.4 ms
+  -> the frame pays 1.6 ms of the 23.6 ms it used to pay
+```
+
+The nav grid it used to pay for on the same thread — ~190 ms of obstacle passes
+and component flood, on the ≥5 s clock, every time eight chunks arrived — is
+gone from the frame entirely; adopting one is four array assignments.
+
+A second saving fell out of the extraction rather than being aimed at.
+`terrainMesh.rebuild`'s mean went from 3.54 ms to 1.79 ms, because
+`Float32BufferAttribute`'s constructor is `new Float32Array( array )` and copies
+everything it is handed. The arrays now arrive already sized, so
+`THREE.BufferAttribute` takes them as they are.
+
+The **browser** cannot answer this question and `probe-streaming.ts` does not
+pretend to: this container paints at about four frames a second under software
+GL, so a per-frame cost measured there is measured over 250 ms frames. What the
+probe is for is that the world still arrives — 169 held, 169 drawn, the gate
+shut until it was, and nothing in the console. `PERF=noworker` runs the same
+probe with the load back on the main thread, which is the only honest way to
+compare two builds on one machine.
+
+## What the browser found that Node could not
+
+Two bugs, both of the same kind, and the second is the one worth keeping.
+
+**The worker was never told about the map.** `StreamedMap` was constructed on
+this side and the `{ kind: 'map' }` message was never sent, so the core dropped
+every chunk on the floor: 169 held, **0 drawn**, and a loading screen that never
+lifted. Every unit test passed, because they drive the core directly and hand it
+a map first.
+
+**A reply may not transfer what the sender still owns.** `postMessage` refused a
+transfer list containing an already-detached `ArrayBuffer`, on the *second*
+request for a nav grid. A grid's `heights` is the per-cell height cache — shared
+by every grid over the same ground, and the whole reason spec 165's late chunk
+costs 7 ms instead of 979 — and the grid itself is memoized, so transferring
+those arrays hands the worker's own caches away. They are copied now, which is
+not an extra copy: structured clone would have copied the same bytes and then
+been unable to transfer them.
+
+The same trap had already been spotted on the mesh side, which is why
+`footprint.materials` was never in the list — `MapChunkStore.buildChunk` returns
+`materials: chunk.materials`, a reference to the store's own array rather than a
+copy. Getting one of the two right and the other wrong is the argument for the
+rule being written down rather than remembered: **transfer only what you
+allocated for this reply.**
+
+## Two things found while wiring it that were not the point
+
+**A worker asked too early builds the wrong grid.** The growth rule fires when
+eight chunks have arrived since the last grid, and `chunksAtGroundRefresh`
+starts below zero — so on a cold start it fired at eight chunks, then sixteen,
+then twenty-four, each queued behind the last on a single-threaded worker, and
+the grid that mattered arrived last. It now waits for the first grid, which
+`updateLoading` asks for once the request window is covered.
+
+**Three of spec 165's four clocks were about the thread, not about correctness.**
+`GROUND_REFRESH_QUIET_MS` (600 ms of world silence) and
+`GROUND_REFRESH_MIN_INTERVAL_MS` (5 s between rebuilds) existed because a grid
+was a 190 ms hitch, and the second was explicitly a compromise — *"a few seconds
+of staleness costs a predicted path that walks at a tree"*. Off the thread there
+is nothing to trade, so both are gone. `GROUND_REFRESH_MIN_CHUNKS` stays,
+because "is there enough new ground to be worth a grid" survives the work
+getting cheaper — cheaper is not free, and a grid per late chunk would keep a
+core busy for the whole of a walk.
