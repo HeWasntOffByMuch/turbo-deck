@@ -178,6 +178,21 @@ describe('game message round-trip', () => {
       to: { container: 'inventory', index: 5 },
       count: 4,
     },
+    {
+      type: ClientMessageType.DropItem,
+      requestId: 9,
+      at: { container: 'inventory', index: 3 },
+      count: 0,
+    },
+    {
+      // A worn item goes on the ground the same way a carried one does, and an
+      // out-of-range index is still a refusal with a reason rather than a
+      // corrupt frame (spec 168).
+      type: ClientMessageType.DropItem,
+      requestId: 10,
+      at: { container: 'equipment', index: -1 },
+      count: 2,
+    },
   ];
 
   it.each(clientMessages.map((m) => [m.type, m] as const))(

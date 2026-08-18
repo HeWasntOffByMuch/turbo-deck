@@ -310,6 +310,24 @@ export interface PickUpItemMessage {
 }
 
 /**
+ * Put a stack down in the world (spec 168).
+ *
+ * The same shape as a move minus its target, because the target is the ground
+ * and the ground has no address. Where it lands is the server's: the body's
+ * facing and a constant reach, neither of which a client may name.
+ *
+ * Answered with an `Inventory` at this `requestId` either way, like every other
+ * container edit.
+ */
+export interface DropItemMessage {
+  readonly type: typeof ClientMessageType.DropItem;
+  readonly requestId: number;
+  readonly at: SlotAddress;
+  /** How many to put down, or 0 for the whole stack. */
+  readonly count: number;
+}
+
+/**
  * "Put me back on my feet" (spec 164). See {@link ClientMessageType.Respawn}.
  *
  * Payloadless, like {@link GoodbyeMessage}: where a respawn puts you and what it
@@ -346,6 +364,7 @@ export type ClientMessage =
   | RequestChunkMessage
   | WatchSpawnersMessage
   | PickUpItemMessage
+  | DropItemMessage
   | RespawnMessage;
 
 /**
@@ -473,6 +492,11 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
     case ClientMessageType.PickUpItem:
       writer.varuint(message.requestId).varuint(message.entityId);
       break;
+    case ClientMessageType.DropItem:
+      writer.varuint(message.requestId);
+      writeAddress(writer, message.at);
+      writer.varint(message.count);
+      break;
     case ClientMessageType.Respawn:
       break;
     case ClientMessageType.OpenVendor:
@@ -584,6 +608,13 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         type: ClientMessageType.PickUpItem,
         requestId: reader.varuint(),
         entityId: reader.varuint(),
+      };
+    case ClientMessageType.DropItem:
+      return {
+        type: ClientMessageType.DropItem,
+        requestId: reader.varuint(),
+        at: readAddress(reader),
+        count: reader.varint(),
       };
     case ClientMessageType.Respawn:
       return { type: ClientMessageType.Respawn };

@@ -115,6 +115,22 @@ export const ClientMessageType = {
    * payload would only be a client asking to arrive somewhere it chose.
    */
   Respawn: 0x1a,
+  /**
+   * Put a stack down in the world (spec 168).
+   *
+   * Names a slot address and a count, exactly as `MoveItem` does -- a drop is a
+   * move whose target is the ground, and the ground has no slot to name. `0`
+   * means the whole stack, the same convention and for the same reason: the wire
+   * has no way to say "absent" and the rules have no use for a zero.
+   *
+   * Answered with an `Inventory` at the request id whether it was taken or
+   * refused, which is what rolls a client's optimistic guess back.
+   *
+   * Where the item lands is **not** on it. The direction is the body's facing
+   * and the reach is a constant, both of which the server already has -- a
+   * client naming a landing spot is a client throwing an item across the map.
+   */
+  DropItem: 0x1b,
 } as const;
 
 export const ServerMessageType = {

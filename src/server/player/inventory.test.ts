@@ -27,6 +27,7 @@ import {
   addToInventory,
   applyMove,
   equipmentAddress,
+  removeFromSlot,
   sanitizeInventory,
   tallyOf,
   type MoveRequest,
@@ -397,5 +398,76 @@ describe('sanitizeInventory', () => {
     expect(loaded[1]).toEqual({ defId: 'potion.minor', count: maxStackOf('potion.minor') });
     expect(loaded[2]).toBeNull();
     expect(loaded).toHaveLength(INVENTORY_SLOTS);
+  });
+});
+
+/**
+ * Taking something out of a slot with nowhere to put it (spec 168).
+ *
+ * The half of a drop that is a container rule. Where the item goes afterwards is
+ * the world's problem and is tested over a real wire in `drop-wire.test.ts`;
+ * what is here is the one property that matters at this layer -- what leaves the
+ * containers is exactly what is handed back, and a refusal hands back nothing
+ * and changes nothing.
+ */
+describe('removeFromSlot', () => {
+  it('takes a whole stack and empties the slot', () => {
+    const bag = bagOf({ 2: { defId: 'potion.minor', count: 3 } });
+    const outcome = removeFromSlot(bag, EMPTY_EQUIPMENT, { container: 'inventory', index: 2 });
+    if (!outcome.ok) throw new Error(outcome.reason);
+    expect(outcome.taken).toEqual({ defId: 'potion.minor', count: 3 });
+    expect(outcome.inventory[2]).toBeNull();
+  });
+
+  it('takes part of a stack and leaves the rest', () => {
+    const bag = bagOf({ 0: { defId: 'potion.minor', count: 5 } });
+    const outcome = removeFromSlot(bag, EMPTY_EQUIPMENT, { container: 'inventory', index: 0 }, 2);
+    if (!outcome.ok) throw new Error(outcome.reason);
+    expect(outcome.taken).toEqual({ defId: 'potion.minor', count: 2 });
+    expect(outcome.inventory[0]).toEqual({ defId: 'potion.minor', count: 3 });
+  });
+
+  /** Nothing is checked on the way out -- the rule `equipRefusal` states. */
+  it('takes what is worn straight off the body', () => {
+    const worn: Equipment = { ...EMPTY_EQUIPMENT, mainHand: 'sword.worn' };
+    const outcome = removeFromSlot(emptyInventory(), worn, equipmentAddress('mainHand'));
+    if (!outcome.ok) throw new Error(outcome.reason);
+    expect(outcome.taken).toEqual({ defId: 'sword.worn', count: 1 });
+    expect(outcome.equipment.mainHand).toBeNull();
+  });
+
+  it.each([
+    ['an empty slot', { container: 'inventory' as const, index: 5 }, undefined],
+    ['a slot that does not exist', { container: 'inventory' as const, index: -1 }, undefined],
+    ['more than is there', { container: 'inventory' as const, index: 0 }, 9],
+    ['a fractional count', { container: 'inventory' as const, index: 0 }, 1.5],
+    ['nothing at all', { container: 'inventory' as const, index: 0 }, 0],
+  ])('refuses %s, changing nothing', (_what, at, count) => {
+    const bag = bagOf({ 0: { defId: 'potion.minor', count: 3 } });
+    const outcome = removeFromSlot(bag, EMPTY_EQUIPMENT, at, count);
+    expect(outcome.ok).toBe(false);
+    expect(bag[0]).toEqual({ defId: 'potion.minor', count: 3 });
+  });
+
+  it('conserves: what left the containers is exactly what came back', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: INVENTORY_SLOTS - 1 }),
+        fc.integer({ min: 1, max: 6 }),
+        fc.integer({ min: 1, max: 8 }),
+        (index, held, wanted) => {
+          const bag = bagOf({ [index]: { defId: 'potion.minor', count: held } });
+          const before = tallyOf(bag, EMPTY_EQUIPMENT).get('potion.minor') ?? 0;
+          const outcome = removeFromSlot(bag, EMPTY_EQUIPMENT, { container: 'inventory', index }, wanted);
+          if (!outcome.ok) {
+            // A refusal is allowed, but only for asking for more than is there.
+            expect(wanted).toBeGreaterThan(held);
+            return;
+          }
+          const after = tallyOf(outcome.inventory, outcome.equipment).get('potion.minor') ?? 0;
+          expect(after + outcome.taken.count).toBe(before);
+        },
+      ),
+    );
   });
 });
