@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TERRAIN_TOOLS } from './brush.js';
 import { fenceStep, FENCE_STYLES } from './fence.js';
 import { MARKER_KINDS } from './markers.js';
+import { PAINT_MATERIALS } from './paint.js';
 import {
   createEditorSettings,
   cursorColor,
@@ -13,6 +14,8 @@ import {
   markerKindEffect,
   MODE_CHOICES,
   MODE_COLORS,
+  PAINT_COLORS,
+  PAINT_MATERIAL_CHOICES,
   TERRAIN_TOOL_CHOICES,
   TOOL_COLORS,
   visibleGroups,
@@ -37,7 +40,9 @@ describe('which settings a mode shows', () => {
   it('shows exactly one tool group per mode, and covers every mode', () => {
     for (const mode of EDITOR_MODES) {
       const show = visibleGroups(mode);
-      const groups = [show.terrain, show.scatter, show.fence, show.marker, show.part, show.rock].filter(Boolean).length;
+      const groups = [show.terrain, show.paint, show.scatter, show.fence, show.marker, show.part, show.rock].filter(
+        Boolean,
+      ).length;
       // The eraser has no settings of its own beyond the shared radius; every
       // other mode has exactly one group, and none has two.
       expect(groups).toBe(mode === 'erase' ? 0 : 1);
@@ -45,7 +50,8 @@ describe('which settings a mode shows', () => {
   });
 
   it('names the group after the mode, so nothing else can be on screen', () => {
-    expect(visibleGroups('terrain')).toMatchObject({ terrain: true, scatter: false, fence: false, marker: false });
+    expect(visibleGroups('terrain')).toMatchObject({ terrain: true, paint: false, scatter: false, fence: false });
+    expect(visibleGroups('paint')).toMatchObject({ terrain: false, paint: true, scatter: false, fence: false });
     expect(visibleGroups('scatter')).toMatchObject({ terrain: false, scatter: true, fence: false, marker: false });
     expect(visibleGroups('fence')).toMatchObject({ terrain: false, scatter: false, fence: true, marker: false });
     expect(visibleGroups('marker')).toMatchObject({ terrain: false, scatter: false, fence: false, marker: true });
@@ -55,10 +61,22 @@ describe('which settings a mode shows', () => {
     // A fence lays a fixed tile and a marker is a point: a radius slider that
     // changes nothing is worse than no slider.
     expect(visibleGroups('terrain').radius).toBe(true);
+    expect(visibleGroups('paint').radius).toBe(true);
     expect(visibleGroups('scatter').radius).toBe(true);
     expect(visibleGroups('erase').radius).toBe(true);
     expect(visibleGroups('fence').radius).toBe(false);
     expect(visibleGroups('marker').radius).toBe(false);
+  });
+
+  it('shows the falloff only for the two brushes that weight their footprint', () => {
+    // The eraser takes everything under its circle whole and the scatter has a
+    // density, so neither has anything for a weight to weight.
+    expect(visibleGroups('terrain').falloff).toBe(true);
+    expect(visibleGroups('paint').falloff).toBe(true);
+    for (const mode of EDITOR_MODES) {
+      if (mode === 'terrain' || mode === 'paint') continue;
+      expect(visibleGroups(mode).falloff).toBe(false);
+    }
   });
 });
 
@@ -72,16 +90,29 @@ describe('what the cursor says', () => {
     expect(new Set(TERRAIN_TOOLS.map((tool) => TOOL_COLORS[tool])).size).toBe(TERRAIN_TOOLS.length);
   });
 
+  it('takes the loaded material\'s colour in paint mode (spec 179)', () => {
+    // Five materials that lay down five different grounds share one mode, so a
+    // single mode colour would be one ring for snow and for dirt. The swatch is
+    // the ground's own colour, which is what makes the palette a palette.
+    for (const material of PAINT_MATERIALS) {
+      expect(cursorColor(armed('paint', { paintMaterial: material }))).toBe(PAINT_COLORS[material]);
+    }
+    expect(new Set(PAINT_MATERIALS.map((m) => PAINT_COLORS[m])).size).toBe(PAINT_MATERIALS.length);
+  });
+
   it('takes the mode\'s colour otherwise, and no two modes share one', () => {
     for (const mode of EDITOR_MODES) {
-      if (mode === 'terrain') continue;
+      if (mode === 'terrain' || mode === 'paint') continue;
       expect(cursorColor(armed(mode))).toBe(MODE_COLORS[mode]);
     }
+    // `terrain` and `paint` keep an entry each even though `cursorColor` never
+    // reaches for them: the ring is decided per sub-tool, and the Record is what
+    // makes a mode added without a colour a type error rather than a black ring.
     expect(new Set(EDITOR_MODES.map((m) => MODE_COLORS[m])).size).toBe(EDITOR_MODES.length);
   });
 
   it('draws the ring at the brush radius for the tools that have one', () => {
-    for (const mode of ['terrain', 'scatter', 'erase'] as const) {
+    for (const mode of ['terrain', 'paint', 'scatter', 'erase'] as const) {
       expect(cursorRadius(armed(mode, { radius: 175 }))).toBe(175);
     }
   });
@@ -104,12 +135,19 @@ describe('the button strips', () => {
   it('offers every mode and every terrain tool, in order', () => {
     expect(MODE_CHOICES.map((c) => c.value)).toEqual([...EDITOR_MODES]);
     expect(TERRAIN_TOOL_CHOICES.map((c) => c.value)).toEqual([...TERRAIN_TOOLS]);
+    expect(PAINT_MATERIAL_CHOICES.map((c) => c.value)).toEqual([...PAINT_MATERIALS]);
     expect(MARKER_CHOICES.map((c) => c.value)).toEqual([...MARKER_KINDS]);
     expect(FENCE_STYLE_CHOICES.map((c) => c.value)).toEqual([...FENCE_STYLES]);
   });
 
   it('labels every button, distinctly within its strip', () => {
-    for (const strip of [MODE_CHOICES, TERRAIN_TOOL_CHOICES, MARKER_CHOICES, FENCE_STYLE_CHOICES]) {
+    for (const strip of [
+      MODE_CHOICES,
+      TERRAIN_TOOL_CHOICES,
+      PAINT_MATERIAL_CHOICES,
+      MARKER_CHOICES,
+      FENCE_STYLE_CHOICES,
+    ]) {
       for (const choice of strip) expect(choice.label.length).toBeGreaterThan(0);
       // Two buttons reading the same is worse than one reading badly.
       expect(new Set(strip.map((c) => c.label)).size).toBe(strip.length);

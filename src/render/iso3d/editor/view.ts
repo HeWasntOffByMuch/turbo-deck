@@ -30,6 +30,7 @@ import {
 } from './camera.js';
 import { Rng } from '../../../shared/prng.js';
 import { applyTerrainBrush } from './brush.js';
+import { applyTerrainPaint } from './paint.js';
 import { createBrushCursor, type BrushCursorHandle } from './cursor.js';
 import { EditHistory } from './history.js';
 import { EditorInputCapture } from './input.js';
@@ -1186,6 +1187,22 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   let strokeChangedProps = false;
   let strokeMovedGround = false;
   let strokeChangedMarkers = false;
+  /**
+   * Whether this stroke repainted any ground (spec 179).
+   *
+   * Its own flag rather than `strokeMovedGround`, because a material change is
+   * the first edit here that changes the document without moving anything: it
+   * owes a re-mesh and a revision, and none of the nav re-bake, prop rebuild or
+   * marker refresh that flag pays for.
+   */
+  let strokeChangedMaterial = false;
+  /**
+   * Where the paint brush was last frame, so a drag paints the circle it swept
+   * rather than a stamp per frame. Cleared whenever the cursor leaves the
+   * terrain, so a pick that lands somewhere else does not paint the line
+   * between.
+   */
+  let paintFrom: { x: number; z: number } | null = null;
   /** Chunks this stroke has dirtied, for the nav re-bake when it ends. */
   const strokeDirty: { cx: number; cz: number }[] = [];
   // The prop field is rebuilt whole, which is far too much to do every frame --
@@ -1263,7 +1280,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       strokeMovedGround = false;
       strokeChangedProps = false;
       strokeChangedMarkers = false;
+      strokeChangedMaterial = false;
       strokeDirty.length = 0;
+      paintFrom = null;
       scatterCarry = 0;
       fencePath = NO_FENCE_PATH;
       propsRebuiltAt = time;
@@ -1316,6 +1335,11 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       }
     }
 
+    // The paint brush's segment memory only means anything while the cursor is
+    // on the terrain: after a gap, the line between where it left and where it
+    // came back is not ground anybody dragged over.
+    if (!at) paintFrom = null;
+
     if (input.isPainting && at) {
       if (settings.mode === 'terrain') {
         const dirty = applyTerrainBrush(
@@ -1325,6 +1349,15 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         );
         remesh(dirty);
         if (dirty.length > 0) strokeMovedGround = true;
+      } else if (settings.mode === 'paint') {
+        const dirty = applyTerrainPaint(
+          scene.map.store,
+          { material: settings.paintMaterial, radius: settings.radius, falloff: settings.falloff },
+          { layerId, x: at.x, z: at.z, from: paintFrom, onTouchChunk: capture },
+        );
+        paintFrom = { x: at.x, z: at.z };
+        remesh(dirty);
+        if (dirty.length > 0) strokeChangedMaterial = true;
       } else if (settings.mode === 'scatter') {
         const out = scatterStroke(
           scene.map.store,
@@ -1419,10 +1452,18 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       // overlay never describes ground that has since moved.
       if (strokeMovedGround) rebakeNav(scene.map.store, layerId, strokeDirty, settings.walkSlope);
       if (strokeMovedGround || strokeChangedProps) refreshNav();
-      if (strokeMovedGround || strokeChangedProps || strokeChangedMarkers) markEdited();
+      // A repaint counts as an edit -- the autosave and the disk both want it --
+      // and owes nothing above it: walkability is ground, solidity and the water
+      // line, a prop's colour comes from its own part rather than from what it
+      // stands on, and a marker sits at a height. None of the three moved.
+      if (strokeMovedGround || strokeChangedProps || strokeChangedMarkers || strokeChangedMaterial) {
+        markEdited();
+      }
       strokeMovedGround = false;
       strokeChangedProps = false;
       strokeChangedMarkers = false;
+      strokeChangedMaterial = false;
+      paintFrom = null;
     }
 
     autosave(time);

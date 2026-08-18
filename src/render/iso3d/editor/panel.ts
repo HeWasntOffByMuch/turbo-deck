@@ -7,6 +7,8 @@ import {
   MODE_CHOICES,
   MODE_COLORS,
   NEW_ROCK_TIER,
+  PAINT_COLORS,
+  PAINT_MATERIAL_CHOICES,
   PART_TOOL_CHOICES,
   PART_TOOL_COLORS,
   ROCK_TOOL_CHOICES,
@@ -198,12 +200,23 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     (mode: EditorMode) => {
       s.mode = mode;
     },
-    (mode) => (mode === 'terrain' ? TOOL_COLORS[s.tool] : MODE_COLORS[mode]),
+    (mode) =>
+      mode === 'terrain'
+        ? TOOL_COLORS[s.tool]
+        : mode === 'paint'
+          ? PAINT_COLORS[s.paintMaterial]
+          : MODE_COLORS[mode],
   );
 
   // Shared by the modes that work under a circle, so switching between them
   // keeps the footprint you were working at.
   const radius = gui.add(s, 'radius', 20, 600, 5).name('Radius');
+  // Shared by both brushes, and up here beside the radius for the same reason:
+  // shaping a hillside and painting it are one footprint, so switching between
+  // them keeps the brush you were working at. 0 is a cookie-cutter edge and 1 a
+  // soft one; the default sits nearer the soft end, which is what stops a height
+  // stroke leaving a visible rim and what dithers a paint stroke's boundary.
+  const falloff = gui.add(s, 'falloff', 0, 1, 0.05).name('Falloff');
 
   const terrain = gui.addFolder('Terrain brush');
   strip(
@@ -217,9 +230,20 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     (tool) => TOOL_COLORS[tool],
   );
   terrain.add(s, 'strength', 5, 400, 5).name('Strength /s');
-  // 0 is a cookie-cutter edge and 1 a soft dome; the default sits nearer the
-  // soft end, which is what stops a stroke leaving a visible rim.
-  terrain.add(s, 'falloff', 0, 1, 0.05).name('Falloff');
+
+  // The loaded material fills its button in the ground's own colour, the same
+  // way every other strip here fills the armed one (spec 179).
+  const paint = gui.addFolder('Paint');
+  strip(
+    paint,
+    PAINT_MATERIAL_CHOICES,
+    3,
+    () => s.paintMaterial,
+    (material) => {
+      s.paintMaterial = material;
+    },
+    (material) => PAINT_COLORS[material],
+  );
 
   const scatter = gui.addFolder('Scatter');
   strip(
@@ -414,7 +438,9 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   function applyVisibility(mode: EditorMode): void {
     const show = visibleGroups(mode);
     radius.show(show.radius);
+    falloff.show(show.falloff);
     terrain.show(show.terrain);
+    paint.show(show.paint);
     scatter.show(show.scatter);
     fence.show(show.fence);
     markers.show(show.marker);
@@ -424,6 +450,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     // empty panel the first time a tool is armed.
     for (const [folder, on] of [
       [terrain, show.terrain],
+      [paint, show.paint],
       [scatter, show.scatter],
       [fence, show.fence],
       [markers, show.marker],

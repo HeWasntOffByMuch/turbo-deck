@@ -270,6 +270,7 @@ const PURE_RENDER = [
   'src/render/iso3d/editor/camera.ts',
   'src/render/iso3d/editor/history.ts',
   'src/render/iso3d/editor/markers.ts',
+  'src/render/iso3d/editor/paint.ts',
   'src/render/iso3d/editor/scatter.ts',
   'src/render/iso3d/editor/*.test.ts',
 ];
