@@ -3,6 +3,7 @@ import { fenceStep } from './fence.js';
 import {
   FENCE_STYLE_CHOICES,
   MARKER_CHOICES,
+  markerKindEffect,
   MODE_CHOICES,
   MODE_COLORS,
   NEW_ROCK_TIER,
@@ -130,6 +131,14 @@ export interface EditorPanelOptions {
   /** The walk limit moved, so the whole layer needs re-baking. */
   readonly onNavRebake: () => void;
   readonly onSave: () => void;
+  /**
+   * Write the map straight over the file it was opened from (spec 177).
+   *
+   * First in the folder because it is the one that finishes the job: a download
+   * is the beginning of a copy somebody still has to make, and getting that
+   * wrong looks exactly like the editor having failed to save.
+   */
+  readonly onSaveToDisk: () => void;
   readonly onLoad: () => void;
   readonly onDiscardAutosave: () => void;
   /** The recipes a part may be grown from, by name (spec 084). */
@@ -162,6 +171,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   const armed = (): void => {
     for (const each of strips) each.refresh();
     applyVisibility(s.mode);
+    markerArmed();
     opts.onArmChange();
   };
   gui.domElement.addEventListener('editor-armed', armed);
@@ -266,10 +276,25 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     },
     () => MODE_COLORS.marker,
   );
-  // Always shown rather than revealed with the `spawner` kind: the strip above
-  // is two columns of buttons, and a control that appears and disappears under
-  // them moves everything below it every time you change your mind.
-  markers.add(s, 'spawnerMonster', SPAWNER_MONSTER_CHOICES.map((c) => c.value)).name('Spawner monster');
+  // What the armed kind does, in the kind's own words. A disabled readout, like
+  // the fence's tile length: four of the five kinds are read by nothing, and a
+  // panel that looks identical whichever is armed lets somebody spend an hour
+  // placing markers the game will never look at (spec 178).
+  const markerEffect = { does: '' };
+  const markerEffectRow = markers.add(markerEffect, 'does').name('Does').disable();
+
+  // Always *shown* rather than revealed with the `spawner` kind -- the strip
+  // above is two columns of buttons, and a control that appears and disappears
+  // under them moves everything below it every time you change your mind -- but
+  // **disabled** unless it is the armed kind's, which is the part that was
+  // missing. Live-looking and inert is the worst of the three states: it reads
+  // as "this is the monster the marker I am about to place will spawn", which
+  // for four of the five kinds is not true.
+  const spawnerMonster = markers
+    .add(s, 'spawnerMonster', SPAWNER_MONSTER_CHOICES.map((c) => c.value))
+    .name('Monster');
+
+  markerArmed();
 
   const parts = gui.addFolder('Parts');
   strip(
@@ -329,6 +354,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   edit.add({ undo: opts.onUndo }, 'undo').name('Undo (Ctrl+Z)');
 
   const file = gui.addFolder('File');
+  file.add({ write: opts.onSaveToDisk }, 'write').name('Save to maps/ (dev server)');
   file.add({ save: opts.onSave }, 'save').name('Save to file');
   file.add({ load: opts.onLoad }, 'load').name('Load file (or drop one)');
   file.add({ discard: opts.onDiscardAutosave }, 'discard').name('Discard autosave');
@@ -369,6 +395,21 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   };
   refreshRockLayers();
 
+  /**
+   * Re-read everything the armed *marker kind* decides.
+   *
+   * A hoisted declaration, like `applyVisibility` below it and for the same
+   * reason: `armed` is wired to the strips as they are built and the marker
+   * folder is built further down, so the alternative is a mutable hook for
+   * every controller a refresh touches.
+   */
+  function markerArmed(): void {
+    markerEffect.does = markerKindEffect(s.markerKind);
+    markerEffectRow.updateDisplay();
+    if (s.markerKind === 'spawner') spawnerMonster.enable();
+    else spawnerMonster.disable();
+  }
+
   /** Show only what the armed mode uses. */
   function applyVisibility(mode: EditorMode): void {
     const show = visibleGroups(mode);
@@ -404,6 +445,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       gui.controllersRecursive().forEach((c) => c.updateDisplay());
       for (const each of strips) each.refresh();
       showTileLength();
+      markerArmed();
       refreshPartIds();
       refreshRockLayers();
       applyVisibility(s.mode);

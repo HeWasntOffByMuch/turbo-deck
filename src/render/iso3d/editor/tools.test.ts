@@ -10,6 +10,7 @@ import {
   FENCE_STYLE_CHOICES,
   MARKER_CHOICES,
   MARKER_CURSOR_RADIUS,
+  markerKindEffect,
   MODE_CHOICES,
   MODE_COLORS,
   TERRAIN_TOOL_CHOICES,
@@ -136,5 +137,42 @@ describe('the settings object', () => {
     }
     expect(FENCE_STYLES).toContain(s.style);
     expect(MARKER_KINDS).toContain(s.markerKind);
+  });
+});
+
+describe('telling the marker kinds apart (spec 178)', () => {
+  it('arms the one kind anything reads', () => {
+    // `spawn` was the default and is read by nothing, so the first marker
+    // somebody placed did nothing at all.
+    expect(createEditorSettings().markerKind).toBe('spawner');
+  });
+
+  it('does not put two near-identical words in the same strip', () => {
+    // `spawn` and `spawner` differ by two letters, sit in one five-button grid,
+    // and only one of them does anything. What the button says has to separate
+    // them; what the map stores may not move -- it is a byte on the wire.
+    const labels = MARKER_CHOICES.map((c) => c.label);
+    const spawner = MARKER_CHOICES.find((c) => c.value === 'spawner');
+    expect(spawner?.label).toBe('monster');
+    for (const a of labels) {
+      for (const b of labels) {
+        if (a === b) continue;
+        expect(a.startsWith(b)).toBe(false);
+      }
+    }
+  });
+
+  it('keeps every stored kind, whatever the buttons say', () => {
+    expect(MARKER_CHOICES.map((c) => c.value)).toEqual([...MARKER_KINDS]);
+  });
+
+  it('says which kinds are sockets with nothing plugged in', () => {
+    expect(markerKindEffect('spawner')).toMatch(/spawns the monster/);
+    for (const kind of MARKER_KINDS) {
+      if (kind === 'spawner') continue;
+      // Not a description of an effect it does not have: four of the five are
+      // written to the map and read by nobody, and the panel says so.
+      expect(markerKindEffect(kind)).toMatch(/nothing reads it yet/);
+    }
   });
 });
