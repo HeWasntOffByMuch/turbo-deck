@@ -34,8 +34,22 @@ const CHROMIUM_ARGS = [
 ];
 
 /** Each variant takes one contributor out. The diff against `baseline` is the answer. */
-const VARIANTS: readonly { readonly label: string; readonly perf: string }[] = [
+const VARIANTS: readonly {
+  readonly label: string;
+  readonly perf: string;
+  /** Hold a movement key while sampling. See {@link readVariant}. */
+  readonly walking?: boolean;
+}[] = [
   { label: 'baseline', perf: '' },
+  // The other half of follow-up 10's answer. Standing still, the shadow gate
+  // skips every frame; walking moves the shadow camera's centre, so it cannot --
+  // and a measurement that only ever stands still would report a win the player
+  // never has.
+  { label: 'baseline, walking', perf: '', walking: true },
+  // Puts the old behaviour back rather than taking something out: before
+  // follow-up 10 the shadow maps were redrawn unconditionally every frame, and
+  // this is the only honest way to price that on the same machine.
+  { label: 'shadow every frame', perf: 'eagershadow' },
   { label: 'no shadow map', perf: 'noshadow' },
   { label: 'no props', perf: 'noprops' },
   { label: 'no terrain', perf: 'noterrain' },
@@ -47,6 +61,8 @@ interface Reading {
   calls: number;
   tris: number;
   fps: number;
+  /** How often the sun's map was actually redrawn, over the last half second. */
+  shadow: number;
 }
 
 function run(script: string, env: NodeJS.ProcessEnv): ChildProcess {
@@ -86,16 +102,25 @@ function median(values: readonly number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
-async function readVariant(page: Page, url: string, label: string): Promise<Reading> {
+async function readVariant(
+  page: Page,
+  url: string,
+  label: string,
+  walking = false,
+): Promise<Reading> {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-world-ready]', { timeout: 180_000 });
   // Standing still, and after the loader has stopped: the frame being measured
   // is the one the player spends their time in.
   await sleep(6000);
+  // Held for the whole sample rather than tapped, because what is being measured
+  // is the steady state of a body in motion.
+  if (walking) await page.keyboard.down('w');
 
   const calls: number[] = [];
   const tris: number[] = [];
   const fps: number[] = [];
+  const shadow: number[] = [];
   for (let i = 0; i < 10; i++) {
     await sleep(700);
     const now = await page.evaluate(() => {
@@ -104,13 +129,22 @@ async function readVariant(page: Page, url: string, label: string): Promise<Read
         calls: Number(el?.dataset['fpsDrawCalls'] ?? 0),
         tris: Number(el?.dataset['fpsTriangles'] ?? 0),
         fps: Number(el?.dataset['fpsValue'] ?? 0),
+        shadow: Number(el?.dataset['fpsShadowRate'] ?? 0),
       };
     });
     calls.push(now.calls);
     tris.push(now.tris);
     fps.push(now.fps);
+    shadow.push(now.shadow);
   }
-  return { label, calls: median(calls), tris: median(tris), fps: median(fps) };
+  if (walking) await page.keyboard.up('w');
+  return {
+    label,
+    calls: median(calls),
+    tris: median(tris),
+    fps: median(fps),
+    shadow: median(shadow),
+  };
 }
 
 async function main(): Promise<void> {
@@ -154,7 +188,14 @@ async function main(): Promise<void> {
     for (const variant of VARIANTS) {
       const query = `?server=ws://127.0.0.1:${PORT}${variant.perf ? `&perf=${variant.perf}` : ''}`;
       console.log(`  measuring ${variant.label}...`);
-      readings.push(await readVariant(page, `http://127.0.0.1:${PAGE_PORT}/${query}`, variant.label));
+      readings.push(
+        await readVariant(
+          page,
+          `http://127.0.0.1:${PAGE_PORT}/${query}`,
+          variant.label,
+          variant.walking ?? false,
+        ),
+      );
     }
   } finally {
     await browser.close();
@@ -164,15 +205,17 @@ async function main(): Promise<void> {
   }
 
   const base = readings[0];
-  console.log('\nvariant                    draws        tris     fps   draws saved');
+  console.log('\nvariant                    draws        tris     fps  shadow   draws saved');
   for (const row of readings) {
     const saved = base && row !== base ? base.calls - row.calls : 0;
     console.log(
       `${row.label.padEnd(24)} ${String(row.calls).padStart(6)} ${`${(row.tris / 1000).toFixed(0)}k`.padStart(11)} ${row.fps.toFixed(0).padStart(7)}` +
+        `${`${(row.shadow * 100).toFixed(0)}%`.padStart(8)}` +
         `${row === base ? '' : `   ${String(saved).padStart(6)} (${((saved / Math.max(1, base?.calls ?? 1)) * 100).toFixed(0)}%)`}`,
     );
   }
   console.log('\ndraws and triangles transfer to any GPU; the fps column is software rasterised and does not.');
+  console.log('shadow% is how often the gate asked for a rebuild -- the eager row overrides it downstream.');
   process.exit(0);
 }
 

@@ -23,11 +23,25 @@ export interface PerfFlags {
   readonly noProps: boolean;
   /** The terrain surface and its walls are hidden. */
   readonly noTerrain: boolean;
+  /**
+   * The shadow maps are redrawn every frame, as they were before follow-up 10.
+   *
+   * The one flag here that puts work *back*: it is how the change-driven rebuild
+   * is measured against what it replaced, on the same machine, in the same
+   * scene, without checking out the old code.
+   */
+  readonly eagerShadow: boolean;
   /** Whether any flag is set, so the readout can say the frame is not the real one. */
   readonly any: boolean;
 }
 
-const NONE: PerfFlags = { noShadow: false, noProps: false, noTerrain: false, any: false };
+const NONE: PerfFlags = {
+  noShadow: false,
+  noProps: false,
+  noTerrain: false,
+  eagerShadow: false,
+  any: false,
+};
 
 /**
  * Read `?perf=` as a comma-separated list.
@@ -44,6 +58,10 @@ export function parsePerfFlags(search: string): PerfFlags {
     noShadow: names.has('noshadow'),
     noProps: names.has('noprops'),
     noTerrain: names.has('noterrain'),
+    eagerShadow: names.has('eagershadow'),
   };
-  return { ...flags, any: flags.noShadow || flags.noProps || flags.noTerrain };
+  return {
+    ...flags,
+    any: flags.noShadow || flags.noProps || flags.noTerrain || flags.eagerShadow,
+  };
 }

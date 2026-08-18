@@ -13,6 +13,18 @@
  */
 
 import { STALL_MS, type FrameStats } from './fps-meter.js';
+import type { SceneStats } from './scene.js';
+
+/**
+ * How many frames the shadow-rebuild rate is averaged over before it is redrawn.
+ *
+ * The scene hands over two running totals, and the useful question is "how often
+ * is the sun's map being redrawn *lately*" -- a session average would tell you
+ * about the loading screen for the rest of the session. Half a second is long
+ * enough to be a rate and short enough that walking and standing still read as
+ * two different numbers.
+ */
+const SHADOW_WINDOW = 30;
 
 const WIDTH = 180;
 const HEIGHT = 56;
@@ -42,7 +54,7 @@ export interface FpsOverlay {
     workMs?: number,
     worstStage?: string,
     worstStageMs?: number,
-    scene?: { calls: number; triangles: number },
+    scene?: SceneStats,
   ): void;
   dispose(): void;
 }
@@ -106,13 +118,25 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
     ctx.stroke();
   };
 
+  // The baseline the rate is measured against, rolled forward every window.
+  let shadowBase = { rebuilds: 0, frames: 0 };
+  let shadowShown = 1;
+  const shadowRate = (scene: SceneStats): number => {
+    const frames = scene.shadowFrames - shadowBase.frames;
+    if (frames >= SHADOW_WINDOW) {
+      shadowShown = (scene.shadowRebuilds - shadowBase.rebuilds) / frames;
+      shadowBase = { rebuilds: scene.shadowRebuilds, frames: scene.shadowFrames };
+    }
+    return shadowShown;
+  };
+
   return {
     set(
       stats: FrameStats | null,
       workMs = 0,
       worstStage = '',
       worstStageMs = 0,
-      scene?: { calls: number; triangles: number },
+      scene?: SceneStats,
     ): void {
       if (!stats) {
         root.style.display = 'none';
@@ -135,9 +159,13 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
             : '';
       root.dataset['fpsWork'] = workMs.toFixed(1);
       if (scene) {
-        draws.textContent = `${scene.calls} draws  ${(scene.triangles / 1000).toFixed(0)}k tris`;
+        const shadow = shadowRate(scene);
+        draws.textContent =
+          `${scene.calls} draws  ${(scene.triangles / 1000).toFixed(0)}k tris` +
+          `  shadow ${(shadow * 100).toFixed(0)}%`;
         root.dataset['fpsDrawCalls'] = String(scene.calls);
         root.dataset['fpsTriangles'] = String(scene.triangles);
+        root.dataset['fpsShadowRate'] = shadow.toFixed(3);
       }
       root.dataset['fpsWorstStage'] = worstStage;
       root.dataset['fpsWorstStageMs'] = worstStageMs.toFixed(1);
