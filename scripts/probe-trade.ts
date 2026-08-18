@@ -489,6 +489,14 @@ async function main(): Promise<void> {
     await waitForStage(ana, 'over', 'Ana');
     check('the ending is drawn rather than the window vanishing', true);
     check('the window is still open on Ana', (await readout(ana)).windows.includes('trade'));
+    // What the ending says each side gave (spec 171). Read off the panel rather
+    // than off the bags: the swap was already checked by counting, and this is
+    // the account of it the player is actually shown. It used to name the item
+    // Ana *received*, because an offer is a slot index and the bag it points
+    // into had already been written.
+    const ended = await readout(ana);
+    check(`the ending says Ana gave the ${GOODS}`, offers(ended.you, GOODS), ended.you);
+    check('...and does not credit her with what she got', !offers(ended.them, GOODS), ended.them);
     await ana.screenshot({ path: '.claude/screenshots/trade-ana.png' });
 
     await ana.waitForTimeout(800);

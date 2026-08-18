@@ -88,8 +88,28 @@ export interface Holdings {
   readonly coins: number;
 }
 
+/** What each side handed over, resolved at the instant it was taken. */
+export interface MovedStacks {
+  readonly a: readonly ItemStack[];
+  readonly b: readonly ItemStack[];
+}
+
 export type SwapOutcome =
-  | { readonly ok: true; readonly a: Holdings; readonly b: Holdings }
+  | {
+      readonly ok: true;
+      readonly a: Holdings;
+      readonly b: Holdings;
+      /**
+       * What actually changed hands (spec 171).
+       *
+       * Carried out rather than recomputed, because by the time anyone asks it
+       * is no longer answerable: an offer is a set of slot *indices* and the
+       * bags they point into have been written. Resolved late everywhere else
+       * -- that is spec 132's duplication defence -- but a finished trade is
+       * the one moment the late answer is the wrong one.
+       */
+      readonly moved: MovedStacks;
+    }
   | { readonly ok: false; readonly reason: string };
 
 export type TradeOutcome =
@@ -316,7 +336,7 @@ export function exchangeProblem(
 }
 
 type Exchange =
-  | { readonly ok: true; readonly a: Holdings; readonly b: Holdings }
+  | { readonly ok: true; readonly a: Holdings; readonly b: Holdings; readonly moved: MovedStacks }
   | { readonly ok: false; readonly side: 'a' | 'b'; readonly reason: string };
 
 /**
@@ -341,6 +361,7 @@ function exchange(trade: Trade, a: Holdings, b: Holdings): Exchange {
     ok: true,
     a: { inventory: givenToA, coins: a.coins - trade.a.coins + trade.b.coins },
     b: { inventory: givenToB, coins: b.coins - trade.b.coins + trade.a.coins },
+    moved: { a: takenFromA.moved, b: takenFromB.moved },
   };
 }
 

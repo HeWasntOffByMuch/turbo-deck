@@ -35,7 +35,7 @@ import {
   type TradeOutcome,
 } from './trade.js';
 
-export type { Trade, TradeStage, OfferedSlot, Holdings, SwapOutcome } from './trade.js';
+export type { Trade, TradeStage, OfferedSlot, Holdings, MovedStacks, SwapOutcome } from './trade.js';
 
 /** How close two players must be to trade at all, in world units. */
 export const TRADE_RANGE = 90;

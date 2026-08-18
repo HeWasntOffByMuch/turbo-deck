@@ -350,6 +350,42 @@ describe('furnishing an invitation (spec 170)', () => {
   });
 });
 
+describe('what the swap reports it moved (spec 171)', () => {
+  const bow = { defId: 'bow.hunting', count: 1 };
+  const stars = { defId: 'stars.weighted', count: 1 };
+
+  /**
+   * Carried out rather than recomputed, because by the time anyone asks it is
+   * no longer answerable: an offer is a set of slot indices and the bags they
+   * point into have been written.
+   */
+  it('reports each side by what it handed over', () => {
+    const ana = holding({ 0: bow });
+    const ben = holding({ 1: stars });
+    const result = swap(
+      agreed(ana, ben, [{ index: 0, count: 1 }], [{ index: 1, count: 1 }]),
+      ana,
+      ben,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.moved.a).toEqual([bow]);
+    expect(result.moved.b).toEqual([stars]);
+  });
+
+  /** A part of a stack is reported as the part, not as the stack. */
+  it('reports a partial stack as what left the bag', () => {
+    const potions = { defId: 'potion.minor', count: 3 };
+    const ana = holding({ 0: potions });
+    const ben = holding({});
+    const result = swap(agreed(ana, ben, [{ index: 0, count: 1 }], []), ana, ben);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.moved.a).toEqual([{ defId: 'potion.minor', count: 1 }]);
+    expect(result.moved.b).toEqual([]);
+  });
+});
+
 describe('exchangeProblem (spec 170)', () => {
   const bow = { defId: 'bow.hunting', count: 1 };
 

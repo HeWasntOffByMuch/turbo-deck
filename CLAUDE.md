@@ -821,7 +821,20 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  players and could only ever be true for one: the player whose
                  own bag was the problem was told "their bag is full", after
                  both had accepted, which is the one moment neither of them can
-                 do anything about it. data/ holds
+                 do anything about it.
+                 Spec 171 is the other end of the same idea: **an offer is
+                 resolved late everywhere except at the moment it stops being an
+                 offer.** The `done` message is published after `applyTrade` has
+                 written both bags, so resolving slot indices there reads a bag
+                 that has moved on -- and since `addToInventory` fills the first
+                 free slot, which is the one your own offer just emptied, each
+                 side was credited with what it *received*. The ending came back
+                 as the trade reversed. `swap` carries out what it took, and the
+                 terminal message uses that; every other publish still resolves
+                 late, because for a live table that is the duplication defence.
+                 A cancellation resolves too and is right to -- nothing was
+                 written, so the bag it reads is the one the offer was made
+                 from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `sim/aggro.ts` is whether one body has business with another

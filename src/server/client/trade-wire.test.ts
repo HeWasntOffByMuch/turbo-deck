@@ -386,6 +386,83 @@ describe('a trade over the wire', () => {
   });
 
   /**
+   * What the ending says each side gave (spec 171).
+   *
+   * This is the case that used to come back **reversed**. An offer is a set of
+   * slot indices resolved when the message is built, and the `done` message is
+   * built after both bags have been written -- so the slot Ana's bow left is
+   * the first free one, which is where Ben's stars landed, and Ana was told she
+   * had offered the stars she just received.
+   */
+  it('says what each side gave, not what it got', async () => {
+    const h = await harness();
+    await open(h);
+    const anaBow = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    const benStars = slotOf(bagOf(h.server, 'ben'), 'stars.weighted');
+    h.ana.offerInTrade([{ index: anaBow, count: 1 }], 0);
+    await settle();
+    h.ben.offerInTrade([{ index: benStars, count: 1 }], 0);
+    await settle();
+
+    const revision = h.ana.view().trade?.revision ?? -1;
+    h.ana.acceptTrade(revision);
+    await settle();
+    h.ben.acceptTrade(revision);
+    await settle();
+
+    const ana = h.ana.view().endedTrade;
+    expect(ana?.you.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+    expect(ana?.them.offer).toEqual([{ defId: 'stars.weighted', count: 1 }]);
+    // ...and the same trade from the other chair, which is the same two lists
+    // the other way round.
+    const ben = h.ben.view().endedTrade;
+    expect(ben?.you.offer).toEqual([{ defId: 'stars.weighted', count: 1 }]);
+    expect(ben?.them.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+  });
+
+  /**
+   * The other half: with nothing coming back, the vacated slot stays empty and
+   * the ending said "nothing offered" -- a completed trade that appears to have
+   * moved nothing at all.
+   */
+  it('names the goods when only one side gave anything', async () => {
+    const h = await harness();
+    await open(h);
+    const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    h.ana.offerInTrade([{ index, count: 1 }], 3);
+    await settle();
+    const revision = h.ana.view().trade?.revision ?? -1;
+    h.ana.acceptTrade(revision);
+    await settle();
+    h.ben.acceptTrade(revision);
+    await settle();
+
+    expect(h.ana.view().endedTrade?.you.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+    expect(h.ben.view().endedTrade?.them.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+    // Coins were never wrong: they are stored on the trade, not derived from a
+    // bag. Asserted so a future change to the ending cannot quietly break them.
+    expect(h.ana.view().endedTrade?.you.coins).toBe(3);
+  });
+
+  /**
+   * A cancellation goes on resolving against the bag, and is right to: nothing
+   * was written, so the bag it resolves against is the one the offer was made
+   * from.
+   */
+  it('still reads a cancelled table off the bag it was offered from', async () => {
+    const h = await harness();
+    await open(h);
+    const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    h.ana.offerInTrade([{ index, count: 1 }], 0);
+    await settle();
+    h.ben.cancelTrade();
+    await settle();
+
+    expect(h.ana.view().endedTrade?.stage).toBe(TradeStageValue.Cancelled);
+    expect(h.ana.view().endedTrade?.you.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+  });
+
+  /**
    * The two-window dupe: offer something, then sell it to a vendor, then have
    * the trade go through. The offer is resolved against the bag at *swap* time,
    * so the sale wins and the trade is refused whole.
