@@ -72,6 +72,64 @@ Ancillary numbers worth having:
   blocking work with no loading screen up yet, because the screen is created
   after it
 
+## Walking is a different shape from the cold start
+
+The cold start is a throughput problem: 8 s of work, and the only question is
+which thread does it. Walking is a *unit size* problem, and the two want their
+costs read differently. One chunk arriving mid-play, end to end:
+
+| | |
+|---|---|
+| `insertChunk` | 0.2 ms |
+| 3 × `buildChunk` (itself plus the edge neighbours already held) | 14.6 ms |
+| 3 × `terrainMesh.rebuild` | 13.3 ms |
+| the prop regions its 616-unit rect touches | **62.1 ms** |
+| **total** | **~90 ms, against a 16.7 ms frame** |
+
+and, on the **remote path only**, a nav rebuild on the ≥5 s clock:
+
+| | |
+|---|---|
+| re-sample the arrived chunk's ground (4096 cells) | 7.2 ms |
+| `createNavGrid` over the whole 797k-cell world | **~190 ms** |
+
+The loopback path pays none of that second table: `navGrowsWithStream` is false
+there, so walking into new ground costs the in-tab sim nothing. It pays the first
+table in full.
+
+**Rate.** Base move speed is 147.5 units/s and a chunk is 616 units, so crossing
+one takes ~4.2 s and the radius-6 request window brings in a new column of 13.
+That is a chunk every ~320 ms, each costing ~90 ms — near a third of the main
+thread, sustained, for as long as the player keeps walking into ground they have
+not seen.
+
+**Two thirds of it is the prop field**, and that is the part that cannot be made
+frame-sized on one thread. One region rebuild is **34 ms** and it decomposes
+badly for anyone hoping to shave it:
+
+| | |
+|---|---|
+| re-bucketing all 6942 props | 1.1 ms (3%) |
+| welding the part geometry (`smoothGeometry`, per part per region) | ~5.9 ms (17%) |
+| 19 `InstancedMesh` batches + materials + ~270 instance compositions | ~27 ms (80%) |
+
+Sharing the welded geometry across regions — the saving spec 165 identified and
+left — takes a region from 34 ms to ~28 ms. Still two dropped frames. There is no
+arrangement of the existing code in which rebuilding a region fits in a frame,
+which is why the walking case and the cold-start case have the same answer.
+
+**A multiplier worth checking before anything else.** `takePropRects` holds a
+region back while any *queued* chunk overlaps it — but a chunk that has not
+arrived yet is not queued. Walking east, every region on the leading edge settles
+on the half that has arrived, rebuilds, and is dirtied again by the next column.
+A 1100-unit region spans parts of ~4 chunks, so the same 34 ms is plausibly being
+paid 2–4 times per region. `StreamedMap` already knows which chunks are
+*declared* against which are *held* (that is what `knows()` and `coverage()` are),
+so the missing condition is "and this region's ground is complete" — with the
+existing timer left in as the backstop for a region whose remaining chunks are
+outside the request radius and are never coming. Cheap, no worker, and it should
+be measured first because it changes what the worker is being asked to carry.
+
 ## What cannot leave the main thread, and why
 
 **`heightAt`.** `scene.ground(x, z)` is `map.world.heightAt(x, z)` and it is
