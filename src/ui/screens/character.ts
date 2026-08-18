@@ -325,7 +325,7 @@ export class CharacterScreen extends Column {
       ...view.branches.map((branch) => branch.id),
       ...view.branches.flatMap((branch) => branch.skills.map((skill) => skill.id)),
     ];
-    if (tabIds.join('|') !== this.branchOrder.join('|')) this.rebuildTabs(view);
+    if (tabIds.join('|') !== this.branchOrder.join('|')) this.rebuildTabs();
     this.branchOrder = tabIds;
 
     for (const attribute of view.attributes) {
@@ -432,7 +432,23 @@ export class CharacterScreen extends Column {
     }
   }
 
-  private rebuildTabs(view: CharacterView): void {
+  /**
+   * Register the three tabs.
+   *
+   * The factories read {@link current} rather than closing over the view this
+   * was called with, and that is the whole of a bug rather than a style
+   * preference. A tab is built lazily on first selection and then kept (spec
+   * 124), so the view a tab is built *from* is the newest one only for whichever
+   * tab happens to be selected at registration -- and this runs once, on the
+   * first `setCharacter`. The Skills factory therefore held the sheet's opening
+   * view forever: a player who allocated an attribute and only then looked at
+   * the tree got a tree gated on the attributes they had before they spent, with
+   * every newly-met skill still greyed out and still saying it needed the number
+   * they now had. `setCharacter` walks the rows afterwards and would have
+   * corrected it, but there was nothing to walk -- `this.rows` is empty until the
+   * factory has run -- and the next `Stats` message is what it took to notice.
+   */
+  private rebuildTabs(): void {
     this.rows.clear();
     this.attributeRows.clear();
     const theme = this.options.theme;
@@ -441,14 +457,14 @@ export class CharacterScreen extends Column {
     // strip on a window this narrow and pushed the last two off the edge, and
     // the six are one tree rather than six trees anyway -- so they are one tab
     // with a heading per attribute.
-    this.tabs.addTab('attributes', 'Attributes', () => this.buildAttributes(view, theme));
+    this.tabs.addTab('attributes', 'Attributes', () => this.buildAttributes(theme));
     this.tabs.addTab('stats', 'Stats', () => this.statColumn);
-    this.tabs.addTab('skills', 'Skills', () => this.buildSkills(view, theme));
+    this.tabs.addTab('skills', 'Skills', () => this.buildSkills(theme));
   }
 
-  private buildAttributes(view: CharacterView, theme: Theme): Column {
+  private buildAttributes(theme: Theme): Column {
     this.attributeColumn.clearChildren();
-    for (const attribute of view.attributes) {
+    for (const attribute of this.current?.attributes ?? []) {
       const row = new AttributeRow(attribute.key, theme, (key) => this.onAllocate?.(key));
       row.setAttribute(attribute);
       this.attributeRows.set(attribute.key, row);
@@ -472,10 +488,10 @@ export class CharacterScreen extends Column {
    * is the attribute, and each row's own tooltip says which number it wants --
    * so a tier label would be a heading that repeats what is under it.
    */
-  private buildSkills(view: CharacterView, theme: Theme): Column {
+  private buildSkills(theme: Theme): Column {
     const column = new Column('character:skills');
     column.gap = theme.spacing.xs;
-    for (const branch of view.branches) {
+    for (const branch of this.current?.branches ?? []) {
       const heading = new Label(branch.name, 'body');
       heading.colorToken = 'accent';
       column.add(heading);

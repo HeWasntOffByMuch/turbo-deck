@@ -270,6 +270,7 @@ const PURE_RENDER = [
   'src/render/iso3d/editor/camera.ts',
   'src/render/iso3d/editor/history.ts',
   'src/render/iso3d/editor/markers.ts',
+  'src/render/iso3d/editor/paint.ts',
   'src/render/iso3d/editor/scatter.ts',
   'src/render/iso3d/editor/*.test.ts',
 ];
@@ -366,7 +367,10 @@ export default tseslint.config(
   {
     // tools/ holds vendored third-party code (the pixeldudesmaker generator and
     // its libs), captured as-is — not ours to lint against the strict config.
-    ignores: ['dist/**', 'node_modules/**', 'tools/**'],
+    // `.claude/scratch/` is gitignored working files -- benches and one-off
+    // comparisons an agent wrote to answer a question. They are outside the
+    // tsconfig by design, so the type-aware rules cannot parse them at all.
+    ignores: ['dist/**', 'node_modules/**', 'tools/**', '.claude/scratch/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.strict,

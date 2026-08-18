@@ -1,7 +1,15 @@
 import { defineConfig } from 'vite';
 
+import { mapWritePlugin } from './scripts/dev-map-write.js';
+
 export default defineConfig({
   root: 'src/render',
+  /**
+   * `POST /api/map` writes the map the editor is editing (spec 177). Dev only --
+   * the plugin declares `apply: 'serve'`, so a built page has no such endpoint
+   * and the editor falls back to the download it always had.
+   */
+  plugins: [mapWritePlugin()],
   /**
    * The Studio tab (spec 109) is the first thing in the client that speaks HTTP
    * to the game server, and in development they are two processes on two ports.
