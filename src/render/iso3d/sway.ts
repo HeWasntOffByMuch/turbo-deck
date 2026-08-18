@@ -226,8 +226,6 @@ export function applySway(
    */
   bendNormals = false,
 ): void {
-  if (!mesh.geometry.getAttribute('aBend')) return;
-
   const base = new Float32Array(instances.length * 3);
   const tune = new Float32Array(instances.length * 2);
   instances.forEach((instance, i) => {
@@ -237,6 +235,27 @@ export function applySway(
     tune[i * 2] = instance.stiffness;
     tune[i * 2 + 1] = instance.phase;
   });
+  applySwayBuffers(mesh, base, tune, height, trail, bendNormals);
+}
+
+/**
+ * The same, from arrays somebody else packed (spec 181).
+ *
+ * Split out because the packing is per *instance* and is therefore part of the
+ * arithmetic that moved to the map worker, while everything below needs the
+ * mesh and cannot move. `applySway` above is this function with the packing in
+ * front of it, kept for the callers that hold `SwayInstance`s.
+ */
+export function applySwayBuffers(
+  mesh: THREE.InstancedMesh,
+  base: Float32Array,
+  tune: Float32Array,
+  height: number,
+  trail: SwayLag = {},
+  bendNormals = false,
+): void {
+  if (!mesh.geometry.getAttribute('aBend')) return;
+
   mesh.geometry.setAttribute('aWindBase', new THREE.InstancedBufferAttribute(base, 3));
   mesh.geometry.setAttribute('aWindTune', new THREE.InstancedBufferAttribute(tune, 2));
 

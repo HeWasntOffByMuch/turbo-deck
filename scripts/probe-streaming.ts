@@ -215,7 +215,15 @@ async function main(): Promise<void> {
     // Give the server its boot: it reads a 3MB map and warms its routing grids.
     await sleep(9000);
 
-    const url = `http://127.0.0.1:${PAGE_PORT}/?server=ws://127.0.0.1:${PORT}`;
+    // `PERF=noworker` runs the load on the main thread, as it did before spec
+    // 176. The point of it is that the two are then one command apart on one
+    // machine, which is the only honest way to say what moving the load bought
+    // -- this container's frame *rate* transfers nowhere, but the streaming cost
+    // it measures is main-thread work and is the same work everywhere.
+    const perf = process.env['PERF'] ?? '';
+    const url =
+      `http://127.0.0.1:${PAGE_PORT}/?server=ws://127.0.0.1:${PORT}` +
+      (perf === '' ? '' : `&perf=${perf}`);
     console.log(`  loading ${url}`);
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
@@ -281,6 +289,10 @@ async function main(): Promise<void> {
       'the loader never took a sixth of a second of a frame after load',
       settle.worstWorkMs < 160,
       `worst streaming cost ${settle.worstWorkMs.toFixed(0)}ms`,
+    );
+    console.log(
+      `  the load ran ${perf.includes('noworker') ? 'on the main thread' : 'on a worker'}` +
+        ` (PERF=noworker to compare)`,
     );
     // Not asserted: `steady` is measured after the walk, when the stream has
     // legitimately re-opened. The idle claim belongs to `settle`, above.

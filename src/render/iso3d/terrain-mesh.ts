@@ -6,20 +6,23 @@ import {
   materialIndex,
   rectContains,
   sampleLayer,
-  TERRAIN_MATERIALS,
   type ChunkOptions,
   type MeshLayer,
   type TerrainChunk,
   type TerrainWorld,
 } from '../../terrain/index.js';
-import { TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
 import { shoreField } from './shore-sdf.js';
+import {
+  buildChunkArrays,
+  type ChunkFootprint,
+  type ChunkMeshArrays,
+  type MeshArrays,
+} from './terrain-arrays.js';
 import { WATER } from './wind.js';
 import { buildWaterQuad, disposeWaterQuad } from './water-material.js';
 import { patchTerrainStreak } from './terrain-streak.js';
 import { patchTerrainCurvature } from './terrain-curvature.js';
 import { patchTerrainDetail } from './terrain-detail.js';
-import { cellCavity, type CornerSample } from './curvature.js';
 
 /**
  * The only thing that turns terrain data into geometry (spec 043). Everything
@@ -90,6 +93,16 @@ export interface TerrainMeshHandle {
    */
   rebuild(chunk: TerrainChunk): void;
   /**
+   * Draw a chunk whose triangles were built elsewhere (spec 180).
+   *
+   * The counterpart to `rebuild` for a client whose mesher is on a worker: same
+   * drawing, same seam re-bake, without the 3.4ms of arithmetic in front of it.
+   * False when the layer is unknown -- a payload for ground this mesher was
+   * never told about is dropped rather than guessed at, exactly as `rebuild`
+   * silently draws nothing for one.
+   */
+  adopt(chunk: ChunkFootprint, arrays: ChunkMeshArrays): boolean;
+  /**
    * Drop one chunk's geometry, for ground that has stopped existing (spec 085).
    *
    * The counterpart to `rebuild`: removing a map part deletes chunks, and
@@ -115,168 +128,27 @@ export interface TerrainMeshHandle {
   dispose(): void;
 }
 
-/** Linear RGB for a palette hex, matching what a plain flat material would show. */
-const colorCache = new Map<number, THREE.Color>();
-function linearColor(hex: number): THREE.Color {
-  let c = colorCache.get(hex);
-  if (!c) {
-    c = new THREE.Color(hex);
-    colorCache.set(hex, c);
-  }
-  return c;
-}
-
 /**
- * A corner of a quad: its world position, plus the smooth normal the surface has
- * there. Walls pass no normal and get flat ones computed for them.
+ * Vertex arrays as a geometry.
+ *
+ * `THREE.BufferAttribute` rather than `Float32BufferAttribute`, which is not a
+ * style choice: the latter's constructor is `new Float32Array( array )`, so it
+ * copies every attribute it is handed. These arrays arrive already sized and,
+ * off a worker, already transferred -- copying 185KB per chunk to wrap them
+ * would put back a good fraction of what moving the build saved.
+ *
+ * A null `normals` means flat shading, and three computes those here where it
+ * always did. See `terrain-arrays.ts` for why that one thing did not move.
  */
-type Corner = readonly [x: number, y: number, z: number, nx?: number, ny?: number, nz?: number];
-
-/** Accumulates triangles for one geometry. */
-class MeshBuffer {
-  readonly positions: number[] = [];
-  readonly colors: number[] = [];
-  readonly normals: number[] = [];
-  /**
-   * How much the ground folds at this vertex, 0..1 (spec 104).
-   *
-   * Constant across a quad, like the colour: it is a property of the cell, and
-   * the ground's whole look is flat bands one cell wide. Emitted only for the
-   * surface -- `build` writes the attribute only when asked, so the walls carry
-   * no column of zeroes for a material that never reads them.
-   */
-  readonly cavities: number[] = [];
-
-  private vertex(v: Corner, c: THREE.Color, cavity: number): void {
-    this.positions.push(v[0], v[1], v[2]);
-    this.colors.push(c.r, c.g, c.b);
-    this.normals.push(v[3] ?? 0, v[4] ?? 0, v[5] ?? 0);
-    this.cavities.push(cavity);
-  }
-
-  /** A quad as two triangles, wound a-b-c / a-c-d. */
-  quad(a: Corner, b: Corner, c: Corner, d: Corner, color: THREE.Color, cavity = 0): void {
-    this.vertex(a, color, cavity);
-    this.vertex(b, color, cavity);
-    this.vertex(c, color, cavity);
-    this.vertex(a, color, cavity);
-    this.vertex(c, color, cavity);
-    this.vertex(d, color, cavity);
-  }
-
-  /** `smooth` geometries carry the normals they were given; the rest derive flat ones. */
-  build(smooth: boolean, cavity = false): THREE.BufferGeometry | null {
-    if (this.positions.length === 0) return null;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(this.positions, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3));
-    if (smooth) geo.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
-    else geo.computeVertexNormals();
-    if (cavity) geo.setAttribute('cavity', new THREE.Float32BufferAttribute(this.cavities, 1));
-    return geo;
-  }
-}
-
-/**
- * Mesh one chunk. Neighbour solidity is asked of the *layer*, not the chunk, so
- * a chunk seam is not mistaken for a coastline -- otherwise every chunk boundary
- * would grow a wall down the middle of open ground. On a streaming client the
- * layer may not know yet, which is a third answer and not a `false` (spec 078).
- */
-function buildChunk(
-  layer: MeshLayer,
-  chunk: TerrainChunk,
-): { surface: THREE.BufferGeometry | null; walls: THREE.BufferGeometry | null } {
-  const surface = new MeshBuffer();
-  const walls = new MeshBuffer();
-  const { cols, rows, heights, cornerX, cornerZ, normals, solid, materials, tones, baseY } = chunk;
-  const stride = cols + 1;
-
-  /** The jittered corner (i, j), carrying the surface normal the field has there. */
-  const corner = (i: number, j: number): Corner => {
-    const k = j * stride + i;
-    return [
-      cornerX[k] ?? 0,
-      heights[k] ?? 0,
-      cornerZ[k] ?? 0,
-      normals[k * 3] ?? 0,
-      normals[k * 3 + 1] ?? 1,
-      normals[k * 3 + 2] ?? 0,
-    ];
-  };
-
-  /**
-   * The same corner as a sample the cavity measure can read (spec 104).
-   *
-   * Everything it needs is already here: the corner's jittered world position and
-   * the smooth normal the field has there, both stored by every chunk that shares
-   * the corner. Which is why this needs no apron and no neighbour lookup -- a
-   * cell's four corners are always inside its own chunk.
-   */
-  const sample = (i: number, j: number): CornerSample => {
-    const k = j * stride + i;
-    return {
-      x: cornerX[k] ?? 0,
-      y: heights[k] ?? 0,
-      z: cornerZ[k] ?? 0,
-      nx: normals[k * 3] ?? 0,
-      ny: normals[k * 3 + 1] ?? 1,
-      nz: normals[k * 3 + 2] ?? 0,
-    };
-  };
-
-  /** True, false, or `null` for a cell across a seam that has not streamed in. */
-  const solidAt = (i: number, j: number): boolean | null =>
-    i >= 0 && j >= 0 && i < cols && j < rows
-      ? solid[j * cols + i] === 1
-      : layer.solidAt(chunk.startCol + i, chunk.startRow + j);
-
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const k = j * cols + i;
-      if (solid[k] !== 1) continue;
-
-      const material = TERRAIN_MATERIALS[materials[k] ?? 0] ?? 'grass';
-      const pair = TERRAIN_COLORS[material];
-      const tone = tones[k] === 1 ? 1 : 0;
-      const color = linearColor(pair[tone] ?? pair[0]);
-
-      const c00 = corner(i, j);
-      const c10 = corner(i + 1, j);
-      const c01 = corner(i, j + 1);
-      const c11 = corner(i + 1, j + 1);
-
-      const cavity = cellCavity(
-        sample(i, j),
-        sample(i + 1, j),
-        sample(i, j + 1),
-        sample(i + 1, j + 1),
-        chunk.cellSize,
-      );
-
-      // Wound so the face normal points +Y (up) for the flat case.
-      surface.quad(c00, c01, c11, c10, color, cavity);
-
-      // Skirt every edge that faces open air, dropped to the layer's underside.
-      // The wall takes the material of the ground it hangs from (spec 123), so
-      // a coastline cuts as sand and a rock tier cuts as grey slate.
-      const cliffPair = TERRAIN_CLIFF_COLORS[material];
-      const cliff = linearColor(cliffPair[tone] ?? cliffPair[0]);
-      const wall = (a: Corner, b: Corner): void => {
-        walls.quad(a, b, [b[0], baseY, b[2]], [a[0], baseY, a[2]], cliff);
-      };
-      // Only a *definite* no earns a skirt. An unknown neighbour is one that has
-      // not streamed in, and a wall built against it is a cliff the settled map
-      // does not have (spec 078); the chunk is re-meshed when the neighbour
-      // lands, which is where a real seam coastline gets its wall.
-      if (solidAt(i - 1, j) === false) wall(c00, c01);
-      if (solidAt(i + 1, j) === false) wall(c10, c11);
-      if (solidAt(i, j - 1) === false) wall(c00, c10);
-      if (solidAt(i, j + 1) === false) wall(c01, c11);
-    }
-  }
-
-  return { surface: surface.build(true, true), walls: walls.build(false) };
+function geometryFrom(arrays: MeshArrays | null): THREE.BufferGeometry | null {
+  if (!arrays) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(arrays.positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(arrays.colors, 3));
+  if (arrays.normals) geo.setAttribute('normal', new THREE.BufferAttribute(arrays.normals, 3));
+  else geo.computeVertexNormals();
+  if (arrays.cavities) geo.setAttribute('cavity', new THREE.BufferAttribute(arrays.cavities, 1));
+  return geo;
 }
 
 /**
@@ -291,7 +163,7 @@ function buildChunk(
  * which can only ever make this chunk's sea look deeper, never invent a shore
  * that disappears when the neighbour lands.
  */
-function buildWater(layer: MeshLayer, chunk: TerrainChunk): THREE.Mesh | null {
+function buildWater(layer: MeshLayer, chunk: ChunkFootprint): THREE.Mesh | null {
   if (layer.waterLevel === null) return null;
   let wet = false;
   for (const material of chunk.materials) {
@@ -353,12 +225,18 @@ export function buildTerrainMeshFromChunks(
     surface: THREE.Mesh | null;
     walls: THREE.Mesh | null;
     water: THREE.Mesh | null;
-    /** Kept so a neighbour's arrival can re-bake this chunk's shore field. */
-    readonly chunk: TerrainChunk;
+    /**
+     * Kept so a neighbour's arrival can re-bake this chunk's shore field.
+     *
+     * The footprint rather than the whole chunk (spec 180): once the triangles
+     * exist, the only thing still wanted from a chunk is what its water needs,
+     * and off a worker the vertex arrays are all that came back.
+     */
+    readonly chunk: ChunkFootprint;
   }
   const drawn = new Map<string, Slot>();
   const keyOf = (layerId: string, cx: number, cz: number): string => `${layerId}:${cx},${cz}`;
-  const slotKey = (chunk: TerrainChunk): string => keyOf(chunk.layerId, chunk.coord.cx, chunk.coord.cz);
+  const slotKey = (chunk: ChunkFootprint): string => keyOf(chunk.layerId, chunk.coord.cx, chunk.coord.cz);
 
   /** Replace one chunk's water quad, disposing whatever it replaces. */
   const drawWater = (layer: MeshLayer, slot: Slot): void => {
@@ -370,8 +248,16 @@ export function buildTerrainMeshFromChunks(
     if (slot.water) group.add(slot.water);
   };
 
-  /** Build (or rebuild) one chunk's meshes into the group. */
-  const draw = (layer: MeshLayer, chunk: TerrainChunk): void => {
+  /**
+   * Draw (or redraw) one chunk's meshes into the group, from vertex arrays
+   * somebody else built.
+   *
+   * Split from the building in spec 180. What is left here is the part that
+   * needs the scene graph -- disposing what was there, wrapping the arrays,
+   * hanging the meshes on the group, and re-baking the shore fields either side
+   * of the seam -- and it is 0.025ms against the 3.4ms the build is.
+   */
+  const draw = (layer: MeshLayer, chunk: ChunkFootprint, arrays: ChunkMeshArrays): void => {
     const key = slotKey(chunk);
     const previous = drawn.get(key);
     if (previous) {
@@ -388,7 +274,8 @@ export function buildTerrainMeshFromChunks(
       if (stale >= 0) pickTargets.splice(stale, 1);
     }
 
-    const { surface, walls } = buildChunk(layer, chunk);
+    const surface = geometryFrom(arrays.surface);
+    const walls = geometryFrom(arrays.walls);
     const slot: Slot = { surface: null, walls: null, water: null, chunk };
     if (surface) {
       // Ground both takes shadows and throws them (spec 045): a cliff casting
@@ -428,7 +315,7 @@ export function buildTerrainMeshFromChunks(
   for (const layer of layers) {
     for (const chunk of chunks) {
       if (byId.get(chunk.layerId) !== layer) continue;
-      draw(layer, chunk);
+      draw(layer, chunk, buildChunkArrays(layer, chunk));
     }
   }
 
@@ -471,7 +358,13 @@ export function buildTerrainMeshFromChunks(
     pickTargets,
     rebuild(chunk: TerrainChunk): void {
       const layer = byId.get(chunk.layerId);
-      if (layer) draw(layer, chunk);
+      if (layer) draw(layer, chunk, buildChunkArrays(layer, chunk));
+    },
+    adopt(chunk: ChunkFootprint, arrays: ChunkMeshArrays): boolean {
+      const layer = byId.get(chunk.layerId);
+      if (!layer) return false;
+      draw(layer, chunk, arrays);
+      return true;
     },
     remove: erase,
     addLayer(layer: MeshLayer): void {
