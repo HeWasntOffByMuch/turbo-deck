@@ -65,6 +65,7 @@ import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud } from './hud.js';
 import { ChunkIngest } from './chunk-ingest.js';
+import { parsePerfFlags } from './perf-flags.js';
 import { FrameBudget } from './frame-budget.js';
 import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
@@ -427,6 +428,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // never rebuilt -- see streamed-map.ts for why rebuilding it per arrival cost
   // ten seconds of frozen page.
   const scene = new WorldScene(canvas);
+  // `?perf=noshadow,noprops,noterrain` -- a measuring affordance, not a setting.
+  // See perf-flags.ts for why the frame is being taken apart this way.
+  scene.setPerfFlags(parsePerfFlags(location.search));
   let streamed: StreamedMap | null = null;
   /**
    * The meshing queue and the prop-region bookkeeping (spec 165).

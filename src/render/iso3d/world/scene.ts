@@ -35,6 +35,7 @@ import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
+import type { PerfFlags } from './perf-flags.js';
 import {
   buildPropField,
   FLAT_SHADING,
@@ -764,6 +765,21 @@ export class WorldScene {
     DETAIL_UNIFORMS.uDetailSharpness.value = Math.max(1, hike.detailSharpness);
     DETAIL_UNIFORMS.uBlendStrength.value = hike.materialBlend ? hike.blendStrength : 0;
     DETAIL_UNIFORMS.uBlendNoise.value = hike.blendNoise;
+  }
+
+  /**
+   * Contributors taken out of the frame for measuring (spec 165 follow-up 9).
+   *
+   * Held rather than applied once, because `applySun` rewrites `castShadow`
+   * every frame from the day/night state -- a one-shot assignment would be
+   * overwritten by the next frame and the measurement would quietly be of the
+   * baseline.
+   */
+  private perf: PerfFlags = { noShadow: false, noProps: false, noTerrain: false, any: false };
+
+  /** Take contributors out of the frame. See {@link PerfFlags}. */
+  setPerfFlags(flags: PerfFlags): void {
+    this.perf = flags;
   }
 
   /** Ground height, or 0 before there is any ground to ask about. */
@@ -2211,11 +2227,16 @@ export class WorldScene {
 
     this.applySun();
     this.syncUnwalkable(this.controls.showUnwalkable());
+    // Applied per frame, beside the switches that own these objects the rest of
+    // the time: the prop field is replaced whenever a region rebuilds, and the
+    // terrain group outlives every chunk, so a one-shot hide would come back.
+    if (this.perf.noProps && this.propField) this.propField.group.visible = false;
+    if (this.perf.noTerrain && this.terrainMesh) this.terrainMesh.group.visible = false;
   }
 
   private applySun(): void {
     const shadow = this.controls.dayNightEnabled() ? this.applyCycleSun() : this.applyManualSun();
-    this.sun.castShadow = shadow.casting;
+    this.sun.castShadow = shadow.casting && !this.perf.noShadow;
 
     const frame = shadowFrame(this.halfWidth);
     this.sun.target.position.copy(this.target);

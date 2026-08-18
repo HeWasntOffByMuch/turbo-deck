@@ -681,3 +681,44 @@ genuine per-pixel cost -- shading, shadow lookups, the quad -- rather than tryin
 to cut a per-pixel cost per object. It is off by default and is the thing to try
 if the frame turns out to be fill-bound. At 625 draws and 494k triangles it more
 likely is not, which is what the readout is for.
+
+---
+
+## Ninth follow-up: where the 625 draw calls go
+
+`pixelSize: 2` on a real machine took 60fps to 55 -- halving the shaded pixels
+bought *nothing*, so the frame is CPU-bound on draw submission rather than
+fill-bound, and every low-resolution idea is off the table. What is left is the
+draw calls, and `?perf=` plus `scripts/probe-frame-cost.ts` take the frame apart
+one contributor at a time:
+
+| variant | draws | triangles | draws saved |
+|---|---|---|---|
+| baseline | 625 | 494k | — |
+| no shadow map | 290 | 230k | **335 (54%)** |
+| no props | 341 | 55k | **284 (45%)** |
+| no terrain | 597 | 450k | 28 (4%) |
+| no shadow + no props | 150 | 22k | 475 (76%) |
+
+Three things fall straight out of it.
+
+**The shadow map is half the frame.** 335 draws, rebuilt every frame by
+`shadowMap.needsUpdate = true` -- over a world whose sun is static (the
+day/night cycle is off by default) and whose terrain and 6942 props never move.
+Only the bodies do.
+
+**The props are the other half, and they are almost all of the triangles.**
+Removing them takes 494k triangles to 55k. The terrain is 28 draws: it is
+already merged per chunk and is not the problem.
+
+**The two overlap**, which is the useful part: shadow alone saves 335, props
+alone 284, both together 475 rather than 619. Roughly 190 of the shadow pass's
+draws *are* the props being drawn a second time -- so anything that stops
+static geometry re-entering the shadow map every frame collects from both
+columns at once.
+
+`?perf=noshadow,noprops,noterrain` is a measuring affordance in the register of
+`?seed=` and `?wire=` -- off unless asked for, never a game rule, and it changes
+what is drawn rather than what the sim does. The fps column in that table is
+software-rasterised and transfers to nothing; the draws and triangles transfer
+to any GPU.
