@@ -256,6 +256,13 @@ export interface ClientView {
   readonly entities: readonly import('./replica.js').ReplicatedEntity[];
   /** The local player's predicted position -- what to draw them at. */
   readonly self: { readonly x: number; readonly y: number } | null;
+  /**
+   * Where this client is turning to put something down, or null (spec 168).
+   *
+   * The oldest unanswered drop: the server serves them in the order they were
+   * asked for and turns to one aim at a time.
+   */
+  readonly dropAim: { readonly x: number; readonly y: number } | null;
   readonly selfEntityId: number;
   /**
    * The world the server is running, or null before the welcome lands. A
@@ -550,6 +557,14 @@ type PendingEdit =
       readonly requestId: number;
       readonly kind: 'drop';
       readonly request: { readonly at: SlotAddress; readonly count?: number };
+      /**
+       * Where it was aimed, so the predicted body turns to it (spec 168).
+       *
+       * On the edit rather than in a field of its own, because the queue of
+       * edits *is* the queue of drops: the head is what the body is coming
+       * round to, and an answer retires both at once.
+       */
+      readonly aim: { readonly x: number; readonly y: number };
     };
 
 export class GameClient {
@@ -892,17 +907,40 @@ export class GameClient {
    *
    * `count` of 0 means the whole stack, as on the wire.
    */
-  dropItem(at: SlotAddress, count = 0): number {
+  dropItem(at: SlotAddress, aim: { readonly x: number; readonly y: number }, count = 0): number {
     if (!this.connected) return 0;
     const requestId = this.nextRequestId();
     this.pendingMoves.push({
       requestId,
       kind: 'drop',
       request: { at, ...(count === 0 ? {} : { count }) },
+      aim,
     });
     this.replayMoves();
-    this.channel.send(encodeClientMessage({ type: ClientMessageType.DropItem, requestId, at, count }));
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.DropItem,
+        requestId,
+        at,
+        count,
+        aimX: aim.x,
+        aimY: aim.y,
+      }),
+    );
     return requestId;
+  }
+
+  /**
+   * Where the body is turning to put something down, or null (spec 168).
+   *
+   * The oldest unanswered drop, because the server serves them in the order
+   * they were asked for and turns to one aim at a time.
+   */
+  private get dropAim(): { readonly x: number; readonly y: number } | null {
+    for (const pending of this.pendingMoves) {
+      if (pending.kind === 'drop') return pending.aim;
+    }
+    return null;
   }
 
   /**
@@ -1504,6 +1542,7 @@ export class GameClient {
       this.wantedFacing,
       this.stats.turnRate,
       this.welcome?.tickRate ?? 60,
+      this.dropAim,
     );
     // A confirmed cast is over when the server's own `endTick` says it is, not
     // when `CastEnded` gets here (spec 069).
@@ -1621,6 +1660,11 @@ export class GameClient {
       commitDelayTicks: this.commitDelayTicks(),
       entities: this.world.all(),
       self: this.prediction?.drawn ?? null,
+      // What the body is turning to put something down at (spec 168). On the
+      // view because the renderer keeps a drawn heading of its own and steps it
+      // from the intent -- so without this the local player is the one person
+      // who does not see their own body come round.
+      dropAim: this.dropAim,
       selfEntityId: this.welcome?.entityId ?? -1,
       worldSeed: this.welcome?.worldSeed ?? null,
       map: this.mapView(),

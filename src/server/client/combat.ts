@@ -34,7 +34,7 @@
 
 import { abilityById, type AbilityDefinition } from '../data/abilities.js';
 import type { AttackTiming } from '../sim/attack-timing.js';
-import { turnToward } from '../sim/movement.js';
+import { headingToward, turnToward } from '../sim/movement.js';
 import {
   attackTimingFor,
   nextReadyTick,
@@ -103,6 +103,7 @@ export function asEntity(mirror: Mirror): ServerEntity {
     cast: mirror.cast,
     cooldowns: mirror.cooldowns,
     projectile: null,
+    dropAim: null,
     drop: null,
     mote: null,
     claimedPosition: null,
@@ -307,9 +308,20 @@ export function steerFacing(
   wanted: number,
   turnRate: number,
   tickRate: number,
+  /**
+   * Where a drop this client has asked for is aimed, or null (spec 168).
+   *
+   * Under the cast and over the input, which is the order `resolveFacing` reads
+   * them in on the server. It is here rather than left to the server for one
+   * reason: this client never adopts the server's facing after the first seed,
+   * so without it the local player would be the one person who cannot see their
+   * own body come round.
+   */
+  dropAim: Point | null = null,
 ): number {
-  const toward = cast
-    ? Math.atan2(cast.targetY - position.y, cast.targetX - position.x)
+  const aim = cast ? { x: cast.targetX, y: cast.targetY } : dropAim;
+  const toward = aim
+    ? headingToward(position, aim, facing)
     : Number.isFinite(wanted)
       ? wanted
       : facing;

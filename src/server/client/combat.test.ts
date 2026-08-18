@@ -238,6 +238,28 @@ describe('the local facing', () => {
     const committed = steerFacing(0, cast, { x: 0, y: 0 }, Math.PI / 2, 540, SERVER_TICK_RATE);
     expect(committed).toBeLessThan(0);
   });
+
+  /**
+   * The same order `resolveFacing` reads them in on the server (spec 168), which
+   * is the whole requirement: this client never adopts the server's facing after
+   * the first seed, so a rule that differed here would leave the local player
+   * watching a body that turns at a different time from everybody else's copy of
+   * it.
+   */
+  it('turns toward a pending drop, under a cast and over the input', () => {
+    const aim = { x: 0, y: -100 };
+    const dropping = steerFacing(0, null, { x: 0, y: 0 }, Math.PI / 2, 540, SERVER_TICK_RATE, aim);
+    expect(dropping).toBeLessThan(0);
+
+    // A committed blow still owns the body.
+    const cast = { targetX: 0, targetY: 100 } as CastState;
+    const casting = steerFacing(0, cast, { x: 0, y: 0 }, 0, 540, SERVER_TICK_RATE, aim);
+    expect(casting).toBeGreaterThan(0);
+
+    // And an aim on top of the body is not a direction: the heading stands.
+    const here = steerFacing(1.25, null, { x: 4, y: 4 }, 1.25, 540, SERVER_TICK_RATE, { x: 4, y: 4 });
+    expect(here).toBeCloseTo(1.25, 9);
+  });
 });
 
 // --- wired, against a real server -------------------------------------------
