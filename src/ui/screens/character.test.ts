@@ -335,3 +335,64 @@ describe('the character sheet', () => {
     expect(nextChangeLine([attributeRow('wisdom', { toNext: 0, nextEffect: '' })])).toBe('');
   });
 });
+
+/**
+ * A tab is built lazily on first selection and then kept (spec 124), so the
+ * view it is built *from* is not the view the sheet was last handed. The
+ * factories used to close over the `CharacterView` that happened to be current
+ * when the tabs were registered -- which is the one the sheet opened on -- so a
+ * player who allocated an attribute and only then looked at the tree got a tree
+ * gated on the attributes they had before they spent.
+ */
+describe('a tab built after the sheet has moved on', () => {
+  function opened(view: CharacterView): { screen: CharacterScreen; root: UiRoot } {
+    const screen = new CharacterScreen({ theme: THEME });
+    screen.setCharacter(view);
+    const root = new UiRoot(screen, {
+      theme: THEME,
+      atlas: bakeAtlas(THEME),
+      viewport: { width: 400, height: 300 },
+    });
+    root.update(0);
+    return { screen, root };
+  }
+
+  const locked = branch('attr:wisdom', [
+    skill('wis.discipline', { canSpend: false, blockedBecause: 'needs 10 Wisdom, you have 8' }),
+  ]);
+  const open = branch('attr:wisdom', [skill('wis.discipline')]);
+
+  it('gates the tree on the attributes the sheet was last told about', () => {
+    const { screen, root } = opened(viewOf({ branches: [locked] }));
+
+    // The point lands while the player is still on the Attributes tab.
+    screen.setCharacter(viewOf({ branches: [open] }));
+    root.update(16);
+
+    // Only now do they go and look at what it opened.
+    screen.tabs.select('skills');
+    root.update(32);
+    expect(screen.rowFor('wis.discipline')?.spendButton.enabled).toBe(true);
+    expect(screen.rowFor('wis.discipline')?.tooltip()).not.toContain('needs 10 Wisdom');
+  });
+
+  /**
+   * The same fault seen from the other side, and the one a player would report
+   * as "my points went nowhere": what is *in* a skill is drawn from the same
+   * view the gate is, so a tree first opened after a point was spent showed the
+   * level it had before.
+   */
+  it('shows what was already spent, not what was spent as of opening', () => {
+    const { screen, root } = opened(
+      viewOf({ branches: [branch('attr:wisdom', [skill('wis.discipline', { level: 0 })])] }),
+    );
+    screen.setCharacter(
+      viewOf({ branches: [branch('attr:wisdom', [skill('wis.discipline', { level: 2 })])] }),
+    );
+    root.update(16);
+
+    screen.tabs.select('skills');
+    root.update(32);
+    expect(screen.rowFor('wis.discipline')?.skill?.level).toBe(2);
+  });
+});
