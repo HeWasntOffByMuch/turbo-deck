@@ -57,7 +57,7 @@ const DEFINITIONS: readonly SynergyDefinition[] = [
     b: 'agility',
     threshold: T,
     name: 'Momentum',
-    effect: 'Breaking an enemy’s poise gives you two Flow stacks and halves your next wind-up.',
+    effect: 'Breaking an enemy’s poise halves your next wind-up.',
     why: 'A status and a timing change off a combat event. Neither stat alone can shorten a wind-up by causing something.',
     grants: { traits: { momentumTicks: SCALING.agility.flowTicks, momentumWindupScale: 0.5 } },
   },

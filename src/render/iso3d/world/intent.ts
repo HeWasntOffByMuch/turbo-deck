@@ -136,6 +136,23 @@ export interface IntentInput {
    * direction, because walking decides its own heading.
    */
   readonly targetAim?: Point | null;
+  /**
+   * True while a poise break holds this body (spec 173).
+   *
+   * Outranks every other branch below, including {@link castAim} and a held
+   * key, because on the server it outranks them too: the movement pass zeroes
+   * the components *and pins the facing to where the body already points*, so a
+   * staggered body neither steps nor turns however the keys are being held.
+   *
+   * The facing half is the part that is easy to miss and the part that shows.
+   * Movement is reconciled -- a `Correction` carries a position, so a predicted
+   * step the server discarded is pulled back within a round trip -- and facing
+   * is not carried on one at all. A drawn heading that keeps turning through a
+   * stagger is therefore an error nothing ever corrects; it is only diluted by
+   * whatever the player does next. So the one place it can be prevented is
+   * here, by not asking for the turn in the first place.
+   */
+  readonly staggered?: boolean;
 }
 
 export function moveIntent(input: IntentInput): MoveIntent {
@@ -149,6 +166,21 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // back, and having to cancel an order first would feel like a stuck key. A
   // spent order steers nothing, whatever waypoint is still on offer.
   const direction = keyed ?? (arrived ? null : steerTo(input.self, input.route ?? input.destination));
+
+  // A poise break holds the body outright (spec 173), and holds it harder than
+  // a cast does: no step, and no turn either.
+  //
+  // First, so it beats the wind-up aim and a held key both. It has to beat the
+  // key in particular, because that is the one branch a player is actively
+  // driving -- somebody who was walking when they were broken is still holding
+  // the key, and every other branch here would happily keep asking for the
+  // heading it implies.
+  //
+  // `input.facing` rather than any aim: the server holds `steered.facing`, so
+  // the only heading that agrees with it is the one the body already has.
+  if (input.staggered) {
+    return { moveX: 0, moveY: 0, facing: input.facing, arrived };
+  }
 
   // Rooted, and turning into the blow. Asking for the aim rather than holding
   // the old heading is what makes the figure visibly come round during a

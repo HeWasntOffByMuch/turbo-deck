@@ -165,6 +165,7 @@ async function walkAwayMidWindup(options: {
             : null,
           range: swing?.range ?? 0,
           rooted: view.selfRoot !== null,
+      staggered: view.selfStaggered,
           pending: view.awaitingCast,
           readyAtTick: view.cooldowns[swingId] ?? 0,
           aligned: !entity ? true : facesAim(view.self, facing, { x: entity.x, y: entity.y }),

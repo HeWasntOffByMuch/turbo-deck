@@ -13,6 +13,7 @@ import {
   slewSpeed,
   speedBetween,
   startedCasting,
+  startedStagger,
   STOPPED,
   type SpeedClock,
   type UnitFacts,
@@ -34,6 +35,47 @@ function facts(patch: Partial<UnitFacts> = {}): UnitFacts {
 function machine(): UnitMachine {
   return new UnitMachine({ unit: unitDefFixture(), clipLib: clipLibFixture() });
 }
+
+describe('startedStagger (spec 173)', () => {
+  it('is true on the tick a break lands', () => {
+    expect(startedStagger(facts({ activity: EntityActivity.Stunned }), facts())).toBe(true);
+  });
+
+  it('is false for every tick after the first', () => {
+    // The window is many ticks long. Raised on each, the clip would restart on
+    // every frame of the stagger it is meant to play once.
+    const stunned = facts({ activity: EntityActivity.Stunned });
+    expect(startedStagger(stunned, stunned)).toBe(false);
+  });
+
+  it('is false with no previous facts', () => {
+    // A body seen for the first time already staggered. Nobody watched it land,
+    // so it is not swung into the clip halfway through.
+    expect(startedStagger(facts({ activity: EntityActivity.Stunned }), null)).toBe(false);
+  });
+
+  it('is false for anything that is not a break', () => {
+    for (const activity of [
+      EntityActivity.Idle,
+      EntityActivity.Moving,
+      EntityActivity.Casting,
+      EntityActivity.Dead,
+    ]) {
+      expect(startedStagger(facts({ activity }), facts())).toBe(false);
+    }
+  });
+
+  it('raises nothing on a unit that never declared the parameter', () => {
+    // The same fallback `triggerFor` applies to `shoot`: no rig in the tree has
+    // a stagger clip yet, so this must be a silent no-op rather than a machine
+    // asked for a state it has not got.
+    const driven = machine();
+    expect(driven.getParameter('stagger')).toBeUndefined();
+    expect(() =>
+      driveUnit(driven, facts({ activity: EntityActivity.Stunned }), facts(), 1),
+    ).not.toThrow();
+  });
+});
 
 describe('startedCasting', () => {
   it('is true on the tick a cast begins', () => {
