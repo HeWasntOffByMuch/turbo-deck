@@ -378,7 +378,18 @@ export class VfxLayer {
     this.system.setTimeScale(scale);
   }
 
-  /** What the debug HUD reads. */
+  /**
+   * What the debug HUD reads.
+   *
+   * The two settings are in here for the reason `data-held-weapons` is published
+   * from what is hanging off the bone rather than from what was wanted (spec
+   * 165): they are read back off the system and the field that act on them, so a
+   * panel whose button lit up and reached nothing reads as unchanged.
+   *
+   * `effectIds` is what has *started* recently rather than what is live, because
+   * a burst instance is retired on the tick it fires -- see
+   * {@link VfxSystem.recentlyStarted}.
+   */
   readout(): {
     readonly particles: number;
     readonly effects: number;
@@ -389,6 +400,9 @@ export class VfxLayer {
     readonly throttled: number;
     readonly decals: number;
     readonly decalBuckets: number;
+    readonly intensity: number;
+    readonly gore: GoreLevel;
+    readonly effectIds: readonly string[];
   } {
     const stats = this.system.stats;
     return {
@@ -401,6 +415,9 @@ export class VfxLayer {
       throttled: stats.throttled,
       decals: this.decals.count,
       decalBuckets: this.decalView.bucketCount,
+      intensity: this.system.getIntensity(),
+      gore: this.decals.getGore(),
+      effectIds: this.system.recentlyStarted(),
     };
   }
 

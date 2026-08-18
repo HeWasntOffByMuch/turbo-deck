@@ -8,8 +8,22 @@ import {
   HEAL_EFFECT,
   REDUNDANT_SERVER_EFFECTS,
   type CombatFacts,
+  type GoreLevel,
+  type PlayRequest,
 } from './vfx-wire.js';
 import { ALL_ABILITIES } from '../../../server/data/abilities.js';
+
+/**
+ * `effectsForBlow` at `Blood: Full`, which is what the panel opens at.
+ *
+ * A helper rather than a default argument on the function itself (spec 182):
+ * every one of these tests is about a blow rather than about the setting, and
+ * the setting is required precisely so the *game's* call site cannot go on not
+ * passing it. The gore levels get their own describe below.
+ */
+function blow(facts: CombatFacts, tick: number, gore: GoreLevel = 2): readonly PlayRequest[] {
+  return effectsForBlow(facts, tick, gore);
+}
 
 function facts(overrides: Partial<CombatFacts> = {}): CombatFacts {
   return {
@@ -34,7 +48,7 @@ describe('the contact point', () => {
   it('lands on the face the attacker is on, not inside the body', () => {
     // The attacker is at x = 60 and the target at x = 100, so the blow arrives
     // travelling +x and the contact is a body radius back along it.
-    const played = effectsForBlow(facts(), 500);
+    const played = blow(facts(), 500);
     for (const request of played) {
       expect(request.x).toBeCloseTo(100 - CONTACT_RADIUS, 5);
       expect(request.z).toBeCloseTo(200, 5);
@@ -42,20 +56,20 @@ describe('the contact point', () => {
   });
 
   it('follows the blow round, whichever way it came from', () => {
-    const played = effectsForBlow(facts({ fromX: 100, fromZ: 260 }), 500);
+    const played = blow(facts({ fromX: 100, fromZ: 260 }), 500);
     const first = played[0];
     expect(first?.x).toBeCloseTo(100, 5);
     expect(first?.z).toBeCloseTo(200 + CONTACT_RADIUS, 5);
   });
 
   it('lands on a chest rather than a pair of boots', () => {
-    expect(effectsForBlow(facts(), 500)[0]?.y).toBeCloseTo(20 + CONTACT_LIFT, 5);
+    expect(blow(facts(), 500)[0]?.y).toBeCloseTo(20 + CONTACT_LIFT, 5);
   });
 
   it('falls back to the target at point blank rather than dividing by nothing', () => {
     // Two bodies stacked, which happens, and a normalize on a zero vector is how
     // a hit ends up at NaN and silently never draws.
-    const played = effectsForBlow(facts({ fromX: 100, fromZ: 200 }), 500);
+    const played = blow(facts({ fromX: 100, fromZ: 200 }), 500);
     const first = played[0];
     expect(first?.x).toBe(100);
     expect(first?.z).toBe(200);
@@ -65,26 +79,26 @@ describe('the contact point', () => {
 
 describe('effectsForBlow', () => {
   it('draws blood from something that bleeds', () => {
-    const played = effectsForBlow(facts(), 500);
+    const played = blow(facts(), 500);
     expect(played.map((request) => request.id)).toEqual(['blood_hit_brush']);
   });
 
   it('draws the death effect on a killing blow', () => {
     // The loud mark and the pool, in that order: the brush hit is the moment and
     // leaves nothing behind, `death_blood` is the stain that outlives it.
-    const played = effectsForBlow(facts({ killed: true }), 500).map((request) => request.id);
+    const played = blow(facts({ killed: true }), 500).map((request) => request.id);
     expect(played[0]).toBe('blood_hit_brush_heavy');
     expect(played).toContain('death_blood');
   });
 
   it('draws the damage type off something that does not bleed', () => {
-    const played = effectsForBlow(facts({ bleeds: false }), 500);
+    const played = blow(facts({ bleeds: false }), 500);
     expect(played.map((request) => request.id)).toEqual(['hit_physical', 'impact_physical']);
   });
 
   it('gives each damage type its own flash', () => {
     for (const damageType of ['physical', 'fire', 'poison', 'ice', 'lightning', 'arcane'] as const) {
-      const played = effectsForBlow(facts({ bleeds: false, damageType }), 1);
+      const played = blow(facts({ bleeds: false, damageType }), 1);
       expect(played[0]?.id).toBe(DAMAGE_EFFECTS[damageType]);
     }
     // ...and they are all different, which a copy-paste table would fail.
@@ -93,7 +107,7 @@ describe('effectsForBlow', () => {
 
   it('throws debris only for the types that break something', () => {
     const withDebris = (damageType: CombatFacts['damageType']): string[] =>
-      effectsForBlow(facts({ bleeds: false, damageType }), 1).map((request) => request.id);
+      blow(facts({ bleeds: false, damageType }), 1).map((request) => request.id);
     expect(withDebris('physical')).toContain('impact_physical');
     expect(withDebris('ice')).toContain('impact_physical');
     expect(withDebris('fire')).not.toContain('impact_physical');
@@ -102,18 +116,18 @@ describe('effectsForBlow', () => {
 
   it('draws no debris off a body that is already throwing blood', () => {
     // Otherwise one blow draws two kinds of debris at once.
-    const played = effectsForBlow(facts({ bleeds: true, damageType: 'physical' }), 1);
+    const played = blow(facts({ bleeds: true, damageType: 'physical' }), 1);
     expect(played.map((request) => request.id)).not.toContain('impact_physical');
   });
 
   it('draws the guard and nothing else off a block', () => {
     // A blow that was stopped opened nothing: no blood and no debris.
-    const played = effectsForBlow(facts({ blocked: true }), 500);
+    const played = blow(facts({ blocked: true }), 500);
     expect(played.map((request) => request.id)).toEqual(['hit_block']);
   });
 
   it('adds the critical on top rather than replacing what happened', () => {
-    const played = effectsForBlow(facts({ critical: true }), 1).map((request) => request.id);
+    const played = blow(facts({ critical: true }), 1).map((request) => request.id);
     expect(played).toContain('blood_hit_brush');
     expect(played).toContain('hit_critical');
   });
@@ -123,7 +137,7 @@ describe('effectsForBlow', () => {
       for (const bleeds of [false, true]) {
         for (const killed of [false, true]) {
           for (const critical of [false, true]) {
-            expect(effectsForBlow(facts({ blocked, bleeds, killed, critical }), 1).length).toBeLessThanOrEqual(3);
+            expect(blow(facts({ blocked, bleeds, killed, critical }), 1).length).toBeLessThanOrEqual(3);
           }
         }
       }
@@ -132,38 +146,38 @@ describe('effectsForBlow', () => {
 
   it('throws the spray away from the attacker', () => {
     // The property the whole directional splat exists for.
-    const fromLeft = effectsForBlow(facts({ fromX: 0, fromZ: 200, x: 100, z: 200 }), 1)[0];
+    const fromLeft = blow(facts({ fromX: 0, fromZ: 200, x: 100, z: 200 }), 1)[0];
     expect(Math.cos(fromLeft?.rotation ?? 0)).toBeCloseTo(1, 5);
 
-    const fromRight = effectsForBlow(facts({ fromX: 200, fromZ: 200, x: 100, z: 200 }), 1)[0];
+    const fromRight = blow(facts({ fromX: 200, fromZ: 200, x: 100, z: 200 }), 1)[0];
     expect(Math.cos(fromRight?.rotation ?? 0)).toBeCloseTo(-1, 5);
 
-    const fromBehind = effectsForBlow(facts({ fromX: 100, fromZ: 0, x: 100, z: 200 }), 1)[0];
+    const fromBehind = blow(facts({ fromX: 100, fromZ: 0, x: 100, z: 200 }), 1)[0];
     expect(Math.sin(fromBehind?.rotation ?? 0)).toBeCloseTo(1, 5);
   });
 
   it('picks a bearing rather than NaN when the two are stacked', () => {
-    const played = effectsForBlow(facts({ fromX: 100, fromZ: 200, x: 100, z: 200 }), 1)[0];
+    const played = blow(facts({ fromX: 100, fromZ: 200, x: 100, z: 200 }), 1)[0];
     expect(Number.isFinite(played?.rotation ?? Number.NaN)).toBe(true);
   });
 
   it('makes a critical louder in the same language, not different', () => {
-    const plain = effectsForBlow(facts(), 1)[0];
-    const critical = effectsForBlow(facts({ critical: true }), 1)[0];
+    const plain = blow(facts(), 1)[0];
+    const critical = blow(facts({ critical: true }), 1)[0];
     expect(critical?.id).toBe(plain?.id);
     expect(critical?.scale ?? 0).toBeGreaterThan(plain?.scale ?? 0);
   });
 
   it('makes a block smaller than an open blow', () => {
-    const blocked = effectsForBlow(facts({ blocked: true }), 1)[0];
-    const open = effectsForBlow(facts({ bleeds: false }), 1)[0];
+    const blocked = blow(facts({ blocked: true }), 1)[0];
+    const open = blow(facts({ bleeds: false }), 1)[0];
     expect(blocked?.scale ?? 0).toBeLessThan(open?.scale ?? 0);
   });
 
   it('gives every effect of one blow a different seed', () => {
     // Otherwise the flash and the spray draw the same numbers and land in
     // exactly the same pattern, which reads as one effect drawn twice.
-    const played = effectsForBlow(facts({ bleeds: false, critical: true, damageType: 'physical' }), 1);
+    const played = blow(facts({ bleeds: false, critical: true, damageType: 'physical' }), 1);
     const seeds = new Set(played.map((request) => request.seed));
     expect(seeds.size).toBe(played.length);
   });
@@ -177,7 +191,7 @@ describe('a heal (spec 157)', () => {
   it('draws the heal and never blood', () => {
     // The whole bug: healing travelled on the blow message and the table never
     // looked at the sign, so a mote picked up sprayed your own blood.
-    expect(effectsForBlow(heal(), 500).map((request) => request.id)).toEqual([HEAL_EFFECT]);
+    expect(blow(heal(), 500).map((request) => request.id)).toEqual([HEAL_EFFECT]);
   });
 
   it('draws no blood whatever flags the message happens to carry', () => {
@@ -187,7 +201,7 @@ describe('a heal (spec 157)', () => {
       for (const critical of [false, true]) {
         for (const blocked of [false, true]) {
           for (const bleeds of [false, true]) {
-            const played = effectsForBlow(heal({ killed, critical, blocked, bleeds }), 3);
+            const played = blow(heal({ killed, critical, blocked, bleeds }), 3);
             expect(played.map((request) => request.id)).toEqual([HEAL_EFFECT]);
           }
         }
@@ -199,7 +213,7 @@ describe('a heal (spec 157)', () => {
     // Not stepped back along a blow and not lifted to a chest: a heal has no
     // direction to carry, and it comes up out of the ground. `playEffect` adds
     // the terrain height, so a lift of zero is the feet.
-    const fromElsewhere = effectsForBlow(heal({ attackerId: 9, fromX: 40, fromZ: 90 }), 7)[0];
+    const fromElsewhere = blow(heal({ attackerId: 9, fromX: 40, fromZ: 90 }), 7)[0];
     expect(fromElsewhere?.x).toBe(100);
     expect(fromElsewhere?.z).toBe(200);
     expect(fromElsewhere?.y).toBe(0);
@@ -207,19 +221,94 @@ describe('a heal (spec 157)', () => {
   });
 
   it('is never louder for a flag that means nothing to it', () => {
-    expect(effectsForBlow(heal({ critical: true }), 1)[0]?.scale).toBe(
-      effectsForBlow(heal(), 1)[0]?.scale,
+    expect(blow(heal({ critical: true }), 1)[0]?.scale).toBe(
+      blow(heal(), 1)[0]?.scale,
     );
   });
 
   it('is seeded by where and when, like every other effect', () => {
     // Two clients watching one heal see one picture.
-    expect(effectsForBlow(heal(), 500)[0]?.seed).toBe(blowSeed(heal(), 500));
+    expect(blow(heal(), 500)[0]?.seed).toBe(blowSeed(heal(), 500));
   });
 
   it('treats a blow that did nothing as a blow, not as a heal', () => {
     // The test is the sign, not "not positive". A zero-damage hit is a hit.
-    expect(effectsForBlow(facts({ damage: 0 }), 1)[0]?.id).toBe('blood_hit_brush');
+    expect(blow(facts({ damage: 0 }), 1)[0]?.id).toBe('blood_hit_brush');
+  });
+});
+
+describe('the blood setting (spec 182)', () => {
+  const ids = (overrides: Partial<CombatFacts>, gore: GoreLevel): string[] =>
+    effectsForBlow(facts(overrides), 500, gore).map((request) => request.id);
+
+  it('plays no blood at all at Off, and still draws the blow', () => {
+    // The whole bug. `Off` reached the decal field, which owns the ground, so
+    // every brush mark still came off the body and only the stains went away.
+    for (const killed of [false, true]) {
+      for (const critical of [false, true]) {
+        const played = ids({ killed, critical }, 0);
+        expect(played.length, JSON.stringify({ killed, critical })).toBeGreaterThan(0);
+        for (const id of played) expect(id, id).not.toMatch(/blood/);
+      }
+    }
+  });
+
+  it('draws a bleeding body exactly like a construct at Off', () => {
+    // Not "nothing": a blow with no picture is a fight that is harder to read
+    // than one with the wrong picture, so it falls through to the impact the
+    // damage type already has.
+    for (const damageType of ['physical', 'fire', 'poison', 'ice', 'lightning', 'arcane'] as const) {
+      expect(ids({ bleeds: true, damageType }, 0)).toEqual(ids({ bleeds: false, damageType }, 2));
+    }
+  });
+
+  it('keeps the wound and drops the pool at Less', () => {
+    // `death_blood` is the loud one, it is the one that lasts, and it is the one
+    // that lays a 96-unit stain on the floor.
+    const killing = ids({ killed: true }, 1);
+    expect(killing).toContain('blood_hit_brush');
+    expect(killing).not.toContain('death_blood');
+    expect(killing).not.toContain('blood_hit_brush_heavy');
+  });
+
+  it('leaves an ordinary hit alone at Less', () => {
+    expect(ids({}, 1)).toEqual(ids({}, 2));
+  });
+
+  it('is the spec-158 table at Full', () => {
+    expect(ids({}, 2)).toEqual(['blood_hit_brush']);
+    expect(ids({ killed: true }, 2)).toEqual(['blood_hit_brush_heavy', 'death_blood']);
+  });
+
+  it('never touches a block or a heal, whatever the level', () => {
+    // Neither is blood, and a setting that silenced a heal would be a bug of its
+    // own -- the number floating off a body is how a player reads a fight.
+    for (const gore of [0, 1, 2] as const) {
+      expect(ids({ blocked: true }, gore)).toEqual(['hit_block']);
+      expect(ids({ damage: -14 }, gore)).toEqual([HEAL_EFFECT]);
+    }
+  });
+
+  it('still never plays more than three effects, at any level', () => {
+    for (const gore of [0, 1, 2] as const) {
+      for (const blocked of [false, true]) {
+        for (const bleeds of [false, true]) {
+          for (const killed of [false, true]) {
+            for (const critical of [false, true]) {
+              const played = effectsForBlow(facts({ blocked, bleeds, killed, critical }), 1, gore);
+              expect(played.length, `${gore}/${blocked}/${bleeds}/${killed}/${critical}`).toBeLessThanOrEqual(3);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('gives every effect of one blow a different seed, at every level', () => {
+    for (const gore of [0, 1, 2] as const) {
+      const played = effectsForBlow(facts({ critical: true, killed: true }), 1, gore);
+      expect(new Set(played.map((request) => request.seed)).size).toBe(played.length);
+    }
   });
 });
 

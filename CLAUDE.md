@@ -2108,6 +2108,36 @@ src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  writes them -- so the angle and the zoom span are also published
                  as `data-camera-orbit` and `data-camera-zoom`, because both
                  probes used to read them off inputs that a phone has not got.
+src/render/iso3d/vfx-controls.ts  the seventh of those buttons (spec 121), and
+                 the rule that came out of it is that **a setting is only as wide
+                 as the thing it reaches** (spec 182). Its gore level was pushed
+                 into `DecalField`, which owns the *stains*, and the stains are
+                 the smaller half of what the row names -- the spatter is chosen
+                 by `effectsForBlow`, which had never been told the setting
+                 existed, so `Blood: Off` left every red brush mark coming off
+                 every body and only swept up after them. `Less` was worse: no
+                 code anywhere read level 1, so the middle button was a label.
+                 Both halves were individually correct and individually tested,
+                 which is exactly why a green suite sat beside a setting that did
+                 not work, and the fix is that the level reaches *both* -- what a
+                 blow throws (`vfx-wire.ts`) and what stays on the ground
+                 (`decals.ts`, a fraction of the authored caps rather than a
+                 second table). What `Off` does **not** do is draw nothing: a
+                 body that would have bled falls through to the impact a
+                 construct already draws, because a blow with no picture is a
+                 fight that is harder to read than one with a quieter picture.
+                 Effect detail was fine throughout and is unchanged; what it
+                 lacked was any way to see that without playing the game. `npx
+                 tsx scripts/probe-vfx-settings.ts` is that, and the thing worth
+                 knowing about it is that **every check in it is an absence** --
+                 no blood at Off, no pool at Less -- so a window in which nothing
+                 was hit passes all of them. It measured exactly that first: one
+                 window killed what it was fighting and the five after it watched
+                 an empty field and reported green. So a window runs until it has
+                 seen an impact effect and a window that never does is a failure,
+                 and the evidence is the `hit_*` flash, which is what a bleeding
+                 body falls back to at `Off` -- it survives the very setting being
+                 measured.
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step
