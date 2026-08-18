@@ -1,5 +1,5 @@
 /**
- * The rules spec 165 exists to enforce, plus the one spec 176 adds, driven by
+ * The rules spec 165 exists to enforce, plus the one spec 180 adds, driven by
  * handing the module numbers.
  *
  * The settle tests are the interesting ones: the original rule was two
@@ -187,7 +187,7 @@ describe('the prop settle', () => {
   });
 });
 
-describe('a region whose ground is not all in yet (spec 176)', () => {
+describe('a region whose ground is not all in yet (spec 180)', () => {
   /** A region is complete only once it reaches x = 1100. */
   const halfArrived = (rect: WorldRect): boolean => rect.minX >= 1100;
 

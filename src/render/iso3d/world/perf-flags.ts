@@ -12,7 +12,7 @@
  * `?slots=` -- a harness affordance, off unless asked for, and never a game
  * rule. Nothing here changes what the sim does.
  *
- * `noworker` (spec 176) is the odd one out and is here rather than anywhere
+ * `noworker` (spec 180) is the odd one out and is here rather than anywhere
  * else for the same reason as the rest: it changes neither the sim nor the
  * picture, only *which thread* builds the picture, and the only way to say what
  * moving the load bought is to run one machine both ways. It is also the way
@@ -28,7 +28,7 @@ export interface PerfFlags {
   readonly noProps: boolean;
   /** The terrain surface and its walls are hidden. */
   readonly noTerrain: boolean;
-  /** The chunk load runs on this thread, as it did before spec 176. */
+  /** The chunk load runs on this thread, as it did before spec 180. */
   readonly noWorker: boolean;
   /** Whether any flag is set, so the readout can say the frame is not the real one. */
   readonly any: boolean;

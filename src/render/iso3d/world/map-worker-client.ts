@@ -1,5 +1,5 @@
 /**
- * The handle the frame holds, and the twin it falls back to (spec 176).
+ * The handle the frame holds, and the twin it falls back to (spec 180).
  *
  * Two implementations of one interface, and the second is not a courtesy:
  *

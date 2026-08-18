@@ -239,7 +239,7 @@ export function applySway(
 }
 
 /**
- * The same, from arrays somebody else packed (spec 177).
+ * The same, from arrays somebody else packed (spec 181).
  *
  * Split out because the packing is per *instance* and is therefore part of the
  * arithmetic that moved to the map worker, while everything below needs the

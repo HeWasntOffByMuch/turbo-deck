@@ -1,4 +1,4 @@
-# 176 — The load moves off the frame
+# 180 — The load moves off the frame
 
 ## Problem
 
@@ -327,7 +327,7 @@ reproduces what `probe-streaming.ts` sees in a browser: 169 chunks at the gate,
 
 Post-gate, over a 90-second walk across most of the world:
 
-| | before spec 176 | after |
+| | before spec 180 | after |
 |---|---|---|
 | 26 chunk arrivals | ~0.6s of dropped frames | ~0.04s |
 | ~3 nav grids | ~0.6s | 0 |

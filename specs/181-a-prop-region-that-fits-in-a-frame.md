@@ -1,4 +1,4 @@
-# 177 — A prop region that fits in a frame
+# 181 — A prop region that fits in a frame
 
 ## Problem
 
@@ -22,7 +22,7 @@ Where the 32.7 ms goes, measured by timing each stage inside `build`:
 | `applySway` + `needsUpdate` | 1.5 | genuinely per batch |
 
 Two separate findings sit in that table. Half the cost is **arithmetic that
-belongs on the worker spec 176 already built**. The other half is **the same
+belongs on the worker spec 180 already built**. The other half is **the same
 geometry being constructed ninety times** — `buildRegion` calls `treeParts(species)`
 for each of three species, `bushParts()`, and `fenceParts(kind)` for each fence
 kind, *per region*, and each call builds `THREE.BufferGeometry` from scratch and
@@ -125,7 +125,7 @@ is a worse thing to own than 152 kB in a chunk that loads in parallel with a
 ```
 
 `view.ts` sends what `takePropRects` hands it and adopts what comes back, in the
-same inbox-and-budget shape spec 176 uses for meshes — a region is a region's
+same inbox-and-budget shape spec 180 uses for meshes — a region is a region's
 worth of work whichever thread does it, and adopting several in one frame is the
 lurch that budget exists to prevent.
 

@@ -1,6 +1,6 @@
 /**
  * One chunk's ground as arrays of numbers, with no rendering library in it
- * (spec 176).
+ * (spec 180).
  *
  * This is `terrain-mesh.ts`'s mesher, moved. The reason it moved is a
  * measurement: `terrainMesh.rebuild` is 2050ms across a cold start of the

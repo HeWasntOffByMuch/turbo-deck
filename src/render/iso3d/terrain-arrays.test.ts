@@ -8,7 +8,7 @@ import { loadMap, type MeshLayer } from '../../terrain/map-world.js';
 import { TERRAIN_MATERIALS, type TerrainChunk } from '../../terrain/index.js';
 
 /**
- * The mesher was moved out of `terrain-mesh.ts` in spec 176 so a worker could
+ * The mesher was moved out of `terrain-mesh.ts` in spec 180 so a worker could
  * run it, and the whole risk of that move is that the arithmetic came with it
  * unchanged. It did: the extraction was checked against the implementation it
  * replaced over the shipped arena, 9.97M floats across 288 meshes, identical

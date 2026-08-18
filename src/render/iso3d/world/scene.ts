@@ -828,7 +828,7 @@ export class WorldScene {
    * second meshing path; it is the one that already existed.
    */
   /**
-   * Draw a chunk whose triangles were built on the worker (spec 176).
+   * Draw a chunk whose triangles were built on the worker (spec 180).
    *
    * The counterpart to `invalidateGroundSamples` below, and split from it on
    * purpose: the *store* gained this ground when the chunk was inserted, which
@@ -891,7 +891,7 @@ export class WorldScene {
    */
   /**
    * Hang one region's prop batches on the scene graph, composed elsewhere
-   * (spec 177).
+   * (spec 181).
    *
    * The counterpart to `adoptTerrainChunk`. What is left on this thread is the
    * shell, the material, the mesh and the sway patch -- about 4ms against the

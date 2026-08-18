@@ -1,5 +1,5 @@
 /**
- * What the two threads say to each other (spec 176).
+ * What the two threads say to each other (spec 180).
  *
  * Types only, so both sides import the same file and a message that changes
  * shape breaks the build rather than the world.

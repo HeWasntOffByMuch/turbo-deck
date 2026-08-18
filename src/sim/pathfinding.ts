@@ -721,7 +721,7 @@ export function navGridFor(
 }
 
 /**
- * A grid's data, without the three things that belong to a thread (spec 176).
+ * A grid's data, without the three things that belong to a thread (spec 180).
  *
  * `NavGrid` holds `world` and `ground` by reference and shares a `scratch` with
  * every other grid of its cell count; everything else about it is four typed
@@ -760,7 +760,7 @@ export function navGridArrays(grid: NavGrid): NavGridArrays {
 
 /**
  * Install a grid built elsewhere, so `navGridFor` hands it back instead of
- * building a second one (spec 176).
+ * building a second one (spec 180).
  *
  * The `world` and `ground` given here are the *caller's* -- whatever objects it
  * is going to ask with -- because the cache is keyed on their identity and a

@@ -1,5 +1,5 @@
 /**
- * The load, done somewhere else, still being the same load (spec 176).
+ * The load, done somewhere else, still being the same load (spec 180).
  *
  * Driven through the in-process twin rather than a real `Worker`, which is the
  * whole reason the twin exists: `npm test` runs in Node, where the `Worker`

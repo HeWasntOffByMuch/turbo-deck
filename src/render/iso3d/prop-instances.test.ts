@@ -1,6 +1,6 @@
 /**
  * A prop region composed somewhere else, and still being the same region
- * (spec 177).
+ * (spec 181).
  *
  * The loop that places every tree, bush and fence tile moved off the thread
  * that draws, and the geometry under those batches is now shared between them.

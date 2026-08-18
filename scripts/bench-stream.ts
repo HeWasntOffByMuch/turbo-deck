@@ -6,7 +6,7 @@
  * client-side pieces -- StreamedMap.add, the terrain remesh, the regional prop
  * rebuild, and the predictor's ground/nav warm -- over the real map, in Node.
  *
- * Since spec 176 it also splits them by *thread*. The rows are tagged `[main]`
+ * Since spec 180 it also splits them by *thread*. The rows are tagged `[main]`
  * where the work is still on the thread that draws and `[worker]` where it is
  * not, because that distinction is now the whole point and a flat table hides
  * it. The browser cannot answer this question: `probe-streaming.ts` paints at
@@ -140,7 +140,7 @@ time('warmNavGrids(all radii, heights in hand)', () =>
   warmNavGrids(colliders, sampler, ROUTING_RADII),
 );
 
-// --- what a chunk arriving while walking costs, split by thread (spec 176) ---
+// --- what a chunk arriving while walking costs, split by thread (spec 180) ---
 //
 // The case the frame rate is actually about: the cold start is behind a loading
 // screen, and this is not.
@@ -195,7 +195,7 @@ time('warmNavGrids(all radii, heights in hand)', () =>
   }
 }
 
-// --- and what a prop region costs, split by thread (spec 177) ---
+// --- and what a prop region costs, split by thread (spec 181) ---
 //
 // Averaged over real regions rather than measured on one, because regions
 // differ hugely in how many props stand in them -- the sparse ones are a few

@@ -179,7 +179,7 @@ export class StreamedMap {
 
   /**
    * Whether every chunk the map declares over this rectangle has arrived
-   * (spec 176).
+   * (spec 180).
    *
    * The question the prop settle could not ask. `takePropRects` holds a region
    * back while a *queued* chunk overlaps it, and a chunk that has not arrived

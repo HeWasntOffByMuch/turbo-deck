@@ -1,6 +1,6 @@
 # Doing the load off the frame (research, 2026-08-18)
 
-> **Built as spec 176**, for terrain and navigation. A chunk arriving while
+> **Built as spec 180**, for terrain and navigation. A chunk arriving while
 > walking cost the frame 23.6ms and costs 1.6ms. The prop field is still on the
 > main thread and is still the biggest single cost -- see *Out of scope* in the
 > spec, and the completeness rule below, which shipped. Everything else here is
@@ -129,7 +129,7 @@ region back while any *queued* chunk overlaps it — but a chunk that has not
 arrived yet is not queued. Walking east, every region on the leading edge settles
 on the half that has arrived, rebuilds, and is dirtied again by the next column.
 A 1100-unit region spans parts of ~4 chunks, so the same 34 ms is plausibly being
-paid 2–4 times per region. **Measured afterwards at 1.29x** (spec 176's
+paid 2–4 times per region. **Measured afterwards at 1.29x** (spec 180's
 follow-up): the mechanism is real, but this map is 210 chunks against a 169-chunk
 request window, so the gate opens holding four fifths of the world and there is
 almost no leading edge to work on. `StreamedMap` already knows which chunks are

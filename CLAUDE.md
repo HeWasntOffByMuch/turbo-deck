@@ -1865,7 +1865,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  is the tab bar's fullscreen button -- DOM only, and absent on
                  anything that cannot go fullscreen or is not a coarse pointer.
 src/render/iso3d/props.ts's instance half  where every prop stands, composed on
-                 the worker (spec 177). A region rebuild was 32.7ms and one
+                 the worker (spec 181). A region rebuild was 32.7ms and one
                  dropped frame every time; the frame pays 1.0ms of it now, and
                  that took two changes because neither was enough alone -- the
                  worker leaves 16.5ms and the sharing leaves 20ms, against a
@@ -1898,7 +1898,7 @@ src/render/iso3d/props.ts's instance half  where every prop stands, composed on
                  here and one built on the worker are the same field by
                  construction rather than by two implementations agreeing.
 src/render/iso3d/terrain-arrays.ts, world/map-worker*.ts  the load, running
-                 beside the frame rather than in it (spec 176). The measurement
+                 beside the frame rather than in it (spec 180). The measurement
                  the whole thing turns on: `terrainMesh.rebuild` is 2050ms across
                  a cold start of which **15ms is three.js** -- found by patching
                  `setAttribute` and `computeVertexNormals` and timing only those.

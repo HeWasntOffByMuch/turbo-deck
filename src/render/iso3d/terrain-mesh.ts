@@ -93,7 +93,7 @@ export interface TerrainMeshHandle {
    */
   rebuild(chunk: TerrainChunk): void;
   /**
-   * Draw a chunk whose triangles were built elsewhere (spec 176).
+   * Draw a chunk whose triangles were built elsewhere (spec 180).
    *
    * The counterpart to `rebuild` for a client whose mesher is on a worker: same
    * drawing, same seam re-bake, without the 3.4ms of arithmetic in front of it.
@@ -228,7 +228,7 @@ export function buildTerrainMeshFromChunks(
     /**
      * Kept so a neighbour's arrival can re-bake this chunk's shore field.
      *
-     * The footprint rather than the whole chunk (spec 176): once the triangles
+     * The footprint rather than the whole chunk (spec 180): once the triangles
      * exist, the only thing still wanted from a chunk is what its water needs,
      * and off a worker the vertex arrays are all that came back.
      */
@@ -252,7 +252,7 @@ export function buildTerrainMeshFromChunks(
    * Draw (or redraw) one chunk's meshes into the group, from vertex arrays
    * somebody else built.
    *
-   * Split from the building in spec 176. What is left here is the part that
+   * Split from the building in spec 180. What is left here is the part that
    * needs the scene graph -- disposing what was there, wrapping the arrays,
    * hanging the meshes on the group, and re-baking the shore fields either side
    * of the seam -- and it is 0.025ms against the 3.4ms the build is.

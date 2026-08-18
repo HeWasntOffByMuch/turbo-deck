@@ -126,7 +126,7 @@ const TICK_MS = 1000 / SERVER_TICK_RATE;
 const PROP_SETTLE_MS = 120;
 
 /**
- * Finished chunks drawn into the scene per frame (spec 176).
+ * Finished chunks drawn into the scene per frame (spec 180).
  *
  * This used to bound the *meshing*, which was 3.4ms a chunk and the reason a
  * pump of arrivals was a visible lurch. Meshing is on the worker now and what is
@@ -199,7 +199,7 @@ const INGEST_DECAY = 0.92;
 
 /**
  * How long a prop region whose ground is still arriving waits before its trees
- * are drawn anyway (spec 176).
+ * are drawn anyway (spec 180).
  *
  * The completeness rule handles the common case -- a leading-edge region
  * rebuilt once its whole ground is in, rather than once per column that reaches
@@ -430,7 +430,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     incompleteHoldMs: PROP_INCOMPLETE_HOLD_MS,
   });
   /**
-   * Where the load actually happens (spec 176).
+   * Where the load actually happens (spec 180).
    *
    * Replies land in an inbox rather than being acted on where they arrive: a
    * message is delivered as a task on this thread's event loop, so adopting
@@ -453,7 +453,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     { threaded: !perfFlags.noWorker },
   );
   /**
-   * Prop regions asked for and not yet on screen (spec 177).
+   * Prop regions asked for and not yet on screen (spec 181).
    *
    * The load gate reads it, and it has to: `takePropRects` empties itself when
    * the rectangles are *taken*, which used to be the same instant they were
@@ -553,7 +553,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (!streamed) {
       streamed = new StreamedMap(map.info);
       scene.setMap(streamed);
-      // The worker builds its own store from the same `MapInfo` (spec 176).
+      // The worker builds its own store from the same `MapInfo` (spec 180).
       // Both sides are then fed the same chunks in the same order, and neither
       // is authoritative over the other -- this side answers `heightAt` now,
       // that side answers what the ground looks like later.
@@ -585,7 +585,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // against ground this chunk has only now supplied (spec 078). The worker
       // works the same dirty set out from its own store; this side computes it
       // to keep the ledger and the prop regions, which is 0.1ms against the
-      // 3.4ms a build is (spec 176).
+      // 3.4ms a build is (spec 180).
       const dirty = streamed.add(held);
       if (dirty.length === 0) continue;
       ingest.offer(dirty, nowMs);
@@ -656,7 +656,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     stage('props', performance.now() - propStart);
 
     // The ground the *predictor* stands on is a different question from the
-    // trees, and it is now somebody else's work (spec 176).
+    // trees, and it is now somebody else's work (spec 180).
     //
     // It used to ride the prop settle, which fired dozens of times once the
     // settle became per region -- each one a ~190ms `createNavGrid` over 797k
@@ -741,7 +741,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // gate: terrain on screen and the tab locked solid was what "shows some
     // terrain early, but it's unresponsive" had been.
     //
-    // The gate no longer waits for it (spec 176). It is on the worker, so the
+    // The gate no longer waits for it (spec 180). It is on the worker, so the
     // five seconds are not a freeze and not a bar the player watches -- and
     // until it lands `RoutePlanner` reads a null world as "walk straight at it",
     // which is the same fail-safe the flat predictor is and is wrong only in the

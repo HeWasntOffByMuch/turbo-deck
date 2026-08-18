@@ -812,7 +812,7 @@ function lobedParts(shape: LobedShape): PropPart[] {
 }
 
 /**
- * The part tables, built once each (spec 177).
+ * The part tables, built once each (spec 181).
  *
  * `buildRegion` called these *per region* -- three species, the bushes and every
  * fence kind, ninety times over -- and each call built `THREE.BufferGeometry`
@@ -1565,7 +1565,7 @@ export interface PropFieldHandle {
   rebuildWithin(props: readonly Prop[], rect: PropRect | readonly PropRect[]): void;
   /**
    * Hang one region's batches on the scene graph, from instances composed
-   * elsewhere (spec 177).
+   * elsewhere (spec 181).
    *
    * The seam the map worker enters through. `rebuildWithin` is this with
    * {@link buildRegionInstances} in front of it, so a field built on this thread
@@ -1638,7 +1638,7 @@ const WELDED = new Map<THREE.BufferGeometry, Map<number, THREE.BufferGeometry>>(
 
 /**
  * The vertex data a batch draws, built once per `(part, crease angle)`
- * (spec 177).
+ * (spec 181).
  *
  * Memoized rather than re-welded per region, which is 5.9ms of a 32.7ms region
  * rebuild. Under flat shading this is the part's own geometry, which was already
@@ -1670,7 +1670,7 @@ function sharedGeometry(
 
 /**
  * A geometry of this batch's own, over vertex data it shares with every other
- * batch of the same part (spec 177).
+ * batch of the same part (spec 181).
  *
  * An `InstancedMesh`'s per-instance attributes live on its *geometry*, and
  * `applySway` writes two of them -- so batches cannot share a geometry object
@@ -1696,7 +1696,7 @@ function shellOf(shared: THREE.BufferGeometry): THREE.BufferGeometry {
 }
 
 /**
- * Free what a batch owns, and nothing it borrows (spec 177).
+ * Free what a batch owns, and nothing it borrows (spec 181).
  *
  * three's `onGeometryDispose` walks `geometry.attributes` and removes the GPU
  * buffer of every one it finds, so disposing a shell as-is would free the
@@ -1732,7 +1732,7 @@ function smoothGeometry(geometry: THREE.BufferGeometry, creaseCos: number): THRE
 
 
 /**
- * Which batch is which, on both sides of a thread boundary (spec 177).
+ * Which batch is which, on both sides of a thread boundary (spec 181).
  *
  * The order `buildRegion` has always walked -- one batch per tree species, then
  * the bushes, then each fence kind -- named once so an index into it means the
@@ -1812,7 +1812,7 @@ function packSway(instances: readonly SwayInstance[]): { base: Float32Array; tun
 }
 
 /**
- * Where every prop in one region stands, as arrays (spec 177).
+ * Where every prop in one region stands, as arrays (spec 181).
  *
  * This is the 16.2ms half of a 32.7ms region rebuild: a position, a quaternion
  * chain, a scale and a colour per instance, and nothing that needs a scene
@@ -2051,7 +2051,7 @@ export function buildPropField(
     readonly group: THREE.Group;
     /**
      * This region's geometries, paired with the shared vertex data each borrows
-     * (spec 177). The pair is what `disposeShell` needs: free the instanced
+     * (spec 181). The pair is what `disposeShell` needs: free the instanced
      * attributes this batch added, leave the ones every other region is using.
      */
     readonly shells: { shell: THREE.BufferGeometry; shared: THREE.BufferGeometry }[];
@@ -2063,7 +2063,7 @@ export function buildPropField(
   /**
    * One `InstancedMesh` per batch, from arrays somebody else composed.
    *
-   * What is left here after spec 177 is the half that needs the scene graph:
+   * What is left here after spec 181 is the half that needs the scene graph:
    * the shell, the material, the mesh, and the sway patch. The 16.2ms of matrix
    * and colour arithmetic that used to sit in the middle of this is
    * {@link buildRegionInstances}, and on the shipped client it runs on the map
@@ -2124,7 +2124,7 @@ export function buildPropField(
   };
 
   /**
-   * Hang one region's batches on the scene graph (spec 177).
+   * Hang one region's batches on the scene graph (spec 181).
    *
    * The seam the map worker enters through: `buildRegion` above composes the
    * instances here and then calls this, and the shipped client has the worker

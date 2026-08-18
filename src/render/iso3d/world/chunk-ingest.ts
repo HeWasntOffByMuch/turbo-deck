@@ -7,7 +7,7 @@
  * **How much to mesh.** Every chunk that arrived in a frame was meshed in that
  * frame, plus up to four edge neighbours each -- a pump of arrivals is up to
  * forty full geometry rebuilds between one paint and the next. Spec 165 made
- * that a queue with a per-frame budget; spec 176 took the meshing off the
+ * that a queue with a per-frame budget; spec 180 took the meshing off the
  * thread entirely, so what is left here is the *ledger* -- offered when the
  * ground lands, completed when its triangles come back. `pending` therefore
  * means "offered and not yet on screen", which is what the load gate always
@@ -47,7 +47,7 @@ export interface IngestOptions {
   readonly regionSize: number;
   /**
    * How long a region whose ground is *incomplete* waits before its trees are
-   * drawn anyway (spec 176).
+   * drawn anyway (spec 180).
    *
    * The completeness rule is a rule about the common case: a leading-edge
    * region rebuilt once its whole ground is in is rebuilt once instead of two
@@ -115,7 +115,7 @@ export class ChunkIngest {
   }
 
   /**
-   * Mark one chunk drawn, and say whether it was owed (spec 176).
+   * Mark one chunk drawn, and say whether it was owed (spec 180).
    *
    * This replaces `takeMesh`, and the change of shape is the change of design:
    * meshing used to be something the frame *did*, so the queue was drained by
@@ -178,7 +178,7 @@ export class ChunkIngest {
       if (since < this.options.settleMs) continue;
       const [rx, rz] = key.split(',').map(Number) as [number, number];
       const rect = { minX: rx * size, minZ: rz * size, maxX: (rx + 1) * size, maxZ: (rz + 1) * size };
-      // Quiet is not the same as finished (spec 176). A region whose ground is
+      // Quiet is not the same as finished (spec 180). A region whose ground is
       // still arriving is rebuilt again the moment it does, so it waits -- but
       // only until the longer clock, because ground outside the request radius
       // is declared, absent, and not on its way.

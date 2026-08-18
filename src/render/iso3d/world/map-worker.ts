@@ -1,5 +1,5 @@
 /**
- * The worker's doorway (spec 176).
+ * The worker's doorway (spec 180).
  *
  * Deliberately almost nothing: it owns a `MapWorkerCore` and forwards messages
  * to it. Everything that could be got wrong lives in the core, where it runs on

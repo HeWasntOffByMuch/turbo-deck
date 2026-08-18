@@ -1,5 +1,5 @@
 /**
- * The load, as a thing that can be done anywhere (spec 176).
+ * The load, as a thing that can be done anywhere (spec 180).
  *
  * This is everything the chunk stream produces except the two steps that need
  * a scene graph: it holds a `StreamedMap` of its own, meshes what arrives, and

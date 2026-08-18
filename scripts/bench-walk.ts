@@ -1,6 +1,6 @@
 /**
  * What walking costs the prop field, and what the completeness rule takes off it
- * (spec 176).
+ * (spec 180).
  *
  * The rule was reasoned about and shipped without being counted: a 1100-unit
  * prop region spans two chunk columns, walking east those columns arrive a
@@ -45,7 +45,7 @@ const PROP_REGIONS_LOADING = 8;
 /**
  * What one region costs the *frame*, from `bench-stream.ts`.
  *
- * 1.0ms since spec 177: composing the instances is 17.5ms on the map worker and
+ * 1.0ms since spec 181: composing the instances is 17.5ms on the map worker and
  * what is left here is the shells, the meshes and the sway patch. It was 34ms,
  * which is why this bench counted rebuilds in the first place -- at that price
  * every one of them was a dropped frame.
@@ -246,7 +246,7 @@ async function main(): Promise<void> {
   console.log(row('with it', counted.withRule));
   const playing = counted.withRule.playing;
   console.log(
-    `\n  a region costs the frame ~${REGION_MS}ms (spec 177), so ${playing} of them in front of` +
+    `\n  a region costs the frame ~${REGION_MS}ms (spec 181), so ${playing} of them in front of` +
       ` the gate is ~${(playing * REGION_MS).toFixed(0)}ms over ${(TICKS / SERVER_TICK_RATE).toFixed(0)}s of walking`,
   );
   process.exit(0);

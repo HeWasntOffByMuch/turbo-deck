@@ -25,7 +25,7 @@ describe('parsePerfFlags', () => {
     expect(both.any).toBe(true);
   });
 
-  it('reads the one switch that moves work rather than hiding it (spec 176)', () => {
+  it('reads the one switch that moves work rather than hiding it (spec 180)', () => {
     // `noworker` changes neither the sim nor the picture, only which thread
     // builds it -- but it is a measuring switch like the rest, and it counts
     // toward `any` so the readout still says the frame is not the shipped one.
