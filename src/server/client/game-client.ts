@@ -165,6 +165,10 @@ export interface TradeView {
   readonly you: TradeSideView;
   readonly them: TradeSideView;
   readonly reason: string;
+  /** You are the side being asked (spec 170). Only meaningful while offered. */
+  readonly invited: boolean;
+  /** What would stop this going through, in your terms. Empty when nothing. */
+  readonly warning: string;
 }
 
 /**
@@ -325,6 +329,17 @@ export interface ClientView {
    * an exchange happened when it may not have.
    */
   readonly trade: TradeView | null;
+  /**
+   * The last trade to end, until the player dismisses it (spec 134).
+   *
+   * Beside {@link trade} rather than folded into it, because they are different
+   * questions: one is an exchange the server is still running, the other is a
+   * sentence about an exchange that is over. Folding them would mean a screen
+   * had to read the stage to know whether its buttons still mean anything, and
+   * the window would have no way to tell "no trade" from "a trade just ended"
+   * -- which is exactly the difference the ending exists to say.
+   */
+  readonly endedTrade: TradeView | null;
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
@@ -923,6 +938,18 @@ export class GameClient {
 
   get endedTrade(): TradeView | null {
     return this.lastTrade;
+  }
+
+  /**
+   * Forget the last ending, because the player has read it (spec 134).
+   *
+   * The one piece of trade state a client is allowed to drop on its own, and it
+   * is allowed precisely because it is not state: the trade is already gone at
+   * the server, so there is nothing here that could disagree with it. Every
+   * other trade fact stays the server's to retract.
+   */
+  dismissEndedTrade(): void {
+    this.lastTrade = null;
   }
 
   /**
@@ -1629,6 +1656,7 @@ export class GameClient {
       vendor: this.vendorView,
       vendorRevision: this.vendorReplies,
       trade: this.tradeView,
+      endedTrade: this.lastTrade,
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
@@ -1949,12 +1977,20 @@ export class GameClient {
                 you: message.you,
                 them: message.them,
                 reason: message.reason,
+                invited: message.invited,
+                warning: message.warning,
               };
         // A finished trade is told once and then forgotten, so what is left is
         // the inventory the server has already sent alongside it.
         if (message.stage === TradeStageValue.Done || message.stage === TradeStageValue.Cancelled) {
           this.lastTrade = this.tradeView;
           this.tradeView = null;
+        } else {
+          // A live trade clears the ending behind it. Without this, an ending
+          // the player never dismissed outlives the *next* trade and is what
+          // the window falls back to the moment that one ends -- the previous
+          // reason, on a trade it does not describe.
+          this.lastTrade = null;
         }
         break;
 
