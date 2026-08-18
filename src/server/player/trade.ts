@@ -170,11 +170,18 @@ export function setOffer(
   coins: number,
   holdings: Holdings,
 ): TradeOutcome {
-  if (trade.stage !== 'open' && trade.stage !== 'confirmed') {
-    return refuse('that trade is not open');
-  }
   const side = sideOf(trade, playerId);
   if (side === null) return refuse('you are not in that trade');
+  // An invitation may be furnished, but only by the player who sent it (spec
+  // 169). An empty request asks "do you want to trade?" with no goods and no
+  // reason to say yes, and the answer to that is always no. The invited side
+  // stays a spectator until they have answered: putting something up is not an
+  // answer, and a table both sides can edit before either has agreed to be at
+  // it is a table you can be dragged into.
+  const inviting = trade.stage === 'offered' && side === 'a';
+  if (!inviting && trade.stage !== 'open' && trade.stage !== 'confirmed') {
+    return refuse(trade.stage === 'offered' ? 'answer the invitation first' : 'that trade is not open');
+  }
 
   const checked = validateOffer(offer, coins, holdings);
   if (checked !== null) return refuse(checked);
@@ -187,7 +194,10 @@ export function setOffer(
       ...trade,
       [side]: next,
       [otherSide(side)]: other,
-      stage: 'open',
+      // An invitation with goods on it is still an invitation. Advancing here
+      // would put the invitee at a table they never agreed to sit at, and
+      // `respond` -- which only runs at `offered` -- could never fire.
+      stage: inviting ? 'offered' : 'open',
       revision: trade.revision + 1,
     },
   };
@@ -277,16 +287,55 @@ export function isSwappable(trade: Trade): boolean {
  */
 export function swap(trade: Trade, a: Holdings, b: Holdings): SwapOutcome {
   if (!isSwappable(trade)) return refuseSwap('both sides have to accept the same offer');
+  const result = exchange(trade, a, b);
+  return result.ok ? result : refuseSwap(result.reason);
+}
 
+/**
+ * Whose bag stops this exchange, and why -- or null if it would go through.
+ *
+ * The same arithmetic {@link swap} runs, minus the stage check, so it can be
+ * asked of a table nobody has accepted yet (spec 169). That is the whole point:
+ * a full bag used to be discovered *after* both sides had accepted, as the
+ * reason the trade was cancelled, and there is nothing a player can do about it
+ * at that moment except start again.
+ *
+ * It names a **side** rather than describing one, because the server publishes
+ * to each player separately and "your bag is full" and "their bag is full" are
+ * different sentences. `swap`'s single reason string could only ever be right
+ * for one of the two people reading it, and was: it said "their bag is full" to
+ * the player whose own bag was the problem.
+ */
+export function exchangeProblem(
+  trade: Trade,
+  a: Holdings,
+  b: Holdings,
+): { readonly side: 'a' | 'b'; readonly reason: string } | null {
+  const result = exchange(trade, a, b);
+  return result.ok ? null : { side: result.side, reason: result.reason };
+}
+
+type Exchange =
+  | { readonly ok: true; readonly a: Holdings; readonly b: Holdings }
+  | { readonly ok: false; readonly side: 'a' | 'b'; readonly reason: string };
+
+/**
+ * Take from both, then give to both.
+ *
+ * Taking first is what makes room -- a trade of a sword for a sword between two
+ * full bags is a legal trade, and giving first would refuse it for lack of a
+ * slot that is about to be empty.
+ */
+function exchange(trade: Trade, a: Holdings, b: Holdings): Exchange {
   const takenFromA = take(trade.a, a);
-  if (typeof takenFromA === 'string') return refuseSwap(takenFromA);
+  if (typeof takenFromA === 'string') return { ok: false, side: 'a', reason: takenFromA };
   const takenFromB = take(trade.b, b);
-  if (typeof takenFromB === 'string') return refuseSwap(takenFromB);
+  if (typeof takenFromB === 'string') return { ok: false, side: 'b', reason: takenFromB };
 
   const givenToA = give(takenFromA.left, takenFromB.moved);
-  if (!givenToA) return refuseSwap('their bag is full');
+  if (!givenToA) return { ok: false, side: 'a', reason: 'no room for what is on the table' };
   const givenToB = give(takenFromB.left, takenFromA.moved);
-  if (!givenToB) return refuseSwap('their bag is full');
+  if (!givenToB) return { ok: false, side: 'b', reason: 'no room for what is on the table' };
 
   return {
     ok: true,

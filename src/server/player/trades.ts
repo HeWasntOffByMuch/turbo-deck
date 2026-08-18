@@ -21,6 +21,7 @@ import {
   accept,
   beginTrade,
   cancel,
+  exchangeProblem,
   isLive,
   isSwappable,
   respond,
@@ -175,4 +176,4 @@ export function partiesOf(trade: Trade): readonly [string, string] {
   return [trade.a.playerId, trade.b.playerId];
 }
 
-export { sideOf, isLive, isSwappable };
+export { sideOf, isLive, isSwappable, exchangeProblem };

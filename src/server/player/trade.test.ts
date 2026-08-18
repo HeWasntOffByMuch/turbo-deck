@@ -19,6 +19,7 @@ import {
   accept,
   beginTrade,
   cancel,
+  exchangeProblem,
   isLive,
   isSwappable,
   respond,
@@ -300,6 +301,108 @@ describe('the swap', () => {
 });
 
 // --- the property ------------------------------------------------------
+
+describe('furnishing an invitation (spec 169)', () => {
+  const bow = { defId: 'bow.hunting', count: 1 };
+
+  /**
+   * An empty request asks "do you want to trade?" with no goods and no reason
+   * to say yes. The inviter may put something up before it is answered.
+   */
+  it('lets the inviting side put something on the table', () => {
+    const trade = beginTrade(1, 'ana', 'ben');
+    const set = setOffer(trade, 'ana', [{ index: 0, count: 1 }], 5, holding({ 0: bow }));
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    // Still an invitation: advancing here would put Ben at a table he never
+    // agreed to sit at, and `respond` -- which only runs at `offered` -- could
+    // then never fire.
+    expect(set.trade.stage).toBe('offered');
+    expect(set.trade.a.offer).toEqual([{ index: 0, count: 1 }]);
+    expect(set.trade.a.coins).toBe(5);
+    expect(set.trade.revision).toBe(trade.revision + 1);
+  });
+
+  /** ...and the invited side may not, until it has answered. */
+  it('refuses the invited side until it has answered', () => {
+    const trade = beginTrade(1, 'ana', 'ben');
+    const set = setOffer(trade, 'ben', [{ index: 0, count: 1 }], 0, holding({ 0: bow }));
+    expect(set.ok).toBe(false);
+    if (set.ok) return;
+    expect(set.reason).toContain('answer the invitation');
+  });
+
+  it('refuses anybody who is not in it', () => {
+    const trade = beginTrade(1, 'ana', 'ben');
+    const set = setOffer(trade, 'cass', [], 0, holding({}));
+    expect(set.ok).toBe(false);
+  });
+
+  /** A furnished invitation still answers, and lands both sides at the table. */
+  it('carries the furnished offer through into the open trade', () => {
+    const trade = beginTrade(1, 'ana', 'ben');
+    const set = setOffer(trade, 'ana', [{ index: 0, count: 1 }], 0, holding({ 0: bow }));
+    if (!set.ok) throw new Error(set.reason);
+    const answered = respond(set.trade, 'ben', true);
+    if (!answered.ok) throw new Error(answered.reason);
+    expect(answered.trade.stage).toBe('open');
+    expect(answered.trade.a.offer).toEqual([{ index: 0, count: 1 }]);
+  });
+});
+
+describe('exchangeProblem (spec 169)', () => {
+  const bow = { defId: 'bow.hunting', count: 1 };
+
+  /** A bag with no free slot and nothing to stack onto. */
+  function full(): Holdings {
+    const entries: Record<number, ItemStack> = {};
+    for (let index = 0; index < INVENTORY_SLOTS; index += 1) {
+      entries[index] = { defId: 'chest.leather', count: 1 };
+    }
+    return holding(entries);
+  }
+
+  it('says nothing about a trade that would go through', () => {
+    const ana = holding({ 0: bow });
+    const ben = holding({});
+    expect(exchangeProblem(agreed(ana, ben, [{ index: 0, count: 1 }], []), ana, ben)).toBeNull();
+  });
+
+  /**
+   * Whose bag it is, rather than a sentence about it. `swap` returned one
+   * string to both players and it was only ever true for one of them: the
+   * player whose own bag was the problem was told "their bag is full".
+   */
+  it('names the side whose bag has no room', () => {
+    const ana = holding({ 0: bow });
+    const ben = full();
+    // Ana gives a bow to a bag with no slot for it, and offers nothing back --
+    // so nothing leaves Ben's bag to make room.
+    const trade = agreed(ana, ben, [{ index: 0, count: 1 }], []);
+    const problem = exchangeProblem(trade, ana, ben);
+    expect(problem?.side).toBe('b');
+
+    // ...and the other way round.
+    const mirrored = agreed(full(), holding({ 0: bow }), [], [{ index: 0, count: 1 }]);
+    expect(exchangeProblem(mirrored, full(), holding({ 0: bow }))?.side).toBe('a');
+  });
+
+  /**
+   * The check that warns and the check that refuses are the same arithmetic, so
+   * they cannot drift: a warning nobody could act on, or worse a table that
+   * looked fine and then failed, is what two separate implementations produce.
+   */
+  it('agrees with swap on whether the exchange runs', () => {
+    for (const [ana, ben] of [
+      [holding({ 0: bow }), holding({})],
+      [holding({ 0: bow }), full()],
+      [full(), full()],
+    ] as const) {
+      const trade = agreed(ana, ben, ana.inventory[0] ? [{ index: 0, count: 1 }] : [], []);
+      expect(exchangeProblem(trade, ana, ben) === null).toBe(swap(trade, ana, ben).ok);
+    }
+  });
+});
 
 const ITEM_IDS = ['sword.worn', 'bow.hunting', 'chest.leather', 'potion.minor'] as const;
 
