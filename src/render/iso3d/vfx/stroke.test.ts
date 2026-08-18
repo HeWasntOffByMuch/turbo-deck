@@ -17,6 +17,8 @@ import { describe, expect, it } from 'vitest';
 import {
   brushStrokeBank,
   brushStrokeMesh,
+  centreStrokes,
+  STROKE_CENTRE_SHIFT,
   strokeHalfAt,
   strokeNodes,
   strokeOutline,
@@ -316,5 +318,44 @@ describe('the bank', () => {
   it('stays inside the 16-bit index range a batch can upload', () => {
     const bank = variedBank({ segments: 12, companions: 2, flecks: 3 }, 8, 1);
     expect(bank.positions.length / 3).toBeLessThan(65536);
+  });
+});
+
+describe('the placed mark is centred on its own origin (spec 175)', () => {
+  const rooted = variedBank({ flecks: 0 }, 4, 0x3b7d);
+  const centred = centreStrokes(rooted);
+
+  it('moves the spine by exactly half a length, along its own axis and nowhere else', () => {
+    expect(centred.positions).toHaveLength(rooted.positions.length);
+    for (let v = 0; v < rooted.positions.length; v += 3) {
+      expect(centred.positions[v]).toBe(rooted.positions[v]);
+      expect(centred.positions[v + 1]).toBeCloseTo((rooted.positions[v + 1] ?? 0) - STROKE_CENTRE_SHIFT, 6);
+      expect(centred.positions[v + 2]).toBe(rooted.positions[v + 2]);
+    }
+  });
+
+  it('changes nothing else about the mark', () => {
+    // The outline, the gesture coordinate, the bank tags and the winding are all
+    // untouched: this is a translation, and a translation that quietly re-rolled
+    // the geometry would be a second bank wearing the first one's name.
+    expect(Array.from(centred.strokeUv)).toEqual(Array.from(rooted.strokeUv));
+    expect(Array.from(centred.indices)).toEqual(Array.from(rooted.indices));
+    expect(Array.from(centred.normals)).toEqual(Array.from(rooted.normals));
+    expect(centred.variants).toBe(rooted.variants);
+    expect(centred.mainNodes).toBe(rooted.mainNodes);
+  });
+
+  it('leaves the mark straddling zero rather than standing on it', () => {
+    // The whole reason it exists: two of these rooted at one point are a V.
+    const ys: number[] = [];
+    for (let v = 1; v < centred.positions.length; v += 3) ys.push(centred.positions[v] ?? 0);
+    expect(Math.min(...ys)).toBeCloseTo(-STROKE_CENTRE_SHIFT, 6);
+    expect(Math.max(...ys)).toBeCloseTo(STROKE_CENTRE_SHIFT, 6);
+  });
+
+  it('does not touch the source it was handed', () => {
+    const before = Array.from(rooted.positions);
+    centreStrokes(rooted);
+    expect(Array.from(rooted.positions)).toEqual(before);
   });
 });

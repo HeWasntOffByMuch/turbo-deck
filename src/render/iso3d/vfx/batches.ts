@@ -46,6 +46,7 @@ import {
   particleMesh,
   rootShadeOf,
   shadingOf,
+  strokeRootOf,
   strokeShape,
   type MeshShape,
 } from './meshes.js';
@@ -436,6 +437,7 @@ attribute float aVariant;
 attribute float iDecay;
 uniform float uVariants;
 uniform float uRootShade;
+uniform float uStrokeRoot;
 varying float vAlong;
 #endif
 
@@ -644,7 +646,13 @@ void main() {
       float band = 0.09;
       float cut = leaving * (1.0 + band) - band;
       alive = smoothstep(0.0, band, along - cut);
-      lift = max(position.y, max(cut, 0.0));
+      // Measured from the mark's OWN root (spec 175). A gesture is one unit long
+      // from wherever it starts, so the threshold walks from uStrokeRoot to
+      // uStrokeRoot + 1 -- which is 0 to 1 for every mark authored from its butt,
+      // and the identical expression this has always been. A centred mark starts
+      // at -0.5, and a threshold sweeping from zero would arrive with the whole
+      // lower half of it already collapsed on its first frame.
+      lift = max(position.y, uStrokeRoot + max(cut, 0.0));
     } else {
       // FIZZLE. Gaps open THROUGH the mark and it comes apart into shrinking
       // islands where it lies.
@@ -783,6 +791,7 @@ export class MeshParticleBatch {
         uCoreGlow: { value: coreGlowShape(shape) ? 1 : 0 },
         uVariants: { value: Math.max(1, particleMesh(shape).variants ?? 1) },
         uRootShade: { value: rootShadeOf(shape) },
+        uStrokeRoot: { value: strokeRootOf(shape) },
       },
       transparent: true,
       // Same pair as the quad batches, and the same two jobs: the right blend

@@ -21,7 +21,13 @@
  * tell them from one sphere seen from a hundred angles.
  */
 
-import { brushStrokeBank, variedBank, type StrokeMeshData } from './stroke.js';
+import {
+  STROKE_CENTRE_SHIFT,
+  brushStrokeBank,
+  centreStrokes,
+  variedBank,
+  type StrokeMeshData,
+} from './stroke.js';
 
 export interface MeshData {
   readonly positions: Float32Array;
@@ -60,10 +66,19 @@ export type MeshShape =
   /** A chunky short mark: a droplet, a chip of debris. */
   | 'brush-dab'
   /** An irregular blunt mass: the clumps painterly smoke is made of. */
-  | 'brush-blot';
+  | 'brush-blot'
+  /**
+   * A mark somebody *placed*: centred on its own origin and held at the angle it
+   * was given (spec 175).
+   *
+   * Every other mark here is thrown -- rooted where it left the brush and aimed
+   * down its own travel. This one has no travel to be aimed by, and two of it
+   * rooted at one point would be a V rather than a cross.
+   */
+  | 'brush-mark';
 
 /** The brush marks, in one place, so nothing has to spell the list out twice. */
-export const BRUSH_SHAPES = ['brush-slash', 'brush-flick', 'brush-dab', 'brush-blot'] as const;
+export const BRUSH_SHAPES = ['brush-slash', 'brush-flick', 'brush-dab', 'brush-blot', 'brush-mark'] as const;
 
 /**
  * Independently generated gestures behind each brush mark (spec 159).
@@ -651,6 +666,34 @@ function brushShape(shape: MeshShape): StrokeMeshData {
       // more broad strokes laid across it, so a single particle is already a
       // chunky irregular mass rather than a bead that needs friends to read.
       return cloudBank(BANK_SIZE, 0x7d13);
+    case 'brush-mark':
+      // The placed mark (spec 175). Broader than a thrown one and shorter for
+      // its width, because it is not going anywhere and its whole job is to be
+      // legible at the size a confirmation is drawn at -- a 1:11 flick is three
+      // pixels of ink at the gameplay zoom and reads as a scratch.
+      //
+      // No flecks. A fleck is paint that has left the brush, which is a fact
+      // about a mark that was thrown; and they sit up to 58% past the tip, so an
+      // arm carrying them is an arm longer at one end than the other, which on a
+      // cross is the one asymmetry that reads as a fault rather than as a hand.
+      return centreStrokes(
+        variedBank(
+          {
+            segments: 9,
+            width: 0.08,
+            curve: 0.1,
+            kink: 0.012,
+            edgeNoise: 0.28,
+            bulge: 0.24,
+            bow: 0.4,
+            companions: 1,
+            flecks: 0,
+            splitTip: 0.6,
+          },
+          BANK_SIZE,
+          0x3b7d,
+        ),
+      );
     case 'brush-slash':
     default:
       // The dominant mark. Long, broad at the root, swelling once in the first
@@ -799,6 +842,13 @@ export function orientOf(shape: MeshShape): number {
       return ORIENT.velocity;
     case 'brush-blot':
       return ORIENT.tumble;
+    // The one shape that finally uses the card mode spec 158 defined (spec 175).
+    // A placed mark has no velocity to be aimed by, and a cross whose arms were
+    // decided by the camera's azimuth is a cross that closes to a line at some
+    // seat in the room -- so it takes the roll it was given, exactly, the way a
+    // sigil takes its rotation.
+    case 'brush-mark':
+      return ORIENT.card;
     default:
       return ORIENT.tumble;
   }
@@ -856,10 +906,35 @@ export function rootShadeOf(shape: MeshShape): number {
   // Gentle. At 0.38 a handful of overlapping marks turned the middle of a hit
   // into one dark mass with no strokes visible in it -- the root shade was
   // doing to the composition what it was meant to do inside a single mark.
-  if (shape === 'brush-slash' || shape === 'brush-flick') return 0.2;
+  if (shape === 'brush-slash' || shape === 'brush-flick' || shape === 'brush-mark') return 0.2;
   if (shape === 'brush-dab') return 0.12;
   return 0;
 }
+
+/**
+ * Where a shape's spine starts, along its own +Y (spec 175).
+ *
+ * Zero for everything that was authored from its butt, which is everything but
+ * the placed mark -- so the shader's retract, which pulls a mark's spine toward
+ * its root, keeps exactly the expression it has always had. The centred mark
+ * reports the half-length it was shifted by, because a threshold that swept from
+ * zero would have half the mark already collapsed on its first frame.
+ */
+export function strokeRootOf(shape: MeshShape): number {
+  return shape === 'brush-mark' ? -STROKE_CENTRE_SHIFT : 0;
+}
+
+/**
+ * How far a placed mark reaches from its own origin, as a multiple of its size
+ * (spec 175).
+ *
+ * A *bound*, and it has to be one rather than a measurement, because it is what
+ * holds the mark clear of the ground: the geometry is half a unit of spine plus
+ * its width, and then the shader stretches it by up to 1.34 and fattens it by up
+ * to 1.22 per instance. `mark-reach` in `meshes.test.ts` multiplies those out
+ * against the real bank and fails if the answer ever climbs past this.
+ */
+export const MARK_REACH = 0.75;
 
 /** Whether a shape's batch needs the particle's velocity uploaded (spec 125). */
 export function needsVelocity(shape: MeshShape): boolean {
