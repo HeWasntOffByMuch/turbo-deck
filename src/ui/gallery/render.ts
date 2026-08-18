@@ -760,6 +760,10 @@ export function demoTrade(options: TradeRenderOptions = {}): TradeUiView {
     // is drawn in the refusal colour, which is what it was before there was a
     // second kind of ending to tell it apart from.
     succeeded: false,
+    // The golden is a table in progress rather than an invitation, so neither
+    // the role split nor the warning is in the picture.
+    invited: false,
+    warning: '',
     you: { name: 'You', rows: [{ name: 'Hunting Bow', count: 1 }], coins: 20, accepted: false },
     them: { name: 'Kestrel', rows: [{ name: 'Oak Shield', count: 1 }], coins: 0, accepted: true },
     bag,

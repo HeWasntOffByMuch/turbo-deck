@@ -29,6 +29,8 @@ export interface TradeSource {
     readonly you: TradeSideView;
     readonly them: TradeSideView;
     readonly reason: string;
+    readonly invited: boolean;
+    readonly warning: string;
   } | null;
   readonly inventory: Inventory;
   readonly coins: number;
@@ -100,6 +102,8 @@ export function tradeViewOf(source: TradeSource): TradeUiView | null {
   return {
     stage: stageOf(trade.stage),
     succeeded,
+    invited: trade.invited,
+    warning: trade.warning,
     you: offerOf(trade.you),
     them: offerOf(trade.them),
     bag: source.inventory.map((stack) => (stack ? itemViewOf(stack.defId, stack.count) : null)),

@@ -72,6 +72,8 @@ describe('tradeViewOf', () => {
         you: side({ offer: [{ defId: 'bow.hunting', count: 1 }], coins: 12 }),
         them: side({ playerId: 'ben', displayName: 'Ben', offer: [], accepted: true }),
         reason: '',
+        invited: false,
+        warning: '',
       },
       inventory: bagOf({ defId: 'bow.hunting', count: 1 }),
       coins: 40,
@@ -91,7 +93,7 @@ describe('tradeViewOf', () => {
   it('reads both endings as one word, and keeps the reason', () => {
     for (const stage of [TradeStageValue.Done, TradeStageValue.Cancelled]) {
       const view = tradeViewOf({
-        trade: { stage, revision: 1, you: side(), them: side(), reason: 'they disconnected' },
+        trade: { stage, revision: 1, you: side(), them: side(), reason: 'they disconnected', invited: false, warning: '' },
         inventory: emptyInventory(),
         coins: 0,
       });
@@ -107,7 +109,7 @@ describe('tradeViewOf', () => {
    */
   it('gives a completed trade words of its own', () => {
     const view = tradeViewOf({
-      trade: { stage: TradeStageValue.Done, revision: 1, you: side(), them: side(), reason: '' },
+      trade: { stage: TradeStageValue.Done, revision: 1, you: side(), them: side(), reason: '', invited: false, warning: '' },
       inventory: emptyInventory(),
       coins: 0,
     });
@@ -125,6 +127,8 @@ describe('tradeViewOf', () => {
         you: side(),
         them: side(),
         reason: 'you walked too far apart',
+        invited: false,
+        warning: '',
       },
       inventory: emptyInventory(),
       coins: 0,
@@ -141,6 +145,8 @@ describe('tradeViewOf', () => {
         you: side(),
         them: side({ offer: [{ defId: 'sword.imaginary', count: 1 }] }),
         reason: '',
+        invited: false,
+        warning: '',
       },
       inventory: emptyInventory(),
       coins: 0,
