@@ -389,7 +389,7 @@ export interface ClientView {
    */
   readonly selfRoot: { readonly x: number; readonly y: number } | null;
   /**
-   * True while a poise break holds this body (spec 169).
+   * True while a poise break holds this body (spec 172).
    *
    * Beside {@link selfRoot} and answering the neighbouring question, because
    * the two are different states with the same consequence: one is a commitment
@@ -836,7 +836,7 @@ export class GameClient {
     // bar still draining for a blow that has been called off.
     if (Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
     // A poise break roots this body and the server has already started
-    // discarding these components (spec 169). The onset cannot be predicted --
+    // discarding these components (spec 172). The onset cannot be predicted --
     // nobody knows they are about to be hit -- so the first round trip's worth
     // of movement is sent, discarded and corrected, and that is the accepted
     // cost. What is not accepted is continuing to send it *after* the stagger
@@ -1285,7 +1285,7 @@ export class GameClient {
       // cooldowns above, and for the same reason: the press has to grey the
       // button out now rather than in a round trip.
       fallbackCharges: Math.max(0, this.fallbackCharges - this.predictedCharges),
-      // The stagger window, straight off the replica (spec 169). Not predicted
+      // The stagger window, straight off the replica (spec 172). Not predicted
       // and deliberately not: nobody knows they are about to be hit, so this is
       // the server's word arriving a round trip late and there is nothing
       // honest to guess in the meantime.
@@ -1296,7 +1296,7 @@ export class GameClient {
 
   /**
    * Whether this client can see itself inside a poise break's window
-   * (spec 169).
+   * (spec 172).
    *
    * Asked of the replica rather than of the mirror, because the mirror is built
    * for `startCast` and this is a movement question -- and asked through the

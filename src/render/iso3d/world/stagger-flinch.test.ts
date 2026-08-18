@@ -1,5 +1,5 @@
 /**
- * The flinch a poise break puts on a body (spec 169).
+ * The flinch a poise break puts on a body (spec 172).
  *
  * Pure, so a whole break's worth of reaction is replayed in Node with no canvas
  * and no clock. Every case here is a statement about a *tick*, because that is
@@ -26,7 +26,7 @@ function broken(windowTicks = 30): { flinches: StaggerFlinches; start: number } 
   return { flinches, start: windowTicks };
 }
 
-describe('a break rocks the body it broke (spec 169)', () => {
+describe('a break rocks the body it broke (spec 172)', () => {
   it('says nothing about a body seen for the first time', () => {
     const flinches = new StaggerFlinches();
     // Already staggered on first sight: walked into view mid-break, or a

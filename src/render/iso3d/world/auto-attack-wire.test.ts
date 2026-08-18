@@ -386,7 +386,7 @@ describe('a standing attack order, over a real session (spec 080)', () => {
       expect(result.cancels, seen).toBe(result.withdrawals);
       expect(result.withdrawals, seen).toBeLessThanOrEqual(result.kills);
       // Nothing refused except the one refusal that cannot be predicted
-      // (spec 169).
+      // (spec 172).
       //
       // The grazer runs above still assert `rejects` is empty outright, and
       // this one cannot, because a stalker breaks your poise: a stagger is

@@ -472,7 +472,7 @@ describe('a body faces what it was told to attack (spec 090)', () => {
   });
 });
 
-describe('a poise break holds the legs and the heading (spec 169)', () => {
+describe('a poise break holds the legs and the heading (spec 172)', () => {
   const HELD_FACING = 1.2;
 
   it('asks for no movement, whatever is held', () => {

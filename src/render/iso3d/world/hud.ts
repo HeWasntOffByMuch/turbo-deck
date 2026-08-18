@@ -154,7 +154,7 @@ interface Bar {
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
   /**
-   * The swirl over a stunned body (spec 169).
+   * The swirl over a stunned body (spec 172).
    *
    * Above the name, so it is the topmost thing in the stack and cannot be
    * confused with anything the body *has* -- health, guard and the cast bar are
@@ -962,7 +962,7 @@ export function createHud(
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
     cast.append(castFill);
 
-    // The stun swirl (spec 169). Built once and hidden, like the name: a body
+    // The stun swirl (spec 172). Built once and hidden, like the name: a body
     // is stunned for well under a second at a time and creating an element per
     // break would churn the DOM on every blow that lands.
     const stun = document.createElement('div');
@@ -1092,7 +1092,7 @@ export function createHud(
       // The fill is replicated health and nothing here delays it; the white
       // band behind it is the chunk the last blow took, decided in the pure
       // field off the same presentation clock the bars are placed by.
-      // The stun swirl (spec 169). Stateless, so unlike the flash above there is
+      // The stun swirl (spec 172). Stateless, so unlike the flash above there is
       // nothing per-body to retain or prune: a body that is stunned right now is
       // stunned whether or not this client watched the blow, which is exactly
       // what a *state* mark should say and the opposite of the flinch's rule.

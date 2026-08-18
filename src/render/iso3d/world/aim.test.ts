@@ -116,7 +116,7 @@ function step(overrides: Partial<CastOrderInput> = {}): ReturnType<typeof castOr
     order: UNIT_ORDER,
     target: MARK,
     rooted: false,
-    // Holding its own footing, unless a case says otherwise (spec 169).
+    // Holding its own footing, unless a case says otherwise (spec 172).
     staggered: false,
     readyAtTick: 0,
     tick: 100,
@@ -280,7 +280,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
   });
 });
 
-describe('a broken body does nothing with a standing cast order (spec 169)', () => {
+describe('a broken body does nothing with a standing cast order (spec 172)', () => {
   it('does not chase while staggered', () => {
     expect(step({ staggered: true, self: { x: 0, y: 0 } }).chaseTo).toBeNull();
   });

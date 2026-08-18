@@ -115,7 +115,7 @@ export const SYSTEM_ICONS: Readonly<Record<SystemIconId, string>> = {
 };
 
 /**
- * The swirl that marks a stunned body (spec 169).
+ * The swirl that marks a stunned body (spec 172).
  *
  * Its own export rather than a row in one of the tables above, because those
  * are both *button* vocabularies -- an inventory bag and a bow are things you

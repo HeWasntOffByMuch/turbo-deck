@@ -118,7 +118,7 @@ export const DRIVEN_PARAMETERS = {
   attack: 'attack',
   shoot: 'shoot',
   /**
-   * The poise break (spec 169). No unit in the tree declares it yet, so today
+   * The poise break (spec 172). No unit in the tree declares it yet, so today
    * this trigger is raised into the void on every rig -- which is the correct
    * shape rather than a gap: `stagger-flinch.ts` is the channel that draws a
    * break without authored content, and this is the hook a `stagger` clip drops
@@ -194,7 +194,7 @@ export function driveUnit(
   // are read off whatever it is in afterwards.
   else if (cancelledCast(facts, previous)) machine.cancelAction();
   // The break is its own edge and is checked after the cast ones rather than
-  // beside them (spec 169), because the two can land on the same frame: a body
+  // beside them (spec 172), because the two can land on the same frame: a body
   // broken mid-wind-up loses its cast on that tick, so `cancelledCast` is also
   // true, and the swing has to be called off *before* the stagger is raised or
   // the machine leaves the stagger state it was just put into. Only a unit that
@@ -249,7 +249,7 @@ export function attackRateFrom(
 }
 
 /**
- * True on the tick a poise break lands, and on no other (spec 169).
+ * True on the tick a poise break lands, and on no other (spec 172).
  *
  * The edge into `Stunned`, and nothing cleverer: unlike a cast there is no
  * phase to go backwards and no predicted copy on a second clock, because a

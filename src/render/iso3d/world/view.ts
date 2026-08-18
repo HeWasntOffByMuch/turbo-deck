@@ -1336,7 +1336,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         ? { id: entity.id, x: entity.x, y: entity.y, radius: targetRadius, health: entity.health }
         : null,
       range: swing?.range ?? 0,
-      // Something done to this body rather than by it (spec 169): while it
+      // Something done to this body rather than by it (spec 172): while it
       // holds, the order stands and asks for nothing.
       staggered: view.selfStaggered,
       // Both halves of "am I committed": the server's cast and the one this
@@ -1407,7 +1407,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // client has only asked for.
       rooted: view.selfRoot !== null,
       // A break clears the cast, so `rooted` is false right through a
-      // stagger and cannot stand in for it (spec 169).
+      // stagger and cannot stand in for it (spec 172).
       staggered: view.selfStaggered,
       readyAtTick: view.cooldowns[standing.abilityId] ?? 0,
       tick: view.estimatedTick,
@@ -1587,7 +1587,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // whole attack delay, and only turned once the blow committed -- so the
       // turn was paid for *after* the wait instead of during it.
       targetAim: aimedMark(view),
-      // A poise break holds the legs *and* the heading (spec 169). The heading
+      // A poise break holds the legs *and* the heading (spec 172). The heading
       // is the half that matters here: a correction carries a position, so a
       // predicted step is pulled back, and it carries no facing at all -- so a
       // body that kept turning through its own stagger would be an error the

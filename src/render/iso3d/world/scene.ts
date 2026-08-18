@@ -478,7 +478,7 @@ export class WorldScene {
    * `motion`: the sim owns the heading, this owns how a body gets to it.
    */
   private readonly turnEase = new TurnEase();
-  /** The rock a poise break puts on a body (spec 169). Presentation only. */
+  /** The rock a poise break puts on a body (spec 172). Presentation only. */
   private readonly staggerFlinches = new StaggerFlinches();
   private readonly bodies = new Map<number, Body>();
   /**
@@ -1336,7 +1336,7 @@ export class WorldScene {
           ? (pose?.z ?? entity.z)
           : this.ground(x, y);
 
-      // The poise break's rock (spec 169), added to the drawn transform and to
+      // The poise break's rock (spec 172), added to the drawn transform and to
       // nothing else. `frame.tick` is the same clock the bodies above are
       // interpolated by, so this lands on the same frame at 30fps and at 144.
       const flinch = this.staggerFlinches.read(

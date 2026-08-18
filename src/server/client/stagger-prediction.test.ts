@@ -1,5 +1,5 @@
 /**
- * What the client does with its own stagger (spec 169).
+ * What the client does with its own stagger (spec 172).
  *
  * The server roots a broken body -- `stagger-gate.test.ts` pins that through
  * the real `step`, from a real blow, and refuses to hand itself the state. This
@@ -107,7 +107,7 @@ function breakOnServer(server: GameServer, entityId: number): void {
   });
 }
 
-describe('the client predicts its own stagger (spec 169)', () => {
+describe('the client predicts its own stagger (spec 172)', () => {
   it('sees the break at all', async () => {
     const { server, client, entityId, step } = await stand();
     expect(client.view().selfStaggered).toBe(false);

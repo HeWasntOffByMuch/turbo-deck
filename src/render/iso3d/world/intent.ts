@@ -124,7 +124,7 @@ export interface IntentInput {
    */
   readonly targetAim?: Point | null;
   /**
-   * True while a poise break holds this body (spec 169).
+   * True while a poise break holds this body (spec 172).
    *
    * Outranks every other branch below, including {@link castAim} and a held
    * key, because on the server it outranks them too: the movement pass zeroes
@@ -154,7 +154,7 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // spent order steers nothing, whatever waypoint is still on offer.
   const direction = keyed ?? (arrived ? null : steerTo(input.self, input.route ?? input.destination));
 
-  // A poise break holds the body outright (spec 169), and holds it harder than
+  // A poise break holds the body outright (spec 172), and holds it harder than
   // a cast does: no step, and no turn either.
   //
   // First, so it beats the wind-up aim and a held key both. It has to beat the

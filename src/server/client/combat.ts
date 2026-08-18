@@ -64,10 +64,10 @@ export interface Mirror {
   readonly poise: number;
   readonly shield: number;
   /**
-   * The stagger window, replicated on `FIELD_ACTIVITY` (spec 169).
+   * The stagger window, replicated on `FIELD_ACTIVITY` (spec 172).
    *
    * Real rather than assumed, for the same reason `fallbackCharges` is: the
-   * gate this mirror exists to ask is `startCast`, and since 169 a poise break
+   * gate this mirror exists to ask is `startCast`, and since 172 a poise break
    * is one of the refusals it can give. A mirror that claimed to be idle would
    * light a button the server is about to refuse -- the mispredicted press this
    * file exists to prevent -- and it is the one refusal the player did not

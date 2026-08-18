@@ -62,7 +62,7 @@ function mirror(overrides: Partial<Mirror> = {}): Mirror {
     poise: 0,
     shield: 0,
     // Not staggered, which is what every test here that is not about the
-    // stagger assumes (spec 169).
+    // stagger assumes (spec 172).
     activity: 0,
     activityUntilTick: 0,
     ...overrides,
@@ -446,7 +446,7 @@ describe('what the player sees, the moment they press', () => {
   });
 });
 
-describe('a staggered mirror refuses the same thing the server does (spec 169)', () => {
+describe('a staggered mirror refuses the same thing the server does (spec 172)', () => {
   it('refuses a cast while the break holds', () => {
     // The mirror used to hardcode `activity: 0`, which would light a button the
     // server is about to refuse -- and a stagger is the one refusal the player

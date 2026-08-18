@@ -148,7 +148,7 @@ export interface CastOrderInput {
    */
   readonly rooted: boolean;
   /**
-   * True while a poise break holds this body (spec 169).
+   * True while a poise break holds this body (spec 172).
    *
    * Its own field beside {@link rooted}, and it has to be: a break *clears* the
    * cast it interrupted (`applyPoiseDamage` nulls it), so `rooted` -- which is
@@ -211,7 +211,7 @@ export function castOrder(input: CastOrderInput): CastOrderStep {
 
   if (input.rooted) return NOTHING;
 
-  // A broken body holds its order and does nothing with it (spec 169). Returned
+  // A broken body holds its order and does nothing with it (spec 172). Returned
   // as `NOTHING` rather than as a drop, for the same reason the standing attack
   // order keeps its mark: a stagger is half a second, and an order that
   // evaporated every time the player was hit would make a break cost the plan
