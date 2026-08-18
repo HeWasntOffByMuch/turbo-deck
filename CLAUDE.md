@@ -1003,6 +1003,33 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  a contact nobody watched. `unit-driver.ts` also raises a
                  `stagger` trigger for a rig that declared one; none has yet, so
                  that channel is silently waiting for a clip.
+                 `world/stun-icon.ts` is the mark beside the reaction -- a swirl
+                 over the head, in `hud.ts`'s existing per-body holder -- and it
+                 is **stateless**, which is the whole difference from the flinch
+                 next to it. A flinch is a *contact* and needs an edge somebody
+                 watched, so it keeps a track and refuses to fire for a body
+                 that walked into view already broken; a swirl is a *state*, and
+                 a body that is stunned is stunned whoever was looking. So there
+                 is no map and nothing to prune, and the phase runs off the
+                 replicated `activityUntilTick` rather than an observed start,
+                 which is what makes every client draw the same angle on the
+                 same tick with nothing replicated for it. It fades over a fixed
+                 *count* of ticks rather than a fraction, because a fraction
+                 needs the window's length and the function is handed only its
+                 end.
+                 What the client half got wrong first is worth keeping: only
+                 `autoAttack` was taught about the stagger, and its two
+                 neighbours were not. `moveIntent` kept asking for a *heading*
+                 while the server pinned the body's own -- worse than a
+                 mispredicted step, because a `Correction` carries a position
+                 and no facing at all, so a predicted turn is an error nothing
+                 ever corrects. And `castOrder` gates on `rooted`, which is "a
+                 cast is in progress" -- but a break *clears* the cast it
+                 interrupted, so `rooted` is false for the entire window and a
+                 standing order chased and cast straight through it. Both now
+                 take `staggered` as their own field, and the `moveIntent`
+                 branch is *first*, ahead of a held key, since the key is the
+                 one branch a player is actively driving.
                  `sim/statuses.ts` is one small timer map and everything the
                  progression needs to remember between ticks goes in it, because
                  twelve mechanics as twenty-four entity fields is twenty-four

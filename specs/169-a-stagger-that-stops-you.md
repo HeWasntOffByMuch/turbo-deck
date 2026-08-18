@@ -200,6 +200,32 @@ already interpolated by — never a second clock.
   mirror refuses with `'staggered'` — the client and the server give the same
   answer about the same body.
 - `autoAttack` asks for nothing while `staggered`, and keeps its mark.
+- `moveIntent` asks for no movement **and no turn** while staggered, and that
+  branch outranks a held key, a wind-up aim, a standing attack mark and a move
+  order — each asserted separately, because each is a different branch that
+  would otherwise supply a heading.
+- `castOrder` neither chases nor casts while staggered, keeps its order, and
+  still drops one whose mark has died.
+- Over a real loopback session: a client told it is staggered predicts **no**
+  movement for the window, ends it in the same place the server has it, walks
+  again once the window passes, and earns `'staggered'` for a cast it asks for
+  inside it. The movement case is checked to be load-bearing — with the client
+  root disabled it predicts 19.3 units the server discards.
+
+**The mark (pure, headless):**
+
+- Drawn for a stunned body inside its window and for nothing else, including a
+  body first seen mid-break — the opposite of the flinch's rule, and the point
+  of it being stateless.
+- Not drawn for a window that has already passed, so a stale delta cannot leave
+  a swirl over a body that is free again.
+- Turns one way throughout, and completes at least one full rotation inside the
+  shortest stagger there is — under that it reads as a tilted glyph rather than
+  a spinning one.
+- Full strength on the frame it appears; thins into the end over a fixed number
+  of ticks, identical for a long window and a short one.
+- A pure function of its three arguments, and finite for anything off a hostile
+  wire.
 - Over a real loopback session against something that fights back, **every**
   refusal the loop earns is `'staggered'` and there are fewer of them than there
   are commits. Any other reason appearing there is the mirror going stale.
@@ -216,6 +242,65 @@ already interpolated by — never a second clock.
 - `presentation-only.test.ts` extends to cover it: the same seed and inputs with
   the animation layer driven and not driven produce identical authoritative
   state, with a stagger in the sequence.
+
+### The mark (`src/render/iso3d/world/stun-icon.ts`, `icons.ts`, `hud.ts`)
+
+The flinch draws the *contact* -- a couple of tenths of a second of rocking --
+and then the body stands unnaturally still for the rest of the window with
+nothing saying why. A swirl over the head says the state, for as long as the
+state lasts.
+
+```ts
+export function stunMark(
+  activity: number,
+  activityUntilTick: number,
+  drawnTick: number,
+): StunMark;   // { visible, spin, opacity }
+```
+
+**Stateless, and that is the whole difference from the flinch.** A flinch is a
+contact: it must be started by an edge somebody watched, so it keeps a
+per-entity track and refuses to fire for a body that walked into view already
+broken. A swirl is a state: a body that is stunned right now is stunned whether
+or not this client saw the blow, and the honest thing to draw for one that
+arrived mid-break is the swirl. So there is no map, no `retain`, and nothing to
+leak -- and every observer of one fight draws the same angle on the same tick,
+because the phase is measured off the replicated `activityUntilTick` rather than
+off an observed start.
+
+It fades over a fixed **count** of ticks rather than a fraction of the window,
+because a fraction needs the window's length and this function is given only its
+end. That turns out to be the better rule anyway: the tail reads the same for a
+30-tick stagger and a 48-tick one. There is no fade *in*, for the reason the
+flinch starts at full throw -- a mark that ramps up reads as unrelated to the
+hit that caused it.
+
+`hud.ts` owns the element, the division `health-bar.ts` already keeps. It goes
+in the existing per-body holder above the name, so it rides the body with no
+second projection and is pruned by the same `live` set, and it is drawn in the
+cast bar's amber rather than the guard's blue: both ambers mean "committed to
+something it cannot get out of", where the blue marks the bar that ran out.
+
+## What the first cut of this spec missed
+
+An audit of the client after the gates landed found two holes. Both are the same
+mistake -- `autoAttack` was taught about the stagger and its neighbours were not.
+
+**The drawn heading kept turning.** `moveIntent` had no notion of a stagger, so a
+player holding a key, or with a standing attack target, kept asking for a
+heading while the server pinned `steered.facing` and turned the body not at all.
+That is worse than a mispredicted step, because a `Correction` carries a
+position and **no facing at all** -- a predicted step is pulled back within a
+round trip, where a predicted turn is an error nothing ever corrects. The
+stagger branch is now first in `moveIntent`, ahead of the wind-up aim and ahead
+of a held key, since the key is the one branch a player is actively driving.
+
+**A standing cast order acted straight through the window.** `CastOrderInput`
+had only `rooted`, which is "a cast is in progress" -- and a break *clears* the
+cast it interrupted, so `rooted` is false for the whole stagger. The order
+chased, and in reach it sent a `useAbility` the server answered `'staggered'`,
+then dropped itself as though it had been spent. It now holds, and keeps the
+order, for the same reason the attack order keeps its mark.
 
 ## What landing this measured, and the number to decide about
 

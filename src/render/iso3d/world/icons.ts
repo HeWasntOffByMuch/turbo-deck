@@ -114,6 +114,35 @@ export const SYSTEM_ICONS: Readonly<Record<SystemIconId, string>> = {
     '<circle cx="12" cy="12" r="7.6" stroke-width="3.4" stroke-dasharray="2.6 3.4"/>',
 };
 
+/**
+ * The swirl that marks a stunned body (spec 169).
+ *
+ * Its own export rather than a row in one of the tables above, because those
+ * are both *button* vocabularies -- an inventory bag and a bow are things you
+ * press, and this is a thing that happens to you. It also floats over a body
+ * rather than sitting in the chrome, which is a different set of constraints:
+ * it is drawn small, over moving ground, in a scene it must stay legible
+ * against.
+ *
+ * An open spiral of about a turn and a half, drawn from the outside in. Two
+ * choices in it are worth stating. It is **open rather than closed**, so it has
+ * a visible head and tail and therefore reads as *turning* once the element is
+ * rotated -- a symmetrical ring rotates into a picture of itself and looks
+ * still. And it is **off-centre by construction**: the spiral tightens toward a
+ * point that is not the viewBox centre, which is what stops the animation
+ * looking like a wheel on an axle and makes it tumble the way the stars-round-
+ * the-head convention it is borrowing from does.
+ */
+export const STUN_ICON =
+  '<path d="M20 11.5 a8 8 0 1 1 -6.2 -7.8"/>' +
+  '<path d="M6.6 13.2 a5 5 0 1 0 5.0 -5.0"/>' +
+  '<path d="M13.6 12.4 a2.1 2.1 0 1 1 -2.4 -2.1"/>';
+
+/** The swirl over a stunned body, as markup ready to drop into the HUD. */
+export function stunIconSvg(options: IconOptions = {}): string {
+  return iconSvg(STUN_ICON, options);
+}
+
 /** The icon for an attack, as markup ready to drop into a button. */
 export function weaponIconSvg(abilityId: string, options: IconOptions = {}): string {
   return iconSvg(WEAPON_ICONS[abilityId] ?? FALLBACK_ICON, options);
