@@ -47,23 +47,34 @@ below cannot come to different answers about what "staggered" means. It reads
 
 ### Gate 1 — the legs (`src/server/sim/world.ts`, movement pass)
 
-A staggered body is handed a **null intent**, not a zeroed one:
+A staggered body has its movement zeroed *and its facing pinned* to where it
+already points:
 
 ```ts
-const intent = staggered(steered, tick)
-  ? null
-  : rawIntent && steered.cast !== null
-    ? { ...rawIntent, moveX: 0, moveY: 0 }
-    : rawIntent;
+const intent = !rawIntent
+  ? rawIntent
+  : staggered(steered, tick)
+    ? { ...rawIntent, moveX: 0, moveY: 0, facing: steered.facing }
+    : steered.cast !== null
+      ? { ...rawIntent, moveX: 0, moveY: 0 }
+      : rawIntent;
 ```
 
-Null rather than `{...rawIntent, moveX: 0, moveY: 0}` because a cast and a
-stagger want different things from the *facing*. A caster keeps steering — spec
-067 holds the aim live right up to the commit, and that is the feature. A
-staggered body is not aiming at anything; `resolveFacing` falls through to
-`entity.facing` on a null input, so the body holds the heading it was broken on.
-A staggered monster that keeps tracking you reads as unaffected, which is the
-whole thing this spec is fixing.
+The facing is what separates the two roots. A caster keeps steering — spec 067
+holds the aim live right up to the commit, and that is the feature. A staggered
+body is aiming at nothing, and one that kept tracking you through its own
+stagger would read as unaffected, which is the whole thing this spec is fixing.
+
+**The intent is pinned, never nulled**, and that was learned by writing it the
+other way first. A null intent is how the movement pass says *no request
+arrived*, and `casters` is built from exactly that (`world.ts`, `if (intent !==
+null || next.cast !== null)`). Nulling it hid the body's **cast request** along
+with its movement: the swing was not refused, it was never considered, so the
+client was never answered and sat out `PREDICTED_CAST_TIMEOUT_TICKS` on every
+blow it tried to throw. Measured, that was 82 asks becoming 39 commits with
+*zero* rejections recorded and the player idle 65% of a fight. Spec 080's rule
+covers this case too, and it is why the dead-body branch a few lines above
+exists: **a request that cannot be honoured still gets an answer.**
 
 ### Gate 2 — the hands (`src/server/sim/abilities.ts`)
 
@@ -88,6 +99,25 @@ server is about to refuse. `activity` and `activityUntilTick` are already
 replicated (`FIELD_ACTIVITY`), so `Mirror` gains both and passes them through —
 the same rule `poise`, `shield` and `fallbackCharges` already follow in that
 file. Statuses stay blank; this is not a change to that decision.
+
+### The order stops asking (`src/render/iso3d/world/target.ts`)
+
+`AutoAttackInput` gains `staggered`, beside `rooted` and `pending`, and the
+standing attack order holds while it is true — no ask, no chase, and the mark is
+kept, because a stagger is half a second and losing your target as well as your
+footing would double what a break costs.
+
+It needs its own field rather than folding into `rooted`, for the reason that
+runs through this whole spec: `rooted` is a commitment this body made and can
+call off, and a stagger is something done to it. `GameClient` publishes it as
+`selfStaggered` on the view, beside `selfRoot` and computed through the sim's
+own `staggered`, so a screen cannot come to a different answer than the server
+about whether a button should ask.
+
+Without this the order asked sixty times a second through every break: **146
+refusals in one measured fight**, all `'staggered'`. That is precisely the storm
+`pending` exists to prevent and for the same reason — the answer cannot change
+until the window ends, so nothing is learned by asking again before it does.
 
 ### What is *not* predicted, and why that is the honest answer
 
@@ -159,12 +189,20 @@ already interpolated by — never a second clock.
   re-broken, so the root cannot be chained past 2s by a second attacker.
 - Determinism: same seed, same inputs, identical state, with a stagger in the
   sequence.
+- **A refused swing is still answered.** A staggered body that asks for a cast
+  produces a `castRejected` event carrying `'staggered'` — the regression that
+  the null-intent version silently failed, and the one worth pinning because its
+  symptom was a client hang rather than a wrong number.
 
 **The prediction:**
 
 - `asEntity` reports the replicated activity, and `decideCast` on a staggered
   mirror refuses with `'staggered'` — the client and the server give the same
   answer about the same body.
+- `autoAttack` asks for nothing while `staggered`, and keeps its mark.
+- Over a real loopback session against something that fights back, **every**
+  refusal the loop earns is `'staggered'` and there are fewer of them than there
+  are commits. Any other reason appearing there is the mirror going stale.
 
 **The render half (pure, headless):**
 
@@ -178,6 +216,41 @@ already interpolated by — never a second clock.
 - `presentation-only.test.ts` extends to cover it: the same seed and inputs with
   the animation layer driven and not driven produce identical authoritative
   state, with a stagger in the sequence.
+
+## What landing this measured, and the number to decide about
+
+The gate turns a flag into a cost, and the cost is now measurable. Driven
+through a real loopback session against a pack of stalkers, a starting character
+spends **21% of the fight staggered** — 1178 ticks in 5392 — across about 38
+separate breaks.
+
+That is not a bug and it is very close to the bound spec 147 chose on purpose:
+`staggerTicks` is 31 ticks against a `STAGGER_IMMUNE_TICKS` of 120, so 25% is
+the most any number of attackers can hold a body, and the measurement sits just
+under it. The immunity window is doing exactly the job 147 built it for.
+
+Two things about the shape of it are worth having written down before anybody
+tunes it, because both are the kind of fact that gets rediscovered as a
+complaint:
+
+- **It is a pack mechanic, not a duel mechanic.** One stalker applies 10.6 poise
+  a second to a 55-point pool regenerating 5.75, which is a break every eleven
+  seconds — barely a mechanic. Three apply it three times over and hit the
+  immunity floor. Poise pressure adds linearly across attackers while the
+  window that bounds it is a constant, so stagger goes from irrelevant at 1v1 to
+  a hard ceiling at 3v1 with nothing in between.
+- **The player breaks monsters far less often than the reverse.** In the same
+  measured fight the monsters were staggered *zero* times. The arithmetic allows
+  it — 12.5 per blow into a 20-point pool regenerating 6 is a break in three
+  consecutive landed swings — but "three consecutive" is the problem: a break
+  nulls the caster's wind-up, so a player being broken every two seconds rarely
+  strings three swings together, while the monsters have no such trouble.
+
+None of that is retuned here, deliberately: this spec's job is to make the
+window mean something, and a balance pass wants the mechanic live or it is
+measuring the old nothing. But the asymmetry is the first thing `npm run
+balance` should be pointed at now, and `monsterPoiseRegen`, `minPoise` and
+`STAGGER_IMMUNE_TICKS` are the three dials that shape it.
 
 ## Out of scope
 

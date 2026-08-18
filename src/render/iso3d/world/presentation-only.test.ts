@@ -47,6 +47,7 @@ import { loadUnitBundle } from '../../../units/bundle.js';
 import { UnitMachine, type FiredEvent } from '../../../units/machine.js';
 import { BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
 import { cancelledCast, driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
+import { StaggerFlinches } from './stagger-flinch.js';
 import { TurnEase, lagBound, shortestTurn, type TurnLimits } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { ClientView } from '../../../server/client/game-client.js';
@@ -115,6 +116,12 @@ interface RunResult {
   /** How many attacks were called off (spec 166), so a run that left every
    * one-shot to finish on its own cannot claim to have covered the cancel. */
   readonly cancels: number;
+  /**
+   * How many bodies the stagger flinch was actually consulted about (spec 168),
+   * so a run in which the reader was never driven cannot pass for one in which
+   * it was.
+   */
+  readonly flinchesTracked: number;
 }
 
 /**
@@ -160,6 +167,7 @@ async function play(animate: boolean): Promise<RunResult> {
   const dropPresenter = new DropPresenter();
   const drops: DropPresentation[] = [];
   let cancels = 0;
+  const flinches = new StaggerFlinches();
 
   for (let tick = 0; tick < TICKS; tick += 1) {
     server.tick();
@@ -240,13 +248,18 @@ async function play(animate: boolean): Promise<RunResult> {
       // reason that is easy to miss: the script walks a circle, and asking to
       // move withdraws from a cast.
       if (cancelledCast(facts, previous.get(entity.id) ?? null)) cancels += 1;
+      // The stagger flinch, driven from the same replicated facts and on the
+      // same tick (spec 168). It reads `activity` and `activityUntilTick`, both
+      // of which are authoritative, and returns two angles nothing here writes
+      // back -- which is the whole claim this file exists to make.
+      flinches.read(entity.id, entity.activity, entity.activityUntilTick ?? 0, tick);
       events.push(...driveUnit(machine, facts, previous.get(entity.id) ?? null, 1));
       previous.set(entity.id, facts);
       if (was === null || moved) positions.set(entity.id, at);
     }
   }
 
-  return { states, events, yaws, drops, cancels };
+  return { states, events, yaws, drops, cancels, flinchesTracked: flinches.tracked };
 }
 
 describe('animation is presentation only', () => {
@@ -309,6 +322,27 @@ describe('animation is presentation only', () => {
     expect(animated.drops.some((shown) => shown.label !== null)).toBe(true);
     // ...and it announced itself on the way, by name rather than by asset.
     expect(animated.drops.flatMap((shown) => shown.cues)).toContain('loot.reveal.rare');
+  }, 30_000);
+
+  it('drives the stagger flinch, and it changes no state (spec 168)', async () => {
+    // What this covers is the *wiring*: the flinch reader is consulted for every
+    // body on every tick, from the same replicated facts the machines get, and
+    // the authoritative state still compares equal. Both `activity` and
+    // `activityUntilTick` are carried in the compared state, so a flinch that
+    // wrote back would surface as a divergence here rather than as a silent
+    // pass.
+    //
+    // What it deliberately does NOT claim is that a break happened. This script
+    // is a fixed input sequence chosen for the turn ease and the drop reveal,
+    // and nothing in it empties anybody's poise pool -- so an assertion that a
+    // flinch fired would either be a lie or force the scenario to be rebuilt
+    // around a mechanic it was not written for. The amplitude, the decay and
+    // the edge are pinned in `stagger-flinch.test.ts`, against ticks rather
+    // than against a fight, and the gate that produces the break at all is
+    // pinned in `server/sim/stagger-gate.test.ts` through the real `step`.
+    const [withAnimation, without] = await Promise.all([play(true), play(false)]);
+    expect(withAnimation.flinchesTracked).toBeGreaterThan(0);
+    expect(withAnimation.states).toEqual(without.states);
   }, 30_000);
 
   it('drives a machine that has nothing it could call', () => {

@@ -117,6 +117,14 @@ export const DRIVEN_PARAMETERS = {
   dead: 'dead',
   attack: 'attack',
   shoot: 'shoot',
+  /**
+   * The poise break (spec 168). No unit in the tree declares it yet, so today
+   * this trigger is raised into the void on every rig -- which is the correct
+   * shape rather than a gap: `stagger-flinch.ts` is the channel that draws a
+   * break without authored content, and this is the hook a `stagger` clip drops
+   * into on the day somebody authors one, with nothing else to change.
+   */
+  stagger: 'stagger',
 } as const;
 
 /**
@@ -171,6 +179,17 @@ export function driveUnit(
   // it was about to (spec 166) -- the machine leaves the state first and events
   // are read off whatever it is in afterwards.
   else if (cancelledCast(facts, previous)) machine.cancelAction();
+  // The break is its own edge and is checked after the cast ones rather than
+  // beside them (spec 168), because the two can land on the same frame: a body
+  // broken mid-wind-up loses its cast on that tick, so `cancelledCast` is also
+  // true, and the swing has to be called off *before* the stagger is raised or
+  // the machine leaves the stagger state it was just put into. Only a unit that
+  // declared the parameter is triggered, the same rule `triggerFor` applies to
+  // `shoot`: a silently dropped trigger is better than a machine asked for a
+  // state it has not got.
+  if (startedStagger(facts, previous) && machine.getParameter(DRIVEN_PARAMETERS.stagger) !== undefined) {
+    machine.trigger(DRIVEN_PARAMETERS.stagger);
+  }
   return machine.step(ticks);
 }
 
@@ -213,6 +232,25 @@ export function attackRateFrom(
   const span = releaseTick - startTick;
   if (!(span > 0) || !(authoredWindupTicks > 0)) return 1;
   return authoredWindupTicks / span;
+}
+
+/**
+ * True on the tick a poise break lands, and on no other (spec 168).
+ *
+ * The edge into `Stunned`, and nothing cleverer: unlike a cast there is no
+ * phase to go backwards and no predicted copy on a second clock, because a
+ * stagger is something done *to* this body and arrives on the wire whole. A
+ * second break cannot land inside the window either -- `STAGGER_IMMUNE_TICKS`
+ * is two seconds against a stagger of at most 48 ticks -- so the edge is the
+ * only thing there is to detect.
+ *
+ * False with no `previous`, which is a body seen for the first time. A unit
+ * that comes into view already staggered does not swing into the clip halfway
+ * through; it is drawn steady until it is broken in front of somebody.
+ */
+export function startedStagger(facts: UnitFacts, previous: UnitFacts | null): boolean {
+  if (facts.activity !== EntityActivity.Stunned) return false;
+  return previous !== null && previous.activity !== EntityActivity.Stunned;
 }
 
 /**
