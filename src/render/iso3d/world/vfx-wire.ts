@@ -25,7 +25,7 @@ import type { GoreLevel } from '../vfx/decals.js';
 
 /**
  * How much blood a blow may draw, re-exported from the field that keeps the
- * stains (spec 176).
+ * stains (spec 182).
  *
  * One declaration rather than three. It arrives *here* because what a blow looks
  * like is this module's whole job, and blood is a thing a blow looks like -- the
@@ -168,7 +168,7 @@ export function blowSeed(facts: CombatFacts, tick: number): number {
  * fighting, and an impact that fans out into six effects is one that starves the
  * next five impacts -- which is worse than any of the six looked good.
  *
- * `gore` is required rather than defaulted (spec 176), because a default is
+ * `gore` is required rather than defaulted (spec 182), because a default is
  * exactly how the one caller that matters goes on not passing it: this argument
  * exists because the setting reached the ground and not the blow for fifty-five
  * specs, with a green test either side of it.
@@ -233,7 +233,7 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
     return out;
   }
 
-  // How much a body bleeds *as far as the setting is concerned* (spec 176).
+  // How much a body bleeds *as far as the setting is concerned* (spec 182).
   //
   // One predicate rather than a branch per consequence, because everything below
   // has to agree about it: at `Off` a body that would have bled draws precisely

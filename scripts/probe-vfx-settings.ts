@@ -1,5 +1,5 @@
 /**
- * Do the two effects settings do anything? (spec 176)
+ * Do the two effects settings do anything? (spec 182)
  *
  *   npm run build && npx tsx scripts/probe-vfx-settings.ts
  *

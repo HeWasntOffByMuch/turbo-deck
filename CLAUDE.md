@@ -2110,7 +2110,7 @@ src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  probes used to read them off inputs that a phone has not got.
 src/render/iso3d/vfx-controls.ts  the seventh of those buttons (spec 121), and
                  the rule that came out of it is that **a setting is only as wide
-                 as the thing it reaches** (spec 176). Its gore level was pushed
+                 as the thing it reaches** (spec 182). Its gore level was pushed
                  into `DecalField`, which owns the *stains*, and the stains are
                  the smaller half of what the row names -- the spatter is chosen
                  by `effectsForBlow`, which had never been told the setting

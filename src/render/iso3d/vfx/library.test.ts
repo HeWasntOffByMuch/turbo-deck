@@ -121,7 +121,7 @@ describe('the damage-type tables', () => {
     expect(new Set(Object.values(DAMAGE_EFFECTS)).size).toBe(Object.keys(DAMAGE_EFFECTS).length);
   });
 
-  it('names only effects the registry holds, at every gore level (spec 176)', () => {
+  it('names only effects the registry holds, at every gore level (spec 182)', () => {
     // The tables above are what a *typo* hides in; this is what a new branch
     // hides in. The gore level chooses between four blood ids, and a level that
     // names one the registry has not got plays nothing and looks like the

@@ -828,7 +828,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * Mirrors the effects settings onto the root element (spec 176).
+   * Mirrors the effects settings onto the root element (spec 182).
    *
    * Read back off the layer that acts on them rather than off the panel that
    * asked, which is the whole point: a button that lit up and reached nothing
@@ -970,7 +970,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // gets the defaults and the options window (spec 135) instead.
   const showsTuningMenus = hudLayout(isHandheldDevice()).showsTuningMenus;
   /**
-   * How much blood the effects panel is currently asking for (spec 176).
+   * How much blood the effects panel is currently asking for (spec 182).
    *
    * Held out here because the panel is not built on a handheld and
    * `onCombatResult` is registered whatever the device -- a phone keeps

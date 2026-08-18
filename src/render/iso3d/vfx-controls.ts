@@ -18,7 +18,7 @@
  * generating and merging them would be a setting that lies to somebody who
  * turned it off because their machine was struggling -- and drawing the spatter
  * anyway lied to somebody who turned it off because they did not want to see it,
- * which is what it did (spec 176).
+ * which is what it did (spec 182).
  *
  * DOM only, like the six panels beside it. The widgets *are* the state: nothing
  * is persisted and every session opens at defaults, which is this tab's standing
@@ -30,7 +30,7 @@ import { createMenuGroup, type MenuGroup } from './menu-group.js';
 import type { GoreLevel } from './vfx/decals.js';
 
 export type VfxIntensity = 0 | 1 | 2 | 3;
-// Re-exported rather than declared again (spec 176): three copies of `0 | 1 | 2`
+// Re-exported rather than declared again (spec 182): three copies of `0 | 1 | 2`
 // is three places for a fourth step to be added in two of them.
 export type { GoreLevel };
 

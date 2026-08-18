@@ -94,7 +94,7 @@ export type GoreLevel = 0 | 1 | 2;
  * every level.
  *
  * Level 1's entry is what makes the middle button do anything at all. Until spec
- * 176 nothing anywhere read it: `add` refused at 0 and accepted otherwise, so
+ * 182 nothing anywhere read it: `add` refused at 0 and accepted otherwise, so
  * `Less` and `Full` were the same code and the same ground.
  */
 const GORE_SCALE = [0, 0.25, 1];

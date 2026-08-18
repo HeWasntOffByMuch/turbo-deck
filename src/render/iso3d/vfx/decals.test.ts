@@ -218,7 +218,7 @@ describe('gore', () => {
     return field.bucket(0, 0).filter((decal) => decal.fadeFrom < 0).length;
   };
 
-  it('holds strictly less ground at Less than at Full (spec 176)', () => {
+  it('holds strictly less ground at Less than at Full (spec 182)', () => {
     // The middle button used to be a label with nothing behind it: `add` refused
     // at 0 and accepted otherwise, so Less and Full were the same code.
     expect(solidAfter(1)).toBeLessThan(solidAfter(2));

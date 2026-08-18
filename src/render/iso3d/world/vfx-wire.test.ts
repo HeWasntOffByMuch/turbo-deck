@@ -16,7 +16,7 @@ import { ALL_ABILITIES } from '../../../server/data/abilities.js';
 /**
  * `effectsForBlow` at `Blood: Full`, which is what the panel opens at.
  *
- * A helper rather than a default argument on the function itself (spec 176):
+ * A helper rather than a default argument on the function itself (spec 182):
  * every one of these tests is about a blow rather than about the setting, and
  * the setting is required precisely so the *game's* call site cannot go on not
  * passing it. The gore levels get their own describe below.
@@ -237,7 +237,7 @@ describe('a heal (spec 157)', () => {
   });
 });
 
-describe('the blood setting (spec 176)', () => {
+describe('the blood setting (spec 182)', () => {
   const ids = (overrides: Partial<CombatFacts>, gore: GoreLevel): string[] =>
     effectsForBlow(facts(overrides), 500, gore).map((request) => request.id);
 

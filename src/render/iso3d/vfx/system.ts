@@ -76,7 +76,7 @@ export const DEFAULT_LIMITS: VfxLimits = {
 
 /**
  * How many effect starts the debug ring remembers, and how many ticks back it
- * reports (spec 176).
+ * reports (spec 182).
  *
  * Three quarters of a second, which is several frames at the rate a browser
  * under software GL actually paints -- so a harness polling the readout cannot
@@ -310,7 +310,7 @@ export class VfxSystem {
 
   /**
    * The ids of the effects started in the last {@link RECENT_TICKS} ticks, each
-   * named once, newest last (spec 176).
+   * named once, newest last (spec 182).
    *
    * A window for a harness rather than anything the sim reads. It exists because
    * every other way of asking "did that blow throw blood" is a threshold on a
@@ -945,7 +945,7 @@ export class VfxSystem {
     this.instPriority[slot] = effect.priority;
     this.liveInstances += 1;
     // The one place every effect in the game is born, sub-effects included, so
-    // the debug ring cannot miss a path (spec 176).
+    // the debug ring cannot miss a path (spec 182).
     this.recordStart(effect.id);
 
     const tint = options?.tint;
