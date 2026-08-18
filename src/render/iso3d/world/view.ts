@@ -630,6 +630,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const ui = new UiLayer(root, {
     map: inputMap,
     onMove: (from, to, count) => client.moveItem(from, to, count),
+    onDropItem: (at, count) => client.dropItem(at, count),
     onSpend: (skillId) => client.spendSkillPoint(skillId),
     onAllocate: (key) => client.allocateAttribute(key as BaseStatKey),
     onRespec: () => client.respecAttributes(),

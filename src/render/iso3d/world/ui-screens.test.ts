@@ -62,6 +62,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
     {
       map: new InputMap(),
       onMove: (from, to, count) => requests.push(`move:${from.index}->${to.index}x${count}`),
+      onDropItem: (at, count) => requests.push(`drop:${at.container}${at.index}x${count}`),
       onSpend: (id) => requests.push(`spend:${id}`),
       onAllocate: (key) => requests.push(`allocate:${key}`),
       onRespec: () => requests.push('respec'),
@@ -322,6 +323,58 @@ describe('who hears an input', () => {
     screens.close('inventory');
     screens.close('character');
     expect(screens.root.contexts.ids()).toEqual(['gameplay']);
+  });
+});
+
+/**
+ * Putting something down (spec 168).
+ *
+ * Two facts that only exist at the mount: which press counts as "the world", and
+ * that such a press does not also reach gameplay. Everything about what a drop
+ * *is* lives in `ui/screens/inventory.test.ts` and over the wire.
+ */
+describe('a carry let go of over the world', () => {
+  function carrying(): ReturnType<typeof harness> {
+    const test = harness();
+    test.screens.show('inventory');
+    test.screens.update(viewFixture({ inventory: starterInventory() }), 0);
+    const cell = [...test.screens.root.content.walk()].find((widget) => widget.name === 'bag:0');
+    if (!cell) throw new Error('the bag drew no cells');
+    const at = { x: cell.rect.x + 2, y: cell.rect.y + 2 };
+    test.screens.handlePointer('down', at, 0, NONE);
+    test.screens.handlePointer('up', at, 0, NONE);
+    if (!test.screens.carrying) throw new Error('nothing was picked up');
+    return test;
+  }
+
+  it('asks the server to put it down, and keeps the press from gameplay', () => {
+    const test = carrying();
+    // Bottom-right of a 400x300 viewport with the bag at the top-left margin:
+    // nothing in the interface is there.
+    expect(test.screens.handlePointer('down', { x: 390, y: 290 }, 0, NONE)).toBe(true);
+    expect(test.requests.filter((r) => r.startsWith('drop:'))).toEqual(['drop:inventory0x0']);
+    expect(test.screens.carrying).toBe(false);
+  });
+
+  /**
+   * The empty half of a window is not the world. Releasing over it has always
+   * meant "keep hold of it", and turning that into a discard would make the one
+   * gesture on this screen that destroys something the easiest one to do by
+   * accident.
+   */
+  it('keeps hold of it when the press lands on a window', () => {
+    const test = carrying();
+    expect(test.screens.handlePointer('down', { x: 20, y: 14 }, 0, NONE)).toBe(true);
+    expect(test.requests.filter((r) => r.startsWith('drop:'))).toEqual([]);
+    expect(test.screens.carrying).toBe(true);
+  });
+
+  it('leaves a press with empty hands to the world', () => {
+    const test = harness();
+    test.screens.show('inventory');
+    test.screens.update(viewFixture({ inventory: starterInventory() }), 0);
+    expect(test.screens.handlePointer('down', { x: 390, y: 290 }, 0, NONE)).toBe(false);
+    expect(test.requests.filter((r) => r.startsWith('drop:'))).toEqual([]);
   });
 });
 
