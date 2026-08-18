@@ -477,6 +477,26 @@ describe('applyTerrainPaint', () => {
   });
 });
 
+describe('the document', () => {
+  it('carries the paint through a save and a load', () => {
+    const map = loaded();
+    stroke(map, paint({ material: 'snow', radius: 200 }), 0, 0);
+    const painted = materials(map);
+    expect(painted).toContain(materialIndex('snow'));
+
+    // Exactly the path the editor's Save to file and the server's boot take.
+    const reloaded = loadMap(map.store.toDocument());
+    const layer = must(map.store.layerInfo(LAYER), 'the layer');
+    for (let row = layer.grid.minRow; row < layer.grid.maxRow; row++) {
+      for (let col = layer.grid.minCol; col < layer.grid.maxCol; col++) {
+        expect(reloaded.store.cellAt(LAYER, col, row)?.materialIndex).toBe(
+          map.store.cellAt(LAYER, col, row)?.materialIndex,
+        );
+      }
+    }
+  });
+});
+
 describe('undo', () => {
   it('takes a paint stroke back', () => {
     const map = loaded();

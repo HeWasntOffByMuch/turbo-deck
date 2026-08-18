@@ -92,10 +92,11 @@ export const ROCK_TOOL_COLORS: Record<RockTool, number> = {
   detail: 0x8fc07a,
 };
 /**
- * The swatch for each paintable material: the ground's own colour, so the
- * palette is a row of swatches and the cursor ring says what is about to be laid
- * down. The same choice `ROCK_TOOL_COLORS.stair` already makes, which is the
- * warm dirt of the tread it lays.
+ * The colour for each paintable material: the ground's own, so the cursor ring
+ * and the armed swatch both say what is about to be laid down. The same choice
+ * `ROCK_TOOL_COLORS.stair` already makes, which is the warm dirt of the tread it
+ * lays. Only the *armed* button is filled, as in every other strip in the panel
+ * -- which one is on has to be readable at a glance rather than by comparison.
  *
  * The first of the material's two tones -- a cell takes one of the pair from a
  * noise field, and a swatch has to pick one.

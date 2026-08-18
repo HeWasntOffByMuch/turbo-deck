@@ -73,12 +73,15 @@ quad at `layer.waterLevel`, so water painted on high ground is a surface buried
 under the terrain that carries it, and sand painted on a lake bed deletes the
 surface while leaving the ground below the flood line — a dry hole in a lake.
 
-For the same reason a **submerged cell refuses paint**: below the water line the
-material is already decided, by the same rule `resculptMaterial` applies. That is
-what keeps paint and the height brush from contradicting each other — paint never
-writes a material the next height stroke would immediately revoke. A cell with no
-ground in it (`solid === 0`) refuses too; there is nothing there to be made of
-anything.
+For the same reason **water is refused in both directions**: a cell already
+stored as water keeps it, and so does one below the flood line. Both checks are
+needed, because they disagree — stored water is what the renderer actually puts a
+surface over, while `classify` decided it from a sample height and this guard
+measures the mean of four jittered corners, so a cell can be stored water with
+its corners averaging above the level. That pair is what keeps paint and the
+height brush from contradicting each other: paint never writes a material the
+next height stroke would immediately revoke. A cell with no ground in it
+(`solid === 0`) refuses too; there is nothing there to be made of anything.
 
 ### The soft edge is dithered, and the dither belongs to the ground
 
@@ -142,11 +145,12 @@ indistinguishable from baked ground.
 
 ### The panel (`editor/panel.ts`, `editor/tools.ts`)
 
-A `Paint` folder with a five-button strip, each button carrying the material's
-own `TERRAIN_COLORS` tone — a paint palette is a row of swatches. `cursorColor`
-returns that colour too, following `ROCK_TOOL_COLORS.stair`, which is already the
-warm dirt of the tread it lays. `visibleGroups` gains `paint`, and `radius` is
-shown for it.
+A `Paint` folder with a five-button strip whose armed button is filled in the
+material's own `TERRAIN_COLORS` tone — only the armed one, as in every other
+strip here, because which is on has to read at a glance. `cursorColor` returns
+that colour too, following `ROCK_TOOL_COLORS.stair`, which is already the warm
+dirt of the tread it lays. `visibleGroups` gains `paint` and `falloff`, and the
+falloff slider moves up beside `radius` since both brushes share it.
 
 ## Invariants tested
 
@@ -182,6 +186,16 @@ shown for it.
   layer, a point off the layer's grid.
 - Undo restores the materials, since a `ChunkSnapshot` already copies the array —
   asserted through `history.ts` rather than assumed.
+- **A painted map saves and loads back the same**, through the document path the
+  editor's Save and the server's boot both take: the point of the tool is ground
+  that stays painted.
+- **The picture** (`npx tsx scripts/preview-paint.ts`), measured off the pixels of
+  the real editor: the mode arms and shows its own folder, every material has a
+  swatch and water has none, a press lays ground that is brighter for snow and
+  warmer for dirt, coverage falls off from the middle to the rim rather than
+  stopping dead, Ctrl+Z gives the ground back, a second press over the same place
+  changes nothing, and a drag paints a footprint elongated along the path it
+  swept.
 
 ## Out of scope
 

@@ -221,8 +221,8 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   );
   terrain.add(s, 'strength', 5, 400, 5).name('Strength /s');
 
-  // A row of swatches in the ground's own colours, which is what a paint
-  // palette is (spec 176).
+  // The loaded material fills its button in the ground's own colour, the same
+  // way every other strip here fills the armed one (spec 176).
   const paint = gui.addFolder('Paint');
   strip(
     paint,

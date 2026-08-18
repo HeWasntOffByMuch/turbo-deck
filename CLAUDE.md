@@ -735,8 +735,8 @@ src/render/iso3d/studio/  the Studio tab (spec 109), the fifth entry in the tab
                  can tell whether three's GLTFLoader accepts the .glb we write.
 src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  from a loaded map document, never from the world generator.
-                 camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
-                 history.ts are pure and tested headlessly; view.ts, cursor.ts and
+                 camera.ts, brush.ts, paint.ts, scatter.ts, markers.ts, parts.ts
+                 and history.ts are pure and tested headlessly; view.ts, cursor.ts and
                  marker-view.ts are the three.js scene; panel.ts is the lil-gui
                  surface. parts.ts adds and removes map parts (spec 084) through
                  the same bakePart the grow script uses, and history.ts records
@@ -747,8 +747,86 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  for the same reason (spec 086): props.ts groups props into
                  square batches for culling, and an edit rebuilds only the
                  batches over the ground it touched.
+                 paint.ts is the material brush (spec 176), and it is beside
+                 brush.ts rather than inside it because brush.ts is what a stroke
+                 does to the *height* array and every one of its four tools reads
+                 and writes heights. What it exists to fix is that a material used
+                 to be a consequence and never a choice: the only thing writing one
+                 after the bake was `refreshMaterials`, which *derives* it, so a
+                 dirt path had to be a ramp steep enough for `dirtSlope` to catch
+                 and sand had to be dropped near the water. Three decisions in it.
+                 **Water is not paint** and the palette is five rather than six --
+                 a material says what ground is made of, `water` says where it sits
+                 relative to the flood line, and painting either direction is a lie
+                 the renderer draws: the quad is at `layer.waterLevel`, so water on
+                 high ground is a surface buried under the terrain carrying it, and
+                 sand on a lake bed is a dry hole in a lake. It is refused on the
+                 *stored* material as well as on the level, because those disagree:
+                 `classify` measures a sample height and the guard measures the
+                 mean of four jittered corners, and only checking the level
+                 repainted five cells of a lake. **The soft edge is dithered**,
+                 since one material per cell forbids a blend (spec 043's hard
+                 boundaries are the art direction) -- and the threshold is hashed
+                 off the cell's own coordinates rather than drawn per frame, which
+                 is the whole design: under a per-frame roll a rim cell at weight
+                 0.1 fills in with probability 1 - 0.9^60 after a second of holding
+                 the brush still, so the feathered edge survives only as long as
+                 you keep moving. Hashed off the cell, holding still changes
+                 nothing, painting twice is idempotent, and a boundary you go back
+                 over does not creep outward -- the same shape spec 125's rock
+                 erosion has. And the footprint is the distance to the **segment**
+                 the cursor swept rather than a stamp per frame, which is what
+                 makes a stroke a function of where the cursor went rather than of
+                 the frame rate; the height brush cannot have that property,
+                 because it integrates a rate over `dtSeconds` and this has no rate
+                 to integrate. A repaint carries its own stroke flag in view.ts: it
+                 is the first edit here that changes the document without moving
+                 anything, so it owes a re-mesh and a revision and none of the nav
+                 re-bake, prop rebuild or marker refresh -- walkability is ground,
+                 solidity and the water line, a prop's colour comes from its own
+                 part rather than from what it stands on, and a marker sits at a
+                 height.
                  `npx tsx scripts/preview-parts.ts` drives the tools in a real
                  browser, since the drag and the commit live in view.ts.
+                 `npx tsx scripts/preview-paint.ts` is the same for the material
+                 brush, and everything in it is measured off the **pixels**,
+                 because the way this feature fails is "the store changed and the
+                 ground did not". Two things in it were learned by getting them
+                 wrong. Reading each pixel as whichever `TERRAIN_COLORS` entry it
+                 is nearest found dirt perfectly and lost snow completely -- lit,
+                 graded and quantized, near-white lands closer to `rock` than to
+                 `snow` -- so it measures *change* instead, which has nothing to be
+                 wrong about and is the sharper instrument anyway: a cell either
+                 took the paint or it did not, which is precisely what the dithered
+                 edge is made of. And the editor is not a still -- the trees sway,
+                 about 9000 pixels of a 936x799 view a second -- so each state is
+                 sampled twice and only the pixels both frames held still are
+                 counted, the aim is *found* rather than guessed (a fixed fraction
+                 of the viewport landed on a tree, whose canopy sways and whose
+                 shadow is too dark to change visibly, and read as a stroke 58%
+                 solid in its own middle), and the mouse is parked over the panel
+                 for every measurement, since the cursor ring is a ~120px circle
+                 the frame before it did not have and was the whole of the residue
+                 an undo appeared to leave behind. The geometry is taken from the
+                 largest *connected* mass rather than from every changed pixel,
+                 because a stroke is one mass and a leaf caught at the same phase
+                 in both frames of one pair and a different one in the next is
+                 not: a handful of those in the window's corners dragged the
+                 95th-percentile radius from 89px to 185px, which put two of the
+                 four coverage bands outside the stroke entirely and reported a
+                 dithered edge as a dead one. Area is robust to specks and a
+                 radius is not. And it clears `AUTOSAVE_KEY` before the page
+                 loads, or a run measures what the *previous* run left behind --
+                 the aim is chosen the same way every time, so the second run
+                 pressed snow onto ground the first had already painted snow and
+                 would have reported a working brush as doing nothing. What it
+                 reports is the coverage *profile* rather than an absolute figure
+                 in the middle, because the middle is not all paintable -- a
+                 prop's shadow is too dark to read either way and ground under the
+                 flood line is refused outright and correctly -- so a threshold
+                 there would be a fact about where the trees are. 79% -> 71% ->
+                 59% -> 28% out from the centre is the dither, and a
+                 cookie-cutter circle cannot make that shape.
 src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim runs on
                  the same fixed 60Hz timestep as src/sim/ and broadcasts deltas
                  every third tick (20Hz) -- one rate for the game, another for the
