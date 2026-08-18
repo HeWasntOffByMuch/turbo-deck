@@ -800,7 +800,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  tick a withdrawal works on is `releaseTick - 1`, asserted from
                  both sides in `sim/attack-cancel.test.ts`.
                  Where a player's attack speed comes from is the **weapon**,
-                 since spec 173: 091 took the cadence off it and 144 rebuilt the
+                 since spec 174: 091 took the cadence off it and 144 rebuilt the
                  socket without plugging anything in, which left four rows in
                  `data/items.ts` authoring an `attackSpeedPct` that reached
                  nothing for eighty specs -- the Keen Longsword's stated defining

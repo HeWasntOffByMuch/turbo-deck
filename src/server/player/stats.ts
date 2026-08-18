@@ -199,9 +199,9 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
-  // Base Attack Time, and the three attack-speed inputs beside it (specs 144, 173).
+  // Base Attack Time, and the three attack-speed inputs beside it (specs 144, 174).
   //
-  // Spec 144 built this socket and deliberately left it unplugged; spec 173
+  // Spec 144 built this socket and deliberately left it unplugged; spec 174
   // plugs it in, because four weapon rows had been authoring `attackSpeedPct`
   // into it since spec 070 and every one of them was inert. Spec 091's rule
   // that the cadence is a property of attacking rather than of what is held is

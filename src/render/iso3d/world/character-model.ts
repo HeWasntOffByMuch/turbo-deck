@@ -184,7 +184,7 @@ const STAT_ROWS: readonly {
   },
   {
     label: 'Attack speed',
-    // The factor rather than the additive `attackSpeed` stat (spec 173). Both
+    // The factor rather than the additive `attackSpeed` stat (spec 174). Both
     // are real and only one has a source: items author `attackSpeedPct`, which
     // is a multiplier, and nothing authors the flat half. The rule at the top
     // of this table says to state what a number does or state that it does

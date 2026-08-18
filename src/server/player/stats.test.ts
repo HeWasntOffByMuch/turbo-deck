@@ -62,7 +62,7 @@ function computeDelayWith(pct: number): number {
  * The attack interval a set of effective stats resolves to.
  *
  * Takes the stats' own attack-speed inputs rather than `NO_ATTACK_SPEED`
- * (spec 173). It used to hardcode the latter, which was harmless while nothing
+ * (spec 174). It used to hardcode the latter, which was harmless while nothing
  * fed the three fields and would have quietly made every "this does not change
  * the cadence" assertion below vacuous the moment something did.
  */
@@ -79,7 +79,7 @@ function intervalOf(stats: EffectiveStats): number {
 }
 
 /**
- * Every span of the basic attack these stats actually swing with (spec 173).
+ * Every span of the basic attack these stats actually swing with (spec 174).
  *
  * Through `attackTimingFor` and the *equipped* weapon's ability, because the
  * whole point of the feature is that one factor reaches the interval, the
@@ -254,7 +254,7 @@ describe('effective stats', () => {
       player({ baseStats: { strength: 5, agility: 500, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 } }),
     );
     expect(quick.baseAttackTimeTicks).toBe(slow.baseAttackTimeTicks);
-    // All three inputs, not just the flat one (spec 173). Now that content can
+    // All three inputs, not just the flat one (spec 174). Now that content can
     // move them, "no attribute reaches the cadence" has to be checked against
     // every field the factor is built from.
     expect(quick.attackSpeed).toBe(slow.attackSpeed);
@@ -281,7 +281,7 @@ describe('effective stats', () => {
     expect(quick.traits.backswingScale).toBeLessThan(slow.traits.backswingScale);
   });
 
-  it('lets the weapon set the attack speed again (spec 173)', () => {
+  it('lets the weapon set the attack speed again (spec 174)', () => {
     // Spec 091 took this off the weapon and spec 144 rebuilt the socket without
     // plugging anything into it, which left four rows in `data/items.ts`
     // authoring an `attackSpeedPct` that reached nothing at all. The factor is
@@ -309,7 +309,7 @@ describe('effective stats', () => {
     }
   });
 
-  it('scales the wind-up and the recovery with the interval, not just the wait (spec 173)', () => {
+  it('scales the wind-up and the recovery with the interval, not just the wait (spec 174)', () => {
     // The property the whole feature rests on. A faster weapon that only came
     // round again sooner would make the *pause* the stat rather than the blow,
     // which is the opposite of what spec 065 built the commitment around.
@@ -335,7 +335,7 @@ describe('effective stats', () => {
       expect(timing.backswingTicks).toBe(Math.round(bare.backswingTicks / timing.factor));
     }
 
-    // The numbers spec 173 quotes, so a retune of the four rows shows up here
+    // The numbers spec 174 quotes, so a retune of the four rows shows up here
     // as a diff rather than as a table that silently stopped describing them.
     expect(keen.intervalTicks).toBe(63);
     expect(keen.attackPointTicks).toBe(26);
@@ -345,7 +345,7 @@ describe('effective stats', () => {
     expect(maul.backswingTicks).toBe(30);
   });
 
-  it('leaves a non-basic ability alone however fast the weapon is (spec 173)', () => {
+  it('leaves a non-basic ability alone however fast the weapon is (spec 174)', () => {
     // `attackTimingFor` passes NO_ATTACK_SPEED for anything without
     // `basicAttack`, so a quick weapon buys a quick swing and never a quick
     // heavy blow: a heavy ability is slow because it is slow (spec 144).
@@ -358,7 +358,7 @@ describe('effective stats', () => {
     expect(quick.intervalTicks).toBe(bare.intervalTicks);
   });
 
-  it('keeps every row in the table on a sane factor (spec 173)', () => {
+  it('keeps every row in the table on a sane factor (spec 174)', () => {
     // Swept over the real table rather than over one weapon, because this is
     // the check that a row added tomorrow cannot put a NaN on the wire or an
     // absurd number past the clamp. The three inputs are replicated, so a
@@ -383,7 +383,7 @@ describe('effective stats', () => {
     }
   });
 
-  it('lets a flat cooldown modifier reach the base attack time (spec 173)', () => {
+  it('lets a flat cooldown modifier reach the base attack time (spec 174)', () => {
     // `baseAttackTimeTicksFrom` exists to take this argument and every caller
     // was passing a literal 0, which is what let the whole socket sit unread.
     // Nothing authors the field yet, so the check is on the function.

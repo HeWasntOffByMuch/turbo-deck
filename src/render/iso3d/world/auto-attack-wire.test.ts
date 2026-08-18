@@ -533,7 +533,7 @@ async function twoShots(): Promise<{
       orderedAt = ticks;
       facing = self.facing;
       // Both budgets come from the *resolved* timing rather than from the
-      // ability's authored wind-up and the bare BAT (spec 173). The bow says
+      // ability's authored wind-up and the bare BAT (spec 174). The bow says
       // `attackSpeedPct: -0.1` and that now reaches the factor, which divides
       // the interval and the attack point alike -- so reading either number raw
       // is measuring the body against a clock it is not running on. Through

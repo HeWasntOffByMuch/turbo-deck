@@ -271,7 +271,7 @@ describe('the character view', () => {
     const view = characterViewOf(source([]));
     for (const row of view.stats) {
       expect(row.hint.length, row.label).toBeGreaterThan(10);
-      // Spec 173 emptied this category: attack speed was the last socket the
+      // Spec 174 emptied this category: attack speed was the last socket the
       // sheet had to apologise for, and it now has a source. The check stays
       // as a sweep rather than being deleted with it, because the rule the
       // table is built on -- say what it does, or say that it does nothing --
