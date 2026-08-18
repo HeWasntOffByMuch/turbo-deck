@@ -1701,6 +1701,39 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  browser is delivering pointer events. `fullscreen.ts` beside it
                  is the tab bar's fullscreen button -- DOM only, and absent on
                  anything that cannot go fullscreen or is not a coarse pointer.
+src/render/iso3d/props.ts's instance half  where every prop stands, composed on
+                 the worker (spec 177). A region rebuild was 32.7ms and one
+                 dropped frame every time; the frame pays 1.0ms of it now, and
+                 that took two changes because neither was enough alone -- the
+                 worker leaves 16.5ms and the sharing leaves 20ms, against a
+                 16.7ms frame. `buildRegion` called `treeParts`, `bushParts` and
+                 `fenceParts` **per region**, each building `BufferGeometry`
+                 from scratch and welding it again: memoized, 32.7ms to 18.5ms.
+                 `buildRegionInstances` then takes the matrix and colour
+                 arithmetic off the thread: 18.5ms to 1.0ms.
+                 The geometry *object* still cannot be shared, and the reason is
+                 the feature that made the per-region rebuild look necessary:
+                 `applySway` writes `aWindBase` and `aWindTune` -- one entry per
+                 tree -- onto `mesh.geometry`, so ninety regions sharing one
+                 geometry is ninety regions swaying around whichever was built
+                 last. Each batch gets a **shell** instead: its own geometry over
+                 the same `BufferAttribute` objects, which costs an object and
+                 four assignments and does no vertex work. And a shell is
+                 **stripped before it is disposed**, because three's
+                 `onGeometryDispose` removes the GPU buffer of every attribute a
+                 geometry holds -- disposing one as-is frees the shared ones and
+                 makes every other region re-upload, a hitch caused by the very
+                 rebuild this makes cheap. Both hazards were checked by putting
+                 the bug back: exactly the two tests written for them failed and
+                 the other nine passed, including equality against the path that
+                 shipped -- which is the shape to expect, because sharing a
+                 geometry does not move a single tree, it moves what the wind
+                 does to them. `PROP_GROUPS` is the batch enumeration named once
+                 so `(group, part)` means the same thing on both sides of the
+                 boundary, and `adoptRegion` is the seam: `rebuildWithin` is that
+                 with `buildRegionInstances` in front of it, so a field built
+                 here and one built on the worker are the same field by
+                 construction rather than by two implementations agreeing.
 src/render/iso3d/terrain-arrays.ts, world/map-worker*.ts  the load, running
                  beside the frame rather than in it (spec 176). The measurement
                  the whole thing turns on: `terrainMesh.rebuild` is 2050ms across
@@ -1739,6 +1772,17 @@ src/render/iso3d/terrain-arrays.ts, world/map-worker*.ts  the load, running
                  from a browser is the state spec 165 spent four follow-ups
                  regretting. `?perf=noworker` is the same switch for a person.
                  `npx tsx scripts/bench-stream.ts` splits its rows by thread;
+                 `npx tsx scripts/bench-walk.ts` counts what a *walk* costs, and
+                 it had to be told two things before it would stop reporting
+                 zero: a raw held direction walks into the first of 6942 trees
+                 after 413 units, so it drives the renderer's own `moveIntent`
+                 and `RoutePlanner`; and a walker that sets off during the load
+                 drags the request window across the map before the gate opens,
+                 which is a scenario no player can produce. On this map the
+                 arena is 210 chunks against a 169-chunk request window, so the
+                 gate opens holding four fifths of the world and only 26 more
+                 chunks ever arrive -- which is why the prop-region completeness
+                 rule measured 1.29x rather than the 2-4x it was reasoned to be.
                  `npx tsx scripts/probe-streaming.ts` (and `PERF=noworker`) is
                  the browser half, and it found the two bugs no headless test
                  could -- a worker never sent the map, so 169 chunks held and 0

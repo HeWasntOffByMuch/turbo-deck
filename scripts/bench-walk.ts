@@ -42,8 +42,15 @@ const PROP_INCOMPLETE_HOLD_MS = 4000;
 const PROP_REGIONS_PER_FRAME = 1;
 /** ...and behind the loading screen, where a lurch costs nothing. */
 const PROP_REGIONS_LOADING = 8;
-/** Measured in `bench-stream.ts`: one region rebuilt is ~34ms of main thread. */
-const REGION_MS = 34;
+/**
+ * What one region costs the *frame*, from `bench-stream.ts`.
+ *
+ * 1.0ms since spec 177: composing the instances is 17.5ms on the map worker and
+ * what is left here is the shells, the meshes and the sway patch. It was 34ms,
+ * which is why this bench counted rebuilds in the first place -- at that price
+ * every one of them was a dropped frame.
+ */
+const REGION_MS = 1;
 /** Three ticks a frame at 60Hz, which is also the delta cadence. */
 const TICKS_PER_FRAME = 3;
 const FRAME_MS = (1000 / SERVER_TICK_RATE) * TICKS_PER_FRAME;
@@ -227,7 +234,7 @@ async function main(): Promise<void> {
   const row = (label: string, n: { loading: number; playing: number }): string =>
     `  ${label.padEnd(30)} ${String(n.loading).padStart(4)} behind the gate,` +
     ` ${String(n.playing).padStart(4)} in front of it` +
-    `  (~${((n.playing * REGION_MS) / 1000).toFixed(1)}s of dropped frames)`;
+    `  (~${(n.playing * REGION_MS).toFixed(0)}ms of main thread in play)`;
   console.log(
     gateAt
       ? `the gate opened at tick ${gateAt.tick} (${(gateAt.ms / 1000).toFixed(1)}s) with ${gateAt.held} chunks;` +
@@ -239,8 +246,8 @@ async function main(): Promise<void> {
   console.log(row('with it', counted.withRule));
   const playing = counted.withRule.playing;
   console.log(
-    `\n  a region is ~${REGION_MS}ms, so in front of the gate that is ` +
-      `~${playing} dropped frames -- ${(playing / (TICKS / SERVER_TICK_RATE)).toFixed(2)} per second of play`,
+    `\n  a region costs the frame ~${REGION_MS}ms (spec 177), so ${playing} of them in front of` +
+      ` the gate is ~${(playing * REGION_MS).toFixed(0)}ms over ${(TICKS / SERVER_TICK_RATE).toFixed(0)}s of walking`,
   );
   process.exit(0);
 }
