@@ -240,7 +240,7 @@ multiplicative optimisation. All fifteen require **25 in both**.
 | Pair | Interaction | Why interesting | Why not just "+X%" |
 |---|---|---|---|
 | STR+CON | **Juggernaut** — below 50% health, wind-up hyper-armour applies to *every* cast, not only basic attacks | turns the dangerous part of the fight into your window | it changes *which casts* are protected, a set, not a number |
-| STR+AGI | **Momentum** — a poise break grants 2 `flow` stacks and halves the next wind-up | heavy weapons that reposition between blows | grants a status and a timing change, no coefficient |
+| STR+AGI | **Momentum** — a poise break halves the next wind-up | heavy weapons that reposition between blows | grants a status and a timing change, no coefficient |
 | STR+INT | **Impact Casting** — abilities deal poise damage equal to half your `staggerPower`; basic attacks apply `sundered` | spells that stagger; a mage who opens with a swing | gives abilities a property they did not have |
 | STR+PER | **Executioner** — weak-point hits deal double poise damage; a staggered target under 25% health takes execute damage | deliberate, one-big-hit monster hunting | conditional on two states co-occurring |
 | STR+WIS | **Disciplined Force** — a poise break restores 5 resource and cuts 10% off live cooldowns | martial sustain with no healing at all | converts a combat *event* into economy |
@@ -590,6 +590,13 @@ Kept honest because a spec that disagrees with its code is worse than no spec.
 12. **No admin path applies a preset.** `npm run balance -- --preset=<id>` builds
    and fights any of the twelve; a wire message that made a character level 20
    is not a thing to ship, and a manager method nothing calls is dead code.
+13. **Momentum grants `momentum`, not `flow`** (corrected in spec 168). The
+   effect string had promised "two Flow stacks and halves the next wind-up" and
+   the grant was `momentumTicks`/`momentumWindupScale` all along -- a separate
+   status, consumed at a different place. The wind-up half was always true; the
+   Flow half described a line of code that was never written. Corrected in the
+   text rather than in the grant, because a second source of Flow stacks that
+   costs nothing to trigger is a balance change and this was a typo.
 
 ## Out of scope
 
