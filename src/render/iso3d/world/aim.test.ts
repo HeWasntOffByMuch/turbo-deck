@@ -116,6 +116,8 @@ function step(overrides: Partial<CastOrderInput> = {}): ReturnType<typeof castOr
     order: UNIT_ORDER,
     target: MARK,
     rooted: false,
+    // Holding its own footing, unless a case says otherwise (spec 169).
+    staggered: false,
     readyAtTick: 0,
     tick: 100,
     ...overrides,
@@ -209,6 +211,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       order: GROUND_ORDER,
       target: null,
       rooted: false,
+      staggered: false,
       readyAtTick: 0,
       tick: 100,
     });
@@ -223,6 +226,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       order: GROUND_ORDER,
       target: null,
       rooted: false,
+      staggered: false,
       readyAtTick: 0,
       tick: 100,
     });
@@ -257,6 +261,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
         order: UNIT_ORDER,
         target: MARK,
         rooted: false,
+      staggered: false,
         readyAtTick: 0,
         tick: 100 + i,
       });
@@ -272,5 +277,36 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       self = { x: self.x + (dx / length) * stepLength, y: self.y + (dy / length) * stepLength };
     }
     expect(cast?.abilityId).toBe('bolt.seek');
+  });
+});
+
+describe('a broken body does nothing with a standing cast order (spec 169)', () => {
+  it('does not chase while staggered', () => {
+    expect(step({ staggered: true, self: { x: 0, y: 0 } }).chaseTo).toBeNull();
+  });
+
+  it('does not cast while staggered, even in reach and off cooldown', () => {
+    // The failure this closes: a break *clears* the cast it interrupted, so
+    // `rooted` is false for the whole window. An order running on `rooted`
+    // alone treats a stunned body as a free one and sends a request the server
+    // answers with `'staggered'`.
+    expect(step({ staggered: true, self: { x: MARK.x - 100, y: 0 } }).cast).toBeNull();
+  });
+
+  it('keeps the order rather than spending it', () => {
+    // The same rule the standing attack order follows: half a second of being
+    // stunned must not also cost the player their plan.
+    expect(step({ staggered: true, self: { x: MARK.x - 100, y: 0 } }).drop).toBe(false);
+  });
+
+  it('still drops an order whose mark has died', () => {
+    // Being staggered does not suspend the rule above it.
+    expect(
+      step({ staggered: true, target: { ...MARK, health: 0 } }).drop,
+    ).toBe(true);
+  });
+
+  it('acts again the moment the window ends', () => {
+    expect(step({ staggered: false, self: { x: MARK.x - 100, y: 0 } }).cast).not.toBeNull();
   });
 });

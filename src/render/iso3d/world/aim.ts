@@ -147,6 +147,17 @@ export interface CastOrderInput {
    * player's behalf, and asking would earn an `alreadyCasting` refusal.
    */
   readonly rooted: boolean;
+  /**
+   * True while a poise break holds this body (spec 169).
+   *
+   * Its own field beside {@link rooted}, and it has to be: a break *clears* the
+   * cast it interrupted (`applyPoiseDamage` nulls it), so `rooted` -- which is
+   * "a cast is in progress" -- is false for the whole stagger. An order left to
+   * run on `rooted` alone therefore treats a stunned body as a free one: it
+   * chases, and in reach it sends a `useAbility` the server answers with
+   * `'staggered'`, then drops the order as though it had been spent.
+   */
+  readonly staggered: boolean;
   /** The tick this ability is ready again, from the server's own table. */
   readonly readyAtTick: number;
   /** The client's estimate of the server's tick. */
@@ -199,6 +210,13 @@ export function castOrder(input: CastOrderInput): CastOrderStep {
   }
 
   if (input.rooted) return NOTHING;
+
+  // A broken body holds its order and does nothing with it (spec 169). Returned
+  // as `NOTHING` rather than as a drop, for the same reason the standing attack
+  // order keeps its mark: a stagger is half a second, and an order that
+  // evaporated every time the player was hit would make a break cost the plan
+  // as well as the footing.
+  if (input.staggered) return NOTHING;
 
   // A unit order follows its mark: the body moves, so the placement is re-read
   // every tick rather than frozen at the click. A ground order stays put --
