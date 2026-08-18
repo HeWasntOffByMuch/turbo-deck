@@ -10,18 +10,9 @@ describe('parsePerfFlags', () => {
       noShadow: false,
       noProps: false,
       noTerrain: false,
-      eagerShadow: false,
       any: false,
     });
     expect(parsePerfFlags('?seed=7').any).toBe(false);
-  });
-
-  it('reads the one flag that puts work back', () => {
-    // `eagerShadow` is how the change-driven rebuild is measured against what it
-    // replaced, so it counts as "not the real frame" like every other flag here.
-    const eager = parsePerfFlags('?perf=eagershadow');
-    expect(eager.eagerShadow).toBe(true);
-    expect(eager.any).toBe(true);
   });
 
   it('reads one name and several', () => {
