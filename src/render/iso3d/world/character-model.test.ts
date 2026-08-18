@@ -267,15 +267,21 @@ describe('the character view', () => {
     }
   });
 
-  it('gives every stat row a hint, and says so where nothing implements it', () => {
+  it('gives every stat row a hint, and none of them still claims to be unbuilt', () => {
     const view = characterViewOf(source([]));
     for (const row of view.stats) {
       expect(row.hint.length, row.label).toBeGreaterThan(10);
+      // Spec 173 emptied this category: attack speed was the last socket the
+      // sheet had to apologise for, and it now has a source. The check stays
+      // as a sweep rather than being deleted with it, because the rule the
+      // table is built on -- say what it does, or say that it does nothing --
+      // is what would rot if a row ever went the other way and nobody noticed
+      // the hint had stopped being true.
+      expect(row.hint, row.label).not.toContain('Not implemented');
     }
-    // Attack speed is a socket with nothing plugged into it (specs 091, 144),
-    // and the sheet says that rather than describing a stat that never moves.
+    // And the row that used to carry it says where the number comes from.
     const speed = view.stats.find((row) => row.label === 'Attack speed');
-    expect(speed?.hint).toContain('Not implemented');
+    expect(speed?.hint).toContain('weapon');
   });
 
   it('counts what is in a column, so the investment is legible', () => {
