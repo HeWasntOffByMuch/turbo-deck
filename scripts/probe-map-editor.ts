@@ -14,22 +14,32 @@
  * whole deliverable -- a marker the editor draws and does not save is the bug
  * this exists to catch.
  *
+ * Spec 177 adds the other end of the same loop. A download is not a saved map:
+ * it is the first of four steps -- save, find it in ~/Downloads, copy it over
+ * `maps/arena.json`, restart the server -- and missing one looks exactly like
+ * the editor having failed to save. So the run happens twice: once over `dist/`,
+ * where there is no dev server and the editor must *say so* rather than
+ * pretending, and once over `npx vite`, where the button has to actually change
+ * the file on disk. The second half backs the map up and puts it back.
+ *
  *   npm run build && npx tsx scripts/probe-map-editor.ts
  *
- * Serves `dist/` rather than the dev server, so what is measured is what ships.
- * Exits non-zero if a step did not do what it claims.
+ * Serves `dist/` rather than the dev server for the first half, so what is
+ * measured is what ships. Exits non-zero if a step did not do what it claims.
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, type Page } from 'playwright';
+import { chromium, type Browser, type Page } from 'playwright';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
 const PORT = 4327;
+/** The dev server, for the half that writes the file. A second port, not a second run. */
+const DEV_PORT = 4328;
 
 const CHROMIUM_PATH = process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium';
 const CHROMIUM_ARGS = [
@@ -88,8 +98,8 @@ async function readout(page: Page): Promise<string> {
 const markerCount = async (page: Page): Promise<number> =>
   Number(/(\d+) markers/.exec(await readout(page))?.[1] ?? -1);
 
-async function openEditor(page: Page, query: string): Promise<void> {
-  await page.goto(`http://localhost:${PORT}/${query}`, { waitUntil: 'load' });
+async function openEditor(page: Page, query: string, port = PORT): Promise<void> {
+  await page.goto(`http://localhost:${port}/${query}`, { waitUntil: 'load' });
   await page.click('button:has-text("Map editor")');
   // `canvas` alone matches the Play tab's too -- it stays in the DOM, hidden,
   // when a tab is switched away from.
@@ -106,6 +116,23 @@ async function clickGround(page: Page, x: number, y: number): Promise<void> {
   await page.waitForTimeout(400);
 }
 
+/** Press the write button and hand back what the status line then says. */
+async function saveToDisk(page: Page): Promise<string> {
+  await page.click('button:has-text("Save to maps/")');
+  // The write is a round trip over a three-megabyte body, and the browser
+  // serialises the document on the main thread before it can even send it --
+  // which under software GL takes seconds, not milliseconds. Waited out
+  // generously: a short poll here reports a working save as a silent one.
+  for (let i = 0; i < 240; i++) {
+    await page.waitForTimeout(250);
+    const said = /(wrote maps[^&<]*|no dev server here[^&<]*|could not reach[^&<]*|not a map document[^&<]*|is not a bare filename[^&<]*)/.exec(
+      await readout(page),
+    )?.[1];
+    if (said !== undefined) return said.trim();
+  }
+  return '(the status line never said anything)';
+}
+
 /** Press Save to file and hand back what the browser downloaded. */
 async function save(page: Page): Promise<{ name: string; doc: MapFile }> {
   const [download] = await Promise.all([
@@ -115,6 +142,75 @@ async function save(page: Page): Promise<{ name: string; doc: MapFile }> {
   const path = await download.path();
   if (path === null) throw new Error('the download had no file behind it');
   return { name: download.suggestedFilename(), doc: JSON.parse(readFileSync(path, 'utf8')) as MapFile };
+}
+
+/**
+ * The half that closes the loop: `npx vite`, the write button, the real file.
+ *
+ * Backs the map up first and puts it back in a `finally`, because the whole
+ * point of the feature under test is that the button changes the map the server
+ * boots from -- there is no way to check that without changing it.
+ */
+async function devHalf(browser: Browser, problems: string[]): Promise<void> {
+  const backup = `${SHIPPED_MAP}.probe-backup`;
+  copyFileSync(SHIPPED_MAP, backup);
+  const before = readFileSync(SHIPPED_MAP, 'utf8');
+  // `node_modules/.bin/vite` rather than `npx vite`, and in its own process
+  // group: `npx` is a wrapper, and a SIGTERM to it leaves the grandchild
+  // holding the port -- the same trap `probe-admin-console.ts` documents, and
+  // the reason a second run of this probe used to find 4328 already taken.
+  const dev = spawn(join(root, 'node_modules', '.bin', 'vite'), ['--port', String(DEV_PORT), '--strictPort'], {
+    cwd: root,
+    stdio: 'ignore',
+    detached: true,
+  });
+  try {
+    await waitForServer(`http://localhost:${DEV_PORT}/`, 60_000);
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    page.on('pageerror', (error) => problems.push(String(error)));
+    await openEditor(page, '', DEV_PORT);
+
+    const shipped = markersIn(JSON.parse(before) as MapFile);
+    await page.getByRole('button', { name: 'marker', exact: true }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: 'campfire', exact: true }).click();
+    await page.waitForTimeout(300);
+    await clickGround(page, 600, 420);
+    check(
+      'the editor says the edit is not on disk yet',
+      /not in maps\//.test(await readout(page)),
+      /(\d+ edits? not in maps\/)/.exec(await readout(page))?.[1] ?? 'said nothing',
+    );
+
+    const said = await saveToDisk(page);
+    check('the write button reports what it wrote', /wrote maps/.test(said), said);
+
+    const after = readFileSync(SHIPPED_MAP, 'utf8');
+    check('maps/arena.json actually changed on disk', after !== before, `${before.length} -> ${after.length} bytes`);
+    const now = markersIn(JSON.parse(after) as MapFile);
+    check(
+      'the file on disk has the placed marker, and everything that was there',
+      now.length === shipped.length + 1 && shipped.every((m) => now.some((s) => s.id === m.id)),
+      `${shipped.length} -> ${now.length} markers`,
+    );
+    check(
+      'the editor stops saying there are edits off disk',
+      !/not in maps\//.test(await readout(page)),
+      /(\d+ edits? not in maps\/)/.exec(await readout(page))?.[1] ?? 'clean',
+    );
+    await page.close();
+  } finally {
+    copyFileSync(backup, SHIPPED_MAP);
+    rmSync(backup, { force: true });
+    // The whole group, so nothing is left listening on DEV_PORT.
+    if (dev.pid !== undefined) {
+      try {
+        process.kill(-dev.pid, 'SIGTERM');
+      } catch {
+        dev.kill('SIGTERM');
+      }
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -138,9 +234,12 @@ async function main(): Promise<void> {
     const problems: string[] = [];
     page.on('pageerror', (error) => problems.push(String(error)));
     page.on('console', (message) => {
-      // The unit importer warns about root motion on every load; it is not this
-      // probe's business and it is not an error in the page.
-      if (message.type() === 'error' && !message.text().includes('[units]')) problems.push(message.text());
+      // Two expected ones: the unit importer warns about root motion on every
+      // load, and the built page's write endpoint is *meant* to 404 -- that is
+      // the check two blocks below, not a fault.
+      const text = message.text();
+      const expected = text.includes('[units]') || text.includes('404');
+      if (message.type() === 'error' && !expected) problems.push(text);
     });
 
     // Nothing in the query string: this is what somebody opening the tab gets.
@@ -204,7 +303,21 @@ async function main(): Promise<void> {
       generatedSave.name,
     );
 
+    // A built page has no write endpoint, and the editor has to say that rather
+    // than look like a save that failed -- the download is still the answer here.
+    await openEditor(page, '');
+    const refused = await saveToDisk(page);
+    check(
+      'a built page says there is no dev server, and points at the download',
+      /no dev server here/.test(refused),
+      refused,
+    );
+
     check('the page logged no errors', problems.length === 0, problems.slice(0, 3).join(' | '));
+    await page.close();
+
+    // --- the dev server, where the button actually writes the file ----------
+    await devHalf(browser, problems);
   } finally {
     await browser.close();
     server.kill('SIGTERM');

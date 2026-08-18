@@ -130,6 +130,14 @@ export interface EditorPanelOptions {
   /** The walk limit moved, so the whole layer needs re-baking. */
   readonly onNavRebake: () => void;
   readonly onSave: () => void;
+  /**
+   * Write the map straight over the file it was opened from (spec 177).
+   *
+   * First in the folder because it is the one that finishes the job: a download
+   * is the beginning of a copy somebody still has to make, and getting that
+   * wrong looks exactly like the editor having failed to save.
+   */
+  readonly onSaveToDisk: () => void;
   readonly onLoad: () => void;
   readonly onDiscardAutosave: () => void;
   /** The recipes a part may be grown from, by name (spec 084). */
@@ -329,6 +337,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   edit.add({ undo: opts.onUndo }, 'undo').name('Undo (Ctrl+Z)');
 
   const file = gui.addFolder('File');
+  file.add({ write: opts.onSaveToDisk }, 'write').name('Save to maps/ (dev server)');
   file.add({ save: opts.onSave }, 'save').name('Save to file');
   file.add({ load: opts.onLoad }, 'load').name('Load file (or drop one)');
   file.add({ discard: opts.onDiscardAutosave }, 'discard').name('Discard autosave');

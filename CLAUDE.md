@@ -128,7 +128,11 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  server loads at boot and streams to clients, what the Play tab
                  imports, and -- since spec 176 -- what the Map editor tab opens;
                  regenerate it with `npx tsx scripts/bake-map.ts`, or edit it in
-                 the editor and save over it. That last clause was documented
+                 the editor -- which since spec 177 writes this file directly,
+                 through a `POST /api/map` the dev server answers and a build
+                 has not got, so "save over it" stopped being four steps a
+                 person does by hand and a download nobody could tell had
+                 landed. That last clause was documented
                  here for a hundred specs and was not true: the editor baked its
                  own world from `viewSeed()`, which falls back to the clock, so
                  it opened a different world every session and nothing placed in
@@ -762,6 +766,32 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  off the map as a side effect. `EditorScene` now *requires* the
                  document it edits: the fallback to the generator was one line,
                  and one line is what this cost.
+                 map-write.ts is the other end of the same loop (spec 177): a
+                 download is not a saved map, it is the first of four steps with
+                 nothing confirming any of them, and the autosave saying
+                 "autosaved" while the file on disk was untouched is the same
+                 lie from the other side. The browser half returns four outcomes
+                 rather than ok/failed, because "there is no dev server here"
+                 (a built page -- use the download), "the server said no", and
+                 "nothing answered" have three different fixes and one message
+                 for all three names none of them. `scripts/dev-map-write.ts` is
+                 the disk half, `apply: 'serve'` so a build has no such endpoint,
+                 with every rule about *which* path may be written pure and
+                 tested -- a bare `.json` name resolved under `maps/` and checked
+                 by its resolved parent, since a prefix test passes
+                 `maps-elsewhere/`. The body goes through `parseMap` before
+                 anything is written and the write is a rename, so the map the
+                 server boots from cannot be replaced by something that will not
+                 load or by half a file. The rule that had to be measured rather
+                 than reasoned: **the write must not hot-reload the page**.
+                 `maps/arena.json` is a `?raw` module in the graph, so writing it
+                 made Vite reload the tab -- three seconds after the click the
+                 page went blank and came back on the Play tab, re-streaming 169
+                 chunks, with the editor rebuilt from disk. For a write the
+                 editor *made* that is backwards, since the newest copy is the
+                 one in the tab; so the plugin swallows the reload for its own
+                 writes only, invalidating the module without announcing it so a
+                 later reload by hand still reads the new bytes.
                  camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
                  history.ts are pure and tested headlessly; view.ts, cursor.ts and
                  marker-view.ts are the three.js scene; panel.ts is the lil-gui
@@ -782,7 +812,12 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  downloaded*, because a marker the editor draws and does not save
                  is exactly the bug 176 turned out to be -- every rule about
                  saving a marker green in Node, beside a tab that called none of
-                 them on the map anybody plays.
+                 them on the map anybody plays. Since 177 it runs twice -- over
+                 `dist/`, where the write button must *say* there is no dev
+                 server rather than look like a failed save, and over a real
+                 dev server, where it has to change the file on disk. The second
+                 half backs the map up and puts it back, because there is no way
+                 to check that a button writes the map without writing it.
 src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim runs on
                  the same fixed 60Hz timestep as src/sim/ and broadcasts deltas
                  every third tick (20Hz) -- one rate for the game, another for the

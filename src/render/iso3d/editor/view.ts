@@ -40,12 +40,14 @@ import { createNavView } from './nav-view.js';
 import {
   AUTOSAVE_INTERVAL_MS,
   clearAutosave,
+  mapFilename,
   mapText,
   readAutosave,
   RevisionTracker,
   writeAutosave,
 } from './persistence.js';
 import { openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
+import { writeMapToDisk } from './map-write.js';
 import { buildEditorPanel, type EditorPanel } from './panel.js';
 import { createEditorSettings, cursorColor, cursorRadius, NEW_ROCK_TIER } from './tools.js';
 import {
@@ -491,17 +493,47 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   );
   const revision = new RevisionTracker();
   /**
+   * Whether a restored autosave is work on *this* map or on a different one.
+   *
+   * The slot holds text and no name, so the only honest way to ask is the
+   * document itself, and the seed answers it: a slot written before spec 176
+   * holds a world generated from the clock, and calling that `arena.json`
+   * would let one click drop a stranger's world on top of the map the server
+   * boots from -- under the right filename, which is the worst version of it
+   * (spec 177).
+   */
+  const restoredIsSource = restored !== null && restored.seed === source.document.seed;
+  /**
    * The name a save comes back as: whatever was opened.
    *
    * Follows a loaded file, so saving after a load round-trips the name rather
-   * than renaming somebody's map after its seed. A *restored autosave* leaves it
-   * alone -- the slot stores text and no name, and the work in it is work on the
-   * map this editor opens, so that is the name it belongs under.
+   * than renaming somebody's map after its seed. A restored autosave keeps the
+   * name only when it is the same map -- otherwise it is named after its own
+   * seed, like any other generated world.
    */
-  let savedAs = source.name;
+  let savedAs = restored !== null && !restoredIsSource ? mapFilename(restored) : source.name;
   /** Which map the readout says is being edited. */
-  let editing = restored ? `${source.from} (restored autosave)` : source.from;
-  let status = restored ? 'restored autosave' : '';
+  let editing =
+    restored === null
+      ? source.from
+      : restoredIsSource
+        ? `${source.from} (restored autosave)`
+        : `restored autosave, seed ${restored.seed} -- NOT ${source.from}`;
+  let status = restored ? 'restored autosave (in this browser, not on disk)' : '';
+  /**
+   * Edits this session has made that are not in `maps/` yet.
+   *
+   * Separate from the autosave's own revision, because they answer different
+   * questions -- the autosave asks "is the slot stale", and this asks "does the
+   * file the server boots from have this in it". Conflating them is what let
+   * "autosaved" read as "saved".
+   */
+  let editsSinceDisk = 0;
+  /** Anything changed: the autosave wants to know, and so does the disk. */
+  const markEdited = (): void => {
+    revision.touch();
+    editsSinceDisk += 1;
+  };
   showHelp();
   const input = new EditorInputCapture(canvas);
   const history = new EditHistory();
@@ -668,7 +700,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     else scene.refreshProps();
     refreshMarkers();
     refreshNav();
-    revision.touch();
+    markEdited();
     onPartsChanged();
   };
 
@@ -702,7 +734,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     // The ring too: a tier's neighbours decide where its skirt goes, so a chunk
     // beside one that just changed has a wall to grow or drop.
     for (const c of withNeighbours([...touched, ...gone])) scene.rebuildChunk(rockLayer, c.cx, c.cz);
-    revision.touch();
+    markEdited();
     onPartsChanged();
   };
 
@@ -965,7 +997,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       rebuiltAfterParts(groundRemeshed, groundRemoved);
       return;
     }
-    revision.touch();
+    markEdited();
     for (const c of groundRemeshed) scene.rebuildChunk(c.layerId, c.cx, c.cz);
     // Nav describes the ground, so undoing the ground has to undo nav with it.
     rebakeNav(scene.map.store, layerId, groundRemeshed, settings.walkSlope);
@@ -997,7 +1029,36 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
-    status = `saved ${anchor.download}`;
+    status = `downloaded ${anchor.download} -- copy it over maps/ and restart the server`;
+  };
+
+  /**
+   * Write the map over the file it came from, through the dev server (spec 177).
+   *
+   * The one that finishes the job. `saveToFile` hands you a download and four
+   * more steps to get wrong, and the failure looks identical to the editor not
+   * having saved -- which is how "I added some spawners and nothing shows up"
+   * happens with every rule in this directory working correctly.
+   *
+   * Never silent, in either direction: it says what it wrote, or why it could
+   * not and what to do instead.
+   */
+  const saveToDisk = (): void => {
+    status = `writing maps/${savedAs}...`;
+    void writeMapToDisk(
+      (input, init) => fetch(input, init),
+      savedAs,
+      mapText(scene.map.store.toDocument()),
+    ).then((result) => {
+      status = result.detail;
+      // Only a write that landed counts as saved. A refusal must leave the
+      // editor dirty, or the autosave stops running and the work is held in
+      // one browser tab with nothing on disk behind it.
+      if (result.kind === 'written') {
+        revision.markSaved();
+        editsSinceDisk = 0;
+      }
+    });
   };
 
   /**
@@ -1022,6 +1083,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     // it again round-trips the file rather than renaming it after its seed.
     savedAs = from;
     editing = from;
+    editsSinceDisk = 0;
     showHelp();
     status = `loaded ${from}`;
   };
@@ -1071,6 +1133,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     },
     onUndo: undo,
     onSave: saveToFile,
+    onSaveToDisk: saveToDisk,
     onLoad: () => fileInput.click(),
     onDiscardAutosave: () => {
       if (storage) clearAutosave(storage);
@@ -1144,7 +1207,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     const result = writeAutosave(storage, mapText(scene.map.store.toDocument()));
     if (result.ok) {
       revision.markSaved();
-      status = 'autosaved';
+      // Named for where it went. "autosaved" reads as "saved", and this slot is
+      // in localStorage -- the file on disk has not been touched, which is
+      // exactly the misunderstanding spec 177 was written about.
+      status = 'autosaved to this browser -- not to maps/';
     } else {
       status = `autosave failed: ${result.reason ?? 'unknown'}`;
     }
@@ -1342,7 +1408,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       // overlay never describes ground that has since moved.
       if (strokeMovedGround) rebakeNav(scene.map.store, layerId, strokeDirty, settings.walkSlope);
       if (strokeMovedGround || strokeChangedProps) refreshNav();
-      if (strokeMovedGround || strokeChangedProps || strokeChangedMarkers) revision.touch();
+      if (strokeMovedGround || strokeChangedProps || strokeChangedMarkers) markEdited();
       strokeMovedGround = false;
       strokeChangedProps = false;
       strokeChangedMarkers = false;
@@ -1364,7 +1430,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
-      `<span style="color:#7a7a90;">${editing} &middot; ${chunkCount()} chunks &middot; ` +
+      `<span style="color:#7a7a90;">${editing}` +
+      `${editsSinceDisk === 0 ? '' : ` <b style="color:#e0c07a;">${editsSinceDisk} edit${editsSinceDisk === 1 ? '' : 's'} not in maps/</b>`}` +
+      ` &middot; ${chunkCount()} chunks &middot; ` +
       `${scene.map.store.props(layerId).length} props${scene.undrawnProps > 0 ? ` (<b style="color:#e08f8f;">${scene.undrawnProps} not drawn</b>)` : ''} &middot; ` +
       `${scene.map.store.markers(layerId).length} markers &middot; ` +
       `${scene.map.store.parts.length} part${scene.map.store.parts.length === 1 ? '' : 's'} &middot; ` +
