@@ -458,7 +458,7 @@ describe('the trade window (spec 134)', () => {
   });
 
   /**
-   * The window can always be shut (spec 169).
+   * The window can always be shut (spec 170).
    *
    * The mount re-opens it every frame while a trade is live, so Escape and the
    * title bar did nothing at all and Cancel was the only exit. Closing a live

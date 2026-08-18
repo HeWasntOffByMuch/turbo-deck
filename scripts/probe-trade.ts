@@ -429,7 +429,7 @@ async function main(): Promise<void> {
     check('Ben is asked, not enrolled', (await readout(ben)).stage === 'offered');
     check('the window opened itself on Ben', (await readout(ben)).windows.includes('trade'));
 
-    // --- the request is furnished before it is answered (spec 169) ----------
+    // --- the request is furnished before it is answered (spec 170) ----------
     check('Ana is not asked to accept her own invitation', (await readout(ana)).invited === 'no');
     check('Ben is the one being asked', (await readout(ben)).invited === 'yes');
     // The sender gets no Accept and no Decline: they are the invitation's own
@@ -529,7 +529,7 @@ async function main(): Promise<void> {
     check('and stays closed', !after.windows.split(',').includes('trade'), `windows: ${after.windows}`);
     check('with no trade left to show', after.stage === '', `stage: ${after.stage}`);
 
-    // --- Escape always gets you out (spec 169) -------------------------------
+    // --- Escape always gets you out (spec 170) -------------------------------
     // A second trade, left live, and shut with the key rather than the button.
     console.log('a second trade, closed with Escape');
     check('a second trade can be opened', await inviteByPointer(ana, 'Ben'));

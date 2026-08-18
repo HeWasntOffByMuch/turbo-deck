@@ -1,8 +1,8 @@
-# 169 — a trade request worth answering
+# 170 — a trade request worth answering
 
 ## Problem
 
-Spec 168 made the trade table work end to end. Playing it turns up five things
+Spec 169 made the trade table work end to end. Playing it turns up five things
 that are wrong with it as an *interaction*, and four of them share one cause:
 the screen and the wire describe a table without saying **which side of it you
 are on**.
@@ -105,7 +105,7 @@ survivor.
 
 ## Out of scope
 
-- **What the ending lists** (spec 168's out-of-scope, unchanged).
+- **What the ending lists** (spec 169's out-of-scope, unchanged).
 - **Making room from inside the trade window.** The warning says which bag; the
   bag window is already open beside it.
 - **Countering an invitation.** The invitee still answers yes or no; the goods

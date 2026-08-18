@@ -805,7 +805,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  trading whatever is in that slot now. The property test counts
                  both players together, because a swap that duplicated a sword
                  leaves each bag individually plausible.
-                 Two rules from spec 169, both about *which side of the table
+                 Two rules from spec 170, both about *which side of the table
                  you are on*. `setOffer` accepts an offer from the **inviting
                  side only** while a trade is still an invitation, and leaves
                  the stage alone: an empty request asks "do you want to trade?"
@@ -1342,7 +1342,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  requires the same numbers. Everything the feature decides is
                  asserted in Node; what it could not say is whether any of it
                  was connected to anything.
-                 Since spec 168 it also owns the trade table's *ending*, and the
+                 Since spec 169 it also owns the trade table's *ending*, and the
                  rule is that the mount reads `view.trade ?? view.endedTrade`:
                  the server forgets a trade the instant it is over, so by the
                  time there is a reason to show, the live field is already null
@@ -1363,7 +1363,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  server, the real shift-right-click and the real buttons, with
                  both bags counted afterwards because a swap that duplicated the
                  bow leaves each side individually plausible.
-                 Since spec 169 **closing a live trade cancels it**, because
+                 Since spec 170 **closing a live trade cancels it**, because
                  leaving the table is what closing means and the alternative is
                  a player sitting in a trade they cannot see and cannot start
                  another one from -- before it the mount re-opened the window

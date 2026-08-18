@@ -862,7 +862,7 @@ export interface TradeStateMessage {
   /** Why it ended, when it ended badly. Empty otherwise. */
   readonly reason: string;
   /**
-   * You are the side being asked (spec 169). Only meaningful while `stage` is
+   * You are the side being asked (spec 170). Only meaningful while `stage` is
    * offered.
    *
    * On the wire because it cannot be derived: `you` and `them` are symmetric by

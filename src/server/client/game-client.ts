@@ -164,7 +164,7 @@ export interface TradeView {
   readonly you: TradeSideView;
   readonly them: TradeSideView;
   readonly reason: string;
-  /** You are the side being asked (spec 169). Only meaningful while offered. */
+  /** You are the side being asked (spec 170). Only meaningful while offered. */
   readonly invited: boolean;
   /** What would stop this going through, in your terms. Empty when nothing. */
   readonly warning: string;

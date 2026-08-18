@@ -302,7 +302,7 @@ describe('the swap', () => {
 
 // --- the property ------------------------------------------------------
 
-describe('furnishing an invitation (spec 169)', () => {
+describe('furnishing an invitation (spec 170)', () => {
   const bow = { defId: 'bow.hunting', count: 1 };
 
   /**
@@ -350,7 +350,7 @@ describe('furnishing an invitation (spec 169)', () => {
   });
 });
 
-describe('exchangeProblem (spec 169)', () => {
+describe('exchangeProblem (spec 170)', () => {
   const bow = { defId: 'bow.hunting', count: 1 };
 
   /** A bag with no free slot and nothing to stack onto. */

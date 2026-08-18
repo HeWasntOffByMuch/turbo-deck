@@ -235,7 +235,7 @@ export class UiScreens {
   /** Which trade the window is about, live or ended. Identity for the below. */
   private tradeShowingId: number | null = null;
   /**
-   * A trade the player has walked away from by closing the window (spec 169).
+   * A trade the player has walked away from by closing the window (spec 170).
    *
    * Neither it nor its ending is drawn again. It has to be an **id** rather
    * than a flag, and it has to outlast the whole cancellation: closing a live

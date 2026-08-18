@@ -151,7 +151,7 @@ describe('accepting', () => {
   });
 
   /**
-   * The two halves of one stage (spec 169). Both players sit at `offered`, and
+   * The two halves of one stage (spec 170). Both players sit at `offered`, and
    * before `invited` was on the wire the screen could not tell them apart -- so
    * the person who *sent* the request was shown "Accept invitation" and
    * "Decline" for their own request, two buttons the server refuses.

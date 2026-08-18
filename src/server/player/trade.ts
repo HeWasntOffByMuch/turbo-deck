@@ -295,7 +295,7 @@ export function swap(trade: Trade, a: Holdings, b: Holdings): SwapOutcome {
  * Whose bag stops this exchange, and why -- or null if it would go through.
  *
  * The same arithmetic {@link swap} runs, minus the stage check, so it can be
- * asked of a table nobody has accepted yet (spec 169). That is the whole point:
+ * asked of a table nobody has accepted yet (spec 170). That is the whole point:
  * a full bag used to be discovered *after* both sides had accepted, as the
  * reason the trade was cancelled, and there is nothing a player can do about it
  * at that moment except start again.

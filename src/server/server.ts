@@ -1550,7 +1550,7 @@ export class GameServer implements AdminHost {
   private publishTrade(trade: Trade): void {
     // Asked once for both players rather than per message: it is the same
     // question about the same two bags, and the only thing that differs between
-    // the two sends is which side of the answer is "yours" (spec 169).
+    // the two sends is which side of the answer is "yours" (spec 170).
     const problem = this.tradeProblem(trade);
     for (const playerId of partiesOf(trade)) {
       const connection = this.connectionForPlayer(playerId);

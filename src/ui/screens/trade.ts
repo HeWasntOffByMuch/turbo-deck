@@ -265,7 +265,7 @@ export class TradeScreen extends Column {
 
     const over = view.stage === 'over';
     const pending = view.stage === 'offered';
-    // Two different screens share this stage (spec 169). The side being *asked*
+    // Two different screens share this stage (spec 170). The side being *asked*
     // answers yes or no and edits nothing; the side that asked builds the
     // request and waits. Telling them apart is the whole reason `invited` is on
     // the wire -- `you` and `them` are symmetric, so the screen cannot work it

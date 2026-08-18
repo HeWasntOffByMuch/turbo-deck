@@ -127,7 +127,7 @@ describe('a trade over the wire', () => {
   });
 
   /**
-   * Which chair you are in (spec 169). `you` and `them` are symmetric by
+   * Which chair you are in (spec 170). `you` and `them` are symmetric by
    * construction, so nothing else in the message says who opened the trade --
    * which is how the sender came to be shown "Accept invitation" for their own
    * invitation.
