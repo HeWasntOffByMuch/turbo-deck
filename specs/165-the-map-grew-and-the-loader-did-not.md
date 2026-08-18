@@ -627,3 +627,57 @@ buffers (`ink` is on in `HIKE_DEFAULTS`), and the picture. That is the 40fps, an
 it is a rendering problem rather than a streaming one -- so it is where the next
 work goes, not here. The readout carries draws and triangles now, so the next
 person to look does not have to guess which of the two is moving.
+
+---
+
+## Eighth follow-up: the ink pass off, and why the retro filter cannot be scoped
+
+### `ink` is off by default
+
+It was the only default that needed the depth-and-normal buffers, and capturing
+those is a **second geometry pass over the whole world** -- the frame already
+draws it for the shadow map and again for the picture, so this was a third.
+Measured on the shipped arena, standing still with the load finished:
+
+| | draw calls | triangles |
+|---|---|---|
+| `ink: true` | 913 | 722k |
+| `ink: false` | **625** | **494k** |
+
+~290 draw calls and ~230k triangles a frame, about a third of everything the
+frame submitted, bought for a distance haze that a locked camera never shows off.
+The switch is still in the hike menu; only the default changed.
+
+`hike.test.ts` now asserts the *set* -- that none of `buffers`, `edges` or `ink`
+is on by default -- rather than `ink === false`, so turning any of the three on
+again has to be a decision taken with the draw count in view.
+
+### Scoping the retro filter to vegetation would cost, not save
+
+Worth writing down, because the idea is a reasonable one and the reason it fails
+is not obvious from outside the pass.
+
+The retro filter is a **post-process**: `RetroPass.render` draws the scene into a
+target, then draws **one fullscreen quad** whose shader grades, quantizes and
+dithers. Its cost is a handful of ALU ops per pixel over the framebuffer, paid
+once, with no per-object component. There is nothing per-object in it to skip.
+
+"Only for vegetation" therefore means masking, and a mask is built the way spec
+138's exemption already builds one: by *re-rendering* the masked objects with an
+override material. That works for the exemption because its subject is the
+players -- a handful of roots. Vegetation is the opposite end of the scene:
+
+- 6942 props, in 90 culling regions
+- **1732 `InstancedMesh`es** if every region were visible
+
+The frame currently submits ~625 draws in total, so culling is already doing most
+of the work -- but a vegetation mask would re-draw whatever share of those props
+is on screen, adding **hundreds of draw calls a frame** to avoid running a
+fullscreen quad that was never the expensive part.
+
+The idea next door that *would* pay is the one this pass already has wired:
+`lowRes` renders the scene into a smaller virtual buffer and upscales. That cuts
+genuine per-pixel cost -- shading, shadow lookups, the quad -- rather than trying
+to cut a per-pixel cost per object. It is off by default and is the thing to try
+if the frame turns out to be fill-bound. At 625 draws and 494k triangles it more
+likely is not, which is what the readout is for.
