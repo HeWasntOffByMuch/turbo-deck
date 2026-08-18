@@ -747,7 +747,7 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  for the same reason (spec 086): props.ts groups props into
                  square batches for culling, and an edit rebuilds only the
                  batches over the ground it touched.
-                 paint.ts is the material brush (spec 176), and it is beside
+                 paint.ts is the material brush (spec 179), and it is beside
                  brush.ts rather than inside it because brush.ts is what a stroke
                  does to the *height* array and every one of its four tools reads
                  and writes heights. What it exists to fix is that a material used

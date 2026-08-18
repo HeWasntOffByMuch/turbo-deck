@@ -10,7 +10,7 @@ import {
 import { brushWeight } from './brush.js';
 
 /**
- * The material brush (spec 176): what a stroke does to the material array.
+ * The material brush (spec 179): what a stroke does to the material array.
  *
  * The counterpart to `brush.ts`, which is documented as "what a stroke does to
  * the height array" and whose four tools all read and write heights. This one

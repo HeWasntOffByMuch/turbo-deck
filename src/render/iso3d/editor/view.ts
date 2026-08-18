@@ -1094,7 +1094,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   let strokeMovedGround = false;
   let strokeChangedMarkers = false;
   /**
-   * Whether this stroke repainted any ground (spec 176).
+   * Whether this stroke repainted any ground (spec 179).
    *
    * Its own flag rather than `strokeMovedGround`, because a material change is
    * the first edit here that changes the document without moving anything: it

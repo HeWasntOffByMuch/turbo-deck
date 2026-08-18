@@ -127,7 +127,7 @@ export interface EditorSettings {
   tool: TerrainTool;
   strength: number;
   falloff: number;
-  /** What the material brush is loaded with (spec 176). Shares radius and falloff. */
+  /** What the material brush is loaded with (spec 179). Shares radius and falloff. */
   paintMaterial: PaintMaterial;
   // Scatter
   species: PropKind;

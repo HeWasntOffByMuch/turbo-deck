@@ -89,7 +89,7 @@ describe('what the cursor says', () => {
     expect(new Set(TERRAIN_TOOLS.map((tool) => TOOL_COLORS[tool])).size).toBe(TERRAIN_TOOLS.length);
   });
 
-  it('takes the loaded material\'s colour in paint mode (spec 176)', () => {
+  it('takes the loaded material\'s colour in paint mode (spec 179)', () => {
     // Five materials that lay down five different grounds share one mode, so a
     // single mode colour would be one ring for snow and for dirt. The swatch is
     // the ground's own colour, which is what makes the palette a palette.

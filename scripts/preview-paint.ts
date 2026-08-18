@@ -1,5 +1,5 @@
 /**
- * Drive the map editor's material brush in a real browser (spec 176).
+ * Drive the map editor's material brush in a real browser (spec 179).
  *
  * `paint.ts` is tested headlessly and covers every rule about which cells a
  * stroke changes. What it cannot cover is whether any of it reaches the screen:
