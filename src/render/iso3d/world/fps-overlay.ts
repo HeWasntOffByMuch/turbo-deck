@@ -14,8 +14,8 @@
 
 import { STALL_MS, type FrameStats } from './fps-meter.js';
 
-const WIDTH = 120;
-const HEIGHT = 36;
+const WIDTH = 180;
+const HEIGHT = 56;
 
 /**
  * The frame time the graph's full height means.
@@ -28,8 +28,16 @@ const HEIGHT = 36;
 const SCALE_MS = STALL_MS;
 
 export interface FpsOverlay {
-  /** Draw, or hide when `stats` is null. */
-  set(stats: FrameStats | null): void;
+  /**
+   * Draw, or hide when `stats` is null.
+   *
+   * `workMs` is the frame's *streaming* cost -- inserting chunks, meshing them,
+   * rebuilding props, warming the nav grid. Shown beside the frame time because
+   * the two answer different questions: a slow frame on a weak GPU and a slow
+   * frame because the world is still arriving look identical in `fps` and are
+   * nothing alike, and only one of them is worth fixing here.
+   */
+  set(stats: FrameStats | null, workMs?: number, worstStage?: string, worstStageMs?: number): void;
   dispose(): void;
 }
 
@@ -38,19 +46,20 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   root.dataset['fps'] = '';
   root.style.cssText = [
     'position:absolute',
-    // Below the connection banner rather than beside it: both want the top-left
-    // corner, the banner is transient and this is not, and a readout that
-    // sometimes has a banner sitting on it is a readout you cannot read at
-    // exactly the moment you went looking for it.
-    'top:40px',
-    'left:8px',
+    // Top *right*, under the settings buttons. The top-left corner already has
+    // two things that want it -- the developer readout and the connection
+    // banner -- and a performance readout you have to hunt for is a performance
+    // readout nobody uses. This corner is empty in the shipped layout, and the
+    // settings popovers that open under these buttons are transient.
+    'top:52px',
+    'right:8px',
     'display:none',
     'flex-direction:column',
     'gap:2px',
     'padding:4px 6px',
     'background:rgba(11,11,18,0.72)',
     'color:#c8c8d4',
-    "font:11px ui-monospace,SFMono-Regular,Menlo,monospace",
+    "font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace",
     'pointer-events:none',
     // Above the loading overlay, deliberately: the frames worth measuring on the
     // grown map are the loading ones, and a meter that appears once the load is
@@ -61,6 +70,11 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   const text = document.createElement('div');
   text.dataset['fpsText'] = '';
   root.append(text);
+
+  const work = document.createElement('div');
+  work.dataset['fpsWork'] = '';
+  work.style.cssText = 'color:#e0b45a;';
+  root.append(work);
 
   const canvas = document.createElement('canvas');
   canvas.width = WIDTH;
@@ -82,7 +96,7 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   };
 
   return {
-    set(stats: FrameStats | null): void {
+    set(stats: FrameStats | null, workMs = 0, worstStage = '', worstStageMs = 0): void {
       if (!stats) {
         root.style.display = 'none';
         return;
@@ -93,6 +107,18 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
       text.textContent =
         `${stats.fps.toFixed(0)} fps  ${stats.avgMs.toFixed(1)}ms` +
         `  1%:${stats.p99Ms.toFixed(0)}  max:${stats.worstMs.toFixed(0)}`;
+      // Blank rather than "0ms" once the world has settled: a line that is
+      // always there stops being read, and its whole job is to say "this frame
+      // was the loader, not your machine".
+      work.textContent =
+        workMs > 0.5
+          ? `streaming ${workMs.toFixed(0)}ms  worst: ${worstStage} ${worstStageMs.toFixed(0)}ms`
+          : worstStage
+            ? `worst since load: ${worstStage} ${worstStageMs.toFixed(0)}ms`
+            : '';
+      root.dataset['fpsWork'] = workMs.toFixed(1);
+      root.dataset['fpsWorstStage'] = worstStage;
+      root.dataset['fpsWorstStageMs'] = worstStageMs.toFixed(1);
       // Published for the harness, which cannot read a canvas but can read this.
       root.dataset['fpsValue'] = stats.fps.toFixed(1);
       root.dataset['fpsWorst'] = stats.worstMs.toFixed(1);

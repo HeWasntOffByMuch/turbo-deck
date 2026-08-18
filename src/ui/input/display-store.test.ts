@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_SHOW_FPS,
   DISPLAY_KEY,
   DISPLAY_VERSION,
   loadScale,
@@ -55,7 +56,7 @@ describe('the scale preference across a reload', () => {
     expect(JSON.parse(store.map.get(DISPLAY_KEY) ?? '')).toEqual({
       version: DISPLAY_VERSION,
       scale: 3,
-      showFps: false,
+      showFps: DEFAULT_SHOW_FPS,
     });
   });
 });
@@ -92,14 +93,16 @@ describe('what the store refuses', () => {
     expect(parseDisplay(store.getItem(DISPLAY_KEY))).toEqual({
       version: DISPLAY_VERSION,
       scale: 'auto',
-      showFps: false,
+      showFps: DEFAULT_SHOW_FPS,
     });
   });
 });
 
 describe('the frame-rate preference (spec 165)', () => {
-  it('is off unless somebody asked for it', () => {
-    expect(loadShowFps(storage())).toBe(false);
+  it('is on unless somebody turned it off', () => {
+    // It shipped off, behind a checkbox two pages in, and the first thing
+    // anybody asked was where it was.
+    expect(loadShowFps(storage())).toBe(true);
   });
 
   it('reads back what was written', () => {
@@ -133,7 +136,8 @@ describe('the frame-rate preference (spec 165)', () => {
     store.setItem(DISPLAY_KEY, JSON.stringify({ version: 1, scale: 4 }));
 
     expect(loadScale(store)).toBe(4);
-    expect(loadShowFps(store)).toBe(false);
+    // Absent means the default, not "the player turned it off".
+    expect(loadShowFps(store)).toBe(DEFAULT_SHOW_FPS);
   });
 
   it('treats a non-boolean as off rather than as a broken document', () => {
@@ -150,7 +154,7 @@ describe('the frame-rate preference (spec 165)', () => {
       setItem: () => undefined,
       removeItem: () => undefined,
     };
-    expect(loadShowFps(hostile)).toBe(false);
+    expect(loadShowFps(hostile)).toBe(DEFAULT_SHOW_FPS);
   });
 });
 

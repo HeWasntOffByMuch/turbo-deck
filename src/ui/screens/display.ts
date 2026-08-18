@@ -18,7 +18,7 @@
 
 import { Column, Row } from '../core/containers.js';
 import { uniformInsets, type Rect } from '../core/geom.js';
-import { SCALE_CHOICES, scaleLabel, type ScaleChoice } from '../input/display-store.js';
+import { DEFAULT_SHOW_FPS, SCALE_CHOICES, scaleLabel, type ScaleChoice } from '../input/display-store.js';
 import type { Theme } from '../theme/theme.js';
 import { Checkbox } from '../widgets/checkbox.js';
 import { Label } from '../widgets/label.js';
@@ -37,7 +37,7 @@ export class DisplayScreen extends Column {
   private readonly effective: Label;
   private readonly fpsBox: Checkbox;
   private choice: ScaleChoice = 'auto';
-  private showFps = false;
+  private showFps = DEFAULT_SHOW_FPS;
 
   constructor(options: DisplayOptions) {
     super('display');
@@ -86,7 +86,7 @@ export class DisplayScreen extends Column {
     this.add(this.fpsBox);
 
     this.setChoice('auto');
-    this.setShowFps(false);
+    this.setShowFps(DEFAULT_SHOW_FPS);
   }
 
   /** The preference as it actually stands. Ticks exactly one box. */

@@ -508,3 +508,65 @@ counter can only throw away a cache that was still good, never keep one that was
 not. `corner-memo.test.ts` is the question a cache in the deterministic core
 earns -- warm and cold stores agreeing sample for sample, an editor moving a
 corner, and ground streaming in under a point already sampled as a hole.
+
+---
+
+## Sixth follow-up: the meter nobody could find, and the stutter it found
+
+Reported: "where is the FPS meter I asked for" and "the first 2000 ticks are not
+smooth at all even when standing still".
+
+### The meter
+
+It shipped **off**, behind a checkbox on the options window's second page. That
+is a readout nobody uses. It is on by default now and lives in the top-right
+corner, which is the one corner of the shipped layout nothing else wants -- the
+top-left already has the developer readout and the connection banner.
+
+It also grew the line that turned out to matter. Frame time alone cannot tell a
+slow machine from a busy loader, so the overlay carries the frame's *streaming*
+cost beside it, and the name of the worst stage since load: insert, mesh, props
+or nav. Guessing which of those it was cost three build-and-measure rounds that
+a label answered outright.
+
+### The stutter
+
+`scripts/probe-streaming.ts` now stands still for twenty seconds after the gate
+lifts and reports what the game's own meter saw. That reproduced the report
+immediately, and the breakdown named the cause:
+
+| | worst frame | worst streaming frame | worst stage |
+|---|---|---|---|
+| as reported | 467ms | 154ms | — |
+| with the stage label | 400ms | 99ms | **nav 286ms** |
+| bounded | 850ms* | 148ms | nav 137ms |
+
+\* the container's own software-GL frame time, which swings by hundreds of
+milliseconds and says nothing about a real machine. The middle column is the
+part this repo can fix.
+
+The cause was mine, from the fifth follow-up. Rebuilding the colliders and the
+nav grid used to ride the prop settle, which was fine while the settle was one
+event at the end of the stream. Making the settle *per region* made it fire
+dozens of times -- and each one rebuilt the whole nav grid. A quarter-second
+hitch every second or so, for the half-minute the far chunks take.
+
+So the ground refresh has its own clock now: the whole world quiet rather than
+one region, and at most once every five seconds. The client's grid is a
+prediction aid and the server routes authoritatively, so a few seconds of
+staleness costs a predicted path that walks at a tree the server routes around
+-- against a visible hitch every second, that is not a close call.
+
+Two other things measured and rejected along the way, recorded so they are not
+tried again: capping prop rebuilds to one region per frame changed nothing
+(158ms → 158ms), and raising the quiet period alone changed nothing (165ms),
+because the stream has lulls longer than any threshold worth setting. Only
+bounding the *rate* helped. The one-region cap was kept anyway -- it is correct
+on its own terms and costs nothing.
+
+### What is left
+
+The remaining ~137ms is one nav-grid build: the obstacle passes and the
+component flood over 797k cells, which the corner memo does not touch because it
+is not sampling. Cutting it means either a smaller grid for the client than the
+server uses, or an incremental flood -- both real changes, neither started.

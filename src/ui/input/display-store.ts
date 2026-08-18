@@ -18,6 +18,9 @@
 
 import type { StorageLike } from '../core/layout-store.js';
 
+/** See {@link StoredDisplay.showFps}. */
+export const DEFAULT_SHOW_FPS = true;
+
 /** `'auto'` defers to `autoUiScale`; a number overrides it. */
 export type ScaleChoice = 'auto' | 1 | 2 | 3 | 4;
 
@@ -35,7 +38,16 @@ export const DISPLAY_KEY = 'turbo-deck.ui.display';
 export interface StoredDisplay {
   readonly version: number;
   readonly scale: ScaleChoice;
-  /** Whether the frame-time readout is drawn (spec 165). Off unless asked for. */
+  /**
+   * Whether the frame-time readout is drawn (spec 165).
+   *
+   * **On by default.** It went out off, behind a checkbox on the options
+   * window's second page, and the first thing anybody asked was where it was.
+   * A performance readout you have to find is a performance readout nobody
+   * uses -- and this game is still being tuned, so the frame cost of a small
+   * canvas in the corner is worth less than the frames it explains. The
+   * checkbox is how you turn it *off*.
+   */
   readonly showFps: boolean;
 }
 
@@ -64,7 +76,9 @@ export function migrateDisplay(raw: unknown): StoredDisplay | null {
   // Absent, or present as something that is not a boolean, both mean off. A
   // preference nobody has expressed is not a reason to throw the rest of the
   // document away -- the scale in it is still exactly what the player chose.
-  const showFps = record['showFps'] === true;
+  // Absent means the default rather than false, so a profile written before
+  // this preference existed does not read as "the player turned it off".
+  const showFps = record['showFps'] === undefined ? DEFAULT_SHOW_FPS : record['showFps'] === true;
   return { version: DISPLAY_VERSION, scale, showFps };
 }
 
@@ -81,7 +95,7 @@ export function parseDisplay(text: string | null): StoredDisplay | null {
 export const DISPLAY_DEFAULTS: StoredDisplay = {
   version: DISPLAY_VERSION,
   scale: 'auto',
-  showFps: false,
+  showFps: DEFAULT_SHOW_FPS,
 };
 
 /** The stored document, or the defaults. Never throws. */

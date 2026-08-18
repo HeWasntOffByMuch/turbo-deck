@@ -41,8 +41,8 @@ function chunk(cx: number, cz: number): TerrainChunk {
   } as TerrainChunk;
 }
 
-function ingest(meshBudget = 4, settleMs = 120): ChunkIngest {
-  return new ChunkIngest({ meshBudget, settleMs, regionSize: 1100 });
+function ingest(meshBudget = 4, settleMs = 120, regionsPerFlush = 8): ChunkIngest {
+  return new ChunkIngest({ meshBudget, settleMs, regionSize: 1100, regionsPerFlush });
 }
 
 describe('the meshing budget', () => {
@@ -185,6 +185,19 @@ describe('the prop settle', () => {
     queue.takeMesh(0);
 
     expect(queue.takePropRects(200)).toHaveLength(4);
+  });
+
+  it('hands back at most the per-frame region budget, and keeps the rest', () => {
+    // A region is ~60ms of geometry, so several in one frame is a lurch while
+    // the player is standing still. They still settle in the order their ground
+    // did -- just a frame apart.
+    const queue = ingest(8, 120, 1);
+    queue.offer([chunk(0, 0), chunk(4, 4)], 0);
+    queue.takeMesh(0);
+
+    expect(queue.takePropRects(200)).toHaveLength(1);
+    expect(queue.takePropRects(200)).toHaveLength(1);
+    expect(queue.takePropRects(200)).toHaveLength(0);
   });
 
   it('empties itself, so the same ground is not rebuilt twice', () => {

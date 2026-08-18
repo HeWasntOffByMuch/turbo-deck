@@ -95,6 +95,58 @@ interface Counts {
   ready: boolean;
 }
 
+interface Perf {
+  fps: number;
+  worstMs: number;
+  stalls: number;
+  /** Worst *streaming* cost seen, which is the part this repo can fix. */
+  worstWorkMs: number;
+}
+
+/**
+ * Watch the shipped frame meter for a while and report what it saw.
+ *
+ * Read off the meter the game already draws rather than timing from outside:
+ * what a player calls "not smooth" is the game's own frame cadence, and a
+ * number measured anywhere else is a number about the harness.
+ */
+async function measure(page: Page, forMs: number, label: string): Promise<Perf> {
+  const start = Date.now();
+  let worst = 0;
+  let stalls = 0;
+  let fps = 0;
+  let worstWork = 0;
+  let stage = '';
+  let stageMs = 0;
+  while (Date.now() - start < forMs) {
+    await sleep(500);
+    const now = await page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>('[data-fps-value]');
+      return {
+        fps: Number(el?.dataset['fpsValue'] ?? 0),
+        worstMs: Number(el?.dataset['fpsWorst'] ?? 0),
+        stalls: Number(el?.dataset['fpsStalls'] ?? 0),
+        workMs: Number(el?.dataset['fpsWork'] ?? 0),
+        stage: String(el?.dataset['fpsWorstStage'] ?? ''),
+        stageMs: Number(el?.dataset['fpsWorstStageMs'] ?? 0),
+      };
+    });
+    fps = now.fps;
+    worst = Math.max(worst, now.worstMs);
+    stalls = Math.max(stalls, now.stalls);
+    worstWork = Math.max(worstWork, now.workMs);
+    if (now.stageMs > stageMs) {
+      stageMs = now.stageMs;
+      stage = now.stage;
+    }
+  }
+  console.log(
+    `  ${label}: ${fps.toFixed(0)} fps, worst frame ${worst.toFixed(0)}ms, ` +
+      `worst streaming cost ${worstWork.toFixed(0)}ms (${stage} ${stageMs.toFixed(0)}ms), ${stalls} stalls`,
+  );
+  return { fps, worstMs: worst, stalls, worstWorkMs: worstWork };
+}
+
 async function counts(page: Page): Promise<Counts> {
   return page.evaluate(() => {
     const root = document.querySelector<HTMLElement>('[data-chunks-held]');
@@ -178,6 +230,12 @@ async function main(): Promise<void> {
     await page.waitForSelector('[data-world-ready]', { timeout: 90_000 });
     console.log('  world ready');
 
+    // Standing perfectly still, right after the gate lifts -- the window the
+    // report is about ("the first 2000 ticks are not smooth even standing
+    // still"). Nothing is pressed; every frame here is the streaming tail and
+    // whatever it triggers.
+    const settle = await measure(page, 20_000, 'standing still after load');
+
     // Walk, because a hole appears where the player goes.
     for (const key of ['KeyD', 'KeyD', 'KeyS']) {
       await page.keyboard.down(key);
@@ -197,6 +255,22 @@ async function main(): Promise<void> {
     check('every chunk held has been drawn', final.held > 0 && final.drawn >= final.held,
       `held ${final.held}, drawn ${final.drawn}`);
     check('the mesh queue drained', final.pending === 0, `pending ${final.pending}`);
+
+    // A frame budget rather than a target: this container paints through
+    // software GL at a handful of frames a second, so the *rate* here says
+    // nothing about a real machine. What does carry over is a single frame far
+    // longer than the rest -- that is main-thread work, and it is the same work
+    // on any machine.
+    // Measured against the *streaming* cost, not the frame time. This container
+    // paints through software GL at a few frames a second, so its frame times
+    // say nothing about a real machine -- but the main-thread work the loader
+    // does is the same work everywhere, and it is the only half this repo can
+    // do anything about.
+    check(
+      'the loader never took a sixth of a second of a frame after load',
+      settle.worstWorkMs < 160,
+      `worst streaming cost ${settle.worstWorkMs.toFixed(0)}ms`,
+    );
 
     if (errors.length > 0) {
       console.log('\npage reported errors:');

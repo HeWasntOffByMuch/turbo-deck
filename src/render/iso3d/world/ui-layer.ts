@@ -34,13 +34,13 @@ import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import type { WindowId } from './key-actions.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
-import type { ScaleChoice } from '../../../ui/input/display-store.js';
+import { DEFAULT_SHOW_FPS, type ScaleChoice } from '../../../ui/input/display-store.js';
 
 export type { WindowId } from './key-actions.js';
 export interface UiLayerOptions extends UiScreensOptions {
   /** The saved scale preference, read at the DOM edge. `'auto'` by default. */
   readonly scale?: ScaleChoice;
-  /** The saved frame-rate preference (spec 165), read at the same edge. Off by default. */
+  /** The saved frame-rate preference (spec 165), read at the same edge. On by default. */
   readonly showFps?: boolean;
 }
 
@@ -137,7 +137,7 @@ export class UiLayer {
     this.frame = this.measureFrame();
     this.screens = new UiScreens(options, { width: this.frame.width, height: this.frame.height });
     this.screens.setScale(this.scaleChoice, this.frame.scale);
-    this.screens.setShowFps(options.showFps ?? false);
+    this.screens.setShowFps(options.showFps ?? DEFAULT_SHOW_FPS);
     this.surface = new Canvas2dSurface(
       this.element,
       this.screens.atlas,

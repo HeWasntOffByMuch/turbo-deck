@@ -44,6 +44,15 @@ export interface IngestOptions {
   readonly settleMs: number;
   /** The prop field's own bucketing step, so a rect lands on region bounds. */
   readonly regionSize: number;
+  /**
+   * Regions handed back per flush.
+   *
+   * Rebuilding one region's props is ~60ms on the grown map, so several in a
+   * frame is a visible lurch even though each is small against the whole field.
+   * One at a time turns a lurch into a ripple: the regions still settle in the
+   * order their ground did, just a frame apart.
+   */
+  readonly regionsPerFlush: number;
 }
 
 /** The world rectangle a chunk's cells cover. */
@@ -74,6 +83,8 @@ export class ChunkIngest {
   private readonly dirtyRegions = new Map<string, number>();
   /** Chunks meshed over the session. */
   private meshedTotal = 0;
+  /** When a chunk was last offered. See {@link quietForMs}. */
+  private lastOfferMs = 0;
 
   constructor(options: IngestOptions) {
     this.options = options;
@@ -89,6 +100,7 @@ export class ChunkIngest {
    */
   offer(chunks: readonly TerrainChunk[], nowMs: number): void {
     if (chunks.length === 0) return;
+    this.lastOfferMs = nowMs;
     for (const chunk of chunks) {
       this.queue.set(`${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`, chunk);
       // Touched on arrival as well as on meshing, so a region with ground still
@@ -142,6 +154,7 @@ export class ChunkIngest {
     const size = this.options.regionSize;
     const out: WorldRect[] = [];
     for (const key of [...this.dirtyRegions.keys()].sort()) {
+      if (out.length >= this.options.regionsPerFlush) break;
       if (inFlight.has(key)) continue;
       const touched = this.dirtyRegions.get(key) ?? 0;
       if (nowMs - touched < this.options.settleMs) continue;
@@ -160,6 +173,18 @@ export class ChunkIngest {
   /** Chunks meshed over the session. For the loading gate and the readout. */
   get meshed(): number {
     return this.meshedTotal;
+  }
+
+  /**
+   * How long since anything last arrived, anywhere.
+   *
+   * The *global* clock, kept beside the per-region ones because two different
+   * jobs want two different answers: a region's trees can be drawn as soon as
+   * that region stops moving, but anything derived from the whole world -- the
+   * collider set, the nav grid -- should wait for the whole world to stop.
+   */
+  quietForMs(nowMs: number): number {
+    return nowMs - this.lastOfferMs;
   }
 
   /** Nothing queued and nothing owed -- the stream has caught up. */

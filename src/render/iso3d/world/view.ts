@@ -83,7 +83,13 @@ import { UiLayer } from './ui-layer.js';
 import { nearestVendorTo } from './shop-model.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
 import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
-import { loadScale, loadShowFps, saveScale, saveShowFps } from '../../../ui/input/display-store.js';
+import {
+  DEFAULT_SHOW_FPS,
+  loadScale,
+  loadShowFps,
+  saveScale,
+  saveShowFps,
+} from '../../../ui/input/display-store.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
@@ -157,6 +163,47 @@ const INGEST_BUDGET_MS = 6;
  * around it -- 1848 units square, comfortably past the default zoom's frame.
  */
 const READY_CHUNK_RADIUS = 2;
+
+/**
+ * Prop regions rebuilt in one frame.
+ *
+ * One. A region is ~60ms of geometry construction, and the measured worst
+ * streaming frame after load was 154ms with several landing together -- which is
+ * a lurch a player feels while standing still. They settle in the same order
+ * either way, a frame apart.
+ */
+const PROP_REGIONS_PER_FRAME = 1;
+
+/** How fast the streaming-cost readout falls back toward nothing. */
+const INGEST_DECAY = 0.92;
+
+/**
+ * How long the whole stream must be quiet before the colliders and nav grid are
+ * rebuilt (spec 165 follow-up 6).
+ *
+ * Far longer than `PROP_SETTLE_MS`, and for a reason worth stating: the trees
+ * want the *earliest* moment that is correct, and this wants the *cheapest*.
+ * Rebuilding is ~100ms of grid whatever has changed, so doing it once when the
+ * stream stops is worth waiting for; doing it per burst is the stutter this
+ * number exists to remove.
+ */
+const GROUND_REFRESH_QUIET_MS = 600;
+
+/**
+ * The least time between two collider-and-nav rebuilds.
+ *
+ * Measured: one of these is ~286ms -- the obstacle passes and the component
+ * flood over 797k cells, plus re-sampling whatever ground arrived since the
+ * last one. It was firing on every lull in a stream that has lulls all through
+ * it, which is a quarter-second hitch every second or so for the half-minute
+ * the far chunks take. That is the "not smooth even standing still" report.
+ *
+ * The client's grid is a *prediction* aid -- the server routes authoritatively
+ * -- so the cost of it being a few seconds stale is a predicted path that walks
+ * at a tree the server routes around, corrected the moment it matters. Against
+ * a visible hitch every second, that is not a close call.
+ */
+const GROUND_REFRESH_MIN_INTERVAL_MS = 5000;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
 /**
@@ -355,6 +402,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     meshBudget: MESH_BUDGET_PER_FRAME,
     settleMs: PROP_SETTLE_MS,
     regionSize: PROP_REGION_SIZE,
+    regionsPerFlush: PROP_REGIONS_PER_FRAME,
   });
   /**
    * Chunks the server has sent that this client has not inserted yet.
@@ -372,6 +420,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let lastLoadLabel = '';
   /** Whether the remote path has built its collision ground and nav grid once. */
   let firstGroundBuilt = false;
+  /** Chunks held when the colliders and nav grid were last rebuilt. */
+  let chunksAtGroundRefresh = -1;
+  /** When that last happened, so it cannot run on every lull. */
+  let lastGroundRefreshMs = 0;
   /** The last published mesh readout, so the DOM is written only on change. */
   let lastMeshState = '';
   /**
@@ -392,8 +444,32 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * are the two seconds with no history in them.
    */
   const frames = new FrameMeter();
+  /**
+   * The streaming cost of recent frames, decayed rather than averaged.
+   *
+   * A spike has to stay legible long enough to read -- at the frame rates this
+   * is diagnosing, an instantaneous number is gone before the eye lands on it --
+   * and it has to fall back to nothing once the world has settled, or the
+   * readout would claim the loader is still working when it is not.
+   */
+  let worstIngestMs = 0;
+  /**
+   * Which stage of the ingest was the worst one recently, and how bad.
+   *
+   * Named rather than summed, because "the loader cost you 150ms" and "the
+   * *props* cost you 150ms" are one question apart, and guessing which stage it
+   * was cost three build-and-measure rounds that a label would have answered
+   * outright.
+   */
+  let worstStage = '';
+  let worstStageMs = 0;
+  function stage(name: string, ms: number): void {
+    if (ms <= worstStageMs) return;
+    worstStageMs = ms;
+    worstStage = name;
+  }
   const fpsOverlay = createFpsOverlay(root);
-  let showFps = false;
+  let showFps = DEFAULT_SHOW_FPS;
 
   /**
    * Take whatever landed since the last frame, and mesh what the frame can afford.
@@ -430,6 +506,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       pendingInserts.set(`${held.layer}:${held.cx},${held.cz}`, held);
     }
 
+    const insertStart = performance.now();
     const spend = new FrameBudget(nowMs, INGEST_BUDGET_MS);
     for (const [key, held] of pendingInserts) {
       if (spend.spent()) break;
@@ -456,6 +533,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       }
     }
 
+    stage('insert', performance.now() - insertStart);
+
     // Every chunk this hands back, without exception.
     //
     // `takeMesh` *dequeues* what it returns, so breaking out of this loop early
@@ -464,10 +543,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // the world that never fills in, at whichever chunk the frame happened to
     // run out of time on. The list is already bounded by MESH_BUDGET_PER_FRAME;
     // the budget's job was done before it was built.
+    const meshStart = performance.now();
     for (const chunk of ingest.takeMesh(nowMs)) {
       scene.addTerrainChunk(chunk);
       drawnChunks.add(`${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`);
     }
+    stage('mesh', performance.now() - meshStart);
 
     // Props wait for the stream to go quiet rather than rebuilding per chunk.
     // One instanced mesh per species over the whole map is a few draw calls;
@@ -478,23 +559,38 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // covers, not the whole field. `takePropRects` returns nothing at all until
     // the queue is drained and the stream has been quiet, so this is a handful
     // of calls across a cold start rather than one per delta.
+    const propStart = performance.now();
     const rects = ingest.takePropRects(nowMs);
-    if (rects.length > 0) {
-      scene.refreshPropsWithin(rects);
-      // And the ground the *predictor* stands on, on the same settle and for
-      // the same reason (spec 146). A fresh colliders object costs a nav grid,
-      // because `navGridFor` memoizes on its identity -- so this must happen
-      // once per burst of arrivals rather than once per arrival.
-      //
-      // This is the call that used to be 4.9 seconds, because the sampler was
-      // minted fresh per call and nothing it sampled was ever reused. With the
-      // per-cell cache and one sampler for the session it re-samples only the
-      // ground that actually arrived.
-      if (plan.mode === 'remote' && streamed) {
-        fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
-        syncPathWorld();
-        if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
-      }
+    if (rects.length > 0) scene.refreshPropsWithin(rects);
+    stage('props', performance.now() - propStart);
+
+    // The ground the *predictor* stands on is a different question from the
+    // trees, and on a different clock (spec 165 follow-up 6).
+    //
+    // It used to ride the prop settle. That was fine while the settle was one
+    // event at the end of the stream; once the settle became per region it fired
+    // dozens of times, and each one rebuilt the whole nav grid -- ~100ms, over
+    // and over, for the half-minute the far chunks take to arrive. Standing
+    // still was not smooth, and this is why.
+    //
+    // So it waits for the *world* to go quiet rather than a region, and only
+    // runs when the collider set has actually grown since it last ran. A fresh
+    // colliders object costs a grid, because `navGridFor` memoizes on identity.
+    if (
+      plan.mode === 'remote' &&
+      streamed &&
+      streamed.size !== chunksAtGroundRefresh &&
+      ingest.idle &&
+      ingest.quietForMs(nowMs) >= GROUND_REFRESH_QUIET_MS &&
+      nowMs - lastGroundRefreshMs >= GROUND_REFRESH_MIN_INTERVAL_MS
+    ) {
+      const groundStart = performance.now();
+      lastGroundRefreshMs = nowMs;
+      chunksAtGroundRefresh = streamed.size;
+      fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
+      syncPathWorld();
+      if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
+      stage('nav', performance.now() - groundStart);
     }
   }
 
@@ -544,6 +640,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       ingest.pending === 0
     ) {
       firstGroundBuilt = true;
+      chunksAtGroundRefresh = streamed.size;
       fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
       syncPathWorld();
       if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
@@ -1898,7 +1995,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (swing !== 0) scene.controls.orbitBy(swing);
 
     const view = client.view();
+    // Timed, because "is this frame slow because of the loader or because of
+    // the machine" is the first question anybody debugging the cold start has,
+    // and the frame time alone cannot tell them (spec 165 follow-up 6).
+    const ingestStart = performance.now();
     ingestChunks(view, now);
+    const ingestMs = performance.now() - ingestStart;
+    worstIngestMs = Math.max(worstIngestMs * INGEST_DECAY, ingestMs);
     updateLoading(view);
     seedTheField(view);
     // A new delta resets the interpolation window. Measuring it from the delta's
@@ -1983,7 +2086,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // computed when somebody is looking -- the sort over the window is cheap but
     // it is not free, and a meter that costs frame time misreports the frame
     // time it costs.
-    fpsOverlay.set(showFps ? frames.stats() : null);
+    fpsOverlay.set(showFps ? frames.stats() : null, worstIngestMs, worstStage, worstStageMs);
 
     // Where the view is looking from and how wide it frames, for the probes.
     // They used to read the Orbit and Zoom sliders, and on a phone the panel
