@@ -51,6 +51,16 @@ export interface TradeUiView {
   readonly revision: number;
   /** Empty while it is live; why it ended once it is not. */
   readonly reason: string;
+  /**
+   * Whether the ending is the good one.
+   *
+   * `stage` collapses both endings into `over` on purpose -- to a player a
+   * trade is over either way -- but the *reason* has to read as an outcome
+   * rather than as an error, and there is no way to tell "the trade went
+   * through" from "they disconnected" by looking at the words. Without it, the
+   * one moment this whole screen exists for was drawn in the refusal colour.
+   */
+  readonly succeeded: boolean;
 }
 
 export interface TradeOptions {
@@ -216,6 +226,7 @@ export class TradeScreen extends Column {
     const invited = view.stage === 'offered';
     this.notice.setText(view.reason);
     this.notice.visible = view.reason.length > 0;
+    this.notice.colorToken = view.succeeded ? 'success' : 'danger';
 
     // An ended trade offers nothing that would ask the server for anything. A
     // button that is still there after the window is dead is a button whose

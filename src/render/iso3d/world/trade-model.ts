@@ -96,8 +96,10 @@ export function offeredSlotsOf(offer: TradeSideView['offer'], inventory: Invento
 export function tradeViewOf(source: TradeSource): TradeUiView | null {
   const trade = source.trade;
   if (!trade) return null;
+  const succeeded = trade.stage === TradeStageValue.Done;
   return {
     stage: stageOf(trade.stage),
+    succeeded,
     you: offerOf(trade.you),
     them: offerOf(trade.them),
     bag: source.inventory.map((stack) => (stack ? itemViewOf(stack.defId, stack.count) : null)),
@@ -105,6 +107,12 @@ export function tradeViewOf(source: TradeSource): TradeUiView | null {
     coins: trade.you.coins,
     purse: source.coins,
     revision: trade.revision,
-    reason: trade.reason,
+    // A completed trade carries no reason -- there is nothing to explain, which
+    // is exactly why it needs words here: the four cancellations all say why the
+    // window is still up, and a success said nothing at all, leaving the payoff
+    // of the whole feature as a blank panel with a Close button on it. The
+    // wording is presentation, so it lives out here with the rest of the rows
+    // rather than being invented by the server or by the screen.
+    reason: trade.reason === '' && succeeded ? 'the trade went through' : trade.reason,
   };
 }

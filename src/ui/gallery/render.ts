@@ -756,6 +756,10 @@ export function demoTrade(options: TradeRenderOptions = {}): TradeUiView {
   ];
   return {
     stage: options.over === true ? 'over' : 'open',
+    // The golden's ending is a cancellation -- the reason below says so -- so it
+    // is drawn in the refusal colour, which is what it was before there was a
+    // second kind of ending to tell it apart from.
+    succeeded: false,
     you: { name: 'You', rows: [{ name: 'Hunting Bow', count: 1 }], coins: 20, accepted: false },
     them: { name: 'Kestrel', rows: [{ name: 'Oak Shield', count: 1 }], coins: 0, accepted: true },
     bag,

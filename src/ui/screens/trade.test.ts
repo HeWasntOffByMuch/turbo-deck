@@ -31,6 +31,7 @@ function viewOf(over: Partial<TradeUiView> = {}): TradeUiView {
     purse: 60,
     revision: 4,
     reason: '',
+    succeeded: false,
     ...over,
   };
 }

@@ -100,6 +100,39 @@ describe('tradeViewOf', () => {
     }
   });
 
+  /**
+   * The good ending is the one the server has nothing to say about: `finish`
+   * leaves the reason empty because there is nothing to explain. That left the
+   * payoff of the whole feature as a blank panel with a Close button on it.
+   */
+  it('gives a completed trade words of its own', () => {
+    const view = tradeViewOf({
+      trade: { stage: TradeStageValue.Done, revision: 1, you: side(), them: side(), reason: '' },
+      inventory: emptyInventory(),
+      coins: 0,
+    });
+    expect(view?.stage).toBe('over');
+    expect(view?.succeeded).toBe(true);
+    expect(view?.reason).not.toBe('');
+  });
+
+  /** ...and never puts words in the server's mouth when it has some. */
+  it('leaves a stated reason alone, and marks a cancellation as not the good one', () => {
+    const view = tradeViewOf({
+      trade: {
+        stage: TradeStageValue.Cancelled,
+        revision: 1,
+        you: side(),
+        them: side(),
+        reason: 'you walked too far apart',
+      },
+      inventory: emptyInventory(),
+      coins: 0,
+    });
+    expect(view?.succeeded).toBe(false);
+    expect(view?.reason).toBe('you walked too far apart');
+  });
+
   it('names an item this build has never heard of rather than hiding the row', () => {
     const view = tradeViewOf({
       trade: {
