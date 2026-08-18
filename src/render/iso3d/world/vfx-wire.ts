@@ -21,6 +21,20 @@
  * here, which is the acceptance criterion the whole arc is built around.
  */
 
+import type { GoreLevel } from '../vfx/decals.js';
+
+/**
+ * How much blood a blow may draw, re-exported from the field that keeps the
+ * stains (spec 176).
+ *
+ * One declaration rather than three. It arrives *here* because what a blow looks
+ * like is this module's whole job, and blood is a thing a blow looks like -- the
+ * setting used to reach only `DecalField`, which owns the ground, so turning
+ * blood off left every red brush mark exactly where it was and only swept up
+ * after them.
+ */
+export type { GoreLevel };
+
 /** The damage-type language from `docs/vfx-plan.md` section 6. */
 export type DamageType = 'physical' | 'fire' | 'poison' | 'ice' | 'lightning' | 'arcane';
 
@@ -153,8 +167,13 @@ export function blowSeed(facts: CombatFacts, tick: number): number {
  * Capped at three deliberately. The budget is spent per-blow by the people
  * fighting, and an impact that fans out into six effects is one that starves the
  * next five impacts -- which is worse than any of the six looked good.
+ *
+ * `gore` is required rather than defaulted (spec 176), because a default is
+ * exactly how the one caller that matters goes on not passing it: this argument
+ * exists because the setting reached the ground and not the blow for fifty-five
+ * specs, with a green test either side of it.
  */
-export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayRequest[] {
+export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel): readonly PlayRequest[] {
   const out: PlayRequest[] = [];
   const seed = blowSeed(facts, tick);
 
@@ -214,16 +233,31 @@ export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayR
     return out;
   }
 
+  // How much a body bleeds *as far as the setting is concerned* (spec 176).
+  //
+  // One predicate rather than a branch per consequence, because everything below
+  // has to agree about it: at `Off` a body that would have bled draws precisely
+  // what a construct draws -- the damage type's own flash and its debris -- so
+  // the blow is still legible. Dropping the blood and putting nothing in its
+  // place would make a fight harder to read, which is a worse setting than the
+  // one being fixed.
+  const bleeds = facts.bleeds && gore > 0;
+
   // Blood is painted since spec 158: `blood_hit_brush` throws brush marks along
-  // the blow rather than a spray of ribbons. A killing blow gets the loud
-  // variant, and then `death_blood` as well -- the two are doing different jobs
-  // and always were. The brush hit is the *moment*, over inside half a second
-  // and leaving nothing; `death_blood` is the pool, and the stain it puts on the
-  // ground outlives every particle either of them owns (spec 120). Dropping it
-  // would quietly delete the gore setting's whole subject.
-  if (facts.bleeds) {
-    out.push(at(facts.killed ? 'blood_hit_brush_heavy' : 'blood_hit_brush', 2));
-    if (facts.killed) out.push(at('death_blood', 6));
+  // the blow rather than a spray of ribbons. At `Full` a killing blow gets the
+  // loud variant, and then `death_blood` as well -- the two are doing different
+  // jobs and always were. The brush hit is the *moment*, over inside half a
+  // second and leaving nothing; `death_blood` is the pool, and the stain it puts
+  // on the ground outlives every particle either of them owns (spec 120).
+  //
+  // `Less` is where the two part company: the wound stays and the pool goes. It
+  // is the loud one, it is the one that lasts, and it is the one that lays a
+  // 96-unit stain on the floor, so a setting that means "less of this" and left
+  // it in place would be reducing the only part nobody minds.
+  if (bleeds) {
+    const loud = gore === 2 && facts.killed;
+    out.push(at(loud ? 'blood_hit_brush_heavy' : 'blood_hit_brush', 2));
+    if (loud) out.push(at('death_blood', 6));
   } else {
     out.push(at(DAMAGE_EFFECTS[facts.damageType], 3));
   }
@@ -234,7 +268,7 @@ export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayR
   // it -- and only off a body that is not already throwing blood, so a blow
   // never draws two kinds of debris at once.
   const debris = DAMAGE_DEBRIS[facts.damageType];
-  if (debris && !facts.bleeds) out.push(at(debris, 5));
+  if (debris && !bleeds) out.push(at(debris, 5));
 
   return out;
 }

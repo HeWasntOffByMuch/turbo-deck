@@ -7,12 +7,18 @@
  * budget's soft caps, and at 0 it skips the whole update -- an effect is not
  * simulated into a void and then hidden.
  *
- * **Gore** is a content control, and it has to be honest about being one. At
- * `Off` the decal field refuses every stain and holds no geometry: nothing is
- * stored, no bucket is ever marked dirty, and no mesh is ever built. Hiding
- * decals while still generating and merging them would be a setting that lies to
- * somebody who turned it off because their machine was struggling -- and to
- * somebody who turned it off because they did not want to see it.
+ * **Gore** is a content control, and it has to be honest about being one. It
+ * reaches two places, and for fifty-five specs it only reached the second.
+ *
+ * `vfx-wire.ts` decides what a blow *throws*: at `Off` a body that bleeds draws
+ * the same impact a construct draws and no blood is played at all, and at `Less`
+ * a killing blow keeps the wound and loses the pool. `DecalField` decides what
+ * stays on the *ground*: at `Off` it refuses every stain and holds no geometry,
+ * and at `Less` it keeps a quarter of the caps. Hiding decals while still
+ * generating and merging them would be a setting that lies to somebody who
+ * turned it off because their machine was struggling -- and drawing the spatter
+ * anyway lied to somebody who turned it off because they did not want to see it,
+ * which is what it did (spec 176).
  *
  * DOM only, like the six panels beside it. The widgets *are* the state: nothing
  * is persisted and every session opens at defaults, which is this tab's standing
@@ -21,9 +27,12 @@
 
 import { createSettingsMenu, resetButton, section } from './settings-menu.js';
 import { createMenuGroup, type MenuGroup } from './menu-group.js';
+import type { GoreLevel } from './vfx/decals.js';
 
 export type VfxIntensity = 0 | 1 | 2 | 3;
-export type GoreLevel = 0 | 1 | 2;
+// Re-exported rather than declared again (spec 176): three copies of `0 | 1 | 2`
+// is three places for a fourth step to be added in two of them.
+export type { GoreLevel };
 
 export interface VfxSettings {
   readonly intensity: VfxIntensity;
@@ -145,9 +154,10 @@ export function createVfxControls(opts: VfxControlOptions = {}): VfxControls {
 
   const gore = makeChoice<GoreLevel>(
     'Blood',
-    'Blood spatter and the stains it leaves on the ground. Off refuses every stain ' +
-      'outright -- none is stored and no geometry is built for one -- so it costs nothing ' +
-      'as well as showing nothing.',
+    'Blood spatter and the stains it leaves on the ground. Less keeps the wound and drops ' +
+      'the pool a death leaves, and holds a quarter as much ground. Off plays no blood at ' +
+      'all -- a hit draws the same impact a construct draws -- and refuses every stain ' +
+      'outright, so it costs nothing as well as showing nothing.',
     [
       { value: 0, text: 'Off' },
       { value: 1, text: 'Less' },

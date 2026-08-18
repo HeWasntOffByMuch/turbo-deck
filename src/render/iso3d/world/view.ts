@@ -55,7 +55,7 @@ import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { HeldChunk } from '../../../server/client/map-cache.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
-import { createVfxControls } from '../vfx-controls.js';
+import { createVfxControls, VFX_DEFAULTS } from '../vfx-controls.js';
 import { createWireControls } from '../wire-controls.js';
 import { UnreliableChannel, type WireConditions } from '../../../server/net/unreliable.js';
 import { parseWire } from '../../../server/net/wire-query.js';
@@ -76,7 +76,7 @@ import { abilityForSlot, actionBarFromQuery } from './action-bar.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
-import { effectsForBlow, REDUNDANT_SERVER_EFFECTS } from './vfx-wire.js';
+import { effectsForBlow, REDUNDANT_SERVER_EFFECTS, type GoreLevel } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
 import { pickupLead, pickupOrderFor } from './loot-drop.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
@@ -761,6 +761,28 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
+   * Mirrors the effects settings onto the root element (spec 176).
+   *
+   * Read back off the layer that acts on them rather than off the panel that
+   * asked, which is the whole point: a button that lit up and reached nothing
+   * publishes the old numbers. `data-held-weapons` is published from the bone
+   * for the same reason (spec 165).
+   */
+  let lastVfxReadout = '';
+  function publishVfxReadout(): void {
+    const readout = scene.vfxReadout();
+    const playing = readout.effectIds.join(',');
+    const text = `${readout.intensity}:${readout.gore}:${readout.particles}:${readout.decals}:${playing}`;
+    if (text === lastVfxReadout) return;
+    lastVfxReadout = text;
+    root.dataset['vfxIntensity'] = String(readout.intensity);
+    root.dataset['vfxGore'] = String(readout.gore);
+    root.dataset['vfxParticles'] = String(readout.particles);
+    root.dataset['vfxDecals'] = String(readout.decals);
+    root.dataset['vfxStarted'] = playing;
+  }
+
+  /**
    * Mirrors what the interface is showing onto the root element (spec 131).
    *
    * The same window `publishUnitReadout` opens, and needed for the same reason
@@ -880,6 +902,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
   // gets the defaults and the options window (spec 135) instead.
   const showsTuningMenus = hudLayout(isHandheldDevice()).showsTuningMenus;
+  /**
+   * How much blood the effects panel is currently asking for (spec 176).
+   *
+   * Held out here because the panel is not built on a handheld and
+   * `onCombatResult` is registered whatever the device -- a phone keeps
+   * `VFX_DEFAULTS`, which is the same answer spec 140 gives for every other
+   * setting in this corner. It is the *blow* this feeds, not the decal field:
+   * that half was already wired and was never the half anybody could see.
+   */
+  let gore: GoreLevel = VFX_DEFAULTS.gore;
   if (showsTuningMenus) {
     const weather = createWeatherControls({ group: scene.controls.menus });
     // The seventh button (spec 121). Both settings are pushed straight into the
@@ -890,6 +922,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       onChange: (settings) => {
         scene.setVfxIntensity(settings.intensity);
         scene.setGore(settings.gore);
+        gore = settings.gore;
       },
     });
     // The eighth button (spec 147). Writes into the conditions the channel
@@ -946,6 +979,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
           bleeds: true,
         },
         client.view().estimatedTick,
+        gore,
       )) {
         scene.playEffect(request);
       }
@@ -2246,6 +2280,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     );
 
     publishUnitReadout();
+    publishVfxReadout();
 
     // Last, over everything (spec 131). It is handed `now` rather than reading
     // one: nothing under `src/ui/` may touch a clock, which is what makes an

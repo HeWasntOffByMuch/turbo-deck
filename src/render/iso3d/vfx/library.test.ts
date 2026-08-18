@@ -14,7 +14,7 @@ import { LIBRARY, aura, burst, fire, puff } from './library.js';
 import { compileRegistry } from './compile.js';
 import { sampleCurve, compileCurve, sampleGradient, compileGradient } from './curve.js';
 import { VfxSystem } from './system.js';
-import { DAMAGE_EFFECTS, DAMAGE_DEBRIS } from '../world/vfx-wire.js';
+import { DAMAGE_EFFECTS, DAMAGE_DEBRIS, effectsForBlow } from '../world/vfx-wire.js';
 import { spriteSheet, sheetFrames } from './textures.js';
 import { MARK_REACH } from './meshes.js';
 
@@ -119,6 +119,53 @@ describe('the damage-type tables', () => {
 
   it('gives every damage type its own flash', () => {
     expect(new Set(Object.values(DAMAGE_EFFECTS)).size).toBe(Object.keys(DAMAGE_EFFECTS).length);
+  });
+
+  it('names only effects the registry holds, at every gore level (spec 176)', () => {
+    // The tables above are what a *typo* hides in; this is what a new branch
+    // hides in. The gore level chooses between four blood ids, and a level that
+    // names one the registry has not got plays nothing and looks like the
+    // setting working.
+    const seen = new Set<string>();
+    for (const gore of [0, 1, 2] as const) {
+      for (const damageType of Object.keys(DAMAGE_EFFECTS) as (keyof typeof DAMAGE_EFFECTS)[]) {
+        for (const bleeds of [false, true]) {
+          for (const killed of [false, true]) {
+            for (const critical of [false, true]) {
+              for (const blocked of [false, true]) {
+                for (const damage of [-14, 0, 10]) {
+                  const played = effectsForBlow(
+                    {
+                      attackerId: 1,
+                      targetId: 2,
+                      damage,
+                      killed,
+                      critical,
+                      blocked,
+                      damageType,
+                      x: 0,
+                      y: 0,
+                      z: 0,
+                      fromX: -40,
+                      fromZ: 0,
+                      bleeds,
+                    },
+                    1,
+                    gore,
+                  );
+                  for (const request of played) seen.add(request.id);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (const id of seen) expect(ids.has(id), id).toBe(true);
+    // And the sweep actually reached the blood vocabulary, or it proved nothing.
+    expect(seen).toContain('blood_hit_brush');
+    expect(seen).toContain('blood_hit_brush_heavy');
+    expect(seen).toContain('death_blood');
   });
 });
 
