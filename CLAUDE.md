@@ -804,7 +804,37 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  bag that changed underneath refuses the whole trade instead of
                  trading whatever is in that slot now. The property test counts
                  both players together, because a swap that duplicated a sword
-                 leaves each bag individually plausible. data/ holds
+                 leaves each bag individually plausible.
+                 Two rules from spec 170, both about *which side of the table
+                 you are on*. `setOffer` accepts an offer from the **inviting
+                 side only** while a trade is still an invitation, and leaves
+                 the stage alone: an empty request asks "do you want to trade?"
+                 with no goods and no reason to say yes, but advancing on the
+                 first item would put the invitee at a table they never agreed
+                 to sit at and `respond` -- which only runs at `offered` --
+                 could then never fire. And `exchangeProblem` is `swap` minus
+                 the stage check, so the same arithmetic answers "would this go
+                 through" for a table nobody has accepted yet; the server runs
+                 it on every publish and sends a **per-player** warning that
+                 disables Accept. It names a *side* rather than describing one,
+                 because the single reason string `swap` returned went to both
+                 players and could only ever be true for one: the player whose
+                 own bag was the problem was told "their bag is full", after
+                 both had accepted, which is the one moment neither of them can
+                 do anything about it.
+                 Spec 171 is the other end of the same idea: **an offer is
+                 resolved late everywhere except at the moment it stops being an
+                 offer.** The `done` message is published after `applyTrade` has
+                 written both bags, so resolving slot indices there reads a bag
+                 that has moved on -- and since `addToInventory` fills the first
+                 free slot, which is the one your own offer just emptied, each
+                 side was credited with what it *received*. The ending came back
+                 as the trade reversed. `swap` carries out what it took, and the
+                 terminal message uses that; every other publish still resolves
+                 late, because for a live table that is the duplication defence.
+                 A cancellation resolves too and is right to -- nothing was
+                 written, so the bag it reads is the one the offer was made
+                 from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `sim/aggro.ts` is whether one body has business with another
@@ -1324,7 +1354,37 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  reads the boxes back off `data-ui-frames`, reloads the tab and
                  requires the same numbers. Everything the feature decides is
                  asserted in Node; what it could not say is whether any of it
-                 was connected to anything),
+                 was connected to anything.
+                 Since spec 169 it also owns the trade table's *ending*, and the
+                 rule is that the mount reads `view.trade ?? view.endedTrade`:
+                 the server forgets a trade the instant it is over, so by the
+                 time there is a reason to show, the live field is already null
+                 -- a window reading only that froze on its last live frame and
+                 offered a Cancel button for a trade nobody was in. **Closing is
+                 what dismisses the ending**, and it lives in `close` and
+                 `closeTopmost` rather than in the Close button, because Escape
+                 and the title bar shut a window without pressing anything --
+                 the same shape the shop's `onVendor('')` already has, and
+                 without it the mount re-opened the ending on the very next
+                 frame. This is also the one window that is **re-placed when its
+                 content changes shape**: every other screen is roughly one
+                 size, and the trade table opens holding an invitation and then
+                 grows a bag grid, which left Accept 77 pixels below its own
+                 window's bottom edge and the trade unfinishable without
+                 resizing by hand. `npx tsx scripts/probe-trade.ts` is the only
+                 thing that could find either -- two tabs, two players, one
+                 server, the real shift-right-click and the real buttons, with
+                 both bags counted afterwards because a swap that duplicated the
+                 bow leaves each side individually plausible.
+                 Since spec 170 **closing a live trade cancels it**, because
+                 leaving the table is what closing means and the alternative is
+                 a player sitting in a trade they cannot see and cannot start
+                 another one from -- before it the mount re-opened the window
+                 every frame a trade was live, so Escape and the title bar did
+                 nothing at all. What that needs is `tradeLeft`, and it is an
+                 **id rather than a flag**: the cancel takes a round trip, the
+                 trade stays live and replicated throughout it, and a flag was
+                 cleared by the very re-open it existed to prevent),
                  loot-drop.ts (how a drop looks while it is still withholding
                  itself, spec 158 -- the three.js half is `iso3d/drop-rig.ts`,
                  beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks

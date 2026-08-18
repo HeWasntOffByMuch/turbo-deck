@@ -87,15 +87,18 @@ import { attributeByOrdinal } from './data/attributes.js';
 import { resolveProgression } from './player/progression.js';
 import { DEFAULT_SPAWN, experienceForLevel, PlayerManager } from './player/player-manager.js';
 import {
+  exchangeProblem,
   inTradeRange,
+  isLive,
   isSwappable,
   partiesOf,
   TradeRegistry,
+  type MovedStacks,
   type Trade,
 } from './player/trades.js';
 import { MemoryDataStore } from './state/memory-store.js';
 import type { DataStore } from './state/store.js';
-import type { Vec3 } from './state/types.js';
+import type { ItemStack, Vec3 } from './state/types.js';
 import {
   ActivityValue,
   EntityKindValue,
@@ -1545,7 +1548,11 @@ export class GameServer implements AdminHost {
    * player is offering; it is told, and what it draws is what the server would
    * swap.
    */
-  private publishTrade(trade: Trade): void {
+  private publishTrade(trade: Trade, moved?: MovedStacks): void {
+    // Asked once for both players rather than per message: it is the same
+    // question about the same two bags, and the only thing that differs between
+    // the two sends is which side of the answer is "yours" (spec 170).
+    const problem = this.tradeProblem(trade);
     for (const playerId of partiesOf(trade)) {
       const connection = this.connectionForPlayer(playerId);
       if (!connection) continue;
@@ -1555,11 +1562,42 @@ export class GameServer implements AdminHost {
         tradeId: trade.id,
         stage: GameServer.TRADE_STAGES[trade.stage],
         revision: trade.revision,
-        you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision),
-        them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision),
+        you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision, moved?.[mine ? 'a' : 'b']),
+        them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision, moved?.[mine ? 'b' : 'a']),
         reason: trade.reason,
+        // `a` is the side that opened the trade, so `b` is the side being asked.
+        invited: !mine,
+        warning: GameServer.warningFor(problem, mine ? 'a' : 'b'),
       });
     }
+  }
+
+  /**
+   * Whose bag would stop this trade, right now.
+   *
+   * Run on every publish rather than only at settle time, so a full bag is
+   * something a player is told about while the table is still open and can be
+   * fixed -- it used to arrive after both sides had accepted, as the reason the
+   * trade had been cancelled. Null while either player has no session, because
+   * a trade with a missing side is about to be cancelled for that reason
+   * instead, and a bag warning would be the wrong thing to say about it.
+   */
+  private tradeProblem(trade: Trade): { readonly side: 'a' | 'b'; readonly reason: string } | null {
+    if (!isLive(trade)) return null;
+    const [aId, bId] = partiesOf(trade);
+    const a = this.players.holdingsOf(aId);
+    const b = this.players.holdingsOf(bId);
+    if (!a || !b) return null;
+    return exchangeProblem(trade, a, b);
+  }
+
+  /** The problem as the named side reads it: theirs, yours, or nothing. */
+  private static warningFor(
+    problem: { readonly side: 'a' | 'b'; readonly reason: string } | null,
+    mine: 'a' | 'b',
+  ): string {
+    if (!problem) return '';
+    return problem.side === mine ? `your bag: ${problem.reason}` : `their bag: ${problem.reason}`;
   }
 
   /**
@@ -1573,13 +1611,23 @@ export class GameServer implements AdminHost {
   private tradeSideView(
     side: Trade['a'],
     revision: number,
+    moved?: readonly ItemStack[],
   ): { playerId: string; displayName: string; offer: { defId: string; count: number }[]; coins: number; accepted: boolean } {
     const session = this.players.get(side.playerId);
     const bag = session?.record.inventory ?? [];
     const offer: { defId: string; count: number }[] = [];
-    for (const entry of side.offer) {
-      const stack = bag[entry.index];
-      if (stack) offer.push({ defId: stack.defId, count: Math.min(entry.count, stack.count) });
+    // What actually changed hands, when the swap has already run (spec 171).
+    // The resolve below cannot answer this any more: the bags have been
+    // written, so the slot an offer names holds whatever landed in it -- which,
+    // for a side whose own offer emptied that slot, is what it just *received*.
+    // The ending read as the trade reversed.
+    if (moved) {
+      for (const stack of moved) offer.push({ defId: stack.defId, count: stack.count });
+    } else {
+      for (const entry of side.offer) {
+        const stack = bag[entry.index];
+        if (stack) offer.push({ defId: stack.defId, count: Math.min(entry.count, stack.count) });
+      }
     }
     return {
       playerId: side.playerId,
@@ -1623,7 +1671,7 @@ export class GameServer implements AdminHost {
       return;
     }
 
-    this.endTrade(this.trades.finish(trade));
+    this.endTrade(this.trades.finish(trade), result.moved);
     for (const playerId of [aId, bId]) {
       const connection = this.connectionForPlayer(playerId);
       if (!connection) continue;
@@ -1632,9 +1680,15 @@ export class GameServer implements AdminHost {
     }
   }
 
-  /** Tell both sides a trade is over, then stop holding it. */
-  private endTrade(trade: Trade): void {
-    this.publishTrade(trade);
+  /**
+   * Tell both sides a trade is over, then stop holding it.
+   *
+   * `moved` is present only for a trade that actually settled. A cancellation
+   * goes on resolving against the bag, and is right to: nothing was written, so
+   * the bag it resolves against is the bag the offer was made from.
+   */
+  private endTrade(trade: Trade, moved?: MovedStacks): void {
+    this.publishTrade(trade, moved);
     this.trades.forget(trade.id);
   }
 

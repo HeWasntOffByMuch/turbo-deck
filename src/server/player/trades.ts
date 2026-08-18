@@ -21,6 +21,7 @@ import {
   accept,
   beginTrade,
   cancel,
+  exchangeProblem,
   isLive,
   isSwappable,
   respond,
@@ -34,7 +35,7 @@ import {
   type TradeOutcome,
 } from './trade.js';
 
-export type { Trade, TradeStage, OfferedSlot, Holdings, SwapOutcome } from './trade.js';
+export type { Trade, TradeStage, OfferedSlot, Holdings, MovedStacks, SwapOutcome } from './trade.js';
 
 /** How close two players must be to trade at all, in world units. */
 export const TRADE_RANGE = 90;
@@ -175,4 +176,4 @@ export function partiesOf(trade: Trade): readonly [string, string] {
   return [trade.a.playerId, trade.b.playerId];
 }
 
-export { sideOf, isLive, isSwappable };
+export { sideOf, isLive, isSwappable, exchangeProblem };

@@ -51,6 +51,34 @@ export interface TradeUiView {
   readonly revision: number;
   /** Empty while it is live; why it ended once it is not. */
   readonly reason: string;
+  /**
+   * Whether the ending is the good one.
+   *
+   * `stage` collapses both endings into `over` on purpose -- to a player a
+   * trade is over either way -- but the *reason* has to read as an outcome
+   * rather than as an error, and there is no way to tell "the trade went
+   * through" from "they disconnected" by looking at the words. Without it, the
+   * one moment this whole screen exists for was drawn in the refusal colour.
+   */
+  readonly succeeded: boolean;
+  /**
+   * You are the side being asked, rather than the side that asked.
+   *
+   * Both players sit at stage `offered`, so without this the person who *sent*
+   * the request was shown "Accept invitation" and "Decline" for their own
+   * request -- two buttons the server refuses, which reads as a broken screen
+   * rather than as a rule.
+   */
+  readonly invited: boolean;
+  /**
+   * What would stop this trade going through right now. Empty when nothing
+   * would.
+   *
+   * Already phrased for the player reading it -- "your bag" or "their bag" --
+   * because whose problem it is is a fact about the table, and this screen does
+   * not know which side of it it is drawing.
+   */
+  readonly warning: string;
 }
 
 export interface TradeOptions {
@@ -61,6 +89,19 @@ export interface TradeOptions {
 }
 
 const DEFAULT_COLUMNS = 6;
+
+/**
+ * Whether this player may put things on the table.
+ *
+ * The inviter may furnish an invitation; the invited side may not, until it has
+ * answered. Stated once because the buttons' visibility and the two edit paths
+ * have to agree -- a hidden grid whose `toggle` still fired would be an offer a
+ * player could not see themselves making.
+ */
+function editable(view: TradeUiView): boolean {
+  if (view.stage === 'over') return false;
+  return view.stage !== 'offered' || !view.invited;
+}
 
 /** One side's list: a heading, its rows, its coins and whether it said yes. */
 class OfferPanel extends Column {
@@ -125,6 +166,11 @@ export class TradeScreen extends Column {
   private readonly yours: OfferPanel;
   private readonly bagCells: ItemSlot[] = [];
   private readonly notice = new Label('', 'body');
+  /** Shown to the side that sent an invitation nobody has answered yet. */
+  private readonly waitingLabel = new Label('', 'body');
+  /** The two things that only mean anything while the table can be edited. */
+  private readonly coinRow: Row;
+  private readonly bagHeading: Label;
   private readonly grid: Grid;
   private shown: TradeUiView | null = null;
 
@@ -138,6 +184,8 @@ export class TradeScreen extends Column {
     this.yours = new OfferPanel('trade:yours', theme);
     this.notice.colorToken = 'danger';
     this.notice.wrap = true;
+    this.waitingLabel.colorToken = 'textDim';
+    this.waitingLabel.wrap = true;
 
     this.acceptButton = new Button('Accept', 'trade:accept');
     this.acceptButton.onPress = () => {
@@ -173,6 +221,7 @@ export class TradeScreen extends Column {
     coinLabel.colorToken = 'textDim';
     coinLabel.layoutAlign = 'center';
     coins.addAll([coinLabel, this.removeCoin, this.addCoin]);
+    this.coinRow = coins;
 
     const buttons = new Row('trade:buttons');
     buttons.gap = theme.spacing.xs;
@@ -182,6 +231,7 @@ export class TradeScreen extends Column {
     yoursHeading.colorToken = 'textDim';
     const bagHeading = new Label('CLICK TO OFFER', 'body');
     bagHeading.colorToken = 'textDim';
+    this.bagHeading = bagHeading;
 
     this.addAll([
       this.theirs,
@@ -192,6 +242,7 @@ export class TradeScreen extends Column {
       bagHeading,
       this.grid,
       this.notice,
+      this.waitingLabel,
       buttons,
     ]);
   }
@@ -213,26 +264,59 @@ export class TradeScreen extends Column {
     this.syncBag(view);
 
     const over = view.stage === 'over';
-    const invited = view.stage === 'offered';
-    this.notice.setText(view.reason);
-    this.notice.visible = view.reason.length > 0;
+    const pending = view.stage === 'offered';
+    // Two different screens share this stage (spec 170). The side being *asked*
+    // answers yes or no and edits nothing; the side that asked builds the
+    // request and waits. Telling them apart is the whole reason `invited` is on
+    // the wire -- `you` and `them` are symmetric, so the screen cannot work it
+    // out.
+    const asked = pending && view.invited;
+    const waiting = pending && !view.invited;
+
+    // The reason an ended trade gives, or -- while it is live -- whatever would
+    // stop it going through. Never both: a live trade has no reason and an
+    // ended one is past being warned about.
+    const notice = over ? view.reason : view.warning;
+    this.notice.setText(notice);
+    this.notice.visible = notice.length > 0;
+    this.notice.colorToken = view.succeeded ? 'success' : 'danger';
+
+    // Said in the heading rather than as a button, because there is nothing to
+    // press: the request has gone and the other player has not answered it yet.
+    this.waitingLabel.setText('WAITING FOR AN ANSWER');
+    this.waitingLabel.visible = waiting;
 
     // An ended trade offers nothing that would ask the server for anything. A
     // button that is still there after the window is dead is a button whose
-    // press is refused, and a refusal the player did not cause is noise.
-    this.acceptButton.setLabel(invited ? 'Accept invitation' : 'Accept');
-    this.acceptButton.visible = !over;
-    this.acceptButton.enabled = !over;
-    this.declineButton.visible = invited;
+    // press is refused, and a refusal the player did not cause is noise -- and
+    // so is an Accept shown to the player who sent the invitation.
+    this.acceptButton.setLabel(asked ? 'Accept invitation' : 'Accept');
+    this.acceptButton.visible = !over && !waiting;
+    // ...and a table that cannot be exchanged cannot be accepted. The warning
+    // beside it says which bag, so this is a refusal the player can act on
+    // rather than one they have to discover by pressing.
+    this.acceptButton.enabled = !over && !waiting && view.warning === '';
+    this.declineButton.visible = asked;
     // The one button that survives the ending, because a window with nothing to
-    // press is a window a player has to find the corner of.
-    this.cancelButton.visible = true;
+    // press is a window a player has to find the corner of. The exception is an
+    // invitation being answered: Decline is already the "no" there, and two
+    // buttons a keystroke apart that both mean "not this" is a question rather
+    // than a choice.
+    this.cancelButton.visible = !asked;
     this.cancelButton.setLabel(over ? 'Close' : 'Cancel');
-    this.addCoin.visible = !over && !invited;
-    this.removeCoin.visible = !over && !invited;
+    // The inviter furnishes the request; the invited side stays a spectator
+    // until it has answered.
+    const canEdit = editable(view);
+    // Their headings with them: "CLICK TO OFFER" over no grid, and a COINS row
+    // with no stepper in it, are the interface describing controls it is not
+    // showing.
+    this.coinRow.visible = canEdit;
+    this.bagHeading.visible = canEdit;
+    this.addCoin.visible = canEdit;
+    this.removeCoin.visible = canEdit;
     this.addCoin.enabled = view.coins + (this.options.coinStep ?? 10) <= view.purse;
     this.removeCoin.enabled = view.coins > 0;
-    this.grid.visible = !over && !invited;
+    this.grid.visible = canEdit;
 
     this.invalidateMeasure();
   }
@@ -280,7 +364,7 @@ export class TradeScreen extends Column {
    */
   toggle(index: number): void {
     const view = this.shown;
-    if (!view || view.stage === 'over' || view.stage === 'offered') return;
+    if (!view || !editable(view)) return;
     const stack = view.bag[index];
     if (!stack) return;
 
@@ -299,7 +383,7 @@ export class TradeScreen extends Column {
   /** Change the coins offered, clamped to the purse. Emits the whole offer. */
   stepCoins(by: number): void {
     const view = this.shown;
-    if (!view || view.stage === 'over' || view.stage === 'offered') return;
+    if (!view || !editable(view)) return;
     const next = Math.max(0, Math.min(view.purse, view.coins + by));
     if (next === view.coins) return;
     this.onOffer?.(
