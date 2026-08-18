@@ -1,8 +1,10 @@
 import type { MapMarkerKind, PropKind } from '../../../terrain/index.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 import { DEFAULT_BRUSH, TERRAIN_TOOLS, type TerrainTool } from './brush.js';
+import { DEFAULT_PAINT_MATERIAL, PAINT_MATERIALS, type PaintMaterial } from './paint.js';
 import { DEFAULT_FENCE, FENCE_STYLES, fenceStep, type FenceStyle } from './fence.js';
 import { MARKER_KINDS } from './markers.js';
+import { TERRAIN_COLORS } from '../palette.js';
 import { DEFAULT_WALK_SLOPE } from './nav.js';
 import { DEFAULT_SCATTER } from './scatter.js';
 
@@ -18,10 +20,22 @@ import { DEFAULT_SCATTER } from './scatter.js';
  */
 
 /** What left-drag does. */
-export type EditorMode = 'terrain' | 'scatter' | 'fence' | 'marker' | 'erase' | 'part' | 'rock';
+export type EditorMode =
+  | 'terrain'
+  | 'paint'
+  | 'scatter'
+  | 'fence'
+  | 'marker'
+  | 'erase'
+  | 'part'
+  | 'rock';
 
 export const EDITOR_MODES: readonly EditorMode[] = [
   'terrain',
+  // Beside the terrain brush rather than at the end: the two share a footprint
+  // and are the two halves of the same question -- what shape the ground is,
+  // and what it is made of.
+  'paint',
   'scatter',
   'fence',
   'marker',
@@ -53,6 +67,9 @@ export const NEW_ROCK_TIER = '';
 /** Ring colour per mode and tool, so the cursor says what is about to happen. */
 export const MODE_COLORS: Record<EditorMode, number> = {
   terrain: 0xffe27a,
+  // Overridden per material by `cursorColor`; this is only what the mode button
+  // falls back to before one is chosen.
+  paint: 0xc8823f,
   scatter: 0x8fe0b4,
   fence: 0xd8a878,
   marker: 0xd0d0e8,
@@ -74,6 +91,19 @@ export const ROCK_TOOL_COLORS: Record<RockTool, number> = {
   // Moss green: the pass that puts grass and bushes on a tier.
   detail: 0x8fc07a,
 };
+/**
+ * The swatch for each paintable material: the ground's own colour, so the
+ * palette is a row of swatches and the cursor ring says what is about to be laid
+ * down. The same choice `ROCK_TOOL_COLORS.stair` already makes, which is the
+ * warm dirt of the tread it lays.
+ *
+ * The first of the material's two tones -- a cell takes one of the pair from a
+ * noise field, and a swatch has to pick one.
+ */
+export const PAINT_COLORS: Record<PaintMaterial, number> = Object.fromEntries(
+  PAINT_MATERIALS.map((material) => [material, TERRAIN_COLORS[material][0]]),
+) as Record<PaintMaterial, number>;
+
 export const TOOL_COLORS: Record<TerrainTool, number> = {
   raise: 0x8fe08f,
   lower: 0xe08f8f,
@@ -96,6 +126,8 @@ export interface EditorSettings {
   tool: TerrainTool;
   strength: number;
   falloff: number;
+  /** What the material brush is loaded with (spec 176). Shares radius and falloff. */
+  paintMaterial: PaintMaterial;
   // Scatter
   species: PropKind;
   density: number;
@@ -162,6 +194,7 @@ export function createEditorSettings(): EditorSettings {
     tool: DEFAULT_BRUSH.tool,
     strength: DEFAULT_BRUSH.strength,
     falloff: DEFAULT_BRUSH.falloff,
+    paintMaterial: DEFAULT_PAINT_MATERIAL,
     species: DEFAULT_SCATTER.species,
     density: DEFAULT_SCATTER.density,
     maxSlope: DEFAULT_SCATTER.maxSlope,
@@ -196,6 +229,7 @@ export function createEditorSettings(): EditorSettings {
 /** The colour the cursor takes for the armed tool. */
 export function cursorColor(settings: EditorSettings): number {
   if (settings.mode === 'terrain') return TOOL_COLORS[settings.tool];
+  if (settings.mode === 'paint') return PAINT_COLORS[settings.paintMaterial];
   if (settings.mode === 'part') return PART_TOOL_COLORS[settings.partTool];
   if (settings.mode === 'rock') return ROCK_TOOL_COLORS[settings.rockTool];
   return MODE_COLORS[settings.mode];
@@ -232,7 +266,10 @@ export function cursorRadius(settings: EditorSettings): number {
  */
 export interface ToolVisibility {
   readonly radius: boolean;
+  /** Shared by the two brushes that work under a weighted footprint. */
+  readonly falloff: boolean;
   readonly terrain: boolean;
+  readonly paint: boolean;
   readonly scatter: boolean;
   readonly fence: boolean;
   readonly marker: boolean;
@@ -244,8 +281,12 @@ export function visibleGroups(mode: EditorMode): ToolVisibility {
   return {
     // The fence lays a fixed tile and a marker is a point: neither has a
     // footprint for the radius to set.
-    radius: mode === 'terrain' || mode === 'scatter' || mode === 'erase',
+    radius: mode === 'terrain' || mode === 'paint' || mode === 'scatter' || mode === 'erase',
+    // The eraser takes everything under its circle whole, so a weight has
+    // nothing to weight; the scatter has a density instead.
+    falloff: mode === 'terrain' || mode === 'paint',
     terrain: mode === 'terrain',
+    paint: mode === 'paint',
     scatter: mode === 'scatter',
     fence: mode === 'fence',
     marker: mode === 'marker',
@@ -269,6 +310,7 @@ export const MODE_CHOICES = choices(EDITOR_MODES);
 export const PART_TOOL_CHOICES = choices(PART_TOOLS);
 export const ROCK_TOOL_CHOICES = choices(ROCK_TOOLS);
 export const TERRAIN_TOOL_CHOICES = choices(TERRAIN_TOOLS);
+export const PAINT_MATERIAL_CHOICES = choices(PAINT_MATERIALS);
 export const MARKER_CHOICES = choices(MARKER_KINDS);
 /**
  * What a spawner marker may name, straight from the MONSTERS table (spec 076).
