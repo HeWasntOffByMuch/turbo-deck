@@ -799,10 +799,22 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  process, and the release tick belongs to the attack. The last
                  tick a withdrawal works on is `releaseTick - 1`, asserted from
                  both sides in `sim/attack-cancel.test.ts`.
-                 Where a player's attack speed comes from is deliberately still
-                 nowhere: spec 091 took the cadence off the weapon on purpose and
-                 144 built over that rather than reversing it, so the stat is a
-                 socket at zero and monsters author BAT per row as they already
+                 Where a player's attack speed comes from is the **weapon**,
+                 since spec 174: 091 took the cadence off it and 144 rebuilt the
+                 socket without plugging anything in, which left four rows in
+                 `data/items.ts` authoring an `attackSpeedPct` that reached
+                 nothing for eighty specs -- the Keen Longsword's stated defining
+                 feature inert, and the maul and the bow keeping their damage
+                 without ever paying the drawback they were priced against. What
+                 makes it a weapon *speed* rather than a cadence is that one
+                 factor divides all three spans, so a quick weapon shortens the
+                 wind-up and the backswing along with the wait; a weapon that
+                 only came round again sooner would make the pause the stat
+                 rather than the blow. Two things did **not** move with it:
+                 spec 147's commitment that nothing an *attribute* writes reaches
+                 `baseAttackTimeTicks` or the three inputs, so the fast stat
+                 still cannot become the damage stat, and monsters, which author
+                 BAT per row beside their own `NO_ATTACK_SPEED` as they already
                  did. `npx tsx scripts/probe-attack.ts --cancel=never|backswing`
                  prints the two timelines side by side, and the invariant reads
                  off the summaries: same attacks, same cadence, a body rooted 24

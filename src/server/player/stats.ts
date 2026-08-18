@@ -21,9 +21,9 @@ import {
 } from '../../sim/constants.js';
 import { CHARACTERS } from '../../sim/characters.js';
 import {
+  attackSpeedFromHaste,
   MAX_ATTACK_INTERVAL_SECONDS,
   MIN_ATTACK_INTERVAL_SECONDS,
-  NO_ATTACK_SPEED,
 } from '../sim/attack-timing.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
@@ -199,23 +199,31 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
-  // Base Attack Time, and the three attack-speed inputs beside it (spec 144).
+  // Base Attack Time, and the three attack-speed inputs beside it (specs 144, 174).
   //
-  // All four are deliberately unmodified. Spec 091 took the attack cadence off
-  // the weapon on purpose -- a bow and a sword put you on the same clock, and
-  // picking one up cannot buy a faster one -- and spec 144 builds the HoN model
-  // over that decision rather than reversing it. `attackSpeedPct` and the flat
-  // `attackCooldownTicks` still exist as modifiers and still mean what they say;
-  // nothing reads them here, which is why the two Finesse skills still do not
-  // shorten the cadence and `stats.test.ts` still asserts that they do not.
+  // Spec 144 built this socket and deliberately left it unplugged; spec 174
+  // plugs it in, because four weapon rows had been authoring `attackSpeedPct`
+  // into it since spec 070 and every one of them was inert. Spec 091's rule
+  // that the cadence is a property of attacking rather than of what is held is
+  // reversed **for the weapon half only** -- that is the half a player picks
+  // up and can therefore make a decision about.
   //
-  // What changed is that there is now somewhere for an attack-speed source to
-  // plug in when a spec decides there should be one: `attackSpeed` is additive
-  // flat in the HoN convention, and the two multipliers stack apart from it.
-  // Converting the existing modifiers onto those three is one call to
-  // `attackSpeedFromHaste` and a sign test, and it is a content decision rather
-  // than a refactor, so it is left undone rather than done quietly.
-  const baseAttackTimeTicks = baseAttackTimeTicksFrom(0);
+  // What is NOT reversed is spec 147's structural commitment: every Agility
+  // scale is on the attack point and the backswing, and nothing an attribute
+  // writes reaches `baseAttackTimeTicks` or any of these three. The fast stat
+  // still cannot become the damage stat by shortening the cadence, and
+  // `stats.test.ts` still asserts it.
+  //
+  // The two multipliers are the same summed fraction split by sign rather than
+  // one number in one bucket. Arithmetically that is identical today -- the
+  // factor is their product and the other is 1 -- and it is written this way so
+  // that a slow arriving later as a status lands in the slow bucket beside the
+  // slows rather than being cancelled against an item's haste.
+  const baseAttackTimeTicks = baseAttackTimeTicksFrom(bonus.attackCooldownTicks);
+  const attackSpeed = attackSpeedFromHaste(bonus.attackSpeed);
+  const attackSpeedPct = Number.isFinite(bonus.attackSpeedPct) ? bonus.attackSpeedPct : 0;
+  const attackSpeedMultiplier = 1 + Math.max(0, attackSpeedPct);
+  const attackSpeedSlowMultiplier = 1 + Math.min(0, attackSpeedPct);
 
   const armor = armorFromAttributes(attributes, bonus.armor);
 
@@ -245,7 +253,9 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     attackDamage,
     attackRange,
     baseAttackTimeTicks,
-    ...NO_ATTACK_SPEED,
+    attackSpeed,
+    attackSpeedMultiplier,
+    attackSpeedSlowMultiplier,
     armor,
     spellPower,
     critChance,
