@@ -24,6 +24,7 @@ import { advanceCast, mayCast, modelledResource, steerFacing, type Mirror } from
 import { GameClient } from './game-client.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
+import { EntityActivity } from '../net/protocol.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -60,6 +61,10 @@ function mirror(overrides: Partial<Mirror> = {}): Mirror {
     stats: STATS,
     poise: 0,
     shield: 0,
+    // Not staggered, which is what every test here that is not about the
+    // stagger assumes (spec 173).
+    activity: 0,
+    activityUntilTick: 0,
     ...overrides,
   };
 }
@@ -460,5 +465,43 @@ describe('what the player sees, the moment they press', () => {
     const entity = server.world.entities.get(client.view().selfEntityId);
     // And the server's own number is what it settles on.
     expect(client.view().resource).toBeCloseTo(entity?.resource ?? -1, 1);
+  });
+});
+
+describe('a staggered mirror refuses the same thing the server does (spec 173)', () => {
+  it('refuses a cast while the break holds', () => {
+    // The mirror used to hardcode `activity: 0`, which would light a button the
+    // server is about to refuse -- and a stagger is the one refusal the player
+    // did not cause, so it is the one they are least ready for.
+    const decision = mayCast(
+      mirror({ activity: EntityActivity.Stunned, activityUntilTick: 40 }),
+      'melee.slash',
+      EAST,
+      10,
+      10,
+    );
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) expect(decision.reason).toBe('staggered');
+  });
+
+  it('takes it again on the tick the window ends', () => {
+    // The gate is `tick < activityUntilTick`, the same comparison the sim's own
+    // `expireActivity` uses, so the two cannot disagree about the last tick.
+    const staggered = mirror({ activity: EntityActivity.Stunned, activityUntilTick: 40 });
+    const inside = mayCast(staggered, 'melee.slash', EAST, 39, 39);
+    const outside = mayCast(staggered, 'melee.slash', EAST, 40, 40);
+    expect(inside.ok).toBe(false);
+    expect(outside.ok).toBe(true);
+  });
+
+  it('is not fooled by a stale window on an idle body', () => {
+    const decision = mayCast(
+      mirror({ activity: EntityActivity.Idle, activityUntilTick: 999 }),
+      'melee.slash',
+      EAST,
+      10,
+      10,
+    );
+    expect(decision.ok).toBe(true);
   });
 });

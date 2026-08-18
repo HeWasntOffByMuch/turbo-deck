@@ -472,6 +472,88 @@ describe('a body faces what it was told to attack (spec 090)', () => {
   });
 });
 
+describe('a poise break holds the legs and the heading (spec 173)', () => {
+  const HELD_FACING = 1.2;
+
+  it('asks for no movement, whatever is held', () => {
+    const result = intent({
+      staggered: true,
+      held: new Set([MOVE_NORTH, MOVE_EAST]),
+      facing: HELD_FACING,
+    });
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+  });
+
+  it('asks for the heading it already has, whatever is held', () => {
+    // The half a correction can never fix. A `Correction` carries a position,
+    // so a predicted step is pulled back inside a round trip; it carries no
+    // facing at all, so a body that kept turning through its own stagger is an
+    // error nothing corrects.
+    expect(
+      intent({ staggered: true, held: new Set([MOVE_NORTH]), facing: HELD_FACING }).facing,
+    ).toBe(HELD_FACING);
+  });
+
+  it('outranks a wind-up aim', () => {
+    // A break clears the cast, so this should not arise from the sim -- but the
+    // two fields are set from different places on the client and the ordering
+    // has to be stated rather than left to whichever branch is written first.
+    const result = intent({
+      staggered: true,
+      castAim: { x: 500, y: 500 },
+      facing: HELD_FACING,
+    });
+    expect(result.facing).toBe(HELD_FACING);
+    expect(result.moveX).toBe(0);
+  });
+
+  it('outranks the mark of a standing attack order', () => {
+    // `autoAttack` already refuses to chase or swing while staggered, but it
+    // still hands back a mark, and facing one is a turn the server will not
+    // make.
+    const result = intent({
+      staggered: true,
+      targetAim: { x: 500, y: 0 },
+      facing: HELD_FACING,
+    });
+    expect(result.facing).toBe(HELD_FACING);
+  });
+
+  it('outranks a standing move order', () => {
+    const result = intent({
+      staggered: true,
+      destination: { x: 900, y: 0 },
+      facing: HELD_FACING,
+    });
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+    expect(result.facing).toBe(HELD_FACING);
+  });
+
+  it('outranks the aim of something being put down (spec 172)', () => {
+    // The two features met in this function on the same day. A drop's aim
+    // deliberately turns the body *while it walks*, which is the one branch
+    // here that returns a live direction -- so it is the one most able to
+    // smuggle a turn through a stagger. The server pins `steered.facing`
+    // regardless, so the client must not ask for one.
+    const result = intent({
+      staggered: true,
+      dropAim: { x: 500, y: 500 },
+      held: new Set([MOVE_EAST]),
+      facing: HELD_FACING,
+    });
+    expect(result.facing).toBe(HELD_FACING);
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+  });
+
+  it('walks again the moment the window ends', () => {
+    const result = intent({ staggered: false, held: new Set([MOVE_EAST]) });
+    expect(result.moveX).toBe(1);
+  });
+});
+
 /**
  * Turning to put something down (spec 172).
  *

@@ -1086,6 +1086,76 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  never merely because Strength was invested in, and it is capped
                  below 1 because a wind-up nothing can answer would make the
                  readable commitment this whole game is built on unreadable.
+                 Its `staggered` predicate is what makes a break cost anything
+                 (spec 173), and it is one function because it is asked in three
+                 places: the movement pass roots the legs on it, `startCast`
+                 refuses the hands on it, and `blow.ts` reads the same state for
+                 Strength's execute bonus. Until 173 none of that existed -- the
+                 flag was written and read twice in the whole server, so a
+                 staggered body walked at full speed and ended its own stagger
+                 early by casting through it, because a commit writes
+                 `activity: Casting` over `Stunned`. Every poise test in the tree
+                 passed throughout, because all of them called
+                 `applyPoiseDamage` directly and asked about the pool.
+                 Two rules came out of wiring it, and the first was learned by
+                 writing the wrong thing first. **A staggered intent is pinned,
+                 never nulled**: a null intent is how the movement pass says "no
+                 request arrived", and `casters` is built from exactly that, so
+                 nulling it hid the body's *cast request* along with its
+                 movement -- the swing was not refused, it was never considered,
+                 and the client sat out `PREDICTED_CAST_TIMEOUT_TICKS` on every
+                 blow it tried to throw. Spec 080's rule covers a stagger too:
+                 a request that cannot be honoured still gets an answer. So the
+                 movement is zeroed and the *facing* is pinned to where the body
+                 already points, which is also the one thing that separates this
+                 root from a cast's -- a caster keeps steering (spec 067 holds
+                 the aim live to the commit and that is the feature), where a
+                 body that kept tracking you through its own stagger would read
+                 as unaffected. And **the onset cannot be predicted**: spec 067's
+                 `selfRoot` works because the client knows it pressed the button,
+                 and nobody knows they are about to be hit, so one round trip of
+                 discarded movement is the accepted cost -- bounded because
+                 `activity` is replicated and the client stops the moment it sees
+                 it, and masked because it lands on the same frame as spec 145's
+                 chunk and 146's kick. What the client *can* close is the asking:
+                 `target.ts` holds the standing order while `selfStaggered`, which
+                 took one measured fight from 146 refusals to two.
+                 `world/stagger-flinch.ts` is the reaction, and it is the channel
+                 that needs no authored content -- a decaying rock on the drawn
+                 yaw, in the same vocabulary as 146's kick and restarted by every
+                 break for the same reason, because a break is a contact and not
+                 a measurement. The window is replicated and the *start* is
+                 observed, so a client that reconnects mid-stagger never invents
+                 a contact nobody watched. `unit-driver.ts` also raises a
+                 `stagger` trigger for a rig that declared one; none has yet, so
+                 that channel is silently waiting for a clip.
+                 `world/stun-icon.ts` is the mark beside the reaction -- a swirl
+                 over the head, in `hud.ts`'s existing per-body holder -- and it
+                 is **stateless**, which is the whole difference from the flinch
+                 next to it. A flinch is a *contact* and needs an edge somebody
+                 watched, so it keeps a track and refuses to fire for a body
+                 that walked into view already broken; a swirl is a *state*, and
+                 a body that is stunned is stunned whoever was looking. So there
+                 is no map and nothing to prune, and the phase runs off the
+                 replicated `activityUntilTick` rather than an observed start,
+                 which is what makes every client draw the same angle on the
+                 same tick with nothing replicated for it. It fades over a fixed
+                 *count* of ticks rather than a fraction, because a fraction
+                 needs the window's length and the function is handed only its
+                 end.
+                 What the client half got wrong first is worth keeping: only
+                 `autoAttack` was taught about the stagger, and its two
+                 neighbours were not. `moveIntent` kept asking for a *heading*
+                 while the server pinned the body's own -- worse than a
+                 mispredicted step, because a `Correction` carries a position
+                 and no facing at all, so a predicted turn is an error nothing
+                 ever corrects. And `castOrder` gates on `rooted`, which is "a
+                 cast is in progress" -- but a break *clears* the cast it
+                 interrupted, so `rooted` is false for the entire window and a
+                 standing order chased and cast straight through it. Both now
+                 take `staggered` as their own field, and the `moveIntent`
+                 branch is *first*, ahead of a held key, since the key is the
+                 one branch a player is actively driving.
                  `sim/statuses.ts` is one small timer map and everything the
                  progression needs to remember between ticks goes in it, because
                  twelve mechanics as twenty-four entity fields is twenty-four

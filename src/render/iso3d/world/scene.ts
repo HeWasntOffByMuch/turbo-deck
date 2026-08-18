@@ -33,6 +33,7 @@ import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
+import { StaggerFlinches } from './stagger-flinch.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
@@ -477,6 +478,8 @@ export class WorldScene {
    * `motion`: the sim owns the heading, this owns how a body gets to it.
    */
   private readonly turnEase = new TurnEase();
+  /** The rock a poise break puts on a body (spec 173). Presentation only. */
+  private readonly staggerFlinches = new StaggerFlinches();
   private readonly bodies = new Map<number, Body>();
   /**
    * The groups `RetroPass` leaves out of the quantize (spec 138).
@@ -1263,6 +1266,7 @@ export class WorldScene {
     // The drawn yaw keeps per-body state for the same reason the drawn position
     // does, and is dropped on the same pass (spec 142).
     this.turnEase.retain(live);
+    this.staggerFlinches.retain(live);
   }
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
@@ -1332,9 +1336,22 @@ export class WorldScene {
           ? (pose?.z ?? entity.z)
           : this.ground(x, y);
 
+      // The poise break's rock (spec 173), added to the drawn transform and to
+      // nothing else. `frame.tick` is the same clock the bodies above are
+      // interpolated by, so this lands on the same frame at 30fps and at 144.
+      const flinch = this.staggerFlinches.read(
+        entity.id,
+        entity.activity,
+        entity.activityUntilTick,
+        frame.tick,
+      );
+
       body.group.position.set(x, ground, y);
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
-      body.group.rotation.y = -facing;
+      body.group.rotation.y = -facing + flinch.yaw;
+      // Rocked back about the lateral axis. Written every frame rather than
+      // only while flinching, so a body that settles is put back flat.
+      body.group.rotation.z = flinch.pitch;
 
       // Both rigs read their own gait out of the positions they are handed, so
       // neither needs the scene to remember where it drew them last frame.

@@ -57,7 +57,8 @@ import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.j
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
 import { bottomEdge, errorStackBottom, hudLayout, poolBottom, stripWidth } from './hud-layout.js';
-import { slotIconSvg, systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
+import { slotIconSvg, stunIconSvg, systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
+import { stunMark } from './stun-icon.js';
 import { ACTION_BAR, type ActionSlot } from './action-bar.js';
 import { deathOverlay } from './death.js';
 import { poolBars } from './pool-bars.js';
@@ -152,6 +153,15 @@ interface Bar {
   readonly guardFill: HTMLElement;
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
+  /**
+   * The swirl over a stunned body (spec 173).
+   *
+   * Above the name, so it is the topmost thing in the stack and cannot be
+   * confused with anything the body *has* -- health, guard and the cast bar are
+   * all quantities, and this is a state. It sits in the same bottom-anchored
+   * holder as the rest, so it rides the body without a second projection.
+   */
+  readonly stun: HTMLElement;
 }
 
 /**
@@ -952,9 +962,29 @@ export function createHud(
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
     cast.append(castFill);
 
-    holder.append(name, healthTrack, guard, cast);
+    // The stun swirl (spec 173). Built once and hidden, like the name: a body
+    // is stunned for well under a second at a time and creating an element per
+    // break would churn the DOM on every blow that lands.
+    const stun = document.createElement('div');
+    stun.style.cssText = [
+      'display:none',
+      'margin:0 auto 2px',
+      'width:18px',
+      'height:18px',
+      // Amber, the cast bar's colour, because both mean "this body is committed
+      // to something it cannot get out of" -- and deliberately not the guard
+      // blue, which marks the bar that ran out rather than what happened next.
+      'color:#ffcf6b',
+      'filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))',
+      // The glyph is turned by writing a transform each frame; naming the origin
+      // here means that write is one property rather than two.
+      'transform-origin:50% 50%',
+    ].join(';');
+    stun.innerHTML = stunIconSvg({ size: 18 });
+
+    holder.append(stun, name, healthTrack, guard, cast);
     root.append(holder);
-    const made: Bar = { root: holder, name, health, ghost, guard, guardFill, cast, castFill };
+    const made: Bar = { root: holder, name, health, ghost, guard, guardFill, cast, castFill, stun };
     bars.set(id, made);
     return made;
   }
@@ -1062,6 +1092,17 @@ export function createHud(
       // The fill is replicated health and nothing here delays it; the white
       // band behind it is the chunk the last blow took, decided in the pure
       // field off the same presentation clock the bars are placed by.
+      // The stun swirl (spec 173). Stateless, so unlike the flash above there is
+      // nothing per-body to retain or prune: a body that is stunned right now is
+      // stunned whether or not this client watched the blow, which is exactly
+      // what a *state* mark should say and the opposite of the flinch's rule.
+      const stun = stunMark(entity.activity, entity.activityUntilTick, tick);
+      element.stun.style.display = stun.visible ? 'block' : 'none';
+      if (stun.visible) {
+        element.stun.style.transform = `rotate(${stun.spin.toFixed(1)}deg)`;
+        element.stun.style.opacity = stun.opacity.toFixed(2);
+      }
+
       const fill = flashes.read(anchor.id, entity.health, entity.maxHealth, tick * TICK_MS);
       // The flinch moves the *bar*, not the body: it is added to the anchor
       // here rather than being a transform of its own, because the holder's
