@@ -722,3 +722,72 @@ columns at once.
 what is drawn rather than what the sim does. The fps column in that table is
 software-rasterised and transfers to nothing; the draws and triangles transfer
 to any GPU.
+
+---
+
+## Tenth follow-up: the shadow map is redrawn when something moved, not every frame
+
+Follow-up 9 found the shadow pass was 335 of 625 draws over a world whose sun
+does not move, whose terrain does not move and whose 6942 props do not move.
+`shadowMap.autoUpdate` has been false since spec 045 -- and then `needsUpdate`
+was set to `true` unconditionally once a frame, which is the same thing as
+`autoUpdate` written out longhand.
+
+The instruction this implements was "only rebuild when the sun's position
+changes". That rule is not enough, and the two things it leaves out are not
+edge cases:
+
+- **the shadow camera follows the player.** `applySun` copies the view target
+  into the light every frame, so walking moves the volume the map covers under
+  a sun that has not moved at all -- and the zoom moves its radius;
+- **bodies cast shadows.** `meshes.ts`, `unit-rig.ts` and `weapon-rig.ts` all
+  set `castShadow`, so a monster walking past invalidates the map with nothing
+  else in the world having changed.
+
+Freeze on the sun alone and every shadow in a fight stays where the thing that
+cast it used to be. So `world/shadow-refresh.ts` compares four things against
+the state the map was last *built* from -- the light's direction, the shadow
+camera's centre and radius, a geometry counter bumped whenever casting geometry
+is added or hidden, and a signature over every body's drawn position, facing and
+squash -- and asks for a rebuild when any of them has moved. Epsilons and a
+quarter-unit quantum sit under all of it, because the camera follow is
+exponential and creeps in the last decimal for a long time after the player has
+stopped: a bare inequality would call that a change and rebuild every frame,
+which is the behaviour being replaced.
+
+What it is measured to do, standing still on the grown map, and walking:
+
+| variant | draws | triangles | rebuild rate |
+|---|---|---|---|
+| standing still | **290** | **230k** | **0%** |
+| walking | 582 | 488k | 43% |
+| shadow every frame (the old behaviour, `?perf=eagershadow`) | 582 | 524k | — |
+| no shadow map at all (`?perf=noshadow`) | 290 | 230k | 0% |
+
+A world at rest now costs exactly what a world with no shadows at all costs.
+A world in motion costs what it always did.
+
+Two things follow, and both are honest limits rather than things to tune away.
+
+**The win is the standing-still frame, and only that.** Walking moves the
+shadow camera every frame, so the gate cannot skip -- 582 draws against the
+eager 582. Buying anything there means *snapping* the shadow camera's centre to
+a grid so travel only re-triggers on a boundary crossing, and the margin
+available for it is thin: `shadowFrame` uses a radius of `1.8 * halfWidth`
+against a framed ground radius of about `1.7 * halfWidth`, so roughly `0.1 *
+halfWidth` is spare -- around 45 units at the default span. A 40-unit snap
+would spend half of that and take the walking rebuild rate to a handful a
+second. Not built: it trades a real margin for a real win and that is a call to
+make deliberately.
+
+**A body animating in place is not seen.** There is no cheap number standing
+for "what pose is this rig in", so an idle clip's limbs move without moving the
+group and the signature does not notice. Under `BasicShadowMap` at this camera
+that is a few units of hard edge that stops breathing until the body turns or
+steps -- stated in the module rather than discovered later.
+
+`?perf=eagershadow` is the one flag in `perf-flags.ts` that puts work *back*: it
+forces the old unconditional rebuild, which is how the two rows above were
+measured on one machine in one scene without checking out the old code. The
+readout carries the rate (`shadow N%`, over a 30-frame window) so the win is
+visible while playing rather than only in a probe.
