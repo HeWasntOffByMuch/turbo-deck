@@ -172,7 +172,7 @@ const STAT_ROWS: readonly {
   {
     label: 'Speed',
     of: (s) => `${basicAttackTiming(s).attacksPerSecond.toFixed(2)}/s`,
-    hint: 'Attacks per second. Nothing raises this yet -- Agility shortens the swing, not the cadence.',
+    hint: 'Attacks per second, after your weapon. Agility shortens the swing, not the cadence.',
   },
   // What that rate is before attack speed, and what attack speed is doing to it
   // (spec 144). Two rows rather than one, because a player who cannot see both
@@ -184,14 +184,14 @@ const STAT_ROWS: readonly {
   },
   {
     label: 'Attack speed',
-    of: (s) => {
-      const factor = basicAttackTiming(s).factor;
-      return `${s.attackSpeed >= 0 ? '+' : ''}${Math.round(s.attackSpeed)} (${factor.toFixed(2)}x)`;
-    },
-    // Honest rather than encouraging. Spec 091 took the cadence off the weapon
-    // on purpose and 144 built the socket without plugging anything into it, so
-    // this reads +0 for everybody and will until a spec says otherwise.
-    hint: 'Not implemented: no item, buff or attribute grants attack speed yet. Always +0.',
+    // The factor rather than the additive `attackSpeed` stat (spec 174). Both
+    // are real and only one has a source: items author `attackSpeedPct`, which
+    // is a multiplier, and nothing authors the flat half. The rule at the top
+    // of this table says to state what a number does or state that it does
+    // nothing, and a permanently-zero `+0` printed beside a factor that moves
+    // is the one thing that manages neither.
+    of: (s) => `${basicAttackTiming(s).factor.toFixed(2)}x`,
+    hint: 'Divides the gap between attacks, the wind-up and the recovery alike. From your weapon.',
   },
   { label: 'Armour', of: (s) => `${Math.round(s.armor * 100)}%`, hint: 'Fraction of incoming damage removed. Constitution, and a little Agility.' },
   {

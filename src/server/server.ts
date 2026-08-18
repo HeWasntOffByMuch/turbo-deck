@@ -40,7 +40,9 @@ import {
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
+  MAX_PENDING_DROPS,
   MAX_REWIND_TICKS,
+  DROP_TURN_TIMEOUT_TICKS,
   RESUME_GRACE_TICKS,
   CONNECTION_TIMEOUT_TICKS,
   PROTOCOL_VERSION,
@@ -50,10 +52,18 @@ import {
 } from './config.js';
 import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
+import { facesAim } from './sim/abilities.js';
+import { headingToward } from './sim/movement.js';
 import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
-import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityToByte } from './data/items.js';
-import { isRevealed, makeDrop, type DropState } from './sim/loot.js';
+import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
+import {
+  isRevealed,
+  makeDrop,
+  makeDroppedItem,
+  throwLanding,
+  type DropState,
+} from './sim/loot.js';
 import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
 import {
   decodeAdminRequest,
@@ -66,6 +76,7 @@ import { DeltaTracker } from './net/delta.js';
 import {
   decodeClientMessage,
   encodeServerMessage,
+  type DropItemMessage,
   type LootDropMessage,
   type RequestChunkMessage,
   type ServerMessage,
@@ -87,15 +98,18 @@ import { attributeByOrdinal } from './data/attributes.js';
 import { resolveProgression } from './player/progression.js';
 import { DEFAULT_SPAWN, experienceForLevel, PlayerManager } from './player/player-manager.js';
 import {
+  exchangeProblem,
   inTradeRange,
+  isLive,
   isSwappable,
   partiesOf,
   TradeRegistry,
+  type MovedStacks,
   type Trade,
 } from './player/trades.js';
 import { MemoryDataStore } from './state/memory-store.js';
 import type { DataStore } from './state/store.js';
-import type { Vec3 } from './state/types.js';
+import type { ItemStack, SlotAddress, Vec3 } from './state/types.js';
 import {
   ActivityValue,
   EntityKindValue,
@@ -260,6 +274,19 @@ interface Connection {
   readonly pendingCasts: PendingCast[];
   /** Cancels, stamped the same way. */
   readonly pendingCancels: PendingCancel[];
+  /**
+   * Drops asked for and not yet turned to (spec 172), oldest first.
+   *
+   * Here rather than in the sim because what a drop takes out of a bag lives
+   * behind an async store the sim cannot reach; what the sim holds is
+   * `dropAim`, which is the half it needs to turn the body.
+   *
+   * A queue for the reason {@link Connection.pendingCasts} is one, plus a
+   * second: emptying four things at the same spot should be one turn and four
+   * drops rather than a turn each, and it is exactly that -- the head aligns and
+   * the rest are already facing the way they asked for.
+   */
+  readonly pendingDrops: PendingDrop[];
   /** The shop this connection has open, or '' (spec 129). */
   openVendorId: string;
   /** Bumped by every cast or cancel, so the two queues can be put back in order. */
@@ -273,6 +300,27 @@ interface Connection {
    * they are immediate.
    */
   lastDriftTick: number;
+}
+
+/**
+ * A drop waiting for the body to come round to it (spec 172).
+ *
+ * `aim` is a world point rather than a heading, because the body may walk while
+ * it turns: a heading captured at the press would send the item off at an angle
+ * from wherever the player ended up, and the point they clicked is the thing
+ * they actually meant.
+ */
+interface PendingDrop {
+  readonly at: SlotAddress;
+  /** 0 for the whole stack, as on the wire. */
+  readonly count: number;
+  /** Answered at this id, taken or refused. */
+  readonly requestId: number;
+  readonly aim: { readonly x: number; readonly y: number };
+  /** The tick it was asked on, so a turn that never lands is not forever. */
+  readonly askedAtTick: number;
+  /** Set while its `dropItem` is in flight, so a tick cannot serve it twice. */
+  serving: boolean;
 }
 
 interface PendingCast {
@@ -439,6 +487,7 @@ export class GameServer implements AdminHost {
       toldOfDeath: false,
       pendingCasts: [],
       pendingCancels: [],
+      pendingDrops: [],
       openVendorId: '',
       asks: 0,
       appliedSeq: 0,
@@ -632,6 +681,21 @@ export class GameServer implements AdminHost {
         // refusal is what takes a client's optimistic guess back, so it has to
         // arrive on the same channel as the acceptance.
         this.sendInventory(connection, message.requestId);
+        break;
+      }
+
+      case ClientMessageType.DropItem: {
+        if (connection.playerId === null) return;
+        const reason = this.queueDrop(connection, message);
+        // A queued drop is answered when it lands, not now: the body has to turn
+        // to face it first (spec 172). Only a refusal answers here, and it
+        // answers at the request id like `MoveItem` and `PickUpItem` do,
+        // because the removal is predicted and the refusal is what takes the
+        // guess back.
+        if (reason !== null) {
+          this.reportAction(connection, reason);
+          this.sendInventory(connection, message.requestId);
+        }
         break;
       }
 
@@ -1125,6 +1189,12 @@ export class GameServer implements AdminHost {
       if (ended) this.endTrade(ended);
     }
     connection.openVendorId = '';
+    // A drop waiting for a turn goes with the connection (spec 172). The body
+    // may linger for its grace period and a lingering body still resolves its
+    // facing, so an aim left behind is a corpse-in-waiting turning toward
+    // something nobody is going to throw.
+    connection.pendingDrops.length = 0;
+    this.aimAtHeadDrop(connection);
     this.connections.delete(connection);
 
     const resumable =
@@ -1463,6 +1533,184 @@ export class GameServer implements AdminHost {
     return null;
   }
 
+  /**
+   * Take a drop request, or refuse it outright (spec 172). Null when it queued.
+   *
+   * Nothing leaves the bag here. Putting something down is an action that needs
+   * facing, so what this does is write the aim onto the body -- `resolveFacing`
+   * turns it from there at its own rate -- and get in line. {@link serveDrops}
+   * is what happens when the heading arrives.
+   *
+   * The refusals here are the ones that are true whatever the body does next: a
+   * client that is not logged in, a corpse, an aim that is not a pair of
+   * numbers, and a queue already deeper than anybody could have meant. Whether
+   * the *slot* holds what was asked for is deliberately not checked yet -- it is
+   * checked when the drop happens, because that is when it matters and the bag
+   * can change while the body turns.
+   */
+  private queueDrop(connection: Connection, message: DropItemMessage): string | null {
+    if (connection.playerId === null) return 'not logged in';
+    const body = this.state.entities.get(connection.entityId);
+    // A corpse does not empty its pockets.
+    if (!body || body.health <= 0) return 'you cannot drop that right now';
+    if (!Number.isFinite(message.aimX) || !Number.isFinite(message.aimY)) return 'aim at something';
+    if (connection.pendingDrops.length >= MAX_PENDING_DROPS) {
+      return 'you are already putting things down';
+    }
+
+    connection.pendingDrops.push({
+      at: message.at,
+      count: message.count,
+      requestId: message.requestId,
+      aim: { x: message.aimX, y: message.aimY },
+      askedAtTick: this.state.tick,
+      serving: false,
+    });
+    this.aimAtHeadDrop(connection);
+    return null;
+  }
+
+  /**
+   * Point the body at whatever it is being asked to put down next.
+   *
+   * One writer for `dropAim`, called whenever the head of the queue changes:
+   * a request arriving, a drop landing, a refusal. Writing it at each of those
+   * sites separately is how a body ends up turning toward an item it already
+   * put down.
+   */
+  private aimAtHeadDrop(connection: Connection): void {
+    const entity = this.state.entities.get(connection.entityId);
+    if (!entity) return;
+    const aim = connection.pendingDrops[0]?.aim ?? null;
+    if (entity.dropAim === aim) return;
+    if (aim && entity.dropAim && aim.x === entity.dropAim.x && aim.y === entity.dropAim.y) return;
+    this.state = replaceEntity(this.state, { ...entity, dropAim: aim });
+  }
+
+  /**
+   * One pass over every connection's pending drops (spec 172).
+   *
+   * Run after the sim has stepped, so the heading being tested is this tick's.
+   * The head is served the tick its aim is reached and the rest wait behind it,
+   * which is what makes four items thrown at the same spot one turn and four
+   * drops.
+   *
+   * Two ways out other than landing, and both leave the item in the bag: the
+   * body dies, or the turn does not finish inside {@link DROP_TURN_TIMEOUT_TICKS}
+   * -- which a body that cannot turn at all never would, and which a body held
+   * facing elsewhere by a long cast might not.
+   */
+  private serveDrops(): void {
+    for (const connection of this.connections) {
+      const pending = connection.pendingDrops[0];
+      if (!pending || pending.serving) continue;
+      const body = this.state.entities.get(connection.entityId);
+
+      if (!body || body.health <= 0) {
+        this.refuseDrops(connection, 'you cannot drop that right now');
+        continue;
+      }
+      if (this.state.tick - pending.askedAtTick > DROP_TURN_TIMEOUT_TICKS) {
+        // Only the one that timed out: the rest may be aimed somewhere the body
+        // can reach, and refusing a queue wholesale for one bad aim would take
+        // items back that had nothing wrong with them.
+        connection.pendingDrops.shift();
+        this.reportAction(connection, 'you could not turn to face that');
+        this.sendInventory(connection, pending.requestId);
+        this.aimAtHeadDrop(connection);
+        continue;
+      }
+      // The same predicate the cast's own turn ends on, so "an action that
+      // needs turning" means one thing across the game.
+      if (!facesAim(body.position, body.facing, pending.aim)) continue;
+
+      pending.serving = true;
+      void this.completeDrop(connection, pending).catch((error: unknown) => {
+        console.warn('[server] drop failed', error);
+      });
+    }
+  }
+
+  /** Every pending drop refused with one reason, and the aim cleared. */
+  private refuseDrops(connection: Connection, reason: string): void {
+    const waiting = connection.pendingDrops.splice(0, connection.pendingDrops.length);
+    for (const pending of waiting) {
+      if (pending.serving) continue;
+      this.reportAction(connection, reason);
+      this.sendInventory(connection, pending.requestId);
+    }
+    this.aimAtHeadDrop(connection);
+  }
+
+  /**
+   * The body is facing it: take the stack and put it on the ground.
+   *
+   * The mirror of {@link pickUpDrop} and it has the same ordering problem the
+   * other way round: `dropItem` writes to the store asynchronously, so the bag
+   * is debited before the entity exists. That is the safe order of the two --
+   * the window between them is a stack that is in nobody's hands, and the
+   * alternative is a window in which it is in two.
+   *
+   * Nothing here is client-supplied but the address, the count and the aim.
+   * *Where* it lands is a constant reach along that aim, which is what stops an
+   * aim being a way to post an item across the map.
+   */
+  private async completeDrop(connection: Connection, pending: PendingDrop): Promise<void> {
+    const playerId = connection.playerId;
+    const finish = (reason: string | null): void => {
+      const index = connection.pendingDrops.indexOf(pending);
+      if (index >= 0) connection.pendingDrops.splice(index, 1);
+      this.reportAction(connection, reason);
+      this.sendInventory(connection, pending.requestId);
+      this.aimAtHeadDrop(connection);
+    };
+    if (playerId === null) {
+      finish('not logged in');
+      return;
+    }
+
+    const result = await this.players.dropItem(
+      playerId,
+      pending.at,
+      // 0 on the wire means "the whole stack", which is `undefined` to the
+      // rules -- the same translation `MoveItem` does, for the same reason.
+      pending.count === 0 ? undefined : pending.count,
+    );
+    if (!result.ok) {
+      finish(result.reason);
+      return;
+    }
+
+    // Read again rather than captured before the await: the body has been
+    // turning, and may have walked while it turned.
+    const body = this.state.entities.get(connection.entityId);
+    if (!body) {
+      // Nothing to throw it from. Put it straight back rather than dropping it
+      // into a world the thrower has left.
+      await this.players.giveItem(playerId, result.taken.defId, result.taken.count);
+      finish('you cannot drop that right now');
+      return;
+    }
+
+    // Both ends of the throw, exactly as a kill's drop has them: the body's own
+    // position is where it was thrown from, and the client draws the arc.
+    const origin: Vec3 = body.position;
+    const heading = headingToward(origin, pending.aim, body.facing);
+    const spot = throwLanding(origin, heading);
+    const landing: Vec3 = { x: spot.x, y: spot.y, z: this.terrain.heightAt(spot.x, spot.y) };
+    const drop = makeDroppedItem(
+      result.taken.defId,
+      result.taken.count,
+      rarityOf(result.taken.defId),
+      origin,
+      this.state.tick,
+    );
+    const spawned = spawnDrop(this.state, drop, landing, this.zones.zoneIdAt(landing.x, landing.y));
+    this.state = spawned.state;
+    this.chunks.place(spawned.entity.id, landing.x, landing.y, false);
+    finish(null);
+  }
+
   /** One `LootDrop`, saying only as much as `tick` permits (spec 158). */
   private lootDropMessage(entityId: number, drop: DropState, tick: number): LootDropMessage {
     const revealed = isRevealed(drop, tick);
@@ -1545,7 +1793,11 @@ export class GameServer implements AdminHost {
    * player is offering; it is told, and what it draws is what the server would
    * swap.
    */
-  private publishTrade(trade: Trade): void {
+  private publishTrade(trade: Trade, moved?: MovedStacks): void {
+    // Asked once for both players rather than per message: it is the same
+    // question about the same two bags, and the only thing that differs between
+    // the two sends is which side of the answer is "yours" (spec 170).
+    const problem = this.tradeProblem(trade);
     for (const playerId of partiesOf(trade)) {
       const connection = this.connectionForPlayer(playerId);
       if (!connection) continue;
@@ -1555,11 +1807,42 @@ export class GameServer implements AdminHost {
         tradeId: trade.id,
         stage: GameServer.TRADE_STAGES[trade.stage],
         revision: trade.revision,
-        you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision),
-        them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision),
+        you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision, moved?.[mine ? 'a' : 'b']),
+        them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision, moved?.[mine ? 'b' : 'a']),
         reason: trade.reason,
+        // `a` is the side that opened the trade, so `b` is the side being asked.
+        invited: !mine,
+        warning: GameServer.warningFor(problem, mine ? 'a' : 'b'),
       });
     }
+  }
+
+  /**
+   * Whose bag would stop this trade, right now.
+   *
+   * Run on every publish rather than only at settle time, so a full bag is
+   * something a player is told about while the table is still open and can be
+   * fixed -- it used to arrive after both sides had accepted, as the reason the
+   * trade had been cancelled. Null while either player has no session, because
+   * a trade with a missing side is about to be cancelled for that reason
+   * instead, and a bag warning would be the wrong thing to say about it.
+   */
+  private tradeProblem(trade: Trade): { readonly side: 'a' | 'b'; readonly reason: string } | null {
+    if (!isLive(trade)) return null;
+    const [aId, bId] = partiesOf(trade);
+    const a = this.players.holdingsOf(aId);
+    const b = this.players.holdingsOf(bId);
+    if (!a || !b) return null;
+    return exchangeProblem(trade, a, b);
+  }
+
+  /** The problem as the named side reads it: theirs, yours, or nothing. */
+  private static warningFor(
+    problem: { readonly side: 'a' | 'b'; readonly reason: string } | null,
+    mine: 'a' | 'b',
+  ): string {
+    if (!problem) return '';
+    return problem.side === mine ? `your bag: ${problem.reason}` : `their bag: ${problem.reason}`;
   }
 
   /**
@@ -1573,13 +1856,23 @@ export class GameServer implements AdminHost {
   private tradeSideView(
     side: Trade['a'],
     revision: number,
+    moved?: readonly ItemStack[],
   ): { playerId: string; displayName: string; offer: { defId: string; count: number }[]; coins: number; accepted: boolean } {
     const session = this.players.get(side.playerId);
     const bag = session?.record.inventory ?? [];
     const offer: { defId: string; count: number }[] = [];
-    for (const entry of side.offer) {
-      const stack = bag[entry.index];
-      if (stack) offer.push({ defId: stack.defId, count: Math.min(entry.count, stack.count) });
+    // What actually changed hands, when the swap has already run (spec 171).
+    // The resolve below cannot answer this any more: the bags have been
+    // written, so the slot an offer names holds whatever landed in it -- which,
+    // for a side whose own offer emptied that slot, is what it just *received*.
+    // The ending read as the trade reversed.
+    if (moved) {
+      for (const stack of moved) offer.push({ defId: stack.defId, count: stack.count });
+    } else {
+      for (const entry of side.offer) {
+        const stack = bag[entry.index];
+        if (stack) offer.push({ defId: stack.defId, count: Math.min(entry.count, stack.count) });
+      }
     }
     return {
       playerId: side.playerId,
@@ -1623,7 +1916,7 @@ export class GameServer implements AdminHost {
       return;
     }
 
-    this.endTrade(this.trades.finish(trade));
+    this.endTrade(this.trades.finish(trade), result.moved);
     for (const playerId of [aId, bId]) {
       const connection = this.connectionForPlayer(playerId);
       if (!connection) continue;
@@ -1632,9 +1925,15 @@ export class GameServer implements AdminHost {
     }
   }
 
-  /** Tell both sides a trade is over, then stop holding it. */
-  private endTrade(trade: Trade): void {
-    this.publishTrade(trade);
+  /**
+   * Tell both sides a trade is over, then stop holding it.
+   *
+   * `moved` is present only for a trade that actually settled. A cancellation
+   * goes on resolving against the bag, and is right to: nothing was written, so
+   * the bag it resolves against is the bag the offer was made from.
+   */
+  private endTrade(trade: Trade, moved?: MovedStacks): void {
+    this.publishTrade(trade, moved);
     this.trades.forget(trade.id);
   }
 
@@ -1796,6 +2095,10 @@ export class GameServer implements AdminHost {
       if (event.kind === 'despawned') this.chunks.remove(event.entityId);
     }
     this.chunks.refreshActive();
+
+    // Bodies that have finished turning to what they were asked to put down
+    // (spec 172). After the step, so the heading it reads is this tick's.
+    this.serveDrops();
 
     for (const connection of this.connections) {
       if (connection.playerId === null || connection.entityId < 0) continue;

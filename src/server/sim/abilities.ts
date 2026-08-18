@@ -49,6 +49,7 @@ import {
 import { ballisticPeak, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { PERFECT_EXIT_COOLDOWN_TICKS, RECENTLY_HIT_TICKS, resolveBlow } from './blow.js';
 import { isInCone } from './combat.js';
+import { staggered } from './poise.js';
 import { salvageFrom } from './restoration.js';
 import {
   applyStatus,
@@ -115,7 +116,17 @@ export type CastRejection =
    * (spec 092). Not a refusal of the request on its merits -- it is the answer
    * that keeps the reply stream paired when the two arrive together.
    */
-  | 'withdrawn';
+  | 'withdrawn'
+  /**
+   * Inside a poise break's window (spec 173).
+   *
+   * Its own reason rather than folding into `alreadyCasting`, because the two
+   * have different fixes and different lengths: one is "finish what you
+   * started", the other is "you are not holding your own body and will be in
+   * under a second". A player told the wrong one learns the wrong lesson about
+   * what just happened to them.
+   */
+  | 'staggered';
 
 export interface CastAttempt {
   readonly abilityId: string;
@@ -403,6 +414,15 @@ export function startCast(
   if (!ability) return { ok: false, reason: 'unknownAbility' };
   if (entity.health <= 0) return { ok: false, reason: 'dead' };
   if (entity.cast !== null) return { ok: false, reason: 'alreadyCasting' };
+  // A broken body does not get to swing through its own stagger (spec 173).
+  //
+  // Ordered above the cooldown deliberately: when a body is both staggered and
+  // on cooldown, the stagger is the more useful answer, because it is the one
+  // that just happened and the one that is about to end. It is also the gate
+  // that makes the window last -- `startCast` writes `activity: Casting`, so a
+  // cast let through here would overwrite `Stunned` and end the stagger early,
+  // which is exactly how the window used to be shorter than `staggerTicks`.
+  if (staggered(entity, tick)) return { ok: false, reason: 'staggered' };
 
   const readyAt = entity.cooldowns[ability.id] ?? 0;
   if (tick < readyAt) return { ok: false, reason: 'onCooldown' };

@@ -97,7 +97,7 @@ import {
 } from '../state/types.js';
 import { ordinalOfAttribute } from '../data/attributes.js';
 import { startingBaseStats } from '../player/attributes.js';
-import { applyMove, type MoveRequest } from '../player/inventory.js';
+import { applyMove, removeFromSlot, type MoveRequest } from '../player/inventory.js';
 import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
@@ -110,6 +110,7 @@ import {
 } from './combat.js';
 import { attackTimingFor } from '../sim/abilities.js';
 import { NO_ATTACK_SPEED, resolveAttackTiming } from '../sim/attack-timing.js';
+import { staggered } from '../sim/poise.js';
 import type { CastState } from '../sim/types.js';
 
 export interface WelcomeInfo {
@@ -174,6 +175,10 @@ export interface TradeView {
   readonly you: TradeSideView;
   readonly them: TradeSideView;
   readonly reason: string;
+  /** You are the side being asked (spec 170). Only meaningful while offered. */
+  readonly invited: boolean;
+  /** What would stop this going through, in your terms. Empty when nothing. */
+  readonly warning: string;
 }
 
 /**
@@ -266,6 +271,13 @@ export interface ClientView {
   readonly entities: readonly import('./replica.js').ReplicatedEntity[];
   /** The local player's predicted position -- what to draw them at. */
   readonly self: { readonly x: number; readonly y: number } | null;
+  /**
+   * Where this client is turning to put something down, or null (spec 172).
+   *
+   * The oldest unanswered drop: the server serves them in the order they were
+   * asked for and turns to one aim at a time.
+   */
+  readonly dropAim: { readonly x: number; readonly y: number } | null;
   readonly selfEntityId: number;
   /**
    * The world the server is running, or null before the welcome lands. A
@@ -334,6 +346,17 @@ export interface ClientView {
    * an exchange happened when it may not have.
    */
   readonly trade: TradeView | null;
+  /**
+   * The last trade to end, until the player dismisses it (spec 134).
+   *
+   * Beside {@link trade} rather than folded into it, because they are different
+   * questions: one is an exchange the server is still running, the other is a
+   * sentence about an exchange that is over. Folding them would mean a screen
+   * had to read the stage to know whether its buttons still mean anything, and
+   * the window would have no way to tell "no trade" from "a trade just ended"
+   * -- which is exactly the difference the ending exists to say.
+   */
+  readonly endedTrade: TradeView | null;
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
@@ -382,6 +405,17 @@ export interface ClientView {
    * a player choosing to stand still.
    */
   readonly selfRoot: { readonly x: number; readonly y: number } | null;
+  /**
+   * True while a poise break holds this body (spec 173).
+   *
+   * Beside {@link selfRoot} and answering the neighbouring question, because
+   * the two are different states with the same consequence: one is a commitment
+   * this client made and can call off, the other is something done to it that
+   * it can only wait out. Published rather than recomputed by the renderer, so
+   * the rule lives once in the sim's own `staggered` and a screen cannot come
+   * to a different answer than the server about whether a button should ask.
+   */
+  readonly selfStaggered: boolean;
   /**
    * True while a request of ours has been sent and not yet answered (spec 080).
    *
@@ -546,6 +580,30 @@ export interface KnownCast {
   readonly targetEntityId: number;
 }
 
+/**
+ * One container edit this client has guessed at and not yet been answered about.
+ *
+ * A drop is in here beside a move because the argument spec 126 made for
+ * predicting a move applies to it unchanged: the rule is pure, it is the same
+ * code the server runs, and what it reads is a slot this client can see. A
+ * pickup is the one that stays unpredicted -- see {@link GameClient.pickUp}.
+ */
+type PendingEdit =
+  | { readonly requestId: number; readonly kind: 'move'; readonly request: MoveRequest }
+  | {
+      readonly requestId: number;
+      readonly kind: 'drop';
+      readonly request: { readonly at: SlotAddress; readonly count?: number };
+      /**
+       * Where it was aimed, so the predicted body turns to it (spec 172).
+       *
+       * On the edit rather than in a field of its own, because the queue of
+       * edits *is* the queue of drops: the head is what the body is coming
+       * round to, and an answer retires both at once.
+       */
+      readonly aim: { readonly x: number; readonly y: number };
+    };
+
 export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
@@ -606,8 +664,17 @@ export class GameClient {
   /** The trade this client is in, or null (spec 132). Replaced whole. */
   private tradeView: TradeView | null = null;
   private equipment: Equipment = EMPTY_EQUIPMENT;
-  /** Moves sent and not yet answered, oldest first. */
-  private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
+  /**
+   * Container edits sent and not yet answered, oldest first.
+   *
+   * Two kinds since spec 172, in **one list** rather than two: a move and a drop
+   * can be in flight at the same time and the order they were sent in is the
+   * order they have to be replayed in -- dropping half a stack and then moving
+   * the rest is a different bag from doing it the other way round. Two lists
+   * would have to be merged by request id at every replay, which is this list
+   * with extra steps.
+   */
+  private readonly pendingMoves: PendingEdit[] = [];
   private moveRequests = 0;
 
   /**
@@ -818,7 +885,21 @@ export class GameClient {
     // server moved them -- a correction on every tick of the step away, and a
     // bar still draining for a blow that has been called off.
     if (Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
-    const input: PredictedInput = { ...intent, seq: this.seq };
+    // A poise break roots this body and the server has already started
+    // discarding these components (spec 173). The onset cannot be predicted --
+    // nobody knows they are about to be hit -- so the first round trip's worth
+    // of movement is sent, discarded and corrected, and that is the accepted
+    // cost. What is not accepted is continuing to send it *after* the stagger
+    // has been replicated: from that point on the client agrees with the
+    // server, and the divergence is bounded by the round trip rather than by
+    // how long the player keeps holding the key.
+    //
+    // Zeroed here rather than at the call site so it covers every caller, and
+    // the facing is left alone because the server holds it anyway -- the intent
+    // it drops is dropped whole.
+    const rooted = this.staggeredNow();
+    const intended = rooted ? { ...intent, moveX: 0, moveY: 0 } : intent;
+    const input: PredictedInput = { ...intended, seq: this.seq };
     const predicted = this.prediction.apply(input);
     this.channel.send(
       encodeClientMessage({
@@ -856,12 +937,61 @@ export class GameClient {
     if (!this.connected) return 0;
     const requestId = this.nextRequestId();
     const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
-    this.pendingMoves.push({ requestId, request });
+    this.pendingMoves.push({ requestId, kind: 'move', request });
     this.replayMoves();
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.MoveItem, requestId, from, to, count }),
     );
     return requestId;
+  }
+
+  /**
+   * Put a stack down in the world (spec 172).
+   *
+   * Predicted like a move and for the same reason -- the removal is a pure rule
+   * over a slot this client can see -- and rolled back by the same `Inventory`
+   * answer, which arrives whether the server took it or refused it.
+   *
+   * What is deliberately *not* predicted is the drop appearing on the ground.
+   * That is an entity, and entities arrive in deltas; a client that invented one
+   * would have to reconcile it against the real one a round trip later.
+   *
+   * `count` of 0 means the whole stack, as on the wire.
+   */
+  dropItem(at: SlotAddress, aim: { readonly x: number; readonly y: number }, count = 0): number {
+    if (!this.connected) return 0;
+    const requestId = this.nextRequestId();
+    this.pendingMoves.push({
+      requestId,
+      kind: 'drop',
+      request: { at, ...(count === 0 ? {} : { count }) },
+      aim,
+    });
+    this.replayMoves();
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.DropItem,
+        requestId,
+        at,
+        count,
+        aimX: aim.x,
+        aimY: aim.y,
+      }),
+    );
+    return requestId;
+  }
+
+  /**
+   * Where the body is turning to put something down, or null (spec 172).
+   *
+   * The oldest unanswered drop, because the server serves them in the order
+   * they were asked for and turns to one aim at a time.
+   */
+  private get dropAim(): { readonly x: number; readonly y: number } | null {
+    for (const pending of this.pendingMoves) {
+      if (pending.kind === 'drop') return pending.aim;
+    }
+    return null;
   }
 
   /**
@@ -878,7 +1008,10 @@ export class GameClient {
     let bag = this.serverInventory;
     let worn = this.serverEquipment;
     for (const pending of this.pendingMoves) {
-      const outcome = applyMove(bag, worn, pending.request, this.level);
+      const outcome =
+        pending.kind === 'move'
+          ? applyMove(bag, worn, pending.request, this.level)
+          : removeFromSlot(bag, worn, pending.request.at, pending.request.count);
       // A guess the local rules refuse is simply not drawn. The server is about
       // to refuse it too, and predicting an illegal move is worse than lagging.
       if (!outcome.ok) continue;
@@ -907,6 +1040,18 @@ export class GameClient {
 
   get endedTrade(): TradeView | null {
     return this.lastTrade;
+  }
+
+  /**
+   * Forget the last ending, because the player has read it (spec 134).
+   *
+   * The one piece of trade state a client is allowed to drop on its own, and it
+   * is allowed precisely because it is not state: the trade is already gone at
+   * the server, so there is nothing here that could disagree with it. Every
+   * other trade fact stays the server's to retract.
+   */
+  dismissEndedTrade(): void {
+    this.lastTrade = null;
   }
 
   /**
@@ -1242,7 +1387,31 @@ export class GameClient {
       // cooldowns above, and for the same reason: the press has to grey the
       // button out now rather than in a round trip.
       fallbackCharges: Math.max(0, this.fallbackCharges - this.predictedCharges),
+      // The stagger window, straight off the replica (spec 173). Not predicted
+      // and deliberately not: nobody knows they are about to be hit, so this is
+      // the server's word arriving a round trip late and there is nothing
+      // honest to guess in the meantime.
+      activity: self.activity,
+      activityUntilTick: self.activityUntilTick,
     };
+  }
+
+  /**
+   * Whether this client can see itself inside a poise break's window
+   * (spec 173).
+   *
+   * Asked of the replica rather than of the mirror, because the mirror is built
+   * for `startCast` and this is a movement question -- and asked through the
+   * sim's own {@link staggered}, so the client and the server cannot disagree
+   * about where the window ends.
+   */
+  private staggeredNow(): boolean {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    if (!self) return false;
+    return staggered(
+      { activity: self.activity, activityUntilTick: self.activityUntilTick },
+      this.estimated,
+    );
   }
 
   /** The cast this client will still be in at `tick`, or null if it is over. */
@@ -1460,6 +1629,7 @@ export class GameClient {
       this.wantedFacing,
       this.stats.turnRate,
       this.welcome?.tickRate ?? 60,
+      this.dropAim,
     );
     // A confirmed cast is over when the server's own `endTick` says it is, not
     // when `CastEnded` gets here (spec 069).
@@ -1577,6 +1747,11 @@ export class GameClient {
       commitDelayTicks: this.commitDelayTicks(),
       entities: this.world.all(),
       self: this.prediction?.drawn ?? null,
+      // What the body is turning to put something down at (spec 172). On the
+      // view because the renderer keeps a drawn heading of its own and steps it
+      // from the intent -- so without this the local player is the one person
+      // who does not see their own body come round.
+      dropAim: this.dropAim,
       selfEntityId: this.welcome?.entityId ?? -1,
       worldSeed: this.welcome?.worldSeed ?? null,
       map: this.mapView(),
@@ -1589,6 +1764,7 @@ export class GameClient {
       vendor: this.vendorView,
       vendorRevision: this.vendorReplies,
       trade: this.tradeView,
+      endedTrade: this.lastTrade,
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
@@ -1601,6 +1777,7 @@ export class GameClient {
       requestedAbilityId: this.requestedAbilityId,
       cooldowns: this.visibleCooldowns(),
       selfRoot: this.selfRoot(),
+      selfStaggered: this.staggeredNow(),
       awaitingCast: this.outstandingCasts.length > 0,
       awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),
@@ -1908,12 +2085,20 @@ export class GameClient {
                 you: message.you,
                 them: message.them,
                 reason: message.reason,
+                invited: message.invited,
+                warning: message.warning,
               };
         // A finished trade is told once and then forgotten, so what is left is
         // the inventory the server has already sent alongside it.
         if (message.stage === TradeStageValue.Done || message.stage === TradeStageValue.Cancelled) {
           this.lastTrade = this.tradeView;
           this.tradeView = null;
+        } else {
+          // A live trade clears the ending behind it. Without this, an ending
+          // the player never dismissed outlives the *next* trade and is what
+          // the window falls back to the moment that one ends -- the previous
+          // reason, on a trade it does not describe.
+          this.lastTrade = null;
         }
         break;
 

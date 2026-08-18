@@ -156,7 +156,11 @@ src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
                  normal, which fixes the roll `point` alone leaves free), plus a
                  `lengthWorld` -- a length rather than a scale factor, because
                  nobody can check a scale and anybody can hold a length up
-                 against the body beside it. grip.ts is the arithmetic and states
+                 against the body beside it. A weapon also names its own
+                 **socket**, which is how the recurve bow (spec 165) goes in the
+                 left hand while both swords go in the right -- an inventory slot
+                 says what a thing is worn in, and which hand a model is held in
+                 is a fact about the model. grip.ts is the arithmetic and states
                  canonical weapon space once: blade +Y, flat +Z, edge +X, origin
                  at the grip. Where a grip sits in a particular palm is a fact
                  about the *body*, so that half lives on the skeleton's socket as
@@ -203,6 +207,35 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  its life in: `weapon.main` was solved against the swing's own
                  guard key, so the blade pointed forward for two frames of an
                  800ms clip and hung straight down the rest of the time.
+                 posture.ts is the third thing beside those two (spec 163): a
+                 stated edit to the posture a *bought* clip is played in, one
+                 angle per bone and constant over the clip, so the stride and
+                 the timing and the bob survive by construction and only the
+                 body's carriage moves. It exists because `run` came out of the
+                 retarget with the chest 30 degrees forward of standing and the
+                 gaze 54 below the horizon, against an idle and a walk at -18 --
+                 a character whose face is only visible while it is standing
+                 still. Three rules. **Every correction turns about one shared
+                 world axis**, the body's pitch axis, which is what makes a
+                 chain of them compose by *adding the degrees* and lets each be
+                 computed against the uncorrected pose and still be exact once
+                 its ancestors have moved -- the same commuting-rotations
+                 argument the pig's hip counter-turn rests on. **The axis comes
+                 from the parent's animated frame, never its bind one**, which
+                 is the one thing `pose.ts`'s `turnQuat` cannot give: at bind
+                 the two agree and 30 degrees into a lean they do not, and the
+                 bind-frame version arrives as a pitch mixed with a roll.
+                 And **the applied table is recorded in the file** it was
+                 applied to, in `animations[0].extras.posture`, because there is
+                 no source document behind a bought clip and a correction
+                 measured against its own last output bends the body further
+                 every time it is regenerated. `npx tsx
+                 scripts/straighten-run.ts --write` is the edit and prints the
+                 two numbers it moved; `npx tsx scripts/preview-run-posture.ts`
+                 is the picture, and it reads that same record so it draws the
+                 retarget against the correction whichever state the bytes are
+                 in -- without that it silently applied the posture twice the
+                 moment the file was written.
                  pig-strike.ts is the
                  pig's swing itself: seven full-body poses over 800ms, contact at
                  500ms because that is `melee.slash`'s wind-up and the frame the
@@ -286,6 +319,43 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  the strain term happens to prefer. Hand and elbow targets are a
                  linkage rather than two wishes -- upper arm 0.178, forearm 0.114
                  -- and a pair 0.071 apart is not a pose.
+                 pig-shot.ts is the bow beside it (spec 164): seven poses over
+                 1150ms with the arrow leaving at 800, which is `ranged.shot`'s
+                 wind-up, so the same rule holds -- the frame the picture shows
+                 the string let go and the frame the arrow exists are the same
+                 frame. It exists because the Hunting Bow is a level-1 weapon
+                 and the pig answered every shot with the sword chop. Three
+                 things in it invert the swing on purpose. **The release is a
+                 velocity discontinuity**: a raise must be one movement, but a
+                 draw is pulled, held still while it is aimed, and let go
+                 instantly, so the anchor is arrived at and left at opposite
+                 speeds -- in a swing that is a dead beat and a whip, in a shot
+                 it is the aim and the loose. **The body does not unwind**,
+                 because what sends an arrow is back tension rather than
+                 rotation; only the string hand travels. And **the stance never
+                 moves** -- every key holds the same hips and the sword's own
+                 guard legs, shared as an object rather than copied, so a foot
+                 cannot slide by construction and none of `plant-foot.ts` is
+                 needed. `npx tsx scripts/aim-bow.ts` is the solver and its
+                 improvement over aim-blade.ts is that **the elbow is derived
+                 rather than wished for**: an author states the hand and a
+                 *roll* -- how far round the shoulder-to-hand axis the elbow
+                 sits -- and the only elbow consistent with the linkage is
+                 computed, so a pose that does not close is impossible to write
+                 rather than visible later. What it prints is the fold, because
+                 the fold is what decides whether an arm reads: on this rig a
+                 hand closer than 0.156 to its own shoulder is past 120 degrees,
+                 which is why the string hand goes outboard round the ribs
+                 instead of straight to the anchor, and why the anchor is behind
+                 the ear rather than at the jaw.
+                 `npx tsx scripts/make-pig-shot.ts` writes the committed bytes
+                 and `npx tsx scripts/preview-shot.ts` photographs them, drawing
+                 a **string** between the two hands rather than a bow: there is
+                 no bow mesh, a proxy invented in a preview is a prop the game
+                 does not have, and what the bar is for is measurement -- a draw
+                 *is* the distance the hands get apart, and it prints that
+                 distance per frame beside the picture because a thumbnail of a
+                 pig cannot settle whether the string hand went back.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and
@@ -365,6 +435,54 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  `npx tsx scripts/probe-facing.ts --job <id>` runs it over a real
                  generation; the reference unit is the control, and the test
                  beside it introduces each of the four faults on purpose.
+                 Since spec 166 it also has a `cancelAction`, which is the
+                 counterpart to the trigger that started an attack: a one-shot
+                 otherwise runs to the end of its clip whatever the sim does, so
+                 a wind-up the player *withdrew* from -- the decision this whole
+                 game is built on -- was still drawn as a completed blow, impact
+                 event and all, a quarter of a second after being refunded. It
+                 cross-fades rather than cutting, it is called *before* the tick
+                 is stepped so the events left in the clip never fire, and it
+                 refuses to leave a `locking` state, because not being
+                 interruptible is that category's whole reason to exist.
+                 Since spec 168 there is a `revive` beside it, for the same
+                 reason in the other direction: a death state is `terminal` and
+                 a terminal state has **no exit**, which is the right rule for a
+                 corpse and is exactly why a body cannot get up on its own. A
+                 respawn keeps the entity -- the server heals and moves the body
+                 it already has, so the renderer keeps the same machine -- so
+                 `dead` going back to false reached a machine incapable of
+                 acting on it, and a respawned player ran, swung and shot around
+                 the arena drawn as the last frame of the clip they fell in.
+                 Getting up is therefore a *command* rather than a condition,
+                 the way cancelling is: a transition out of a terminal state is
+                 the thing that category exists to forbid. It comes back to the
+                 entry state and lets the ordinary transitions take it from
+                 there, and it **cuts rather than fading**, because every other
+                 part of a respawn is a cut -- the position arrives as a
+                 `Teleport` correction, which spec 067 snaps -- and a pose easing
+                 up off the floor at the spawn point draws a body getting up
+                 from a fall that happened somewhere else. Held by `driveUnit`
+                 as a *level* on every living tick rather than as an edge off
+                 `previous`, since a dropped frame would otherwise cost a whole
+                 session.
+                 Two rules about the *fade* live there too (spec 167). Going
+                 back to the state a fade is in the middle of leaving is a
+                 **reversal** and keeps that state as the thing it fades from,
+                 rather than the half-arrived one -- otherwise a body three
+                 quarters through drawing a bow is drawn entirely standing still
+                 for one frame, which is what a jerk between two shots turned
+                 out to be: 47.5 degrees of bone movement in one tick, against
+                 19.3 for the loose the draw is *meant* to snap through. It only
+                 happens where a clip is exactly as long as its cast, because
+                 then the return to idle and the next attack land on top of each
+                 other. And `poses` names **each clip once**, because a reversal
+                 is how two playheads on one clip arise and `applyPoses` keys its
+                 actions by clip id, so a second sample would silently overwrite
+                 the first. `npx tsx scripts/probe-shot-loop.ts` is the
+                 instrument -- a real server, a real client, shooting on a loop
+                 -- and it reports the pose as well as the mix, because a tidy
+                 mix can still jerk if the clip time under it jumps.
                  machine.ts is the state machine BOTH the Studio tab and the game
                  drive (specs 110-111) -- one machine, two callers, which is what
                  makes "the tool and the game read the same files" a fact about
@@ -462,6 +580,22 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
+                 Since spec 172 that vocabulary has one more word in it, and it
+                 is the one the note on `placeOn` used to say did not exist:
+                 letting go over the **world** puts the thing on the ground.
+                 What counts as the world is a null hit test through the layer
+                 stack -- the empty half of a window is not it, because
+                 releasing there has always meant "keep hold of it" and turning
+                 that into a discard would make the one gesture that gets rid of
+                 something the easiest one to do by accident. Read on the
+                 *press*, because that is the half gameplay acts on, and
+                 consumed, so the button that drops an item does not also order
+                 the player to walk over to where it landed. The press is also
+                 the *aim*: `view.ts` reads the point being offered to the
+                 interface at that instant rather than the cursor's last known
+                 position, since `UiLayer.toUi` is deliberately the one
+                 conversion between UI pixels and canvas ones and a stale
+                 cursor would throw the item somewhere nobody clicked.
                  One more rule of the same kind, from spec 147's sheet: **a
                  hidden tab still has rectangles in it**. A tab switched away is
                  hidden and never destroyed -- that is what makes a tab keep what
@@ -665,10 +799,22 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  process, and the release tick belongs to the attack. The last
                  tick a withdrawal works on is `releaseTick - 1`, asserted from
                  both sides in `sim/attack-cancel.test.ts`.
-                 Where a player's attack speed comes from is deliberately still
-                 nowhere: spec 091 took the cadence off the weapon on purpose and
-                 144 built over that rather than reversing it, so the stat is a
-                 socket at zero and monsters author BAT per row as they already
+                 Where a player's attack speed comes from is the **weapon**,
+                 since spec 174: 091 took the cadence off it and 144 rebuilt the
+                 socket without plugging anything in, which left four rows in
+                 `data/items.ts` authoring an `attackSpeedPct` that reached
+                 nothing for eighty specs -- the Keen Longsword's stated defining
+                 feature inert, and the maul and the bow keeping their damage
+                 without ever paying the drawback they were priced against. What
+                 makes it a weapon *speed* rather than a cadence is that one
+                 factor divides all three spans, so a quick weapon shortens the
+                 wind-up and the backswing along with the wait; a weapon that
+                 only came round again sooner would make the pause the stat
+                 rather than the blow. Two things did **not** move with it:
+                 spec 147's commitment that nothing an *attribute* writes reaches
+                 `baseAttackTimeTicks` or the three inputs, so the fast stat
+                 still cannot become the damage stat, and monsters, which author
+                 BAT per row beside their own `NO_ATTACK_SPEED` as they already
                  did. `npx tsx scripts/probe-attack.ts --cancel=never|backswing`
                  prints the two timelines side by side, and the invariant reads
                  off the summaries: same attacks, same cadence, a body rooted 24
@@ -686,7 +832,37 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  bag that changed underneath refuses the whole trade instead of
                  trading whatever is in that slot now. The property test counts
                  both players together, because a swap that duplicated a sword
-                 leaves each bag individually plausible. data/ holds
+                 leaves each bag individually plausible.
+                 Two rules from spec 170, both about *which side of the table
+                 you are on*. `setOffer` accepts an offer from the **inviting
+                 side only** while a trade is still an invitation, and leaves
+                 the stage alone: an empty request asks "do you want to trade?"
+                 with no goods and no reason to say yes, but advancing on the
+                 first item would put the invitee at a table they never agreed
+                 to sit at and `respond` -- which only runs at `offered` --
+                 could then never fire. And `exchangeProblem` is `swap` minus
+                 the stage check, so the same arithmetic answers "would this go
+                 through" for a table nobody has accepted yet; the server runs
+                 it on every publish and sends a **per-player** warning that
+                 disables Accept. It names a *side* rather than describing one,
+                 because the single reason string `swap` returned went to both
+                 players and could only ever be true for one: the player whose
+                 own bag was the problem was told "their bag is full", after
+                 both had accepted, which is the one moment neither of them can
+                 do anything about it.
+                 Spec 171 is the other end of the same idea: **an offer is
+                 resolved late everywhere except at the moment it stops being an
+                 offer.** The `done` message is published after `applyTrade` has
+                 written both bags, so resolving slot indices there reads a bag
+                 that has moved on -- and since `addToInventory` fills the first
+                 free slot, which is the one your own offer just emptied, each
+                 side was credited with what it *received*. The ending came back
+                 as the trade reversed. `swap` carries out what it took, and the
+                 terminal message uses that; every other publish still resolves
+                 late, because for a live table that is the duplication defence.
+                 A cancellation resolves too and is right to -- nothing was
+                 written, so the bag it reads is the one the offer was made
+                 from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `sim/aggro.ts` is whether one body has business with another
@@ -771,6 +947,74 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  refuses past, which made every pickup on a good connection one
                  refusal and a retry -- and the server's own check allows for its
                  input backlog, bounded by `MAX_REWIND_TICKS`.
+                 A player can put one there too (spec 172), and it is an
+                 **action that needs facing**: the press carries the world point
+                 the cursor was over, the body turns to it at its own rate, and
+                 only then does the item leave the bag. Not a cast -- no cost,
+                 no cooldown, no wind-up, no backswing, nothing rooted and no
+                 `CastState`, because every one of those would put a cast bar
+                 over a body putting a potion down. What it borrows is the one
+                 part of a cast that is about aiming: `CastPhase.Turning`'s rule
+                 that a committed action waits for the heading it committed to.
+                 `ServerEntity.dropAim` is that aim and `resolveFacing` reads it
+                 directly under the cast, so the turn is the same turn every
+                 other player watches. It outranks the *input* rather than being
+                 outranked by it, which is where it parts company with a cast: a
+                 step withdraws from a blow because there is a cost to refund,
+                 and there is nothing to refund here, so a player who asked to
+                 put something down and then walked off still asked. The queue
+                 lives on the `Connection` rather than in the sim, because what
+                 a drop takes out of a bag is behind an async store the sim
+                 cannot reach -- and it is a queue rather than a slot so that
+                 emptying four things at one spot is one turn and four drops.
+                 Three bounded ways it ends other than by landing, all of them
+                 refusals that leave the item in the bag: the body dies, the
+                 queue passes `MAX_PENDING_DROPS`, or the heading does not
+                 arrive inside `DROP_TURN_TIMEOUT_TICKS` -- which a body that
+                 cannot turn at all never would. The aim is a **direction and
+                 not a destination**: the reach is the server's constant, so
+                 clicking the horizon and clicking two paces away drop the same
+                 distance away, and an aim on top of the body has no direction
+                 in it and leaves the heading standing (`headingToward`).
+                 Both ends predict the turn -- `steerFacing` on the client and
+                 `moveIntent`'s `dropAim` in the renderer -- because a client
+                 never adopts the server's facing after the first seed, so
+                 without it the local player would be the one person who cannot
+                 see their own body come round.
+                 It differs from a kill's drop in the two ways the presentation
+                 is *about*:
+                 `makeDroppedItem` gives it **no owner**, since a thing somebody
+                 discarded is not being protected from anybody, and **no
+                 reveal** at any tier, since the reveal withholds an identity
+                 from somebody who does not know it and the person who emptied
+                 their own bag does. It also draws nothing from `state.rng`:
+                 `throwLanding` is the body's facing and a constant reach, where
+                 a kill's `scatterLanding` is two seeded draws -- a landing
+                 nobody chose has to come from somewhere, and one that was aimed
+                 must not, or opening a bag would shift every roll in the world
+                 after it. Everything else is inherited whole, the arc included,
+                 because `origin` is the body's own position and the client
+                 already knows how to draw a throw between two replicated
+                 points. `removeFromSlot` is the container half, beside
+                 `applyMove` and separate from it because a move has a target
+                 and this has none; the client predicts it through the same
+                 in-flight list a move replays through, which is the one thing
+                 `pickUp` deliberately does not do -- a drop reads a slot this
+                 client can see, a pickup reads a range check and an identity it
+                 may not have been told. `npx tsx scripts/probe-drop.ts` is the
+                 half no headless test can reach, and the measurement in it that
+                 makes it honest is the **Escape control**: a cell drawn empty
+                 is either an item on the ground or an item still in hand, since
+                 a carry empties the cell it came from, so the probe cancels
+                 with Escape and requires the cell to *stay* empty -- having
+                 first measured on the same build that Escape does put a carry
+                 back. Every wait in it is a *poll*, and that is not tidiness:
+                 this environment paints the page at about five frames a second
+                 under software GL and the bag's readout is published from the
+                 frame, so a fixed 200ms wait is less than one frame and reads
+                 the state before the click it is checking. It reported a
+                 working drop as a failure exactly once, which is how that is
+                 known.
                  `admin:triggerEvent 'drop'`/`'reveal'` and the live
                  `lootRevealScale` are the developer path, so a presentation is
                  tuned without farming for one -- and none of the three can
@@ -842,6 +1086,76 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  never merely because Strength was invested in, and it is capped
                  below 1 because a wind-up nothing can answer would make the
                  readable commitment this whole game is built on unreadable.
+                 Its `staggered` predicate is what makes a break cost anything
+                 (spec 173), and it is one function because it is asked in three
+                 places: the movement pass roots the legs on it, `startCast`
+                 refuses the hands on it, and `blow.ts` reads the same state for
+                 Strength's execute bonus. Until 173 none of that existed -- the
+                 flag was written and read twice in the whole server, so a
+                 staggered body walked at full speed and ended its own stagger
+                 early by casting through it, because a commit writes
+                 `activity: Casting` over `Stunned`. Every poise test in the tree
+                 passed throughout, because all of them called
+                 `applyPoiseDamage` directly and asked about the pool.
+                 Two rules came out of wiring it, and the first was learned by
+                 writing the wrong thing first. **A staggered intent is pinned,
+                 never nulled**: a null intent is how the movement pass says "no
+                 request arrived", and `casters` is built from exactly that, so
+                 nulling it hid the body's *cast request* along with its
+                 movement -- the swing was not refused, it was never considered,
+                 and the client sat out `PREDICTED_CAST_TIMEOUT_TICKS` on every
+                 blow it tried to throw. Spec 080's rule covers a stagger too:
+                 a request that cannot be honoured still gets an answer. So the
+                 movement is zeroed and the *facing* is pinned to where the body
+                 already points, which is also the one thing that separates this
+                 root from a cast's -- a caster keeps steering (spec 067 holds
+                 the aim live to the commit and that is the feature), where a
+                 body that kept tracking you through its own stagger would read
+                 as unaffected. And **the onset cannot be predicted**: spec 067's
+                 `selfRoot` works because the client knows it pressed the button,
+                 and nobody knows they are about to be hit, so one round trip of
+                 discarded movement is the accepted cost -- bounded because
+                 `activity` is replicated and the client stops the moment it sees
+                 it, and masked because it lands on the same frame as spec 145's
+                 chunk and 146's kick. What the client *can* close is the asking:
+                 `target.ts` holds the standing order while `selfStaggered`, which
+                 took one measured fight from 146 refusals to two.
+                 `world/stagger-flinch.ts` is the reaction, and it is the channel
+                 that needs no authored content -- a decaying rock on the drawn
+                 yaw, in the same vocabulary as 146's kick and restarted by every
+                 break for the same reason, because a break is a contact and not
+                 a measurement. The window is replicated and the *start* is
+                 observed, so a client that reconnects mid-stagger never invents
+                 a contact nobody watched. `unit-driver.ts` also raises a
+                 `stagger` trigger for a rig that declared one; none has yet, so
+                 that channel is silently waiting for a clip.
+                 `world/stun-icon.ts` is the mark beside the reaction -- a swirl
+                 over the head, in `hud.ts`'s existing per-body holder -- and it
+                 is **stateless**, which is the whole difference from the flinch
+                 next to it. A flinch is a *contact* and needs an edge somebody
+                 watched, so it keeps a track and refuses to fire for a body
+                 that walked into view already broken; a swirl is a *state*, and
+                 a body that is stunned is stunned whoever was looking. So there
+                 is no map and nothing to prune, and the phase runs off the
+                 replicated `activityUntilTick` rather than an observed start,
+                 which is what makes every client draw the same angle on the
+                 same tick with nothing replicated for it. It fades over a fixed
+                 *count* of ticks rather than a fraction, because a fraction
+                 needs the window's length and the function is handed only its
+                 end.
+                 What the client half got wrong first is worth keeping: only
+                 `autoAttack` was taught about the stagger, and its two
+                 neighbours were not. `moveIntent` kept asking for a *heading*
+                 while the server pinned the body's own -- worse than a
+                 mispredicted step, because a `Correction` carries a position
+                 and no facing at all, so a predicted turn is an error nothing
+                 ever corrects. And `castOrder` gates on `rooted`, which is "a
+                 cast is in progress" -- but a break *clears* the cast it
+                 interrupted, so `rooted` is false for the entire window and a
+                 standing order chased and cast straight through it. Both now
+                 take `staggered` as their own field, and the `moveIntent`
+                 branch is *first*, ahead of a held key, since the key is the
+                 one branch a player is actively driving.
                  `sim/statuses.ts` is one small timer map and everything the
                  progression needs to remember between ticks goes in it, because
                  twelve mechanics as twenty-four entity fields is twenty-four
@@ -942,7 +1256,38 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
                  monsters are drawn from an authored unit, the pure function from
                  replicated facts to machine commands -- handed a snapshot and not
-                 the GameClient, so animation has nothing it *could* call -- and
+                 the GameClient, so animation has nothing it *could* call. Since
+                 spec 164 that snapshot carries the **ability id**, because a
+                 body has more than one basic attack and they do not look alike:
+                 a sword coming over the shoulder and a bow being drawn are the
+                 same `Casting` activity on the wire, so one `attack` trigger
+                 could only ever pick one of them. Which animation an ability
+                 gets is read off **what it sends** -- a projectile whose look is
+                 an arrow is drawn with a bow -- rather than off a list of ids to
+                 keep in sync with the content table, and an ability with no clip
+                 authored for it keeps the swing, because a wrong animation is
+                 worse than a generic one. A unit whose document declares no
+                 `shoot` parameter falls back the same way, since a silently
+                 dropped trigger is a body standing perfectly still through its
+                 own attack. Since spec 166 the snapshot also carries how much
+                 of the cast is **left** -- `endTick - tick`, which the cast bar
+                 already reads -- because that is the one thing that separates a
+                 cast which *finished* from one that was *called off*, and both
+                 end with the cast simply gone. A cancellation is read off the
+                 cast list rather than off the activity: the list is predicted,
+                 so a withdrawal lands on the frame the player asked for it,
+                 while the activity is replicated and a round trip behind, and a
+                 bad connection is exactly when a withdrawal matters most. The
+                 margin that decides "finished" is a *sampling* margin -- a
+                 frame at 20fps drains three ticks, so a cast ending on schedule
+                 was last seen with a few left -- and it errs toward leaving an
+                 attack alone, which is what everything did before. Closing that
+                 loop also turned up a case `startedCasting` had always got
+                 wrong and nobody could see: a withdrawal followed straight away
+                 by another attack, where the cast list goes windup / nothing /
+                 windup while the replicated activity never moves. It used to be
+                 invisible because the withdrawn swing played on and the second
+                 attack was drawn by the first one's leftovers -- and
                  how often a body's pose is applied; the machine itself is
                  never throttled, because its events are authored on frame indices.
                  The LOD measures how big a body is *drawn*, in pixels of the
@@ -1175,7 +1520,37 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  reads the boxes back off `data-ui-frames`, reloads the tab and
                  requires the same numbers. Everything the feature decides is
                  asserted in Node; what it could not say is whether any of it
-                 was connected to anything),
+                 was connected to anything.
+                 Since spec 169 it also owns the trade table's *ending*, and the
+                 rule is that the mount reads `view.trade ?? view.endedTrade`:
+                 the server forgets a trade the instant it is over, so by the
+                 time there is a reason to show, the live field is already null
+                 -- a window reading only that froze on its last live frame and
+                 offered a Cancel button for a trade nobody was in. **Closing is
+                 what dismisses the ending**, and it lives in `close` and
+                 `closeTopmost` rather than in the Close button, because Escape
+                 and the title bar shut a window without pressing anything --
+                 the same shape the shop's `onVendor('')` already has, and
+                 without it the mount re-opened the ending on the very next
+                 frame. This is also the one window that is **re-placed when its
+                 content changes shape**: every other screen is roughly one
+                 size, and the trade table opens holding an invitation and then
+                 grows a bag grid, which left Accept 77 pixels below its own
+                 window's bottom edge and the trade unfinishable without
+                 resizing by hand. `npx tsx scripts/probe-trade.ts` is the only
+                 thing that could find either -- two tabs, two players, one
+                 server, the real shift-right-click and the real buttons, with
+                 both bags counted afterwards because a swap that duplicated the
+                 bow leaves each side individually plausible.
+                 Since spec 170 **closing a live trade cancels it**, because
+                 leaving the table is what closing means and the alternative is
+                 a player sitting in a trade they cannot see and cannot start
+                 another one from -- before it the mount re-opened the window
+                 every frame a trade was live, so Escape and the title bar did
+                 nothing at all. What that needs is `tradeLeft`, and it is an
+                 **id rather than a flag**: the cancel takes a round trip, the
+                 trade stays live and replicated throughout it, and a flag was
+                 cleared by the very re-open it existed to prevent),
                  loot-drop.ts (how a drop looks while it is still withholding
                  itself, spec 158 -- the three.js half is `iso3d/drop-rig.ts`,
                  beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks
@@ -1526,11 +1901,52 @@ src/render/iso3d/weapon-rig.ts, unit-rig.ts's attach()  a weapon in a hand (spec
                  the pose is on the machine's, and spec 118 throttles how often
                  that pose is applied. The pivot also undoes the host's import
                  scale, so `lengthWorld` is in world units and a sword is one
-                 size whatever holds it. Both of the pig's socket calibrations
-                 were found by sweeping candidates through the offscreen
-                 rasteriser rather than derived: `npx tsx scripts/preview-weapon.ts`
-                 photographs the real mesh at the real pose, and `SWEEP=` puts
-                 four candidate rotations side by side in one strip.
+                 size whatever holds it. The pig's `weapon.main`
+                 calibration was found by sweeping candidates through the
+                 offscreen rasteriser: `npx tsx scripts/preview-weapon.ts`
+                 photographs the real mesh at the real pose, `SWEEP=` puts four
+                 candidate rotations side by side in one strip, and `CLIP=shoot`
+                 poses the draw instead of the swing -- which matters as much as
+                 the numbers, because a calibration is exact at one pose and
+                 approximate everywhere else. `weapon.off` was *solved* instead
+                 (spec 165): `npx tsx scripts/solve-socket.ts` states where the
+                 weapon's own axes should point in the body's axes and answers in
+                 one matrix multiply, `pivot = boneᵀ · target`, because a sweep is
+                 slow and only ever answers "which of these four". Its reportable
+                 half is worth as much as the solve -- run with no `WANT` it
+                 prints where each axis currently goes -- and it was checked
+                 against the sword's known-good numbers before being trusted with
+                 a new socket: the blade at the guard comes back "forward and 20
+                 degrees up", which is what `aim-blade.ts` says it authored.
+                 Since spec 165 the Play tab actually *uses* all of this. It had
+                 not: `scene.ts` built a `UnitRig`, never called `setSockets` and
+                 never built a `WeaponRig`, so every player was drawn
+                 empty-handed while holding a sword -- a complete format with
+                 green tests either side of a game that called none of it.
+                 `world/weapon-look.ts` is the table saying which model an
+                 equipped item is drawn with, and its rule is that **an item with
+                 no row draws empty hands**: the maul and the stars have no mesh,
+                 and drawing the maul as the knotted stick would be a lie the
+                 player reads as a fact about their gear. Only the *local*
+                 player's weapon is drawn, because only the local player's
+                 equipment is on the wire.
+                 Two things make the mount a per-frame call rather than an event.
+                 The body's mesh and the weapon's mesh are independent fetches
+                 and `attach` needs a bone, so it is retried until it takes; and
+                 the wanted model id is written before the load starts and
+                 re-checked after it resolves, so a bow that arrives after the
+                 player has switched back is disposed rather than drawn. Whatever
+                 is held is dropped *unconditionally* when a load lands, because
+                 two loads of the same weapon can be in flight at once -- switch
+                 away and back inside one fetch and both carry the same id, so
+                 both pass the staleness test, and assigning over the first
+                 leaves it attached to the bone with nothing left holding a
+                 reference to detach it.
+                 `npx tsx scripts/probe-held-weapon.ts` is the only thing that can
+                 see any of that: it drives the shipped build, clicks the real
+                 weapon switch and reads `data-held-weapons`, which is published
+                 from **what is attached** rather than from what was wanted, so a
+                 weapon fetched and hung on nothing reads as absent.
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
                  a cloth solve or a turn rate can be watched in isolation.

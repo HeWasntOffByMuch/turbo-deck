@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "9c03955e88e036e8a4b4ed6bc5a228c7306e4691d2c2b51a518fc18e85e29a2d",
+  "hash": "d6294a7da645d8cb1f4d0bbfc8924a955c971c42812ebfd5c25750c7e4548084",
   "builtStages": [],
   "units": [
     {
@@ -60,8 +60,8 @@
         },
         {
           "path": "biped.core.cliplib.json",
-          "sha256": "216451016a3dbcbbe961e6b66e928c8bffe8398c62fb544cda5c6431180bfaff",
-          "bytes": 1931
+          "sha256": "f4e7a4a1110d7f154555431cc24d86bba39eea4c4845b5b2a7ecc376908b394f",
+          "bytes": 2525
         },
         {
           "path": "clips/defeat_02.glb",
@@ -80,8 +80,13 @@
         },
         {
           "path": "clips/run.glb",
-          "sha256": "532f61a7c93d6ec9e32e2f3e0783c3327798824cb1105c91f3c4beb8f2cf580f",
-          "bytes": 365836
+          "sha256": "12b338cf95e862ce11b7c1713687973ed29a23efbbc13aec4247608c6daf7e53",
+          "bytes": 365900
+        },
+        {
+          "path": "clips/shoot.glb",
+          "sha256": "899f4e4f19006e124122cc48eb3ba35cc79a1cde8825a28affde4d594e9cdbe4",
+          "bytes": 44004
         },
         {
           "path": "clips/slash.glb",
@@ -101,8 +106,8 @@
       "entries": [
         {
           "path": "pig_a_pose_full/pig_a_pose_full.unitdef.json",
-          "sha256": "af3c2175974f910047a37ced64d9c12c57d6bf98ba2782d0817a123f664856e5",
-          "bytes": 4110
+          "sha256": "a2894990a541f4219a97c12a874eab20fa887bd52cac22d864135baa5c26b615",
+          "bytes": 5075
         },
         {
           "path": "pig_a_pose_full/pig_a_pose_full.glb",
@@ -111,8 +116,8 @@
         },
         {
           "path": "biped.core.cliplib.json",
-          "sha256": "216451016a3dbcbbe961e6b66e928c8bffe8398c62fb544cda5c6431180bfaff",
-          "bytes": 1931
+          "sha256": "f4e7a4a1110d7f154555431cc24d86bba39eea4c4845b5b2a7ecc376908b394f",
+          "bytes": 2525
         },
         {
           "path": "clips/defeat_02.glb",
@@ -131,8 +136,13 @@
         },
         {
           "path": "clips/run.glb",
-          "sha256": "532f61a7c93d6ec9e32e2f3e0783c3327798824cb1105c91f3c4beb8f2cf580f",
-          "bytes": 365836
+          "sha256": "12b338cf95e862ce11b7c1713687973ed29a23efbbc13aec4247608c6daf7e53",
+          "bytes": 365900
+        },
+        {
+          "path": "clips/shoot.glb",
+          "sha256": "899f4e4f19006e124122cc48eb3ba35cc79a1cde8825a28affde4d594e9cdbe4",
+          "bytes": 44004
         },
         {
           "path": "clips/slash.glb",

@@ -123,15 +123,26 @@ export const STRIKE_KEY_MS = {
  * Left foot: 0.19 of drift down to 0.013. `pig-strike.test.ts` bounds what is
  * left rather than trusting it.
  */
+/**
+ * The guard's legs on their own, because a second clip stands on them too.
+ *
+ * `pig-shot.ts` holds this pose in every one of its keys -- an archer sets
+ * their feet and shoots with everything above the waist -- and both clips are
+ * entered from the idle across a short cross-fade, so the legs they start from
+ * have to be the same legs or one of them snaps the knees on the way in.
+ * Exported rather than copied so the two cannot drift apart.
+ */
+export const STRIKE_GUARD_LEGS = {
+  leftUpLeg: { lateral: 6, forward: 4, up: 0 },
+  leftLeg: { lateral: 30 },
+  leftFoot: { lateral: -22, up: 0 },
+  rightUpLeg: { lateral: 12, forward: -4, up: 0 },
+  rightLeg: { lateral: 30 },
+  rightFoot: { lateral: -18, up: 0 },
+} as const satisfies PoseTable;
+
 const STANCE = {
-  guard: {
-    leftUpLeg: { lateral: 6, forward: 4, up: 0 },
-    leftLeg: { lateral: 30 },
-    leftFoot: { lateral: -22, up: 0 },
-    rightUpLeg: { lateral: 12, forward: -4, up: 0 },
-    rightLeg: { lateral: 30 },
-    rightFoot: { lateral: -18, up: 0 },
-  },
+  guard: STRIKE_GUARD_LEGS,
   rise: {
     leftUpLeg: { lateral: 5.1, forward: 4.5, up: -0.2 },
     leftLeg: { lateral: 30.2 },

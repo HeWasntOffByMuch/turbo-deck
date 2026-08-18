@@ -13,7 +13,12 @@ import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
 import type { ItemView } from '../widgets/item-slot.js';
-import { InventoryScreen, type ContainerView, type MoveIntent } from './inventory.js';
+import {
+  InventoryScreen,
+  type ContainerView,
+  type DropIntent,
+  type MoveIntent,
+} from './inventory.js';
 
 const SLOTS = [
   { id: 'mainHand', label: 'Main' },
@@ -44,6 +49,7 @@ function viewOf(overrides: Partial<ContainerView> = {}): ContainerView {
 interface Harness {
   readonly screen: InventoryScreen;
   readonly moves: MoveIntent[];
+  readonly dropped: DropIntent[];
   readonly root: UiRoot;
 }
 
@@ -56,6 +62,8 @@ function harness(view = viewOf()): Harness {
 
   const moves: MoveIntent[] = [];
   screen.onMove = (intent) => moves.push(intent);
+  const dropped: DropIntent[] = [];
+  screen.onDropToWorld = (intent) => dropped.push(intent);
 
   const root = new UiRoot(layers, {
     theme: THEME,
@@ -64,7 +72,7 @@ function harness(view = viewOf()): Harness {
     layers,
   });
   root.update(0);
-  return { screen, moves, root };
+  return { screen, moves, dropped, root };
 }
 
 interface Ref {
@@ -520,5 +528,71 @@ describe('layout', () => {
       expect(cell?.rect.width).toBe(20);
       expect(cell?.rect.height).toBe(20);
     });
+  });
+});
+/**
+ * Putting a carry down in the world (spec 172).
+ *
+ * The screen's half of it is small on purpose: it says which slot the thing came
+ * out of and lets go. Where it lands, whether the server allows it and what the
+ * cell shows next are all somebody else's -- the same division every other
+ * intent on this screen keeps.
+ */
+describe('dropping a carry into the world', () => {
+  it('emits the slot it came from and ends the carry', () => {
+    const test = harness();
+    clickCell(test, { container: 'inventory', index: 0 });
+    expect(test.screen.drag.active).not.toBeNull();
+
+    expect(test.screen.dropCarried()).toBe(true);
+    expect(test.dropped).toEqual([{ at: { container: 'inventory', index: 0 }, count: 0 }]);
+    expect(test.screen.drag.active).toBeNull();
+    // Nothing was moved between slots: a drop is not a move.
+    expect(test.moves).toEqual([]);
+  });
+
+  /** 0 is "all of it" on the wire, so a part-carry has to say how many. */
+  it('says how many when only part of a stack is in hand', () => {
+    const test = harness();
+    // Right-click on the stack of six takes half of it.
+    clickCell(test, { container: 'inventory', index: 1 }, 2);
+    test.screen.dropCarried();
+    expect(test.dropped).toEqual([{ at: { container: 'inventory', index: 1 }, count: 3 }]);
+  });
+
+  it('drops what was taken off the paperdoll', () => {
+    const worn = viewOf({
+      worn: {
+        mainHand: item('sword', 'mainHand'),
+        offHand: null,
+        head: null,
+        chest: null,
+        legs: null,
+        trinket: null,
+      },
+    });
+    const test = harness(worn);
+    clickCell(test, { container: 'equipment', index: 0 });
+    test.screen.dropCarried();
+    expect(test.dropped).toEqual([{ at: { container: 'equipment', index: 0 }, count: 0 }]);
+  });
+
+  it('does nothing at all with empty hands', () => {
+    const test = harness();
+    expect(test.screen.dropCarried()).toBe(false);
+    expect(test.dropped).toEqual([]);
+  });
+
+  /**
+   * The cell goes back to showing what the server last said. What removes the
+   * item is the client's prediction arriving through `setContainers`, like every
+   * other change here -- this screen never edits itself.
+   */
+  it('leaves the cell holding what it was handed until it is told otherwise', () => {
+    const test = harness();
+    clickCell(test, { container: 'inventory', index: 0 });
+    expect(test.screen.cellAt({ container: 'inventory', index: 0 })?.item).toBeNull();
+    test.screen.dropCarried();
+    expect(test.screen.cellAt({ container: 'inventory', index: 0 })?.item?.defId).toBe('sword');
   });
 });

@@ -49,7 +49,7 @@ import { CharacterScreen } from '../../../ui/screens/character.js';
 import { InventoryScreen, type SlotRef } from '../../../ui/screens/inventory.js';
 import { KeybindingsScreen } from '../../../ui/screens/keybindings.js';
 import { ShopScreen } from '../../../ui/screens/shop.js';
-import { TradeScreen, type TradeUiView } from '../../../ui/screens/trade.js';
+import { TradeScreen, type TradeOfferView, type TradeUiView } from '../../../ui/screens/trade.js';
 import { OptionsScreen } from '../../../ui/screens/options.js';
 import { DisplayScreen } from '../../../ui/screens/display.js';
 import type { ScaleChoice } from '../../../ui/input/display-store.js';
@@ -70,6 +70,13 @@ export interface UiScreensOptions {
   readonly map: InputMap;
   /** A drag that landed: where from, where to, and 0 for the whole stack. */
   readonly onMove: (from: SlotRef, to: SlotRef, count: number) => void;
+  /**
+   * A carry let go of over the world (spec 172): put it on the ground.
+   *
+   * Where it lands is not named here and cannot be -- the server throws it in
+   * front of the body -- so this says which slot it left and how much of it.
+   */
+  readonly onDropItem: (at: SlotRef, count: number) => void;
   readonly onSpend: (skillId: string) => void;
   /** Put one attribute point somewhere, and hand every one of them back (147). */
   readonly onAllocate: (key: string) => void;
@@ -89,6 +96,11 @@ export interface UiScreensOptions {
   readonly onTradeAccept: (revision: number) => void;
   readonly onTradeRespond: (accept: boolean) => void;
   readonly onTradeCancel: () => void;
+  /**
+   * The player has read the ending and put it away (spec 134). Local: the trade
+   * is already gone at the server, so there is nothing to tell it.
+   */
+  readonly onTradeDismiss: () => void;
   /**
    * The player changed a key (spec 135).
    *
@@ -172,6 +184,13 @@ const WINDOW_CHROME = {
 /** How far a window sits from the edge it opens against, in UI pixels. */
 const MARGIN = 8;
 
+/** One side of the trade table as a single line, for the readout. */
+function sideLine(side: TradeOfferView | undefined): string {
+  if (!side) return '';
+  const rows = side.rows.map((row) => `${row.name} x${row.count}`).join('/');
+  return `${side.name}|${side.accepted ? 'yes' : 'no'}|${side.coins}|${rows}`;
+}
+
 export class UiScreens {
   readonly atlas: Atlas = bakeAtlas(THEME);
   readonly layers = new LayerStack();
@@ -212,6 +231,35 @@ export class UiScreens {
   private readonly contents = new Map<WindowId, Widget>();
   /** Whether the `ui` context is on the stack -- pushed, popped, never toggled. */
   private uiContextPushed = false;
+  /**
+   * The trade stage the window was last sized for (spec 134).
+   *
+   * Every other window holds one screen whose content is roughly one size, so
+   * `placeWindow` sizes it once and never again. The trade table is the
+   * exception: it opens holding an *invitation* -- two names and a button --
+   * and then grows a bag grid, a coin stepper and a second offer panel the
+   * moment the invitation is accepted. Sized once, it was sized for the
+   * invitation: 161 UI pixels tall for content that wanted 264, with Accept 77
+   * pixels below the bottom edge and clipped by the scroll view. The trade was
+   * unfinishable without resizing the window by hand.
+   */
+  private tradeStagePlaced: string | null = null;
+  /** Which trade the window is about, live or ended. Identity for the below. */
+  private tradeShowingId: number | null = null;
+  /**
+   * A trade the player has walked away from by closing the window (spec 170).
+   *
+   * Neither it nor its ending is drawn again. It has to be an **id** rather
+   * than a flag, and it has to outlast the whole cancellation: closing a live
+   * trade sends a cancel, and for the round trip that follows the trade is
+   * still live and still replicated, so a mount that only remembered "an ending
+   * is coming" re-opened the window it had just been told to shut -- and, in
+   * re-opening it, cleared the very flag that was meant to keep it closed.
+   *
+   * Cleared when the trade is gone, so the *next* trade and the next ending are
+   * shown normally.
+   */
+  private tradeLeft: number | null = null;
   private now = 0;
   /** The shop the server says is open. What a Buy is addressed to. */
   private openVendorId = '';
@@ -227,17 +275,6 @@ export class UiScreens {
   private shopAskedAt = -1;
   /** The last answer count seen, so {@link show} can stamp against it. */
   private lastVendorRevision = 0;
-  /**
-   * The trade as it ended, kept after the trade itself is gone (spec 134).
-   *
-   * The ending is the one thing the interface most needs to say -- "cancelled --
-   * you walked too far apart" -- and by the time it can be said the server has
-   * already forgotten the trade. A window that vanished would leave the player
-   * wondering whether it went through. Cleared when they close it, or when a new
-   * trade starts.
-   */
-  private endedTrade: TradeUiView | null = null;
-
   /** What the screens were last built from. See {@link containersChanged}. */
   private lastInventory: ClientView['inventory'] | null = null;
   private lastEquipment: ClientView['equipment'] | null = null;
@@ -276,6 +313,9 @@ export class UiScreens {
     });
     this.inventory.onMove = (intent) => {
       options.onMove(intent.from, intent.to, intent.count);
+    };
+    this.inventory.onDropToWorld = (intent) => {
+      options.onDropItem(intent.at, intent.count);
     };
     this.layers.place('dragGhost', this.inventory.ghost);
     // Above every window, like the ghost, because a tooltip about a cell in one
@@ -328,10 +368,9 @@ export class UiScreens {
       // Closing an ended trade is a local act -- there is nothing left to tell
       // the server about -- so it shuts the window instead of sending a cancel
       // for a trade that is already gone.
-      if (this.trade.view?.stage === 'over') {
-        this.endedTrade = null;
-        this.close('trade');
-      }
+      // Closing is what dismisses the ending, and `close` is where that lives
+      // -- the manager can shut this window without going through here.
+      if (this.trade.view?.stage === 'over') this.close('trade');
       else options.onTradeCancel();
     };
 
@@ -549,18 +588,40 @@ export class UiScreens {
     // opens when a trade appears and closes when the player dismisses the
     // ending -- not when the trade ends, because the ending is the one thing
     // the interface most needs to say.
+    //
+    // The live trade, or the last one to end. The fallback is the whole of the
+    // "what the ending says" rule: the server forgets a trade the instant it is
+    // over, so by the time there is a reason to show, `view.trade` is already
+    // null -- and a window that read only that would vanish on the one frame it
+    // had something worth saying.
     const tradeView = tradeViewOf({
-      trade: view.trade,
+      trade: view.trade ?? view.endedTrade,
       inventory: view.inventory,
       coins: view.coins,
     });
-    if (tradeView) {
+    // Which trade this is, so leaving one can be remembered by identity rather
+    // than by a flag a later frame could clear.
+    const replicated = view.trade ?? view.endedTrade;
+    this.tradeShowingId = replicated?.id ?? null;
+    if (replicated === null) this.tradeLeft = null;
+
+    if (tradeView !== null && replicated !== null && this.tradeLeft === replicated.id) {
+      // Walked away from. Not drawn, live or ended -- and once the ending has
+      // arrived there is something to forget, which is what finally clears it.
+      if (view.trade === null) this.options.onTradeDismiss();
+    } else if (tradeView) {
       if (!this.isOpen('trade')) this.show('trade');
-      this.endedTrade = tradeView.stage === 'over' ? tradeView : null;
       this.trade.setTrade(tradeView);
-    } else if (this.endedTrade) {
-      if (!this.isOpen('trade')) this.show('trade');
-      this.trade.setTrade(this.endedTrade);
+      // Re-sized when the stage changes, because the stage is exactly what
+      // decides how much there is to show. Queued rather than done here: the
+      // screen has to be laid out with its new content before it can be
+      // measured, which is the same frame-behind rule `awaitingPlacement`
+      // exists for above.
+      if (tradeView.stage !== this.tradeStagePlaced) {
+        this.tradeStagePlaced = tradeView.stage;
+        this.placed.delete('trade');
+        this.awaitingPlacement.add('trade');
+      }
     }
 
     // The tooltip's delay is time passing rather than an event, so it is
@@ -669,8 +730,15 @@ export class UiScreens {
     readonly bindRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly resetRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly windowRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly tradeStage: string;
+    readonly tradeReason: string;
+    readonly tradeInvited: string;
+    readonly tradeYou: string;
+    readonly tradeThem: string;
+    readonly tradeRects: readonly { readonly id: string; readonly rect: Rect }[];
   } {
     const tabs = this.optionsScreen.tabs;
+    const shownTrade = this.isOpen('trade') ? this.trade.view : null;
     return {
       windows: this.opened(),
       bag: this.inventory.bagSlots.map((cell) => cell.item?.name ?? ''),
@@ -704,7 +772,56 @@ export class UiScreens {
         const window = this.windows.get(id);
         return window ? [{ id, rect: window.placement() }] : [];
       }),
+      // The trade table, in the same shape and for the same reason (spec 134).
+      // This is the one screen a single tab cannot exercise at all -- it needs
+      // two players and a server between them -- so it is also the one whose
+      // wiring nothing but a two-tab harness can check. The stage and the
+      // reason ride along because "the window is open" is the assertion that
+      // let a frozen window pass for a finished trade for two specs.
+      // Only while the window is up. The screen keeps the last view it was
+      // handed -- that is what makes a re-open instant -- but this readout is a
+      // statement about what is *on screen*, and a closed window is showing
+      // nothing. Reporting the stale stage here would make "the ending was put
+      // away" indistinguishable from "the ending is still up".
+      tradeStage: shownTrade?.stage ?? '',
+      // The reason an ending gives, or the warning a live table carries -- the
+      // same one thing the screen puts in that line.
+      tradeReason: shownTrade === null ? '' : shownTrade.stage === 'over' ? shownTrade.reason : shownTrade.warning,
+      tradeInvited: shownTrade === null ? '' : shownTrade.invited ? 'yes' : 'no',
+      // What is actually on each side of the table. The stage says how far the
+      // trade has got; these say what it is *about*, which is the half a
+      // harness needs to tell "the click landed" from "the click missed".
+      tradeYou: sideLine(shownTrade?.you),
+      tradeThem: sideLine(shownTrade?.them),
+      tradeRects: shownTrade ? this.tradeButtons() : [],
     };
+  }
+
+  /**
+   * Where the trade table's controls are, by name. For the harness.
+   *
+   * Only what is *visible*: this screen hides its buttons rather than disabling
+   * them -- an ended trade offers nothing that would ask the server for
+   * anything -- so publishing a hidden button's rect would hand a harness a
+   * place to click that a player does not have.
+   */
+  private tradeButtons(): readonly { id: string; rect: Rect }[] {
+    const named: readonly (readonly [string, Widget])[] = [
+      ['accept', this.trade.acceptButton],
+      ['decline', this.trade.declineButton],
+      ['cancel', this.trade.cancelButton],
+      ['addCoin', this.trade.addCoin],
+      ['removeCoin', this.trade.removeCoin],
+      ...this.trade.bagSlots.map((cell, index) => [`bag:${index}`, cell] as const),
+    ];
+    return named
+      .filter(([, widget]) => widget.visible)
+      .map(([id, widget]) => ({ id, rect: widget.rect }))
+      // ...and nothing with no area. A cell inside a hidden grid stays visible
+      // in its own right -- the grid is what was hidden -- so it would otherwise
+      // publish a 0x0 box at the origin, which is a place a harness can click
+      // and a player cannot.
+      .filter(({ rect }) => rect.width > 0 && rect.height > 0);
   }
 
   /** Where a keybinding row's buttons are, by action id. For the harness. */
@@ -776,6 +893,16 @@ export class UiScreens {
     return this.windows.get(id)?.visible === true;
   }
 
+  /**
+   * What the trade window is showing, or null. Diagnostics, and what a harness
+   * reads -- "the window is open" cannot tell an ending being shown apart from
+   * a window frozen on the last live frame, which is the exact difference the
+   * ending is for.
+   */
+  get shownTrade(): TradeUiView | null {
+    return this.trade.view;
+  }
+
   /** Which windows are open, front last. Diagnostics, and what a harness reads. */
   opened(): readonly WindowId[] {
     return this.windows.order.filter((id): id is WindowId => this.isOpen(id as WindowId));
@@ -810,6 +937,11 @@ export class UiScreens {
     // re-open would show the stale list for a frame, and the server would go on
     // replicating a vendor nobody is looking at.
     if (id === 'shop') this.options.onVendor('');
+    // Closing the trade window is what puts it away (spec 134). Here rather
+    // than in the Close button's handler, because Escape and the title bar shut
+    // a window without pressing anything -- and an ending still remembered is
+    // an ending the mount re-opens on the very next frame.
+    if (id === 'trade') this.leaveTrade();
     this.syncContext();
   }
 
@@ -911,6 +1043,14 @@ export class UiScreens {
    */
   handlePointer(phase: 'down' | 'up' | 'move', pos: Point, button: number, mods: Modifiers): boolean {
     if (phase === 'down') this.focusOnPress(pos);
+    // A press on the world with something in hand puts it down (spec 172), and
+    // is not passed on: the button that drops an item must not also order the
+    // player to walk over to where it landed.
+    //
+    // On the press rather than the release, because that is the half gameplay
+    // acts on -- an order is given on the way down -- so consuming the release
+    // would be consuming an event nothing was going to read.
+    if (phase === 'down' && this.dropOnWorld(pos)) return true;
     const consumed = this.root.handle({ kind: 'pointer', phase, pos, button, mods, time: this.now });
     // A move with no button down reaches no gesture, and two things need it: a
     // carry follows the cursor with nothing held, and a tooltip is by definition
@@ -918,6 +1058,22 @@ export class UiScreens {
     if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
     if (phase === 'move' && this.isOpen('character')) this.character.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));
+  }
+
+  /**
+   * Put a carried stack down, if the press landed on the world (spec 172).
+   *
+   * "The world" is nothing in the interface at all -- a null hit test through
+   * the layer stack, which is the same question {@link focusOnPress} asks. A
+   * press on a window that is not a cell is not a drop: releasing over the empty
+   * half of the bag has always meant "keep hold of it", and turning that into a
+   * discard would be the one gesture in the screen that destroys something by
+   * being slightly off.
+   */
+  private dropOnWorld(pos: Point): boolean {
+    if (this.inventory.drag.active === null) return false;
+    if (this.layers.hitTest(pos) !== null) return false;
+    return this.inventory.dropCarried();
   }
 
   /**
@@ -996,10 +1152,33 @@ export class UiScreens {
    */
   private closeTopmost(): boolean {
     const shopWasOpen = this.isOpen('shop');
+    const tradeWasOpen = this.isOpen('trade');
     if (!this.windows.closeTopmost()) return false;
     if (shopWasOpen && !this.isOpen('shop')) this.options.onVendor('');
+    if (tradeWasOpen && !this.isOpen('trade')) this.leaveTrade();
     this.syncContext();
     return true;
+  }
+
+  /**
+   * Shutting the trade window, however it was shut.
+   *
+   * **Closing a live trade cancels it**, because leaving the table is what
+   * closing means and there is no other honest reading: a window that shut
+   * while the trade went on would leave the player in a trade they cannot see
+   * and unable to start another. Before this the mount re-opened the window
+   * every frame while a trade was live, so Escape and the title bar did nothing
+   * at all and the Cancel button was the only way out.
+   *
+   * An ending is simply forgotten -- there is nothing left to tell the server
+   * about a trade it has already dropped.
+   */
+  private leaveTrade(): void {
+    const showing = this.trade.view;
+    if (showing !== null && showing.stage !== 'over') this.options.onTradeCancel();
+    this.tradeLeft = this.tradeShowingId;
+    this.options.onTradeDismiss();
+    this.tradeStagePlaced = null;
   }
 
   private routingOf(consumed: boolean, kind: UiEvent['kind']): Routing {

@@ -31,6 +31,9 @@ function viewOf(over: Partial<TradeUiView> = {}): TradeUiView {
     purse: 60,
     revision: 4,
     reason: '',
+    succeeded: false,
+    invited: false,
+    warning: '',
     ...over,
   };
 }
@@ -137,7 +140,7 @@ describe('accepting', () => {
 
   it('answers an invitation rather than accepting an offer', () => {
     const h = harness();
-    h.screen.setTrade(viewOf({ stage: 'offered' }));
+    h.screen.setTrade(viewOf({ stage: 'offered', invited: true }));
     h.screen.acceptButton.press();
     // Two different messages, one word to the player.
     expect(h.responses).toEqual([true]);
@@ -145,6 +148,54 @@ describe('accepting', () => {
 
     h.screen.declineButton.press();
     expect(h.responses).toEqual([true, false]);
+  });
+
+  /**
+   * The two halves of one stage (spec 170). Both players sit at `offered`, and
+   * before `invited` was on the wire the screen could not tell them apart -- so
+   * the person who *sent* the request was shown "Accept invitation" and
+   * "Decline" for their own request, two buttons the server refuses.
+   */
+  it('asks the invited side, and lets the inviting side furnish the request', () => {
+    const asked = harness();
+    asked.screen.setTrade(viewOf({ stage: 'offered', invited: true }));
+    expect(asked.screen.acceptButton.visible).toBe(true);
+    expect(asked.screen.declineButton.visible).toBe(true);
+    // ...and edits nothing until it has answered: a table the invited side
+    // could edit before agreeing to sit at it is a table you can be dragged to.
+    expect(asked.screen.addCoin.visible).toBe(false);
+    asked.screen.toggle(0);
+    asked.screen.stepCoins(10);
+    expect(asked.offers).toEqual([]);
+
+    const asking = harness();
+    asking.screen.setTrade(viewOf({ stage: 'offered', invited: false }));
+    expect(asking.screen.acceptButton.visible).toBe(false);
+    expect(asking.screen.declineButton.visible).toBe(false);
+    // The point of the whole change: a request arrives with something in it.
+    expect(asking.screen.addCoin.visible).toBe(true);
+    asking.screen.toggle(1);
+    expect(asking.offers).toEqual([{ slots: [{ index: 1, count: 1 }], coins: 0 }]);
+    // And can always be called off, which is the only button it has.
+    expect(asking.screen.cancelButton.visible).toBe(true);
+  });
+
+  /**
+   * A full bag used to be discovered after both sides had accepted, as the
+   * reason the trade was cancelled -- the one moment nothing can be done about
+   * it. Said while the table is open, it is something a player can fix.
+   */
+  it('will not let a table be accepted that cannot be exchanged', () => {
+    const h = harness();
+    h.screen.setTrade(viewOf({ warning: 'their bag: no room for what is on the table' }));
+    expect(h.screen.acceptButton.visible).toBe(true);
+    expect(h.screen.acceptButton.enabled).toBe(false);
+    h.screen.acceptButton.press();
+    expect(h.accepted).toEqual([]);
+
+    // ...and clears the moment room is made, without the table changing.
+    h.screen.setTrade(viewOf({ warning: '' }));
+    expect(h.screen.acceptButton.enabled).toBe(true);
   });
 
   it('shows their acceptance where it cannot be missed', () => {

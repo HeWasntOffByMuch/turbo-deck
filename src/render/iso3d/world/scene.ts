@@ -33,6 +33,7 @@ import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
+import { StaggerFlinches } from './stagger-flinch.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { PerfFlags } from './perf-flags.js';
@@ -109,10 +110,13 @@ import {
 import { PlayerLighting } from '../player-lighting.js';
 import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
 import { UnitRig } from '../unit-rig.js';
+import { WeaponRig } from '../weapon-rig.js';
+import { weaponAssets } from '../weapon-assets.js';
 import { UnitMachine } from '../../../units/machine.js';
 import type { UnitDef } from '../../../units/types.js';
 import { authoredUnitFor } from './unit-catalog.js';
 import { authoredUnitAssets } from './unit-assets.js';
+import { weaponModelFor } from './weapon-look.js';
 import {
   advanceSpeed,
   attackRateFrom,
@@ -279,6 +283,19 @@ interface DrivenUnit {
   previous: UnitFacts | null;
   /** Last drawn position, for the speed the blend tree reads. */
   previousPosition: { x: number; y: number } | null;
+  /**
+   * The weapon model currently wanted, and the rig that is drawing it (spec 165).
+   *
+   * Three fields rather than one because the body and the weapon are two
+   * independent fetches and either can land first. `weaponId` is the intent and
+   * is written the instant the equipment changes, so a mesh that arrives after
+   * the player has switched again can tell that it is stale. `attached` is
+   * whether the scene graph has actually been joined up, which cannot happen
+   * until the *unit's* mesh has loaded and there is a bone to hang from.
+   */
+  weaponId: string | null;
+  weapon: WeaponRig | null;
+  weaponAttached: boolean;
   /** That speed, kept on the sim's clock rather than the browser's (spec 118). */
   speed: SpeedClock;
   /**
@@ -468,6 +485,8 @@ export class WorldScene {
    * `motion`: the sim owns the heading, this owns how a body gets to it.
    */
   private readonly turnEase = new TurnEase();
+  /** The rock a poise break puts on a body (spec 173). Presentation only. */
+  private readonly staggerFlinches = new StaggerFlinches();
   private readonly bodies = new Map<number, Body>();
   /**
    * The groups `RetroPass` leaves out of the quantize (spec 138).
@@ -492,6 +511,10 @@ export class WorldScene {
    * leaves no entry behind to be read as a swing that never finished.
    */
   private readonly castPhases = new Map<number, number>();
+  /** Which ability each caster is casting, so the driver can pick its clip. */
+  private readonly castAbilities = new Map<number, string>();
+  /** How much of each cast is left, so a cancellation can be told from an end. */
+  private readonly castTicksLeft = new Map<number, number>();
   /** Attack-speed factor per casting entity, for the swing's playback rate. */
   private readonly attackRates = new Map<number, number>();
   private hovered: number | null = null;
@@ -1340,15 +1363,26 @@ export class WorldScene {
     // The drawn yaw keeps per-body state for the same reason the drawn position
     // does, and is dropped on the same pass (spec 142).
     this.turnEase.retain(live);
+    this.staggerFlinches.retain(live);
   }
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
     const live = new Set<number>();
     this.hoverTargets.length = 0;
     this.castPhases.clear();
+    this.castAbilities.clear();
+    this.castTicksLeft.clear();
     this.attackRates.clear();
     for (const cast of view.casts) {
       this.castPhases.set(cast.entityId, cast.phase);
+      // Which ability, not just that there is one (spec 164): a sword swing and
+      // a bow draw are the same activity on the wire and two different clips.
+      this.castAbilities.set(cast.entityId, cast.abilityId);
+      // And how much of it is left to run (spec 166), so the frame the cast
+      // vanishes can be read as "finished" or "called off". Against the drawn
+      // tick rather than the replicated one, because that is the clock the
+      // machine is being stepped on.
+      this.castTicksLeft.set(cast.entityId, cast.endTick - frame.tick);
       // Measured off the ticks the server sent rather than off anyone's stats
       // (spec 144): the ratio of the authored wind-up to the one actually being
       // run is the attack-speed factor, so a hasted body's swing animation
@@ -1373,6 +1407,10 @@ export class WorldScene {
       const look = appearanceOf(entity);
       const body = this.bodyFor(entity.id, look);
       const isSelf = entity.id === view.selfEntityId;
+      // Only our own body, because only our own equipment is on the wire: a
+      // remote player's `mainHand` is not replicated, so drawing one would mean
+      // inventing what they are holding (spec 165).
+      if (isSelf && body.unit) this.syncHeldWeapon(body.unit, view.equipment.mainHand);
 
       // The local player is drawn at its prediction; everything else at its
       // smoothed replica. Interpolating our own body would add a frame of lag to
@@ -1395,9 +1433,22 @@ export class WorldScene {
           ? (pose?.z ?? entity.z)
           : this.ground(x, y);
 
+      // The poise break's rock (spec 173), added to the drawn transform and to
+      // nothing else. `frame.tick` is the same clock the bodies above are
+      // interpolated by, so this lands on the same frame at 30fps and at 144.
+      const flinch = this.staggerFlinches.read(
+        entity.id,
+        entity.activity,
+        entity.activityUntilTick,
+        frame.tick,
+      );
+
       body.group.position.set(x, ground, y);
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
-      body.group.rotation.y = -facing;
+      body.group.rotation.y = -facing + flinch.yaw;
+      // Rocked back about the lateral axis. Written every frame rather than
+      // only while flinching, so a body that settles is put back flat.
+      body.group.rotation.z = flinch.pitch;
 
       // Both rigs read their own gait out of the positions they are handed, so
       // neither needs the scene to remember where it drew them last frame.
@@ -1445,8 +1496,90 @@ export class WorldScene {
       // A shot builds its own geometry and is gone within a second or two, so
       // this is a leak that would run at the rate of the fighting.
       body.shot?.dispose();
+      // A held weapon is a loaded mesh hanging off a bone that is about to
+      // leave the scene, so it goes with it.
+      if (body.unit) this.dropHeldWeapon(body.unit);
       this.bodies.delete(id);
     }
+  }
+
+  /**
+   * Puts the equipped weapon in the player's hand, and keeps it there (spec 165).
+   *
+   * Called every frame for the local body, and does nothing on almost all of
+   * them. Two things make it worth a per-frame call rather than an event.
+   *
+   * **The two halves land in either order.** The unit's mesh and the weapon's
+   * mesh are separate fetches, and `attach` needs a *bone*, which does not exist
+   * until the body has loaded. So the attach is retried until it takes, which is
+   * one boolean test on the frames where it already has.
+   *
+   * **A switch mid-fetch must not resurrect the old weapon.** `weaponId` is
+   * written before the load starts and re-checked after it resolves, so a bow
+   * that arrives after the player has gone back to the sword is disposed instead
+   * of drawn. Without that the race is invisible on a fast connection and
+   * reliable on a slow one, which is the worst shape a bug can have.
+   */
+  private syncHeldWeapon(unit: DrivenUnit, itemId: string | null): void {
+    const wanted = weaponModelFor(itemId);
+    if (wanted !== unit.weaponId) {
+      unit.weaponId = wanted;
+      this.dropHeldWeapon(unit);
+      const assets = wanted === null ? null : weaponAssets(wanted);
+      if (assets) {
+        const rig = new WeaponRig(assets.def);
+        void rig.load({ meshUrl: assets.meshUrl }).then(() => {
+          // Superseded while the bytes were in flight, or the mesh is broken.
+          // Both are "do not draw it", and neither is worth a console line on a
+          // path a player can take by clicking the weapon switch twice.
+          if (unit.weaponId !== wanted) {
+            rig.dispose();
+            return;
+          }
+          if (rig.error !== null) {
+            // Said out loud rather than left as empty hands, the same rule
+            // `weapon-assets.ts` applies to a document that will not validate:
+            // a weapon that fails here is one the player is about to go looking
+            // for, and silence is indistinguishable from a socket that missed.
+            console.error(`[items] ${wanted} did not load: ${rig.error}`);
+            rig.dispose();
+            return;
+          }
+          // Whatever is in the hand comes out first, even when it is the same
+          // model. Two loads of one weapon can be in flight at once -- switch
+          // away and back inside a fetch and both have the same `wanted`, so
+          // both pass the test above -- and assigning over the first would
+          // leave it attached to the bone with nothing left holding a
+          // reference to detach it.
+          this.dropHeldWeapon(unit);
+          unit.weapon = rig;
+          castsShadows(rig.object);
+        });
+      }
+    }
+
+    const held = unit.weapon;
+    if (held === null || unit.weaponAttached) return;
+    unit.weaponAttached = unit.rig.attach(held.weapon.socket, held.object);
+    if (!unit.weaponAttached && unit.rig.loaded) {
+      // The body has a skeleton and the socket still did not resolve, so this
+      // is a document naming a socket or a bone that does not exist -- not the
+      // ordinary "the mesh has not arrived yet" case, which is what the
+      // `loaded` test above excludes. Once, because the retry is per frame.
+      console.error(`[items] ${held.weapon.id} names socket ${held.weapon.socket}, which this rig has nowhere to hang`);
+      unit.weaponAttached = true;
+    }
+  }
+
+  /** Takes the held weapon off the bone and frees it. Safe on an empty hand. */
+  private dropHeldWeapon(unit: DrivenUnit): void {
+    const held = unit.weapon;
+    if (held) {
+      unit.rig.detach(held.weapon.socket);
+      held.dispose();
+    }
+    unit.weapon = null;
+    unit.weaponAttached = false;
   }
 
   /**
@@ -1603,6 +1736,17 @@ export class WorldScene {
     frame: FrameInfo,
   ): void {
     const dead = entity.maxHealth > 0 && entity.health <= 0;
+    // A respawn is a teleport home, and the ground it covered is not travel.
+    // Measured as travel it is thousands of units in one tick, which the slew
+    // then walks the blend parameter up through -- so a body that has just
+    // stood up takes a stride it never made. Forgetting the last drawn position
+    // is the whole fix: the frame the body reappears measures nothing, and the
+    // frame after it measures from where it actually is.
+    if (unit.previous?.dead === true && !dead) {
+      unit.previousPosition = null;
+      unit.speed = STOPPED;
+      unit.blendSpeed = 0;
+    }
     // Distance on the frame clock, the quotient on the tick clock (spec 118).
     // A drawn position only moves when a tick drained, so dividing by the frame
     // delta reported a standing body on every frame that drained none -- which
@@ -1623,6 +1767,8 @@ export class WorldScene {
       activity: entity.activity,
       castPhase: this.castPhases.get(entity.id) ?? null,
       attackRate: this.attackRates.get(entity.id) ?? 1,
+      abilityId: this.castAbilities.get(entity.id) ?? null,
+      castTicksLeft: this.castTicksLeft.get(entity.id) ?? null,
       dead,
     };
     driveUnit(unit.machine, facts, unit.previous, frame.ticks);
@@ -1650,17 +1796,31 @@ export class WorldScene {
    * distinguishes "loaded", "has the right skeleton" and "is being driven";
    * `view.ts` puts it on a data attribute and nothing in the game reads it.
    */
-  authoredUnitReadout(): { readonly loaded: number; readonly bones: number; readonly states: string } {
+  authoredUnitReadout(): {
+    readonly loaded: number;
+    readonly bones: number;
+    readonly states: string;
+    readonly held: string;
+  } {
     let loaded = 0;
     let bones = 0;
     const states: string[] = [];
+    const held: string[] = [];
     for (const body of this.bodies.values()) {
       if (!body.unit?.rig.loaded) continue;
       loaded += 1;
       bones = Math.max(bones, body.unit.bones);
       states.push(`${body.unit.machine.stateId}@${body.unit.machine.tick}`);
+      // What is actually hanging off a bone, not what was asked for (spec 165).
+      // The whole failure this exists to catch is a weapon that is wanted,
+      // fetched, and attached to nothing -- an uncalibrated socket id, a rig
+      // whose mesh had not loaded yet -- and every one of those leaves
+      // `weaponId` set and the scene graph empty.
+      if (body.unit.weapon && body.unit.weaponAttached) {
+        held.push(`${body.unit.weapon.weapon.socket}=${body.unit.weapon.weapon.id}`);
+      }
     }
-    return { loaded, bones, states: states.sort().join(',') };
+    return { loaded, bones, states: states.sort().join(','), held: held.sort().join(',') };
   }
 
   /** Whether a body is anywhere the camera can see, for the skinning skip. */
@@ -1836,12 +1996,19 @@ export class WorldScene {
       const group = new THREE.Group();
       const unitRig = new UnitRig();
       group.add(unitRig.object);
+      // Without this `attach` has no socket to resolve and silently draws no
+      // weapon (spec 165). The sandbox has always called it; the Play tab never
+      // did, because until now nothing here had anything to hang.
+      if (authoredUnit.skeleton) unitRig.setSockets(authoredUnit.skeleton.sockets);
       const driven: DrivenUnit = {
         rig: unitRig,
         machine: new UnitMachine({ unit: authoredUnit.unit, clipLib: authoredUnit.clipLib }),
         def: authoredUnit.unit,
         previous: null,
         previousPosition: null,
+        weaponId: null,
+        weapon: null,
+        weaponAttached: false,
         speed: STOPPED,
         blendSpeed: 0,
         bones: 0,

@@ -13,6 +13,7 @@ import {
   slewSpeed,
   speedBetween,
   startedCasting,
+  startedStagger,
   STOPPED,
   type SpeedClock,
   type UnitFacts,
@@ -24,6 +25,8 @@ function facts(patch: Partial<UnitFacts> = {}): UnitFacts {
     activity: EntityActivity.Idle,
     castPhase: null,
     attackRate: 1,
+    abilityId: null,
+    castTicksLeft: null,
     dead: false,
     ...patch,
   };
@@ -32,6 +35,47 @@ function facts(patch: Partial<UnitFacts> = {}): UnitFacts {
 function machine(): UnitMachine {
   return new UnitMachine({ unit: unitDefFixture(), clipLib: clipLibFixture() });
 }
+
+describe('startedStagger (spec 173)', () => {
+  it('is true on the tick a break lands', () => {
+    expect(startedStagger(facts({ activity: EntityActivity.Stunned }), facts())).toBe(true);
+  });
+
+  it('is false for every tick after the first', () => {
+    // The window is many ticks long. Raised on each, the clip would restart on
+    // every frame of the stagger it is meant to play once.
+    const stunned = facts({ activity: EntityActivity.Stunned });
+    expect(startedStagger(stunned, stunned)).toBe(false);
+  });
+
+  it('is false with no previous facts', () => {
+    // A body seen for the first time already staggered. Nobody watched it land,
+    // so it is not swung into the clip halfway through.
+    expect(startedStagger(facts({ activity: EntityActivity.Stunned }), null)).toBe(false);
+  });
+
+  it('is false for anything that is not a break', () => {
+    for (const activity of [
+      EntityActivity.Idle,
+      EntityActivity.Moving,
+      EntityActivity.Casting,
+      EntityActivity.Dead,
+    ]) {
+      expect(startedStagger(facts({ activity }), facts())).toBe(false);
+    }
+  });
+
+  it('raises nothing on a unit that never declared the parameter', () => {
+    // The same fallback `triggerFor` applies to `shoot`: no rig in the tree has
+    // a stagger clip yet, so this must be a silent no-op rather than a machine
+    // asked for a state it has not got.
+    const driven = machine();
+    expect(driven.getParameter('stagger')).toBeUndefined();
+    expect(() =>
+      driveUnit(driven, facts({ activity: EntityActivity.Stunned }), facts(), 1),
+    ).not.toThrow();
+  });
+});
 
 describe('startedCasting', () => {
   it('is true on the tick a cast begins', () => {
@@ -522,5 +566,80 @@ describe('hasDeathAnimation', () => {
       },
     };
     expect(hasDeathAnimation(noDeath)).toBe(false);
+  });
+});
+
+describe('the pig, respawned', () => {
+  /**
+   * The bug this is about, end to end: the real unitdef, the real machine, a
+   * real death and a real respawn.
+   *
+   * A death state is `terminal` and a terminal state has no exit, so `dead`
+   * going false left the machine in `down` forever -- and since the player is
+   * the body drawn from this document, a respawned player went on running
+   * around the arena drawn as the last frame of the clip they fell in.
+   */
+  const DIR = 'assets/units/pig_a_pose_full';
+  const read = (name: string): unknown => JSON.parse(readFileSync(join(process.cwd(), DIR, name), 'utf8'));
+  const readFamily = (name: string): unknown =>
+    JSON.parse(readFileSync(join(process.cwd(), 'assets/units', name), 'utf8'));
+  const bundle = loadUnitBundle(read('pig_a_pose_full.unitdef.json'), readFamily('biped.core.cliplib.json'));
+
+  /** A machine that has been killed, and left down long enough to settle. */
+  function fallen(): { machine: UnitMachine; previous: UnitFacts } {
+    const loaded = bundle.value;
+    if (!loaded) throw new Error(bundleErrorText(bundle));
+    const machine = new UnitMachine({ unit: loaded.unit, clipLib: loaded.clipLib });
+    let previous: UnitFacts = facts({ speed: MOVE_SPEED });
+    for (let tick = 0; tick < 30; tick += 1) driveUnit(machine, previous, previous, 1);
+    const dead = facts({ dead: true });
+    for (let tick = 0; tick < 60; tick += 1) {
+      driveUnit(machine, dead, previous, 1);
+      previous = dead;
+    }
+    expect(machine.stateId).toBe('down');
+    return { machine, previous };
+  }
+
+  it('gets up instead of running around as its own corpse', () => {
+    const { machine, previous } = fallen();
+    const alive = facts({ speed: MOVE_SPEED });
+    driveUnit(machine, alive, previous, 1);
+    expect(machine.stateId).not.toBe('down');
+
+    // And is back to drawing the gait it is actually moving at.
+    let last = alive;
+    for (let tick = 0; tick < 60; tick += 1) driveUnit(machine, last, (last = alive), 1);
+    expect(machine.stateId).toBe('locomotion');
+    expect(machine.poses().some((pose) => pose.clipId === 'run' && pose.weight > 0.9)).toBe(true);
+  });
+
+  it('does not blend the corpse across the trip home', () => {
+    // The respawn is a `Teleport` correction, which the client snaps rather
+    // than eases (spec 067). A pose easing up off the floor at the spawn point
+    // would be the one part of it drawing a body getting up from a fall that
+    // happened somewhere else.
+    const { machine, previous } = fallen();
+    driveUnit(machine, facts(), previous, 1);
+    expect(machine.snapshot().previousStateId).not.toBe('down');
+    expect(machine.poses().some((pose) => pose.clipId === 'hurt')).toBe(false);
+  });
+
+  it('gets up on a tick that dropped the edge', () => {
+    // Level rather than edge: `previous` is the last frame that was driven, and
+    // a client that missed the frame the health crossed back must not spend the
+    // rest of the session drawn as a corpse.
+    const { machine } = fallen();
+    const alive = facts({ speed: MOVE_SPEED });
+    driveUnit(machine, alive, alive, 1);
+    expect(machine.stateId).not.toBe('down');
+  });
+
+  it('leaves a corpse lying down', () => {
+    // The other direction still has to hold: nothing here revives a body the
+    // wire still says is dead.
+    const { machine, previous } = fallen();
+    for (let tick = 0; tick < 60; tick += 1) driveUnit(machine, previous, previous, 1);
+    expect(machine.stateId).toBe('down');
   });
 });

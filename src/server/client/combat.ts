@@ -34,7 +34,7 @@
 
 import { abilityById, type AbilityDefinition } from '../data/abilities.js';
 import type { AttackTiming } from '../sim/attack-timing.js';
-import { turnToward } from '../sim/movement.js';
+import { headingToward, turnToward } from '../sim/movement.js';
 import {
   attackTimingFor,
   nextReadyTick,
@@ -63,6 +63,18 @@ export interface Mirror {
   /** Replicated, so the mirror may claim them. Statuses are not (spec 147). */
   readonly poise: number;
   readonly shield: number;
+  /**
+   * The stagger window, replicated on `FIELD_ACTIVITY` (spec 173).
+   *
+   * Real rather than assumed, for the same reason `fallbackCharges` is: the
+   * gate this mirror exists to ask is `startCast`, and since 173 a poise break
+   * is one of the refusals it can give. A mirror that claimed to be idle would
+   * light a button the server is about to refuse -- the mispredicted press this
+   * file exists to prevent -- and it is the one refusal the player did not
+   * cause, so it is also the one they are least ready for.
+   */
+  readonly activity: number;
+  readonly activityUntilTick: number;
   /** Replicated on its own message (spec 156), so the flask gate is predictable. */
   readonly fallbackCharges: number;
 }
@@ -89,8 +101,8 @@ export function asEntity(mirror: Mirror): ServerEntity {
     level: 1,
     zoneId: '',
     stats: mirror.stats,
-    activity: 0,
-    activityUntilTick: 0,
+    activity: mirror.activity,
+    activityUntilTick: mirror.activityUntilTick,
     radius: 0,
     targetId: null,
     aggro: AggroValue.Calm,
@@ -103,6 +115,7 @@ export function asEntity(mirror: Mirror): ServerEntity {
     cast: mirror.cast,
     cooldowns: mirror.cooldowns,
     projectile: null,
+    dropAim: null,
     drop: null,
     mote: null,
     claimedPosition: null,
@@ -307,9 +320,20 @@ export function steerFacing(
   wanted: number,
   turnRate: number,
   tickRate: number,
+  /**
+   * Where a drop this client has asked for is aimed, or null (spec 172).
+   *
+   * Under the cast and over the input, which is the order `resolveFacing` reads
+   * them in on the server. It is here rather than left to the server for one
+   * reason: this client never adopts the server's facing after the first seed,
+   * so without it the local player would be the one person who cannot see their
+   * own body come round.
+   */
+  dropAim: Point | null = null,
 ): number {
-  const toward = cast
-    ? Math.atan2(cast.targetY - position.y, cast.targetX - position.x)
+  const aim = cast ? { x: cast.targetX, y: cast.targetY } : dropAim;
+  const toward = aim
+    ? headingToward(position, aim, facing)
     : Number.isFinite(wanted)
       ? wanted
       : facing;

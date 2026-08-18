@@ -39,6 +39,7 @@ function viewFixture(overrides: Partial<ClientView> = {}): ClientView {
     vendor: null,
     vendorRevision: 0,
     trade: null,
+    endedTrade: null,
     level: 3,
     experience: 40,
     unspentSkillPoints: 1,
@@ -62,6 +63,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
     {
       map: new InputMap(),
       onMove: (from, to, count) => requests.push(`move:${from.index}->${to.index}x${count}`),
+      onDropItem: (at, count) => requests.push(`drop:${at.container}${at.index}x${count}`),
       onSpend: (id) => requests.push(`spend:${id}`),
       onAllocate: (key) => requests.push(`allocate:${key}`),
       onRespec: () => requests.push('respec'),
@@ -73,6 +75,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       onTradeAccept: (revision) => requests.push(`tradeAccept:${revision}`),
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
+      onTradeDismiss: () => requests.push('tradeDismiss'),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
       onShowFpsChosen: (show) => requests.push(`showFps:${String(show)}`),
@@ -326,6 +329,58 @@ describe('who hears an input', () => {
   });
 });
 
+/**
+ * Putting something down (spec 172).
+ *
+ * Two facts that only exist at the mount: which press counts as "the world", and
+ * that such a press does not also reach gameplay. Everything about what a drop
+ * *is* lives in `ui/screens/inventory.test.ts` and over the wire.
+ */
+describe('a carry let go of over the world', () => {
+  function carrying(): ReturnType<typeof harness> {
+    const test = harness();
+    test.screens.show('inventory');
+    test.screens.update(viewFixture({ inventory: starterInventory() }), 0);
+    const cell = [...test.screens.root.content.walk()].find((widget) => widget.name === 'bag:0');
+    if (!cell) throw new Error('the bag drew no cells');
+    const at = { x: cell.rect.x + 2, y: cell.rect.y + 2 };
+    test.screens.handlePointer('down', at, 0, NONE);
+    test.screens.handlePointer('up', at, 0, NONE);
+    if (!test.screens.carrying) throw new Error('nothing was picked up');
+    return test;
+  }
+
+  it('asks the server to put it down, and keeps the press from gameplay', () => {
+    const test = carrying();
+    // Bottom-right of a 400x300 viewport with the bag at the top-left margin:
+    // nothing in the interface is there.
+    expect(test.screens.handlePointer('down', { x: 390, y: 290 }, 0, NONE)).toBe(true);
+    expect(test.requests.filter((r) => r.startsWith('drop:'))).toEqual(['drop:inventory0x0']);
+    expect(test.screens.carrying).toBe(false);
+  });
+
+  /**
+   * The empty half of a window is not the world. Releasing over it has always
+   * meant "keep hold of it", and turning that into a discard would make the one
+   * gesture on this screen that destroys something the easiest one to do by
+   * accident.
+   */
+  it('keeps hold of it when the press lands on a window', () => {
+    const test = carrying();
+    expect(test.screens.handlePointer('down', { x: 20, y: 14 }, 0, NONE)).toBe(true);
+    expect(test.requests.filter((r) => r.startsWith('drop:'))).toEqual([]);
+    expect(test.screens.carrying).toBe(true);
+  });
+
+  it('leaves a press with empty hands to the world', () => {
+    const test = harness();
+    test.screens.show('inventory');
+    test.screens.update(viewFixture({ inventory: starterInventory() }), 0);
+    expect(test.screens.handlePointer('down', { x: 390, y: 290 }, 0, NONE)).toBe(false);
+    expect(test.requests.filter((r) => r.startsWith('drop:'))).toEqual([]);
+  });
+});
+
 describe('the trade window (spec 134)', () => {
   const openTrade = {
     id: 1,
@@ -334,6 +389,8 @@ describe('the trade window (spec 134)', () => {
     you: { playerId: 'you', displayName: 'You', offer: [], coins: 0, accepted: false },
     them: { playerId: 'ben', displayName: 'Ben', offer: [], coins: 0, accepted: false },
     reason: '',
+    invited: false,
+    warning: '',
   };
 
   /**
@@ -347,24 +404,172 @@ describe('the trade window (spec 134)', () => {
     expect(screens.isOpen('trade')).toBe(true);
   });
 
+  /** How an ending actually reaches the mount: `trade` null, `endedTrade` set. */
+  const endedTrade = { ...openTrade, stage: 4, reason: 'you walked too far apart' };
+
   /**
    * ...and does *not* close itself when the trade ends. The ending is the one
    * thing the interface most needs to say, and by then the server has forgotten
    * the trade -- a window that vanished would leave the player wondering whether
    * it went through.
+   *
+   * The shape matters more than the assertion here. An ended trade never
+   * arrives in `view.trade`: the client moves it to `endedTrade` and nulls the
+   * live one on the same message, so a test that puts a `cancelled` stage in
+   * `trade` is testing a view the client cannot produce. That is what this test
+   * used to do, and it passed for two specs against a mount that read only
+   * `view.trade` -- so the window froze on the last live frame and the reason
+   * was never drawn at all.
    */
   it('stays up on the ending, showing why', () => {
     const { screens } = harness();
     screens.update(viewFixture({ trade: openTrade }), 0);
-    screens.update(
-      viewFixture({ trade: { ...openTrade, stage: 4, reason: 'you walked too far apart' } }),
-      16,
-    );
+    screens.update(viewFixture({ trade: null, endedTrade }), 16);
+    expect(screens.isOpen('trade')).toBe(true);
+    // Open is not enough: a window frozen on the last live frame is also open.
+    expect(screens.shownTrade?.stage).toBe('over');
+    expect(screens.shownTrade?.reason).toBe('you walked too far apart');
+
+    // And goes on saying it, frame after frame, until it is put away.
+    screens.update(viewFixture({ trade: null, endedTrade }), 32);
+    expect(screens.isOpen('trade')).toBe(true);
+    expect(screens.shownTrade?.stage).toBe('over');
+  });
+
+  /**
+   * Closing it is what dismisses it, and the mount must say so -- the client is
+   * what remembers the ending, so a window closed without telling it is a
+   * window the very next frame re-opens.
+   */
+  it('dismisses the ending when the window is closed', () => {
+    const { screens, requests } = harness();
+    screens.update(viewFixture({ trade: null, endedTrade }), 0);
+    screens.close('trade');
+    expect(requests).toContain('tradeDismiss');
+    expect(screens.isOpen('trade')).toBe(false);
+  });
+
+  /** Escape shuts a window without pressing anything, so it dismisses too. */
+  it('dismisses the ending when Escape shuts it', () => {
+    const { screens, requests } = harness();
+    screens.update(viewFixture({ trade: null, endedTrade }), 0);
+    expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
+    expect(screens.isOpen('trade')).toBe(false);
+    expect(requests).toContain('tradeDismiss');
+  });
+
+  /** Once dismissed, the client stops sending it -- and it stays shut. */
+  it('does not come back once the ending is dismissed', () => {
+    const { screens } = harness();
+    screens.update(viewFixture({ trade: null, endedTrade }), 0);
+    screens.close('trade');
+    screens.update(viewFixture({ trade: null, endedTrade: null }), 16);
+    expect(screens.isOpen('trade')).toBe(false);
+  });
+
+  /**
+   * The window has to be big enough for what the trade has *become*.
+   *
+   * Every other window holds one screen of roughly one size, so `placeWindow`
+   * sizes it once. The trade table opens holding an invitation -- two names and
+   * a button -- and grows a bag grid, a coin stepper and a second offer panel
+   * the moment the invitation is accepted. Sized once, it was sized for the
+   * invitation: the Accept button ended up 77 UI pixels below the window's own
+   * bottom edge, clipped by the scroll view, and the trade could not be
+   * completed without resizing the window by hand. Two tabs found it; nothing
+   * in Node could, because nothing measured a button against its window.
+   */
+  it('grows to fit the table once the invitation is accepted', () => {
+    const { screens } = harness({}, { width: 1200, height: 800 });
+    // The frame after each update is where placement happens: a window is sized
+    // from what its screen wants, and that is not known until it is laid out.
+    const settle = (view: ClientView): void => {
+      for (let frame = 0; frame < 3; frame += 1) screens.update(view, frame * 16);
+    };
+
+    // Through the invitation first, because that is where the bug is born: the
+    // window is placed while it holds two names and a button, and the grid
+    // arrives afterwards. Straight to `open` and it is sized correctly by
+    // accident, which is what made this pass before the fix existed.
+    const bag = starterInventory();
+    settle(viewFixture({ trade: { ...openTrade, stage: 0 }, inventory: bag }));
+    settle(viewFixture({ trade: openTrade, inventory: bag }));
+    const open = screens.readout();
+    const frame = open.windowRects.find((box) => box.id === 'trade')?.rect;
+    const accept = open.tradeRects.find((box) => box.id === 'accept')?.rect;
+    expect(frame).toBeDefined();
+    expect(accept).toBeDefined();
+    if (!frame || !accept) return;
+
+    // Inside the window it belongs to, on both edges. A button below the fold is
+    // a button the pointer cannot reach.
+    expect(accept.y + accept.height).toBeLessThanOrEqual(frame.y + frame.height);
+    expect(accept.x + accept.width).toBeLessThanOrEqual(frame.x + frame.width);
+    // ...and the bag it offers from, which is the taller half.
+    const lastCell = open.tradeRects.filter((box) => box.id.startsWith('bag:')).at(-1)?.rect;
+    expect(lastCell).toBeDefined();
+    if (lastCell) expect(lastCell.y + lastCell.height).toBeLessThanOrEqual(frame.y + frame.height);
+  });
+
+  /**
+   * The window can always be shut (spec 170).
+   *
+   * The mount re-opens it every frame while a trade is live, so Escape and the
+   * title bar did nothing at all and Cancel was the only exit. Closing a live
+   * trade means leaving the table, so it cancels -- a window that shut while
+   * the trade went on would leave the player in a trade they cannot see and
+   * unable to start another.
+   */
+  it('closes a live trade by leaving the table', () => {
+    const { screens, requests } = harness();
+    screens.update(viewFixture({ trade: openTrade }), 0);
     expect(screens.isOpen('trade')).toBe(true);
 
-    // The server has forgotten it; the window has not.
-    screens.update(viewFixture({ trade: null }), 32);
+    expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
+    expect(screens.isOpen('trade')).toBe(false);
+    expect(requests).toContain('tradeCancel');
+
+    // For the whole round trip the trade is still live and still replicated,
+    // and it must not re-open the window the player just shut. This is the case
+    // a flag could not hold: re-opening here is also what cleared it.
+    for (let frame = 1; frame <= 6; frame += 1) {
+      screens.update(viewFixture({ trade: openTrade }), frame * 16);
+      expect(screens.isOpen('trade')).toBe(false);
+    }
+
+    // ...and then the cancellation arrives as an ending. One action, not two.
+    screens.update(viewFixture({ trade: null, endedTrade }), 112);
+    expect(screens.isOpen('trade')).toBe(false);
+    expect(requests).toContain('tradeDismiss');
+  });
+
+  /** ...but the *next* trade's ending is still shown. */
+  it('shows the ending of a trade the player did not close', () => {
+    const { screens } = harness();
+    screens.update(viewFixture({ trade: openTrade }), 0);
+    screens.handleKey('Escape', 'down', NONE);
+    screens.update(viewFixture({ trade: null, endedTrade }), 16);
+    expect(screens.isOpen('trade')).toBe(false);
+
+    // A second trade, ended by somebody else. A new id, because the registry
+    // never reuses one -- and it is the id that says which table was left.
+    const second = { ...openTrade, id: openTrade.id + 1 };
+    screens.update(viewFixture({ trade: second }), 32);
+    screens.update(viewFixture({ trade: null, endedTrade: { ...endedTrade, id: second.id } }), 48);
     expect(screens.isOpen('trade')).toBe(true);
+    expect(screens.shownTrade?.stage).toBe('over');
+  });
+
+  /** A live trade wins over an ending the player has not put away yet. */
+  it('shows the live trade rather than a stale ending', () => {
+    const { screens } = harness();
+    screens.update(viewFixture({ trade: openTrade, endedTrade }), 0);
+    expect(screens.isOpen('trade')).toBe(true);
+    // Nothing to dismiss: the window is showing a trade that is still running.
+    expect(screens.shownTrade?.stage).toBe('open');
+    screens.update(viewFixture({ trade: openTrade, endedTrade }), 16);
+    expect(screens.isOpen('trade')).toBe(true);
+    expect(screens.shownTrade?.stage).toBe('open');
   });
 });
 

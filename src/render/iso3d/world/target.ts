@@ -60,6 +60,19 @@ export interface AutoAttackInput {
    * request sixty times a second until the answer landed.
    */
   readonly pending: boolean;
+  /**
+   * True while a poise break holds this body (spec 173).
+   *
+   * The third way to be unable to swing, and it needs its own field because it
+   * is the only one the player did not cause: {@link rooted} is a cast this
+   * body committed to and {@link pending} is a request it sent, where a stagger
+   * is something done to it. Without it the order kept asking sixty times a
+   * second through every break -- 146 refusals in one measured fight, all of
+   * them `'staggered'`, which is precisely the storm {@link pending} exists to
+   * prevent and for the same reason: the answer cannot change until the window
+   * ends, so nothing is learned by asking again before it does.
+   */
+  readonly staggered: boolean;
   /** The tick the basic attack is ready again, from the server's own table. */
   readonly readyAtTick: number;
   /**
@@ -133,6 +146,12 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
   // during a wind-up would call the swing off on the player's behalf -- and the
   // one thing the feint has to be is theirs.
   if (input.rooted) return { chaseTo: null, attack: false, drop: false };
+
+  // A broken body holds too, and holds harder (spec 173): it cannot swing and
+  // it cannot walk, so there is not even a chase to keep up. The order itself
+  // survives -- a stagger is half a second and dropping the mark would make
+  // every break cost the player their target as well as their footing.
+  if (input.staggered) return { chaseTo: null, attack: false, drop: false };
 
   const dx = target.x - input.self.x;
   const dy = target.y - input.self.y;

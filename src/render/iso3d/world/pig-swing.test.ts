@@ -47,12 +47,22 @@ describe('the trigger finally reaches a state', () => {
 
   it('swings when a cast begins, and not before', () => {
     const machine = machineFor();
-    const standing: UnitFacts = { speed: 0, activity: EntityActivity.Idle, castPhase: null, attackRate: 1, dead: false };
+    const standing: UnitFacts = {
+      speed: 0,
+      activity: EntityActivity.Idle,
+      castPhase: null,
+      attackRate: 1,
+      abilityId: null,
+      castTicksLeft: null,
+      dead: false,
+    };
     const casting: UnitFacts = {
       speed: 0,
       activity: EntityActivity.Casting,
       castPhase: CastPhaseValue.Windup,
       attackRate: 1,
+      abilityId: 'melee.slash',
+      castTicksLeft: 60,
       dead: false,
     };
     driveUnit(machine, standing, null, 10);
@@ -72,6 +82,8 @@ describe('the trigger finally reaches a state', () => {
       activity: EntityActivity.Casting,
       castPhase: CastPhaseValue.Windup,
       attackRate: 1,
+      abilityId: 'melee.slash',
+      castTicksLeft: 60,
       dead: false,
     };
     const impacts: number[] = [];
@@ -96,6 +108,8 @@ describe('the trigger finally reaches a state', () => {
       activity: EntityActivity.Moving,
       castPhase: null,
       attackRate: 1,
+      abilityId: null,
+      castTicksLeft: null,
       dead: false,
     };
     driveUnit(machine, running, null, 30);
@@ -106,6 +120,8 @@ describe('the trigger finally reaches a state', () => {
       activity: EntityActivity.Casting,
       castPhase: CastPhaseValue.Windup,
       attackRate: 1,
+      abilityId: 'melee.slash',
+      castTicksLeft: 60,
       dead: false,
     };
     driveUnit(machine, casting, running, 1);
@@ -122,6 +138,8 @@ describe('the trigger finally reaches a state', () => {
       activity: EntityActivity.Casting,
       castPhase: CastPhaseValue.Windup,
       attackRate: 1,
+      abilityId: 'melee.slash',
+      castTicksLeft: 60,
       dead: false,
     };
     driveUnit(machine, casting, null, 5);

@@ -751,12 +751,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let lastUnitReadout = '';
   function publishUnitReadout(): void {
     const readout = scene.authoredUnitReadout();
-    const text = `${readout.loaded}:${readout.bones}:${readout.states}`;
+    const text = `${readout.loaded}:${readout.bones}:${readout.states}:${readout.held}`;
     if (text === lastUnitReadout) return;
     lastUnitReadout = text;
     root.dataset['authoredUnits'] = String(readout.loaded);
     root.dataset['authoredBones'] = String(readout.bones);
     root.dataset['authoredStates'] = readout.states;
+    root.dataset['heldWeapons'] = readout.held;
   }
 
   /**
@@ -806,9 +807,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // and a readout that did not watch it would report the old box forever,
     // which is exactly the state the whole feature is a claim about.
     const frames = boxes(readout.windowRects);
+    // The trade table (spec 134). In the key as well as the attributes: a trade
+    // can change stage without moving a window or touching the bag, and the
+    // ending changes only the reason.
+    const tradeRects = boxes(readout.tradeRects);
+    const trade =
+      `${readout.tradeStage}|${readout.tradeReason}|${readout.tradeInvited}` +
+      `|${readout.tradeYou}|${readout.tradeThem}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
-      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}`;
+      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
+      `|${trade}|${tradeRects}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
@@ -824,6 +833,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiBinds'] = binds;
     root.dataset['uiResets'] = resets;
     root.dataset['uiFrames'] = frames;
+    root.dataset['uiTradeStage'] = readout.tradeStage;
+    root.dataset['uiTradeReason'] = readout.tradeReason;
+    root.dataset['uiTradeInvited'] = readout.tradeInvited;
+    root.dataset['uiTradeYou'] = readout.tradeYou;
+    root.dataset['uiTradeThem'] = readout.tradeThem;
+    root.dataset['uiTradeRects'] = tradeRects;
   }
 
   /**
@@ -1028,6 +1043,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const ui = new UiLayer(root, {
     map: inputMap,
     onMove: (from, to, count) => client.moveItem(from, to, count),
+    // Aimed at the press, not at the body (spec 172). `offering` is the point
+    // the interface is being handed *right now* -- this fires from inside
+    // `offerPress` -- so the aim is the press that caused it rather than
+    // wherever the cursor was last seen.
+    onDropItem: (at, count) => {
+      const me = client.view().self;
+      const world = offering ? scene.screenToWorld(offering.x, offering.y) : null;
+      // With no press behind it there is nothing to aim at, so it aims at our
+      // own feet -- which the server reads as no direction at all and leaves
+      // the body's own heading standing.
+      client.dropItem(at, world ?? { x: me?.x ?? 0, y: me?.y ?? 0 }, count);
+    },
     onSpend: (skillId) => client.spendSkillPoint(skillId),
     onAllocate: (key) => client.allocateAttribute(key as BaseStatKey),
     onRespec: () => client.respecAttributes(),
@@ -1039,6 +1066,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     onTradeAccept: (revision) => client.acceptTrade(revision),
     onTradeRespond: (accept) => client.respondToTrade(accept),
     onTradeCancel: () => client.cancelTrade(),
+    onTradeDismiss: () => client.dismissEndedTrade(),
     // Written straight through, because a key the player just changed and then
     // lost to a refresh is worse than one that never saved at all.
     onBindingsChanged: () => saveBindings(bindingStorage, inputMap),
@@ -1077,6 +1105,30 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     },
   });
   let cursor: { x: number; y: number } | null = null;
+  /**
+   * The canvas point of the press the interface is being offered, or null.
+   *
+   * Set for exactly the length of one `handlePointer('down')` call, because
+   * that is when a screen can answer with something that needs to know *where*
+   * -- putting a carried item down aims at the press (spec 172). Read from a
+   * variable rather than passed through the interface because `src/ui/` speaks
+   * UI pixels and the world is picked in canvas ones, and `UiLayer.toUi` is
+   * deliberately the one conversion between them.
+   */
+  let offering: { x: number; y: number } | null = null;
+  /** Offer a press to the interface, with the point it landed on to hand. */
+  const offerPress = (
+    at: { x: number; y: number },
+    button: number,
+    mods: Modifiers,
+  ): boolean => {
+    offering = at;
+    try {
+      return ui.handlePointer('down', at, button, mods);
+    } finally {
+      offering = null;
+    }
+  };
   let aim = { x: 0, y: 0 };
   /** The standing move order from the last right-click, in world units. */
   let destination: { x: number; y: number } | null = null;
@@ -1397,7 +1449,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     ui.handlePointer('up', pointIn(event), event.button, mouseModifiers(event));
   };
   const onMouseDown = (event: MouseEvent): void => {
-    if (ui.handlePointer('down', pointIn(event), event.button, mouseModifiers(event))) return;
+    if (offerPress(pointIn(event), event.button, mouseModifiers(event))) return;
     const rect = canvas.getBoundingClientRect();
     cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
@@ -1572,7 +1624,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Without this a window drawn over the world was scenery: the tap under it
     // ordered the player to walk to wherever the window was, and nothing in the
     // bag, the sheet or the options window could be pressed at all.
-    if (ui.handlePointer('down', pointIn(event), 0, touchModifiers)) {
+    if (offerPress(pointIn(event), 0, touchModifiers)) {
       interfaceFingers.add(event.pointerId);
       return;
     }
@@ -1728,6 +1780,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         ? { id: entity.id, x: entity.x, y: entity.y, radius: targetRadius, health: entity.health }
         : null,
       range: swing?.range ?? 0,
+      // Something done to this body rather than by it (spec 173): while it
+      // holds, the order stands and asks for nothing.
+      staggered: view.selfStaggered,
       // Both halves of "am I committed": the server's cast and the one this
       // client has only asked for. `selfRoot` is already the union of the two.
       rooted: view.selfRoot !== null,
@@ -1795,6 +1850,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // Both halves of "am I committed": the server's cast and the one this
       // client has only asked for.
       rooted: view.selfRoot !== null,
+      // A break clears the cast, so `rooted` is false right through a
+      // stagger and cannot stand in for it (spec 173).
+      staggered: view.selfStaggered,
       readyAtTick: view.cooldowns[standing.abilityId] ?? 0,
       tick: view.estimatedTick,
     });
@@ -1968,11 +2026,21 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
+      // Turning to put something down (spec 172): the same aim the server is
+      // turning the body with, so the drawn heading is the one it is about to
+      // arrive at rather than the one it left.
+      dropAim: view.dropAim,
       // Face the mark while the swing is still on cooldown (spec 090). Without
       // it the body stood facing wherever it happened to be looking for up to a
       // whole attack delay, and only turned once the blow committed -- so the
       // turn was paid for *after* the wait instead of during it.
       targetAim: aimedMark(view),
+      // A poise break holds the legs *and* the heading (spec 173). The heading
+      // is the half that matters here: a correction carries a position, so a
+      // predicted step is pulled back, and it carries no facing at all -- so a
+      // body that kept turning through its own stagger would be an error the
+      // server never corrects.
+      staggered: view.selfStaggered,
     });
     if (intent.arrived) {
       destination = null;
