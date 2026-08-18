@@ -1,5 +1,11 @@
 # Doing the load off the frame (research, 2026-08-18)
 
+> **Built as spec 176**, for terrain and navigation. A chunk arriving while
+> walking cost the frame 23.6ms and costs 1.6ms. The prop field is still on the
+> main thread and is still the biggest single cost -- see *Out of scope* in the
+> spec, and the completeness rule below, which shipped. Everything else here is
+> the research the spec was written from and is left as it was measured.
+
 The question: **can chunk loading and the work hanging off it — meshing, props,
 navigation — happen in the background without costing game frames?**
 

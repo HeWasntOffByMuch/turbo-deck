@@ -1701,6 +1701,48 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  browser is delivering pointer events. `fullscreen.ts` beside it
                  is the tab bar's fullscreen button -- DOM only, and absent on
                  anything that cannot go fullscreen or is not a coarse pointer.
+src/render/iso3d/terrain-arrays.ts, world/map-worker*.ts  the load, running
+                 beside the frame rather than in it (spec 176). The measurement
+                 the whole thing turns on: `terrainMesh.rebuild` is 2050ms across
+                 a cold start of which **15ms is three.js** -- found by patching
+                 `setAttribute` and `computeVertexNormals` and timing only those.
+                 Everything else was a buffer of numbers being filled in, on the
+                 one thread that also has to draw. So terrain-arrays.ts is that
+                 mesher with no rendering library in it, and the worker owns a
+                 `StreamedMap` of its own and answers in typed arrays; the
+                 renderer keeps a store too, because `scene.ground(x, z)` is
+                 asked mid-frame by every body, decal and effect and there is no
+                 synchronous call across a thread. That is affordable only
+                 because of the split spec 165 made for another reason --
+                 `insertChunk` is 0.1ms and `buildChunk` is 3.4ms -- so the two
+                 sides are not paying one bill twice. A chunk arriving while
+                 walking cost the frame 23.6ms and costs 1.6ms.
+                 Three rules, each of which was got wrong first. **Transfer only
+                 what you allocated for this reply**: `footprint.materials` is a
+                 reference to the store's own array and a nav grid's `heights`
+                 is the per-cell height cache, so transferring either hands the
+                 worker its own caches away -- which `postMessage` refused, on
+                 the *second* grid. **Nothing three.js-shaped may be
+                 reimplemented**: the walls' flat normals stay
+                 `computeVertexNormals` on the geometry rather than being
+                 replicated, and the colour transfer is three's `SRGBToLinear`
+                 in three's own premultiplied form with a test against
+                 `THREE.Color` rather than against the formula -- the extraction
+                 is exact, 9.97M floats across 288 meshes identical element for
+                 element. And **navigation moves on the remote path only**: a
+                 loopback tab runs the sim, `routeToward` calls `navGridFor`
+                 inside the tick, and a grid arriving when a worker happens to
+                 finish is wall-clock input to a deterministic simulation.
+                 map-worker-client.ts carries an in-process twin behind the same
+                 interface, which is not a courtesy -- `npm test` runs in Node
+                 where `Worker` does not exist, and a pipeline reachable only
+                 from a browser is the state spec 165 spent four follow-ups
+                 regretting. `?perf=noworker` is the same switch for a person.
+                 `npx tsx scripts/bench-stream.ts` splits its rows by thread;
+                 `npx tsx scripts/probe-streaming.ts` (and `PERF=noworker`) is
+                 the browser half, and it found the two bugs no headless test
+                 could -- a worker never sent the map, so 169 chunks held and 0
+                 drawn with every unit test green.
 src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
                  111). The three.js half of "the tool and the game read the same
                  files": load the .glb, strip root motion and say so, write a
