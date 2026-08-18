@@ -283,5 +283,12 @@ describe('the nav grid over a partial world', () => {
     // reason that has nothing to do with streaming -- so this is "most are
     // open", not "none are blocked".
     expect(blockedUnknown).toBeLessThan(unknownCells / 2);
-  });
+    // Deliberately generous, and not because the assertion got slower. This
+    // builds a nav grid over the *whole* map -- 924x863 cells, one `heightAt`
+    // each, and over ground that has mostly not arrived every one of them falls
+    // into the neighbour-ring search and costs several times its settled price.
+    // It measured 4.8s against vitest's 5s default, which is a test passing by
+    // luck rather than a test with a budget. The number below is a bound on the
+    // machine, not on the code (spec 165).
+  }, 30_000);
 });

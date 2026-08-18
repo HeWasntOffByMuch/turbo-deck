@@ -1910,7 +1910,22 @@ export function buildPropField(
       }
       if (wanted.size === 0) return;
 
-      const fresh = bucketize(next);
+      // Bucketed over the *wanted* regions only (spec 165 follow-up). A full
+      // `bucketize` builds a list for all 66 regions of the grown map to read
+      // the handful being rebuilt, and pays it again for `countUndrawn` -- which
+      // is the fixed cost that made rebuilding one region nearly as expensive as
+      // rebuilding four.
+      const fresh = new Map<string, Prop[]>();
+      let undrawn = 0;
+      for (const prop of next) {
+        if (!DRAWN_KINDS.has(prop.kind)) undrawn++;
+        const key = propRegionKey(prop.x, prop.y);
+        if (!wanted.has(key)) continue;
+        const bucket = fresh.get(key);
+        if (bucket) bucket.push(prop);
+        else fresh.set(key, [prop]);
+      }
+
       for (const key of [...wanted].sort()) {
         const region = regions.get(key);
         if (region) {
@@ -1922,7 +1937,7 @@ export function buildPropField(
         // rebuilt as nothing, so the scene graph does not fill with empty groups.
         if (bucket && bucket.length > 0) buildRegion(key, bucket);
       }
-      handle.undrawn = countUndrawn(next);
+      handle.undrawn = undrawn;
     },
     dispose(): void {
       for (const region of regions.values()) disposeRegion(region);

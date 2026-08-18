@@ -232,7 +232,101 @@ function climbable(heights: Float32Array, a: number, b: number): boolean {
  * is, so the four radii in play over one world sample the world once between
  * them rather than four times.
  */
-const HEIGHT_CACHE = new WeakMap<NavGround, Map<string, Float32Array>>();
+/**
+ * One grid shape's samples for one ground, and which of them are real yet.
+ *
+ * `sampled` exists for the streaming client (spec 165 follow-up). Heights are
+ * memoized on the ground's *identity*, which is exactly right for a world that
+ * is finished when it is handed over and exactly wrong for one that grows: a
+ * client that mints a fresh sampler per arrival re-samples the whole map every
+ * time, and one that keeps a stable sampler caches a map full of holes forever.
+ *
+ * So the cache is per cell rather than per array. A chunk arriving marks its own
+ * cells unsampled ({@link invalidateNavHeights}) and nothing else is touched --
+ * 62x62 cells over a 616-unit chunk against 924x863 over the arena, which is the
+ * difference between 23ms and 4.8 seconds.
+ *
+ * `version` is what stops a cached {@link NavGrid} outliving the heights it was
+ * built from. Grids are keyed on the colliders' identity, and a chunk of ground
+ * can arrive without the colliders changing at all.
+ */
+interface HeightSamples {
+  readonly heights: Float32Array;
+  /** 0 where the height is a placeholder, 1 where the ground was actually asked. */
+  readonly sampled: Uint8Array;
+  /** Unsampled cells remaining, so a caller can pace the work without a scan. */
+  pending: number;
+  /** Bumped whenever a sample changes, so a grid can tell it is stale. */
+  version: number;
+  /**
+   * Where the incremental sweep left off.
+   *
+   * Without it `stepNavHeights` restarts its search at cell zero every call, and
+   * once most of the map is sampled the *scan* costs more than the sampling: a
+   * 512-cell slice measured 21ms against the 3ms of actual work, because it
+   * walked half a million sampled flags to find the next hole. Reset by
+   * `invalidateNavHeights`, since dirtying a chunk can put work behind the
+   * cursor.
+   */
+  cursor: number;
+}
+
+const HEIGHT_CACHE = new WeakMap<NavGround, Map<string, HeightSamples>>();
+
+function shapeKeyOf(cols: number, rows: number, originX: number, originY: number, cellSize: number): string {
+  return `${cols}x${rows}@${originX},${originY}/${cellSize}`;
+}
+
+function samplesFor(
+  ground: NavGround,
+  cols: number,
+  rows: number,
+  originX: number,
+  originY: number,
+  cellSize: number,
+): HeightSamples {
+  let byShape = HEIGHT_CACHE.get(ground);
+  if (!byShape) {
+    byShape = new Map();
+    HEIGHT_CACHE.set(ground, byShape);
+  }
+  const shapeKey = shapeKeyOf(cols, rows, originX, originY, cellSize);
+  const cached = byShape.get(shapeKey);
+  if (cached) return cached;
+  const count = cols * rows;
+  const fresh: HeightSamples = {
+    heights: new Float32Array(count),
+    sampled: new Uint8Array(count),
+    pending: count,
+    version: 0,
+    cursor: 0,
+  };
+  byShape.set(shapeKey, fresh);
+  return fresh;
+}
+
+/** Sample one cell if it has not been sampled. Returns whether it did work. */
+function sampleCell(
+  samples: HeightSamples,
+  ground: NavGround,
+  index: number,
+  cols: number,
+  originX: number,
+  originY: number,
+  cellSize: number,
+): boolean {
+  if (samples.sampled[index] === 1) return false;
+  const col = index % cols;
+  const row = (index - col) / cols;
+  samples.heights[index] = ground.heightAt(
+    originX + (col + 0.5) * cellSize,
+    originY + (row + 0.5) * cellSize,
+  );
+  samples.sampled[index] = 1;
+  samples.pending--;
+  samples.version++;
+  return true;
+}
 
 function heightsFor(
   ground: NavGround,
@@ -242,25 +336,153 @@ function heightsFor(
   originY: number,
   cellSize: number,
 ): Float32Array {
-  let byShape = HEIGHT_CACHE.get(ground);
-  if (!byShape) {
-    byShape = new Map();
-    HEIGHT_CACHE.set(ground, byShape);
-  }
-  const shapeKey = `${cols}x${rows}@${originX},${originY}/${cellSize}`;
-  const cached = byShape.get(shapeKey);
-  if (cached) return cached;
-  const heights = new Float32Array(cols * rows);
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      heights[row * cols + col] = ground.heightAt(
-        originX + (col + 0.5) * cellSize,
-        originY + (row + 0.5) * cellSize,
-      );
+  const samples = samplesFor(ground, cols, rows, originX, originY, cellSize);
+  if (samples.pending === 0) return samples.heights;
+
+  // Whatever is still outstanding, now. For every caller that is not streaming
+  // this is the whole grid on the first call and nothing on the rest, which is
+  // exactly what the old array-shaped cache did.
+  //
+  // Written as the nested row/col walk rather than through `sampleCell` because
+  // this is the bulk path over ~800k cells, and recovering a row and a column
+  // from an index with a modulo and a divide -- per cell, when the loop already
+  // knows both -- is a measurable tax on the one caller that can least afford it.
+  // Split on whether anything has been sampled at all, so the case that is not
+  // streaming -- the server at boot, and every test -- runs the exact loop it ran
+  // before the per-cell cache existed. Over 800k cells even the flag check is
+  // worth its own branch: with it in the inner loop this path was ~4% slower,
+  // which was enough to push a five-second test over its limit.
+  let index = 0;
+  if (samples.pending === samples.heights.length) {
+    for (let row = 0; row < rows; row++) {
+      const y = originY + (row + 0.5) * cellSize;
+      for (let col = 0; col < cols; col++, index++) {
+        samples.heights[index] = ground.heightAt(originX + (col + 0.5) * cellSize, y);
+      }
+    }
+    samples.sampled.fill(1);
+  } else {
+    for (let row = 0; row < rows; row++) {
+      const y = originY + (row + 0.5) * cellSize;
+      for (let col = 0; col < cols; col++, index++) {
+        if (samples.sampled[index] === 1) continue;
+        samples.heights[index] = ground.heightAt(originX + (col + 0.5) * cellSize, y);
+        samples.sampled[index] = 1;
+      }
     }
   }
-  byShape.set(shapeKey, heights);
-  return heights;
+  samples.version += samples.pending;
+  samples.pending = 0;
+  samples.cursor = 0;
+  return samples.heights;
+}
+
+/** The nav grid shape a set of colliders implies, so callers agree on one. */
+function navShapeOf(world: WorldColliders, cellSize: number): {
+  cols: number;
+  rows: number;
+  originX: number;
+  originY: number;
+} {
+  const bounds = world.bounds;
+  return {
+    cols: Math.ceil(bounds.w / cellSize),
+    rows: Math.ceil(bounds.h / cellSize),
+    originX: bounds.x,
+    originY: bounds.y,
+  };
+}
+
+/**
+ * Mark the cells over a world rectangle as needing a fresh height (spec 165).
+ *
+ * For a ground that grows: a streamed chunk lands, and the cells over it are the
+ * only ones whose answer changed. Everything outside the rectangle keeps the
+ * sample it already had, which is what makes an arrival cost its own chunk
+ * rather than the whole map.
+ *
+ * Widened by one cell on each side, because a nav cell's *centre* is what is
+ * sampled and a chunk's edge cuts through cells whose centres sit outside it.
+ */
+export function invalidateNavHeights(
+  ground: NavGround,
+  world: WorldColliders,
+  rect: { minX: number; minZ: number; maxX: number; maxZ: number },
+  cellSize: number = NAV_CELL_SIZE,
+): void {
+  const byShape = HEIGHT_CACHE.get(ground);
+  if (!byShape) return;
+  const { cols, rows, originX, originY } = navShapeOf(world, cellSize);
+  const samples = byShape.get(shapeKeyOf(cols, rows, originX, originY, cellSize));
+  if (!samples) return;
+
+  const lowCol = Math.max(0, Math.floor((rect.minX - originX) / cellSize) - 1);
+  const highCol = Math.min(cols - 1, Math.ceil((rect.maxX - originX) / cellSize) + 1);
+  const lowRow = Math.max(0, Math.floor((rect.minZ - originY) / cellSize) - 1);
+  const highRow = Math.min(rows - 1, Math.ceil((rect.maxZ - originY) / cellSize) + 1);
+
+  for (let row = lowRow; row <= highRow; row++) {
+    for (let col = lowCol; col <= highCol; col++) {
+      const index = row * cols + col;
+      if (samples.sampled[index] === 0) continue;
+      samples.sampled[index] = 0;
+      samples.pending++;
+      samples.version++;
+      if (index < samples.cursor) samples.cursor = index;
+    }
+  }
+}
+
+/**
+ * Sample at most `budget` outstanding cells, and say how many are left
+ * (spec 165).
+ *
+ * This is the whole point of the per-cell cache: the renderer spends a slice of
+ * each frame here instead of meeting the entire cost inside the one frame that
+ * happens to ask for a route. It is the same work and the same result -- only
+ * when it happens moves, exactly as `warmNavGrids` already argued for doing it
+ * at boot rather than at the first move order.
+ */
+export function stepNavHeights(
+  ground: NavGround,
+  world: WorldColliders,
+  budget: number,
+  cellSize: number = NAV_CELL_SIZE,
+): number {
+  const { cols, rows, originX, originY } = navShapeOf(world, cellSize);
+  const samples = samplesFor(ground, cols, rows, originX, originY, cellSize);
+  if (samples.pending === 0) return 0;
+
+  let spent = 0;
+  let index = samples.cursor;
+  const count = samples.heights.length;
+  while (index < count && spent < budget) {
+    if (sampleCell(samples, ground, index, cols, originX, originY, cellSize)) spent++;
+    index++;
+  }
+  // Past the end with work still outstanding means an invalidation landed behind
+  // the cursor; the next call sweeps from the front and finds it.
+  samples.cursor = index >= count ? 0 : index;
+  return samples.pending;
+}
+
+/** Outstanding height samples for this ground and these bounds. */
+export function pendingNavHeights(
+  ground: NavGround,
+  world: WorldColliders,
+  cellSize: number = NAV_CELL_SIZE,
+): number {
+  const { cols, rows, originX, originY } = navShapeOf(world, cellSize);
+  return samplesFor(ground, cols, rows, originX, originY, cellSize).pending;
+}
+
+function heightVersionOf(
+  ground: NavGround,
+  world: WorldColliders,
+  cellSize: number,
+): number {
+  const { cols, rows, originX, originY } = navShapeOf(world, cellSize);
+  return samplesFor(ground, cols, rows, originX, originY, cellSize).version;
 }
 
 /**
@@ -460,7 +682,19 @@ function scratchFor(cellCount: number): NavScratch {
  * because a ground is an object and a `WeakMap` is what lets a world that goes
  * away take its grids with it.
  */
-const GRID_CACHE = new WeakMap<WorldColliders, WeakMap<NavGround, Map<number, NavGrid>>>();
+/**
+ * Built grids, per colliders, ground and body radius.
+ *
+ * The height `version` rides along because the two caches answer to different
+ * things: colliders change when a tree arrives, heights change when *ground*
+ * arrives, and on a streaming client those are separate events (spec 165). A
+ * grid keyed on identity alone survived a chunk landing under it and went on
+ * routing bodies around ground that had since turned into a hill.
+ */
+const GRID_CACHE = new WeakMap<
+  WorldColliders,
+  WeakMap<NavGround, Map<number, { grid: NavGrid; version: number }>>
+>();
 
 /** The nav grid for a body radius in `world`, built once and reused. */
 export function navGridFor(
@@ -478,10 +712,11 @@ export function navGridFor(
     byRadius = new Map();
     byGround.set(ground, byRadius);
   }
+  const version = heightVersionOf(ground, world, NAV_CELL_SIZE);
   const cached = byRadius.get(radius);
-  if (cached) return cached;
+  if (cached && cached.version === version) return cached.grid;
   const grid = createNavGrid(world, radius, NAV_CELL_SIZE, ground);
-  byRadius.set(radius, grid);
+  byRadius.set(radius, { grid, version: heightVersionOf(ground, world, NAV_CELL_SIZE) });
   return grid;
 }
 

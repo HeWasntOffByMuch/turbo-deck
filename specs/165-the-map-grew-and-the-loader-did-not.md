@@ -157,3 +157,88 @@ the same versioned document as the interface scale, defaulting off.
   path, and finish long before the terrain does.
 - **`?wire=` interaction.** The gate reports what it is waiting for; it does not
   get its own timeout or failure mode beyond the reconnect banner that exists.
+
+---
+
+## Follow-up: the freeze that survived the first cut
+
+The first implementation of this spec fixed the prop thrash and the chunk
+budget, and the game still froze while loading chunks. Measuring rather than
+guessing (`npx tsx scripts/bench-stream.ts`) found the reason in one line:
+
+| stage | n | mean | worst |
+|---|---|---|---|
+| `StreamedMap.add` | 210 | 10.0ms | 39.5ms |
+| `terrainMesh.rebuild` | 601 | 2.9ms | 51.3ms |
+| `rebuildWithin` (4 regions) | 1 | 171ms | — |
+| **`warmNavGrids`** | 1 | **4944ms** | — |
+
+And splitting the last one: **4793ms of the 4852ms is ground-height sampling** —
+797k nav cells over the grown arena at ~6us a `heightAt`. Everything else in a
+nav grid, the obstacle passes and the component flood included, is 90ms.
+
+Three causes, all of them mine to have missed:
+
+1. **The nav warm ran on every settle and re-sampled the entire map each time.**
+   `heightsFor` memoizes on the ground object's *identity*, and
+   `StreamedMap.sampler()` minted a fresh object per call — so the cache never
+   hit once. A 4.8 second frame, once per burst of chunks. This is the freeze.
+2. **Only the meshing was budgeted, not the insert that produces it.**
+   `StreamedMap.add` rebuilds the arrival's baked cells plus its four edge
+   neighbours', ~10ms each, and every arrival in a frame ran in that frame. A
+   pump of 24 was a quarter-second before a triangle was touched.
+3. **The loopback mount called `warmRouting` synchronously**, so single-player
+   spent 4.8 seconds frozen *before the loading screen was even created*.
+
+### What the fix is
+
+Height samples are cached **per cell** rather than per array, with an explicit
+`invalidateNavHeights(ground, world, rect)` that a chunk arrival calls for its
+own ground. A chunk is 4096 cells against the map's 797k — 42ms instead of 4.8
+seconds, and spread over frames rather than spent in one.
+
+`stepNavHeights` pays the outstanding cells down a slice at a time under a frame
+budget, and the grid is built once everything is in hand. `StreamedMap.sampler()
+`returns one object for the session, which is what makes any of the caching
+work. `FrameBudget` is a *time* budget rather than a count, because the jobs it
+paces differ by 3x in cost and the worst case differs by 4x from the mean.
+
+The sweep keeps a cursor: without one, `stepNavHeights` rescanned from cell zero
+every call and a 512-cell slice measured 22ms against 3ms of real work, because
+it was walking half a million sampled flags to find the next hole. The cursor is
+reset by an invalidation behind it, which is the one case that would otherwise
+make it a bug rather than an optimisation.
+
+### Extra invariants tested
+
+- Pacing changes when, never what: a grid built from samples drained in awkward
+  slices is cell-for-cell the grid a single blocking pass produces.
+- Every cell is sampled exactly once across a paced sweep.
+- An invalidation dirties only the cells over its rectangle.
+- A cached `NavGrid` is rebuilt when the ground under it moved, even though the
+  colliders it is keyed on did not change.
+- Work dirtied *behind* the sweep cursor is still found.
+- `FrameBudget` always allows at least one unit of work.
+
+### What it costs now
+
+Same harness, after the fix:
+
+| stage | before | after |
+|---|---|---|
+| nav heights, worst single slice | 4944ms (one block) | **4.7ms** |
+| one late chunk arriving | 4944ms | **36ms**, worst slice 2.4ms |
+| nav grid build, heights in hand | — | 111ms, once per quiet period |
+| `StreamedMap.add` | unbudgeted, 10ms x arrivals | budgeted, 6ms/frame |
+| `rebuildWithin` (4 regions) | 178ms | 138ms |
+
+The remaining per-settle hitch is the ~138ms prop rebuild and the ~111ms grid
+build, and those are stutters rather than freezes. Both are held behind quiet
+periods so a cold start pays them once rather than per burst.
+
+Two things deliberately not done. The prop field's per-region cost is
+geometry *construction*, not instancing -- sharing geometry across regions would
+cut it, and that is a change to how `buildPropField` is organised rather than to
+when it is called. And `collider-paging.test.ts`'s nav-grid test now carries an
+explicit 30s timeout: it builds the full 924x863 grid over mostly-unarrived
+ground, measured 4.8s against vitest's 5s default, and was passing on luck.

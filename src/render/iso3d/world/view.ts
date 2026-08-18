@@ -35,8 +35,13 @@ import { mapIdOf } from '../../../server/world/map-index.js';
 import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
-import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
-import { warmNavGrids } from '../../../sim/pathfinding.js';
+import { buildWorldFromMap } from '../../../server/world/build.js';
+import {
+  invalidateNavHeights,
+  pendingNavHeights,
+  stepNavHeights,
+  warmNavGrids,
+} from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
   SERVER_PLAYER_RADIUS,
@@ -51,6 +56,7 @@ import { ASSET_MANIFEST_HASH } from './unit-assets.js';
 import mapText from '../../../../maps/arena.json?raw';
 import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
+import type { HeldChunk } from '../../../server/client/map-cache.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { createVfxControls } from '../vfx-controls.js';
@@ -62,7 +68,8 @@ import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud } from './hud.js';
-import { ChunkIngest } from './chunk-ingest.js';
+import { ChunkIngest, chunkRect } from './chunk-ingest.js';
+import { FrameBudget } from './frame-budget.js';
 import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { FrameMeter } from './fps-meter.js';
@@ -128,6 +135,54 @@ const PROP_SETTLE_MS = 120;
  * longer, which is the trade this whole spec is about.
  */
 const MESH_BUDGET_PER_FRAME = 4;
+
+/**
+ * Milliseconds of a frame the chunk stream may have (spec 165 follow-up).
+ *
+ * A count was not enough. `MESH_BUDGET_PER_FRAME` bounded the *meshing* and left
+ * the insert that produces it unbounded -- `StreamedMap.add` rebuilds the
+ * arrival's baked cells and its four edge neighbours', ~10ms each on this map,
+ * and a pump of 24 arrivals ran all of them in one frame. 6ms is a little over a
+ * third of a 60Hz frame, which keeps the stream moving without ever being the
+ * reason one is missed.
+ */
+const INGEST_BUDGET_MS = 6;
+
+/**
+ * Milliseconds of a frame the nav-grid warm may have.
+ *
+ * Smaller than the stream's, because this one is never urgent: nothing on screen
+ * waits for it, and the only thing that does -- the first predicted route -- can
+ * fall back to flat prediction for a few frames without anybody seeing it.
+ */
+const NAV_BUDGET_MS = 5;
+
+/**
+ * Cells sampled between budget checks.
+ *
+ * The budget is checked between slices, so a slice is how far it can overshoot.
+ * 512 measured 22ms in the worst case -- `heightAt` over ground that is still
+ * arriving falls into its neighbour-ring search and costs several times its
+ * settled price, which is exactly when this is running. 128 keeps the worst
+ * observed slice inside a frame. Checking a clock per cell would cost more than
+ * the sample does.
+ */
+const NAV_CELLS_PER_SLICE = 128;
+
+/**
+ * Wall-clock quiet before the nav grid itself is rebuilt.
+ *
+ * The sampling is sliced, but the grid built from it is not -- the obstacle
+ * passes and the component flood are ~110ms and there is no natural seam in
+ * them. It is keyed on the colliders, which change on every prop settle, so
+ * during a cold start it would be paid once per burst. Waiting for the stream to
+ * genuinely stop turns that into once.
+ *
+ * Longer than `PROP_SETTLE_MS` on purpose: nothing on screen waits for this, so
+ * it should be the last thing to happen rather than a second settle racing the
+ * first.
+ */
+const NAV_GRID_QUIET_MS = 500;
 
 /**
  * Chunks around the player that must arrive before the world is shown.
@@ -205,7 +260,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // start-up rather than in the frame where the first move order is given. The
   // streaming client's equivalent is on the settle in `ingestChunks`, which is
   // the earliest moment it could possibly be done.
-  if (local) warmRouting(local);
+  //
+  // NOT warmed here any more (spec 165 follow-up). `warmRouting` is one
+  // `heightAt` per nav cell, and the grown map is 797k of them at ~6us -- 4.8
+  // seconds of frozen tab before the loading screen it is behind has even been
+  // created. `stepNavWarm` in the frame loop pays the identical cost a slice at
+  // a time instead, which is what the loading screen is for.
 
   /**
    * What the predictor is allowed to collide against.
@@ -327,6 +387,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     settleMs: PROP_SETTLE_MS,
     regionSize: PROP_REGION_SIZE,
   });
+  /**
+   * Chunks the server has sent that this client has not inserted yet.
+   *
+   * Keyed by coordinate, because `client.view()` hands back the whole held set
+   * every frame: without this the same arrival would be queued again on every
+   * frame until the budget got to it.
+   */
+  const pendingInserts = new Map<string, HeldChunk>();
+  /** When a chunk was last offered, for the nav grid's quiet period. */
+  let lastArrivalMs = 0;
   const gate = new LoadGate();
   const loading = createLoadingOverlay(root);
   /** The load as the overlay last drew it, so the DOM is written only on change. */
@@ -370,14 +440,40 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       }
     }
 
+    // Inserting a chunk is not free either -- it rebuilds the arrival's own
+    // baked cells plus its four edge neighbours', ~10ms each on the grown map --
+    // so the *insert* is budgeted alongside the mesh rather than run over every
+    // arrival in the frame it lands. Before this, one pump of 24 arrivals was a
+    // quarter-second frame before a single triangle had been rebuilt.
     for (const held of map.chunks) {
+      if (streamed.has(held.layer, held.cx, held.cz)) continue;
+      const key = `${held.layer}:${held.cx},${held.cz}`;
+      if (!pendingInserts.has(key)) lastArrivalMs = nowMs;
+      pendingInserts.set(key, held);
+    }
+
+    const spend = new FrameBudget(nowMs, INGEST_BUDGET_MS);
+    for (const [key, held] of pendingInserts) {
+      if (spend.spent()) break;
+      pendingInserts.delete(key);
       // One arrival, but up to five chunks to draw: a neighbour's mesh was baked
       // against ground this chunk has only now supplied (spec 078).
       const dirty = streamed.add(held);
       if (dirty.length > 0) ingest.offer(dirty, nowMs);
+      // The nav heights over this ground are now answerable, and were not
+      // before (spec 165). Marking the rectangle is what keeps the re-sample to
+      // this chunk instead of the whole 797k-cell grid.
+      if (pathWorld) {
+        for (const chunk of dirty) {
+          invalidateNavHeights(pathWorld.ground, pathWorld.colliders, chunkRect(chunk));
+        }
+      }
     }
 
-    for (const chunk of ingest.takeMesh()) scene.addTerrainChunk(chunk);
+    for (const chunk of ingest.takeMesh()) {
+      scene.addTerrainChunk(chunk);
+      if (spend.spent()) break;
+    }
 
     // Props wait for the stream to go quiet rather than rebuilding per chunk.
     // One instanced mesh per species over the whole map is a few draw calls;
@@ -400,10 +496,49 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       if (plan.mode === 'remote' && streamed) {
         fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
         syncPathWorld();
-        if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
       }
     }
   }
+
+  /**
+   * Pay down the nav grid a slice of a frame at a time (spec 165 follow-up).
+   *
+   * `warmNavGrids` used to be called straight from the settle above, and on the
+   * grown map that is a **4.8 second** frame: 797k cells, one `heightAt` each at
+   * 6us, and a fresh sampler per settle meant the whole map was re-sampled every
+   * time a burst of chunks landed. Measured, not guessed -- 99% of the warm is
+   * the sampling and 90ms is everything else.
+   *
+   * So the sampling is incremental now and the grid is built from it once there
+   * is nothing outstanding. The work and the answer are identical; only when it
+   * happens moves, which is the same argument `warmNavGrids` itself makes for
+   * doing it at boot rather than at the first move order.
+   */
+  function stepNavWarm(nowMs: number): void {
+    const world = pathWorld;
+    if (!world) return;
+    // Not while the stream is still working. Nothing can use the grid until the
+    // world around the player is there anyway, and the two jobs competing for
+    // one frame is how a budget stops being a budget.
+    if (pendingInserts.size > 0 || !ingest.idle) return;
+    const spend = new FrameBudget(nowMs, NAV_BUDGET_MS);
+    let left = pendingNavHeights(world.ground, world.colliders);
+    while (left > 0 && !spend.spent()) {
+      left = stepNavHeights(world.ground, world.colliders, NAV_CELLS_PER_SLICE);
+    }
+    if (left > 0 || navWarmed === world.colliders) return;
+    // Sampled, but hold the ~110ms build until the stream has actually stopped.
+    if (nowMs - lastArrivalMs < NAV_GRID_QUIET_MS) return;
+    // Everything sampled: the remaining ~90ms is the obstacle passes and the
+    // component flood, and it is paid once per colliders object rather than once
+    // per frame. The colliders only change when the prop field does, which is
+    // the settle -- so this is a handful of times across a load, not a cadence.
+    navWarmed = world.colliders;
+    warmNavGrids(world.colliders, world.ground, [SERVER_PLAYER_RADIUS]);
+  }
+
+  /** The colliders the nav grid was last built against, so it is built once. */
+  let navWarmed: WorldColliders | null = null;
 
   /**
    * Whether to show the world yet, and what the bar says while we do not
@@ -1754,6 +1889,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
     const view = client.view();
     ingestChunks(view, now);
+    stepNavWarm(now);
     updateLoading(view);
     seedTheField(view);
     // A new delta resets the interpolation window. Measuring it from the delta's

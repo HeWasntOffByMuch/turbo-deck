@@ -54,6 +54,8 @@ export class StreamedMap {
   private readonly chunkExtent: number;
   /** The declared extent of the whole map, fixed before the first chunk. */
   private readonly bounds: Rect;
+  /** The one sampler handed out. See {@link sampler}. */
+  private liveSampler: CoverageSampler | null = null;
 
   constructor(info: MapInfoMessage) {
     this.info = info;
@@ -161,12 +163,28 @@ export class StreamedMap {
     return { held, needed };
   }
 
-  /** `heightAt` through the live world, plus the coverage query above. */
+  /**
+   * `heightAt` through the live world, plus the coverage query above.
+   *
+   * **One object for the session**, and that is load-bearing rather than tidy
+   * (spec 165). Everything downstream memoizes on this object's identity --
+   * `navGridFor` on it and on the colliders, and the nav height samples on it
+   * alone -- so a fresh sampler per call is a fresh cache per call, and the
+   * client re-sampled 797k ground heights on every settle: 4.8 seconds of
+   * frozen page, once per burst of chunks.
+   *
+   * Returning the same object is safe for exactly the reason the whole streamed
+   * map is built the way it is: this closes over the live store, so it answers
+   * for ground that has only just arrived without being rebuilt. What it cannot
+   * do on its own is tell a cache *which* answers changed -- that is
+   * `invalidateNavHeights`, called as each chunk lands.
+   */
   sampler(): CoverageSampler {
-    return {
+    this.liveSampler ??= {
       heightAt: (x, y) => this.loaded.world.heightAt(x, y),
       knows: (x, y) => this.knows(x, y),
     };
+    return this.liveSampler;
   }
 
   /** What the mesher needs to know about each layer. Also live. */
