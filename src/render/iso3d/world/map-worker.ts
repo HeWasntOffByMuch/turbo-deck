@@ -35,5 +35,8 @@ self.onmessage = (event: MessageEvent<MapWorkerRequest>): void => {
       if (out) reply(out);
       return;
     }
+    case 'props':
+      for (const out of core.propRegions(request.rects)) reply(out);
+      return;
   }
 };

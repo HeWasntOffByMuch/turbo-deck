@@ -442,11 +442,28 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * two are compared on one machine.
    */
   const meshInbox: MapWorkerReply[] = [];
+  const propInbox: MapWorkerReply[] = [];
   const navInbox: MapWorkerReply[] = [];
   const mapWorker = createMapWorker(
-    (reply) => (reply.kind === 'mesh' ? meshInbox : navInbox).push(reply),
+    (reply) => {
+      if (reply.kind === 'mesh') meshInbox.push(reply);
+      else if (reply.kind === 'props') propInbox.push(reply);
+      else navInbox.push(reply);
+    },
     { threaded: !perfFlags.noWorker },
   );
+  /**
+   * Prop regions asked for and not yet on screen (spec 177).
+   *
+   * The load gate reads it, and it has to: `takePropRects` empties itself when
+   * the rectangles are *taken*, which used to be the same instant they were
+   * drawn because the rebuild was synchronous. It is not any more, and a gate
+   * counting only what is still queued would lift over a world whose trees are
+   * still being composed.
+   *
+   * `takePropRects` returns one rectangle per region, so this counts regions.
+   */
+  let propsInFlight = 0;
   /**
    * Chunks the server has sent that this client has not inserted yet.
    *
@@ -620,7 +637,22 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       gate.open ? PROP_REGIONS_PER_FRAME : PROP_REGIONS_LOADING,
       (rect) => held.rectCovered(rect),
     );
-    if (rects.length > 0) scene.refreshPropsWithin(rects);
+    if (rects.length > 0) {
+      propsInFlight += rects.length;
+      mapWorker.send({ kind: 'props', rects });
+    }
+    // ...and hanging what comes back, which is the 4ms half of what a region
+    // rebuild used to be. Budgeted for the same reason the meshes are: a burst
+    // arrives as one task on this thread's event loop.
+    const adoptRegions = gate.open ? PROP_REGIONS_PER_FRAME : PROP_REGIONS_LOADING;
+    let adoptedRegions = 0;
+    while (propInbox.length > 0 && adoptedRegions < adoptRegions) {
+      const reply = propInbox.shift();
+      if (!reply || reply.kind !== 'props') continue;
+      adoptedRegions++;
+      propsInFlight = Math.max(0, propsInFlight - 1);
+      scene.adoptPropRegion(reply.region, reply.instances);
+    }
     stage('props', performance.now() - propStart);
 
     // The ground the *predictor* stands on is a different question from the
@@ -737,7 +769,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // Prop regions count as outstanding work too: one rebuilt after the gate
       // opens is a ~170ms hitch in a world that has said it is ready, and behind
       // the screen it is just part of the load.
-      meshPending: ingest.pending + ingest.dirtyRegionCount,
+      meshPending: ingest.pending + ingest.dirtyRegionCount + propsInFlight,
       // Only this tab's own sim can stall on it; a remote client's grid is a
       // prediction aid and warms behind the world.
     });

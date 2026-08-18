@@ -86,6 +86,9 @@ function inProcess(onReply: (reply: MapWorkerReply) => void): MapWorkerHandle {
           if (out) onReply(out);
           return;
         }
+        case 'props':
+          for (const out of core.propRegions(request.rects)) onReply(out);
+          return;
       }
     },
   };

@@ -160,3 +160,55 @@ lurch that budget exists to prevent.
 - **The load's other 1.5 s.** Behind the gate this spec removes 81 rebuilds'
   worth of prop work from the main thread, but the chunk stream, the first nav
   grid and the gate's own conditions decide when it lifts.
+
+---
+
+## What it cost, measured
+
+`npx tsx scripts/bench-stream.ts`, averaged over thirty real regions of the
+shipped arena rather than measured on one — regions differ hugely in how many
+props stand in them, and either a sparse or a dense one alone is a number that
+flatters or libels the change:
+
+```
+one prop region, averaged over 30 real ones (77 props and 20 batches each):
+  [worker] compose instances      17.5 ms
+  [main]   shells + meshes + sway  1.0 ms
+  -> the frame pays 1.0 ms of the 18.5 ms it used to pay
+```
+
+Both halves are in that pair of numbers. **32.7 ms → 18.5 ms** is the geometry
+sharing, measured on its own before the worker was wired: the part tables and
+the welds stopped being rebuilt ninety times. **18.5 ms → 1.0 ms** is the
+worker.
+
+The browser agrees, on the path that matters. `probe-streaming.ts` against a
+real server over `?server`:
+
+| | before 176 | after 176 | after 177 |
+|---|---|---|---|
+| worst streaming cost, standing still | — | 38–77 ms | **10 ms** |
+| worst streaming cost, after walking | — | 98–129 ms | **9 ms** |
+| worst stage named | props | props | mesh |
+
+"props" has stopped being the worst thing the loader does, which it had been
+since spec 165 opened.
+
+The worker bundle went from 34.9 kB to 143 kB, which is the three.js it now
+carries. That was the trade named in the Shape above and it is the one that was
+made.
+
+## What the tests had to be watched failing
+
+The two ownership hazards are the reason this spec is not just "move the loop",
+and a test nobody has watched fail is a test nobody should trust. Both were
+checked by putting the bug back — `shellOf` returning the shared geometry
+directly — and both of the tests written for them failed, and only those two:
+
+- *gives two regions of the same species different wind bases*
+- *leaves another region drawable after one is disposed*
+
+The other nine passed throughout, including the equality check against the path
+that shipped. That is the shape to expect: sharing a geometry object does not
+move a single tree, it moves what the *wind* does to them, and it would have
+looked perfect in every still screenshot this repo takes.

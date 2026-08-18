@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { hashUnit2 } from '../../shared/hash.js';
 import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
-import { applySway, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
+import { applySwayBuffers, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
 import { DEFAULT_CREASE_ANGLE, weldedNormals } from './shading.js';
 import { stiffness } from './wind.js';
 import { frondGap, frondHem, frondRim, type FrondPoint } from './frond.js';
@@ -811,7 +811,31 @@ function lobedParts(shape: LobedShape): PropPart[] {
   return parts;
 }
 
+/**
+ * The part tables, built once each (spec 177).
+ *
+ * `buildRegion` called these *per region* -- three species, the bushes and every
+ * fence kind, ninety times over -- and each call built `THREE.BufferGeometry`
+ * from scratch and welded it again afterwards. Measured at 6.7ms of a 32.7ms
+ * region rebuild, with the weld another 5.9ms beside it.
+ *
+ * What made that look necessary is `applySway`, which writes instanced
+ * attributes onto `mesh.geometry`: a geometry object shared between regions is
+ * ninety regions swaying around whichever was built last. The answer is a
+ * per-batch *shell* over these shared attributes rather than a per-region
+ * rebuild of them -- see {@link shellOf}.
+ */
+const TREE_PARTS = new Map<TreeSpecies, PropPart[]>();
 function treeParts(species: TreeSpecies): PropPart[] {
+  let held = TREE_PARTS.get(species);
+  if (!held) {
+    held = buildTreeParts(species);
+    TREE_PARTS.set(species, held);
+  }
+  return held;
+}
+
+function buildTreeParts(species: TreeSpecies): PropPart[] {
   const shape = SPECIES[species];
   if (shape.kind === 'lobed') return lobedParts(shape);
   // The bend weight is measured against the tallest the species reaches, not
@@ -880,7 +904,13 @@ const SPECIES_STIFFNESS: Record<TreeSpecies, number> = {
  */
 const PHASE_SPREAD = 0.25;
 
+let BUSH_PARTS: PropPart[] | null = null;
 function bushParts(): PropPart[] {
+  BUSH_PARTS ??= buildBushParts();
+  return BUSH_PARTS;
+}
+
+function buildBushParts(): PropPart[] {
   return [
     { geometry: new THREE.IcosahedronGeometry(20, 0), offsetY: 14, scaleY: 0.7, color: PALETTE.bush, foliage: true },
     {
@@ -1365,7 +1395,17 @@ function rubbleFenceParts(): PropPart[] {
   return parts;
 }
 
+const FENCE_PARTS = new Map<FenceKind, PropPart[]>();
 function fenceParts(kind: FenceKind): PropPart[] {
+  let held = FENCE_PARTS.get(kind);
+  if (!held) {
+    held = buildFenceParts(kind);
+    FENCE_PARTS.set(kind, held);
+  }
+  return held;
+}
+
+function buildFenceParts(kind: FenceKind): PropPart[] {
   switch (kind) {
     case 'fence-boards':
       return boardFenceParts();
@@ -1523,6 +1563,16 @@ export interface PropFieldHandle {
    * union of the regions the rectangles touch.
    */
   rebuildWithin(props: readonly Prop[], rect: PropRect | readonly PropRect[]): void;
+  /**
+   * Hang one region's batches on the scene graph, from instances composed
+   * elsewhere (spec 177).
+   *
+   * The seam the map worker enters through. `rebuildWithin` is this with
+   * {@link buildRegionInstances} in front of it, so a field built on this thread
+   * and one built on the worker are the same field by construction rather than
+   * by two implementations agreeing.
+   */
+  adoptRegion(key: string, instances: RegionInstances): void;
   dispose(): void;
 }
 
@@ -1584,6 +1634,84 @@ export const FLAT_SHADING: PropShading = {
  * disposes it with the batch. Marked as done so a geometry handed out twice is
  * welded once.
  */
+const WELDED = new Map<THREE.BufferGeometry, Map<number, THREE.BufferGeometry>>();
+
+/**
+ * The vertex data a batch draws, built once per `(part, crease angle)`
+ * (spec 177).
+ *
+ * Memoized rather than re-welded per region, which is 5.9ms of a 32.7ms region
+ * rebuild. Under flat shading this is the part's own geometry, which was already
+ * shared -- the sharing is not new, only the welded case is.
+ *
+ * Nothing disposes what this holds: it is one geometry per part per angle for
+ * the life of the page, the same lifetime the part tables have. A crease angle
+ * the panel visits and leaves keeps its entry, which is a handful of small
+ * geometries against re-welding on every region for the rest of the session.
+ */
+function sharedGeometry(
+  geometry: THREE.BufferGeometry,
+  creaseCos: number,
+  smooth: boolean,
+): THREE.BufferGeometry {
+  if (!smooth) return geometry;
+  let byAngle = WELDED.get(geometry);
+  if (!byAngle) {
+    byAngle = new Map();
+    WELDED.set(geometry, byAngle);
+  }
+  let held = byAngle.get(creaseCos);
+  if (!held) {
+    held = smoothGeometry(geometry, creaseCos);
+    byAngle.set(creaseCos, held);
+  }
+  return held;
+}
+
+/**
+ * A geometry of this batch's own, over vertex data it shares with every other
+ * batch of the same part (spec 177).
+ *
+ * An `InstancedMesh`'s per-instance attributes live on its *geometry*, and
+ * `applySway` writes two of them -- so batches cannot share a geometry object
+ * however identical their vertices are. They can share the `BufferAttribute`
+ * objects underneath, which is where all the cost was: a shell is an object and
+ * a handful of assignments and does no vertex work at all.
+ *
+ * The bounding sphere is cloned rather than shared. Nothing mutates it today --
+ * `InstancedMesh.computeBoundingSphere` reads the geometry's and writes the
+ * mesh's -- and one `Sphere` per batch is not worth being right about later.
+ */
+function shellOf(shared: THREE.BufferGeometry): THREE.BufferGeometry {
+  const shell = new THREE.BufferGeometry();
+  for (const [name, attribute] of Object.entries(shared.attributes)) {
+    shell.setAttribute(name, attribute);
+  }
+  if (shared.index) shell.setIndex(shared.index);
+  if (shared.boundingSphere) shell.boundingSphere = shared.boundingSphere.clone();
+  if (shared.groups.length > 0) {
+    for (const g of shared.groups) shell.addGroup(g.start, g.count, g.materialIndex);
+  }
+  return shell;
+}
+
+/**
+ * Free what a batch owns, and nothing it borrows (spec 177).
+ *
+ * three's `onGeometryDispose` walks `geometry.attributes` and removes the GPU
+ * buffer of every one it finds, so disposing a shell as-is would free the
+ * *shared* attributes and force every other region holding that part to
+ * re-upload -- a hitch caused by the very rebuild this is meant to make cheap,
+ * and one that no headless test could see. So the borrowed attributes are taken
+ * off the shell first, and what is disposed is what this batch added:
+ * `aWindBase` and `aWindTune`.
+ */
+function disposeShell(shell: THREE.BufferGeometry, shared: THREE.BufferGeometry): void {
+  for (const name of Object.keys(shared.attributes)) shell.deleteAttribute(name);
+  if (shared.index) shell.setIndex(null);
+  shell.dispose();
+}
+
 function smoothGeometry(geometry: THREE.BufferGeometry, creaseCos: number): THREE.BufferGeometry {
   if (geometry.userData['weldedNormals'] === creaseCos) return geometry;
   if (!geometry.getAttribute('position')) return geometry;
@@ -1602,41 +1730,116 @@ function smoothGeometry(geometry: THREE.BufferGeometry, creaseCos: number): THRE
   return target;
 }
 
+
 /**
- * Build the instanced meshes for a list of scattered props, standing each one on
- * the terrain via `heightAt`. Static: instance matrices are written once, since
- * scenery never moves.
+ * Which batch is which, on both sides of a thread boundary (spec 177).
  *
- * `normalAt` is optional and only consulted for props that ask to be aligned to
- * the ground (spec 051). Without it every prop stands upright, whatever it asked
- * for -- so a caller that has no terrain normals to offer degrades to the
- * behaviour that existed before the flag did.
+ * The order `buildRegion` has always walked -- one batch per tree species, then
+ * the bushes, then each fence kind -- named once so an index into it means the
+ * same thing wherever it is read. Both the worker composing instances and the
+ * renderer hanging them on a mesh enumerate this same list from this same
+ * module, so a `(group, part)` pair cannot mean two things.
  */
-export function buildPropField(
-  props: readonly Prop[],
+const PROP_GROUPS: readonly (
+  | { readonly kind: 'tree'; readonly species: TreeSpecies }
+  | { readonly kind: 'bush' }
+  | { readonly kind: 'fence'; readonly fence: FenceKind }
+)[] = [
+  ...TREE_SPECIES.map((species) => ({ kind: 'tree' as const, species })),
+  { kind: 'bush' as const },
+  ...FENCE_KINDS.map((fence) => ({ kind: 'fence' as const, fence })),
+];
+
+/** How many batches a region can have, before its props are looked at. */
+export const PROP_GROUP_COUNT = PROP_GROUPS.length;
+
+/** The parts a batch group draws with. Memoized; see {@link treeParts}. */
+export function propGroupParts(group: number): readonly PropPart[] {
+  const of = PROP_GROUPS[group];
+  if (!of) return [];
+  if (of.kind === 'tree') return treeParts(of.species);
+  if (of.kind === 'bush') return bushParts();
+  return fenceParts(of.fence);
+}
+
+/** The props in this bucket that a batch group draws. */
+function propGroupMembers(
+  group: number,
+  bucket: readonly Prop[],
+  variants: ReadonlyMap<Prop, TreeVariant>,
+): readonly Prop[] {
+  const of = PROP_GROUPS[group];
+  if (!of) return [];
+  if (of.kind === 'tree') {
+    return bucket.filter((p) => p.kind === 'tree' && variants.get(p)?.species === of.species);
+  }
+  if (of.kind === 'bush') return bucket.filter((p) => p.kind === 'bush');
+  return bucket.filter((p) => p.kind === of.fence);
+}
+
+/** One batch's per-instance data, as arrays that can cross a thread. */
+export interface PropBatchInstances {
+  /** Index into the batch enumeration. See {@link propGroupParts}. */
+  readonly group: number;
+  /** Index into that group's part list. */
+  readonly part: number;
+  readonly count: number;
+  /** 16 floats per instance, in `Matrix4` order. */
+  readonly matrices: Float32Array;
+  /** 3 per instance, linear RGB. */
+  readonly colors: Float32Array;
+  /** Present only where every instance in the batch sways. */
+  readonly sway: {
+    readonly base: Float32Array;
+    readonly tune: Float32Array;
+    readonly height: number;
+    readonly reach: number;
+  } | null;
+}
+
+/** Instances as the two flat arrays `applySwayBuffers` wants. */
+function packSway(instances: readonly SwayInstance[]): { base: Float32Array; tune: Float32Array } {
+  const base = new Float32Array(instances.length * 3);
+  const tune = new Float32Array(instances.length * 2);
+  instances.forEach((instance, i) => {
+    base[i * 3] = instance.baseX;
+    base[i * 3 + 1] = instance.baseY;
+    base[i * 3 + 2] = instance.baseZ;
+    tune[i * 2] = instance.stiffness;
+    tune[i * 2 + 1] = instance.phase;
+  });
+  return { base, tune };
+}
+
+/**
+ * Where every prop in one region stands, as arrays (spec 177).
+ *
+ * This is the 16.2ms half of a 32.7ms region rebuild: a position, a quaternion
+ * chain, a scale and a colour per instance, and nothing that needs a scene
+ * graph. It uses three's maths classes and none of its objects, which is what
+ * lets it run on the map worker and hand back the result.
+ *
+ * The shading settings are deliberately not an argument. Nothing in here reads
+ * them -- `smooth` picks a geometry and `swayNormals` patches a material, and
+ * both of those happen where the mesh is made.
+ */
+export interface RegionInstances {
+  readonly batches: readonly PropBatchInstances[];
+  /**
+   * Prop kinds in this region with no geometry to draw them with.
+   *
+   * Carried rather than warned about here, because this runs on the worker and
+   * a warning is for a person. The renderer says it once when it adopts -- the
+   * alternative is silence, which is nothing on screen and no error (spec 086).
+   */
+  readonly undrawnKinds: readonly string[];
+}
+
+export function buildRegionInstances(
+  bucket: readonly Prop[],
   heightAt: (x: number, z: number) => number,
   normalAt?: NormalAt,
-  shading?: PropShading,
-): PropFieldHandle {
-  const group = new THREE.Group();
-  const shade = shading ?? FLAT_SHADING;
-  const creaseCos = Math.cos(shade.creaseAngle);
-
-  /**
-   * One batching region's meshes and the resources only it owns.
-   *
-   * Kept per region rather than in one flat list, so a region can be freed and
-   * rebuilt on its own (spec 086). The geometries and materials are built per
-   * batch, so each belongs to exactly one region and freeing it frees them.
-   */
-  interface Region {
-    readonly group: THREE.Group;
-    readonly geometries: THREE.BufferGeometry[];
-    readonly materials: THREE.Material[];
-  }
-  const regions = new Map<string, Region>();
-  let current: Region = { group, geometries: [], materials: [] };
-
+): RegionInstances {
   // Reused across every instance of every part.
   const matrix = new THREE.Matrix4();
   const position = new THREE.Vector3();
@@ -1652,19 +1855,21 @@ export function buildPropField(
   const scale = new THREE.Vector3();
   const color = new THREE.Color();
 
-  /**
-   * One `InstancedMesh` per part, over the props that actually grow it. A tier
-   * above a tree's count is left out of that batch rather than written at zero
-   * scale, so a stand of saplings costs a small batch instead of a full-size one
-   * padded with degenerate triangles.
-   */
-  const build = (
-    parts: readonly PropPart[],
-    of: readonly Prop[],
-    variants?: ReadonlyMap<Prop, TreeVariant>,
-  ): void => {
-    if (of.length === 0) return;
-    parts.forEach((part, partIndex) => {
+  // Hashed once per tree rather than once per part per tree.
+  const variants = new Map<Prop, TreeVariant>();
+  for (const prop of bucket) {
+    if (prop.kind === 'tree') variants.set(prop, treeVariant(prop));
+  }
+
+  const out: PropBatchInstances[] = [];
+  const undrawnKinds = new Set<string>();
+  for (const prop of bucket) {
+    if (!DRAWN_KINDS.has(prop.kind)) undrawnKinds.add(prop.kind);
+  }
+  for (let group = 0; group < PROP_GROUPS.length; group++) {
+    const of = propGroupMembers(group, bucket, variants);
+    if (of.length === 0) continue;
+    propGroupParts(group).forEach((part, partIndex) => {
       const tier = part.tier;
       // `tier + 1` is the rule the conifers have always used; `grownAt` is what
       // lets the lobed canopy keep its topmost slab at every count (spec 077),
@@ -1686,14 +1891,8 @@ export function buildPropField(
       const jitterSize =
         part.jitterScaleX !== undefined || part.jitterScaleY !== undefined || part.jitterTint !== undefined;
 
-      const geometry = shade.smooth ? smoothGeometry(part.geometry, creaseCos) : part.geometry;
-      const material = new THREE.MeshLambertMaterial({ flatShading: !shade.smooth });
-      const mesh = new THREE.InstancedMesh(geometry, material, grown.length);
-      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-      // Scenery is the bulk of the shadow pass (spec 045): a canopy that throws
-      // dappled shade onto the ground is what stops props reading as decals.
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      const matrices = new Float32Array(grown.length * 16);
+      const colors = new Float32Array(grown.length * 3);
       // What the wind is sampled with, once per tree (spec 074). Gathered
       // alongside the matrices rather than in a second pass, because it is the
       // same three numbers the matrix is being composed from.
@@ -1780,7 +1979,7 @@ export function buildPropField(
           s * (part.scaleY ?? 1) * (1 + (part.jitterScaleY ?? 0) * wobbleSize),
           s,
         );
-        mesh.setMatrixAt(i, matrix.compose(position, quaternion, scale));
+        matrix.compose(position, quaternion, scale).toArray(matrices, i * 16);
         // A uniform prop takes the part's flat tone and neither drift, so two
         // tiles of a run come out identical however far apart they stand.
         color.setHex(
@@ -1790,7 +1989,7 @@ export function buildPropField(
               ? part.uniformColor ?? part.color
               : shadedColor(part.color, prop.tint, part.tintAmount ?? 0, (part.jitterTint ?? 0) * wobbleSize),
         );
-        mesh.setColorAt(i, color);
+        color.toArray(colors, i * 3);
 
         if (part.sway && variant) {
           // The tree's *ground point*, not this part's origin. Every batch a
@@ -1809,25 +2008,98 @@ export function buildPropField(
         }
       });
 
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      if (swaying.length === grown.length && swaying.length > 0) {
-        applySway(
-          mesh,
-          swaying,
-          swayHeight,
-          {
-            lag: part.swayLag ?? 0,
-            tilt: part.swayTilt ?? 0,
-            reach: swayReach,
-          },
-          shade.swayNormals,
-        );
-      }
-      current.group.add(mesh);
-      current.geometries.push(geometry);
-      current.materials.push(material);
+      // A batch sways only when *every* instance in it does. A partial set would
+      // put the attributes out of step with the instances they belong to.
+      const sway =
+        swaying.length === grown.length && swaying.length > 0
+          ? { ...packSway(swaying), height: swayHeight, reach: swayReach }
+          : null;
+      out.push({ group, part: partIndex, count: grown.length, matrices, colors, sway });
     });
+  }
+  return { batches: out, undrawnKinds: [...undrawnKinds] };
+}
+
+/**
+ * Build the instanced meshes for a list of scattered props, standing each one on
+ * the terrain via `heightAt`. Static: instance matrices are written once, since
+ * scenery never moves.
+ *
+ * `normalAt` is optional and only consulted for props that ask to be aligned to
+ * the ground (spec 051). Without it every prop stands upright, whatever it asked
+ * for -- so a caller that has no terrain normals to offer degrades to the
+ * behaviour that existed before the flag did.
+ */
+export function buildPropField(
+  props: readonly Prop[],
+  heightAt: (x: number, z: number) => number,
+  normalAt?: NormalAt,
+  shading?: PropShading,
+): PropFieldHandle {
+  const group = new THREE.Group();
+  const shade = shading ?? FLAT_SHADING;
+  const creaseCos = Math.cos(shade.creaseAngle);
+
+  /**
+   * One batching region's meshes and the resources only it owns.
+   *
+   * Kept per region rather than in one flat list, so a region can be freed and
+   * rebuilt on its own (spec 086). The geometries and materials are built per
+   * batch, so each belongs to exactly one region and freeing it frees them.
+   */
+  interface Region {
+    readonly group: THREE.Group;
+    /**
+     * This region's geometries, paired with the shared vertex data each borrows
+     * (spec 177). The pair is what `disposeShell` needs: free the instanced
+     * attributes this batch added, leave the ones every other region is using.
+     */
+    readonly shells: { shell: THREE.BufferGeometry; shared: THREE.BufferGeometry }[];
+    readonly materials: THREE.Material[];
+  }
+  const regions = new Map<string, Region>();
+  let current: Region = { group, shells: [], materials: [] };
+
+  /**
+   * One `InstancedMesh` per batch, from arrays somebody else composed.
+   *
+   * What is left here after spec 177 is the half that needs the scene graph:
+   * the shell, the material, the mesh, and the sway patch. The 16.2ms of matrix
+   * and colour arithmetic that used to sit in the middle of this is
+   * {@link buildRegionInstances}, and on the shipped client it runs on the map
+   * worker.
+   */
+  const build = (batch: PropBatchInstances): void => {
+    const part = propGroupParts(batch.group)[batch.part];
+    if (!part || batch.count === 0) return;
+
+    const shared = sharedGeometry(part.geometry, creaseCos, shade.smooth);
+    const geometry = shellOf(shared);
+    const material = new THREE.MeshLambertMaterial({ flatShading: !shade.smooth });
+    const mesh = new THREE.InstancedMesh(geometry, material, batch.count);
+    // Assigned rather than filled, so the arrays the worker transferred are the
+    // arrays the attribute holds -- `set` would copy 16 floats per instance back
+    // over the boundary the transfer just avoided.
+    mesh.instanceMatrix = new THREE.InstancedBufferAttribute(batch.matrices, 16);
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(batch.colors, 3);
+    // Scenery is the bulk of the shadow pass (spec 045): a canopy that throws
+    // dappled shade onto the ground is what stops props reading as decals.
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    if (batch.sway) {
+      applySwayBuffers(
+        mesh,
+        batch.sway.base,
+        batch.sway.tune,
+        batch.sway.height,
+        { lag: part.swayLag ?? 0, tilt: part.swayTilt ?? 0, reach: batch.sway.reach },
+        shade.swayNormals,
+      );
+    }
+    current.group.add(mesh);
+    current.shells.push({ shell: geometry, shared });
+    current.materials.push(material);
   };
 
   // Group props into square regions, then batch each region's trees (split by
@@ -1848,22 +2120,33 @@ export function buildPropField(
 
   /** Build one region's batches into a group of its own. */
   const buildRegion = (key: string, bucket: readonly Prop[]): void => {
-    const region: Region = { group: new THREE.Group(), geometries: [], materials: [] };
+    adoptRegion(key, buildRegionInstances(bucket, heightAt, normalAt));
+  };
+
+  /**
+   * Hang one region's batches on the scene graph (spec 177).
+   *
+   * The seam the map worker enters through: `buildRegion` above composes the
+   * instances here and then calls this, and the shipped client has the worker
+   * compose them and calls this with what came back. One path either way, so a
+   * field built on this thread and one built on the other are the same field by
+   * construction rather than by two implementations agreeing.
+   */
+  const adoptRegion = (key: string, instances: RegionInstances): void => {
+    const held = regions.get(key);
+    if (held) {
+      disposeRegion(held);
+      regions.delete(key);
+    }
+    if (instances.undrawnKinds.length > 0) {
+      // Loud, because the alternative is silence: nothing on screen and no error.
+      console.warn(`buildPropField: no geometry for ${instances.undrawnKinds.join(', ')}`);
+    }
+    const batches = instances.batches;
+    if (batches.length === 0) return;
+    const region: Region = { group: new THREE.Group(), shells: [], materials: [] };
     current = region;
-    // Hashed once per tree rather than once per part per tree.
-    const variants = new Map<Prop, TreeVariant>();
-    const trees = bucket.filter((p) => p.kind === 'tree');
-    for (const tree of trees) variants.set(tree, treeVariant(tree));
-    for (const species of TREE_SPECIES) {
-      build(treeParts(species), trees.filter((p) => variants.get(p)?.species === species), variants);
-    }
-    build(bushParts(), bucket.filter((p) => p.kind === 'bush'));
-    // Fences batch per region and per style like everything else. A tile carries
-    // no variant: what makes one differ from the next is its own tint and the
-    // per-part jitter hashed from where it stands.
-    for (const kind of FENCE_KINDS) {
-      build(fenceParts(kind), bucket.filter((p) => p.kind === kind));
-    }
+    for (const batch of batches) build(batch);
     regions.set(key, region);
     group.add(region.group);
   };
@@ -1875,7 +2158,7 @@ export function buildPropField(
     for (const child of region.group.children) {
       if (child instanceof THREE.InstancedMesh) disposeSway(child);
     }
-    for (const geo of region.geometries) geo.dispose();
+    for (const { shell, shared } of region.shells) disposeShell(shell, shared);
     for (const mat of region.materials) mat.dispose();
     region.group.clear();
     group.remove(region.group);
@@ -1898,6 +2181,7 @@ export function buildPropField(
   const handle: PropFieldHandle = {
     group,
     undrawn: countUndrawn(props),
+    adoptRegion,
     rebuildWithin(next, rect): void {
       const rects = Array.isArray(rect) ? (rect as readonly PropRect[]) : [rect as PropRect];
       const wanted = new Set<string>();
@@ -1927,15 +2211,10 @@ export function buildPropField(
       }
 
       for (const key of [...wanted].sort()) {
-        const region = regions.get(key);
-        if (region) {
-          disposeRegion(region);
-          regions.delete(key);
-        }
-        const bucket = fresh.get(key);
         // A region emptied by an erase or a removed part is dropped rather than
-        // rebuilt as nothing, so the scene graph does not fill with empty groups.
-        if (bucket && bucket.length > 0) buildRegion(key, bucket);
+        // rebuilt as nothing, so the scene graph does not fill with empty
+        // groups: `adoptRegion` frees whatever was there and returns.
+        buildRegion(key, fresh.get(key) ?? []);
       }
       handle.undrawn = undrawn;
     },

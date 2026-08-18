@@ -24,7 +24,7 @@ import { parseMap } from '../src/terrain/map.js';
 import { StreamedMap } from '../src/server/client/streamed-map.js';
 import { buildTerrainMeshFromChunks } from '../src/render/iso3d/terrain-mesh.js';
 import { MapWorkerCore } from '../src/render/iso3d/world/map-worker-core.js';
-import { buildPropField } from '../src/render/iso3d/props.js';
+import { buildPropField, buildRegionInstances, propRegionKey } from '../src/render/iso3d/props.js';
 import {
   invalidateNavHeights,
   pendingNavHeights,
@@ -193,6 +193,54 @@ time('warmNavGrids(all radii, heights in hand)', () =>
         `${(insertMs + workerMs + adoptMs).toFixed(1)} ms it used to pay`,
     );
   }
+}
+
+// --- and what a prop region costs, split by thread (spec 177) ---
+//
+// Averaged over real regions rather than measured on one, because regions
+// differ hugely in how many props stand in them -- the sparse ones are a few
+// milliseconds and the dense ones ten times that, and either alone is a number
+// that flatters or libels the change.
+{
+  const smooth = { smooth: true, creaseAngle: (50 * Math.PI) / 180, swayNormals: true };
+  const field = buildPropField([], () => 0, undefined, smooth);
+  const ground = (x: number, z: number): number => streamed.world.heightAt(x, z);
+  const buckets = new Map<string, typeof props[number][]>();
+  for (const prop of props) {
+    const key = propRegionKey(prop.x, prop.y);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(prop);
+    else buckets.set(key, [prop]);
+  }
+  const keys = [...buckets.keys()].sort().slice(0, 30);
+
+  // Warm: the part tables and the welds are built once for the life of the page
+  // now, so timing the first region would time a cost nothing pays twice.
+  const first = keys[0];
+  if (first) field.adoptRegion(first, buildRegionInstances(buckets.get(first) ?? [], ground));
+
+  let composeMs = 0;
+  let adoptMs = 0;
+  let batches = 0;
+  for (const key of keys) {
+    const bucket = buckets.get(key) ?? [];
+    const a = ms();
+    const instances = buildRegionInstances(bucket, ground);
+    composeMs += ms() - a;
+    const b = ms();
+    field.adoptRegion(key, instances);
+    adoptMs += ms() - b;
+    batches += instances.batches.length;
+  }
+  const n = keys.length;
+  console.log(
+    `\none prop region, averaged over ${n} real ones ` +
+      `(${(props.length / buckets.size).toFixed(0)} props and ${(batches / n).toFixed(0)} batches each):\n` +
+      `  [worker] compose instances      ${(composeMs / n).toFixed(1)} ms\n` +
+      `  [main]   shells + meshes + sway ${(adoptMs / n).toFixed(1)} ms\n` +
+      `  -> the frame pays ${(adoptMs / n).toFixed(1)} ms of the ` +
+      `${((composeMs + adoptMs) / n).toFixed(1)} ms it used to pay`,
+  );
 }
 
 // What walking into one fresh chunk costs, which is the case that froze.

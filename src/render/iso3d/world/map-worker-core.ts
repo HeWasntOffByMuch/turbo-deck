@@ -23,6 +23,7 @@
  */
 
 import { StreamedMap } from '../../../server/client/streamed-map.js';
+import type { Prop } from '../../../terrain/vegetation.js';
 import type { HeldChunk } from '../../../server/client/map-cache.js';
 import type { MapInfoMessage } from '../../../server/net/map-messages.js';
 import {
@@ -31,6 +32,8 @@ import {
   navGridFor,
 } from '../../../sim/pathfinding.js';
 import { buildChunkArrays, footprintOf } from '../terrain-arrays.js';
+import { buildRegionInstances, propRegionKey } from '../props.js';
+import type { WorldRect } from './chunk-ingest.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 
 export class MapWorkerCore {
@@ -108,6 +111,55 @@ export class MapWorkerCore {
    * match is the kind of agreement that holds until the frame it does not, so
    * only one side mints and the other adopts what it is given.
    */
+  /**
+   * The prop instances for every batching region these rectangles touch.
+   *
+   * The rectangles come from `ChunkIngest.takePropRects`, which speaks in world
+   * space; the regions come from this side's own props. One reply per region
+   * rather than one per call, so the renderer can pace adopting them the same
+   * way it paces meshes -- a region is a region's worth of scene-graph work
+   * whichever thread composed it.
+   */
+  propRegions(rects: readonly WorldRect[]): MapWorkerReply[] {
+    const streamed = this.streamed;
+    if (!streamed || rects.length === 0) return [];
+
+    const wanted = new Set<string>();
+    for (const rect of rects) {
+      const [lox, loz] = keyParts(propRegionKey(rect.minX, rect.minZ));
+      const [hix, hiz] = keyParts(propRegionKey(rect.maxX, rect.maxZ));
+      for (let rz = loz; rz <= hiz; rz++) {
+        for (let rx = lox; rx <= hix; rx++) wanted.add(`${rx},${rz}`);
+      }
+    }
+    if (wanted.size === 0) return [];
+
+    // Bucketed over the *wanted* regions only, the same economy `rebuildWithin`
+    // makes: a full pass builds a list for every region of the map to read the
+    // handful being rebuilt.
+    const buckets = new Map<string, Prop[]>();
+    for (const prop of streamed.props()) {
+      const key = propRegionKey(prop.x, prop.y);
+      if (!wanted.has(key)) continue;
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(prop);
+      else buckets.set(key, [prop]);
+    }
+
+    const world = streamed.world;
+    const out: MapWorkerReply[] = [];
+    for (const region of [...wanted].sort()) {
+      out.push({
+        kind: 'props',
+        region,
+        // An empty region is still a reply: it is how a region emptied by ground
+        // that turned out to hold nothing gets its old batches taken down.
+        instances: buildRegionInstances(buckets.get(region) ?? [], (x, z) => world.heightAt(x, z)),
+      });
+    }
+    return out;
+  }
+
   navGrid(radius: number): MapWorkerReply | null {
     const streamed = this.streamed;
     if (!streamed) return null;
@@ -164,6 +216,12 @@ export class MapWorkerCore {
  * The mesh arrays are safe because `buildChunkArrays` allocates fresh ones per
  * call and nothing here keeps them.
  */
+/** `"3,-1"` as a pair of numbers. */
+function keyParts(key: string): [number, number] {
+  const [x, z] = key.split(',').map(Number);
+  return [x ?? 0, z ?? 0];
+}
+
 export function transfersOf(reply: MapWorkerReply): ArrayBuffer[] {
   if (reply.kind === 'mesh') {
     const out: ArrayBuffer[] = [];
@@ -172,6 +230,14 @@ export function transfersOf(reply: MapWorkerReply): ArrayBuffer[] {
       out.push(arrays.positions.buffer as ArrayBuffer, arrays.colors.buffer as ArrayBuffer);
       if (arrays.normals) out.push(arrays.normals.buffer as ArrayBuffer);
       if (arrays.cavities) out.push(arrays.cavities.buffer as ArrayBuffer);
+    }
+    return out;
+  }
+  if (reply.kind === 'props') {
+    const out: ArrayBuffer[] = [];
+    for (const batch of reply.instances.batches) {
+      out.push(batch.matrices.buffer as ArrayBuffer, batch.colors.buffer as ArrayBuffer);
+      if (batch.sway) out.push(batch.sway.base.buffer as ArrayBuffer, batch.sway.tune.buffer as ArrayBuffer);
     }
     return out;
   }
