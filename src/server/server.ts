@@ -87,7 +87,9 @@ import { attributeByOrdinal } from './data/attributes.js';
 import { resolveProgression } from './player/progression.js';
 import { DEFAULT_SPAWN, experienceForLevel, PlayerManager } from './player/player-manager.js';
 import {
+  exchangeProblem,
   inTradeRange,
+  isLive,
   isSwappable,
   partiesOf,
   TradeRegistry,
@@ -1546,6 +1548,10 @@ export class GameServer implements AdminHost {
    * swap.
    */
   private publishTrade(trade: Trade): void {
+    // Asked once for both players rather than per message: it is the same
+    // question about the same two bags, and the only thing that differs between
+    // the two sends is which side of the answer is "yours" (spec 169).
+    const problem = this.tradeProblem(trade);
     for (const playerId of partiesOf(trade)) {
       const connection = this.connectionForPlayer(playerId);
       if (!connection) continue;
@@ -1558,8 +1564,39 @@ export class GameServer implements AdminHost {
         you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision),
         them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision),
         reason: trade.reason,
+        // `a` is the side that opened the trade, so `b` is the side being asked.
+        invited: !mine,
+        warning: GameServer.warningFor(problem, mine ? 'a' : 'b'),
       });
     }
+  }
+
+  /**
+   * Whose bag would stop this trade, right now.
+   *
+   * Run on every publish rather than only at settle time, so a full bag is
+   * something a player is told about while the table is still open and can be
+   * fixed -- it used to arrive after both sides had accepted, as the reason the
+   * trade had been cancelled. Null while either player has no session, because
+   * a trade with a missing side is about to be cancelled for that reason
+   * instead, and a bag warning would be the wrong thing to say about it.
+   */
+  private tradeProblem(trade: Trade): { readonly side: 'a' | 'b'; readonly reason: string } | null {
+    if (!isLive(trade)) return null;
+    const [aId, bId] = partiesOf(trade);
+    const a = this.players.holdingsOf(aId);
+    const b = this.players.holdingsOf(bId);
+    if (!a || !b) return null;
+    return exchangeProblem(trade, a, b);
+  }
+
+  /** The problem as the named side reads it: theirs, yours, or nothing. */
+  private static warningFor(
+    problem: { readonly side: 'a' | 'b'; readonly reason: string } | null,
+    mine: 'a' | 'b',
+  ): string {
+    if (!problem) return '';
+    return problem.side === mine ? `your bag: ${problem.reason}` : `their bag: ${problem.reason}`;
   }
 
   /**
