@@ -108,6 +108,19 @@ export interface IntentInput {
    */
   readonly castAim: Point | null;
   /**
+   * Where a drop this client has asked for is aimed, or null (spec 168).
+   *
+   * Ranked under {@link castAim} and over everything else, including a
+   * direction -- which is the one place this list is not simply "the most
+   * specific ask wins". A step withdraws from a cast, so a cast aim that lost
+   * to a direction was about to stop existing anyway; a drop is not withdrawn
+   * from by walking, because there is nothing to refund and nothing rooted. So
+   * a body that asked to put something down and then set off keeps coming round
+   * to it while it walks, which is exactly what the server is doing with the
+   * same aim.
+   */
+  readonly dropAim?: Point | null;
+  /**
    * The mark of a standing attack order, or null (spec 090).
    *
    * Faced while *waiting* to swing at it. With a target in reach and the attack
@@ -151,6 +164,16 @@ export function moveIntent(input: IntentInput): MoveIntent {
     const dy = input.castAim.y - input.self.y;
     const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
     return { moveX: 0, moveY: 0, facing, arrived };
+  }
+
+  // Turning to put something down (spec 168). Over the direction rather than
+  // under it: the walk still happens -- `direction` is what moves the body --
+  // and only the heading is the drop's. See the field.
+  if (input.dropAim) {
+    const dx = input.dropAim.x - input.self.x;
+    const dy = input.dropAim.y - input.self.y;
+    const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
+    return { moveX: direction?.x ?? 0, moveY: direction?.y ?? 0, facing, arrived };
   }
 
   // Standing over a mark, waiting for the swing to come off cooldown. Turning
