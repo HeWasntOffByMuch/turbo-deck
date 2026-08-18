@@ -79,15 +79,11 @@ export function createLoadingOverlay(parent: HTMLElement): LoadingOverlay {
       if (done) return;
       label.textContent = progress.label;
       fill.style.width = `${Math.round(progress.fraction * 100)}%`;
-      // The chunk count while chunks are the thing; a percentage once the bar is
-      // measuring something a player has no unit for. Either way a number, so
-      // "slow" and "stuck" stay distinguishable.
+      // The chunk count, because a bar with no number on it cannot distinguish
+      // "slow" from "stuck" -- which is the only question anybody looking at a
+      // loading screen actually has.
       detail.textContent =
-        progress.phase === 'routing'
-          ? `${Math.round(progress.fraction * 100)}%`
-          : progress.needed > 0
-            ? `${progress.held} / ${progress.needed} chunks`
-            : '';
+        progress.needed > 0 ? `${progress.held} / ${progress.needed} chunks` : '';
       root.dataset['loadingPhase'] = progress.phase;
 
       if (progress.phase !== 'ready') return;

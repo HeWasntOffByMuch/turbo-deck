@@ -30,7 +30,7 @@
  */
 
 /** What the load is waiting on, in the order it waits on them. */
-export type LoadPhase = 'connecting' | 'locating' | 'streaming' | 'meshing' | 'routing' | 'ready';
+export type LoadPhase = 'connecting' | 'locating' | 'streaming' | 'meshing' | 'ready';
 
 export interface LoadInput {
   /** Whether the server has said what map this is. */
@@ -43,32 +43,6 @@ export interface LoadInput {
   readonly held: number;
   /** Chunks arrived but not yet meshed. */
   readonly meshPending: number;
-  /**
-   * Whether the routing grid still owes work *and this tab needs it before
-   * play* (spec 165 follow-up).
-   *
-   * True only when this tab is running the simulation. `routeToward` calls
-   * `navGridFor` inside the sim tick, and on the loopback path that tick is the
-   * render thread -- so a monster waking up over ground whose heights had not
-   * been sampled built the whole grid inside that frame. Walking right from
-   * spawn toward the first hill froze for three seconds, which is the report
-   * this phase exists to answer.
-   *
-   * A remote client leaves this false: its grid is prediction only, the real
-   * server warmed its own at boot, and making the player wait for a
-   * prediction aid would be charging them for something they cannot see.
-   */
-  readonly routingPending: boolean;
-  /**
-   * How much of the routing grid is done, 0..1. Ignored unless
-   * {@link routingPending}.
-   *
-   * Carried so the bar keeps moving through it. Sampling the ground is seconds
-   * of work on the grown map, and a bar parked at 90% for five seconds is the
-   * shape of a hang -- which is the one thing a loading screen must not look
-   * like.
-   */
-  readonly routingProgress: number;
 }
 
 export interface LoadProgress {
@@ -86,7 +60,6 @@ const LABELS: Record<LoadPhase, string> = {
   locating: 'Finding you',
   streaming: 'Loading the world',
   meshing: 'Building the world',
-  routing: 'Mapping the ground',
   ready: 'Ready',
 };
 
@@ -97,13 +70,7 @@ const LABELS: Record<LoadPhase, string> = {
  * otherwise be a bar that sits at 100% while the page is still visibly working
  * -- the exact moment a player decides something has hung.
  */
-const STREAM_SHARE = 0.75;
-
-/** The share the meshing tail owns; the rest belongs to routing. */
-const MESH_SHARE = 0.15;
-
-/** What is left for the routing grid. */
-const ROUTE_SHARE = 1 - STREAM_SHARE - MESH_SHARE;
+const STREAM_SHARE = 0.9;
 
 export class LoadGate {
   private best = 0;
@@ -120,15 +87,13 @@ export class LoadGate {
     const phase = this.phaseOf(input);
     const share =
       input.needed > 0 ? Math.min(1, input.held / input.needed) * STREAM_SHARE : STREAM_SHARE;
-    const meshed = input.meshPending > 0 || input.held < input.needed ? 0 : MESH_SHARE;
-    const routed =
-      phase === 'routing' ? Math.min(1, Math.max(0, input.routingProgress)) * ROUTE_SHARE : 0;
+    const meshed = input.meshPending > 0 || input.held < input.needed ? 0 : 1 - STREAM_SHARE;
     const raw =
       phase === 'ready'
         ? 1
         : phase === 'connecting' || phase === 'locating'
           ? 0
-          : share + meshed + routed;
+          : share + meshed;
     this.best = Math.max(this.best, raw);
     return {
       phase,
@@ -152,9 +117,6 @@ export class LoadGate {
     if (!input.located) return 'locating';
     if (input.needed > 0 && input.held < input.needed) return 'streaming';
     if (input.meshPending > 0) return 'meshing';
-    // Last, because it is the only step that is about the *simulation* being
-    // ready rather than the picture being ready.
-    if (input.routingPending) return 'routing';
     this.latched = true;
     this.best = 1;
     return 'ready';

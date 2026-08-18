@@ -339,3 +339,42 @@ seconds that used to land mid-play, on the first monster to path, are gone.
 
 The remaining lever is `heightAt` itself at ~6us a call. Everything above is
 arithmetic *around* that number; halving it would halve the load.
+
+---
+
+## Third follow-up: the slicing was the mistake
+
+Reported: loading and navigation both broken. Both were mine, and both came from
+the same over-correction -- slicing the routing warm across frames.
+
+**Loading.** A budget spent *per frame* makes the wall-clock cost of the load a
+function of the frame rate. 4.8s of work at 24ms a frame is 200 frames, which is
+about four seconds at 60fps and over half a minute on anything slower -- and the
+loading screen still renders the scene and ticks the server, so the frames it is
+divided into are not cheap ones. The offscreen harness, which paints a handful
+of frames a second, simply never finished loading. Slicing did not make the load
+cheaper; it made it *unbounded in wall-clock*, which is strictly worse than a
+five-second pause.
+
+**Navigation.** To stop a move order meeting a half-built grid, `pathWorld` was
+withheld until the grid was current -- and it was withdrawn again on every chunk
+that dirtied the heights under it. `RoutePlanner` reads a null world as "walk
+straight at it", so on the streaming path the player spent long stretches with
+no pathing at all, walking into what they should have been routed around.
+
+So the sliced warm, the `routing` load phase and the `pathWorld` withdrawal are
+all gone. `warmRouting` is back at mount where it was, blocking, and the remote
+path warms on the settle exactly as it did before. The routing behaviour is now
+identical to what shipped before any of this.
+
+**What stays, because it is what actually fixed the reported freeze:** the
+per-cell height cache with `invalidateNavHeights`, one stable sampler per
+session, the budgeted chunk insert and mesh, the regional prop rebuild, the
+ms-based settle, and the derived chunk burst. The mount warm is the only pass
+that pays for the whole map now -- the chunk arrivals that used to re-pay for it
+in full cost their own ground instead, which is the 4.9s-per-settle freeze this
+spec was opened for.
+
+The lesson worth keeping: **spreading a fixed cost over frames only helps if the
+frames were going to happen anyway.** Behind a loading screen they are not free,
+and a cost that must be paid before play is better paid at once.
