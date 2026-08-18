@@ -13,6 +13,8 @@ const BASE: LoadInput = {
   held: 0,
   needed: 25,
   meshPending: 0,
+  routingPending: false,
+  routingProgress: 0,
 };
 
 describe('the load gate', () => {
@@ -66,6 +68,45 @@ describe('the load gate', () => {
     expect(later.phase).toBe('ready');
     expect(later.fraction).toBe(1);
     expect(gate.open).toBe(true);
+  });
+
+  it('waits for the routing grid when this tab is running the simulation', () => {
+    // The three-second freeze this phase exists for: `routeToward` builds the
+    // nav grid inside the sim tick, and on the loopback path that tick is the
+    // render thread. Everything is drawn and it still is not ready to play.
+    const gate = new LoadGate();
+    const progress = gate.progress({
+      ...BASE,
+      held: 25,
+      meshPending: 0,
+      routingPending: true,
+      routingProgress: 0.2,
+    });
+
+    expect(progress.phase).toBe('routing');
+    expect(gate.open).toBe(false);
+    expect(progress.fraction).toBeLessThan(1);
+
+    // And the bar keeps moving through it, rather than parking at 90% for the
+    // several seconds sampling the ground actually takes.
+    const later = gate.progress({
+      ...BASE,
+      held: 25,
+      routingPending: true,
+      routingProgress: 0.8,
+    });
+    expect(later.fraction).toBeGreaterThan(progress.fraction);
+
+    expect(gate.progress({ ...BASE, held: 25 }).phase).toBe('ready');
+    expect(gate.open).toBe(true);
+  });
+
+  it('does not wait for routing when the simulation is somewhere else', () => {
+    // A remote client's grid is a prediction aid, and the server it is talking
+    // to warmed its own at boot. Charging the player for it would be charging
+    // them for something they cannot see.
+    const gate = new LoadGate();
+    expect(gate.progress({ ...BASE, held: 25, routingPending: false }).phase).toBe('ready');
   });
 
   it('does not stall below full on a map with nothing left to send', () => {

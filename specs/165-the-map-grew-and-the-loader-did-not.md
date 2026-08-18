@@ -260,3 +260,82 @@ restored by `stepNavWarm` once the grid has been rebuilt. A null `pathWorld` is
 predictor is, and the server routes authoritatively regardless -- so the cost of
 the fallback is a few seconds of slightly worse *prediction* rather than a
 visible stall.
+
+---
+
+## Second follow-up: the freeze moved into the sim
+
+Reported from play: walking right from spawn toward the first hill, chunks
+started loading and the game froze for nearly three seconds.
+
+The guard added above protects the *client's* routing -- `pathWorld` is withheld
+until its grid is built. The simulation has its own way in, and on the loopback
+path it is the same thread:
+
+```
+src/server/sim/world.ts:1803   routeToward()
+  const grid = navGridFor(monster.radius, context.world, context.terrain);
+```
+
+That call is **inside the sim tick**. A monster waking as the player walks
+toward the hill asks for a route, `navGridFor` finds heights nobody has sampled,
+and it samples all of them right there. Deferring `warmRouting` off the mount
+did not remove that cost; it left it lying where a monster would step on it.
+
+Three separate mistakes, all introduced by the first follow-up:
+
+1. **Nothing warmed the simulation's grid any more.** `warmRouting` at mount was
+   doing that job as well as the client's, and removing it left the sim to build
+   its own lazily.
+2. **The loopback path was invalidating heights it had no business
+   invalidating.** `navSource.ground` there is the *bundled* map's sampler,
+   complete since mount -- a streamed chunk tells it nothing. Dirtying it
+   re-sampled unchanged ground and bumped the height version, which threw away
+   the grid the in-tab server was pathing against. Every chunk that arrived
+   while walking cost the sim a fresh nav grid.
+3. **Only the player's radius was warmed.** A grid is per radius and
+   `routeToward` asks with the *monster's*. `build.ts` says in as many words that
+   the radii live there "so the two cannot warm different sets", and the new call
+   site was the second set.
+
+### The fix
+
+Routing is a **phase of the load** now, not a background nicety -- but only when
+this tab is running the simulation. `LoadPhase` gains `'routing'`, the gate holds
+until the grid is built, and the bar moves through it with its own share and its
+own percentage, because a bar parked at 90% for five seconds is the shape of a
+hang. Behind the gate the sweep gets a much larger frame budget (24ms against
+5ms): slicing exists to keep frames smooth, and there are no frames to protect
+while a loading screen is up -- at 5ms the arena's 797k cells would be sixteen
+seconds of waiting for 4.8s of work.
+
+A remote client leaves `routingPending` false. Its grid is a prediction aid, the
+server it is talking to warmed its own at boot, and making a player wait for
+something they cannot see would be charging them for nothing.
+
+The loopback path no longer invalidates nav heights at all, so after the initial
+warm its grid is stable for the session and walking into new ground costs the
+sim nothing.
+
+### Extra invariants tested
+
+- The gate reports `routing` and stays shut while the simulation still owes a
+  grid, with everything else already done.
+- It does *not* wait for routing when the simulation is elsewhere.
+- The bar's fraction increases through the routing phase rather than parking.
+
+### What the load costs now, measured
+
+`npx tsx scripts/bench-stream.ts` on the shipped arena:
+
+- ground-height sampling: 5031ms of work, worst single slice **3.3ms**
+- routing radii: five of them (12, 16, 20, 22, 30)
+- all five grids, heights in hand: **373ms**
+- one chunk arriving later: 4096 cells, 41ms, worst slice 2.3ms
+
+So the loopback load now spends about five seconds behind a moving bar where it
+used to spend the same five seconds behind a frozen blank tab -- and the three
+seconds that used to land mid-play, on the first monster to path, are gone.
+
+The remaining lever is `heightAt` itself at ~6us a call. Everything above is
+arithmetic *around* that number; halving it would halve the load.

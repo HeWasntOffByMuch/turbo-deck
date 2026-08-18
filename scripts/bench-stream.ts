@@ -21,7 +21,7 @@ import {
   stepNavHeights,
   warmNavGrids,
 } from '../src/sim/pathfinding.js';
-import { SERVER_PLAYER_RADIUS } from '../src/server/config.js';
+import { ROUTING_RADII } from '../src/server/world/build.js';
 import { buildMapIndex, mapIdOf } from '../src/server/world/map-index.js';
 import { ServerMessageType } from '../src/server/net/protocol.js';
 
@@ -123,8 +123,10 @@ while (pendingNavHeights(sampler, colliders) > 0) {
 console.log(
   `nav heights, sliced: ${slices} slices, ${sliceTotal.toFixed(0)} ms total, worst slice ${worstSlice.toFixed(2)} ms`,
 );
-time('warmNavGrids(heights in hand)', () =>
-  warmNavGrids(colliders, sampler, [SERVER_PLAYER_RADIUS]),
+// Every radius the sim asks with, which is what the loading screen waits for.
+console.log(`routing radii: ${ROUTING_RADII.join(', ')}`);
+time('warmNavGrids(all radii, heights in hand)', () =>
+  warmNavGrids(colliders, sampler, ROUTING_RADII),
 );
 
 // What walking into one fresh chunk costs, which is the case that froze.

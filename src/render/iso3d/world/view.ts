@@ -35,7 +35,7 @@ import { mapIdOf } from '../../../server/world/map-index.js';
 import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
-import { buildWorldFromMap } from '../../../server/world/build.js';
+import { buildWorldFromMap, ROUTING_RADII } from '../../../server/world/build.js';
 import {
   invalidateNavHeights,
   pendingNavHeights,
@@ -156,6 +156,17 @@ const INGEST_BUDGET_MS = 6;
  * fall back to flat prediction for a few frames without anybody seeing it.
  */
 const NAV_BUDGET_MS = 5;
+
+/**
+ * The same budget while the loading screen is up.
+ *
+ * Much larger, because behind the gate there is no frame to protect -- nothing
+ * is on screen but a bar. At 5ms a frame the arena's 797k cells would take
+ * sixteen seconds of *waiting*, against 4.8s of actual work; the slicing is
+ * there to keep frames smooth, and when smoothness is not the constraint it is
+ * pure overhead.
+ */
+const LOAD_NAV_BUDGET_MS = 24;
 
 /**
  * Cells sampled between budget checks.
@@ -370,6 +381,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let navSource: { colliders: WorldColliders; ground: TerrainSampler } | null = null;
   /** The colliders the nav grid has been built against. See {@link stepNavWarm}. */
   let navWarmed: WorldColliders | null = null;
+  /** Height cells outstanding and the total, so the loading bar can move through them. */
+  let navCellsLeft = 0;
+  let navTotalCells = 0;
   function syncPathWorld(): void {
     const { colliders, terrain } = ground;
     navSource = colliders && terrain ? { colliders, ground: terrain } : null;
@@ -415,6 +429,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let lastArrivalMs = 0;
   const gate = new LoadGate();
   const loading = createLoadingOverlay(root);
+  /**
+   * Whether this tab is running the simulation (spec 165 follow-up).
+   *
+   * The loopback tab is its own server, so `routeToward`'s `navGridFor` runs on
+   * *this* thread inside the sim tick. That makes the routing grid a thing the
+   * player has to wait for rather than a background nicety, and it is why the
+   * load gate has a `routing` phase at all.
+   */
+  const ownsSimulation = plan.mode !== 'remote';
+  /** Whether the routing ground grows as chunks arrive. See the invalidation below. */
+  const navGrowsWithStream = plan.mode === 'remote';
   /** The load as the overlay last drew it, so the DOM is written only on change. */
   let lastLoadLabel = '';
 
@@ -479,15 +504,22 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // The nav heights over this ground are now answerable, and were not
       // before (spec 165). Marking the rectangle is what keeps the re-sample to
       // this chunk instead of the whole 797k-cell grid.
-      if (navSource && dirty.length > 0) {
+      // Only when the routing world is the one that *grows*.
+      //
+      // On the loopback path it is not: `navSource.ground` is the bundled map's
+      // own sampler, complete since mount, and a streamed chunk tells it nothing
+      // it did not already know. Dirtying it there was worse than useless -- it
+      // re-sampled ground that had not changed AND bumped the height version,
+      // which invalidates the grid the *in-tab server* is pathing against. Every
+      // chunk that arrived while walking cost the sim a fresh nav grid.
+      if (navGrowsWithStream && navSource && dirty.length > 0) {
         for (const chunk of dirty) {
           invalidateNavHeights(navSource.ground, navSource.colliders, chunkRect(chunk));
         }
-        // Ground can go stale without the *colliders* changing -- on the
-        // loopback path they never change at all -- so the routed world is
-        // withdrawn here rather than only when a settle mints new ones. Left
-        // standing, the next move order would rebuild the grid inside its own
-        // frame, which is the cost this is all about not paying.
+        // Ground can go stale without the *colliders* changing, so the routed
+        // world is withdrawn here rather than only when a settle mints new ones.
+        // Left standing, the next move order would rebuild the grid inside its
+        // own frame, which is the cost this is all about not paying.
         navWarmed = null;
         syncPathWorld();
       }
@@ -540,24 +572,39 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   function stepNavWarm(nowMs: number): void {
     const world = navSource;
     if (!world) return;
-    // Not while the stream is still working. Nothing can use the grid until the
-    // world around the player is there anyway, and the two jobs competing for
-    // one frame is how a budget stops being a budget.
-    if (pendingInserts.size > 0 || !ingest.idle) return;
-    const spend = new FrameBudget(nowMs, NAV_BUDGET_MS);
+    // Not while the stream is still working -- *once the world is up*. Nothing
+    // can use the grid until the ground around the player is there, and two jobs
+    // competing for one frame is how a budget stops being a budget.
+    //
+    // Behind the loading screen the opposite is true: there is no frame to
+    // protect, and on the loopback path the gate is waiting for exactly this. So
+    // it runs alongside the stream there, and the bar says what it is doing.
+    if (gate.open && (pendingInserts.size > 0 || !ingest.idle)) return;
+    const spend = new FrameBudget(nowMs, gate.open ? NAV_BUDGET_MS : LOAD_NAV_BUDGET_MS);
     let left = pendingNavHeights(world.ground, world.colliders);
+    if (navTotalCells === 0) navTotalCells = left;
     while (left > 0 && !spend.spent()) {
       left = stepNavHeights(world.ground, world.colliders, NAV_CELLS_PER_SLICE);
     }
+    navCellsLeft = left;
     if (left > 0 || navWarmed === world.colliders) return;
     // Sampled, but hold the ~110ms build until the stream has actually stopped.
-    if (nowMs - lastArrivalMs < NAV_GRID_QUIET_MS) return;
+    // Not while the loading screen is up: there the build *is* the thing being
+    // waited for, and deferring it would be the gate waiting on a step that is
+    // waiting on the gate.
+    if (gate.open && nowMs - lastArrivalMs < NAV_GRID_QUIET_MS) return;
     // Everything sampled: the remaining ~90ms is the obstacle passes and the
     // component flood, and it is paid once per colliders object rather than once
     // per frame. The colliders only change when the prop field does, which is
     // the settle -- so this is a handful of times across a load, not a cadence.
     navWarmed = world.colliders;
-    warmNavGrids(world.colliders, world.ground, [SERVER_PLAYER_RADIUS]);
+    // Every radius the sim will ask for, not just the player's. A grid is per
+    // radius, and `routeToward` asks with the *monster's* -- so warming one
+    // radius leaves the first wolf to path building its own grid inside the sim
+    // tick, which is the stall this is here to prevent wearing a smaller hat.
+    // The set lives in build.ts precisely so two call sites cannot disagree
+    // about it, and this is the second call site.
+    warmNavGrids(world.colliders, world.ground, ROUTING_RADII);
     // Only now may a move order route through it.
     syncPathWorld();
   }
@@ -589,6 +636,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       held: coverage.held,
       needed: coverage.needed,
       meshPending: ingest.pending,
+      // Only this tab's own sim can stall on it; a remote client's grid is a
+      // prediction aid and warms behind the world.
+      routingPending: ownsSimulation && pathWorld === null,
+      routingProgress:
+        navTotalCells > 0 ? 1 - navCellsLeft / navTotalCells : 0,
     });
 
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;
