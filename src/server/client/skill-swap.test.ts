@@ -1,5 +1,5 @@
 /**
- * Changing a skill, over the wire (spec 184).
+ * Changing a skill, over the wire (spec 188).
  *
  * A real client, a real server, real encoded frames -- because everything worth
  * asserting here is about the *seam*: the swap is refused, or delayed, or
@@ -163,7 +163,7 @@ describe('a skill on cooldown cannot be swapped out', () => {
  * and resolution happen where normal combat resolves".
  *
  * The check this asserts is the first ownership check the ability system has
- * ever had: before spec 184, `STARTING_ABILITIES` was exported and read by
+ * ever had: before spec 188, `STARTING_ABILITIES` was exported and read by
  * nothing, so a client could send any id in the table on its first tick and the
  * server would cast it.
  */
@@ -202,7 +202,7 @@ describe('the server decides what a client may cast', () => {
 });
 
 /**
- * Two other ways a slot could have been emptied, both closed (spec 184).
+ * Two other ways a slot could have been emptied, both closed (spec 188).
  *
  * The lock has to be on the *state* rather than on one message, or the way
  * round it is a button the interface already has. `Equip`/`Unequip` is the
@@ -255,7 +255,7 @@ describe('a skill slot cannot be emptied by the back door', () => {
 });
 
 /**
- * A swap is a **commitment**, not a timer (spec 184).
+ * A swap is a **commitment**, not a timer (spec 188).
  *
  * The difference is that a commitment can be given up, and the body carries a
  * state saying it is being made. That state is the claim: `activity` is

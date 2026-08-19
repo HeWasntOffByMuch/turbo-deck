@@ -535,7 +535,7 @@ export class UiScreens {
     // happens when there isn't one.
     this.restoreLayout();
 
-    // The change in flight, as of the tick being drawn (spec 184). Worked out
+    // The change in flight, as of the tick being drawn (spec 188). Worked out
     // once here and used twice -- the bag marks its two cells with it and the
     // HUD's bar draws the same fraction -- because a swap is one commitment and
     // two surfaces showing it at different depths would be worse than one

@@ -49,7 +49,7 @@ export const VIAL_ABILITY_ID = 'self.hearthdraught';
 /**
  * How many skill slots there are, before the vial.
  *
- * The same four as `SKILL_EQUIP_SLOTS` since spec 184, and asserted to be:
+ * The same four as `SKILL_EQUIP_SLOTS` since spec 188, and asserted to be:
  * the four cells beside the backpack and the four along the bottom of the
  * screen are the *same* four slots, so a mismatch between the two counts would
  * be a bar with a button that reaches nothing.
@@ -60,7 +60,7 @@ export const SKILL_SLOTS = SKILL_EQUIP_SLOTS.length;
 export const ACTION_BAR: readonly ActionSlot[] = buildActionBar([]);
 
 /**
- * The bar a player's equipment produces (spec 184).
+ * The bar a player's equipment produces (spec 188).
  *
  * The one way a slot comes to hold something now: a skill is an item worn in
  * one of the four skill slots, so what the bar holds is a *view of the
@@ -99,7 +99,7 @@ export function buildActionBar(abilityIds: readonly (string | null)[]): readonly
  *
  * A developer path and nothing else, in the same register as `?seed=`, `?wire=`
  * and `?units=`. It used to be the *only* way a slot could hold anything;
- * spec 184 made equipment the ordinary way, so this now **overrides** the
+ * spec 188 made equipment the ordinary way, so this now **overrides** the
  * equipped skills rather than filling a bar nothing else could fill -- which is
  * what keeps it useful: a harness that wants `ground.quake` on the bar should
  * not have to loot a sigil for it first.
@@ -124,7 +124,7 @@ export function actionBarFromQuery(search: string): readonly ActionSlot[] | null
 }
 
 /**
- * Whether two bars hold the same things in the same places (spec 184).
+ * Whether two bars hold the same things in the same places (spec 188).
  *
  * The guard on rebuilding the row: what a bar *is* is its five ability ids in
  * order, so two bars agreeing on those are the same bar however they were

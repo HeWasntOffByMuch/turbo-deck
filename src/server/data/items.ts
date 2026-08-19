@@ -67,7 +67,7 @@ export interface ItemDefinition {
    */
   readonly basicAttackId?: string;
   /**
-   * The active skill this item *is* (spec 184).
+   * The active skill this item *is* (spec 188).
    *
    * The same shape `basicAttackId` above already uses, and for the same stated
    * reason: a bow is a row in this table rather than a class, and so is a skill.
@@ -252,7 +252,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 8,
     modifiers: { maxHealthPct: 0.12, attackDamagePct: 0.05 },
   },
-  // --- active skills (spec 184) ---
+  // --- active skills (spec 188) ---
   //
   // A skill is an item, so it drops, trades, sits in a bag and is worn -- and
   // every one of those verbs is a system that already existed. What makes these
@@ -362,7 +362,7 @@ export const STARTING_KIT: readonly { readonly defId: string; readonly count: nu
   { defId: 'helm.leather', count: 1 },
   { defId: 'legs.traveller', count: 1 },
   { defId: 'potion.minor', count: 3 },
-  // One skill to start (spec 184). Not a nicety: with four empty slots and no
+  // One skill to start (spec 188). Not a nicety: with four empty slots and no
   // sigil in the bag there is no way for a new character to reach the feature
   // at all, and "it works once you have looted one" is how a system ships
   // untested by everybody who has not.

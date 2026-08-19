@@ -111,6 +111,7 @@ import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
 import type { WorldAnchor } from './damage-popup.js';
+import { XpGains } from './xp-gain.js';
 import { castRefusalText } from './error-log.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
@@ -948,7 +949,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   /**
    * The bar `?slots=` forced, or null for "read it off the player's equipment"
-   * (spec 184).
+   * (spec 188).
    *
    * An override rather than the only source: a skill is an item worn in one of
    * the four skill slots, so the ordinary bar is a view of the equipment and
@@ -1040,6 +1041,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   /** Where a blow lands on a body, in world units above its feet. */
   const BLOOD_HEIGHT = 26;
 
+  /**
+   * Experience, as gains rather than as a running total (spec 184).
+   *
+   * The arithmetic is pure and lives in `xp-gain.ts`; this is the memory it
+   * needs between frames and nothing else.
+   */
+  const xpGains = new XpGains();
+  /**
+   * The last body this player killed, and where its number went.
+   *
+   * Cleared when it is spent, so a grant that arrives with no kill behind it --
+   * an admin `AddExperience`, a quest one day -- cannot land on a corpse from
+   * five minutes ago. It falls back to the player's own body instead, which is
+   * the only other place a number about the player could honestly go.
+   */
+  let lastKill: { group: number; at: WorldAnchor } | null = null;
+
   client.onCombatResult((result) => {
     // What a blow looks like, decided in one pure place (spec 120). Nothing
     // about this changes a game outcome -- the server already resolved the blow
@@ -1076,6 +1094,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const at = scene.bodyAnchor(result.targetId) ?? replicaAnchor(result.targetId);
     if (!at) return;
     hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
+    // Where the reward for this body will go, if there turns out to be one
+    // (spec 184). Remembered rather than acted on, because the experience is not
+    // in this message: the server grants it against the store and sends a whole
+    // `Stats` some frames later, with nothing in it saying which kill it was
+    // for. This is the client's half of that join -- the same anchor the damage
+    // number was given, held until a total moves.
+    if ((result.flags & 1) !== 0 && result.attackerId === client.view().selfEntityId) {
+      lastKill = { group: result.targetId, at };
+    }
   });
   client.onEffect((effect) => {
     // A self-heal reports itself twice: once as this message and once as the
@@ -2302,8 +2329,27 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       style.height = `${box.height}px`;
     }
 
+    // What the last kill was worth, once the server has said (spec 184).
+    //
+    // Read here rather than in a message handler because the reward has no
+    // message of its own: a `Stats` arrives, and the only way to tell a gain
+    // from a re-send of the same character is to have kept the last one. The
+    // popup wants a place, and the frame is where the scene can still be asked
+    // for one.
+    const gained = xpGains.observe(view.level, view.experience);
+    if (gained > 0) {
+      const kill = lastKill;
+      lastKill = null;
+      // The corpse's own ground when there is a kill behind it; the player's
+      // body when there is not. Never nothing -- a reward with nowhere to go is
+      // still a reward, and the strip alone is what this spec exists to fix.
+      const at =
+        kill?.at ?? scene.bodyAnchor(view.selfEntityId) ?? replicaAnchor(view.selfEntityId);
+      if (at) hud.addExperience(kill?.group ?? view.selfEntityId, at, gained);
+    }
+
     // What the four skill slots hold, read off the equipment every frame
-    // (spec 184). Pushed rather than remembered, for the reason the window
+    // (spec 188). Pushed rather than remembered, for the reason the window
     // buttons are: the equipment is the state, and a bar that kept its own copy
     // would be a second opinion about what the player is carrying -- which is
     // exactly what a swap the server refused would leave behind. `setSlots`

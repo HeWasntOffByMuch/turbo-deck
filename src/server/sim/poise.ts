@@ -184,7 +184,7 @@ export function applyPoiseDamage(
 }
 
 /**
- * Everything that happens to a body that has just been staggered (spec 184).
+ * Everything that happens to a body that has just been staggered (spec 188).
  *
  * Lifted out of `blow.ts`, where it was written inline, because there are now
  * two ways to be staggered -- a guard broken by a blow, and a skill that says

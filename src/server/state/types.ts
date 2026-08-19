@@ -60,7 +60,7 @@ export type EquipSlot =
   | 'legs'
   | 'trinket'
   /**
-   * The four active-skill slots (spec 184).
+   * The four active-skill slots (spec 188).
    *
    * Equipment slots rather than a container of their own, and that decision is
    * most of what made the feature small: `applyMove` already knows how to put a
@@ -94,7 +94,7 @@ export const EQUIP_SLOTS: readonly EquipSlot[] = [
 ];
 
 /**
- * The four, in bar order (spec 184).
+ * The four, in bar order (spec 188).
  *
  * Named once so that "which slot is slot 2" has one answer across the server,
  * the HUD and the bag. The index into this array is the index into the action
@@ -110,7 +110,7 @@ export function isSkillSlot(slot: string): boolean {
 }
 
 /**
- * Where an item says it goes (spec 184).
+ * Where an item says it goes (spec 188).
  *
  * Wider than {@link EquipSlot} by exactly one value: `'skill'`, which means
  * "any of the four". An item naming one particular skill slot would be an item
@@ -669,7 +669,7 @@ export interface EffectiveStats {
   readonly basicAttackId: string;
   /**
    * The active skills this body may cast, derived from its four skill slots
-   * (spec 184).
+   * (spec 188).
    *
    * A stat for the reason {@link basicAttackId} is one: it is the difference
    * between one character and another, it comes off equipment, and it is

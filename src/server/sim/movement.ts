@@ -42,7 +42,7 @@ import type { ServerEntity, ServerInput } from './types.js';
 
 /**
  * The slowest a slow may leave a body, as a fraction of its own speed
- * (spec 184).
+ * (spec 188).
  *
  * A quarter, and it is a floor rather than a clamp on the authored magnitude so
  * that stacking sources -- when there are any -- still cannot cross it. What it
@@ -57,7 +57,7 @@ export interface MovementContext {
   readonly terrain: TerrainSampler;
   readonly config: LiveConfig;
   /**
-   * The tick being resolved (spec 184).
+   * The tick being resolved (spec 188).
    *
    * Here because a slow is a *timed state* and this is where speed is read: a
    * status is only live relative to a tick, so a mover that could not name one
@@ -182,7 +182,7 @@ export function resolveMovement(
   let dx = 0;
   let dy = 0;
 
-  // A slow multiplies the step and nothing else (spec 184): the collision, the
+  // A slow multiplies the step and nothing else (spec 188): the collision, the
   // terrain check and the facing are all unchanged, so a slowed body walks the
   // same way it always did and gets less far doing it. `MIN_MOVE_SCALE` is the
   // floor -- see `moveScaleOf` -- so no slow can turn into a root.

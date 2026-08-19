@@ -65,8 +65,17 @@ import {
   readoutShown,
   stripWidth,
 } from './hud-layout.js';
-import { slotIconSvg, stunIconSvg, systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
+import {
+  slotIconSvg,
+  statusIconSvg,
+  stunIconSvg,
+  systemIconSvg,
+  weaponIconSvg,
+  type SystemIconId,
+} from './icons.js';
 import { stunMark } from './stun-icon.js';
+import { statusMarks } from './status-marks.js';
+import { MAX_VISIBLE_STATUSES } from '../../../server/data/status-visuals.js';
 import {
   barSlotOf,
   swapLabel,
@@ -168,7 +177,7 @@ interface Bar {
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
   /**
-   * Changing a skill (spec 184).
+   * Changing a skill (spec 188).
    *
    * The third timed commitment a body can be in and the only one with nothing
    * else on screen saying so: a cast has its bar, a stagger has the swirl, and
@@ -187,6 +196,27 @@ interface Bar {
    * holder as the rest, so it rides the body without a second projection.
    */
   readonly stun: HTMLElement;
+  /**
+   * The row of status marks (spec 186).
+   *
+   * Above the swirl, so the stack reads downward as state, then what is
+   * happening, then who this is, then how it is doing. Safe to hide with
+   * `display` -- unlike the guard bar, which has to keep its box -- because the
+   * holder is anchored by its *bottom*, so a row appearing at the top grows the
+   * holder upward and moves nothing a player is reading. The swirl above it has
+   * always relied on the same thing.
+   */
+  readonly statusRow: HTMLElement;
+  readonly statusSlots: readonly StatusSlot[];
+}
+
+/** One reusable mark in the row: its box, its glyph and its stack count. */
+interface StatusSlot {
+  readonly root: HTMLElement;
+  readonly glyph: HTMLElement;
+  readonly count: HTMLElement;
+  /** What is currently drawn, so an unchanged mark rewrites no markup. */
+  drawn: string;
 }
 
 /**
@@ -208,22 +238,47 @@ const BAR_LOST = '#f4f2ee';
  */
 const BAR_GUARD = '#8fa6c8';
 /**
+ * The two status colours (spec 186), and there are deliberately only two.
+ *
+ * A boon takes the guard blue the bar under it already uses for "this body is
+ * holding"; an affliction takes the debuff rust from the VFX palette, which is
+ * the colour a body already gets ringed in when something is wrong with it. One
+ * colour per status would be a legend a player has to learn before a fight
+ * tells them anything, and the question they actually ask -- is that good for
+ * them or bad for them -- has two answers.
+ */
+const STATUS_BOON = BAR_GUARD;
+const STATUS_AFFLICTION = '#d0796f';
+/** Small enough that eight fit over a body, big enough to tell apart. */
+const STATUS_ICON_PX = 13;
+/**
  * The resource pool (spec 164). Blue, and the one bar on screen that is *spent*
  * rather than lost -- health and guard are both taken off you by somebody else.
  */
 const POOL_RESOURCE = '#4f9fe0';
 
 /**
- * The experience strip (spec 164).
+ * Experience (specs 164, 184). One palette, because experience now has two
+ * places it is shown -- the number that floats off a kill and the strip along
+ * the bottom edge -- and they are the same fact: what that body was worth, and
+ * how far it moved you. A player who learns the colour from one reads the other
+ * for free, which is only true if there is one colour to learn.
  *
- * Gold on black. Nothing else in this HUD is gold except a cast that can still
- * be called off, and the two never share a corner -- a cast bar is over a body
- * and this is the frame's own edge. The lit line is an inset highlight along the
- * top, which is what stops six pixels of flat fill reading as a coloured border.
+ * Purple rather than the gold this strip opened with, and the swap is what
+ * makes the pair possible: gold is already a cast that can still be called off,
+ * and a floating gold number is a critical hit. Both of those are over a body,
+ * which is exactly where the reward now floats too -- the strip could get away
+ * with sharing a hue from the frame's own edge and a number cannot.
+ *
+ * Light on dark in both places. `XP_PURPLE_LIT` is the strip's inset highlight
+ * along the top, which is what stops six pixels of flat fill reading as a
+ * coloured border; `XP_PURPLE_DARK` is the number's outline and the empty half
+ * of the strip, so what the fill is drawn against and what the digits are cut
+ * out of are the same colour.
  */
-const XP_GOLD = '#d8a52c';
-const XP_GOLD_LIT = '#ffdd80';
-const XP_EMPTY = '#0a0b0d';
+const XP_PURPLE = '#a878e8';
+const XP_PURPLE_LIT = '#d3b6ff';
+const XP_PURPLE_DARK = '#200d36';
 
 /**
  * The death banner (spec 164). Brighter than `BAR_ENEMY` and than the blood: it
@@ -276,6 +331,20 @@ export interface HudHandle {
    */
   addDamage(entityId: number, at: WorldAnchor, damage: number, crit: boolean): void;
   /**
+   * `amount` experience was earned, at the world point `at` (spec 184).
+   *
+   * The same field and the same rules as {@link addDamage} -- a world point
+   * taken once and re-projected, so the reward for a kill stays on the ground
+   * the body fell on. What differs is the path and the colour, and both are
+   * about the one number this shares a frame with: the killing blow's, spawned
+   * on the same tick from the same anchor.
+   *
+   * `group` is the body that died, for the same reason a blow's is the body it
+   * landed on -- it is never resolved to anything, and here it is what lets the
+   * field sweep the reward away from the lane that blow's number took.
+   */
+  addExperience(group: number, at: WorldAnchor, amount: number): void;
+  /**
    * Something was refused, and this is what to say about it (spec 143).
    *
    * Takes a finished line rather than an ability and a reason: the wording lives
@@ -310,7 +379,7 @@ export interface HudHandle {
    */
   showOpenWindows(open: readonly WindowId[]): void;
   /**
-   * Replace what the five slots hold (spec 184).
+   * Replace what the five slots hold (spec 188).
    *
    * Pushed in every frame from the player's equipment, for the same reason
    * {@link showOpenWindows} is pushed rather than read: the equipment is the
@@ -510,7 +579,7 @@ export function createHud(
     readonly sweep: HTMLDivElement;
     readonly remaining: HTMLSpanElement;
     readonly charges: HTMLSpanElement;
-    /** The overlay a skill-slot change in flight draws (spec 184). */
+    /** The overlay a skill-slot change in flight draws (spec 188). */
     readonly change: HTMLDivElement;
     readonly changeLabel: HTMLSpanElement;
     readonly changeFill: HTMLDivElement;
@@ -630,7 +699,7 @@ export function createHud(
 
     /**
      * A skill-slot change in flight, over the slot it is happening to
-     * (spec 184).
+     * (spec 188).
      *
      * Its own overlay rather than a reuse of the cooldown sweep, because the
      * two say opposite things: a sweep is "this is not ready yet" and drains
@@ -667,7 +736,7 @@ export function createHud(
   let slots = buildSlots(slotPlan);
 
   /**
-   * Rebuild the row when what is in it changes (spec 184).
+   * Rebuild the row when what is in it changes (spec 188).
    *
    * A rebuild rather than an in-place edit of five labels, and the reason is
    * the one this file already gives about the slot's contents: a slot's markup
@@ -808,15 +877,15 @@ export function createHud(
   xpStrip.dataset['xpBar'] = 'true';
   xpStrip.style.cssText =
     `position:absolute;left:0;right:0;bottom:0;height:${layout.xpBarHeight}px;` +
-    `background:${XP_EMPTY};border-top:1px solid #000;box-sizing:content-box;` +
+    `background:${XP_PURPLE_DARK};border-top:1px solid #000;box-sizing:content-box;` +
     // Auto, so it can be hovered: it is the only thing in the HUD whose detail
     // is *only* available on hover, and a strip that ignored the pointer would
     // have no way to be asked.
     'pointer-events:auto;overflow:hidden;';
   const xpFill = document.createElement('div');
   xpFill.style.cssText =
-    `position:absolute;left:0;top:0;bottom:0;width:0;background:${XP_GOLD};` +
-    `box-shadow:inset 0 1px 0 ${XP_GOLD_LIT};`;
+    `position:absolute;left:0;top:0;bottom:0;width:0;background:${XP_PURPLE};` +
+    `box-shadow:inset 0 1px 0 ${XP_PURPLE_LIT};`;
   const xpTicks = document.createElement('div');
   xpTicks.style.cssText =
     'position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(' +
@@ -1118,7 +1187,76 @@ export function createHud(
     ].join(';');
     stun.innerHTML = stunIconSvg({ size: 18 });
 
-    // Changing a skill (spec 184). The cast bar's shape in a different colour,
+    // The status row (spec 186). Built once at full width and hidden, like the
+    // swirl and the name: a body picks statuses up and drops them several times
+    // a fight, and creating elements per application would churn the DOM on
+    // every blow that lands.
+    //
+    // A fixed pool of slots rather than one element per status, so the row never
+    // allocates while a fight is running and a mark that goes away is a
+    // `display` write rather than a removal.
+    const statusRow = document.createElement('div');
+    statusRow.dataset['bar'] = 'statuses';
+    statusRow.style.cssText = [
+      'display:none',
+      'justify-content:center',
+      'align-items:center',
+      // Four rather than two. Each glyph's ink fills most of its own box -- the
+      // paths run nearly the full 24-unit viewBox -- so at two the row read as
+      // one continuous ribbon rather than as several marks, which is the one
+      // thing a row of marks must not do.
+      'gap:4px',
+      'margin-bottom:2px',
+      'pointer-events:none',
+      // Allowed to be wider than the holder, and centred on it.
+      //
+      // The holder is a fixed 52px -- the width of the health bar -- and four
+      // marks already need more than that. Left in flow the slots are flex items
+      // in a box too small for them, so they *shrink*: eight of them came out
+      // 3px wide each, which is a row of specks that passes every check about
+      // what is drawn and shows a player nothing. `max-content` takes the row
+      // out of that negotiation, and the half-shifts re-centre it over the body.
+      'width:max-content',
+      'position:relative',
+      'left:50%',
+      'transform:translateX(-50%)',
+    ].join(';');
+
+    const statusSlots: StatusSlot[] = [];
+    for (let index = 0; index < MAX_VISIBLE_STATUSES; index += 1) {
+      const slot = document.createElement('div');
+      slot.style.cssText = [
+        'display:none',
+        'position:relative',
+        `width:${STATUS_ICON_PX}px`,
+        `height:${STATUS_ICON_PX}px`,
+        // Belt and braces with the row's `max-content` above: a mark is a fixed
+        // size and must never be negotiated down to fit.
+        'flex:0 0 auto',
+        'filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))',
+      ].join(';');
+      const glyph = document.createElement('div');
+      glyph.style.cssText = 'position:absolute;inset:0;';
+      // Bottom-right, outside the glyph's own weight, so a two-stack Flow reads
+      // as a marked glyph rather than as a different glyph.
+      const count = document.createElement('div');
+      count.style.cssText = [
+        'position:absolute',
+        // Inside the box, not hanging off it. Outside, the digit sat in the gap
+        // and collided with the next mark's glyph, so a stacking status made the
+        // one after it unreadable.
+        'right:0',
+        'bottom:0',
+        'font:7px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+        'color:#f2f6fb',
+        'text-shadow:0 0 2px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,.95)',
+      ].join(';');
+      slot.append(glyph, count);
+      statusRow.append(slot);
+      statusSlots.push({ root: slot, glyph, count, drawn: '' });
+    }
+
+    // Changing a skill (spec 188). The cast bar's shape in a different colour,
     // because it means the same kind of thing -- this body is committed to
     // something with a clock on it -- and a fourth vocabulary for the fourth
     // timed thing would be three too many. Below the cast bar rather than in
@@ -1137,9 +1275,23 @@ export function createHud(
     swapFill.style.cssText = 'height:100%;width:0;background:#6bd7cf;';
     swap.append(swapFill);
 
-    holder.append(stun, name, healthTrack, guard, cast, swap);
+    holder.append(statusRow, stun, name, healthTrack, guard, cast, swap);
     root.append(holder);
-    const made: Bar = { root: holder, name, health, ghost, guard, guardFill, cast, castFill, stun, swap, swapFill };
+    const made: Bar = {
+      root: holder,
+      name,
+      health,
+      ghost,
+      guard,
+      guardFill,
+      cast,
+      castFill,
+      stun,
+      statusRow,
+      statusSlots,
+      swap,
+      swapFill,
+    };
     bars.set(id, made);
     return made;
   }
@@ -1258,7 +1410,52 @@ export function createHud(
         element.stun.style.opacity = stun.opacity.toFixed(2);
       }
 
-      // Changing a skill (spec 184). Stateless like the swirl above and for the
+      // The status marks (spec 186), on the same terms as the swirl above: a
+      // pure function of what was replicated and the tick being drawn, with
+      // nothing kept between frames. A status whose window has passed is refused
+      // by `statusMarks` rather than by anything here, so a delta that has not
+      // arrived yet cannot leave a mark up.
+      // `?? []` for the same reason the guard above reads `entity.poise ?? 1`:
+      // several harnesses fabricate a view by hand (`hud-probe.ts`, the bot
+      // client) and a field added to `ReplicatedEntity` is not a field they
+      // know to set. The type says it is always there; the rigs say otherwise,
+      // and a HUD that throws on a missing field takes the whole frame.
+      const marks = statusMarks(entity.statuses ?? [], tick);
+      element.statusRow.style.display = marks.length > 0 ? 'flex' : 'none';
+      for (let index = 0; index < element.statusSlots.length; index += 1) {
+        const slot = element.statusSlots[index];
+        if (!slot) continue;
+        const mark = marks[index];
+        if (!mark) {
+          slot.root.style.display = 'none';
+          continue;
+        }
+        slot.root.style.display = 'block';
+        slot.root.style.opacity = mark.opacity.toFixed(2);
+        // The markup is rewritten only when the glyph in this position actually
+        // changes. A mark that merely fades or re-counts costs two style writes
+        // rather than an innerHTML parse, which matters because this runs for
+        // every body in interest range every frame.
+        const wanted = `${mark.icon}:${mark.kind}`;
+        if (slot.drawn !== wanted) {
+          slot.drawn = wanted;
+          // Colour by `kind` and by nothing else: eight colours over a head is a
+          // legend rather than a picture, and "is that good or bad for them"
+          // is the question a player asks first and answers fastest.
+          slot.glyph.innerHTML = statusIconSvg(mark.icon, {
+            size: STATUS_ICON_PX,
+            color: mark.kind === 'boon' ? STATUS_BOON : STATUS_AFFLICTION,
+          });
+        }
+        const count = mark.showsCount && mark.stacks > 1 ? String(mark.stacks) : '';
+        if (slot.count.textContent !== count) slot.count.textContent = count;
+        // Read by `scripts/probe-status-marks.ts`, for the same reason the health
+        // bar carries `data-entity`: so a probe can assert what is on a body
+        // without re-deriving the camera projection or reading SVG paths.
+        slot.root.dataset['status'] = mark.id;
+      }
+
+      // Changing a skill (spec 188). Stateless like the swirl above and for the
       // same reason: a body that is busy right now is busy whether or not this
       // client watched it start, so there is nothing per-body to retain.
       const changing = swapOverhead(entity.activity, entity.activityUntilTick, tick);
@@ -1365,7 +1562,7 @@ export function createHud(
       weapon.button.style.color = current ? '#f2f6fb' : '#98a4b4';
     }
 
-    // Which slot is being changed, and how far through (spec 184). Worked out
+    // Which slot is being changed, and how far through (spec 188). Worked out
     // once outside the loop: it is one change at a time and asking per slot
     // would be four answers to a question with one.
     const changing = swapProgress(view.pendingSwap, tick);
@@ -1641,6 +1838,36 @@ export function createHud(
       popupElements.set(added.id, element);
       // The field caps how many float at once; whatever it dropped to make room
       // is an element nobody will place again.
+      for (const id of added.expired) dropPopup(id);
+    },
+    addExperience(group, at, amount) {
+      // Nothing to say about a gain of nothing. `XpGains` already reports 0
+      // rather than a negative, so this is the rounding's floor and not a
+      // second opinion about whether experience can go backwards.
+      const whole = Math.round(amount);
+      if (whole <= 0) return;
+      const element = document.createElement('div');
+      element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);display:none;';
+      // Labelled, because the colour and the column say "this is not damage"
+      // and neither of them says what it *is*: a purple number under a white
+      // one is a second quantity, and which quantity is the whole point.
+      //
+      // What the label cost was measured before it was kept -- `+24 XP` is
+      // three times the width of the `24` alone, which is why this is the
+      // smallest text of the pair, at half a critical's scale. It is the
+      // second number spawned on one tick and its job is to be readable
+      // rather than to be the headline.
+      element.innerHTML = pixelTextSvg(`+${whole} XP`, {
+        scale: 2,
+        fill: XP_PURPLE,
+        outline: XP_PURPLE_DARK,
+      });
+      root.append(element);
+      const added = popups.add(group, at, 'xp');
+      // Stamped the way a damage number is, so one can be followed across
+      // frames from outside without re-deriving the camera.
+      element.dataset['xpPopup'] = String(added.id);
+      popupElements.set(added.id, element);
       for (const id of added.expired) dropPopup(id);
     },
     error(text) {

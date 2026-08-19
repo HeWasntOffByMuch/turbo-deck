@@ -53,7 +53,6 @@ import {
 import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
 import { facesAim } from './sim/abilities.js';
-import { applyStatus } from './sim/statuses.js';
 import { SKILL_SWAP } from './data/skill-effects.js';
 import {
   movesASkill,
@@ -65,6 +64,8 @@ import { headingToward } from './sim/movement.js';
 import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
 import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
+import { applyStatus, adaptedKey } from './sim/statuses.js';
+import { ADAPTED_ID, STATUS_VISUALS } from './data/status-visuals.js';
 import {
   isRevealed,
   makeDrop,
@@ -298,7 +299,7 @@ interface Connection {
    */
   readonly pendingDrops: PendingDrop[];
   /**
-   * Skill-slot changes asked for and not yet applied (spec 184), oldest first.
+   * Skill-slot changes asked for and not yet applied (spec 188), oldest first.
    *
    * Here rather than in the sim for the reason {@link Connection.pendingDrops}
    * is: what a swap does to a bag lives behind an async store the sim cannot
@@ -348,7 +349,7 @@ interface PendingDrop {
 }
 
 /**
- * One skill-slot change, waiting out its duration (spec 184).
+ * One skill-slot change, waiting out its duration (spec 188).
  *
  * Carries the move rather than the resulting containers, and that is the whole
  * of why swapping cannot be raced: the bag is read and written at the moment
@@ -708,7 +709,7 @@ export class GameServer implements AdminHost {
 
       case ClientMessageType.MoveItem: {
         if (connection.playerId === null) return;
-        // A move that touches a skill slot is not a move (spec 184): it is
+        // A move that touches a skill slot is not a move (spec 188): it is
         // refused outright if the skill leaving is on cooldown, and otherwise
         // it *takes time*. `queueSwap` answers which -- a reason, or null for
         // "queued, and it will be answered when it lands".
@@ -1256,7 +1257,7 @@ export class GameServer implements AdminHost {
     // facing, so an aim left behind is a corpse-in-waiting turning toward
     // something nobody is going to throw.
     connection.pendingDrops.length = 0;
-    // And a swap that has not landed (spec 184). Nothing was taken out of the
+    // And a swap that has not landed (spec 188). Nothing was taken out of the
     // bag -- the move runs when the swap lands, not when it is asked for -- so
     // dropping the queue loses the request and nothing else.
     connection.pendingSwaps.length = 0;
@@ -1600,7 +1601,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Take a skill-slot change, refuse it, or say it is not one (spec 184).
+   * Take a skill-slot change, refuse it, or say it is not one (spec 188).
    *
    * Three answers rather than two, because "this move has nothing to do with
    * skills" is not a refusal and must not be reported as one: `'notASwap'`
@@ -1664,7 +1665,7 @@ export class GameServer implements AdminHost {
     // through `applyStatus` like everything else, so it expires by the same
     // comparison and shows up in the same map.
     //
-    // And the body takes the *claim* (spec 184): `Swapping` until the change
+    // And the body takes the *claim* (spec 188): `Swapping` until the change
     // lands, which is what makes this a commitment rather than a hidden timer.
     // It rides the field `activity` already rides, so every client draws the
     // same body busy with the same thing -- and anything that takes the body
@@ -1687,7 +1688,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * The swap this connection is committed to, or null (spec 184).
+   * The swap this connection is committed to, or null (spec 188).
    *
    * Read off the queue rather than stored twice, so "is there a change in
    * flight" has one answer. The *kind* is derived here rather than remembered
@@ -1713,7 +1714,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * One pass over every connection's pending skill swaps (spec 184).
+   * One pass over every connection's pending skill swaps (spec 188).
    *
    * Run beside {@link serveDrops} and shaped like it, because it is the same
    * problem: an action that takes time, whose effect is behind an async store,
@@ -1736,7 +1737,7 @@ export class GameServer implements AdminHost {
       }
 
       // **The claim is the commitment, and it is checked while it is being
-      // made** (spec 184).
+      // made** (spec 188).
       //
       // One comparison, and it covers every way a swap can be given up: the
       // body walked off (the movement pass drops the claim), it was staggered
@@ -1769,7 +1770,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Every waiting swap refused with one reason, and the claim let go (spec 184).
+   * Every waiting swap refused with one reason, and the claim let go (spec 188).
    *
    * Shaped like {@link refuseDrops} and for the same reason: nothing has left
    * the bag, so a refusal costs the request and nothing else. The claim is
@@ -1795,7 +1796,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * The wait is over: run the move (spec 184).
+   * The wait is over: run the move (spec 188).
    *
    * Through the ordinary `moveItem`, which is the point. The swap has cost its
    * time and its status by now, and what is left is a bag edit -- so it goes
@@ -1880,7 +1881,7 @@ export class GameServer implements AdminHost {
     if (connection.pendingDrops.length >= MAX_PENDING_DROPS) {
       return 'you are already putting things down';
     }
-    // **A skill on cooldown may not leave its slot by any route** (spec 184).
+    // **A skill on cooldown may not leave its slot by any route** (spec 188).
     //
     // Throwing it on the ground is removing it, so the rule that governs a swap
     // governs this too -- otherwise the lock would be a lock on one message
@@ -2073,7 +2074,7 @@ export class GameServer implements AdminHost {
     if (connection.playerId === null) return;
     const session = this.players.get(connection.playerId);
     if (!session) return;
-    // Whatever change is in flight rides along (spec 184). Derived here rather
+    // Whatever change is in flight rides along (spec 188). Derived here rather
     // than remembered, so every `Inventory` -- asked for, landed, refused, or
     // sent for some unrelated reason -- carries the truth at the moment it left
     // rather than a stale copy of it.
@@ -3115,6 +3116,15 @@ export class GameServer implements AdminHost {
    */
   private static readonly ADMIN_DROP_THROW = 24;
 
+  /**
+   * How long `admin:triggerEvent 'status'` leaves its marks up.
+   *
+   * Ten seconds: long enough to orbit the camera round a body and read the row,
+   * short enough that a forgotten trigger clears itself rather than leaving a
+   * server in a state somebody later reports as a bug.
+   */
+  private static readonly STATUS_DEMO_TICKS = 600;
+
   triggerEvent(eventName: string, x: number, y: number, magnitude: number): string {
     switch (eventName) {
       case 'raid': {
@@ -3137,6 +3147,48 @@ export class GameServer implements AdminHost {
           removed += 1;
         }
         return `cleared ${removed} monsters within ${magnitude} units`;
+      }
+      case 'status': {
+        // The developer path (spec 186), in the same register as `drop` and
+        // `reveal` below: every visible status at once, on every body within
+        // `magnitude`, for `STATUS_DEMO_TICKS`.
+        //
+        // It exists because none of these fire for a character who has not built
+        // into them -- Exposed needs the Weak-Point Study milestone, Flow needs
+        // Quick Recovery -- so the alternative to this is levelling a Perception
+        // character every time somebody wants to look at the marks. Same
+        // argument the action bar's `?slots=` makes about a bar that is empty by
+        // design.
+        //
+        // It writes only into `statuses`, so it can no more change an outcome
+        // than the real thing can: every one of these is read by the sim through
+        // the same `statusOf`, and what a demo Exposed does to a blow is exactly
+        // what a real one does. Nothing here draws from `state.rng`.
+        const reach = Math.max(1, magnitude);
+        const until = this.state.tick + GameServer.STATUS_DEMO_TICKS;
+        let marked = 0;
+        for (const entity of [...this.state.entities.values()]) {
+          if (entity.kind !== EntityKindValue.Player && entity.kind !== EntityKindValue.Monster) {
+            continue;
+          }
+          if (Math.hypot(entity.position.x - x, entity.position.y - y) > reach) continue;
+          let statuses = entity.statuses;
+          for (const visual of STATUS_VISUALS) {
+            // The collapsed `adapted` row is not an id the sim writes, so it is
+            // demonstrated through a real member of the family rather than by
+            // inventing a key nothing else would ever read.
+            const id = visual.id === ADAPTED_ID ? adaptedKey('melee.slash') : visual.id;
+            statuses = applyStatus(statuses, id, this.state.tick, GameServer.STATUS_DEMO_TICKS, {
+              maxStacks: visual.maxStacks,
+            });
+          }
+          this.state = {
+            ...this.state,
+            entities: new Map(this.state.entities).set(entity.id, { ...entity, statuses }),
+          };
+          marked += 1;
+        }
+        return `marked ${marked} bodies with every visible status until tick ${until}`;
       }
       case 'drop': {
         // The developer path (spec 158): a drop of a chosen tier, at a chosen

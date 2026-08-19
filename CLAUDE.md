@@ -62,6 +62,8 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
+| `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -157,7 +159,49 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  stitching the join by copying shared corners exactly and easing
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
-                 collision and pathfinding helpers the server collides against
+                 collision and pathfinding helpers the server collides against.
+                 avoidance.ts is how two bodies get past each other (spec 187):
+                 ORCA, van den Berg et al.'s reciprocal collision avoidance,
+                 RVO2's 2D solver transcribed rather than invented. Each
+                 neighbour contributes one half-plane of velocities safe with
+                 respect to it over the next second; the answer is the velocity
+                 nearest the wanted one satisfying all of them, found with a
+                 small linear program. Worth transcribing rather than replacing
+                 with a repulsion force for two properties, both about what it
+                 does *not* do. **It does not oscillate**: a repulsion force
+                 reacts to where a neighbour *is*, so two bodies swerve, stop
+                 overlapping, swerve back, and shudder down the corridor -- where
+                 a half-plane is built from where the neighbour is *going*, and
+                 each body assumes the other is solving the same problem and
+                 takes exactly half the correction, so one swerve settles the
+                 pair. **It does not stop**: the answer is the *nearest* safe
+                 velocity rather than a brake, so a body that can go round goes
+                 round; slowing down is what it does when there is nowhere to go.
+                 That last case is `linearProgram3` -- the relaxation that runs
+                 when no velocity satisfies every neighbour at once, finding the
+                 one that minimises the worst violation rather than refusing to
+                 move, and the single most important function in the file for a
+                 dense crowd. What it deliberately does not know about is walls:
+                 static obstacles are the nav grid's job and `slideCircle`'s, and
+                 ORCA obstacle lines would be a third description of the world's
+                 geometry. The failure mode of omitting them is a body that hugs
+                 a wall rather than one that walks through it. If they are ever
+                 added, `linearProgram3` must be given `numObstLines` and must
+                 seed its projection with them -- obstacle constraints are hard
+                 where agent constraints are relaxable.
+                 neighbours.ts is who is near enough to matter: a hashed uniform
+                 grid over body positions, rebuilt each tick by counting sort
+                 into flat typed arrays. Rebuilt rather than maintained because
+                 every body moves every tick; hashed rather than dense over the
+                 world because the map is grown by editing a document and has no
+                 extent this module should have an opinion about; and a cell is
+                 exactly the search radius wide, so a query is always the 3x3
+                 block and never a loop whose length depends on the radius.
+                 Results come back in bucket order then insertion order, which is
+                 deterministic and is *not* anything a reader would recognise --
+                 so `crowd.ts` re-sorts by distance and breaks ties on entity id,
+                 because the linear program's answer can depend on the order its
+                 half-planes arrive in.
 src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
                  small document and explicitly none of the bind-pose, skinning,
                  retarget and family machinery src/units/ exists to manage for a
@@ -593,7 +637,7 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
-                 Since spec 184 the bag has a **skill row** under the grid: the
+                 Since spec 188 the bag has a **skill row** under the grid: the
                  four `skill1..skill4` equipment slots, laid out four across in
                  key order, which is the same four the action bar draws along
                  the bottom of the screen. Under the bag rather than beside the
@@ -621,6 +665,35 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  position, since `UiLayer.toUi` is deliberately the one
                  conversion between UI pixels and canvas ones and a stale
                  cursor would throw the item somewhere nobody clicked.
+                 Since spec 185 an item also *says* what it is, and the colour it
+                 says it in is the one it was lying in the grass: the three tier
+                 colours moved out of `drop-rig.ts` into the palette, and the drop
+                 reads them back, so the bag and the ground cannot drift and a
+                 test in `drop-rig.test.ts` fails if they do. That took the
+                 palette cap from 16 to 19, which is the cap doing its job rather
+                 than being waived -- it is against *invented* colour, and these
+                 three are the world's own. Three rules came out of drawing it.
+                 The tier goes **behind** the icon rather than on it: the sprites
+                 carry their own colour, so tinting an orange trinket gold and
+                 grey gives two oranges nobody can tell apart, where a wash on a
+                 near-black cell is the same three bytes whatever the icon is
+                 made of. That wash is **composited into an opaque colour before
+                 it is drawn**, with the rasterizer's own `over`, because nothing
+                 in this framework blends -- a source-over is the one operation
+                 the software backend and a browser canvas round differently, and
+                 `budget.test.ts` refuses one at draw time. And **common is not
+                 washed at all**, which is the whole contrast: ordinary loot looks
+                 exactly as it did, so the mark means "this one is not ordinary"
+                 rather than announcing which of three tiers everything is -- the
+                 same argument `restFlare` settles on the ground, where a common
+                 drop's curve is flat at the dimmest value there is. A `Tooltip`
+                 now takes lines as well as prose, wrapped **per line** so a long
+                 name folds without swallowing the stat under it, and what a line
+                 is worth saying is decided outside `src/ui/`: the view-model hands
+                 over a *tone* -- good, bad, dim, the item's own tier -- and this
+                 layer says what a tone looks like. The one line decided here
+                 rather than there is `Requires level N`, because it is the only
+                 thing about an item that depends on who is holding it.
                  One more rule of the same kind, from spec 147's sheet: **a
                  hidden tab still has rectangles in it**. A tab switched away is
                  hidden and never destroyed -- that is what makes a tab keep what
@@ -1041,7 +1114,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  **Active skills** are the fourth thing an `AbilityDefinition`
-                 can be (spec 184), and the point of them is how little is new:
+                 can be (spec 188), and the point of them is how little is new:
                  a skill is `targeting + casting + costs + cooldown + effects`
                  and every one of those five was already a system here. So the
                  row gains four optional fields -- `castAngleDeg` (the brief's
@@ -1455,12 +1528,182 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  take `staggered` as their own field, and the `moveIntent`
                  branch is *first*, ahead of a held key, since the key is the
                  one branch a player is actively driving.
+                 `world/status-marks.ts` is that same swirl generalised to the
+                 rest of the progression (spec 186), and it is built to the
+                 stun icon's three rules on purpose, because they were the right
+                 ones and a second answer to "how does a timed state get drawn"
+                 is a second thing to keep in step. **Stateless**, so a body
+                 that walks into view already Exposed is marked -- there is no
+                 start to have missed, which is exactly what separates a *state*
+                 from the flinch's *contact*. **A stale entry is refused on
+                 read**, the same comparison `statusOf` makes in the sim, which
+                 is what makes correctness independent of whether the delta
+                 saying "it fell off" has arrived. And **the fade is a count of
+                 ticks**, since the function is handed an end and not a length
+                 -- more clearly right here than there, because these windows
+                 vary from a 1.2s Flow to a several-second Adaptation and a
+                 fraction would fade the long one for seconds. Order is by wire
+                 index rather than by arrival, for the reason `AURA_ORDER` is
+                 fixed: a mark must not slide along the row because something
+                 else was applied. Colour is by `kind` and by nothing else --
+                 eight colours over a head is a legend rather than a picture,
+                 and "is that good for them or bad for them" is the question a
+                 player asks first. The thing that keeps it from shipping dark:
+                 almost every row is milestone-gated, so a fresh character could
+                 have gone on seeing an empty row forever with nobody noticing
+                 the wire was wrong. `Vulnerable` is written on *commit*, for
+                 anybody who swings at anything, and a test asserts a mark
+                 appears from one ordinary swing.
+                 `admin:triggerEvent 'status'` is the developer path beside it,
+                 in the same register as spec 158's `'drop'` and `'reveal'` and
+                 for the same reason -- it writes only into `statuses` and draws
+                 nothing from `state.rng`, so it can no more change an outcome
+                 than the real thing can.
+                 `npx tsx scripts/probe-status-marks.ts` is the half no headless
+                 test can see, and it earned its place immediately: every Node
+                 assertion passed while the row drew a line of **specks**. The
+                 per-body holder is a fixed 52px -- the health bar's width -- so
+                 eight 13px marks left in flow are flex items in a box too small
+                 for them, and flex's answer is to shrink them to 3px each. What
+                 is drawn, in what order, in what colour: all true, all
+                 unreadable. The row is `width:max-content` and re-centred with
+                 half-shifts so it is never in that negotiation, and the probe
+                 measures the marks' actual boxes rather than their presence.
+                 It also asserts the health bar **does not move** when the row
+                 appears, which is the whole reason a bottom-anchored holder may
+                 grow at the top at all -- the cast bar had to be taken out of
+                 flow for exactly this.
+                 `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
+                 to a body because of the bodies around it (spec 187). Until they
+                 existed nothing on the server knew that two units were in the
+                 same place: `resolveMovement` is handed `{ world, terrain,
+                 config }` and has never once looked at another entity, so a herd
+                 walked as one point and a pack chasing a player converged into a
+                 single stack. (`src/sim/collision.ts`'s `resolveOverlaps` was the
+                 closest thing to a fix and had no caller anywhere -- a survivor
+                 of the single-player sim spec 062 deleted.)
+                 crowd.ts is two halves, deliberately different in kind, and the
+                 difference is why neither alone is enough. `solveAvoidance` runs
+                 **before** anybody moves and is a *velocity* rule, so it is
+                 invisible until a body is on a collision course and never fights
+                 the body's own intent. `resolveCrowding` runs **after** everybody
+                 has moved and is a *position* rule, so it works on bodies that
+                 are not moving at all -- what a spawn, a stagger, a wall or a
+                 body with no legal velocity leaves behind -- but it is exactly
+                 the rule that shudders if you lean on it, which is why it is a
+                 fraction of the overlap per tick and a safety net rather than the
+                 mechanism.
+                 Three fields carry the policy and the last two are separate
+                 questions: `pinned` (not solved for, everybody else takes the
+                 whole avoidance against it), `bumps` (in the overlap pass at
+                 all), `pushLimit` (how far it may be displaced in a tick). A
+                 player is pinned *and* does not bump, and both are stated limits
+                 rather than simplifications -- their movement is predicted on
+                 their own machine (spec 067), so deflecting it here would cost a
+                 correction every tick a monster came near; and shoving bodies
+                 aside by walking into them is a design decision with consequences
+                 for every reach and chase in the game, which this is not. The
+                 push cap is a fraction of the body's own **speed**, and that was
+                 learned the hard way: capped at a fraction of its *radius* it was
+                 eleven units a tick for a grazer -- six hundred a second against
+                 a walking speed of forty -- so a player walking into one
+                 bulldozed it across the map faster than it could run, and it
+                 could not be caught. Every number was small and the product was
+                 absurd, which is the same failure `turn-swing.ts` exists to
+                 catch.
+                 `symmetryBreak` gives each body a constant tenth of a degree of
+                 asymmetry hashed off its id, because *exact* mirror symmetry is
+                 the one configuration reciprocal avoidance is bad at and a game
+                 spawns bodies on grids and marches them in ranks. Hashed rather
+                 than drawn, since the sim's `Rng` draw *count* is load-bearing;
+                 and applied as a rotation by `atan(slope)` built from `Math.sqrt`
+                 rather than from `Math.cos`/`Math.sin`, which ECMAScript permits
+                 an implementation to approximate differently -- a
+                 replay-divergence hazard hiding inside a constant nobody would
+                 ever look at again.
+                 attack-slots.ts is where a target's attackers stand, and it
+                 exists because avoidance alone cannot fix a pack: avoidance
+                 answers "how do I not walk into you", and the problem when twelve
+                 bodies chase one player is that everybody genuinely wants the
+                 same place. So the surroundings are cut into evenly spaced angles
+                 on a ring at the attacker's own standoff, one body to a slot, and
+                 an attacker aims at its slot **while it closes** and stops when
+                 it is in reach, wherever on the way that happens. The ring is an
+                 approach preference and never a destination -- marching to an
+                 exact standing position is what makes a pack of animals look like
+                 a drill squad, and what makes them shuffle forever when the
+                 target moves. Three rules. **The ring is cut once per target, for
+                 the widest body on it**: cut per attacker, a spider's ring is
+                 seventeen slots and a ravager's is six, the two sets of angles do
+                 not line up, neither excludes the other, and the pair stack on
+                 exactly the ground the ring exists to keep them off. **Claims are
+                 two passes, reservations then new claims**: "your held slot wins
+                 if it is free" only protects a body from those processed after
+                 it, and claims are taken in creation order, so an older body with
+                 no slot walked off with the angle a younger one had been walking
+                 toward for a second. A body stopped in reach reserves too,
+                 because its slot is the ground it is standing on. And **the board
+                 is rebuilt every tick, never released by event**, since a body
+                 leaves a fight in half a dozen ways no release covers -- it dies,
+                 it is dragged past its leash, it loses interest, its chunk stops
+                 being simulated.
+                 The ring aim only applies where the straight line to the target
+                 is clear, and that is not a simplification either: a ring point
+                 is a place nobody has checked, so it can be inside the wall the
+                 target is standing behind, and handing one to `findPath` turns
+                 "there is no way to my target" into "there is a way to this other
+                 spot" -- which parks a body against a palisade instead of
+                 pressing at the gate, and quietly retires the retry cadence spec
+                 073 put on hopeless searches.
+                 The pass they hang off restructured the tick: the movement loop
+                 decided and moved each body before the next was asked anything,
+                 which is the one shape reciprocal avoidance cannot be built in --
+                 a body that has already moved is one its neighbours avoid in the
+                 wrong place, and one that has not is one whose velocity is a tick
+                 stale. It is three passes over the same list in the same creation
+                 order now -- decide, solve, move -- plus the overlap pass after.
+                 `ServerEntity` gained `velocity`, which is what the body
+                 *actually* travelled at rather than what it asked for, so a body
+                 pressed into a tree tells its neighbours it is going nowhere.
+                 Nothing is replicated and nothing is asked of the client.
+                 `npx tsx scripts/preview-crowd.ts` is the picture and `npx tsx
+                 scripts/bench-crowd.ts` the cost; both share
+                 `scripts/crowd-scenarios.ts` with `sim/crowd.test.ts`, so a panel
+                 that looks wrong and a green test cannot both be true. The
+                 shipped map cannot field these crowds -- fourteen spawners, one
+                 monster each, five self-initiating attackers at the tightest
+                 cluster -- so the bodies are placed, which is what an admin
+                 conjuring a fight does.
                  `sim/statuses.ts` is one small timer map and everything the
                  progression needs to remember between ticks goes in it, because
                  twelve mechanics as twenty-four entity fields is twenty-four
                  places for an expiry to be forgotten. Expiry is a comparison and
                  never a sweep, so reading a stale entry cannot produce a live
-                 effect. `sim/blow.ts` is one blow with all of it applied, in one
+                 effect.
+                 `data/status-visuals.ts` is which of those a player may see
+                 (spec 186), and it exists because that map is deliberately
+                 wider than anything anybody should be shown: some of what it
+                 remembers is a condition -- Flow building, a target left
+                 Exposed -- and some is bookkeeping, a 0.2s window Perfect Exit
+                 reads or an inverted "your comeback has been spent". The rule
+                 is one sentence: **the wire carries the conditions somebody
+                 could point at, not the timers the sim keeps for itself**, and
+                 absent is the default -- `visualFor` answers null for anything
+                 with no row, so a status added to the sim is invisible until
+                 somebody decides it should not be. Eight rows ride, four
+                 `StatusId`s and every internal family (`dmg:`,
+                 `exposed.bounty`, the restoration keys) do not. Two things in
+                 it are load-bearing. `wire` is **append-only**, because it is
+                 the number that crosses in place of the string and renumbering
+                 a row silently re-labels every mark on a client that has not
+                 been rebuilt. And `adapted` is the one entry that is not an id
+                 the sim ever writes: adaptation is per ability, so the packer
+                 folds every `adapt:<ability>` into it keeping the largest stack
+                 -- a mark over a head cannot name the ability, and what is left
+                 is still true. `magnitude` does not ride at all, on the same
+                 argument that made poise a fraction: the picture says *that* a
+                 body is Exposed, never by how much.
+                 `sim/blow.ts` is one blow with all of it applied, in one
                  order, written once -- and the line in it that must not move is
                  that **crit is rolled before the weak point and always**: the Rng
                  is threaded through the whole sim and a body that draws a
@@ -1770,7 +2013,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  ground telegraph had nothing left to press. Deleting those
                  checks would have been the change quietly taking the coverage
                  with it. The vial can never be one of them.
-                 Since spec 184 the four slots are no longer empty by
+                 Since spec 188 the four slots are no longer empty by
                  construction: `actionBarFor(equipment)` reads them off the
                  player's four `skill1..skill4` equipment slots, so the bar is a
                  *view of the equipment* and there is no second list to keep in
@@ -1798,7 +2041,74 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  `experienceForLevel` rather than a copy of the curve, because
                  the strip and the character sheet disagreeing about how far
                  along somebody is is the kind of bug nobody reports -- they
-                 just stop trusting the bar. pool-bars.ts holds one judgement:
+                 just stop trusting the bar. Since spec 184 it is purple rather
+                 than gold, and the recolour is the smaller half of that spec:
+                 experience now has *two* places it is shown -- the strip and a
+                 number that floats off a kill -- and one colour to learn is
+                 what makes them read as the same fact. Gold had to go because
+                 the number is over a body, where gold is already a cast that
+                 can still be called off and a floating gold number is a
+                 critical hit; a strip at the frame's own edge could get away
+                 with sharing a hue and a number cannot.
+                 xp-gain.ts is the other half (spec 184), and it exists because
+                 **the server never says "you earned 12"**: experience arrives
+                 as a whole `Stats` message with a level and a count in it,
+                 replacing whatever was there, so a gain is a difference -- and
+                 the difference is not the subtraction it looks like, since a
+                 level-up moves the count backwards. A kill taking somebody from
+                 5 short of level 2 to 3 into it earned 8, and the raw counts
+                 differ by minus the whole level; `cumulativeExperience` is the
+                 monotonic number two readings can honestly subtract. Two rules
+                 beside it, each the fix for the version without it. The
+                 **first reading only establishes the baseline**, because the
+                 first `Stats` carries a whole character and a client that
+                 reported a gain on connect would throw a session's worth of
+                 experience across the screen of somebody who has just logged
+                 in. And a **backwards move reports nothing and re-baselines**
+                 -- an admin reset is not a negative reward, and leaving the old
+                 baseline would swallow every real gain until it had all been
+                 earned back. Where the number *goes* is a join view.ts makes
+                 rather than a fact on the wire: nothing links a `Stats` to the
+                 kill that caused it, so a kill by the local player remembers
+                 the anchor its damage number was already given and the frame
+                 that sees the total move spends it there; a grant with no kill
+                 behind it falls back to the player's own body, which is the
+                 only other place a number about the player could honestly go.
+                 The *path* is the third piece and lives in damage-popup.ts as a
+                 second trail, sharing spec 096's one field, one capacity, one
+                 projection and one expiry. It needs to be distinguishable
+                 because the pair is spawned on the same tick, on the same body,
+                 from the same anchor. The first cut swept the reward out to the
+                 side on an ease-out, which separated it perfectly and looked
+                 wrong: **nothing in this game leaves a body at 45 degrees**,
+                 and reading the pair meant following two marks going different
+                 ways. So a reward is stacked **under** the blow, in the blow's
+                 own lane, rising at the blow's own rate -- one column, nothing
+                 to follow -- and earns its own moment by *outliving* the number
+                 above it, by `XP_EXTRA_LIFE` (half a second at 60fps). What
+                 makes that a column rather than two things that happen to line
+                 up is that `XP_RISE` is **derived and not authored**:
+                 `NUMBER_RISE * XP_LIFE / NUMBER_LIFE`, so the two share a rate
+                 and only the time differs -- a rate of its own has them
+                 converge or separate, which is the diagonal's problem in
+                 another direction. It reads the lane counter without consuming
+                 one, so a kill's reward cannot shift where the next blow on
+                 that body draws its number, and successive rewards on one group
+                 step down through `XP_STACK` gaps rather than piling up. The
+                 text is `+N XP` and stays labelled: the colour and the column
+                 say "this is not damage" and neither of them says what it *is*,
+                 and a purple number under a white one is a second quantity
+                 whose identity is the whole point. The label costs three times
+                 the width of the count alone, which was measured rather than
+                 assumed and is why this is the smallest text of the pair, at
+                 half a critical's scale.
+                 `npx tsx scripts/probe-xp-popup.ts` is the half no headless
+                 test can see, over spec 164's `hud-probe.html` rig: it lands a
+                 real blow and earns a real reward at one point and measures the
+                 pair off the DOM, reading the purple out of the SVG rather than
+                 out of the constant -- a number that reached the page in the
+                 damage palette fails there.
+                 pool-bars.ts holds one judgement:
                  **an unknown maximum is not a maximum of zero**, or the opening
                  frames of every session paint an empty health bar over a player
                  at full health -- and its health bar is the *same bar

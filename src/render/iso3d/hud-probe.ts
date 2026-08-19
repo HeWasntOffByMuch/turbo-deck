@@ -32,6 +32,22 @@ interface ProbeApi {
   respawns(): number;
   /** Which ability ids the slot buttons have asked to cast, in order. */
   used(): string[];
+  /** Land a blow at the rig's one world point (spec 096). */
+  hit(damage: number, crit: boolean): void;
+  /** Earn `amount` experience at the same point (spec 184). */
+  reward(amount: number): void;
+  /** Draw `frames` more frames, so a floating number gets somewhere. */
+  advance(frames: number): void;
+  /**
+   * Put one body's floating bar at a screen point, or take it away (spec 186).
+   *
+   * The per-body holder -- name, health, guard, cast bar, stun swirl, status row
+   * -- is drawn from `anchors` rather than from the view, because in the game a
+   * body's screen position is something the scene works out. There is no scene
+   * here, so a rig that wants to look at that holder has to say where the body
+   * is; nothing before spec 186 did, so it defaulted to none and stayed there.
+   */
+  anchor(at: { id: number; x: number; y: number } | null): void;
 }
 
 declare global {
@@ -65,7 +81,22 @@ const STATS = {
 function baseView(): Record<string, unknown> {
   return {
     tick: 400,
-    entities: [{ id: 1, kind: 0, typeId: 'player', x: 0, y: 0, z: 0, health: 96, maxHealth: 140, poise: 1 }],
+    entities: [
+      {
+        id: 1,
+        kind: 0,
+        typeId: 'player',
+        x: 0,
+        y: 0,
+        z: 0,
+        health: 96,
+        maxHealth: 140,
+        poise: 1,
+        // Spec 185. Empty by default so the row is off unless a case asks for
+        // it, which is what the shipped HUD does for a body carrying nothing.
+        statuses: [],
+      },
+    ],
     selfEntityId: 1,
     self: { x: 0, y: 0 },
     drops: [],
@@ -88,7 +119,17 @@ let respawnCount = 0;
 const used: string[] = [];
 let overrides: Record<string, unknown> = {};
 
-const hud = createHud(() => ({ x: 0, y: 0, onScreen: false }));
+/**
+ * One world point, in the middle of the frame (spec 184).
+ *
+ * It used to answer `onScreen: false` from the origin, which was fine while
+ * nothing here spawned a floating number -- the projector's only other caller
+ * is the hovered drop's label, and this rig hovers nothing. A number needs a
+ * place to be photographed at, and the honest one is the point the rig claims
+ * every body is standing on.
+ */
+const PROBE_POINT = { x: 560, y: 300 };
+const hud = createHud(() => ({ x: PROBE_POINT.x, y: PROBE_POINT.y, onScreen: true }));
 hud.onRespawn(() => {
   respawnCount += 1;
 });
@@ -96,9 +137,19 @@ hud.onUse((abilityId) => used.push(abilityId));
 app.append(hud.element);
 hud.element.style.inset = '0';
 
+/**
+ * The floating bars this rig draws, if any (spec 186).
+ *
+ * Empty by default, which is what every case before spec 186 wanted: the bottom
+ * band is drawn from the view alone, and a body's own bar needs an *anchor* --
+ * a screen point the scene worked out. There is no scene here, so a rig that
+ * wants the per-body holder has to say where the body is.
+ */
+let anchors: { id: number; x: number; y: number; onScreen: boolean }[] = [];
+
 function draw(): void {
   const view = { ...baseView(), ...overrides } as unknown as ClientView;
-  hud.update(view, [], 400, 0, null, { abilityId: null, pending: false }, null, 1000);
+  hud.update(view, anchors, 400, 0, null, { abilityId: null, pending: false }, null, 1000);
 }
 
 draw();
@@ -109,6 +160,21 @@ window.hudProbe = {
     overrides = next;
     draw();
   },
+  anchor(at) {
+    anchors = at === null ? [] : [{ id: at.id, x: at.x, y: at.y, onScreen: true }];
+    draw();
+  },
   respawns: () => respawnCount,
   used: () => [...used],
+  hit(damage, crit) {
+    hud.addDamage(7, { x: 0, y: 0, lift: 0 }, damage, crit);
+    draw();
+  },
+  reward(amount) {
+    hud.addExperience(7, { x: 0, y: 0, lift: 0 }, amount);
+    draw();
+  },
+  advance(frames) {
+    for (let frame = 0; frame < frames; frame++) draw();
+  },
 };

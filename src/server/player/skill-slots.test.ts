@@ -1,5 +1,5 @@
 /**
- * The four slots' rules (spec 184).
+ * The four slots' rules (spec 188).
  *
  * Pure, so all of it is asserted without a server: what a character may cast,
  * which moves count as a swap, and the one hard rule the brief states about

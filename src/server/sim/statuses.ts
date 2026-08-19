@@ -88,7 +88,7 @@ export const StatusId = {
    */
   InCombat: 'inCombat',
   /**
-   * Movement taken away for a while (spec 184).
+   * Movement taken away for a while (spec 188).
    *
    * The first status in this map that is **applied by a skill rather than
    * earned by a build**, and it is in this map rather than in a debuff system
@@ -214,7 +214,7 @@ export function adaptationAgainst(
 }
 
 /**
- * What this body's move speed is multiplied by right now (spec 184).
+ * What this body's move speed is multiplied by right now (spec 188).
  *
  * The one place a slow is *read*, so `resolveMovement` and the client's mirror
  * of it cannot disagree about what "40% slower" means. Returns 1 for a body

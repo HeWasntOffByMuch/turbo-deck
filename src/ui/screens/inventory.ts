@@ -23,10 +23,12 @@ import { uniformInsets, type Point } from '../core/geom.js';
 import type { Widget } from '../core/widget.js';
 import type { Theme } from '../theme/theme.js';
 import { DragGhost } from '../widgets/drag-ghost.js';
-import { Tooltip } from '../widgets/tooltip.js';
+import { Tooltip, type TooltipLine } from '../widgets/tooltip.js';
 import {
   ItemSlot,
+  rarityToken,
   SLOT_SIDE,
+  type DetailTone,
   type ItemDrag,
   type ItemView,
   type SlotPending,
@@ -34,13 +36,27 @@ import {
 } from '../widgets/item-slot.js';
 import { Label } from '../widgets/label.js';
 
-export type { ItemView, SlotRef } from '../widgets/item-slot.js';
+export type { ItemDetail, ItemView, SlotRef } from '../widgets/item-slot.js';
+
+/**
+ * What a tone is drawn in (spec 185).
+ *
+ * The one place the vocabulary the view-model speaks meets the palette. `rarity`
+ * is absent because it is not one colour -- it is the item's own, and only the
+ * item knows which.
+ */
+const TONE_TOKENS: Readonly<Record<Exclude<DetailTone, 'rarity'>, string>> = {
+  good: 'success',
+  bad: 'danger',
+  dim: 'textDim',
+  normal: 'text',
+};
 
 /**
  * One equipment slot, as the screen is told about it.
  *
  * `accepts` is what the cell will take, and it is a **family** rather than the
- * slot's own id (spec 184). The two are the same string for every slot that
+ * slot's own id (spec 188). The two are the same string for every slot that
  * takes exactly one kind of thing -- a helmet slot accepts `head` -- and they
  * differ for the four skill slots, which all accept `skill` so that one sigil
  * row fits any of them.
@@ -72,7 +88,7 @@ export interface ContainerView {
    */
   readonly slots: readonly SlotDescriptor[];
   /**
-   * The four active-skill slots, in bar order (spec 184).
+   * The four active-skill slots, in bar order (spec 188).
    *
    * A second list rather than four more entries in {@link slots}, because they
    * are drawn somewhere else: the paperdoll is a column of *worn* things beside
@@ -88,7 +104,7 @@ export interface ContainerView {
   /** The character's level, for the tooltip's "requires level N". */
   readonly level: number;
   /**
-   * A change to a skill slot the server has committed to (spec 184), or absent.
+   * A change to a skill slot the server has committed to (spec 188), or absent.
    *
    * The screen still renders exactly what it is handed and still predicts
    * nothing -- this is a *fact about the containers*, not a guess at their next
@@ -147,7 +163,7 @@ const DEFAULT_COLUMNS = 6;
 const DEFAULT_SLOTS = 24;
 
 /**
- * How wide the skill row is (spec 184).
+ * How wide the skill row is (spec 188).
  *
  * Four, so the row is one line whatever the caller does with the bag's width --
  * the whole point of it is that it looks like the bar along the bottom of the
@@ -218,7 +234,7 @@ export class InventoryScreen extends Row {
     }
 
     /**
-     * The four skill slots, under the bag (spec 184).
+     * The four skill slots, under the bag (spec 188).
      *
      * Under it rather than beside the paperdoll, and that placement *is* the
      * feature the brief asks for: these four are the same four along the bottom
@@ -324,14 +340,32 @@ export class InventoryScreen extends Row {
     return left > 0 ? { ...item, count: left } : null;
   }
 
-  /** What the tooltip says over a cell, or empty when there is nothing there. */
-  tooltipFor(cell: ItemSlot): string {
+  /**
+   * What the tooltip says over a cell, or nothing when the cell is empty.
+   *
+   * The name in the item's tier colour, then whatever the view-model described
+   * (spec 185) -- the tier, where it is worn, what it does to your numbers, what
+   * it is worth. The level gate is still decided *here* rather than in the
+   * model, because it is the only line that depends on who is looking: the same
+   * sword is gated for one character and not for another, and a model that baked
+   * it in would have to be rebuilt every time a level-up landed.
+   */
+  tooltipFor(cell: ItemSlot): readonly TooltipLine[] {
     const item = cell.item;
-    if (!item) return '';
-    const lines = [item.name];
-    if (item.count > 1) lines.push(`x${item.count}`);
-    if (item.levelRequirement > this.level) lines.push(`Requires level ${item.levelRequirement}`);
-    return lines.join(' ');
+    if (!item) return [];
+    const tier = rarityToken(item.rarity);
+    const lines: TooltipLine[] = [{ text: item.name, colorToken: tier }];
+    if (item.count > 1) lines.push({ text: `x${item.count}`, colorToken: TONE_TOKENS.dim });
+    for (const detail of item.details) {
+      lines.push({
+        text: detail.text,
+        colorToken: detail.tone === 'rarity' ? tier : TONE_TOKENS[detail.tone],
+      });
+    }
+    if (item.levelRequirement > this.level) {
+      lines.push({ text: `Requires level ${item.levelRequirement}`, colorToken: TONE_TOKENS.bad });
+    }
+    return lines;
   }
 
   private rebuildPaperdoll(

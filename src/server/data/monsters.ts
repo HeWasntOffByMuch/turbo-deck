@@ -112,7 +112,7 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
     ...monster,
     stats: {
       ...monster.stats,
-      // Empty, and not authorable (spec 184). Active skills are carried in the
+      // Empty, and not authorable (spec 188). Active skills are carried in the
       // four skill slots and a monster has no equipment, so "monsters cannot
       // cast player skills" is a fact about the derivation rather than a check
       // somewhere that could be forgotten. A monster that should throw one gets

@@ -130,7 +130,7 @@ export type CastRejection =
    */
   | 'staggered'
   /**
-   * A skill asked for out of a slot that is not holding it (spec 184).
+   * A skill asked for out of a slot that is not holding it (spec 188).
    *
    * The first ownership refusal this system has ever had. Its own reason
    * because the fix is nothing like any of the others: not "wait", not "walk
@@ -138,9 +138,9 @@ export type CastRejection =
    * bug in its own bar and for a dishonest one is the whole answer.
    */
   | 'notEquipped'
-  /** A skill priced in health, asked for with too little to pay it (spec 184). */
+  /** A skill priced in health, asked for with too little to pay it (spec 188). */
   | 'notEnoughHealth'
-  /** A skill priced in guard, asked for with too little to pay it (spec 184). */
+  /** A skill priced in guard, asked for with too little to pay it (spec 188). */
   | 'notEnoughPoise';
 
 export interface CastAttempt {
@@ -400,7 +400,7 @@ export function castRangeFor(
 
 /**
  * The health and guard this skill costs, and whether the caster can pay
- * (spec 184).
+ * (spec 188).
  *
  * One function so that the check and the charge cannot disagree: `startCast`
  * asks it once, refuses on a reason, and spends exactly the numbers it was
@@ -481,7 +481,7 @@ export function startCast(
   // which is exactly how the window used to be shorter than `staggerTicks`.
   if (staggered(entity, tick)) return { ok: false, reason: 'staggered' };
 
-  // **You have to be carrying it** (spec 184). The first ownership check the
+  // **You have to be carrying it** (spec 188). The first ownership check the
   // ability system has ever had, and it is here rather than in `world.ts` for
   // the reason every other gate is: `startCast` is what the sim, the client's
   // prediction and every test call, so a check anywhere else would be a rule
@@ -517,7 +517,7 @@ export function startCast(
     return { ok: false, reason: 'noCharges' };
   }
 
-  // Health and guard (spec 184). Checked here with everything else and spent
+  // Health and guard (spec 188). Checked here with everything else and spent
   // below with everything else, so a skill priced in blood behaves exactly like
   // one priced in mana: taken at the commit, handed back by a withdrawal.
   const extra = extraCostsFor(entity, ability);
@@ -555,7 +555,7 @@ export function startCast(
   // `commitAlignEps`. `advanceCast` still holds the wind-up back at the strict
   // tolerance, so a body that genuinely has to come round still pays for it.
   // Generous at the commit and only at the commit (spec 090), *or* as wide as
-  // the row says, whichever is wider (spec 184). The two answer different
+  // the row says, whichever is wider (spec 188). The two answer different
   // questions -- one is "close enough that a turn would be a formality", the
   // other is "close enough that this skill does not care" -- and taking the max
   // means a wide `castAngleDeg` can only ever make a cast easier to start,
@@ -577,7 +577,7 @@ export function startCast(
     abilityId: ability.id,
     spentResource: Math.min(cost, entity.resource),
     // The overflow and the skill's own blood price are one number from here on
-    // (spec 184): both are health this cast took, both come back on a
+    // (spec 188): both are health this cast took, both come back on a
     // withdrawal, and two fields would be two things to keep in step.
     spentHealth: overflow + extra.health,
     spentCharges: charges,
@@ -614,7 +614,7 @@ export function startCast(
         overflow + extra.health > 0
           ? Math.max(1, entity.health - overflow - extra.health)
           : entity.health,
-      // Guard, spent (spec 184). Floored at zero rather than allowed to empty
+      // Guard, spent (spec 188). Floored at zero rather than allowed to empty
       // into a break: `extraCostsFor` has already refused a cast that could not
       // afford it, so this floor is arithmetic hygiene rather than a rule.
       poise: extra.poise > 0 ? Math.max(0, entity.poise - extra.poise) : entity.poise,
@@ -681,7 +681,7 @@ function endTickFor(
 export const TURN_ALIGN_EPS = (0.5 * Math.PI) / 180;
 
 /**
- * How far off its aim this ability may be pointed and still start (spec 184).
+ * How far off its aim this ability may be pointed and still start (spec 188).
  *
  * The brief's `castAngle`, and it is four lines rather than a system because
  * spec 065 already built the mechanism: a body turns into its aim *before* the
@@ -922,7 +922,7 @@ function cancelWindup(
       health: cast.spentHealth > 0
         ? Math.min(entity.stats.maxHealth, entity.health + cast.spentHealth)
         : entity.health,
-      // And the guard a skill was priced in (spec 184). Clamped like the other
+      // And the guard a skill was priced in (spec 188). Clamped like the other
       // three refunds and for the same reason: poise regenerates during a
       // wind-up, so an unclamped hand-back would put the pool above its own
       // ceiling and hand a feint free guard.
@@ -1352,7 +1352,7 @@ function landAbility(
     case 'projectile':
       return launchProjectile(ability, caster, cast, tick, rng);
     case 'area':
-      // The kind that reads a *shape* (spec 184). Everything else here names
+      // The kind that reads a *shape* (spec 188). Everything else here names
       // either a body or a point; this names a region and asks
       // `sim/skill-area.ts` who is standing in it.
       return landArea(ability, caster, cast, candidates, tick, rng);
@@ -1360,7 +1360,7 @@ function landAbility(
 }
 
 /**
- * One application of an ability to one body (spec 184).
+ * One application of an ability to one body (spec 188).
  *
  * The seam the whole feature hangs off, and it is four lines: an ability with
  * no `effects` is the blow it always was, and one with them runs its list. Put
@@ -1390,7 +1390,7 @@ function applyToTarget(
 }
 
 /**
- * A landing that picks its targets by shape (spec 184).
+ * A landing that picks its targets by shape (spec 188).
  *
  * Written beside `landBlast` rather than replacing it, because the two are not
  * the same thing: a blast is a `ground` ability's crater at the point the cast

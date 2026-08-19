@@ -58,7 +58,7 @@ export const ActivityValue = {
   Stunned: 3,
   Dead: 4,
   /**
-   * Changing an active skill (spec 184).
+   * Changing an active skill (spec 188).
    *
    * A body state rather than a hidden timer on the connection, and that is the
    * whole of what "commitment, not just time" means here. It is replicated by
@@ -172,7 +172,7 @@ export interface CastState {
    */
   readonly spentCharges: number;
   /**
-   * Guard this cast paid at the commit (spec 184).
+   * Guard this cast paid at the commit (spec 188).
    *
    * Beside `spentResource` and `spentCharges` for the reason they are beside
    * each other: a withdrawal has to hand back **what was paid**, whatever it was
@@ -370,6 +370,22 @@ export interface ServerEntity {
   readonly activityUntilTick: number;
   /** Body radius for collision. */
   readonly radius: number;
+  /**
+   * How fast this body actually travelled last tick, world units per second
+   * (spec 187).
+   *
+   * The *actual* velocity, measured from where the body ended up, not the one
+   * it asked for -- a body that walked into a tree has a velocity of nearly
+   * zero however hard it was pushing, and the crowd around it has to believe
+   * the tree rather than the intent. Reciprocal avoidance is built on each body
+   * assuming its neighbours will keep doing what they are doing, so this is the
+   * one fact it needs about a neighbour that the position alone cannot give.
+   *
+   * Not replicated: nothing on the client predicts a body other than its own
+   * player, and the drawn motion of everything else is interpolated between two
+   * replicated positions, which already carries the velocity implicitly.
+   */
+  readonly velocity: Vec2;
   /** Homing target for a monster; null when idle or player-controlled. */
   readonly targetId: number | null;
   /**
@@ -395,6 +411,20 @@ export interface ServerEntity {
   readonly repathAtTick: number;
   /** Where the target was when `path` was planned, to notice it moving away. */
   readonly pathGoal: Vec2 | null;
+  /**
+   * Which slot on its target's ring this body is walking to, or -1 (spec 187).
+   *
+   * Held on the entity rather than recomputed, because the recomputation is
+   * correct every tick and that is exactly the problem: a body that took the
+   * best free slot each tick would be shuffled round the ring by whoever
+   * happened to ask before it and would never arrive anywhere. Holding it is
+   * the hysteresis.
+   *
+   * Only meaningful against the target the body had when it was taken, so it is
+   * offered back to {@link SlotBoard.take} only while {@link targetId} has not
+   * changed.
+   */
+  readonly attackSlot: number;
   /** Ability resource. Live, clamped to `stats.maxResource` on recalculation. */
   readonly resource: number;
   /** The cast in progress, or null when free (spec 062). */

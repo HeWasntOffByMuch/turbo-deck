@@ -411,8 +411,27 @@ export const EntityField = {
   /** Absorb left, in health units, and the tick it falls off whole. */
   Shield: 1 << 8,
   /**
+   * The timed states this body is carrying, as far as anybody may see them
+   * (spec 186).
+   *
+   * `u8 count`, then per status `u8 wire`, `u8 stacks`, `u32 expiresAtTick`.
+   * The index is `StatusVisual.wire` rather than the string id -- a content id
+   * per status per body per delta is what "an entity only ever stores an id"
+   * exists to prevent, and the table is shared code.
+   *
+   * An **absolute** expiry, like `activityUntilTick` and `shieldUntilTick` above
+   * it, and for the same reason: it is what lets a client draw the mark as a
+   * pure function of what it was told and the tick it is drawing, with nothing
+   * observed and nothing kept. A late delta cannot leave a mark up, because the
+   * drawing refuses a passed window the way `statusOf` refuses a stale entry.
+   *
+   * Bounded by `MAX_VISIBLE_STATUSES`, and set only in the deltas where the set
+   * actually changed -- which for most bodies is never.
+   */
+  Statuses: 1 << 9,
+  /**
    * How fast this body may move right now, as a fraction of its own speed
-   * (spec 184).
+   * (spec 188).
    *
    * On the wire because a slow the owner's client does not know about is a
    * client predicting full speed against a server walking at 60% -- which the
@@ -425,7 +444,7 @@ export const EntityField = {
    * than only to the owner: a remote body being slowed changes how far the
    * interpolator should expect it to have travelled, and it is one byte.
    */
-  MoveScale: 1 << 9,
+  MoveScale: 1 << 10,
 } as const;
 
 export const EntityKind = {
@@ -456,7 +475,7 @@ export const EntityActivity = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
-  /** Changing an active skill (spec 184). Mirrors `ActivityValue.Swapping`. */
+  /** Changing an active skill (spec 188). Mirrors `ActivityValue.Swapping`. */
   Swapping: 5,
 } as const;
 

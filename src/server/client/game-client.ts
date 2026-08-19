@@ -327,7 +327,7 @@ export interface ClientView {
   /** What the player can spend (spec 129). */
   readonly coins: number;
   /**
-   * A skill-slot change in flight, or null (spec 184).
+   * A skill-slot change in flight, or null (spec 188).
    *
    * The one container edit this client does **not** predict, and this is what
    * it draws instead: the server holds the change for `SKILL_SWAP.durationTicks`
@@ -917,7 +917,7 @@ export class GameClient {
     // it drops is dropped whole.
     const rooted = this.staggeredNow();
     const intended = rooted ? { ...intent, moveX: 0, moveY: 0 } : intent;
-    // The slow the server last told us about (spec 184). Carried on the input
+    // The slow the server last told us about (spec 188). Carried on the input
     // rather than baked into the predictor, so a replay after a correction
     // walks each buffered input at the speed that applied when it was made.
     //
@@ -964,7 +964,7 @@ export class GameClient {
     if (!this.connected) return 0;
     const requestId = this.nextRequestId();
     const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
-    // **A skill swap is not predicted** (spec 184).
+    // **A skill swap is not predicted** (spec 188).
     //
     // Every other move is: the rule is pure, the slots are ones this client can
     // see, and the answer comes back inside a round trip. A swap does not --
@@ -1447,7 +1447,7 @@ export class GameClient {
    * about where the window ends.
    */
   /**
-   * How fast this client believes its own body may move, 0..1 (spec 184).
+   * How fast this client believes its own body may move, 0..1 (spec 188).
    *
    * Read off the *replicated* body rather than from anything local, because a
    * slow is the server's to apply and this is the client agreeing with it. 1
@@ -2091,7 +2091,7 @@ export class GameClient {
         this.serverInventory = message.inventory;
         this.serverEquipment = message.equipment;
         this.coins = message.coins;
-        // The change in flight, or none (spec 184). Replaced rather than
+        // The change in flight, or none (spec 188). Replaced rather than
         // merged, because every `Inventory` carries the truth at the moment it
         // left: a message with no block is the server saying there is nothing
         // in flight, which is exactly what the one that ends a swap says.

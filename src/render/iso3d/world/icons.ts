@@ -16,6 +16,8 @@
  * therefore checkable in Node.
  */
 
+import type { StatusIconId } from '../../../server/data/status-visuals.js';
+
 export interface IconOptions {
   /** Both sides of the square the icon draws in, in CSS px. */
   readonly size?: number;
@@ -49,7 +51,7 @@ export const WEAPON_ICONS: Readonly<Record<string, string>> = {
     '<path fill="currentColor" stroke="none" fill-rule="evenodd" ' +
     'd="M12 1.5 L14.6 9.4 L22.5 12 L14.6 14.6 L12 22.5 L9.4 14.6 L1.5 12 L9.4 9.4 Z ' +
     'M12 10.1 a1.9 1.9 0 1 0 0 3.8 a1.9 1.9 0 1 0 0 -3.8 Z"/>',
-  // --- active skills (spec 184) ---
+  // --- active skills (spec 188) ---
   //
   // Keyed by ability id like the three above, so the compact bar draws a skill
   // rather than the fallback lozenge. Silhouette rather than detail, for the
@@ -169,6 +171,46 @@ export const STUN_ICON =
 /** The swirl over a stunned body, as markup ready to drop into the HUD. */
 export function stunIconSvg(options: IconOptions = {}): string {
   return iconSvg(STUN_ICON, options);
+}
+
+/**
+ * The eight status glyphs (spec 186).
+ *
+ * The same constraints the swirl above states -- drawn small, over moving
+ * ground, in a scene they must stay legible against -- plus one more that does
+ * not apply to it: **there may be several of them at once, in a row.** So each
+ * is built to be told apart at 14px by its *silhouette* rather than by its
+ * detail, and the eight are deliberately spread across shape families: an
+ * arrow, a chevron, a diamond, a ring, a crack, a target, a shield and a wave.
+ * Two glyphs that were both "a circle with something in it" would be one glyph
+ * as far as a player glancing at a fight is concerned.
+ *
+ * Colour is not here and must not come here: it is set by `kind` at the mount,
+ * so a boon and an affliction are told apart before either is identified.
+ */
+const STATUS_ICONS: Record<StatusIconId, string> = {
+  // Flow -- a chevron stream. Motion kept, which is what Flow is.
+  flow: '<path d="M5 8 l5 4 -5 4"/><path d="M12 8 l5 4 -5 4"/>',
+  // Momentum -- an arrow driven into a wall. The break, then the follow-through.
+  momentum: '<path d="M3 12h12"/><path d="M10 7l5 5-5 5"/><path d="M19 5v14"/>',
+  // Prepared -- a held charge: a diamond wound tight, with nothing leaving it.
+  prepared: '<path d="M12 3l6 9-6 9-6-9z"/><path d="M12 8v8"/>',
+  // Attuned -- concentric rings, the stack reading as depth rather than count.
+  attuned: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/>',
+  // Exposed -- a seam opened up. Two halves parted, with the gap the subject.
+  exposed: '<path d="M9 3v18"/><path d="M15 3v18"/><path d="M12 8v8"/>',
+  // Vulnerable -- a target, because the body has told you where it is going.
+  vulnerable: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3v5"/><path d="M12 16v5"/>' +
+    '<path d="M3 12h5"/><path d="M16 12h5"/>',
+  // Sundered -- armour with a crack through it.
+  sundered: '<path d="M12 3l8 3v7c0 4-4 7-8 8-4-1-8-4-8-8V6z"/><path d="M13 7l-3 5h4l-3 5"/>',
+  // Adapted -- a wave meeting a wall and turning back.
+  adapted: '<path d="M4 9c3-3 5 3 8 0s5-3 8 0"/><path d="M4 15c3-3 5 3 8 0s5-3 8 0"/>',
+};
+
+/** One status mark, as markup ready to drop into the HUD. */
+export function statusIconSvg(id: StatusIconId, options: IconOptions = {}): string {
+  return iconSvg(STATUS_ICONS[id] ?? FALLBACK_ICON, options);
 }
 
 /** The icon for an attack, as markup ready to drop into a button. */

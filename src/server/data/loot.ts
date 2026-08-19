@@ -215,7 +215,7 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
       entries: [
         { defId: 'potion.minor', count: 1, weight: 10 },
         { defId: 'helm.leather', count: 1, weight: 4 },
-        // A skill is an item, so it drops like one (spec 184). Crippling
+        // A skill is an item, so it drops like one (spec 188). Crippling
         // Strike is the level-2 sigil, which puts it on the earliest body that
         // drops anything worth walking over to.
         { defId: 'sigil.cripplingStrike', count: 1, weight: 2 },

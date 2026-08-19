@@ -262,7 +262,7 @@ describe('easing a drift correction (spec 067)', () => {
   });
 });
 
-describe('a slow the client has been told about (spec 184)', () => {
+describe('a slow the client has been told about (spec 188)', () => {
   /**
    * The one thing that keeps a two-and-a-half-second slow from being a
    * correction every tick for its whole duration: the scale rides the *input*,

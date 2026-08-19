@@ -61,7 +61,7 @@ describe('the HUD layout', () => {
   });
 
   it('fits the longest ability name inside a slot, in the game’s own font', () => {
-    // The *drawn* name, which is `shortName` where a row has one (spec 184).
+    // The *drawn* name, which is `shortName` where a row has one (spec 188).
     // Measuring `name` would fail a row that already answered the constraint,
     // and measuring nothing would let the next long one through silently.
     const longest = ALL_ABILITIES.reduce(

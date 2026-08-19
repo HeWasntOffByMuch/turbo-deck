@@ -353,7 +353,7 @@ export const ITEM_ICONS: Readonly<Record<string, readonly string[]>> = {
     '.....TT.....',
   ],
   /**
-   * A sigil (spec 184): a carried skill.
+   * A sigil (spec 188): a carried skill.
    *
    * A disc with a mark cut through it rather than a scroll or a book, because
    * every other icon in this table is a *thing you hold* and a skill has to

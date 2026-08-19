@@ -1,5 +1,5 @@
 /**
- * What a skill-slot change looks like while it happens (spec 184).
+ * What a skill-slot change looks like while it happens (spec 188).
  *
  * Pure, so all three surfaces are checked without a browser: the fraction the
  * two bars fill by, which cell is which end, which bar slot is being changed,

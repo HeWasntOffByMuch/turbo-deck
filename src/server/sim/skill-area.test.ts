@@ -1,5 +1,5 @@
 /**
- * Who an area skill catches (spec 184).
+ * Who an area skill catches (spec 188).
  *
  * Pure geometry, so it is tested as geometry: bodies placed by hand at known
  * distances, and the answer compared to what a ruler says. Everything about

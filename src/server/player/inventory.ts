@@ -131,7 +131,7 @@ function equipRefusal(stack: ItemStack, index: number, level: number): string | 
   if (slot === null) return `no such equipment slot: ${index}`;
   const definition = itemById(stack.defId);
   if (!definition) return `no such item: ${stack.defId}`;
-  // Families rather than names since spec 184: the four skill slots all accept
+  // Families rather than names since spec 188: the four skill slots all accept
   // `slot: 'skill'`, and everything else still accepts exactly one thing. An
   // item that named one particular skill slot would be an item that can only
   // ever be your second skill, which is not a thing anybody wants to author.

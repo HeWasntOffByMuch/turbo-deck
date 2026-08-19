@@ -1,5 +1,5 @@
 /**
- * Active skills, driven through the real `step` (spec 184).
+ * Active skills, driven through the real `step` (spec 188).
  *
  * Nothing here calls `startCast` or `applyEffects` directly, for the reason
  * `abilities.test.ts` gives about the abilities it tests: a skill is only

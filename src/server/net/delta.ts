@@ -22,9 +22,10 @@
 import { EntityField } from './protocol.js';
 import { MIN_MOVE_SCALE } from '../sim/movement.js';
 import { moveScaleOf } from '../sim/statuses.js';
-import type { DeltaMessage, EntityDelta } from './messages.js';
+import type { DeltaMessage, EntityDelta, WireStatus } from './messages.js';
 import { ServerMessageType } from './protocol.js';
 import type { ServerEntity } from '../sim/types.js';
+import { visualFor } from '../data/status-visuals.js';
 
 /** Position changes below this are noise, not movement. */
 const POSITION_EPSILON = 0.01;
@@ -56,6 +57,9 @@ interface KnownEntity {
   poise: number;
   shield: number;
   shieldUntilTick: number;
+  /** Spec 185, already packed and sorted. Compared entry by entry. */
+  statuses: readonly WireStatus[];
+  /** Spec 188. A fraction, because that is all a step is multiplied by. */
   moveScale: number;
 }
 
@@ -75,6 +79,7 @@ function snapshotOf(entity: ServerEntity, name: string, tick: number): KnownEnti
     poise: poiseFractionOf(entity),
     shield: entity.shield,
     shieldUntilTick: entity.shieldUntilTick,
+    statuses: visibleStatusesOf(entity, tick),
     moveScale: moveScaleOf(entity.statuses, tick, MIN_MOVE_SCALE),
   };
 }
@@ -84,6 +89,75 @@ function poiseFractionOf(entity: ServerEntity): number {
   const max = entity.stats.traits.maxPoise;
   if (!(max > 0)) return 1;
   return Math.max(0, Math.min(1, entity.poise / max));
+}
+
+/**
+ * The statuses on this body that anybody may see, packed for the wire (spec 186).
+ *
+ * Three things happen here and nowhere else:
+ *
+ *  - **The table decides.** `visualFor` answers null for everything without a
+ *    row, so the sim's own bookkeeping -- `recentlyHit`, the spent-flags,
+ *    `exposed.bounty`, the `dmg:` assist keys, the restoration windows -- never
+ *    reaches a client. Absent is the default.
+ *  - **The adaptation family collapses.** Every `adapt:<ability>` maps to the one
+ *    `adapted` row, and the largest stack count wins, because a mark over a head
+ *    cannot name the ability and the honest reading of the collapsed form is
+ *    still true.
+ *  - **Expired entries are dropped**, on the same comparison `statusOf` makes.
+ *    `expireStatuses` is a garbage collector rather than a rule, so a status
+ *    whose window has passed can still be sitting in the map, and sending one
+ *    would put a mark on screen the sim has already stopped honouring.
+ *
+ * Sorted by wire index, so a set that has not changed cannot look changed
+ * because the map was built in a different order on a later tick.
+ */
+function visibleStatusesOf(entity: ServerEntity, tick: number): readonly WireStatus[] {
+  let packed: WireStatus[] | null = null;
+  for (const [id, held] of Object.entries(entity.statuses)) {
+    if (tick >= held.expiresAtTick) continue;
+    const visual = visualFor(id);
+    if (!visual) continue;
+    packed ??= [];
+    const already = packed.find((candidate) => candidate.wire === visual.wire);
+    if (!already) {
+      packed.push({ wire: visual.wire, stacks: held.stacks, expiresAtTick: held.expiresAtTick });
+      continue;
+    }
+    // Only the collapsed `adapted` row can arrive twice. Keep the strongest, and
+    // the expiry that goes with it, so the mark and its count describe the same
+    // ability rather than the deepest stack wearing the longest clock.
+    if (held.stacks > already.stacks) {
+      packed[packed.indexOf(already)] = {
+        wire: visual.wire,
+        stacks: held.stacks,
+        expiresAtTick: held.expiresAtTick,
+      };
+    }
+  }
+  if (!packed) return EMPTY_STATUSES;
+  return packed.sort((a, b) => a.wire - b.wire);
+}
+
+/** Shared, so the common case -- a body carrying nothing -- allocates nothing. */
+const EMPTY_STATUSES: readonly WireStatus[] = [];
+
+/** Whether two packed lists say the same thing. Both are sorted by wire index. */
+function sameStatuses(a: readonly WireStatus[], b: readonly WireStatus[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (!left || !right) return false;
+    if (
+      left.wire !== right.wire ||
+      left.stacks !== right.stacks ||
+      left.expiresAtTick !== right.expiresAtTick
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export class DeltaTracker {
@@ -124,7 +198,15 @@ export class DeltaTracker {
             EntityField.Level |
             EntityField.Poise |
             EntityField.Shield |
-            EntityField.MoveScale |
+            // Only when there is something in it. A first sight is the one
+            // delta that is always sent in full, and paying a byte per body to
+            // say "no statuses" is a cost every projectile and prop in the
+            // world would carry for a field almost nothing uses.
+            (next.statuses.length > 0 ? EntityField.Statuses : 0) |
+            // The same argument for the same reason (spec 188): almost nothing
+            // in the world is ever slowed, and a client told nothing assumes
+            // the full speed it would have assumed anyway.
+            (next.moveScale < 1 ? EntityField.MoveScale : 0) |
             (named === null ? 0 : EntityField.Identity),
           kind: entity.kind,
           typeId: entity.typeId,
@@ -138,7 +220,8 @@ export class DeltaTracker {
           poise: next.poise,
           shield: entity.shield,
           shieldUntilTick: entity.shieldUntilTick,
-          moveScale: next.moveScale,
+          ...(next.statuses.length > 0 ? { statuses: next.statuses } : {}),
+          ...(next.moveScale < 1 ? { moveScale: next.moveScale } : {}),
           ...(named === null ? {} : { name: named, turnRate: entity.stats.turnRate }),
         });
         this.known.set(entity.id, next);
@@ -185,6 +268,12 @@ export class DeltaTracker {
       ) {
         fields |= EntityField.Shield;
       }
+      // Refreshing a status to a new expiry is a change, and so is losing the
+      // last one: the empty list has to be *sent* or a status could only ever be
+      // added. The comparison is entry by entry against a list already sorted by
+      // wire index, so the map's iteration order cannot make a still set look
+      // like a moving one.
+      if (!sameStatuses(next.statuses, previous.statuses)) fields |= EntityField.Statuses;
 
       if (fields === 0) continue;
 
@@ -208,6 +297,7 @@ export class DeltaTracker {
         ...(fields & EntityField.Shield
           ? { shield: entity.shield, shieldUntilTick: entity.shieldUntilTick }
           : {}),
+        ...(fields & EntityField.Statuses ? { statuses: next.statuses } : {}),
       });
       this.known.set(entity.id, next);
     }

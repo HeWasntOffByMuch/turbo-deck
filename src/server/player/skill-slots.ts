@@ -1,5 +1,5 @@
 /**
- * The four active-skill slots, and what may be done to them (spec 184).
+ * The four active-skill slots, and what may be done to them (spec 188).
  *
  * Pure, and it is the only place three questions are answered:
  *
@@ -46,7 +46,7 @@ export function activeSkillOf(defId: string | null): string | null {
 }
 
 /**
- * What this character may cast, in slot order (spec 184).
+ * What this character may cast, in slot order (spec 188).
  *
  * Positional -- a slot holding nothing is `null` rather than being skipped --
  * because the index *is* the action-bar index, and a list that closed its gaps
@@ -106,7 +106,7 @@ export function skillSlotOnCooldown(
 }
 
 /**
- * Why this move may not touch a skill slot right now, or null (spec 184).
+ * Why this move may not touch a skill slot right now, or null (spec 188).
  *
  * Called by `server.ts` before the move is delegated, because the rule needs
  * three things that live in three places -- the equipment (the store), the
@@ -133,7 +133,7 @@ export function skillSwapRefusal(
 }
 
 /**
- * Which of the three a change to a skill slot is (spec 184).
+ * Which of the three a change to a skill slot is (spec 188).
  *
  * Derived from the two addresses and what is in them, never from anything a
  * client said -- the client draws what this answers, it does not choose it.

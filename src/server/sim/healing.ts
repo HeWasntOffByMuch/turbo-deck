@@ -1,7 +1,7 @@
 /**
  * One restoration, with the economy applied (specs 147, 156).
  *
- * Moved out of `sim/abilities.ts` by spec 184 and otherwise untouched. It came
+ * Moved out of `sim/abilities.ts` by spec 188 and otherwise untouched. It came
  * out because the skill resolver needs it and `sim/abilities.ts` needs the skill
  * resolver, and two peers importing each other is a cycle even when ESM happens
  * to survive one. It reads better here anyway: healing is asked about by

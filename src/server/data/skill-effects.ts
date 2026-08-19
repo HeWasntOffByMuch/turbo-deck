@@ -1,5 +1,5 @@
 /**
- * What an active skill is assembled *from* (spec 184).
+ * What an active skill is assembled *from* (spec 188).
  *
  * The vocabulary and nothing else -- three small unions and one tuning block,
  * pure data with no behaviour, in `data/` because every number in them is a
@@ -25,7 +25,7 @@ import { SERVER_TICK_RATE } from '../config.js';
 import { StatusId } from '../sim/statuses.js';
 
 /**
- * Costs beside pool and flask charges (spec 184).
+ * Costs beside pool and flask charges (spec 188).
  *
  * Deliberately *beside* rather than replacing them. `AbilityDefinition.cost` is
  * the pool cost and it is threaded through `resourceCostFor`, `spentResource`,
@@ -62,7 +62,7 @@ export interface SkillCosts {
 
 /**
  * How a landing picks who it lands on, when the answer is a shape rather than
- * a named body (spec 184).
+ * a named body (spec 188).
  *
  * Three shapes, one union, and the union is the extension point: a fourth is a
  * member here and a case in `selectByArea`, with no other file touched. The
@@ -99,7 +99,7 @@ export type SkillArea =
     };
 
 /**
- * One reusable thing a skill does to whoever it landed on (spec 184).
+ * One reusable thing a skill does to whoever it landed on (spec 188).
  *
  * Read the list as the whole of what a skill may do: there is no `custom` case
  * and no script, because "the smallest clean abstraction that fits" stops
@@ -112,7 +112,7 @@ export type SkillArea =
  * body whose pool is already down, and swapping the two rows changes the skill.
  */
 /**
- * Which body an effect lands on (spec 184).
+ * Which body an effect lands on (spec 188).
  *
  * `target` -- whoever the landing picked -- is the default and is what almost
  * every effect means. `caster` is how one row says "and it does this to *me*":
@@ -193,7 +193,7 @@ function seconds(value: number): number {
 }
 
 /**
- * What changing a skill slot costs (spec 184).
+ * What changing a skill slot costs (spec 188).
  *
  * One block, because the brief's three asks about swapping -- that it takes
  * time, that it is not instantaneous in combat, and that it applies a status --
@@ -223,7 +223,7 @@ export const SKILL_SWAP = {
 } as const;
 
 /**
- * Which of the three things a skill-slot change is (spec 184).
+ * Which of the three things a skill-slot change is (spec 188).
  *
  * One operation -- `from` to `to` -- seen from three ends, and they are told
  * apart by what the two addresses are rather than by anything a client says:

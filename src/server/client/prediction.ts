@@ -43,7 +43,7 @@ export interface PredictedInput {
   readonly buttons: number;
   /**
    * How fast the body could move on the tick this input was made for, as a
-   * fraction of its own speed (spec 184). Absent is 1.
+   * fraction of its own speed (spec 188). Absent is 1.
    *
    * On the *input* rather than on the predictor, because a slow is a timed
    * state: a predictor built with one scale would keep it for the whole

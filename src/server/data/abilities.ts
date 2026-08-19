@@ -150,7 +150,7 @@ export interface AbilityDefinition {
   readonly basicAttack?: boolean;
   /**
    * This ability is an **active skill** and may only be cast out of a skill slot
-   * (spec 184).
+   * (spec 188).
    *
    * The first ownership check the ability system has ever had. Before it,
    * `STARTING_ABILITIES` was exported and read by nothing, so a client could
@@ -165,7 +165,7 @@ export interface AbilityDefinition {
   readonly skill?: boolean;
   /**
    * What the action bar calls this, when {@link name} does not fit a slot
-   * (spec 184).
+   * (spec 188).
    *
    * The bar draws a *name* in the game's own 5x7 face at a whole-number scale,
    * so a slot 92px wide holds fifteen characters and there is no smaller size to
@@ -181,7 +181,7 @@ export interface AbilityDefinition {
   readonly shortName?: string;
   /**
    * How closely the caster must be pointing at the aim before the wind-up may
-   * start, in degrees off the aim (spec 184).
+   * start, in degrees off the aim (spec 188).
    *
    * The brief's `castAngle`, and it is one number rather than a system because
    * the sim already had the mechanism: spec 065 turns a body into its aim before
@@ -195,7 +195,7 @@ export interface AbilityDefinition {
    */
   readonly castAngleDeg?: number;
   /**
-   * What this costs beside pool and flask charges (spec 184).
+   * What this costs beside pool and flask charges (spec 188).
    *
    * Spent at the commit and refunded whole by a withdrawal, exactly as
    * {@link cost} and {@link chargeCost} are -- so the price of a wind-up
@@ -204,14 +204,14 @@ export interface AbilityDefinition {
    */
   readonly costs?: SkillCosts;
   /**
-   * Who a landing picks, when the answer is a shape (spec 184).
+   * Who a landing picks, when the answer is a shape (spec 188).
    *
    * Read by `kind: 'area'` and by nothing else, so the existing five kinds
    * resolve exactly as they always have.
    */
   readonly area?: SkillArea;
   /**
-   * What happens to each body the landing picked (spec 184).
+   * What happens to each body the landing picked (spec 188).
    *
    * Absent means "the damage, as before", which is what every row written
    * before this spec means and why none of them had to change. A row that lists
@@ -387,7 +387,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description:
       'A draught from the hearth flask. Limited charges, refilled by resting in a safe zone.',
   },
-  // --- active skills (spec 184) ------------------------------------------
+  // --- active skills (spec 188) ------------------------------------------
   //
   // Four rows, and between them they are the whole argument for the feature:
   // none of them is a class, none of them has a function anywhere with its name
@@ -412,7 +412,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     castAngleDeg: 35,
     cooldownTicks: seconds(6),
     cost: 3,
-    // **And some of your own guard** (spec 184). The one row in the table
+    // **And some of your own guard** (spec 188). The one row in the table
     // priced in something other than mana, and it is priced that way because
     // that is what the skill *is*: you drop your guard to get inside theirs.
     // Refunded whole by a withdrawal like every other cost, and refused rather
@@ -569,7 +569,7 @@ export const STARTING_ABILITIES: readonly string[] = [
  * shape, for a caller with no stats in hand.
  */
 /**
- * What the action bar calls an ability (spec 184).
+ * What the action bar calls an ability (spec 188).
  *
  * One function so the HUD and the test that asserts it fits read the same
  * string. A row with no {@link AbilityDefinition.shortName} is its own name,

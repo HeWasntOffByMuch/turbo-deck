@@ -210,6 +210,12 @@ export const INVENTORY_GOLDEN_CASES: readonly InventoryGoldenCase[] = [
     covers: 'a stack named and counted, over the cell it belongs to',
   },
   {
+    name: 'bag-tooltip-rare',
+    options: { tooltipOver: { container: 'inventory', index: 3 } },
+    covers:
+      'an item described (spec 185): its name and tier in the tier\'s own colour, a benefit, a drawback and what it is worth',
+  },
+  {
     name: 'bag-swapping',
     options: {
       // A sigil going from the bag into the second skill slot, halfway through.

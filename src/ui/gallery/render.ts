@@ -25,7 +25,7 @@ import { LayerStack } from '../core/layers.js';
 import { WindowManager } from '../core/window-manager.js';
 import { InputMap } from '../input/input-map.js';
 import { KeybindingsScreen } from '../screens/keybindings.js';
-import { InventoryScreen, type ContainerView, type ItemView, type SlotRef } from '../screens/inventory.js';
+import { InventoryScreen, type ContainerView, type ItemDetail, type ItemView, type SlotRef } from '../screens/inventory.js';
 import { HudScreen, type HudView } from '../screens/hud.js';
 import {
   CharacterScreen,
@@ -202,7 +202,7 @@ export interface InventoryRenderOptions {
   readonly tooltipOver?: SlotRef;
   /**
    * A skill-slot change in flight, so the commitment is in the frame
-   * (spec 184).
+   * (spec 188).
    *
    * Worth a golden for the reason the drag cases are: whether the two ends of a
    * change read as a *direction* -- one cell losing something, one gaining it --
@@ -221,31 +221,59 @@ export interface InventoryRenderOptions {
  */
 export function demoContainers(): ContainerView {
   const bag: (ItemView | null)[] = new Array<ItemView | null>(24).fill(null);
-  const put = (index: number, defId: string, name: string, icon: string, slot: string | null, count = 1): void => {
-    bag[index] = { defId, name, count, slot, icon: `item:${icon}`, levelRequirement: 1 };
+  const put = (
+    index: number,
+    defId: string,
+    name: string,
+    icon: string,
+    slot: string | null,
+    count = 1,
+    rarity = 'common',
+    details: readonly ItemDetail[] = [],
+  ): void => {
+    bag[index] = { defId, name, count, slot, icon: `item:${icon}`, levelRequirement: 1, rarity, details };
   };
   put(0, 'sword', 'Worn Sword', 'sword', 'mainHand');
   put(1, 'bow', 'Hunting Bow', 'bow', 'mainHand');
   put(2, 'star', 'Weighted Stars', 'star', 'mainHand');
-  put(3, 'staff', 'Emberwood Staff', 'staff', 'mainHand');
+  // One of each tier, and the described lines on the one the tooltip golden
+  // opens over: what a rarity is *for* is being different from its neighbours,
+  // and a picture of three commons could not show that (spec 185).
+  put(3, 'staff', 'Emberwood Staff', 'staff', 'mainHand', 1, 'rare', [
+    { text: 'Rare  Main Hand', tone: 'rarity' },
+    { text: '+3 Intelligence', tone: 'good' },
+    { text: '+20% Spell Power', tone: 'good' },
+    { text: '-10% Attack Speed', tone: 'bad' },
+    { text: 'Worth 95 coins', tone: 'dim' },
+  ]);
   put(6, 'shield', 'Oak Shield', 'shield', 'offHand');
-  put(7, 'focus', 'Quartz Focus', 'focus', 'offHand');
+  put(7, 'focus', 'Quartz Focus', 'focus', 'offHand', 1, 'rare');
   put(8, 'potion', 'Minor Salve', 'potion', null, 9);
+  put(12, 'stone', 'Bloodstone', 'trinket', 'trinket', 1, 'exceptional');
   put(13, 'legs', "Traveller's Greaves", 'legs', 'legs');
   put(19, 'mystery', 'Something Else', 'nope', null);
   // A sigil, so the skill row and the change-in-flight golden have something
-  // real to move (spec 184).
+  // real to move (spec 188).
   put(4, 'sigil', 'Sigil of Guard Break', 'sigil', 'skill');
+
+  const worn = (
+    defId: string,
+    name: string,
+    slot: string,
+    icon: string,
+    levelRequirement: number,
+    rarity = 'common',
+  ): ItemView => ({ defId, name, count: 1, slot, icon: `item:${icon}`, levelRequirement, rarity, details: [] });
 
   return {
     bag,
     worn: {
-      mainHand: { defId: 'maul', name: 'Iron Maul', count: 1, slot: 'mainHand', icon: 'item:sword', levelRequirement: 5 },
+      mainHand: worn('maul', 'Iron Maul', 'mainHand', 'sword', 5, 'rare'),
       offHand: null,
-      head: { defId: 'helm', name: 'Leather Cap', count: 1, slot: 'head', icon: 'item:helm', levelRequirement: 1 },
-      chest: { defId: 'jerkin', name: 'Leather Jerkin', count: 1, slot: 'chest', icon: 'item:chest', levelRequirement: 1 },
+      head: worn('helm', 'Leather Cap', 'head', 'helm', 1),
+      chest: worn('jerkin', 'Leather Jerkin', 'chest', 'chest', 1),
       legs: null,
-      trinket: { defId: 'band', name: 'Swiftband', count: 1, slot: 'trinket', icon: 'item:trinket', levelRequirement: 3 },
+      trinket: worn('band', 'Swiftband', 'trinket', 'trinket', 3, 'rare'),
     },
     slots: [
       { id: 'mainHand', label: 'Main' },
@@ -255,7 +283,7 @@ export function demoContainers(): ContainerView {
       { id: 'legs', label: 'Legs' },
       { id: 'trinket', label: 'Charm' },
     ],
-    // `accepts` is the family, so one sigil fits any of the four (spec 184).
+    // `accepts` is the family, so one sigil fits any of the four (spec 188).
     skillSlots: [
       { id: 'skill1', label: 'Skill 1', accepts: 'skill' },
       { id: 'skill2', label: 'Skill 2', accepts: 'skill' },
@@ -770,9 +798,9 @@ export interface TradeRenderOptions {
  */
 export function demoTrade(options: TradeRenderOptions = {}): TradeUiView {
   const bag: (ItemView | null)[] = [
-    { defId: 'bow', name: 'Hunting Bow', count: 1, slot: 'mainHand', icon: 'item:bow', levelRequirement: 1 },
-    { defId: 'potion', name: 'Minor Salve', count: 3, slot: null, icon: 'item:potion', levelRequirement: 1 },
-    { defId: 'helm', name: 'Leather Cap', count: 1, slot: 'head', icon: 'item:helm', levelRequirement: 1 },
+    { defId: 'bow', name: 'Hunting Bow', count: 1, slot: 'mainHand', icon: 'item:bow', levelRequirement: 1, rarity: 'common', details: [] },
+    { defId: 'potion', name: 'Minor Salve', count: 3, slot: null, icon: 'item:potion', levelRequirement: 1, rarity: 'common', details: [] },
+    { defId: 'helm', name: 'Leather Cap', count: 1, slot: 'head', icon: 'item:helm', levelRequirement: 1, rarity: 'common', details: [] },
     null,
     null,
     null,

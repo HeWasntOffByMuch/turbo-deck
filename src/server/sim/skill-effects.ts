@@ -1,5 +1,5 @@
 /**
- * What a landed skill actually does, effect by effect (spec 184).
+ * What a landed skill actually does, effect by effect (spec 188).
  *
  * The whole of "a skill is assembled rather than written", and the file to read
  * to see whether that claim is true: every case below is two or three lines

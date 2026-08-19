@@ -245,7 +245,7 @@ export function resolveBlow(
     );
     target = poised.entity;
     if (poised.broke) {
-      // What a stagger *is* lives in `sim/poise.ts` since spec 184, because a
+      // What a stagger *is* lives in `sim/poise.ts` since spec 188, because a
       // skill can now apply one directly and two copies of these lines would be
       // two answers to the same question. `applyPoiseDamage` has already
       // checked the immunity and taken the cast off, so the cast it dropped is

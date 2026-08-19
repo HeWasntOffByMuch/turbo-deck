@@ -1,5 +1,5 @@
 /**
- * What a skill-slot change looks like while it is happening (spec 184).
+ * What a skill-slot change looks like while it is happening (spec 188).
  *
  * A swap is the one container edit this client does not predict: the server
  * holds it for `SKILL_SWAP.durationTicks` on purpose, so the interface cannot
@@ -113,7 +113,7 @@ function firstSkillIndex(): number {
 }
 
 /**
- * The commitment as seen from *outside*, over a body (spec 184).
+ * The commitment as seen from *outside*, over a body (spec 188).
  *
  * Everything above is driven by the `pendingSwap` block, which is owner-only --
  * it names slot addresses, and what is in another player's bag is nobody

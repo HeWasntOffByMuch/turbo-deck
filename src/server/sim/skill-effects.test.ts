@@ -1,5 +1,5 @@
 /**
- * The effect vocabulary (spec 184).
+ * The effect vocabulary (spec 188).
  *
  * `active-skills.test.ts` drives the four shipped skills through the real tick;
  * this file drives the *verbs* -- including the three no shipped row uses yet --
@@ -300,7 +300,7 @@ describe('a list', () => {
 });
 
 /**
- * Stun durations do not stack (spec 184).
+ * Stun durations do not stack (spec 188).
  *
  * The rule is **replace, not extend**: a stun that lands on a body already
  * stunned sets the window to its own length measured from now, and whatever was

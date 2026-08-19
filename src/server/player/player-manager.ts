@@ -416,10 +416,10 @@ export class PlayerManager {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
     if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
-    // **Not a skill slot** (spec 184). This is the weapon switch's path and it
+    // **Not a skill slot** (spec 188). This is the weapon switch's path and it
     // is instantaneous by design; a skill slot costs time and is refused while
     // its skill is on cooldown, and neither rule lives here. Left reachable it
-    // would be the whole of spec 184's swap gate bypassed by a message the HUD
+    // would be the whole of spec 188's swap gate bypassed by a message the HUD
     // already sends.
     if (isSkillSlot(slot)) return { ok: false, reason: 'change a skill from the bag' };
 

@@ -1,5 +1,5 @@
 /**
- * Who an area skill lands on (spec 184).
+ * Who an area skill lands on (spec 188).
  *
  * Pure geometry and nothing else: it is handed the caster, the aim the cast
  * captured, a shape and the candidates the caller has already filtered by

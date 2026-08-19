@@ -59,7 +59,7 @@ describe('the action bar', () => {
  * as `?seed=` and `?wire=`.
  */
 describe('?slots=', () => {
-  it('is null when it is not asked for, so equipment decides (spec 184)', () => {
+  it('is null when it is not asked for, so equipment decides (spec 188)', () => {
     expect(actionBarFromQuery('')).toBeNull();
     expect(actionBarFromQuery('?seed=4')).toBeNull();
   });
@@ -91,7 +91,7 @@ describe('?slots=', () => {
 });
 
 /**
- * The bar is a view of the equipment (spec 184).
+ * The bar is a view of the equipment (spec 188).
  *
  * Which is the whole of "the four slots beside the backpack mirror the four
  * along the bottom": there is no second list to keep in step, because there is
