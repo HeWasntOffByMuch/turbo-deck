@@ -761,6 +761,24 @@ export interface EntityDelta {
   /** Absorb left in health units, and the tick the whole thing falls off. */
   readonly shield?: number;
   readonly shieldUntilTick?: number;
+  /** What this body is visibly carrying (spec 186). See {@link EntityField.Statuses}. */
+  readonly statuses?: readonly WireStatus[];
+}
+
+/**
+ * One status as it crosses the wire (spec 186).
+ *
+ * A table index rather than a string id, and an **absolute** expiry rather than
+ * a remaining count -- the two choices that let the client's mark be a pure
+ * function of this record and the tick being drawn. `magnitude` deliberately
+ * does not ride: the picture says *that* a body is Exposed, not by how much, on
+ * the same argument that made poise a fraction.
+ */
+export interface WireStatus {
+  /** `StatusVisual.wire`. */
+  readonly wire: number;
+  readonly stacks: number;
+  readonly expiresAtTick: number;
 }
 
 export interface DeltaMessage {
@@ -1185,6 +1203,7 @@ const FIELD_LEVEL = 1 << 5;
 const FIELD_IDENTITY = 1 << 6;
 const FIELD_POISE = 1 << 7;
 const FIELD_SHIELD = 1 << 8;
+const FIELD_STATUSES = 1 << 9;
 
 function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   // A varuint rather than a byte since spec 147: `Identity` took the eighth bit
@@ -1215,6 +1234,19 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   if (entity.fields & FIELD_SHIELD) {
     writer.f32(entity.shield ?? 0).u32(entity.shieldUntilTick ?? 0);
   }
+  // Six bytes each behind a count (spec 186). The count is written even when the
+  // list is empty, because an empty list is the message "everything you were
+  // told about is gone" -- without it a status could only ever be added.
+  if (entity.fields & FIELD_STATUSES) {
+    const held = entity.statuses ?? [];
+    writer.u8(Math.min(255, held.length));
+    for (const status of held) {
+      writer
+        .u8(Math.max(0, Math.min(255, status.wire)))
+        .u8(Math.max(0, Math.min(255, status.stacks)))
+        .u32(Math.max(0, status.expiresAtTick));
+    }
+  }
 }
 
 function readEntityDelta(reader: BufferReader): EntityDelta {
@@ -1234,6 +1266,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let poise: number | undefined;
   let shield: number | undefined;
   let shieldUntilTick: number | undefined;
+  let statuses: WireStatus[] | undefined;
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
@@ -1260,6 +1293,18 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     shield = reader.f32();
     shieldUntilTick = reader.u32();
   }
+  if (fields & FIELD_STATUSES) {
+    const count = reader.u8();
+    const read: WireStatus[] = [];
+    // Every entry is read whatever this build makes of it. A `wire` index with
+    // no row here is a client talking to a newer server, and skipping the bytes
+    // rather than reading them would desync the whole frame -- so the unknown
+    // one is carried and dropped where it is drawn, not where it is decoded.
+    for (let index = 0; index < count; index += 1) {
+      read.push({ wire: reader.u8(), stacks: reader.u8(), expiresAtTick: reader.u32() });
+    }
+    statuses = read;
+  }
   return {
     id,
     fields,
@@ -1276,6 +1321,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     ...(turnRate === undefined ? {} : { turnRate }),
     ...(poise === undefined ? {} : { poise }),
     ...(shield === undefined ? {} : { shield, shieldUntilTick: shieldUntilTick ?? 0 }),
+    ...(statuses === undefined ? {} : { statuses }),
   };
 }
 

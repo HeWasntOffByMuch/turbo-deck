@@ -13,8 +13,11 @@
  * a second opinion about game state.
  */
 
-import type { EntityDelta } from '../net/messages.js';
+import type { EntityDelta, WireStatus } from '../net/messages.js';
 import { EntityField } from '../net/protocol.js';
+
+/** Shared, so every body carrying nothing points at the same empty list. */
+const NO_STATUSES: readonly WireStatus[] = [];
 
 export interface ReplicatedEntity {
   readonly id: number;
@@ -41,6 +44,16 @@ export interface ReplicatedEntity {
   /** Absorb left in health units, and the tick it falls off whole. */
   readonly shield: number;
   readonly shieldUntilTick: number;
+  /**
+   * What this body is visibly carrying (spec 186).
+   *
+   * Empty for anything with nothing on it, which is most bodies most of the
+   * time -- and empty rather than optional, so a reader never has to tell "no
+   * statuses" apart from "not told about yet". Each entry carries an absolute
+   * `expiresAtTick`, and a consumer is expected to refuse a passed one on read
+   * exactly as the sim's own `statusOf` does; nothing prunes this list.
+   */
+  readonly statuses: readonly WireStatus[];
 }
 
 export class ReplicatedWorld {
@@ -96,6 +109,7 @@ export class ReplicatedWorld {
           poise: record.poise ?? 1,
           shield: record.shield ?? 0,
           shieldUntilTick: record.shieldUntilTick ?? 0,
+          statuses: record.statuses ?? NO_STATUSES,
         });
         continue;
       }
@@ -134,6 +148,12 @@ export class ReplicatedWorld {
           : {}),
         ...(record.fields & EntityField.Shield && record.shield !== undefined
           ? { shield: record.shield, shieldUntilTick: record.shieldUntilTick ?? existing.shieldUntilTick }
+          : {}),
+        // Replaced whole rather than merged (spec 186). The field carries the
+        // body's entire visible set, so an empty list is how the server says the
+        // last one fell off -- merging would make a status impossible to lose.
+        ...(record.fields & EntityField.Statuses
+          ? { statuses: record.statuses ?? NO_STATUSES }
           : {}),
       });
     }

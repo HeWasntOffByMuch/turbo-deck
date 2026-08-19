@@ -57,6 +57,8 @@ import { headingToward } from './sim/movement.js';
 import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
 import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
+import { applyStatus, adaptedKey } from './sim/statuses.js';
+import { ADAPTED_ID, STATUS_VISUALS } from './data/status-visuals.js';
 import {
   isRevealed,
   makeDrop,
@@ -2771,6 +2773,15 @@ export class GameServer implements AdminHost {
    */
   private static readonly ADMIN_DROP_THROW = 24;
 
+  /**
+   * How long `admin:triggerEvent 'status'` leaves its marks up.
+   *
+   * Ten seconds: long enough to orbit the camera round a body and read the row,
+   * short enough that a forgotten trigger clears itself rather than leaving a
+   * server in a state somebody later reports as a bug.
+   */
+  private static readonly STATUS_DEMO_TICKS = 600;
+
   triggerEvent(eventName: string, x: number, y: number, magnitude: number): string {
     switch (eventName) {
       case 'raid': {
@@ -2793,6 +2804,48 @@ export class GameServer implements AdminHost {
           removed += 1;
         }
         return `cleared ${removed} monsters within ${magnitude} units`;
+      }
+      case 'status': {
+        // The developer path (spec 186), in the same register as `drop` and
+        // `reveal` below: every visible status at once, on every body within
+        // `magnitude`, for `STATUS_DEMO_TICKS`.
+        //
+        // It exists because none of these fire for a character who has not built
+        // into them -- Exposed needs the Weak-Point Study milestone, Flow needs
+        // Quick Recovery -- so the alternative to this is levelling a Perception
+        // character every time somebody wants to look at the marks. Same
+        // argument the action bar's `?slots=` makes about a bar that is empty by
+        // design.
+        //
+        // It writes only into `statuses`, so it can no more change an outcome
+        // than the real thing can: every one of these is read by the sim through
+        // the same `statusOf`, and what a demo Exposed does to a blow is exactly
+        // what a real one does. Nothing here draws from `state.rng`.
+        const reach = Math.max(1, magnitude);
+        const until = this.state.tick + GameServer.STATUS_DEMO_TICKS;
+        let marked = 0;
+        for (const entity of [...this.state.entities.values()]) {
+          if (entity.kind !== EntityKindValue.Player && entity.kind !== EntityKindValue.Monster) {
+            continue;
+          }
+          if (Math.hypot(entity.position.x - x, entity.position.y - y) > reach) continue;
+          let statuses = entity.statuses;
+          for (const visual of STATUS_VISUALS) {
+            // The collapsed `adapted` row is not an id the sim writes, so it is
+            // demonstrated through a real member of the family rather than by
+            // inventing a key nothing else would ever read.
+            const id = visual.id === ADAPTED_ID ? adaptedKey('melee.slash') : visual.id;
+            statuses = applyStatus(statuses, id, this.state.tick, GameServer.STATUS_DEMO_TICKS, {
+              maxStacks: visual.maxStacks,
+            });
+          }
+          this.state = {
+            ...this.state,
+            entities: new Map(this.state.entities).set(entity.id, { ...entity, statuses }),
+          };
+          marked += 1;
+        }
+        return `marked ${marked} bodies with every visible status until tick ${until}`;
       }
       case 'drop': {
         // The developer path (spec 158): a drop of a chosen tier, at a chosen
