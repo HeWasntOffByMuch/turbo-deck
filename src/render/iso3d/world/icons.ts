@@ -146,7 +146,7 @@ export function stunIconSvg(options: IconOptions = {}): string {
 }
 
 /**
- * The eight status glyphs (spec 185).
+ * The eight status glyphs (spec 186).
  *
  * The same constraints the swirl above states -- drawn small, over moving
  * ground, in a scene they must stay legible against -- plus one more that does

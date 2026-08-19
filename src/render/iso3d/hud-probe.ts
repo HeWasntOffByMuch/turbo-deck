@@ -39,13 +39,13 @@ interface ProbeApi {
   /** Draw `frames` more frames, so a floating number gets somewhere. */
   advance(frames: number): void;
   /**
-   * Put one body's floating bar at a screen point, or take it away (spec 185).
+   * Put one body's floating bar at a screen point, or take it away (spec 186).
    *
    * The per-body holder -- name, health, guard, cast bar, stun swirl, status row
    * -- is drawn from `anchors` rather than from the view, because in the game a
    * body's screen position is something the scene works out. There is no scene
    * here, so a rig that wants to look at that holder has to say where the body
-   * is; nothing before spec 185 did, so it defaulted to none and stayed there.
+   * is; nothing before spec 186 did, so it defaulted to none and stayed there.
    */
   anchor(at: { id: number; x: number; y: number } | null): void;
 }
@@ -138,9 +138,9 @@ app.append(hud.element);
 hud.element.style.inset = '0';
 
 /**
- * The floating bars this rig draws, if any (spec 185).
+ * The floating bars this rig draws, if any (spec 186).
  *
- * Empty by default, which is what every case before spec 185 wanted: the bottom
+ * Empty by default, which is what every case before spec 186 wanted: the bottom
  * band is drawn from the view alone, and a body's own bar needs an *anchor* --
  * a screen point the scene worked out. There is no scene here, so a rig that
  * wants the per-body holder has to say where the body is.

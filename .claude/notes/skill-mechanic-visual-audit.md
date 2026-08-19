@@ -1,6 +1,6 @@
 # Effects with no visual representation (audit, 2026-08-18)
 
-> **Status, 2026-08-19.** Finding 1 is **closed** by spec 185: eight of the
+> **Status, 2026-08-19.** Finding 1 is **closed** by spec 186: eight of the
 > twelve statuses now ride a tenth entity field and are drawn as marks over the
 > body, on the stun icon's stateless pattern. The other four are withheld
 > deliberately and the note below is now the record of *why*. Finding 2 is
@@ -256,6 +256,6 @@ Ordered by cost, not by importance:
    `REDUNDANT_SERVER_EFFECTS`, so the debug disc stops shipping.
 7. **`blocked`** — decide whether it means armour or a guard, and stop it
    early-returning past blood and crit.
-8. ~~**The status layer**~~ — **done** (spec 185). Protocol 18 carries eight of
+8. ~~**The status layer**~~ — **done** (spec 186). Protocol 18 carries eight of
    the twelve on a tenth entity field, drawn as marks on the stun icon's
    stateless pattern.

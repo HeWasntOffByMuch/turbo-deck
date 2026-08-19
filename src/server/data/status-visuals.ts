@@ -1,5 +1,5 @@
 /**
- * Which statuses a player can see, and what each one looks like (spec 185).
+ * Which statuses a player can see, and what each one looks like (spec 186).
  *
  * `sim/statuses.ts` is where *"everything the progression needs to remember
  * about a body between ticks"* goes, and that is deliberately wider than what

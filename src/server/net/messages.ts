@@ -761,12 +761,12 @@ export interface EntityDelta {
   /** Absorb left in health units, and the tick the whole thing falls off. */
   readonly shield?: number;
   readonly shieldUntilTick?: number;
-  /** What this body is visibly carrying (spec 185). See {@link EntityField.Statuses}. */
+  /** What this body is visibly carrying (spec 186). See {@link EntityField.Statuses}. */
   readonly statuses?: readonly WireStatus[];
 }
 
 /**
- * One status as it crosses the wire (spec 185).
+ * One status as it crosses the wire (spec 186).
  *
  * A table index rather than a string id, and an **absolute** expiry rather than
  * a remaining count -- the two choices that let the client's mark be a pure
@@ -1234,7 +1234,7 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   if (entity.fields & FIELD_SHIELD) {
     writer.f32(entity.shield ?? 0).u32(entity.shieldUntilTick ?? 0);
   }
-  // Six bytes each behind a count (spec 185). The count is written even when the
+  // Six bytes each behind a count (spec 186). The count is written even when the
   // list is empty, because an empty list is the message "everything you were
   // told about is gone" -- without it a status could only ever be added.
   if (entity.fields & FIELD_STATUSES) {

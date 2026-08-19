@@ -262,7 +262,7 @@ describe('delta tracking', () => {
   });
 });
 
-describe('statuses on the wire (spec 185)', () => {
+describe('statuses on the wire (spec 186)', () => {
   /** A body carrying one live status, expiring at `until`. */
   function carrying(
     id: number,

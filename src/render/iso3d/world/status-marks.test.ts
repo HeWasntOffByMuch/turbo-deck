@@ -15,7 +15,7 @@ function status(id: string, expiresAtTick: number, stacks = 1): WireStatus {
   return { wire: wireOf(id), stacks, expiresAtTick };
 }
 
-describe('statusMarks (spec 185)', () => {
+describe('statusMarks (spec 186)', () => {
   it('draws a live status', () => {
     const marks = statusMarks([status(StatusId.Flow, 100, 2)], 40);
     expect(marks).toHaveLength(1);

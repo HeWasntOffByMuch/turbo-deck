@@ -2806,7 +2806,7 @@ export class GameServer implements AdminHost {
         return `cleared ${removed} monsters within ${magnitude} units`;
       }
       case 'status': {
-        // The developer path (spec 185), in the same register as `drop` and
+        // The developer path (spec 186), in the same register as `drop` and
         // `reveal` below: every visible status at once, on every body within
         // `magnitude`, for `STATUS_DEMO_TICKS`.
         //

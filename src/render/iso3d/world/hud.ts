@@ -179,7 +179,7 @@ interface Bar {
    */
   readonly stun: HTMLElement;
   /**
-   * The row of status marks (spec 185).
+   * The row of status marks (spec 186).
    *
    * Above the swirl, so the stack reads downward as state, then what is
    * happening, then who this is, then how it is doing. Safe to hide with
@@ -220,7 +220,7 @@ const BAR_LOST = '#f4f2ee';
  */
 const BAR_GUARD = '#8fa6c8';
 /**
- * The two status colours (spec 185), and there are deliberately only two.
+ * The two status colours (spec 186), and there are deliberately only two.
  *
  * A boon takes the guard blue the bar under it already uses for "this body is
  * holding"; an affliction takes the debuff rust from the VFX palette, which is
@@ -1086,7 +1086,7 @@ export function createHud(
     ].join(';');
     stun.innerHTML = stunIconSvg({ size: 18 });
 
-    // The status row (spec 185). Built once at full width and hidden, like the
+    // The status row (spec 186). Built once at full width and hidden, like the
     // swirl and the name: a body picks statuses up and drops them several times
     // a fight, and creating elements per application would churn the DOM on
     // every blow that lands.
@@ -1288,7 +1288,7 @@ export function createHud(
         element.stun.style.opacity = stun.opacity.toFixed(2);
       }
 
-      // The status marks (spec 185), on the same terms as the swirl above: a
+      // The status marks (spec 186), on the same terms as the swirl above: a
       // pure function of what was replicated and the tick being drawn, with
       // nothing kept between frames. A status whose window has passed is refused
       // by `statusMarks` rather than by anything here, so a delta that has not

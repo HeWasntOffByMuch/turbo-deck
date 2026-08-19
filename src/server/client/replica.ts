@@ -45,7 +45,7 @@ export interface ReplicatedEntity {
   readonly shield: number;
   readonly shieldUntilTick: number;
   /**
-   * What this body is visibly carrying (spec 185).
+   * What this body is visibly carrying (spec 186).
    *
    * Empty for anything with nothing on it, which is most bodies most of the
    * time -- and empty rather than optional, so a reader never has to tell "no
@@ -149,7 +149,7 @@ export class ReplicatedWorld {
         ...(record.fields & EntityField.Shield && record.shield !== undefined
           ? { shield: record.shield, shieldUntilTick: record.shieldUntilTick ?? existing.shieldUntilTick }
           : {}),
-        // Replaced whole rather than merged (spec 185). The field carries the
+        // Replaced whole rather than merged (spec 186). The field carries the
         // body's entire visible set, so an empty list is how the server says the
         // last one fell off -- merging would make a status impossible to lose.
         ...(record.fields & EntityField.Statuses

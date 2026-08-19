@@ -1349,7 +1349,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  branch is *first*, ahead of a held key, since the key is the
                  one branch a player is actively driving.
                  `world/status-marks.ts` is that same swirl generalised to the
-                 rest of the progression (spec 185), and it is built to the
+                 rest of the progression (spec 186), and it is built to the
                  stun icon's three rules on purpose, because they were the right
                  ones and a second answer to "how does a timed state get drawn"
                  is a second thing to keep in step. **Stateless**, so a body
@@ -1400,7 +1400,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  never a sweep, so reading a stale entry cannot produce a live
                  effect.
                  `data/status-visuals.ts` is which of those a player may see
-                 (spec 185), and it exists because that map is deliberately
+                 (spec 186), and it exists because that map is deliberately
                  wider than anything anybody should be shown: some of what it
                  remembers is a condition -- Flow building, a target left
                  Exposed -- and some is bookkeeping, a 0.2s window Perfect Exit

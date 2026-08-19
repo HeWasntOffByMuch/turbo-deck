@@ -1,5 +1,5 @@
 /**
- * A status over the real wire (spec 185).
+ * A status over the real wire (spec 186).
  *
  * The halves either side of this are pinned down on their own:
  * `net/delta.test.ts` says exactly what the server packs, one status at a time,
@@ -85,7 +85,7 @@ function demo(r: Rig, at: { x: number; y: number }): string {
   return r.server.triggerEvent('status', at.x, at.y, 200);
 }
 
-describe('a status over the real wire (spec 185)', () => {
+describe('a status over the real wire (spec 186)', () => {
   it('reaches the body’s own client, and draws through to a mark', async () => {
     const r = rig();
     const eve = await join(r, 'eve');

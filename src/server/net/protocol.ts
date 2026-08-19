@@ -412,7 +412,7 @@ export const EntityField = {
   Shield: 1 << 8,
   /**
    * The timed states this body is carrying, as far as anybody may see them
-   * (spec 185).
+   * (spec 186).
    *
    * `u8 count`, then per status `u8 wire`, `u8 stacks`, `u32 expiresAtTick`.
    * The index is `StatusVisual.wire` rather than the string id -- a content id

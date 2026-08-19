@@ -1,9 +1,9 @@
 /**
- * The status marks, in a real browser (spec 185).
+ * The status marks, in a real browser (spec 186).
  *
  *   npx tsx scripts/probe-status-marks.ts
  *
- * Everything spec 185 decides is asserted in Node: what the server packs
+ * Everything spec 186 decides is asserted in Node: what the server packs
  * (`net/delta.test.ts`), what a mark does with it
  * (`world/status-marks.test.ts`), and that the two meet over a real socket
  * (`client/status-wire.test.ts`). What none of them can say is whether any of it

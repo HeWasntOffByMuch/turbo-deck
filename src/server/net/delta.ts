@@ -87,7 +87,7 @@ function poiseFractionOf(entity: ServerEntity): number {
 }
 
 /**
- * The statuses on this body that anybody may see, packed for the wire (spec 185).
+ * The statuses on this body that anybody may see, packed for the wire (spec 186).
  *
  * Three things happen here and nowhere else:
  *

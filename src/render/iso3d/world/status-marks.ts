@@ -1,5 +1,5 @@
 /**
- * The marks over a body carrying a status (spec 185).
+ * The marks over a body carrying a status (spec 186).
  *
  * The companion to `stun-icon.ts`, and deliberately built to the same three
  * rules, because they were the right ones and a second answer to "how does a

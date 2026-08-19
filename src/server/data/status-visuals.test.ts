@@ -8,7 +8,7 @@ import {
   visualFor,
 } from './status-visuals.js';
 
-describe('the visible status table (spec 185)', () => {
+describe('the visible status table (spec 186)', () => {
   it('gives every row a unique wire index, and one that survives a rebuild', () => {
     const seen = new Set<number>();
     for (const visual of STATUS_VISUALS) {
