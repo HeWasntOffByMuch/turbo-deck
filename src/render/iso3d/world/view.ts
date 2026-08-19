@@ -911,10 +911,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const trade =
       `${readout.tradeStage}|${readout.tradeReason}|${readout.tradeInvited}` +
       `|${readout.tradeYou}|${readout.tradeThem}`;
+    // The chat (spec 189). In the key as well, because a line arriving changes
+    // nothing else on this line -- and the whole claim the feature makes is
+    // that a line somebody else said turns up on this screen.
+    const chatRects = boxes(readout.chatRects);
+    const chat = `${readout.chat.join(';')}|${String(readout.chatOpen)}|${readout.chatInput}|${chatRects}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
       `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
-      `|${trade}|${tradeRects}`;
+      `|${trade}|${tradeRects}|${chat}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
@@ -936,6 +941,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiTradeYou'] = readout.tradeYou;
     root.dataset['uiTradeThem'] = readout.tradeThem;
     root.dataset['uiTradeRects'] = tradeRects;
+    root.dataset['uiChat'] = readout.chat.join(';');
+    root.dataset['uiChatOpen'] = String(readout.chatOpen);
+    root.dataset['uiChatInput'] = readout.chatInput;
+    root.dataset['uiChatRects'] = chatRects;
   }
 
   /**

@@ -375,19 +375,6 @@ export function bottomEdge(layout: HudLayout): number {
 }
 
 /**
- * How far up from the bottom edge the HUD's furniture reaches on the **left**,
- * in CSS px (spec 189).
- *
- * The pool block, because that is what is actually under the chat: the slot row
- * is taller but it is centred, and measuring the chat's clearance against
- * something on the other side of the frame would push the log a slot's height
- * up a screen for no reason anybody could see.
- */
-export function leftBandHeight(layout: HudLayout): number {
-  return poolBottom(layout) + poolBlockHeight(layout);
-}
-
-/**
  * Whether the diagnostic readout is drawn right now (spec 183).
  *
  * Two decisions, answered together: what the layout allows and what the player

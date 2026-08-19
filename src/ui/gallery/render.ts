@@ -672,7 +672,7 @@ export function renderChat(options: ChatRenderOptions = {}): ChatFrame {
  * in two colours -- so a golden of it is also the check that the speaker's
  * colour stops where the speaker's name does.
  */
-const DEMO_CHAT: readonly ChatLineView[] = [
+export const DEMO_CHAT: readonly ChatLineView[] = [
   { id: 1, channel: 1, from: '', text: 'Grazer was slain by Bru' },
   { id: 2, channel: 0, from: 'Ada', text: 'watch the ravager on the left, it has not been pulled yet' },
   { id: 3, channel: 2, from: '', text: 'restarting in five minutes' },

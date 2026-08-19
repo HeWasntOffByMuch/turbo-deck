@@ -839,6 +839,7 @@ export class UiScreens {
     readonly chat: readonly string[];
     readonly chatOpen: boolean;
     readonly chatInput: string;
+    readonly chatRects: readonly { readonly id: string; readonly rect: Rect }[];
   } {
     const tabs = this.optionsScreen.tabs;
     const shownTrade = this.isOpen('trade') ? this.trade.view : null;
@@ -853,6 +854,14 @@ export class UiScreens {
       chat: this.chatLines.map((line) => (line.from.length > 0 ? `${line.from}: ${line.text}` : line.text)),
       chatOpen: this.chat.isOpen,
       chatInput: this.chat.inputText,
+      // Where the log and the field are, in UI pixels. The one claim about the
+      // chat that is purely geometric -- that it clears the HUD it is docked
+      // above -- can only be checked against something that knows where the
+      // pool bars are, and that is the DOM, on the other side of the canvas.
+      chatRects: [
+        { id: 'log', rect: this.chat.log.rect },
+        ...(this.chat.isOpen ? [{ id: 'input', rect: this.chat.field.rect }] : []),
+      ],
       // The options window's tab strip, in UI pixels (spec 136). A harness
       // cannot click a tab it cannot find, and every other way of finding one --
       // a guessed offset, a scan for lit pixels -- is a measurement of the
