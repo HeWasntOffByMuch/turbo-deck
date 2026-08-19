@@ -147,6 +147,19 @@ export const NEUTRAL_TRAITS: TraitStats = {
 };
 
 /**
+ * The Damage row, expressed as a multiplier a basic attack is multiplied by.
+ *
+ * A body with the reference damage hits for exactly what the ability says, and
+ * one with twice it hits twice as hard. One function rather than one expression
+ * per caller because there are two bodies that need it -- a player's derived
+ * damage and a monster's authored one (spec 184) -- and {@link DeriveContext}
+ * already states the rule this keeps: there must not be two of it.
+ */
+export function weaponPowerFor(attackDamage: number): number {
+  return Math.max(0, attackDamage / PLAYER_ATTACK_DAMAGE);
+}
+
+/**
  * A monster's traits (spec 147).
  *
  * Sized off its own health rather than off attributes it does not have, so that
@@ -154,16 +167,30 @@ export const NEUTRAL_TRAITS: TraitStats = {
  * world. A big monster has a lot of poise and a small one has little, which is
  * the behaviour a player expects without a single number being authored per row.
  *
+ * `attackDamage` is the third argument for the reason spec 184 exists: it is a
+ * number a row authors and, until then, the one number a monster fights with
+ * that never reached a blow. `weaponPower` fell through at its neutral 1, so
+ * every body swinging `melee.slash` hit for the ability's own 14 -- the
+ * ravager's 24 and the spider's 5 were the same blow. It is required rather
+ * than defaulted, because a default is how the one caller that matters silently
+ * keeps not passing it.
+ *
  * Everything else stays neutral: monsters do not weak-point, do not gain flow
- * and do not adapt. Those are progression, and progression is the player's.
+ * and do not adapt. Those are progression, and progression is the player's --
+ * where how hard a body hits is not.
  */
-export function monsterTraits(maxHealth: number, staggerPower: number): TraitStats {
+export function monsterTraits(
+  maxHealth: number,
+  staggerPower: number,
+  attackDamage: number,
+): TraitStats {
   const health = Number.isFinite(maxHealth) && maxHealth > 0 ? maxHealth : 1;
   return {
     ...NEUTRAL_TRAITS,
     maxPoise: Math.max(SCALING.combat.minPoise, health * SCALING.combat.monsterPoiseFraction),
     poiseRegen: SCALING.combat.monsterPoiseRegen / 60,
     staggerPower: Math.max(0, staggerPower),
+    weaponPower: weaponPowerFor(attackDamage),
     maxShield: 0,
   };
 }
@@ -321,9 +348,7 @@ export function deriveTraits(
     executeBonus: Math.max(0, t.executeBonus),
     executeBelow: clamp(t.executeBelow, 0, 1),
     overkillResource: Math.max(0, t.overkillResource),
-    // The Damage row, expressed as a multiplier a blow can be multiplied by.
-    // A body with the reference damage hits for exactly what the ability says.
-    weaponPower: Math.max(0, context.attackDamage / PLAYER_ATTACK_DAMAGE),
+    weaponPower: weaponPowerFor(context.attackDamage),
     momentumTicks: Math.max(0, Math.round(t.momentumTicks)),
     momentumWindupScale: clamp(t.momentumWindupScale, 0, 0.9),
     heavyWindupScale: reduction(t.heavyWindupReduction),

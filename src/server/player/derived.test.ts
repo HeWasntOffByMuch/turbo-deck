@@ -21,10 +21,10 @@ import { ALL_MILESTONES } from '../data/milestones.js';
 import { BUILD_PRESETS, fullSpreadOf, spreadOf } from '../data/presets.js';
 import { above, reciprocal, SCALING, softCap } from '../data/scaling.js';
 import { ALL_SYNERGIES } from '../data/synergies.js';
-import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
+import { MAX_DAMAGE_REDUCTION, PLAYER_ATTACK_DAMAGE } from '../../sim/constants.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type BaseStats, type PersistedPlayer } from '../state/types.js';
 import { startingBaseStats } from './attributes.js';
-import { NEUTRAL_TRAITS } from './derived.js';
+import { monsterTraits, NEUTRAL_TRAITS, weaponPowerFor } from './derived.js';
 import { milestoneProgress, resolveProgression } from './progression.js';
 import { computeEffectiveStats, MAX_CRIT_CHANCE } from './stats.js';
 
@@ -354,6 +354,44 @@ describe('milestone progress, as the sheet reads it', () => {
       expect(entry.remaining).toBe(0);
       expect(entry.met).toHaveLength(3);
     }
+  });
+});
+
+describe('the damage a body actually swings with (spec 184)', () => {
+  it('is the reference damage as 1, and linear either side of it', () => {
+    // The denominator is the player's unarmed reference, which is what lets an
+    // authored monster row and a player's sheet mean the same thing by the same
+    // number. A body at the reference hits for exactly what the ability says.
+    expect(weaponPowerFor(PLAYER_ATTACK_DAMAGE)).toBe(1);
+    expect(weaponPowerFor(PLAYER_ATTACK_DAMAGE * 2)).toBe(2);
+    expect(weaponPowerFor(PLAYER_ATTACK_DAMAGE / 2)).toBe(0.5);
+    expect(weaponPowerFor(0)).toBe(0);
+    // Never negative: a "damage" that went below zero is a bug, not healing.
+    expect(weaponPowerFor(-5)).toBe(0);
+  });
+
+  it('reaches a monster, which is what spec 184 fixed', () => {
+    // The bug: `monsterTraits` returned NEUTRAL_TRAITS with only the poise
+    // fields overridden, so every monster's basic attack was multiplied by 1
+    // and the `attackDamage` its row authored reached nothing at all.
+    const heavy = monsterTraits(140, 12, 24);
+    const light = monsterTraits(22, 3, 5);
+    expect(heavy.weaponPower).toBe(24 / PLAYER_ATTACK_DAMAGE);
+    expect(light.weaponPower).toBe(5 / PLAYER_ATTACK_DAMAGE);
+    expect(heavy.weaponPower).toBeGreaterThan(light.weaponPower);
+  });
+
+  it('leaves everything progression owns neutral', () => {
+    // Monsters do not weak-point, gain flow, adapt or carry a shield. How hard
+    // a body hits is not progression, which is the one line that moved.
+    const traits = monsterTraits(140, 12, 24);
+    expect(traits.weakPointChance).toBe(NEUTRAL_TRAITS.weakPointChance);
+    expect(traits.flowTicks).toBe(NEUTRAL_TRAITS.flowTicks);
+    expect(traits.adaptationPerStack).toBe(NEUTRAL_TRAITS.adaptationPerStack);
+    expect(traits.maxShield).toBe(0);
+    // And the poise sizing this function already did is untouched.
+    expect(traits.maxPoise).toBeGreaterThan(monsterTraits(22, 3, 5).maxPoise);
+    expect(traits.staggerPower).toBe(12);
   });
 });
 

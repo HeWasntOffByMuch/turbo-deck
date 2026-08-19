@@ -13,6 +13,13 @@
  * having its BAT quietly pre-divided, because the same factor also has to reach
  * the wind-up and the backswing.
  *
+ * It includes `attackDamage` too, and since spec 184 that is true rather than
+ * merely stated: a row's damage is measured against the player's own reference
+ * the way a player's is, so a body authored at 8 hits for exactly what its
+ * ability says and one authored at 24 hits three times as hard. Before it, every
+ * monster's `weaponPower` was the neutral 1 and every row in this file swinging
+ * `melee.slash` dealt the same 14.
+ *
  * Since spec 079 it also includes `basicAttackId`, which is where the monster's
  * `ability` field went. Two places naming what a body swings with was one too
  * many, and the sim was already reaching past the entity to find the other one.
@@ -36,10 +43,12 @@ import { SCALING } from './scaling.js';
  * What a row actually authors (spec 147).
  *
  * `traits` is deliberately absent: a monster's poise is a function of its own
- * health and its stagger power a function of its damage, both applied by
- * {@link withTraits} on the way out. Authoring them per row would be two more
- * numbers per monster that nobody could tune relative to each other, and a row
- * added later would be a body that silently cannot be staggered.
+ * health, and its stagger power and its weapon power are functions of its
+ * damage, all applied by {@link withTraits} on the way out. Authoring them per
+ * row would be three more numbers per monster that nobody could tune relative to
+ * each other, and a row added later would be a body that silently cannot be
+ * staggered -- or, until spec 184, one whose blow silently ignored the
+ * `attackDamage` beside it.
  */
 export type AuthoredStats = Omit<EffectiveStats, 'traits'>;
 
@@ -110,7 +119,10 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
   const power = monster.stats.attackDamage * 0.5 + SCALING.strength.staggerBase * 0.5;
   return {
     ...monster,
-    stats: { ...monster.stats, traits: monsterTraits(monster.stats.maxHealth, power) },
+    stats: {
+      ...monster.stats,
+      traits: monsterTraits(monster.stats.maxHealth, power, monster.stats.attackDamage),
+    },
   };
 }
 
