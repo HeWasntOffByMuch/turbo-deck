@@ -1100,9 +1100,25 @@ export function createHud(
       'display:none',
       'justify-content:center',
       'align-items:center',
-      'gap:2px',
+      // Four rather than two. Each glyph's ink fills most of its own box -- the
+      // paths run nearly the full 24-unit viewBox -- so at two the row read as
+      // one continuous ribbon rather than as several marks, which is the one
+      // thing a row of marks must not do.
+      'gap:4px',
       'margin-bottom:2px',
       'pointer-events:none',
+      // Allowed to be wider than the holder, and centred on it.
+      //
+      // The holder is a fixed 52px -- the width of the health bar -- and four
+      // marks already need more than that. Left in flow the slots are flex items
+      // in a box too small for them, so they *shrink*: eight of them came out
+      // 3px wide each, which is a row of specks that passes every check about
+      // what is drawn and shows a player nothing. `max-content` takes the row
+      // out of that negotiation, and the half-shifts re-centre it over the body.
+      'width:max-content',
+      'position:relative',
+      'left:50%',
+      'transform:translateX(-50%)',
     ].join(';');
 
     const statusSlots: StatusSlot[] = [];
@@ -1113,6 +1129,9 @@ export function createHud(
         'position:relative',
         `width:${STATUS_ICON_PX}px`,
         `height:${STATUS_ICON_PX}px`,
+        // Belt and braces with the row's `max-content` above: a mark is a fixed
+        // size and must never be negotiated down to fit.
+        'flex:0 0 auto',
         'filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))',
       ].join(';');
       const glyph = document.createElement('div');
@@ -1122,11 +1141,14 @@ export function createHud(
       const count = document.createElement('div');
       count.style.cssText = [
         'position:absolute',
-        'right:-1px',
-        'bottom:-3px',
-        'font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+        // Inside the box, not hanging off it. Outside, the digit sat in the gap
+        // and collided with the next mark's glyph, so a stacking status made the
+        // one after it unreadable.
+        'right:0',
+        'bottom:0',
+        'font:7px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
         'color:#f2f6fb',
-        'text-shadow:0 1px 2px rgba(0,0,0,.95)',
+        'text-shadow:0 0 2px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,.95)',
       ].join(';');
       slot.append(glyph, count);
       statusRow.append(slot);
@@ -1271,7 +1293,12 @@ export function createHud(
       // nothing kept between frames. A status whose window has passed is refused
       // by `statusMarks` rather than by anything here, so a delta that has not
       // arrived yet cannot leave a mark up.
-      const marks = statusMarks(entity.statuses, tick);
+      // `?? []` for the same reason the guard above reads `entity.poise ?? 1`:
+      // several harnesses fabricate a view by hand (`hud-probe.ts`, the bot
+      // client) and a field added to `ReplicatedEntity` is not a field they
+      // know to set. The type says it is always there; the rigs say otherwise,
+      // and a HUD that throws on a missing field takes the whole frame.
+      const marks = statusMarks(entity.statuses ?? [], tick);
       element.statusRow.style.display = marks.length > 0 ? 'flex' : 'none';
       for (let index = 0; index < element.statusSlots.length; index += 1) {
         const slot = element.statusSlots[index];
