@@ -6,9 +6,12 @@
  * - **occupancy**: which entities are in which chunk, kept as a forward and a
  *   reverse index so both "where is entity 7" and "who is in chunk 3,4" are O(1).
  * - **activation**: a chunk is *active* when at least one player is within the
- *   interest radius of it. Inactive chunks are skipped by the sim entirely, so
- *   the cost of the world is proportional to where the players are and not to
- *   how big the map is.
+ *   interest radius of it. `sim/world.ts`'s `isSimulated` reads the set, so a
+ *   body outside every player's window is not decided for, not moved, and not
+ *   given an attack slot -- the cost of the world is proportional to where the
+ *   players are rather than to how big the map is. Maintaining the set is
+ *   likewise proportional to how often players cross a chunk boundary, which is
+ *   what spec 190 is about.
  *
  * Pure of transport and of clocks: everything here is a function of the
  * positions it is told about, so a test can drive it directly.
@@ -16,12 +19,6 @@
 
 import { INTEREST_CHUNK_RADIUS } from '../config.js';
 import { chunkKey, chunkKeyOf, chunkKeysInRadius, parseChunkKey, type ChunkKey } from './chunks.js';
-
-/** A chunk changing activation state, reported so the caller can load/unload. */
-export interface ChunkTransition {
-  readonly key: ChunkKey;
-  readonly activated: boolean;
-}
 
 export interface EntityMove {
   readonly entityId: number;
@@ -37,6 +34,16 @@ export class ChunkManager {
   /** Players only, so activation never depends on where monsters wandered. */
   private readonly playerChunks = new Map<number, ChunkKey>();
   private active = new Set<ChunkKey>();
+  /**
+   * Whether a player has moved between chunks since the last refresh (spec 190).
+   *
+   * The active set is a function of where the *players* are and of nothing else,
+   * so this is exact rather than conservative: raised where that truth changes
+   * and nowhere else. It starts true so the first refresh always runs, which is
+   * what makes a manager with players already placed behave like one that was
+   * refreshed as they arrived.
+   */
+  private playersMoved = true;
 
   constructor(
     private readonly chunkSize: number,
@@ -67,7 +74,10 @@ export class ChunkManager {
       this.occupants.set(to, set);
     }
     set.add(entityId);
-    if (isPlayer) this.playerChunks.set(entityId, to);
+    if (isPlayer) {
+      this.playerChunks.set(entityId, to);
+      this.playersMoved = true;
+    }
     return { entityId, from, to };
   }
 
@@ -81,7 +91,10 @@ export class ChunkManager {
       }
     }
     this.entityChunk.delete(entityId);
-    this.playerChunks.delete(entityId);
+    // Only when it *was* a player: a monster leaving the world cannot change
+    // which chunks are active, and a delete that missed costs a rebuild for
+    // every kill.
+    if (this.playerChunks.delete(entityId)) this.playersMoved = true;
   }
 
   chunkOfEntity(entityId: number): ChunkKey | null {
@@ -98,36 +111,44 @@ export class ChunkManager {
     return [...this.occupants.keys()];
   }
 
-  activeChunks(): readonly ChunkKey[] {
-    return [...this.active];
-  }
-
-  isActive(key: ChunkKey): boolean {
-    return this.active.has(key);
+  /**
+   * The chunks a player is close enough to for the sim to step what is in them.
+   *
+   * The live set rather than a copy (spec 190). `StepContext.activeChunks` is a
+   * `ReadonlySet`, and the tick used to build an array and a second `Set` on top
+   * of this one every time it was asked. Aliasing is safe here for a stated
+   * reason rather than by luck: {@link refreshActive} runs *after* `step()`
+   * returns, so no tick ever observes the set changing under it.
+   */
+  activeChunks(): ReadonlySet<ChunkKey> {
+    return this.active;
   }
 
   /**
-   * Recomputes the active set from where the players are, and reports what
-   * changed. Called once per tick: the set is small (players x radius^2) and
-   * rebuilding it is cheaper and far less bug-prone than incrementally
-   * maintaining it as players move.
+   * Recompute the active set, if a player has moved between chunks since the
+   * last call.
+   *
+   * The rebuild is not cheap -- `chunkKeysInRadius` allocates a coordinate and a
+   * string per chunk, and at the shipped radius that is 289 of each per player.
+   * Doing it every tick made this 25% of the whole tick once spec 189 took the
+   * collider walk out. It is not needed either: `CHUNK_SIZE` is 400 units, so a
+   * player crosses a boundary every few seconds and the set is identical on
+   * essentially every tick in between.
+   *
+   * Returns nothing. It used to return what opened and closed, and the one
+   * caller has always thrown that away -- and a call that finds nothing moved
+   * does no diff, so continuing to return it would be a lie as well as a cost.
    */
-  refreshActive(): readonly ChunkTransition[] {
+  refreshActive(): void {
+    if (!this.playersMoved) return;
+    this.playersMoved = false;
     const next = new Set<ChunkKey>();
     for (const key of this.playerChunks.values()) {
       for (const nearby of chunkKeysInRadius(parseChunkKey(key), this.interestRadius)) {
         next.add(nearby);
       }
     }
-    const transitions: ChunkTransition[] = [];
-    for (const key of next) {
-      if (!this.active.has(key)) transitions.push({ key, activated: true });
-    }
-    for (const key of this.active) {
-      if (!next.has(key)) transitions.push({ key, activated: false });
-    }
     this.active = next;
-    return transitions;
   }
 
   /**

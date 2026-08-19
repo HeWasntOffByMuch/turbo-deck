@@ -2412,7 +2412,7 @@ export class GameServer implements AdminHost {
       terrain: this.terrain,
       zones: this.zones,
       config: this.config.get(),
-      activeChunks: new Set(this.chunks.activeChunks()),
+      activeChunks: this.chunks.activeChunks(),
       chunkSize: CHUNK_SIZE,
       spawnPoints: this.spawnPoints,
       // Where bodies were, so a blow lands on what its attacker saw (spec 149).
