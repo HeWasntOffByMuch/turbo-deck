@@ -45,10 +45,17 @@ export interface RetroSettings {
 }
 
 /**
- * The tuning the view opens at: twelve steps per channel, and a dither turned
- * right down to 5%. Enough colours that shading reads as shading rather than as
- * posterization, with the weave only just breaking up the band edges -- the
- * retro texture without the crosshatch swallowing the palette.
+ * The tuning the filter runs at once it is switched on: twelve steps per channel,
+ * and a dither turned right down to 5%. Enough colours that shading reads as
+ * shading rather than as posterization, with the weave only just breaking up the
+ * band edges -- the retro texture without the crosshatch swallowing the palette.
+ *
+ * `enabled` here is the *pass's* own default -- what a caller that constructs a
+ * `RetroPass` without saying gets, which is the Studio preview, the wind rig and
+ * the offscreen probes, all of which exist to look at the filter. The surfaces
+ * with a cog on them open with the row switched off (view-controls.ts): what a
+ * player sees at load is a separate question from what the filter looks like,
+ * and this constant answers only the second.
  */
 export const RETRO_DEFAULTS: RetroSettings = {
   enabled: true,
