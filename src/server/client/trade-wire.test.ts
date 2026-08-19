@@ -53,15 +53,28 @@ async function harness(): Promise<Harness> {
    * exercises the thing a player actually does.
    */
   const walkApart = async (apart: number): Promise<number> => {
+    // Away from Ben, rather than along +x. Since spec 184 a player is blocked
+    // by another player, and Ben spawns on Ana's +x -- so walking +x pressed
+    // her into him and measured a gap that had stopped growing. It passed for
+    // as long as it did because bodies used to walk through each other.
+    //
+    // Recomputed every tick rather than once up front, because a record only
+    // catches up with its entity when a tick mirrors it back: before the first
+    // one both of them read as the spawn point, and a direction taken from that
+    // is (0, 0), which is Ana standing still and the gap never moving at all.
+    let away = { x: -1, y: 0 };
     for (let tick = 0; tick < 240; tick += 1) {
-      ana.sendInput({ moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+      ana.sendInput({ moveX: away.x, moveY: away.y, facing: 0, buttons: 0 });
       server.tick();
       await settle();
       const here = server.playerManager.get('ana')?.record.position;
       const there = server.playerManager.get('ben')?.record.position;
       if (!here || !there) break;
-      const gap = Math.hypot(here.x - there.x, here.y - there.y);
+      const dx = here.x - there.x;
+      const dy = here.y - there.y;
+      const gap = Math.hypot(dx, dy);
       if (gap > apart) return gap;
+      if (gap > 1e-6) away = { x: dx / gap, y: dy / gap };
     }
     return 0;
   };

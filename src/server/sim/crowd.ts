@@ -49,12 +49,15 @@
  */
 
 import {
+  CROWD_CELL_SIZE,
   CROWD_LOOKAHEAD,
   CROWD_MARGIN,
   CROWD_MAX_AVOID,
+  CROWD_MAX_NEIGHBOURS,
   CROWD_SEPARATION_WEIGHT,
   CROWD_SIDESTEP_WEIGHT,
 } from '../../sim/constants.js';
+import { NeighbourGrid } from '../../sim/neighbours.js';
 import type { Vec2 } from '../../sim/types.js';
 
 export interface CrowdBody {
@@ -183,4 +186,68 @@ export function steer(
     avoidY *= scale;
   }
   return unit(desired.x + avoidX, desired.y + avoidY) ?? desired;
+}
+
+/**
+ * This tick's bodies, indexed so each one only ever looks at the handful that
+ * could touch it.
+ *
+ * Held by the caller and rebuilt each tick rather than allocated per tick: the
+ * grid, the handle buffer and the result array all survive, so a tick with
+ * forty bodies in it allocates nothing. `findPath` keeps its working set the
+ * same way and for the same reason.
+ *
+ * Nothing in here is state the sim reads *across* ticks -- `build` replaces
+ * everything -- so a replay that rebuilds the index from the same bodies gets
+ * the same answers, and there is no order of `step` calls that could leak one
+ * tick's crowd into another's.
+ */
+export class CrowdIndex {
+  private readonly grid = new NeighbourGrid(CROWD_CELL_SIZE);
+  private readonly handles = new Int32Array(CROWD_MAX_NEIGHBOURS);
+  private readonly found: CrowdBody[] = [];
+  private bodies: readonly CrowdBody[] = [];
+  private widest = 0;
+
+  build(bodies: readonly CrowdBody[]): void {
+    this.bodies = bodies;
+    this.grid.reset(bodies.length);
+    let widest = 0;
+    for (let i = 0; i < bodies.length; i++) {
+      const one = bodies[i];
+      if (!one) continue;
+      this.grid.insert(i, one.x, one.y);
+      if (one.radius > widest) widest = one.radius;
+    }
+    this.widest = widest;
+  }
+
+  /**
+   * How far this body has to look: far enough to see the widest body in the
+   * world at the edge of its own lookahead.
+   *
+   * Measured from the crowd rather than from a constant, so a map that adds a
+   * bigger monster cannot silently shorten everybody's sight of it.
+   */
+  rangeFor(body: CrowdBody): number {
+    return body.radius + this.widest + CROWD_LOOKAHEAD + CROWD_MARGIN;
+  }
+
+  /**
+   * The bodies near this one, nearest-first-capped and never including itself.
+   *
+   * The returned array is reused on the next call. Callers pass it straight to
+   * `steer` and to the blocker list within the same tick, which is the only
+   * use it has; holding on to it would see it change underneath.
+   */
+  near(body: CrowdBody, range: number): readonly CrowdBody[] {
+    const count = this.grid.query(body.x, body.y, range, this.handles);
+    this.found.length = 0;
+    for (let i = 0; i < count; i++) {
+      const handle = this.handles[i] ?? -1;
+      const other = handle >= 0 ? this.bodies[handle] : undefined;
+      if (other && other.id !== body.id) this.found.push(other);
+    }
+    return this.found;
+  }
 }

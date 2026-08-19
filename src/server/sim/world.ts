@@ -25,7 +25,7 @@
 import { Rng } from '../../shared/prng.js';
 import { findPath, navGridFor, pathClear } from '../../sim/pathfinding.js';
 import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
-import type { Vec2, WorldColliders } from '../../sim/types.js';
+import type { Circle, Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { rarityOf } from '../data/items.js';
@@ -34,6 +34,8 @@ import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { FLEE_DISTANCE, notice, rally, settle } from './aggro.js';
+import { approachPoints, type Approach } from './attack-slots.js';
+import { CrowdIndex, steer, type CrowdBody } from './crowd.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
@@ -92,6 +94,28 @@ import {
 
 /** A monster closes to this fraction of its reach before it stops walking in. */
 const STANDOFF_FRACTION = 0.8;
+
+/**
+ * How near its approach slot a body has to get before it stands and swings
+ * (spec 184).
+ *
+ * The ring is placed this far *inside* the reach rather than on it, which is
+ * what makes the tolerance safe: a body that stops anywhere within this of its
+ * slot is still inside the distance it can swing from, so arriving and being
+ * able to attack cannot come apart. Placed on the reach exactly, half the bodies
+ * in a ring would settle a hair outside it and stand there holding a sword.
+ */
+const SLOT_ARRIVE_EPS = 10;
+
+/**
+ * The tick's neighbour index, reused rather than rebuilt (spec 184).
+ *
+ * Module-level scratch, exactly as `findPath` keeps its working set: `step` is
+ * synchronous and `build` replaces everything it holds, so nothing survives
+ * from one tick into the next and a replay reconstructs it identically. What it
+ * buys is that a crowded tick allocates nothing at all.
+ */
+const CROWD = new CrowdIndex();
 
 /**
  * How far a monster may be dragged from its spawn point before it gives up
@@ -491,10 +515,24 @@ export function step(
     context.activeChunks.has(chunkKeyOf(entity.position.x, entity.position.y, context.chunkSize));
 
   // --- 1 + 2: timers and movement, in creation order -------------------
+  //
+  // Split in two since spec 184, because a crowd cannot be decided one body at
+  // a time: steering a body around its neighbours needs to know which way those
+  // neighbours are about to walk, and asking mid-loop would answer for the ones
+  // already processed and guess for the rest. So every body decides first, the
+  // decisions are indexed, and then everybody moves.
+  //
+  // What that costs is that a monster now reads its target's position as it was
+  // at the top of the tick rather than as it is part-way through one. What it
+  // buys is that the decision no longer depends on creation order at all, which
+  // is a property this tick did not previously have.
   const casters: number[] = [];
   // Monsters decide their intent during the movement pass; the cast pass needs
   // the same decision rather than a second, differently-timed one.
   const monsterIntentCache = new Map<number, ServerInput>();
+  // Where each attacker should stand, for every target with a pack on it.
+  const slots = approachAssignments(state.entities, isSimulated);
+  const decisions: Decision[] = [];
   for (const entity of state.entities.values()) {
     const current = working.get(entity.id) ?? entity;
     if (current.health <= 0) {
@@ -527,7 +565,7 @@ export function step(
     } else {
       // A monster's route is entity state, so deciding where to walk can change
       // the entity -- see `monsterIntent`.
-      const decided = monsterIntent(current, working, tick, context);
+      const decided = monsterIntent(current, working, tick, context, slots);
       rawIntent = decided.input;
       steered = decided.entity;
     }
@@ -581,7 +619,46 @@ export function step(
           : rawIntent;
     if (intent && current.kind !== EntityKindValue.Player) monsterIntentCache.set(current.id, intent);
 
-    const outcome = resolveMovement(steered, intent, movement);
+    // Written back so a body decided later this pass reads this one's fresh
+    // route and mood -- its *position* has deliberately not moved yet.
+    working.set(steered.id, steered);
+    decisions.push({ entity: steered, intent, input });
+  }
+
+  // --- 2b: the crowd (spec 184) ----------------------------------------
+  // Every body that decided to go somewhere, indexed by where it is and which
+  // way it is about to walk, so the pass below can ask each one about the
+  // handful of bodies that could touch it rather than about all of them.
+  CROWD.build(decisions.map((decision) => crowdBodyOf(decision.entity, decision.intent)));
+
+  for (const decision of decisions) {
+    const { entity: steered, intent, input } = decision;
+    const self = crowdBodyOf(steered, intent);
+    const neighbours = CROWD.near(self, CROWD.rangeFor(self));
+
+    // A player's own direction is never touched. Steering is the sim deciding
+    // where a body walks, and for a player that decision is the input -- an
+    // avoidance term applied to it would be the server quietly driving.
+    //
+    // And what comes out of here reaches the *movement* and nothing else. The
+    // cast pass keeps reading pass A's intent, because the two are answering
+    // different questions and only one of them is the body's: asking to walk is
+    // how a blow is withdrawn from (spec 079), so a crowd that wrote into the
+    // intent would be withdrawing on the body's behalf. A monster standing in
+    // its target -- which is every monster whose reach is shorter than the two
+    // bodies are wide -- would step aside, cancel its own swing, and do it
+    // again on the next tick for ever.
+    const crowded =
+      steered.kind === EntityKindValue.Player
+        ? intent
+        : crowdedIntent(steered, intent, neighbours, tick);
+
+    const outcome = resolveMovement(
+      steered,
+      crowded,
+      movement,
+      blockersFor(steered, neighbours, working),
+    );
     const moved =
       outcome.position.x !== steered.position.x || outcome.position.y !== steered.position.y;
 
@@ -1546,6 +1623,187 @@ function expireActivity(entity: ServerEntity, tick: number, resting: number): Se
 }
 
 /** What a monster decided this tick: how to move, and any route state it changed. */
+/** One body's decision, made in the first movement pass and acted on in the second. */
+interface Decision {
+  /** The body with its route and mood settled, and its position not yet moved. */
+  readonly entity: ServerEntity;
+  readonly intent: ServerInput | null;
+  /** The client frame behind it, for the claim and correction bookkeeping. */
+  readonly input: ServerInput | null;
+}
+
+/**
+ * A body as the crowd sees it: where it is, how big it is, and which way it is
+ * about to walk (spec 184).
+ *
+ * The velocity is the *intent* rather than the last tick's travel, because a
+ * crowd is decided a tick at a time -- two bodies that have both just been told
+ * to walk at each other are closing on each other, whatever they were doing
+ * before. A body with no movement in its intent is standing, and reads as
+ * something to walk around rather than something to keep pace with.
+ */
+function crowdBodyOf(entity: ServerEntity, intent: ServerInput | null): CrowdBody {
+  const speed = entity.stats.moveSpeed / SERVER_TICK_RATE;
+  const direction = intent ? unit(intent.moveX, intent.moveY) : null;
+  return {
+    id: entity.id,
+    x: entity.position.x,
+    y: entity.position.y,
+    radius: entity.radius,
+    vx: direction ? direction.x * speed : 0,
+    vy: direction ? direction.y * speed : 0,
+  };
+}
+
+/**
+ * The intent again, with the crowd taken into account.
+ *
+ * Two shapes come out of here and both are ordinary movement. A body going
+ * somewhere gets its direction bent around whoever is in the way; a body going
+ * nowhere that finds itself standing inside somebody gets a direction to walk
+ * out along -- which is the whole of "unstick is an intent". It travels at the
+ * body's own move speed, over ground it is allowed to cross, and `activity`
+ * goes to `Moving`, so what the renderer draws is a body walking aside rather
+ * than a body sliding while its animation says it is standing still.
+ *
+ * A committed cast or a stagger has already zeroed the movement upstream, and
+ * neither is second-guessed here: a rooted body stays rooted even if that
+ * leaves it overlapping, because being unable to move is what those states are.
+ */
+function crowdedIntent(
+  entity: ServerEntity,
+  intent: ServerInput | null,
+  neighbours: readonly CrowdBody[],
+  tick: number,
+): ServerInput | null {
+  if (neighbours.length === 0) return intent;
+  // A body held by a cast or a stagger is neither steered nor unstuck. Its
+  // movement was zeroed upstream precisely so that it stays zero, and being
+  // unable to move is the whole of what those two states are.
+  if (entity.cast !== null || staggered(entity, tick)) return intent;
+
+  const self = crowdBodyOf(entity, intent);
+  const wanted = intent && asksToMove(intent) ? unit(intent.moveX, intent.moveY) : null;
+  const adjusted = steer(self, wanted, neighbours);
+  if (!adjusted) return intent;
+  return intent
+    ? { ...intent, moveX: adjusted.x, moveY: adjusted.y }
+    : standingIntent(entity, adjusted);
+}
+
+/** An intent for a body that was not going to send one, so it can step aside. */
+function standingIntent(entity: ServerEntity, direction: Vec2): ServerInput {
+  return {
+    entityId: entity.id,
+    seq: 0,
+    moveX: direction.x,
+    moveY: direction.y,
+    // Not `atan2(direction)`: stepping out of somebody is not a decision to
+    // look that way, and a body turning to face wherever it was nudged from
+    // would spin on the spot in a press.
+    facing: entity.facing,
+    buttons: 0,
+    predictedX: entity.position.x,
+    predictedY: entity.position.y,
+    hasPrediction: false,
+    seqSpan: 1,
+    castAbilityId: '',
+    castTargetX: 0,
+    castTargetY: 0,
+    castTargetEntityId: 0,
+    cancelCast: false,
+  };
+}
+
+/**
+ * The bodies this one may not walk into (spec 184).
+ *
+ * The asymmetry is the design rather than an oversight. A **player is blocked
+ * only by another player**, because nothing may displace a body and two bodies
+ * that both refuse to be displaced have no other way to keep out of each other
+ * -- blocking is what the rule degenerates to when neither side can yield. A
+ * player is never blocked by a monster: being penned would cost the step that a
+ * wind-up is withdrawn with, and a body whose feint can be taken away by
+ * positioning is a combat change rather than a navigation one. What keeps a
+ * monster out of a player is the other direction of the same rule -- the
+ * monster is blocked, and walks aside under its own power.
+ *
+ * Positions are read from `working` rather than from the crowd index, because
+ * this is the hard guarantee and wants the freshest answer: bodies decided
+ * earlier in this pass have already moved, and testing against where they were
+ * at the top of the tick would let two of them into the same gap.
+ */
+function blockersFor(
+  mover: ServerEntity,
+  neighbours: readonly CrowdBody[],
+  working: ReadonlyMap<number, ServerEntity>,
+): readonly Circle[] {
+  const blockers: Circle[] = [];
+  const moverIsPlayer = mover.kind === EntityKindValue.Player;
+  for (const neighbour of neighbours) {
+    const body = working.get(neighbour.id);
+    if (!body || body.health <= 0) continue;
+    if (moverIsPlayer && body.kind !== EntityKindValue.Player) continue;
+    blockers.push({ x: body.position.x, y: body.position.y, r: body.radius });
+  }
+  return blockers;
+}
+
+/**
+ * Where every attacker in a pack should stand, keyed by attacker id (spec 184).
+ *
+ * Only targets with **two or more** attackers on them appear at all, which is
+ * what keeps the common case free and the single-attacker case exactly what it
+ * was: with nobody to avoid there is no reason to move a body off the line it
+ * is already walking.
+ *
+ * Built from the top-of-tick entities, so every attacker in one pack is placed
+ * against the same snapshot of where the others are -- a ring computed halfway
+ * through a movement pass would place the first half of the pack against the
+ * second half's old positions.
+ */
+function approachAssignments(
+  entities: ReadonlyMap<number, ServerEntity>,
+  isSimulated: (entity: ServerEntity) => boolean,
+): ReadonlyMap<number, Vec2> {
+  const packs = new Map<number, Approach[]>();
+  for (const entity of entities.values()) {
+    if (entity.kind !== EntityKindValue.Monster) continue;
+    if (entity.health <= 0 || entity.targetId === null) continue;
+    // Only a body actually closing in wants a place to stand. One sizing you up
+    // is holding still on purpose, and one running away is not approaching
+    // anything.
+    if (entity.aggro !== AggroValue.Engaged) continue;
+    if (!isSimulated(entity)) continue;
+    const target = entities.get(entity.targetId);
+    if (!target || target.health <= 0) continue;
+
+    const swing = abilityById(entity.stats.basicAttackId);
+    const reach = ((swing?.range ?? entity.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
+    const pack = packs.get(entity.targetId) ?? [];
+    pack.push({
+      attackerId: entity.id,
+      x: entity.position.x,
+      y: entity.position.y,
+      radius: entity.radius,
+      // Inside the reach by the arrival tolerance, so a body that stops short
+      // of its slot is still close enough to swing. See SLOT_ARRIVE_EPS.
+      standoff: Math.max(entity.radius + target.radius, reach - SLOT_ARRIVE_EPS),
+    });
+    packs.set(entity.targetId, pack);
+  }
+
+  const assigned = new Map<number, Vec2>();
+  for (const [targetId, pack] of packs) {
+    if (pack.length < 2) continue;
+    const target = entities.get(targetId);
+    if (!target) continue;
+    pack.sort((a, b) => a.attackerId - b.attackerId);
+    for (const [id, point] of approachPoints(target.position, pack)) assigned.set(id, point);
+  }
+  return assigned;
+}
+
 interface MonsterDecision {
   /** Null when there is nothing to chase; the body simply stands. */
   readonly input: ServerInput | null;
@@ -1565,6 +1823,7 @@ function monsterIntent(
   entities: ReadonlyMap<number, ServerEntity>,
   tick: number,
   context: StepContext,
+  slots: ReadonlyMap<number, Vec2>,
 ): MonsterDecision {
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
@@ -1625,16 +1884,31 @@ function monsterIntent(
   // because the pose the feature needs is the one this function already has for
   // "stopped, facing you"; what is withheld is the blow.
   const alert = monster.aggro === AggroValue.Alert;
-  const closing = !alert && distance > reach;
 
-  const steer = closing
-    ? routeToward(monster, target.position, tick, context)
+  // Where it walks, and how close it has to get before it stands (spec 184).
+  // With no slot both are what they always were -- the target itself, and its
+  // own reach -- which is what makes a lone monster's approach unchanged.
+  //
+  // With one, the arrival is measured against the *slot* rather than against
+  // the target, and that is the whole reason slots work: stopping at the first
+  // point inside reach is stopping on the bearing you came in on, so a pack
+  // given twelve different places to stand would still pile onto one of them.
+  const slot = slots.get(monster.id) ?? null;
+  const goal: Vec3 = slot ? { x: slot.x, y: slot.y, z: target.position.z } : target.position;
+  const arrived = slot
+    ? Math.hypot(slot.x - monster.position.x, slot.y - monster.position.y) <= SLOT_ARRIVE_EPS
+    : distance <= reach;
+  const closing = !alert && !arrived;
+  const inReach = distance <= reach;
+
+  const route = closing
+    ? routeToward(monster, goal, tick, context)
     : { direction: null, entity: forgetPath(monster) };
-  const entity = steer.entity;
+  const entity = route.entity;
 
   // Face where it is walking; face the target once it has stopped to swing.
-  const facing = steer.direction
-    ? Math.atan2(steer.direction.y, steer.direction.x)
+  const facing = route.direction
+    ? Math.atan2(route.direction.y, route.direction.x)
     : distance > 1e-6
       ? Math.atan2(dy, dx)
       : monster.facing;
@@ -1642,14 +1916,14 @@ function monsterIntent(
   // Monsters use the same ability system players do -- one code path for
   // "something committed to a swing", so a monster's wind-up is as readable
   // and as interruptible as anyone else's.
-  const wantsToSwing = !alert && !closing && monster.cast === null && swing !== null;
+  const wantsToSwing = !alert && !closing && inReach && monster.cast === null && swing !== null;
   return {
     entity,
     input: {
       entityId: monster.id,
       seq: 0,
-      moveX: steer.direction?.x ?? 0,
-      moveY: steer.direction?.y ?? 0,
+      moveX: route.direction?.x ?? 0,
+      moveY: route.direction?.y ?? 0,
       facing,
       buttons: 0,
       predictedX: monster.position.x,
@@ -1697,10 +1971,10 @@ function fleeFrom(
     z: monster.position.z,
   };
 
-  const steer = routeToward(monster, goal, tick, context);
-  const direction = steer.direction ?? heading;
+  const route = routeToward(monster, goal, tick, context);
+  const direction = route.direction ?? heading;
   return {
-    entity: steer.entity,
+    entity: route.entity,
     input: {
       entityId: monster.id,
       seq: 0,
@@ -1751,17 +2025,17 @@ function walkHome(monster: ServerEntity, tick: number, context: StepContext): Mo
   const dy = anchor.y - monster.position.y;
   if (Math.hypot(dx, dy) <= monster.radius) return null;
 
-  const steer = routeToward(monster, { x: anchor.x, y: anchor.y, z: monster.position.z }, tick, context);
-  if (!steer.direction) return { input: null, entity: forgetPath(steer.entity) };
+  const route = routeToward(monster, { x: anchor.x, y: anchor.y, z: monster.position.z }, tick, context);
+  if (!route.direction) return { input: null, entity: forgetPath(route.entity) };
 
   return {
-    entity: steer.entity,
+    entity: route.entity,
     input: {
       entityId: monster.id,
       seq: 0,
-      moveX: steer.direction.x,
-      moveY: steer.direction.y,
-      facing: Math.atan2(steer.direction.y, steer.direction.x),
+      moveX: route.direction.x,
+      moveY: route.direction.y,
+      facing: Math.atan2(route.direction.y, route.direction.x),
       buttons: 0,
       predictedX: monster.position.x,
       predictedY: monster.position.y,

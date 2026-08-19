@@ -31,7 +31,7 @@
  */
 
 import { slideCircle, pushOutOfObstacles } from '../../sim/collision.js';
-import type { Vec2, WorldColliders } from '../../sim/types.js';
+import type { Circle, Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { CorrectionReason } from '../net/protocol.js';
@@ -148,10 +148,25 @@ export function isWalkable(
   return Math.abs(height - from.z) <= MAX_STEP_HEIGHT;
 }
 
+/** Nothing in the way, for callers with no crowd around them. */
+const NO_BLOCKERS: readonly Circle[] = [];
+
+/**
+ * `blockers` are the other bodies this one may not walk into (spec 184).
+ *
+ * A body rather than a wall, so it is refused through `bodyBlocked` and its
+ * escape-permissive rule rather than through `circleBlocked` -- and refused
+ * only on the way in. Nothing here displaces anybody: a body that finds itself
+ * overlapping walks out under its own power on a later tick, which is an
+ * ordinary intent through this same function.
+ *
+ * Empty for a caller that does not care, which is every existing one.
+ */
 export function resolveMovement(
   entity: ServerEntity,
   input: ServerInput | null,
   context: MovementContext,
+  blockers: readonly Circle[] = NO_BLOCKERS,
 ): MovementOutcome {
   const { world, terrain, config } = context;
   const from: Vec2 = { x: entity.position.x, y: entity.position.y };
@@ -166,7 +181,8 @@ export function resolveMovement(
     dy += direction.y * maxStep;
   }
 
-  let landed: Vec2 = dx === 0 && dy === 0 ? from : slideCircle(from, dx, dy, entity.radius, world);
+  let landed: Vec2 =
+    dx === 0 && dy === 0 ? from : slideCircle(from, dx, dy, entity.radius, world, blockers);
 
   // The heightfield half of collision. `slideCircle` knows about walls and
   // vegetation; it knows nothing about a cliff face or a lake, so those are
