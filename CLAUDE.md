@@ -62,6 +62,8 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/preview-crowd.ts` | Five crowd scenarios through the real `step`, drawn as trails (spec 184) |
+| `npx tsx scripts/bench-crowd.ts` | What a crowd costs a tick, at 10 to 200 bodies against the real map |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -157,7 +159,41 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  stitching the join by copying shared corners exactly and easing
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
-                 collision and pathfinding helpers the server collides against
+                 collision and pathfinding helpers the server collides against.
+                 neighbours.ts is the broadphase both halves of spec 184 rest on
+                 -- a uniform grid, rebuilt per tick for bodies and built once
+                 for the world's vegetation, allocation-free either way. It has
+                 two queries and the difference between them is a rule rather
+                 than a convenience: `query` returns handles **ascending**,
+                 because a caller summing forces over the result would otherwise
+                 be summing floats in whatever order a hash chained the buckets,
+                 and float addition is not associative -- so the same crowd could
+                 settle two different ways from the same start. `queryUnsorted`
+                 skips the sort and the duplicate check for callers whose answer
+                 is a boolean, which is what a collision test asks.
+                 collision.ts gained `bodyBlocked` with it: a step into a spot
+                 somebody is standing in is refused the way a step into a wall
+                 is, and it is **escape-permissive** -- a candidate is refused
+                 only when it overlaps AND gets no closer to being out. Nothing
+                 in this game displaces a body, so an overlap cannot be repaired
+                 after the fact, and a plain overlap test refuses every direction
+                 including the one that leaves. That clause is the whole
+                 difference between a block and a trap.
+                 It also indexes `world.circles` now, which is every tree on the
+                 map and which `circleBlocked` used to walk in full for every
+                 body several times a tick -- 321us per body, measured by
+                 `scripts/bench-collision.ts` long before spec 184 and enough to
+                 put forty bodies at three quarters of a frame on their own.
+                 `slideCircle` is 1.5us. The index is exact rather than close and
+                 `collider-index.test.ts` holds a full copy of the loop it
+                 replaced to prove it, because `pushOutOfObstacles` returns a
+                 *position* and two positions a millionth apart are two different
+                 worlds a few hundred ticks later. Its fast path is an early
+                 return for a body that overlaps nothing, which is every body
+                 every tick; anything actually overlapping falls through to the
+                 original loop, since that loop moves the body as it goes and a
+                 neighbourhood computed around where it started is not a claim
+                 about where it ends up.
 src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
                  small document and explicitly none of the bind-pose, skinning,
                  retarget and family machinery src/units/ exists to manage for a
@@ -1028,6 +1064,89 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 `sim/crowd.ts` and `sim/attack-slots.ts` are how a pack
+                 moves (spec 184), and the rule they exist to respect is that
+                 **nothing in this game displaces a body**. What makes a shove
+                 look wrong is not the displacement, it is that a shoved body
+                 *slides* while its animation says it is standing still -- and
+                 the animation is right, because nothing about that body decided
+                 to move. So there is no separation solver anywhere: overlap is
+                 prevented rather than repaired, by steering before contact and
+                 by `bodyBlocked` refusing the step, and a body that ends up
+                 overlapping anyway walks out under its own power through the
+                 ordinary movement pass, at its own speed, over ground it is
+                 allowed to cross. Unstick is an *intent*, which is why it is
+                 drawn as walking.
+                 `steer` returns a direction and never a speed, and that is the
+                 overtaking rule stated once: a body that matched the pace of
+                 whatever was in front of it would turn a crowd into a queue, so
+                 avoidance is purely lateral and a fast unit goes round a slow
+                 one whenever there is room.
+                 The side-step is where ORCA's value is bought cheaply -- which
+                 side to pass on is the sign of `cross(desired, toNeighbour)`,
+                 and both bodies evaluate it over the same pair of vectors and
+                 reach the same *handedness*, so two bodies pointing opposite
+                 ways go down opposite sides of the world by construction rather
+                 than by negotiation. The tie-break may **not** be an id, and
+                 that was learned by writing it that way: "left" is measured
+                 against each body's own heading, so head-on bodies given
+                 opposite handedness both step the same way in the world and
+                 collide having each politely yielded.
+                 Separation ramps across the *margin* rather than from zero, so
+                 it is strongest exactly where the bodies touch. Measured from
+                 zero -- the obvious way -- two bodies at touching distance get a
+                 fifth of the available push, which is fine in the open and
+                 deadlocks a funnel, where a fifth cannot break the symmetry and
+                 there is no shove to grind them past it.
+                 A crowd with no shove can still wedge: a body cornered between a
+                 wall and a neighbour often has a free direction that no blend of
+                 route and avoidance points at. So a body that has made no
+                 *progress* for `CROWD_STUCK_TICKS` stops blending and asks --
+                 context steering, nearest candidate first, starting with its own
+                 unbent route, because avoidance is a preference and never a
+                 veto. Three things in it were each got wrong first. The fan
+                 opens around the route rather than around the steered direction.
+                 A candidate is judged by the same progress test that called the
+                 body stuck, or the first one always "succeeds" with the
+                 thousandth of a unit a wedged body slides along a wall and the
+                 probe congratulates itself every tick for ever. And the widest
+                 candidates point *backwards*, which reads like an oversight and
+                 is most of the value -- against a pack filing through a two-body
+                 gap, a fan stopping at sideways gets two of sixteen through
+                 where one that backs out gets all sixteen.
+                 `attack-slots.ts` is where a pack stands to fight one thing, and
+                 it is **angular separation** rather than a lattice of slots:
+                 each attacker keeps the bearing it already has, and bearings move
+                 only where two are closer than two bodies of that size at that
+                 distance can be. A lone attacker is therefore left exactly where
+                 it was aiming and behaves as it did before this spec; an attacker
+                 that dies does not re-shuffle the survivors, because gaps only
+                 grow; and a body standing in its place keeps it, because the
+                 bearing being assigned is the bearing it already has. The
+                 relaxation takes **signed, unwrapped** differences -- folded into
+                 [0, TAU) a body pushed past its neighbour reads as almost a full
+                 turn away, so the crossing is never undone. Overflow goes to an
+                 outer ring and waits, which is the honest consequence of a game
+                 with no shoving in it.
+                 The one thing that must not move: what the crowd decides reaches
+                 the **movement** and nothing else. Asking to walk is how a blow
+                 is withdrawn from (spec 079), so a crowd that wrote into the
+                 intent the cast pass reads would withdraw on the body's behalf --
+                 a monster standing in its target stepped aside, cancelled its own
+                 swing, and did it again on the next tick for ever. Ten stagger
+                 tests caught it, all of them reporting that a monster never
+                 attacked.
+                 Who blocks whom is asymmetric on purpose: a player is blocked
+                 only by another player, because two bodies that both refuse to be
+                 displaced have no other way to keep out of each other -- blocking
+                 is what the push rule degenerates to when neither side can yield.
+                 A monster is blocked by everything. A player is never blocked by
+                 a monster, because being penned would cost the step a wind-up is
+                 withdrawn with, and a body whose feint can be taken away by
+                 positioning is a combat change rather than a navigation one.
+                 `npx tsx scripts/preview-crowd.ts` is the picture and
+                 `scripts/bench-crowd.ts` the cost: 10 bodies at 0.5% of a 60Hz
+                 frame, 50 at 24%, 100 at 58%.
                  `sim/aggro.ts` is whether one body has business with another
                  (spec 163), and it exists because until it did, the entire
                  aggro system was one line in `blow.ts` -- `targetId ??
