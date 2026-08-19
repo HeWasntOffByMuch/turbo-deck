@@ -10,10 +10,15 @@
  *
  * `?perf=noshadow,noprops` in the same register as `?seed=`, `?wire=` and
  * `?slots=` -- a harness affordance, off unless asked for, and never a game
- * rule. Nothing here changes what the sim does; it changes what is drawn, which
- * is why it is a measuring tool and not a setting.
+ * rule. Nothing here changes what the sim does.
  *
- * Pure: a string in, four booleans out.
+ * `noworker` (spec 180) is the odd one out and is here rather than anywhere
+ * else for the same reason as the rest: it changes neither the sim nor the
+ * picture, only *which thread* builds the picture, and the only way to say what
+ * moving the load bought is to run one machine both ways. It is also the way
+ * back if a worker turns out to be the problem rather than the fix.
+ *
+ * Pure: a string in, five booleans out.
  */
 
 export interface PerfFlags {
@@ -23,11 +28,19 @@ export interface PerfFlags {
   readonly noProps: boolean;
   /** The terrain surface and its walls are hidden. */
   readonly noTerrain: boolean;
+  /** The chunk load runs on this thread, as it did before spec 180. */
+  readonly noWorker: boolean;
   /** Whether any flag is set, so the readout can say the frame is not the real one. */
   readonly any: boolean;
 }
 
-const NONE: PerfFlags = { noShadow: false, noProps: false, noTerrain: false, any: false };
+const NONE: PerfFlags = {
+  noShadow: false,
+  noProps: false,
+  noTerrain: false,
+  noWorker: false,
+  any: false,
+};
 
 /**
  * Read `?perf=` as a comma-separated list.
@@ -44,6 +57,10 @@ export function parsePerfFlags(search: string): PerfFlags {
     noShadow: names.has('noshadow'),
     noProps: names.has('noprops'),
     noTerrain: names.has('noterrain'),
+    noWorker: names.has('noworker'),
   };
-  return { ...flags, any: flags.noShadow || flags.noProps || flags.noTerrain };
+  return {
+    ...flags,
+    any: flags.noShadow || flags.noProps || flags.noTerrain || flags.noWorker,
+  };
 }

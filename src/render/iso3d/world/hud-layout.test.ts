@@ -20,6 +20,7 @@ import {
   poolBottom,
   poolClearance,
   poolLabelFits,
+  readoutShown,
   stripHeight,
   stripWidth,
 } from './hud-layout.js';
@@ -105,6 +106,18 @@ describe('the HUD layout', () => {
   it('draws no weapon switch on a finger, and keeps it on a desktop', () => {
     expect(compact.showsWeaponSwitch).toBe(false);
     expect(desktop.showsWeaponSwitch).toBe(true);
+  });
+
+  /**
+   * The toggle behind `debug.toggleStats` (spec 183). Two decisions, and the
+   * layout's is the one that cannot be argued with: a phone has no keyboard to
+   * ask with, so a `true` arriving there did not come from a player.
+   */
+  it('lets the player hide the readout, and keeps a finger without one either way', () => {
+    expect(readoutShown(desktop, true)).toBe(true);
+    expect(readoutShown(desktop, false)).toBe(false);
+    expect(readoutShown(compact, true)).toBe(false);
+    expect(readoutShown(compact, false)).toBe(false);
   });
 
   /**

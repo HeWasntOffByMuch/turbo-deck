@@ -125,9 +125,22 @@ schemas/         JSON Schema (draft-07) for the three unit documents and the wea
                  throughout, so a typo'd key in a hand-edited file is an error with
                  a pointer at it rather than a field that silently does nothing.
 maps/            the world, as a map document (spec 072). arena.json is what the
-                 server loads at boot and streams to clients; regenerate it with
-                 `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
-                 and save over it. Checked in so the world reviews as a diff.
+                 server loads at boot and streams to clients, what the Play tab
+                 imports, and -- since spec 176 -- what the Map editor tab opens;
+                 regenerate it with `npx tsx scripts/bake-map.ts`, or edit it in
+                 the editor -- which since spec 177 writes this file directly,
+                 through a `POST /api/map` the dev server answers and a build
+                 has not got, so "save over it" stopped being four steps a
+                 person does by hand and a download nobody could tell had
+                 landed. That last clause was documented
+                 here for a hundred specs and was not true: the editor baked its
+                 own world from `viewSeed()`, which falls back to the clock, so
+                 it opened a different world every session and nothing placed in
+                 it -- a marker least of all -- had anywhere to arrive. Nobody
+                 could see it while the shipped map *was* the generated world
+                 (`bake-map.ts` defaults to seed 1, and the arena was seed 1 with
+                 no parts); spec 165 grew the map and the coincidence went with
+                 it. Checked in so the world reviews as a diff.
                  recipes/ are the feature lists parts are grown from (spec 083) --
                  `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
                  --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
@@ -763,9 +776,69 @@ src/render/iso3d/studio/  the Studio tab (spec 109), the fifth entry in the tab
                  and cannot fail a headless test -- and it is the only thing that
                  can tell whether three's GLTFLoader accepts the .glb we write.
 src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
-                 from a loaded map document, never from the world generator.
-                 camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
-                 history.ts are pure and tested headlessly; view.ts, cursor.ts and
+                 from a loaded map document, never from the world generator --
+                 and since spec 176 from *the* document, `maps/arena.json`, the
+                 one the server boots from. map-source.ts is where that is
+                 decided and the only place it may be: it holds the same `?raw`
+                 module the Play tab plays, and `openEditorMap` answers both
+                 halves of the question at once -- which map, and what a save of
+                 it comes back called, since "save over it" is a copy when the
+                 download is named `arena.json` and a rename somebody has to get
+                 right when it is named after a seed. A generated world stays
+                 behind `?map=generated`, because looking at what a seed produces
+                 before `bake-map.ts` commits it is a real thing to want; what it
+                 is not is the default, since a default that is *nearly* the
+                 game's world is worse than one that plainly is not. `?seed=`
+                 deliberately does not switch sources -- it is session-wide and
+                 answers which generated world rather than whether -- so a
+                 harness pinning a seed for the Play tab cannot take the editor
+                 off the map as a side effect. `EditorScene` now *requires* the
+                 document it edits: the fallback to the generator was one line,
+                 and one line is what this cost.
+                 map-write.ts is the other end of the same loop (spec 177): a
+                 download is not a saved map, it is the first of four steps with
+                 nothing confirming any of them, and the autosave saying
+                 "autosaved" while the file on disk was untouched is the same
+                 lie from the other side. The browser half returns four outcomes
+                 rather than ok/failed, because "there is no dev server here"
+                 (a built page -- use the download), "the server said no", and
+                 "nothing answered" have three different fixes and one message
+                 for all three names none of them. `scripts/dev-map-write.ts` is
+                 the disk half, `apply: 'serve'` so a build has no such endpoint,
+                 with every rule about *which* path may be written pure and
+                 tested -- a bare `.json` name resolved under `maps/` and checked
+                 by its resolved parent, since a prefix test passes
+                 `maps-elsewhere/`. The body goes through `parseMap` before
+                 anything is written and the write is a rename, so the map the
+                 server boots from cannot be replaced by something that will not
+                 load or by half a file. The rule that had to be measured rather
+                 than reasoned: **the write must not hot-reload the page**.
+                 `maps/arena.json` is a `?raw` module in the graph, so writing it
+                 made Vite reload the tab -- three seconds after the click the
+                 page went blank and came back on the Play tab, re-streaming 169
+                 chunks, with the editor rebuilt from disk. For a write the
+                 editor *made* that is backwards, since the newest copy is the
+                 one in the tab; so the plugin swallows the reload for its own
+                 writes only, invalidating the module without announcing it so a
+                 later reload by hand still reads the new bytes.
+                 tools.ts holds the one thing 176 and 177 both missed, because
+                 neither was about the panel (spec 178): of the five marker
+                 kinds only `spawner` has a reader anywhere, and the strip
+                 presented all five identically with an always-live monster
+                 dropdown under them. `spawn` and `spawner` differ by two
+                 letters, `spawn` was the default, and picking a monster and
+                 pressing the wrong one of the pair produces a map that saves
+                 correctly, boots correctly and has an empty arena. So the
+                 stored kind does not move -- it is a byte on the wire -- and
+                 the *button* says `monster`, the dropdown is **disabled**
+                 rather than merely present when its kind is not armed (shown
+                 and live are different claims, and the layout argument for
+                 showing it always still holds), a `Does` row says
+                 `nothing reads it yet` for the four that are sockets with
+                 nothing plugged in, and placing one reports what it made:
+                 `placed spawner-2: grazer`.
+                 camera.ts, brush.ts, paint.ts, scatter.ts, markers.ts, parts.ts
+                 and history.ts are pure and tested headlessly; view.ts, cursor.ts and
                  marker-view.ts are the three.js scene; panel.ts is the lil-gui
                  surface. parts.ts adds and removes map parts (spec 084) through
                  the same bakePart the grow script uses, and history.ts records
@@ -776,8 +849,98 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  for the same reason (spec 086): props.ts groups props into
                  square batches for culling, and an edit rebuilds only the
                  batches over the ground it touched.
+                 paint.ts is the material brush (spec 179), and it is beside
+                 brush.ts rather than inside it because brush.ts is what a stroke
+                 does to the *height* array and every one of its four tools reads
+                 and writes heights. What it exists to fix is that a material used
+                 to be a consequence and never a choice: the only thing writing one
+                 after the bake was `refreshMaterials`, which *derives* it, so a
+                 dirt path had to be a ramp steep enough for `dirtSlope` to catch
+                 and sand had to be dropped near the water. Three decisions in it.
+                 **Water is not paint** and the palette is five rather than six --
+                 a material says what ground is made of, `water` says where it sits
+                 relative to the flood line, and painting either direction is a lie
+                 the renderer draws: the quad is at `layer.waterLevel`, so water on
+                 high ground is a surface buried under the terrain carrying it, and
+                 sand on a lake bed is a dry hole in a lake. It is refused on the
+                 *stored* material as well as on the level, because those disagree:
+                 `classify` measures a sample height and the guard measures the
+                 mean of four jittered corners, and only checking the level
+                 repainted five cells of a lake. **The soft edge is dithered**,
+                 since one material per cell forbids a blend (spec 043's hard
+                 boundaries are the art direction) -- and the threshold is hashed
+                 off the cell's own coordinates rather than drawn per frame, which
+                 is the whole design: under a per-frame roll a rim cell at weight
+                 0.1 fills in with probability 1 - 0.9^60 after a second of holding
+                 the brush still, so the feathered edge survives only as long as
+                 you keep moving. Hashed off the cell, holding still changes
+                 nothing, painting twice is idempotent, and a boundary you go back
+                 over does not creep outward -- the same shape spec 125's rock
+                 erosion has. And the footprint is the distance to the **segment**
+                 the cursor swept rather than a stamp per frame, which is what
+                 makes a stroke a function of where the cursor went rather than of
+                 the frame rate; the height brush cannot have that property,
+                 because it integrates a rate over `dtSeconds` and this has no rate
+                 to integrate. A repaint carries its own stroke flag in view.ts: it
+                 is the first edit here that changes the document without moving
+                 anything, so it owes a re-mesh and a revision and none of the nav
+                 re-bake, prop rebuild or marker refresh -- walkability is ground,
+                 solidity and the water line, a prop's colour comes from its own
+                 part rather than from what it stands on, and a marker sits at a
+                 height.
                  `npx tsx scripts/preview-parts.ts` drives the tools in a real
-                 browser, since the drag and the commit live in view.ts.
+                 browser, since the drag and the commit live in view.ts, and
+                 `npx tsx scripts/probe-map-editor.ts` is the one that asks
+                 whether any of it is wired to anything: it places a spawner on
+                 the shipped map and reads it back out of the *file the browser
+                 downloaded*, because a marker the editor draws and does not save
+                 is exactly the bug 176 turned out to be -- every rule about
+                 saving a marker green in Node, beside a tab that called none of
+                 them on the map anybody plays. Since 177 it runs twice -- over
+                 `dist/`, where the write button must *say* there is no dev
+                 server rather than look like a failed save, and over a real
+                 dev server, where it has to change the file on disk. The second
+                 half backs the map up and puts it back, because there is no way
+                 to check that a button writes the map without writing it.
+                 `npx tsx scripts/preview-paint.ts` is the same for the material
+                 brush, and everything in it is measured off the **pixels**,
+                 because the way this feature fails is "the store changed and the
+                 ground did not". Two things in it were learned by getting them
+                 wrong. Reading each pixel as whichever `TERRAIN_COLORS` entry it
+                 is nearest found dirt perfectly and lost snow completely -- lit,
+                 graded and quantized, near-white lands closer to `rock` than to
+                 `snow` -- so it measures *change* instead, which has nothing to be
+                 wrong about and is the sharper instrument anyway: a cell either
+                 took the paint or it did not, which is precisely what the dithered
+                 edge is made of. And the editor is not a still -- the trees sway,
+                 about 9000 pixels of a 936x799 view a second -- so each state is
+                 sampled twice and only the pixels both frames held still are
+                 counted, the aim is *found* rather than guessed (a fixed fraction
+                 of the viewport landed on a tree, whose canopy sways and whose
+                 shadow is too dark to change visibly, and read as a stroke 58%
+                 solid in its own middle), and the mouse is parked over the panel
+                 for every measurement, since the cursor ring is a ~120px circle
+                 the frame before it did not have and was the whole of the residue
+                 an undo appeared to leave behind. The geometry is taken from the
+                 largest *connected* mass rather than from every changed pixel,
+                 because a stroke is one mass and a leaf caught at the same phase
+                 in both frames of one pair and a different one in the next is
+                 not: a handful of those in the window's corners dragged the
+                 95th-percentile radius from 89px to 185px, which put two of the
+                 four coverage bands outside the stroke entirely and reported a
+                 dithered edge as a dead one. Area is robust to specks and a
+                 radius is not. And it clears `AUTOSAVE_KEY` before the page
+                 loads, or a run measures what the *previous* run left behind --
+                 the aim is chosen the same way every time, so the second run
+                 pressed snow onto ground the first had already painted snow and
+                 would have reported a working brush as doing nothing. What it
+                 reports is the coverage *profile* rather than an absolute figure
+                 in the middle, because the middle is not all paintable -- a
+                 prop's shadow is too dark to read either way and ground under the
+                 flood line is refused outright and correctly -- so a threshold
+                 there would be a fact about where the trees are. 79% -> 71% ->
+                 59% -> 28% out from the centre is the dither, and a
+                 cookie-cutter circle cannot make that shape.
 src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim runs on
                  the same fixed 60Hz timestep as src/sim/ and broadcasts deltas
                  every third tick (20Hz) -- one rate for the game, another for the
@@ -1504,7 +1667,74 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  `experienceForLevel` rather than a copy of the curve, because
                  the strip and the character sheet disagreeing about how far
                  along somebody is is the kind of bug nobody reports -- they
-                 just stop trusting the bar. pool-bars.ts holds one judgement:
+                 just stop trusting the bar. Since spec 184 it is purple rather
+                 than gold, and the recolour is the smaller half of that spec:
+                 experience now has *two* places it is shown -- the strip and a
+                 number that floats off a kill -- and one colour to learn is
+                 what makes them read as the same fact. Gold had to go because
+                 the number is over a body, where gold is already a cast that
+                 can still be called off and a floating gold number is a
+                 critical hit; a strip at the frame's own edge could get away
+                 with sharing a hue and a number cannot.
+                 xp-gain.ts is the other half (spec 184), and it exists because
+                 **the server never says "you earned 12"**: experience arrives
+                 as a whole `Stats` message with a level and a count in it,
+                 replacing whatever was there, so a gain is a difference -- and
+                 the difference is not the subtraction it looks like, since a
+                 level-up moves the count backwards. A kill taking somebody from
+                 5 short of level 2 to 3 into it earned 8, and the raw counts
+                 differ by minus the whole level; `cumulativeExperience` is the
+                 monotonic number two readings can honestly subtract. Two rules
+                 beside it, each the fix for the version without it. The
+                 **first reading only establishes the baseline**, because the
+                 first `Stats` carries a whole character and a client that
+                 reported a gain on connect would throw a session's worth of
+                 experience across the screen of somebody who has just logged
+                 in. And a **backwards move reports nothing and re-baselines**
+                 -- an admin reset is not a negative reward, and leaving the old
+                 baseline would swallow every real gain until it had all been
+                 earned back. Where the number *goes* is a join view.ts makes
+                 rather than a fact on the wire: nothing links a `Stats` to the
+                 kill that caused it, so a kill by the local player remembers
+                 the anchor its damage number was already given and the frame
+                 that sees the total move spends it there; a grant with no kill
+                 behind it falls back to the player's own body, which is the
+                 only other place a number about the player could honestly go.
+                 The *path* is the third piece and lives in damage-popup.ts as a
+                 second trail, sharing spec 096's one field, one capacity, one
+                 projection and one expiry. It needs to be distinguishable
+                 because the pair is spawned on the same tick, on the same body,
+                 from the same anchor. The first cut swept the reward out to the
+                 side on an ease-out, which separated it perfectly and looked
+                 wrong: **nothing in this game leaves a body at 45 degrees**,
+                 and reading the pair meant following two marks going different
+                 ways. So a reward is stacked **under** the blow, in the blow's
+                 own lane, rising at the blow's own rate -- one column, nothing
+                 to follow -- and earns its own moment by *outliving* the number
+                 above it, by `XP_EXTRA_LIFE` (half a second at 60fps). What
+                 makes that a column rather than two things that happen to line
+                 up is that `XP_RISE` is **derived and not authored**:
+                 `NUMBER_RISE * XP_LIFE / NUMBER_LIFE`, so the two share a rate
+                 and only the time differs -- a rate of its own has them
+                 converge or separate, which is the diagonal's problem in
+                 another direction. It reads the lane counter without consuming
+                 one, so a kill's reward cannot shift where the next blow on
+                 that body draws its number, and successive rewards on one group
+                 step down through `XP_STACK` gaps rather than piling up. The
+                 text is `+N XP` and stays labelled: the colour and the column
+                 say "this is not damage" and neither of them says what it *is*,
+                 and a purple number under a white one is a second quantity
+                 whose identity is the whole point. The label costs three times
+                 the width of the count alone, which was measured rather than
+                 assumed and is why this is the smallest text of the pair, at
+                 half a critical's scale.
+                 `npx tsx scripts/probe-xp-popup.ts` is the half no headless
+                 test can see, over spec 164's `hud-probe.html` rig: it lands a
+                 real blow and earns a real reward at one point and measures the
+                 pair off the DOM, reading the purple out of the SVG rather than
+                 out of the constant -- a number that reached the page in the
+                 damage palette fails there.
+                 pool-bars.ts holds one judgement:
                  **an unknown maximum is not a maximum of zero**, or the opening
                  frames of every session paint an empty health bar over a player
                  at full health -- and its health bar is the *same bar
@@ -1730,6 +1960,92 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  browser is delivering pointer events. `fullscreen.ts` beside it
                  is the tab bar's fullscreen button -- DOM only, and absent on
                  anything that cannot go fullscreen or is not a coarse pointer.
+src/render/iso3d/props.ts's instance half  where every prop stands, composed on
+                 the worker (spec 181). A region rebuild was 32.7ms and one
+                 dropped frame every time; the frame pays 1.0ms of it now, and
+                 that took two changes because neither was enough alone -- the
+                 worker leaves 16.5ms and the sharing leaves 20ms, against a
+                 16.7ms frame. `buildRegion` called `treeParts`, `bushParts` and
+                 `fenceParts` **per region**, each building `BufferGeometry`
+                 from scratch and welding it again: memoized, 32.7ms to 18.5ms.
+                 `buildRegionInstances` then takes the matrix and colour
+                 arithmetic off the thread: 18.5ms to 1.0ms.
+                 The geometry *object* still cannot be shared, and the reason is
+                 the feature that made the per-region rebuild look necessary:
+                 `applySway` writes `aWindBase` and `aWindTune` -- one entry per
+                 tree -- onto `mesh.geometry`, so ninety regions sharing one
+                 geometry is ninety regions swaying around whichever was built
+                 last. Each batch gets a **shell** instead: its own geometry over
+                 the same `BufferAttribute` objects, which costs an object and
+                 four assignments and does no vertex work. And a shell is
+                 **stripped before it is disposed**, because three's
+                 `onGeometryDispose` removes the GPU buffer of every attribute a
+                 geometry holds -- disposing one as-is frees the shared ones and
+                 makes every other region re-upload, a hitch caused by the very
+                 rebuild this makes cheap. Both hazards were checked by putting
+                 the bug back: exactly the two tests written for them failed and
+                 the other nine passed, including equality against the path that
+                 shipped -- which is the shape to expect, because sharing a
+                 geometry does not move a single tree, it moves what the wind
+                 does to them. `PROP_GROUPS` is the batch enumeration named once
+                 so `(group, part)` means the same thing on both sides of the
+                 boundary, and `adoptRegion` is the seam: `rebuildWithin` is that
+                 with `buildRegionInstances` in front of it, so a field built
+                 here and one built on the worker are the same field by
+                 construction rather than by two implementations agreeing.
+src/render/iso3d/terrain-arrays.ts, world/map-worker*.ts  the load, running
+                 beside the frame rather than in it (spec 180). The measurement
+                 the whole thing turns on: `terrainMesh.rebuild` is 2050ms across
+                 a cold start of which **15ms is three.js** -- found by patching
+                 `setAttribute` and `computeVertexNormals` and timing only those.
+                 Everything else was a buffer of numbers being filled in, on the
+                 one thread that also has to draw. So terrain-arrays.ts is that
+                 mesher with no rendering library in it, and the worker owns a
+                 `StreamedMap` of its own and answers in typed arrays; the
+                 renderer keeps a store too, because `scene.ground(x, z)` is
+                 asked mid-frame by every body, decal and effect and there is no
+                 synchronous call across a thread. That is affordable only
+                 because of the split spec 165 made for another reason --
+                 `insertChunk` is 0.1ms and `buildChunk` is 3.4ms -- so the two
+                 sides are not paying one bill twice. A chunk arriving while
+                 walking cost the frame 23.6ms and costs 1.6ms.
+                 Three rules, each of which was got wrong first. **Transfer only
+                 what you allocated for this reply**: `footprint.materials` is a
+                 reference to the store's own array and a nav grid's `heights`
+                 is the per-cell height cache, so transferring either hands the
+                 worker its own caches away -- which `postMessage` refused, on
+                 the *second* grid. **Nothing three.js-shaped may be
+                 reimplemented**: the walls' flat normals stay
+                 `computeVertexNormals` on the geometry rather than being
+                 replicated, and the colour transfer is three's `SRGBToLinear`
+                 in three's own premultiplied form with a test against
+                 `THREE.Color` rather than against the formula -- the extraction
+                 is exact, 9.97M floats across 288 meshes identical element for
+                 element. And **navigation moves on the remote path only**: a
+                 loopback tab runs the sim, `routeToward` calls `navGridFor`
+                 inside the tick, and a grid arriving when a worker happens to
+                 finish is wall-clock input to a deterministic simulation.
+                 map-worker-client.ts carries an in-process twin behind the same
+                 interface, which is not a courtesy -- `npm test` runs in Node
+                 where `Worker` does not exist, and a pipeline reachable only
+                 from a browser is the state spec 165 spent four follow-ups
+                 regretting. `?perf=noworker` is the same switch for a person.
+                 `npx tsx scripts/bench-stream.ts` splits its rows by thread;
+                 `npx tsx scripts/bench-walk.ts` counts what a *walk* costs, and
+                 it had to be told two things before it would stop reporting
+                 zero: a raw held direction walks into the first of 6942 trees
+                 after 413 units, so it drives the renderer's own `moveIntent`
+                 and `RoutePlanner`; and a walker that sets off during the load
+                 drags the request window across the map before the gate opens,
+                 which is a scenario no player can produce. On this map the
+                 arena is 210 chunks against a 169-chunk request window, so the
+                 gate opens holding four fifths of the world and only 26 more
+                 chunks ever arrive -- which is why the prop-region completeness
+                 rule measured 1.29x rather than the 2-4x it was reasoned to be.
+                 `npx tsx scripts/probe-streaming.ts` (and `PERF=noworker`) is
+                 the browser half, and it found the two bugs no headless test
+                 could -- a worker never sent the map, so 169 chunks held and 0
+                 drawn with every unit test green.
 src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
                  111). The three.js half of "the tool and the game read the same
                  files": load the .glb, strip root motion and say so, write a
@@ -1888,6 +2204,36 @@ src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  writes them -- so the angle and the zoom span are also published
                  as `data-camera-orbit` and `data-camera-zoom`, because both
                  probes used to read them off inputs that a phone has not got.
+src/render/iso3d/vfx-controls.ts  the seventh of those buttons (spec 121), and
+                 the rule that came out of it is that **a setting is only as wide
+                 as the thing it reaches** (spec 182). Its gore level was pushed
+                 into `DecalField`, which owns the *stains*, and the stains are
+                 the smaller half of what the row names -- the spatter is chosen
+                 by `effectsForBlow`, which had never been told the setting
+                 existed, so `Blood: Off` left every red brush mark coming off
+                 every body and only swept up after them. `Less` was worse: no
+                 code anywhere read level 1, so the middle button was a label.
+                 Both halves were individually correct and individually tested,
+                 which is exactly why a green suite sat beside a setting that did
+                 not work, and the fix is that the level reaches *both* -- what a
+                 blow throws (`vfx-wire.ts`) and what stays on the ground
+                 (`decals.ts`, a fraction of the authored caps rather than a
+                 second table). What `Off` does **not** do is draw nothing: a
+                 body that would have bled falls through to the impact a
+                 construct already draws, because a blow with no picture is a
+                 fight that is harder to read than one with a quieter picture.
+                 Effect detail was fine throughout and is unchanged; what it
+                 lacked was any way to see that without playing the game. `npx
+                 tsx scripts/probe-vfx-settings.ts` is that, and the thing worth
+                 knowing about it is that **every check in it is an absence** --
+                 no blood at Off, no pool at Less -- so a window in which nothing
+                 was hit passes all of them. It measured exactly that first: one
+                 window killed what it was fighting and the five after it watched
+                 an empty field and reported green. So a window runs until it has
+                 seen an impact effect and a window that never does is a failure,
+                 and the evidence is the `hit_*` flash, which is what a bleeding
+                 body falls back to at `Off` -- it survives the very setting being
+                 measured.
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step

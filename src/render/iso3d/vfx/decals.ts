@@ -85,6 +85,20 @@ export const DECAL_LIMITS: DecalLimits = {
 /** 0 off, 1 reduced, 2 full. Off is off: nothing is stored and nothing is built. */
 export type GoreLevel = 0 | 1 | 2;
 
+/**
+ * How much of {@link DECAL_LIMITS} each gore level keeps. Index is the level.
+ *
+ * A fraction of the authored caps rather than a second table of numbers, so
+ * "Less" is visibly a reduction of "Full" rather than an unrelated pair somebody
+ * has to keep in step -- and so a change to the caps still means something at
+ * every level.
+ *
+ * Level 1's entry is what makes the middle button do anything at all. Until spec
+ * 182 nothing anywhere read it: `add` refused at 0 and accepted otherwise, so
+ * `Less` and `Full` were the same code and the same ground.
+ */
+const GORE_SCALE = [0, 0.25, 1];
+
 function keyOf(cx: number, cz: number): string {
   return `${cx},${cz}`;
 }
@@ -108,8 +122,16 @@ export class DecalField {
   }
 
   setGore(level: GoreLevel): void {
+    if (level === this.gore) return;
     this.gore = level;
-    if (level === 0) this.clear();
+    if (level === 0) {
+      this.clear();
+      return;
+    }
+    // Turning it down trims the ground that is *already* stained. Waiting for
+    // the next add would leave the setting looking broken for exactly as long as
+    // nobody was hitting anything, which is when somebody changes it.
+    this.enforceAll();
   }
 
   getGore(): GoreLevel {
@@ -120,6 +142,16 @@ export class DecalField {
   setViewpoint(x: number, z: number): void {
     this.viewX = x;
     this.viewZ = z;
+  }
+
+  /** The per-chunk cap at the current level. Derived, never written down twice. */
+  private get perChunkCap(): number {
+    return Math.max(1, Math.round(this.limits.perChunk * (GORE_SCALE[this.gore] ?? 1)));
+  }
+
+  /** The global cap at the current level. */
+  private get totalCap(): number {
+    return Math.max(1, Math.round(this.limits.total * (GORE_SCALE[this.gore] ?? 1)));
   }
 
   chunkOf(x: number, z: number): ChunkKey {
@@ -272,7 +304,7 @@ export class DecalField {
   private enforcePerChunk(key: string, bucket: Decal[]): void {
     let solid = 0;
     for (const decal of bucket) if (decal.fadeFrom < 0) solid += 1;
-    let over = solid - this.limits.perChunk;
+    let over = solid - this.perChunkCap;
     if (over <= 0) return;
     for (const decal of bucket) {
       if (over <= 0) break;
@@ -284,11 +316,23 @@ export class DecalField {
   }
 
   /**
+   * Re-apply both caps to a field nobody has added to.
+   *
+   * What `setGore` needs and what an add never does: an add can only push one
+   * bucket over, so it checks that one. Lowering the level moves every cap at
+   * once, and every bucket has to be measured against the new one.
+   */
+  private enforceAll(): void {
+    for (const [key, bucket] of this.buckets) this.enforcePerChunk(key, bucket);
+    this.enforceTotal();
+  }
+
+  /**
    * Over the global cap, whole buckets go -- the furthest from the viewpoint
    * first, and never the one the player is standing in.
    */
   private enforceTotal(): void {
-    if (this.live <= this.limits.total) return;
+    if (this.live <= this.totalCap) return;
     const size = Math.max(1, this.limits.chunkSize);
     const ranked: { key: string; distance: number }[] = [];
     for (const key of this.buckets.keys()) {
@@ -302,7 +346,7 @@ export class DecalField {
     ranked.sort((a, b) => b.distance - a.distance);
 
     for (const { key } of ranked) {
-      if (this.live <= this.limits.total) break;
+      if (this.live <= this.totalCap) break;
       const bucket = this.buckets.get(key);
       if (!bucket) continue;
       this.live -= bucket.length;

@@ -1,16 +1,17 @@
 /**
- * The two rules spec 165 exists to enforce, driven by handing the module numbers.
+ * The rules spec 165 exists to enforce, plus the one spec 180 adds, driven by
+ * handing the module numbers.
  *
- * The second one is the interesting test: the old settle was two *frames*, and
- * every test that could have caught it would have had to know that frames are
- * 16ms and deltas are 50ms. So the delta cadence is written into the test
- * explicitly, and the assertion is about how many rebuilds a whole cold start
- * costs rather than about what happens on any one frame.
+ * The settle tests are the interesting ones: the original rule was two
+ * *frames*, and every test that could have caught it would have had to know
+ * that frames are 16ms and deltas are 50ms. So the delta cadence is written
+ * into the test explicitly, and the assertion is about how many rebuilds a
+ * whole cold start costs rather than about what happens on any one frame.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { ChunkIngest } from './chunk-ingest.js';
+import { ChunkIngest, type WorldRect } from './chunk-ingest.js';
 import type { ChunkRef } from '../../../server/client/streamed-map.js';
 
 const CELL = 22;
@@ -29,64 +30,51 @@ function chunk(cx: number, cz: number): ChunkRef {
   };
 }
 
-function ingest(meshBudget = 4, settleMs = 120, regionsPerFlush = 8): ChunkIngest {
-  return new ChunkIngest({ meshBudget, settleMs, regionSize: 1100, regionsPerFlush });
+function ingest(settleMs = 120, regionsPerFlush = 8, incompleteHoldMs = 4000): ChunkIngest {
+  return new ChunkIngest({ settleMs, regionSize: 1100, regionsPerFlush, incompleteHoldMs });
 }
 
-describe('the meshing budget', () => {
-  it('never meshes more than the budget in one frame', () => {
-    const queue = ingest(4);
-    queue.offer([...Array(20)].map((_, i) => chunk(i, 0)), 0);
+/** Complete everything offered, as a worker's replies eventually do. */
+function completeAll(queue: ChunkIngest, offered: readonly ChunkRef[], nowMs: number): void {
+  for (const c of offered) queue.complete(c.layer, c.cx, c.cz, nowMs);
+}
 
-    for (let frame = 0; frame < 5; frame++) {
-      expect(queue.takeMesh(0).length).toBeLessThanOrEqual(4);
-    }
-  });
-
-  it('meshes every queued chunk exactly once', () => {
-    const queue = ingest(4);
-    const offered = [...Array(21)].map((_, i) => chunk(i, 0));
+describe('the ledger of ground owed a mesh', () => {
+  it('holds a chunk pending until its triangles come back', () => {
+    const queue = ingest();
+    const offered = [...Array(6)].map((_, i) => chunk(i, 0));
     queue.offer(offered, 0);
+    expect(queue.pending).toBe(6);
 
-    const seen: string[] = [];
-    while (queue.pending > 0) {
-      for (const c of queue.takeMesh(0)) seen.push(`${c.cx},${c.cz}`);
-    }
-
-    expect(seen).toHaveLength(21);
-    expect(new Set(seen).size).toBe(21);
+    expect(queue.complete(0, 0, 0, 0)).toBe(true);
+    expect(queue.complete(0, 1, 0, 0)).toBe(true);
+    expect(queue.pending).toBe(4);
+    expect(queue.meshed).toBe(2);
   });
 
-  it('hands a taken chunk back exactly once, and never holds it again', () => {
-    // `takeMesh` dequeues what it returns, so a caller that drops part of the
-    // list drops that ground for the session -- a hole in the world that never
-    // fills in, because the chunk is already in the streamed map and will not be
-    // offered a second time. The queue cannot prevent that; what it can do is
-    // make the contract impossible to miss, which is what this pins.
-    const queue = ingest(4);
-    queue.offer([...Array(6)].map((_, i) => chunk(i, 0)), 0);
-
-    const first = queue.takeMesh(0);
-    expect(first).toHaveLength(4);
-    expect(queue.pending).toBe(2);
-
-    // Nothing taken is still queued: the caller now owns every one of them.
-    const second = queue.takeMesh(0);
-    const taken = [...first, ...second].map((c) => `${c.cx},${c.cz}`);
-    expect(new Set(taken).size).toBe(6);
+  it('completes a chunk once, and says so when asked twice', () => {
+    // Spec 176 replaced `takeMesh` -- which *dequeued* what it returned, so a
+    // caller that dropped part of the list left ground held with no geometry
+    // for the session -- with completion by coordinate. A chunk re-offered
+    // while its mesh was in flight is completed by the first reply and
+    // re-completed by the second, which must be a no-op rather than a second
+    // decrement.
+    const queue = ingest();
+    queue.offer([chunk(0, 0)], 0);
+    expect(queue.complete(0, 0, 0, 0)).toBe(true);
+    expect(queue.complete(0, 0, 0, 0)).toBe(false);
     expect(queue.pending).toBe(0);
-    expect(queue.takeMesh(0)).toHaveLength(0);
+    expect(queue.meshed).toBe(1);
   });
 
   it('collapses a chunk re-offered because a neighbour arrived', () => {
-    // The common case during a burst, not a corner one: chunks arriving along an
-    // edge each re-dirty the one before them.
-    const queue = ingest(8);
+    // The common case during a burst, not a corner one: chunks arriving along
+    // an edge each re-dirty the one before them.
+    const queue = ingest();
     queue.offer([chunk(1, 0), chunk(2, 0)], 0);
     queue.offer([chunk(2, 0), chunk(3, 0)], 8);
 
     expect(queue.pending).toBe(3);
-    expect(queue.takeMesh(0)).toHaveLength(3);
   });
 });
 
@@ -96,14 +84,14 @@ describe('the prop settle', () => {
     // two quiet *frames* always fit in the 50ms between them. Here the same
     // region is re-touched on every delta, so it must never come up for
     // rebuild -- whatever the frame cadence is.
-    const queue = ingest(8, 120);
+    const queue = ingest(120);
     let flushes = 0;
     let now = 0;
 
     for (let delta = 0; delta < 6; delta++) {
       queue.offer([chunk(0, 0)], now);
+      queue.complete(0, 0, 0, now);
       for (let frame = 0; frame < 3; frame++) {
-        queue.takeMesh(now);
         if (queue.takePropRects(now).length > 0) flushes++;
         now += 16;
       }
@@ -113,9 +101,9 @@ describe('the prop settle', () => {
   });
 
   it('fires once that ground has genuinely stopped', () => {
-    const queue = ingest(8, 120);
+    const queue = ingest(120);
     queue.offer([chunk(0, 0)], 0);
-    queue.takeMesh(0);
+    queue.complete(0, 0, 0, 0);
 
     expect(queue.takePropRects(100)).toHaveLength(0);
     expect(queue.takePropRects(200).length).toBeGreaterThan(0);
@@ -123,13 +111,12 @@ describe('the prop settle', () => {
 
   it('draws a settled region while the rest of the map is still streaming', () => {
     // The whole point of making this per region (spec 165 follow-up 5). Under a
-    // single clock for the map, a cold start is never quiet until its last chunk
-    // lands -- so every tree in the world appeared at once, seconds after its
-    // ground. The near region has finished; its trees should not wait on the far
-    // one.
-    const queue = ingest(8, 120);
+    // single clock for the map, a cold start is never quiet until its last
+    // chunk lands -- so every tree in the world appeared at once, seconds after
+    // its ground.
+    const queue = ingest(120);
     queue.offer([chunk(0, 0)], 0);
-    queue.takeMesh(0);
+    queue.complete(0, 0, 0, 0);
 
     // Ground still arriving far away, in a region of its own.
     queue.offer([chunk(8, 8)], 200);
@@ -140,25 +127,25 @@ describe('the prop settle', () => {
     expect(rects[0]?.minZ).toBe(0);
   });
 
-  it('will not rebuild a region a queued chunk still overlaps', () => {
+  it('will not rebuild a region a chunk is still owed over', () => {
     // Props standing on ground whose neighbours are about to be re-meshed would
     // be rebuilt against heights that are about to change.
-    const queue = ingest(1, 120);
+    const queue = ingest(120);
     queue.offer([chunk(0, 0), chunk(1, 0)], 0);
-    queue.takeMesh(0);
+    queue.complete(0, 0, 0, 0);
 
     expect(queue.pending).toBe(1);
-    // Region 0 is touched by both chunks, and chunk (1,0) is still queued.
+    // Region 0 is touched by both chunks, and chunk (1,0) has not come back.
     expect(queue.takePropRects(5000)).toHaveLength(0);
 
-    queue.takeMesh(5000);
+    queue.complete(0, 1, 0, 5000);
     expect(queue.takePropRects(6000).length).toBeGreaterThan(0);
   });
 
   it('hands back the regions the ground covers, not the whole world', () => {
-    const queue = ingest(8, 120);
+    const queue = ingest(120);
     queue.offer([chunk(0, 0)], 0);
-    queue.takeMesh(0);
+    queue.complete(0, 0, 0, 0);
     const rects = queue.takePropRects(200);
 
     // 616 units of chunk inside 1100-unit regions: one region, not the map.
@@ -167,21 +154,23 @@ describe('the prop settle', () => {
   });
 
   it('covers every region a chunk straddles', () => {
-    const queue = ingest(8, 120);
+    const queue = ingest(120);
     // Chunk (1,1) runs 616..1232 on both axes, across the 1100 boundary.
-    queue.offer([chunk(1, 1)], 0);
-    queue.takeMesh(0);
+    const offered = [chunk(1, 1)];
+    queue.offer(offered, 0);
+    completeAll(queue, offered, 0);
 
     expect(queue.takePropRects(200)).toHaveLength(4);
   });
 
   it('hands back at most the per-frame region budget, and keeps the rest', () => {
-    // A region is ~60ms of geometry, so several in one frame is a lurch while
+    // A region is ~34ms of geometry, so several in one frame is a lurch while
     // the player is standing still. They still settle in the order their ground
     // did -- just a frame apart.
-    const queue = ingest(8, 120, 1);
-    queue.offer([chunk(0, 0), chunk(4, 4)], 0);
-    queue.takeMesh(0);
+    const queue = ingest(120, 1);
+    const offered = [chunk(0, 0), chunk(4, 4)];
+    queue.offer(offered, 0);
+    completeAll(queue, offered, 0);
 
     expect(queue.takePropRects(200)).toHaveLength(1);
     expect(queue.takePropRects(200)).toHaveLength(1);
@@ -189,12 +178,50 @@ describe('the prop settle', () => {
   });
 
   it('empties itself, so the same ground is not rebuilt twice', () => {
-    const queue = ingest(8, 120);
+    const queue = ingest(120);
     queue.offer([chunk(0, 0)], 0);
-    queue.takeMesh(0);
+    queue.complete(0, 0, 0, 0);
 
     expect(queue.takePropRects(200)).toHaveLength(1);
     expect(queue.takePropRects(400)).toHaveLength(0);
   });
 });
 
+describe('a region whose ground is not all in yet (spec 180)', () => {
+  /** A region is complete only once it reaches x = 1100. */
+  const halfArrived = (rect: WorldRect): boolean => rect.minX >= 1100;
+
+  it('waits rather than rebuilding once per column that reaches it', () => {
+    // Walking east, the leading-edge region settles on the half it has,
+    // rebuilds all ~270 of its instances, and is dirtied again by the next
+    // column. A 1100-unit region spans parts of about four 616-unit chunks, so
+    // the same 34ms was being paid two to four times over.
+    const queue = ingest(120);
+    queue.offer([chunk(0, 0)], 0);
+    queue.complete(0, 0, 0, 0);
+
+    expect(queue.takePropRects(200, 8, halfArrived)).toHaveLength(0);
+  });
+
+  it('gives up waiting on the longer clock, because declared is not the same as coming', () => {
+    // A chunk outside the request radius arrives when the player walks toward
+    // it and not before. A region straddling that boundary would hold its trees
+    // for as long as they stayed away.
+    const queue = ingest(120, 8, 4000);
+    queue.offer([chunk(0, 0)], 0);
+    queue.complete(0, 0, 0, 0);
+
+    expect(queue.takePropRects(3999, 8, halfArrived)).toHaveLength(0);
+    expect(queue.takePropRects(4001, 8, halfArrived)).toHaveLength(1);
+  });
+
+  it('does not delay a region whose ground is complete', () => {
+    const queue = ingest(120);
+    const offered = [chunk(2, 0)];
+    queue.offer(offered, 0);
+    completeAll(queue, offered, 0);
+
+    // Chunk (2,0) runs 1232..1848, so its regions start at or past 1100.
+    expect(queue.takePropRects(200, 8, halfArrived).length).toBeGreaterThan(0);
+  });
+});
