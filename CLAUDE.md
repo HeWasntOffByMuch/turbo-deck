@@ -601,8 +601,9 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  a property over the whole easing table instead of a claim each
                  widget has to remember. text/ is the two bitmap faces; theme/ is theme.json plus the
                  atlas authored as text; widgets/ is the nine; screens/ is the
-                 eight (the HUD, the bag, the sheet, the shop, the keybindings,
-                 the trade table, the options window and its display page);
+                 nine (the HUD, the bag, the sheet, the shop, the keybindings,
+                 the trade table, the options window, its display page and the
+                 chat);
                  input/ is the actions, the key map and the two preferences that
                  outlive a session -- the bindings and the interface scale, each
                  a versioned document over an injected `StorageLike` that never
@@ -624,6 +625,78 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that no `if` in the renderer changes an outcome is finally a fact
                  about the module graph. **No colour is spelled out** in a widget;
                  a hex literal there fails the build.
+                 chat.ts is the ninth and the only one that is not a window
+                 (spec 189): docked bottom-left in the `hud` layer, no title
+                 bar, never dragged, nothing in the layout store, because it is
+                 furniture that is always there rather than something the player
+                 opened. It exists because the chat protocol was finished at
+                 both ends and neither end had a caller -- `GameClient.say` and
+                 `GameClient.onChat` had none anywhere in the tree, so the
+                 `System` line the server sends on every death and every admin
+                 broadcast were encoded, framed, sent, decoded and handed to an
+                 empty listener list.
+                 Three rules, and the first is the one that decided its whole
+                 shape. **It wipes rather than fades.** Nothing in this framework
+                 blends -- `budget.test.ts` asserts every quad at alpha 255,
+                 because a source-over is the one operation `raster.ts` and a
+                 browser canvas round differently -- and over the *world* an
+                 alpha would be worse rather than better: the UI canvas is
+                 cleared to transparent, so a translucent quad composites
+                 against nothing, and `raster.ts` writes the source straight
+                 through on an empty pixel where a browser stores it
+                 premultiplied and rounds. The two backends would disagree by
+                 construction, which is exactly what the cross-backend
+                 comparison exists to catch. So the log leaves the way a window
+                 arrives (spec 133): a clip computed while painting, anchored at
+                 the bottom so the oldest line goes first and the one somebody
+                 is still reading goes last. It costs no layout, and `animate`
+                 answers reduce-motion centrally by snapping.
+                 **The field pushes `textEntry`**, which is what makes a typed
+                 `1` a one rather than a cast. That context has existed since
+                 spec 123 to justify `TextField` and nothing had ever pushed it:
+                 `setFocused` had no caller either. Which means a press landing
+                 anywhere else has to close the chat -- focus moves on its own,
+                 the field pops the context only when it is *told* it lost
+                 focus, and a stranded push swallows every key in the game from
+                 then on, the same failure a stranded keybinding capture used to
+                 cause.
+                 And **colour comes out of the nineteen that exist**: `focus`
+                 for a speaker's name, `text` for what they said, `textDim` for
+                 a death notice, `accent` for an operator's broadcast. The cap
+                 is against *invented* colour and a channel is not a new thing
+                 in the world -- it is three tones already doing what they mean.
+                 The mount adds two of its own. Up and Down are asked directly
+                 rather than routed, because `TextField` swallows every key it
+                 is given and answers the arrows it cares about itself, so a
+                 routed `ArrowUp` reaches the field and stops -- the same reason
+                 a keybinding capture is asked from the one place that sees
+                 every key. And **the wheel is only taken while the field is
+                 open**: the wheel is camera zoom in the Play tab, and a log
+                 that took it whenever the cursor happened to be bottom-left
+                 would break zoom in one corner of the screen with nothing drawn
+                 there to explain why.
+                 `world/chat-log.ts` is the client state beside it -- a capped
+                 scrollback, a ring of the lines this player sent, and the one
+                 timestamp `revealAt` measures. Pure, and stamped with the
+                 frame's time rather than a clock of its own, for the reason
+                 `error-log.ts` gives: a line arrives on a network callback,
+                 outside the frame loop, and a frame is a few milliseconds
+                 against a ten-second quiet window.
+                 Nothing is echoed locally, because `broadcastMessage` sends to
+                 every connection with a player on it and the sender is one of
+                 them.
+                 `npx tsx scripts/probe-chat.ts` is the half no headless test
+                 can see: two tabs, two players, one real server, and a line
+                 typed in one turning up in the other. It found the layout bug
+                 every green test had missed -- the log drawn straight over the
+                 weapon switch, because `setSafeBottom` had been *derived* from
+                 the pool bars, which sit lower and further right than the thing
+                 actually in that corner. It is measured off `data-hud-bottom`
+                 now, and the probe reports which furniture it found lowest,
+                 because its own first cut measured the pool bars and passed
+                 while the log sat on the switch beside them: a clearance check
+                 against the wrong thing is worse than none, since it reads as
+                 evidence.
                  Since spec 137 the bag is a *pointer* surface: one press and
                  one release on a cell is the whole gesture vocabulary (left
                  takes a stack, right takes half, shift+right takes one,
