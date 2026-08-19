@@ -62,7 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
-| `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 184) |
+| `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 186) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
@@ -160,7 +160,7 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against.
-                 avoidance.ts is how two bodies get past each other (spec 184):
+                 avoidance.ts is how two bodies get past each other (spec 186):
                  ORCA, van den Berg et al.'s reciprocal collision avoidance,
                  RVO2's 2D solver transcribed rather than invented. Each
                  neighbour contributes one half-plane of velocities safe with
@@ -1393,7 +1393,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  branch is *first*, ahead of a held key, since the key is the
                  one branch a player is actively driving.
                  `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
-                 to a body because of the bodies around it (spec 184). Until they
+                 to a body because of the bodies around it (spec 186). Until they
                  existed nothing on the server knew that two units were in the
                  same place: `resolveMovement` is handed `{ world, terrain,
                  config }` and has never once looked at another entity, so a herd

@@ -1,5 +1,5 @@
 /**
- * The neighbour broadphase (spec 184).
+ * The neighbour broadphase (spec 186).
  *
  * Two things are being pinned here and only one of them is "does it find the
  * right bodies". The other is that it finds them in the *same order* every

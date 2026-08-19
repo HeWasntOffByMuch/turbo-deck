@@ -1,5 +1,5 @@
 /**
- * Reciprocal collision avoidance between moving bodies (ORCA, spec 184).
+ * Reciprocal collision avoidance between moving bodies (ORCA, spec 186).
  *
  * This is van den Berg et al.'s *Optimal Reciprocal Collision Avoidance* --
  * RVO2's 2D solver -- transcribed rather than invented. A body states the

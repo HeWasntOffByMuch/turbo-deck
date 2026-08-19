@@ -370,7 +370,7 @@ describe('a standing attack order, over a real session (spec 080)', () => {
         // committing, because the mark died in that window (spec 155) -- and a
         // cancel outranks a commit asked for on the same tick, so it eats the
         // ask. That second term was zero on the trajectory this was first
-        // measured on, which made the constant look like the rule; spec 184
+        // measured on, which made the constant look like the rule; spec 186
         // moved a grazer by a few units and it stopped being. For melee, where
         // `withdrawals` is asserted to be zero just above, this is still
         // exactly `asks - commits <= 1`.

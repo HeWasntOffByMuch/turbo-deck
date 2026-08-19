@@ -1,5 +1,5 @@
 /**
- * Where each of a target's attackers stands (spec 184).
+ * Where each of a target's attackers stands (spec 186).
  *
  * A pack chasing one player is the case that reads worst without help: every
  * body is routed at the same point, so they arrive on the same side, stack into

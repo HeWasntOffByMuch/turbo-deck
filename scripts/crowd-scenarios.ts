@@ -1,4 +1,4 @@
-// The five crowd scenarios (spec 184), built once and read by three things: the
+// The five crowd scenarios (spec 186), built once and read by three things: the
 // picture (`preview-crowd.ts`), the assertions (`src/server/sim/crowd.test.ts`)
 // and the cost (`bench-crowd.ts`).
 //

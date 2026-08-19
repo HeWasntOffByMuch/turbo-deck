@@ -1,5 +1,5 @@
 /**
- * What a crowd does (spec 184).
+ * What a crowd does (spec 186).
  *
  * The five scenarios these assert are the same five `npx tsx
  * scripts/preview-crowd.ts` draws, out of the same harness -- so a panel that
@@ -193,7 +193,7 @@ describe('the crowd pass is part of the deterministic core', () => {
 });
 
 /**
- * The limit spec 184 states rather than hides: a player's own movement is not
+ * The limit spec 186 states rather than hides: a player's own movement is not
  * touched, because it is predicted on their machine (spec 067) and a deflection
  * here is a divergence the client cannot reproduce.
  */

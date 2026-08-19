@@ -1,6 +1,6 @@
 /**
  * The crowd pass: what a tick does to a body because of the bodies around it
- * (spec 184).
+ * (spec 186).
  *
  * Until this existed, nothing on the server knew that two units were in the
  * same place. `resolveMovement` slides a body along walls, refuses it a cliff
@@ -224,7 +224,7 @@ export interface CrowdBody extends CrowdAgent {
    * pushed and as something that pushes.
    *
    * False for a player, and that is a deliberate limit rather than an oversight
-   * (spec 184). Shoving monsters aside by walking into them is a real design
+   * (spec 186). Shoving monsters aside by walking into them is a real design
    * decision with real consequences for every reach, standoff and chase in the
    * game -- it is how a player would kite a pack into a wall -- and it is not
    * the decision this feature is about. Monsters no longer stand inside each
