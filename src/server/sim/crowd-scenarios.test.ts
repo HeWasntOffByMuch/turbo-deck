@@ -337,6 +337,35 @@ describe('a herd crossing open ground', () => {
     expect(widthAcross(positions, { x: 1, y: 0 })).toBeGreaterThan(200);
   });
 
+  it('gets all forty of them to the target, in rings rather than a heap', () => {
+    // The case the brief leads with, and the one the picture caught missing:
+    // every test above measures the *crossing*, and a pack that crossed
+    // beautifully and then piled up on arrival would pass all of them.
+    //
+    // Forty bodies cannot all stand in swinging range of one target -- about
+    // seven fit on the inner ring -- so what is asserted is the shape that
+    // follows from that: everybody arrives, the inner ring is close enough to
+    // fight, nobody is left out in the field, and nobody is inside anybody.
+    const { state, ctx, playerId } = herd(40);
+    const result = run(state, 900, ctx);
+    const target = result.state.entities.get(playerId);
+    if (!target) throw new Error('no player');
+
+    const distances = living(result.state)
+      .filter((one) => one.kind === EntityKindValue.Monster)
+      .map((one) => distanceOf(one.position, target.position))
+      .sort((a, b) => a - b);
+    expect(distances).toHaveLength(40);
+
+    // The nearest are in range of `melee.slash`, which reaches 70 from the
+    // body's edge.
+    expect(distances[0]).toBeLessThan(70 + target.radius);
+    // And the furthest is queued just outside rather than stranded across the
+    // field: four rings of bodies two radii apart is a couple of hundred units.
+    expect(distances[39]).toBeLessThan(260);
+    expect(result.worstOverlap).toBeLessThan(1);
+  });
+
   it('does not dither: bodies commit to a side rather than swinging back and forth', () => {
     const { state, ctx } = herd(40);
     const result = run(state, 400, ctx);

@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 import { CROWD_MAX_AVOID } from '../../sim/constants.js';
 import type { Vec2 } from '../../sim/types.js';
-import { steer, type CrowdBody } from './crowd.js';
+import { escapes, steer, type CrowdBody } from './crowd.js';
 
 const RADIUS = 16;
 
@@ -156,5 +156,63 @@ describe('steer', () => {
     const first = steer(walker(1, 0, 0, EAST), EAST, crowd);
     const second = steer(walker(1, 0, 0, EAST), EAST, crowd);
     expect(second).toEqual(first);
+  });
+});
+
+describe('escapes', () => {
+  const EAST: Vec2 = { x: 1, y: 0 };
+
+  function fan(direction: Vec2, tieBreak: number): Vec2[] {
+    return [...escapes(direction, tieBreak)];
+  }
+
+  it('offers the unbent route first', () => {
+    // Avoidance is a preference and never a veto: a crowd that has steered a
+    // body into a wall must not also be what keeps it there, so the first thing
+    // a stuck body tries is where it actually wanted to go.
+    expect(fan(EAST, 0)[0]).toEqual(EAST);
+  });
+
+  it('opens outwards, nearest to the route first', () => {
+    const offsets = fan(EAST, 0).map(
+      (candidate) => Math.abs(Math.atan2(candidate.y, candidate.x)) * (180 / Math.PI),
+    );
+    for (let i = 1; i < offsets.length; i++) {
+      expect(offsets[i] ?? 0).toBeGreaterThanOrEqual((offsets[i - 1] ?? 0) - 1e-9);
+    }
+  });
+
+  it('is willing to back out, but never straight back the way it came', () => {
+    // The widest candidates point backwards on purpose: a body wedged on a
+    // corner usually has no forward or sideways step at all, and measured
+    // against a pack filing through a two-body gap, a fan that stops at
+    // sideways gets two of sixteen through where this one gets all sixteen.
+    const candidates = fan(EAST, 0);
+    expect(candidates.some((one) => one.x < 0)).toBe(true);
+    // A full reversal is the one direction that cannot be a way past anything.
+    for (const candidate of candidates) {
+      expect(candidate.x).toBeGreaterThan(-1 + 1e-6);
+    }
+  });
+
+  it('keeps every candidate a unit vector', () => {
+    for (const candidate of fan({ x: 0.6, y: 0.8 }, 3)) {
+      expect(Math.hypot(candidate.x, candidate.y)).toBeCloseTo(1, 12);
+    }
+  });
+
+  it('sends two wedged bodies to opposite sides first', () => {
+    // The opposite of the side-step's rule, and deliberately so. Two bodies
+    // passing each other need the *same* handedness; two bodies wedged against
+    // the same obstacle are pointing the same way, so a shared rule sends them
+    // both at the same gap and neither gets through. Here the ids break the
+    // symmetry rather than preserving it.
+    const even = fan(EAST, 2)[1];
+    const odd = fan(EAST, 3)[1];
+    expect(Math.sign(even?.y ?? 0)).toBe(-Math.sign(odd?.y ?? 0));
+  });
+
+  it('is the same fan every time', () => {
+    expect(fan(EAST, 7)).toEqual(fan(EAST, 7));
   });
 });

@@ -233,10 +233,15 @@ export const CROWD_STUCK_PROGRESS = 0.1;
 // The directions a stuck body tries, in degrees off the one it wanted, nearest
 // first. Both signs of each are tried, so this is six candidates.
 //
-// It stops at 135 rather than reaching 180 because a body that can only go
-// backwards is behind something rather than beside it, and reversing puts it at
-// the back of a queue it was already in -- the route will bring it round again
-// on its own once whatever is in front has moved.
+// It reaches 135, which is past sideways and genuinely backwards, and that
+// candidate is the one doing the work: a pack filing through a two-body gap
+// gets 16 of 16 through with it and 2 of 16 without. A body wedged on a corner
+// usually cannot go forwards *or* sideways, and backing out is the only move
+// there is -- it loses its place in the queue and the route brings it round
+// again, which is what a person would do.
+//
+// It stops short of a full reversal because 180 is the one direction that
+// cannot be a way past anything: it is the way the body already came.
 export const CROWD_FAN_DEGREES: readonly number[] = [40, 80, 135];
 
 // --- Walking on ground that has height (spec 056) ---

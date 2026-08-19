@@ -156,3 +156,39 @@ describe('NeighbourGrid', () => {
     expect(() => grid.insert(2, 0, 0)).toThrow();
   });
 });
+
+describe('NeighbourGrid.queryUnsorted', () => {
+  function unsorted(grid: NeighbourGrid, x: number, y: number, range: number, cap = 64): number[] {
+    const out = new Int32Array(cap);
+    return [...out.slice(0, grid.queryUnsorted(x, y, range, out))];
+  }
+
+  it('finds the same set as the sorted query, order aside', () => {
+    const bodies: Body[] = [];
+    for (let i = 0; i < 300; i++) bodies.push({ x: (i % 17) * 41 - 200, y: Math.floor(i / 17) * 41 - 200 });
+    const grid = gridOf(64, bodies);
+    for (let q = 0; q < 30; q++) {
+      const x = -220 + q * 13;
+      const y = -200 + q * 9;
+      const range = 30 + (q % 4) * 40;
+      const loose = new Set(unsorted(grid, x, y, range, 300));
+      expect([...loose].sort((a, b) => a - b)).toEqual(bruteForce(bodies, x, y, range));
+    }
+  });
+
+  it('reports a full buffer by filling it, so a caller can tell', () => {
+    // There is no way to say "and some more" in a count, so a caller that
+    // cannot use a truncated answer has to check -- which is exactly what
+    // `circlesNear` does before it falls back to the full scan.
+    const bodies: Body[] = [];
+    for (let i = 0; i < 40; i++) bodies.push({ x: i, y: 0 });
+    const grid = gridOf(64, bodies);
+    const out = new Int32Array(8);
+    expect(grid.queryUnsorted(0, 0, 1000, out)).toBe(8);
+  });
+
+  it('finds nothing when there is nothing in range', () => {
+    const grid = gridOf(64, [{ x: 0, y: 0 }]);
+    expect(unsorted(grid, 500, 500, 50)).toEqual([]);
+  });
+});

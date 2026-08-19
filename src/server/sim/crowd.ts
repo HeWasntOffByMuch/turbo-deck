@@ -287,6 +287,12 @@ export class CrowdIndex {
  * which is what keeps it affordable: every candidate costs a collision query,
  * and in open ground nothing is ever stuck, so nothing ever probes.
  *
+ * The widest candidates point *backwards*, and that is not an oversight to be
+ * tidied away -- it is most of the value. A body wedged on a corner commonly
+ * has no forward or sideways step at all, and measured against a pack filing
+ * through a two-body gap, a fan that stops at sideways gets two of sixteen
+ * through where one that backs out gets all sixteen.
+ *
  * **The side is broken on id parity, and that is the opposite of the rule the
  * side-step uses on purpose.** Two bodies passing each other need the *same*
  * handedness, because they point opposite ways and one shared rule sends them
