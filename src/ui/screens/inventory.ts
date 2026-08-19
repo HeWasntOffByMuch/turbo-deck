@@ -23,11 +23,33 @@ import { uniformInsets, type Point } from '../core/geom.js';
 import type { Widget } from '../core/widget.js';
 import type { Theme } from '../theme/theme.js';
 import { DragGhost } from '../widgets/drag-ghost.js';
-import { Tooltip } from '../widgets/tooltip.js';
-import { ItemSlot, SLOT_SIDE, type ItemDrag, type ItemView, type SlotRef } from '../widgets/item-slot.js';
+import { Tooltip, type TooltipLine } from '../widgets/tooltip.js';
+import {
+  ItemSlot,
+  rarityToken,
+  SLOT_SIDE,
+  type DetailTone,
+  type ItemDrag,
+  type ItemView,
+  type SlotRef,
+} from '../widgets/item-slot.js';
 import { Label } from '../widgets/label.js';
 
-export type { ItemView, SlotRef } from '../widgets/item-slot.js';
+export type { ItemDetail, ItemView, SlotRef } from '../widgets/item-slot.js';
+
+/**
+ * What a tone is drawn in (spec 185).
+ *
+ * The one place the vocabulary the view-model speaks meets the palette. `rarity`
+ * is absent because it is not one colour -- it is the item's own, and only the
+ * item knows which.
+ */
+const TONE_TOKENS: Readonly<Record<Exclude<DetailTone, 'rarity'>, string>> = {
+  good: 'success',
+  bad: 'danger',
+  dim: 'textDim',
+  normal: 'text',
+};
 
 /** Everything the screen shows, assembled outside `src/ui/`. */
 export interface ContainerView {
@@ -208,14 +230,32 @@ export class InventoryScreen extends Row {
     return left > 0 ? { ...item, count: left } : null;
   }
 
-  /** What the tooltip says over a cell, or empty when there is nothing there. */
-  tooltipFor(cell: ItemSlot): string {
+  /**
+   * What the tooltip says over a cell, or nothing when the cell is empty.
+   *
+   * The name in the item's tier colour, then whatever the view-model described
+   * (spec 185) -- the tier, where it is worn, what it does to your numbers, what
+   * it is worth. The level gate is still decided *here* rather than in the
+   * model, because it is the only line that depends on who is looking: the same
+   * sword is gated for one character and not for another, and a model that baked
+   * it in would have to be rebuilt every time a level-up landed.
+   */
+  tooltipFor(cell: ItemSlot): readonly TooltipLine[] {
     const item = cell.item;
-    if (!item) return '';
-    const lines = [item.name];
-    if (item.count > 1) lines.push(`x${item.count}`);
-    if (item.levelRequirement > this.level) lines.push(`Requires level ${item.levelRequirement}`);
-    return lines.join(' ');
+    if (!item) return [];
+    const tier = rarityToken(item.rarity);
+    const lines: TooltipLine[] = [{ text: item.name, colorToken: tier }];
+    if (item.count > 1) lines.push({ text: `x${item.count}`, colorToken: TONE_TOKENS.dim });
+    for (const detail of item.details) {
+      lines.push({
+        text: detail.text,
+        colorToken: detail.tone === 'rarity' ? tier : TONE_TOKENS[detail.tone],
+      });
+    }
+    if (item.levelRequirement > this.level) {
+      lines.push({ text: `Requires level ${item.levelRequirement}`, colorToken: TONE_TOKENS.bad });
+    }
+    return lines;
   }
 
   private rebuildPaperdoll(slots: readonly { readonly id: string; readonly label: string }[]): void {

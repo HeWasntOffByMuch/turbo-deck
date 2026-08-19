@@ -18,6 +18,8 @@ const item = (defId: string, name: string, count = 1): ItemView => ({
   slot: null,
   icon: 'item:potion',
   levelRequirement: 1,
+  rarity: 'common',
+  details: [],
 });
 
 function viewOf(over: Partial<TradeUiView> = {}): TradeUiView {

@@ -653,6 +653,35 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  position, since `UiLayer.toUi` is deliberately the one
                  conversion between UI pixels and canvas ones and a stale
                  cursor would throw the item somewhere nobody clicked.
+                 Since spec 185 an item also *says* what it is, and the colour it
+                 says it in is the one it was lying in the grass: the three tier
+                 colours moved out of `drop-rig.ts` into the palette, and the drop
+                 reads them back, so the bag and the ground cannot drift and a
+                 test in `drop-rig.test.ts` fails if they do. That took the
+                 palette cap from 16 to 19, which is the cap doing its job rather
+                 than being waived -- it is against *invented* colour, and these
+                 three are the world's own. Three rules came out of drawing it.
+                 The tier goes **behind** the icon rather than on it: the sprites
+                 carry their own colour, so tinting an orange trinket gold and
+                 grey gives two oranges nobody can tell apart, where a wash on a
+                 near-black cell is the same three bytes whatever the icon is
+                 made of. That wash is **composited into an opaque colour before
+                 it is drawn**, with the rasterizer's own `over`, because nothing
+                 in this framework blends -- a source-over is the one operation
+                 the software backend and a browser canvas round differently, and
+                 `budget.test.ts` refuses one at draw time. And **common is not
+                 washed at all**, which is the whole contrast: ordinary loot looks
+                 exactly as it did, so the mark means "this one is not ordinary"
+                 rather than announcing which of three tiers everything is -- the
+                 same argument `restFlare` settles on the ground, where a common
+                 drop's curve is flat at the dimmest value there is. A `Tooltip`
+                 now takes lines as well as prose, wrapped **per line** so a long
+                 name folds without swallowing the stat under it, and what a line
+                 is worth saying is decided outside `src/ui/`: the view-model hands
+                 over a *tone* -- good, bad, dim, the item's own tier -- and this
+                 layer says what a tone looks like. The one line decided here
+                 rather than there is `Requires level N`, because it is the only
+                 thing about an item that depends on who is holding it.
                  One more rule of the same kind, from spec 147's sheet: **a
                  hidden tab still has rectangles in it**. A tab switched away is
                  hidden and never destroyed -- that is what makes a tab keep what
@@ -1783,7 +1812,74 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  `experienceForLevel` rather than a copy of the curve, because
                  the strip and the character sheet disagreeing about how far
                  along somebody is is the kind of bug nobody reports -- they
-                 just stop trusting the bar. pool-bars.ts holds one judgement:
+                 just stop trusting the bar. Since spec 184 it is purple rather
+                 than gold, and the recolour is the smaller half of that spec:
+                 experience now has *two* places it is shown -- the strip and a
+                 number that floats off a kill -- and one colour to learn is
+                 what makes them read as the same fact. Gold had to go because
+                 the number is over a body, where gold is already a cast that
+                 can still be called off and a floating gold number is a
+                 critical hit; a strip at the frame's own edge could get away
+                 with sharing a hue and a number cannot.
+                 xp-gain.ts is the other half (spec 184), and it exists because
+                 **the server never says "you earned 12"**: experience arrives
+                 as a whole `Stats` message with a level and a count in it,
+                 replacing whatever was there, so a gain is a difference -- and
+                 the difference is not the subtraction it looks like, since a
+                 level-up moves the count backwards. A kill taking somebody from
+                 5 short of level 2 to 3 into it earned 8, and the raw counts
+                 differ by minus the whole level; `cumulativeExperience` is the
+                 monotonic number two readings can honestly subtract. Two rules
+                 beside it, each the fix for the version without it. The
+                 **first reading only establishes the baseline**, because the
+                 first `Stats` carries a whole character and a client that
+                 reported a gain on connect would throw a session's worth of
+                 experience across the screen of somebody who has just logged
+                 in. And a **backwards move reports nothing and re-baselines**
+                 -- an admin reset is not a negative reward, and leaving the old
+                 baseline would swallow every real gain until it had all been
+                 earned back. Where the number *goes* is a join view.ts makes
+                 rather than a fact on the wire: nothing links a `Stats` to the
+                 kill that caused it, so a kill by the local player remembers
+                 the anchor its damage number was already given and the frame
+                 that sees the total move spends it there; a grant with no kill
+                 behind it falls back to the player's own body, which is the
+                 only other place a number about the player could honestly go.
+                 The *path* is the third piece and lives in damage-popup.ts as a
+                 second trail, sharing spec 096's one field, one capacity, one
+                 projection and one expiry. It needs to be distinguishable
+                 because the pair is spawned on the same tick, on the same body,
+                 from the same anchor. The first cut swept the reward out to the
+                 side on an ease-out, which separated it perfectly and looked
+                 wrong: **nothing in this game leaves a body at 45 degrees**,
+                 and reading the pair meant following two marks going different
+                 ways. So a reward is stacked **under** the blow, in the blow's
+                 own lane, rising at the blow's own rate -- one column, nothing
+                 to follow -- and earns its own moment by *outliving* the number
+                 above it, by `XP_EXTRA_LIFE` (half a second at 60fps). What
+                 makes that a column rather than two things that happen to line
+                 up is that `XP_RISE` is **derived and not authored**:
+                 `NUMBER_RISE * XP_LIFE / NUMBER_LIFE`, so the two share a rate
+                 and only the time differs -- a rate of its own has them
+                 converge or separate, which is the diagonal's problem in
+                 another direction. It reads the lane counter without consuming
+                 one, so a kill's reward cannot shift where the next blow on
+                 that body draws its number, and successive rewards on one group
+                 step down through `XP_STACK` gaps rather than piling up. The
+                 text is `+N XP` and stays labelled: the colour and the column
+                 say "this is not damage" and neither of them says what it *is*,
+                 and a purple number under a white one is a second quantity
+                 whose identity is the whole point. The label costs three times
+                 the width of the count alone, which was measured rather than
+                 assumed and is why this is the smallest text of the pair, at
+                 half a critical's scale.
+                 `npx tsx scripts/probe-xp-popup.ts` is the half no headless
+                 test can see, over spec 164's `hud-probe.html` rig: it lands a
+                 real blow and earns a real reward at one point and measures the
+                 pair off the DOM, reading the purple out of the SVG rather than
+                 out of the constant -- a number that reached the page in the
+                 damage palette fails there.
+                 pool-bars.ts holds one judgement:
                  **an unknown maximum is not a maximum of zero**, or the opening
                  frames of every session paint an empty health bar over a player
                  at full health -- and its health bar is the *same bar
