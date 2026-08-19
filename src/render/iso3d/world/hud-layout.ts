@@ -373,3 +373,24 @@ export function errorStackBottom(layout: HudLayout, systemButtons: number): numb
 export function bottomEdge(layout: HudLayout): number {
   return layout.edge + layout.xpBarHeight;
 }
+
+/**
+ * Whether the diagnostic readout is drawn right now (spec 183).
+ *
+ * Two decisions, answered together: what the layout allows and what the player
+ * last asked for with `debug.toggleStats`. A function rather than an `&&` in the
+ * DOM half because both halves of it are rules, and this is the file where the
+ * first one is already written down.
+ *
+ * **The compact layout keeps it hidden whatever the toggle says.** It is
+ * developer instrumentation over a 390px frame, which is why spec 094 hid it in
+ * the first place, and a phone has no keyboard to reach the toggle with -- so a
+ * `true` arriving there could not have come from a player pressing a key.
+ *
+ * Says nothing about whether the readout is *written*: it always is. See the
+ * note in `hud.ts`, where the touch harness's only clock is a `display:none`
+ * subtree.
+ */
+export function readoutShown(layout: HudLayout, enabled: boolean): boolean {
+  return layout.showsReadout && enabled;
+}

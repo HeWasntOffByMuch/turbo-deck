@@ -56,7 +56,14 @@ import { isHandheldDevice } from '../device.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
-import { bottomEdge, errorStackBottom, hudLayout, poolBottom, stripWidth } from './hud-layout.js';
+import {
+  bottomEdge,
+  errorStackBottom,
+  hudLayout,
+  poolBottom,
+  readoutShown,
+  stripWidth,
+} from './hud-layout.js';
 import { slotIconSvg, stunIconSvg, systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
 import { stunMark } from './stun-icon.js';
 import { ACTION_BAR, type ActionSlot } from './action-bar.js';
@@ -331,6 +338,13 @@ export interface HudHandle {
    * server decides where a respawn puts you and what it restores. This end asks.
    */
   onRespawn(handler: () => void): void;
+  /**
+   * Show or hide the diagnostic readout (spec 183). Returns whether it is now
+   * shown, which on a compact layout is always false -- see `readoutShown`.
+   *
+   * Hidden, never silenced: the text is written every frame either way.
+   */
+  toggleReadout(): boolean;
 }
 
 /**
@@ -360,17 +374,38 @@ export function createHud(
   status.style.cssText =
     'position:absolute;left:12px;top:52px;font:12px ui-monospace,Menlo,monospace;color:#cfd6e0;' +
     'background:rgba(10,14,20,.72);padding:8px 10px;border-radius:6px;line-height:1.6;white-space:pre;';
-  if (!layout.showsReadout) {
-    // Hidden, not removed, and still written every frame. It is developer
-    // instrumentation and has no business on a 390px frame -- but it is also the
-    // only clock `scripts/preview-touch.ts` has: it reads the tick and the target
-    // line out of `document.body.textContent`, which includes a `display:none`
-    // subtree. Deleting it would leave the touch harness unable to tell "the tap
-    // did nothing" from "the frame had not run yet", which is the confusion
-    // spec 093 was debugged out of.
-    status.style.display = 'none';
-    status.setAttribute('aria-hidden', 'true');
-  }
+  /**
+   * Whether the player has asked for the readout (spec 183). Shown to begin
+   * with, because that is what every session before the toggle existed did, and
+   * nothing about it is persisted -- the *binding* outlives a session, where the
+   * switch does not.
+   */
+  let readoutWanted = true;
+
+  /**
+   * Hidden, not removed, and still written every frame. It is developer
+   * instrumentation and has no business on a 390px frame -- but it is also the
+   * only clock `scripts/preview-touch.ts` has: it reads the tick and the target
+   * line out of `document.body.textContent`, which includes a `display:none`
+   * subtree. Deleting it would leave the touch harness unable to tell "the tap
+   * did nothing" from "the frame had not run yet", which is the confusion
+   * spec 093 was debugged out of.
+   *
+   * So the toggle moves these two properties and nothing else: the readout is
+   * hidden, never silenced.
+   */
+  const applyReadout = (): boolean => {
+    const shown = readoutShown(layout, readoutWanted);
+    status.style.display = shown ? 'block' : 'none';
+    if (shown) status.removeAttribute('aria-hidden');
+    else status.setAttribute('aria-hidden', 'true');
+    // Published on the readout itself, because "the key did nothing" and "the
+    // key hid a box that was already hidden" are the same screenshot -- and
+    // because a probe wanting the box's text wants the same element.
+    status.dataset['statsReadout'] = shown ? 'on' : 'off';
+    return shown;
+  };
+  applyReadout();
   root.append(status);
 
   // The refusal stack (spec 143). Its *bottom* is pinned and it has no height of
@@ -1539,6 +1574,10 @@ export function createHud(
     },
     onRespawn(handler) {
       respawnHandler = handler;
+    },
+    toggleReadout() {
+      readoutWanted = !readoutWanted;
+      return applyReadout();
     },
   };
 }

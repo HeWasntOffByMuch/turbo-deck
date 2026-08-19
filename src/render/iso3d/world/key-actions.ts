@@ -54,12 +54,31 @@ export interface KeyDecision {
   readonly cancel: boolean;
   /** Windows to open or close, in the order their actions fired (spec 131). */
   readonly windows: readonly WindowId[];
+  /** Whether the diagnostic readout should be shown or hidden (spec 183). */
+  readonly toggleStats: boolean;
 }
 
-export const NO_DECISION: KeyDecision = { move: [], skillbar: [], cancel: false, windows: [] };
+export const NO_DECISION: KeyDecision = {
+  move: [],
+  skillbar: [],
+  cancel: false,
+  windows: [],
+  toggleStats: false,
+};
 
 /** The action id that calls off a wind-up. */
 export const CANCEL_ACTION = 'combat.cancel';
+
+/**
+ * The action id that shows or hides the diagnostic readout (spec 183).
+ *
+ * It had been in `bindings.json` since spec 125 -- listed in the keybinding
+ * window, rebindable, saved -- and reached nothing at all, because every action
+ * that is not a move, a slot, a window or the cancel fell off the end of the
+ * loop below. A row the interface offers to rebind is the interface asserting
+ * the key does something.
+ */
+export const TOGGLE_STATS_ACTION = 'debug.toggleStats';
 
 /**
  * Resolve a key press into what the Play tab does about it.
@@ -72,6 +91,7 @@ export function decideKeyDown(map: InputMap, code: string, mods: Modifiers): Key
   const skillbar: number[] = [];
   const windows: WindowId[] = [];
   let cancel = false;
+  let toggleStats = false;
 
   for (const action of map.resolve(code, mods, 'gameplay')) {
     if (MOVE_ACTIONS[action]) {
@@ -89,9 +109,10 @@ export function decideKeyDown(map: InputMap, code: string, mods: Modifiers): Key
       continue;
     }
     if (action === CANCEL_ACTION) cancel = true;
+    if (action === TOGGLE_STATS_ACTION) toggleStats = true;
   }
 
-  return { move, skillbar, cancel, windows };
+  return { move, skillbar, cancel, windows, toggleStats };
 }
 
 /**

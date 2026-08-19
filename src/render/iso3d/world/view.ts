@@ -1503,6 +1503,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       order = null;
     }
 
+    // The readout the top-left corner has drawn unconditionally since spec 063
+    // (spec 183). `preventDefault` because F3 is a key the browser has its own
+    // plans for -- and because the action is rebindable, so is whatever key
+    // gets here.
+    if (decision.toggleStats) {
+      hud.toggleReadout();
+      event.preventDefault();
+    }
+
     for (const slot of decision.skillbar) {
       // The one gate (spec 164). An empty slot and a key past the last slot are
       // the same nothing here as they are on the button, because both ends ask

@@ -14,6 +14,7 @@ describe('what a key press means to the Play tab', () => {
       skillbar: [],
       cancel: false,
       windows: [],
+      toggleStats: false,
     });
     expect(decideKeyDown(map, 'KeyD', NONE).move).toEqual(['move.east']);
   });
@@ -36,6 +37,36 @@ describe('what a key press means to the Play tab', () => {
     const map = new InputMap();
     expect(decideKeyDown(map, 'Escape', NONE).cancel).toBe(true);
     expect(decideKeyDown(map, 'KeyW', NONE).cancel).toBe(false);
+  });
+
+  it('toggles the diagnostic readout on the debug action', () => {
+    // The row has been in `bindings.json` since spec 125 and reached nothing:
+    // every action that was not a move, a slot, a window or the cancel fell off
+    // the end of the loop.
+    const map = new InputMap();
+    expect(decideKeyDown(map, 'F3', NONE)).toEqual({
+      move: [],
+      skillbar: [],
+      cancel: false,
+      windows: [],
+      toggleStats: true,
+    });
+  });
+
+  it('follows a rebind of the readout toggle', () => {
+    const map = new InputMap();
+    map.bind('debug.toggleStats', 'primary', { code: 'KeyG' });
+    expect(decideKeyDown(map, 'KeyG', NONE).toggleStats).toBe(true);
+    expect(decideKeyDown(map, 'F3', NONE).toggleStats).toBe(false);
+  });
+
+  it('leaves the readout alone for every other shipped binding', () => {
+    // The other half of the assertion: a field that is set by everything is the
+    // same bug as a field that is set by nothing.
+    const map = new InputMap();
+    for (const code of ['KeyW', 'Digit1', 'KeyI', 'KeyC', 'Escape', 'KeyX']) {
+      expect(decideKeyDown(map, code, NONE).toggleStats).toBe(false);
+    }
   });
 
   it('does nothing for a key nothing is bound to', () => {
