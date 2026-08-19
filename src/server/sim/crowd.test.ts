@@ -112,6 +112,23 @@ describe('a crowd at a narrow opening', () => {
   it('does not stand bodies inside each other doing it', () => {
     expect(worstOverlap(trace)).toBeLessThan(0.12);
   });
+
+  /**
+   * The tight end of the envelope, pinned because it is the number that decides
+   * whether this reads as "sensible in a corridor". A gap of 70 units is 1.8
+   * stalkers wide -- one body with barely room to be passed -- and it still
+   * clears, just slowly.
+   *
+   * Below about 1.2 widths nothing gets through, and that is not this: a gap of
+   * 44 stops a *single* body, because `NAV_CELL_SIZE` is 10 and a cell is
+   * graded at its centre, so the 4-unit passable band need contain no cell
+   * centre at all.
+   */
+  it('still clears a gap not much wider than one body', () => {
+    const tight = run(gate(8, 35), 1400, 1);
+    expect(reached(tight, 1, { x: 1700, y: 900 }, 520)).toBe(sizeOf(tight, 1));
+    expect(worstOverlap(tight)).toBeLessThan(0.12);
+  });
 });
 
 describe('a pack converging on one quarry', () => {

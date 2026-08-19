@@ -258,14 +258,25 @@ export function overtake(): Scenario {
 
 /**
  * A wall with one gap in it, a crowd on one side and the quarry on the other.
- * The gap is a little over three bodies wide, so it cannot be walked through
- * abreast and something has to give way.
+ * The gap defaults to a little over three bodies wide, so it cannot be walked
+ * through abreast and something has to give way.
+ *
+ * The envelope, measured (`npx tsx scripts/preview-crowd.ts` draws the default;
+ * these are from sweeping `gapHalf`): 24 stalkers clear a gap of 3.5 body
+ * widths in about 17 seconds, 2.5 widths in 26, and 1.8 widths in 37 -- slower
+ * and slower, and all of them through. Below about 1.4 widths a crowd stops
+ * clearing it at all.
+ *
+ * What is *not* a crowd failure is anything under about 1.2 widths, where a
+ * single body cannot get through either: `NAV_CELL_SIZE` is 10 and a cell is
+ * graded at its centre, so a 44-unit gap leaves a 4-unit band that no cell
+ * centre need fall inside, and the grid calls it blocked. That is the router's
+ * resolution and it predates all of this.
  */
-export function gate(count = 24): Scenario {
+export function gate(count = 24, gapHalf = 70): Scenario {
   const build = begin();
   const wallX = 1100;
   const gapY = 900;
-  const gapHalf = 70;
   const world = createWorldColliders(
     [
       { x: wallX, y: 300, w: 60, h: gapY - gapHalf - 300 },

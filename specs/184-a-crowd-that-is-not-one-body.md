@@ -209,7 +209,18 @@ so a panel and a green test cannot disagree:
 - **8 slow bodies in front of 8 fast ones**: every fast body finishes ahead of
   the slow median, and no body's speed changes.
 - **16 bodies at a 140-unit gap** (a stalker is 40 across): all of them get
-  through, without standing inside each other.
+  through, without standing inside each other. And 8 bodies at a **70-unit**
+  gap, which is 1.8 stalkers wide -- the tight end of the envelope, pinned
+  because it is the number that decides whether this reads as sensible in a
+  corridor.
+
+  The envelope, measured by sweeping the gap: 24 stalkers clear 3.5 body widths
+  in about 17 seconds, 2.5 widths in 26, 1.8 widths in 37 -- slower and slower,
+  and all of them through. Below about 1.4 widths a crowd stops clearing it.
+  Below about 1.2 widths **a single body** cannot get through either, and that
+  is the router rather than the crowd: `NAV_CELL_SIZE` is 10 and a cell is
+  graded at its centre, so a 44-unit gap leaves a 4-unit passable band that no
+  cell centre need fall inside.
 - **12 bodies converging on one quarry**: the widest empty arc around it is
   under three quarters of a turn, most of the pack ends inside its own reach,
   and nothing piles up.
@@ -273,5 +284,15 @@ The stated limit, asserted rather than described:
   `walkHome` cannot congest. Whoever adds a herd-move order wants goal offsets
   hashed off id, an arrival tolerance that grows with the group, and "if you are
   blocked by a body that has already arrived, you have arrived".
+- **Queueing at a passage narrower than about 1.4 body widths.** A crowd stops
+  clearing one, and what would fix it is a queueing rule rather than more force
+  -- the crowd literature's "faster is slower" result says pushing harder
+  strengthens the arch at a bottleneck rather than breaking it. Measured rather
+  than assumed; see the envelope above.
+- **Sliding the separation push along a wall.** Tried, and it made things worse
+  where they were working: `slideCircle`ing the push lets a body wedged in a
+  doorway be shoved back *out* of it along the corridor, and 24 bodies that
+  cleared a 1.8-width gap stopped clearing it at all. A refused push stays
+  refused.
 - **The renderer.** Nothing here is drawn, replicated or predicted; monsters are
   interpolated from replicated positions exactly as before.
