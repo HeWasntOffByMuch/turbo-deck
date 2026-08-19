@@ -41,6 +41,20 @@ export interface ContainerView {
    * hard-coded six names would silently stop drawing the seventh.
    */
   readonly slots: readonly { readonly id: string; readonly label: string }[];
+  /**
+   * The four active-skill slots, in bar order (spec 184).
+   *
+   * A second list rather than four more entries in {@link slots}, because they
+   * are drawn somewhere else: the paperdoll is a column of *worn* things beside
+   * a body, and these are a row of four under the bag that mirrors the four at
+   * the bottom of the screen. One list would have made them six-in-a-column and
+   * the mirror would have been the player's job to notice.
+   *
+   * The `id`s are equipment slots like any other, so a move to one is the same
+   * `MoveIntent` a move to the chest is and nothing downstream learns a new
+   * word.
+   */
+  readonly skillSlots: readonly { readonly id: string; readonly label: string }[];
   /** The character's level, for the tooltip's "requires level N". */
   readonly level: number;
 }
@@ -84,6 +98,18 @@ export interface InventoryOptions {
 const DEFAULT_COLUMNS = 6;
 const DEFAULT_SLOTS = 24;
 
+/**
+ * How wide the skill row is (spec 184).
+ *
+ * Four, so the row is one line whatever the caller does with the bag's width --
+ * the whole point of it is that it looks like the bar along the bottom of the
+ * screen, and a bar that wrapped to two lines would stop looking like one.
+ * Not derived from `view.skillSlots.length`: this screen renders what it is
+ * handed, and a fifth slot arriving should be a visible change to this constant
+ * rather than a silent reflow.
+ */
+const SKILL_ROW_COLUMNS = 4;
+
 export class InventoryScreen extends Row {
   readonly ghost = new DragGhost();
   /**
@@ -103,6 +129,7 @@ export class InventoryScreen extends Row {
   private readonly wornCells: ItemSlot[] = [];
   private readonly slotIds: string[] = [];
   private readonly grid: Grid;
+  private readonly skills: Grid;
   private readonly paperdoll: Column;
   private level = 1;
   /**
@@ -142,9 +169,26 @@ export class InventoryScreen extends Row {
       this.grid.add(cell);
     }
 
+    /**
+     * The four skill slots, under the bag (spec 184).
+     *
+     * Under it rather than beside the paperdoll, and that placement *is* the
+     * feature the brief asks for: these four are the same four along the bottom
+     * of the screen, so they are laid out the same way -- one row, in key
+     * order, next to the bag they are filled from. A skill goes in one by
+     * dragging it out of the grid two rows up, which is the shortest journey
+     * this screen can offer.
+     *
+     * Built empty and filled by `setContainers`, exactly as the paperdoll is:
+     * the screen renders what it is handed and never decides how many slots
+     * there are.
+     */
+    this.skills = new Grid(SKILL_ROW_COLUMNS, SLOT_SIDE, SLOT_SIDE, 'skillGrid');
+    this.skills.gap = theme.spacing.xs;
+
     const bag = new Column('bag');
     bag.gap = theme.spacing.xs;
-    bag.addAll([heading('BAG'), this.grid]);
+    bag.addAll([heading('BAG'), this.grid, heading('SKILLS'), this.skills]);
 
     this.addAll([this.paperdoll, bag]);
   }
@@ -173,8 +217,11 @@ export class InventoryScreen extends Row {
   setContainers(view: ContainerView): void {
     this.view = view;
     this.level = view.level;
-    const ids = view.slots.map((slot) => slot.id);
-    if (ids.join('|') !== this.slotIds.join('|')) this.rebuildPaperdoll(view.slots);
+    // One cell list over both groups, indexed by the *equipment ordinal*, so a
+    // `SlotRef` means the same thing whichever group it landed in -- which is
+    // what lets `cellAt`, `render` and the drag stay group-blind.
+    const ids = [...view.slots, ...view.skillSlots].map((slot) => slot.id);
+    if (ids.join('|') !== this.slotIds.join('|')) this.rebuildPaperdoll(view.slots, view.skillSlots);
     this.render();
   }
 
@@ -218,8 +265,17 @@ export class InventoryScreen extends Row {
     return lines.join(' ');
   }
 
-  private rebuildPaperdoll(slots: readonly { readonly id: string; readonly label: string }[]): void {
-    for (const cell of this.wornCells) cell.parent?.parent?.remove(cell.parent);
+  private rebuildPaperdoll(
+    slots: readonly { readonly id: string; readonly label: string }[],
+    skillSlots: readonly { readonly id: string; readonly label: string }[],
+  ): void {
+    for (const cell of this.wornCells) {
+      // A worn cell sits inside a labelled row; a skill cell sits straight in
+      // the grid. Removing from whichever parent it actually has keeps this one
+      // loop rather than two.
+      if (cell.parent === this.skills) this.skills.remove(cell);
+      else cell.parent?.parent?.remove(cell.parent);
+    }
     this.wornCells.length = 0;
     this.slotIds.length = 0;
     // Keep the heading, drop the rows: the heading is not a slot and rebuilding
@@ -244,6 +300,19 @@ export class InventoryScreen extends Row {
       // slightly wider.
       row.addAll([cell, label]);
       this.paperdoll.add(row);
+    }
+
+    // The four, in the same row and the same order as the bar. No label beside
+    // each: their order *is* their name -- slot 1 is the key you press -- and
+    // four captions under four cells would say less than the row's own heading
+    // already does.
+    for (const [offset, slot] of skillSlots.entries()) {
+      const index = slots.length + offset;
+      const cell = this.makeCell({ container: 'equipment', index }, `skill:${slot.id}`);
+      cell.acceptsSlot = slot.id;
+      this.wornCells.push(cell);
+      this.slotIds.push(slot.id);
+      this.skills.add(cell);
     }
   }
 

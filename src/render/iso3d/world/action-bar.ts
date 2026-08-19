@@ -19,6 +19,9 @@
  * than each building one.
  */
 
+import type { Equipment } from '../../../server/state/types.js';
+import { SKILL_EQUIP_SLOTS, skillSlotAbilities } from '../../../server/player/skill-slots.js';
+
 /** A skill slot, or the vial. */
 export type ActionSlotKind = 'skill' | 'vial';
 
@@ -43,11 +46,34 @@ export interface ActionSlot {
  */
 export const VIAL_ABILITY_ID = 'self.hearthdraught';
 
-/** How many skill slots there are, before the vial. */
-export const SKILL_SLOTS = 4;
+/**
+ * How many skill slots there are, before the vial.
+ *
+ * The same four as `SKILL_EQUIP_SLOTS` since spec 184, and asserted to be:
+ * the four cells beside the backpack and the four along the bottom of the
+ * screen are the *same* four slots, so a mismatch between the two counts would
+ * be a bar with a button that reaches nothing.
+ */
+export const SKILL_SLOTS = SKILL_EQUIP_SLOTS.length;
 
 /** The bar as it ships: four empty slots and the vial. */
 export const ACTION_BAR: readonly ActionSlot[] = buildActionBar([]);
+
+/**
+ * The bar a player's equipment produces (spec 184).
+ *
+ * The one way a slot comes to hold something now: a skill is an item worn in
+ * one of the four skill slots, so what the bar holds is a *view of the
+ * equipment* and nothing on this side decides it. That is what makes the four
+ * cells in the bag and the four along the bottom the same four -- there is no
+ * second list to keep in step, because there is no second list.
+ *
+ * Positional: an empty slot stays empty rather than being closed up, so
+ * emptying slot 2 does not silently renumber the player's keys.
+ */
+export function actionBarFor(equipment: Equipment): readonly ActionSlot[] {
+  return buildActionBar(skillSlotAbilities(equipment));
+}
 
 /**
  * A bar with `abilityIds` in its skill slots, shortest wins.
@@ -68,12 +94,15 @@ export function buildActionBar(abilityIds: readonly (string | null)[]): readonly
 }
 
 /**
- * The bar a `?slots=` query parameter asks for, or the shipped one.
+ * The bar a `?slots=` query parameter asks for, or **null** for "use the
+ * player's equipment".
  *
  * A developer path and nothing else, in the same register as `?seed=`, `?wire=`
- * and `?units=`: the four slots ship empty and there is no way for a *player* to
- * put anything in one, because binding a skill needs a source to drag from and
- * that is a change of its own.
+ * and `?units=`. It used to be the *only* way a slot could hold anything;
+ * spec 184 made equipment the ordinary way, so this now **overrides** the
+ * equipped skills rather than filling a bar nothing else could fill -- which is
+ * what keeps it useful: a harness that wants `ground.quake` on the bar should
+ * not have to loot a sigil for it first.
  *
  * It exists because the alternative was worse than a query parameter. With the
  * bar empty, every ability in the game except the auto-attack and the flask
@@ -88,10 +117,26 @@ export function buildActionBar(abilityIds: readonly (string | null)[]): readonly
  * ability in `hud.ts` and draws as an empty slot, which is the same nothing an
  * unfilled slot is and needs no second path.
  */
-export function actionBarFromQuery(search: string): readonly ActionSlot[] {
+export function actionBarFromQuery(search: string): readonly ActionSlot[] | null {
   const raw = new URLSearchParams(search).get('slots');
-  if (raw === null) return ACTION_BAR;
+  if (raw === null) return null;
   return buildActionBar(raw.split(',').map((id) => (id.trim() === '' ? null : id.trim())));
+}
+
+/**
+ * Whether two bars hold the same things in the same places (spec 184).
+ *
+ * The guard on rebuilding the row: what a bar *is* is its five ability ids in
+ * order, so two bars agreeing on those are the same bar however they were
+ * built. Here rather than in `hud.ts` because it is a statement about the model
+ * and not about the DOM, and because a test can then assert it.
+ */
+export function sameBar(
+  a: readonly { readonly abilityId: string | null }[],
+  b: readonly { readonly abilityId: string | null }[],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((slot, index) => slot.abilityId === b[index]?.abilityId);
 }
 
 /**

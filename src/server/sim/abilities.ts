@@ -49,8 +49,10 @@ import {
 import { ballisticPeak, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { PERFECT_EXIT_COOLDOWN_TICKS, RECENTLY_HIT_TICKS, resolveBlow } from './blow.js';
 import { isInCone } from './combat.js';
+import { areaReachOf, scaleArea, selectByArea } from './skill-area.js';
+import { applyEffects } from './skill-effects.js';
 import { staggered } from './poise.js';
-import { salvageFrom } from './restoration.js';
+import { applyHealing } from './healing.js';
 import {
   applyStatus,
   clearStatus,
@@ -126,7 +128,20 @@ export type CastRejection =
    * under a second". A player told the wrong one learns the wrong lesson about
    * what just happened to them.
    */
-  | 'staggered';
+  | 'staggered'
+  /**
+   * A skill asked for out of a slot that is not holding it (spec 184).
+   *
+   * The first ownership refusal this system has ever had. Its own reason
+   * because the fix is nothing like any of the others: not "wait", not "walk
+   * closer", but "you are not carrying that" -- which for an honest client is a
+   * bug in its own bar and for a dishonest one is the whole answer.
+   */
+  | 'notEquipped'
+  /** A skill priced in health, asked for with too little to pay it (spec 184). */
+  | 'notEnoughHealth'
+  /** A skill priced in guard, asked for with too little to pay it (spec 184). */
+  | 'notEnoughPoise';
 
 export interface CastAttempt {
   readonly abilityId: string;
@@ -305,7 +320,8 @@ export function resourceCostFor(
   const flow = stacksOf(statuses, StatusId.Flow, tick) * traits.flowCostPct;
   const discount = Math.max(0.1, 1 - Math.min(0.75, attuned + flow));
 
-  const shaped = ability.radius !== undefined || ability.projectile !== undefined;
+  const shaped =
+    ability.radius !== undefined || ability.projectile !== undefined || ability.area !== undefined;
   // The Archmage pair waives the premium on a prepared cast, which is the one
   // thing that makes shaping free rather than merely paid off.
   const waived = traits.preparedMastery > 0 && hasStatus(statuses, StatusId.Prepared, tick);
@@ -382,6 +398,47 @@ export function castRangeFor(
   return ability.range * (1 + entity.stats.traits.spellRangePct);
 }
 
+/**
+ * The health and guard this skill costs, and whether the caster can pay
+ * (spec 184).
+ *
+ * One function so that the check and the charge cannot disagree: `startCast`
+ * asks it once, refuses on a reason, and spends exactly the numbers it was
+ * given back. Two reads of a cost table is how a body ends up paying a price it
+ * was never quoted.
+ *
+ * Both are **refused rather than clamped**, and each for its own reason.
+ *
+ *  - Health: the bill has to leave the caster alive, so it is refused at
+ *    `health <= cost` rather than at `<`. A skill that could kill its user is a
+ *    skill nobody uses in the fight it was designed for, which makes the cost a
+ *    fiction and the skill a worse version of a free one.
+ *  - Guard: paying poise you have not got would *break* the caster -- the pool
+ *    empties, `applyPoiseDamage`'s consequences do not run, and the body is
+ *    left at zero guard for the next blow to trivially stagger. A self-stagger
+ *    that arrives through the cost line is a bug that looks exactly like a
+ *    mechanic, so it is refused at the door.
+ *
+ * Unlike the pool cost this is **not scaled by anything**. Wisdom buys
+ * efficiency with mana; it has never bought cheaper blood, and a cost in a
+ * second currency that quietly followed the first would make the second
+ * currency decorative.
+ */
+export function extraCostsFor(
+  entity: Pick<ServerEntity, 'health' | 'poise'>,
+  ability: AbilityDefinition,
+): { readonly health: number; readonly poise: number; readonly refusal: CastRejection | null } {
+  const health = Math.max(0, ability.costs?.health ?? 0);
+  const poise = Math.max(0, ability.costs?.poise ?? 0);
+  if (health > 0 && entity.health <= health) {
+    return { health, poise, refusal: 'notEnoughHealth' };
+  }
+  if (poise > 0 && entity.poise < poise) {
+    return { health, poise, refusal: 'notEnoughPoise' };
+  }
+  return { health, poise, refusal: null };
+}
+
 export type CastStartResult =
   | { readonly ok: true; readonly entity: ServerEntity; readonly events: readonly ServerSimEvent[] }
   | { readonly ok: false; readonly reason: CastRejection };
@@ -424,6 +481,20 @@ export function startCast(
   // which is exactly how the window used to be shorter than `staggerTicks`.
   if (staggered(entity, tick)) return { ok: false, reason: 'staggered' };
 
+  // **You have to be carrying it** (spec 184). The first ownership check the
+  // ability system has ever had, and it is here rather than in `world.ts` for
+  // the reason every other gate is: `startCast` is what the sim, the client's
+  // prediction and every test call, so a check anywhere else would be a rule
+  // one of the three did not know about.
+  //
+  // What it reads is a *derived* stat -- `skillAbilityIds` comes off the four
+  // skill slots the way `basicAttackId` comes off the main hand -- so nothing
+  // here trusts a client, and a skill unequipped mid-wind-up is still refused
+  // the next time it is asked for.
+  if (ability.skill === true && !entity.stats.skillAbilityIds.includes(ability.id)) {
+    return { ok: false, reason: 'notEquipped' };
+  }
+
   const readyAt = entity.cooldowns[ability.id] ?? 0;
   if (tick < readyAt) return { ok: false, reason: 'onCooldown' };
 
@@ -445,6 +516,12 @@ export function startCast(
   if (charges > 0 && entity.fallbackCharges < charges) {
     return { ok: false, reason: 'noCharges' };
   }
+
+  // Health and guard (spec 184). Checked here with everything else and spent
+  // below with everything else, so a skill priced in blood behaves exactly like
+  // one priced in mana: taken at the commit, handed back by a withdrawal.
+  const extra = extraCostsFor(entity, ability);
+  if (extra.refusal !== null) return { ok: false, reason: extra.refusal };
 
   // A skill aimed at a body has to have one (spec 080). Refused rather than
   // quietly downgraded to a cone or a patch of ground: an ability whose whole
@@ -477,11 +554,17 @@ export function startCast(
   // Generous at the commit, and only at the commit (spec 090): see
   // `commitAlignEps`. `advanceCast` still holds the wind-up back at the strict
   // tolerance, so a body that genuinely has to come round still pays for it.
+  // Generous at the commit and only at the commit (spec 090), *or* as wide as
+  // the row says, whichever is wider (spec 184). The two answer different
+  // questions -- one is "close enough that a turn would be a formality", the
+  // other is "close enough that this skill does not care" -- and taking the max
+  // means a wide `castAngleDeg` can only ever make a cast easier to start,
+  // never harder than it already was.
   const turning = !facesAim(
     entity.position,
     entity.facing,
     aim,
-    commitAlignEps(entity.stats.turnRate, SERVER_TICK_RATE),
+    Math.max(commitAlignEps(entity.stats.turnRate, SERVER_TICK_RATE), castAngleEps(ability)),
   );
   const phase = turning ? CastPhase.Turning : CastPhase.Windup;
   // Snapshotted here and never recomputed (spec 144): a buff that lands halfway
@@ -493,8 +576,12 @@ export function startCast(
   const cast: CastState = {
     abilityId: ability.id,
     spentResource: Math.min(cost, entity.resource),
-    spentHealth: overflow,
+    // The overflow and the skill's own blood price are one number from here on
+    // (spec 184): both are health this cast took, both come back on a
+    // withdrawal, and two fields would be two things to keep in step.
+    spentHealth: overflow + extra.health,
     spentCharges: charges,
+    spentPoise: extra.poise,
     startedTick: tick,
     // Provisional while turning, and re-stamped at alignment: the attack has
     // not started until the wind-up has, and the interval is measured from it.
@@ -523,7 +610,14 @@ export function startCast(
       // -- `overflowCostFor` refuses anything past 40% of what is left -- so the
       // risk is that the *next* thing to hit you finds you low, which is the
       // trade the milestone is offering rather than a way to kill yourself.
-      health: overflow > 0 ? Math.max(1, entity.health - overflow) : entity.health,
+      health:
+        overflow + extra.health > 0
+          ? Math.max(1, entity.health - overflow - extra.health)
+          : entity.health,
+      // Guard, spent (spec 184). Floored at zero rather than allowed to empty
+      // into a break: `extraCostsFor` has already refused a cast that could not
+      // afford it, so this floor is arithmetic hygiene rather than a rule.
+      poise: extra.poise > 0 ? Math.max(0, entity.poise - extra.poise) : entity.poise,
       stillSinceTick: tick,
       // The cooldown is *not* stamped here (spec 091). It starts when the blow
       // goes off, so a wind-up withdrawn from costs the time it took and
@@ -587,6 +681,28 @@ function endTickFor(
 export const TURN_ALIGN_EPS = (0.5 * Math.PI) / 180;
 
 /**
+ * How far off its aim this ability may be pointed and still start (spec 184).
+ *
+ * The brief's `castAngle`, and it is four lines rather than a system because
+ * spec 065 already built the mechanism: a body turns into its aim *before* the
+ * wind-up clock starts, and `facesAim` has always taken the tolerance as an
+ * argument. This makes that argument the row's to name.
+ *
+ * A row's `castAngleDeg` is the full opening angle, so the tolerance is half of
+ * it either side -- which is how anybody reading "a 60 degree cast angle" would
+ * expect it to behave. Absent is {@link TURN_ALIGN_EPS}, which is what every row
+ * written before this spec has always meant.
+ *
+ * Never *narrower* than `TURN_ALIGN_EPS`: a row authoring zero would be a body
+ * that can never satisfy its own gate through float drift, and a cast that can
+ * never start is worse than one that starts a tick early.
+ */
+export function castAngleEps(ability: AbilityDefinition): number {
+  if (ability.castAngleDeg === undefined) return TURN_ALIGN_EPS;
+  return Math.max(TURN_ALIGN_EPS, (Math.max(0, ability.castAngleDeg) * Math.PI) / 360);
+}
+
+/**
  * Whether a body at `from`, pointing `facing`, counts as facing `aim`.
  *
  * Exported in this shape -- loose numbers rather than a `ServerEntity` -- so the
@@ -638,8 +754,12 @@ export function commitAlignEps(turnRateDegrees: number, tickRate: number): numbe
 }
 
 /** Whether `entity` is already pointing at `aim` closely enough to swing. */
-function facingAim(entity: ServerEntity, aim: { readonly x: number; readonly y: number }): boolean {
-  return facesAim(entity.position, entity.facing, aim);
+function facingAim(
+  entity: ServerEntity,
+  aim: { readonly x: number; readonly y: number },
+  ability: AbilityDefinition,
+): boolean {
+  return facesAim(entity.position, entity.facing, aim, castAngleEps(ability));
 }
 
 /** A self cast aims at itself; everything else aims where it was told. */
@@ -802,6 +922,13 @@ function cancelWindup(
       health: cast.spentHealth > 0
         ? Math.min(entity.stats.maxHealth, entity.health + cast.spentHealth)
         : entity.health,
+      // And the guard a skill was priced in (spec 184). Clamped like the other
+      // three refunds and for the same reason: poise regenerates during a
+      // wind-up, so an unclamped hand-back would put the pool above its own
+      // ceiling and hand a feint free guard.
+      poise: cast.spentPoise > 0
+        ? Math.min(entity.stats.traits.maxPoise, entity.poise + cast.spentPoise)
+        : entity.poise,
       // And the flask charge (spec 156). Clamped like the resource refund, for
       // the same reason -- a rest tick can return a charge mid-wind-up, and an
       // unclamped refund would put the flask above its own ceiling.
@@ -990,7 +1117,7 @@ export function advanceCast(
   // Held here until the body is pointing at what it committed to. Movement runs
   // before casts within a tick, so `entity.facing` is already this tick's.
   if (cast.phase === CastPhase.Turning) {
-    if (!facingAim(caster, { x: cast.targetX, y: cast.targetY })) {
+    if (!facingAim(caster, { x: cast.targetX, y: cast.targetY }, ability)) {
       return { updated: new Map(), spawns: [], events: [], rng: currentRng };
     }
 
@@ -1224,7 +1351,104 @@ function landAbility(
       return landSelf(ability, caster, tick, rng);
     case 'projectile':
       return launchProjectile(ability, caster, cast, tick, rng);
+    case 'area':
+      // The kind that reads a *shape* (spec 184). Everything else here names
+      // either a body or a point; this names a region and asks
+      // `sim/skill-area.ts` who is standing in it.
+      return landArea(ability, caster, cast, candidates, tick, rng);
   }
+}
+
+/**
+ * One application of an ability to one body (spec 184).
+ *
+ * The seam the whole feature hangs off, and it is four lines: an ability with
+ * no `effects` is the blow it always was, and one with them runs its list. Put
+ * here rather than in each lander so that a skill inherits every one of the
+ * landers' existing rules -- the range measured at the *release*, the miss on a
+ * target that walked out of it, the cone's geometry, the caster folded back --
+ * instead of the effect pipeline growing a second, slightly different copy of
+ * each.
+ */
+function applyToTarget(
+  ability: AbilityDefinition,
+  attacker: ServerEntity,
+  target: ServerEntity,
+  rng: Rng,
+  tick: number,
+): { readonly attacker: ServerEntity; readonly target: ServerEntity; readonly events: readonly ServerSimEvent[]; readonly rng: Rng } {
+  if (!ability.effects || ability.effects.length === 0) {
+    return applyDamage(ability, attacker, target, rng, tick);
+  }
+  const applied = applyEffects(ability, attacker, target, tick, rng);
+  return {
+    attacker: applied.caster,
+    target: applied.target,
+    events: applied.events,
+    rng: applied.rng,
+  };
+}
+
+/**
+ * A landing that picks its targets by shape (spec 184).
+ *
+ * Written beside `landBlast` rather than replacing it, because the two are not
+ * the same thing: a blast is a `ground` ability's crater at the point the cast
+ * named, and this is a skill's own geometry, which may be centred on the caster
+ * and may be a cone or a lane. Deleting one into the other would be this spec
+ * rewriting a working system to fit a new feature.
+ *
+ * Intelligence's shaping widens the shape's *reach* here, the same line
+ * `landBlast` has had since spec 147 -- so a shaped Whirlwind sweeps further,
+ * which is a different fight rather than a bigger number.
+ */
+function landArea(
+  ability: AbilityDefinition,
+  caster: ServerEntity,
+  cast: CastState,
+  candidates: readonly ServerEntity[],
+  tick: number,
+  rng: Rng,
+): LandResult {
+  const authored = ability.area;
+  if (!authored) return { updated: new Map(), spawns: [], events: [], rng };
+  const area = scaleArea(authored, 1 + caster.stats.traits.spellRadiusPct);
+  // A caster-centred shape draws its cue on the caster; an aimed one draws it
+  // where it was aimed. Either way it is the point the shape is measured from,
+  // so the picture and the geometry cannot come apart.
+  const centreX = area.shape === 'circle' && area.origin === 'aim' ? cast.targetX : caster.position.x;
+  const centreY = area.shape === 'circle' && area.origin === 'aim' ? cast.targetY : caster.position.y;
+
+  const updated = new Map<number, ServerEntity>();
+  const events: ServerSimEvent[] = [
+    {
+      kind: 'effect',
+      effectId: `${ability.id}.impact`,
+      x: centreX,
+      y: centreY,
+      z: caster.position.z,
+      radius: areaReachOf(area),
+      durationTicks: Math.round(SERVER_TICK_RATE * 0.4),
+    },
+  ];
+
+  let currentRng = rng;
+  let attacker = caster;
+  let connected = false;
+  for (const target of selectByArea(area, caster, { x: cast.targetX, y: cast.targetY }, candidates)) {
+    const hit = applyToTarget(ability, attacker, target, currentRng, tick);
+    currentRng = hit.rng;
+    attacker = hit.attacker;
+    connected = true;
+    updated.set(target.id, hit.target);
+    events.push(...hit.events);
+  }
+
+  // A sweep that caught nobody still reports a miss, so the client's "that did
+  // nothing" feedback is the one it already has for every other landing.
+  if (!connected) events.push({ kind: 'attackMissed', attackerId: caster.id });
+  else updated.set(caster.id, attacker);
+  return { updated, spawns: [], events, rng: currentRng };
 }
 
 /**
@@ -1264,7 +1488,7 @@ function landOnTarget(
     };
   }
 
-  const hit = applyDamage(ability, caster, target, rng, tick);
+  const hit = applyToTarget(ability, caster, target, rng, tick);
   return {
     // The caster goes back in the map too (spec 147). `advanceCast` folds an
     // entry with the caster's own id into its local copy, so this is how a weak
@@ -1308,7 +1532,7 @@ function landCone(
       continue;
     }
     connected = true;
-    const hit = applyDamage(ability, attacker, target, currentRng, tick);
+    const hit = applyToTarget(ability, attacker, target, currentRng, tick);
     currentRng = hit.rng;
     attacker = hit.attacker;
     updated.set(target.id, hit.target);
@@ -1347,7 +1571,7 @@ function landBlast(
     const dx = target.position.x - x;
     const dy = target.position.y - y;
     if (Math.hypot(dx, dy) > radius + target.radius) continue;
-    const hit = applyDamage(ability, attacker, target, currentRng, tick);
+    const hit = applyToTarget(ability, attacker, target, currentRng, tick);
     currentRng = hit.rng;
     attacker = hit.attacker;
     connected = true;
@@ -1399,98 +1623,6 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
       },
     ],
     rng,
-  };
-}
-
-export interface HealResult {
-  readonly entity: ServerEntity;
-  /** What actually went into the health bar. */
-  readonly healed: number;
-  /** What did not fit, before Constitution or Wisdom got hold of it. */
-  readonly overheal: number;
-  /** Of that, what Wisdom put back into the restoration meter (spec 156). */
-  readonly salvaged: number;
-  /** And what nothing caught. The number the instrumentation calls waste. */
-  readonly wasted: number;
-}
-
-/**
- * One restoration, with the economy applied (spec 147).
- *
- * The one place healing is scaled and the one place overheal goes anywhere. In
- * order:
- *
- *  1. Wisdom (and a little Constitution) scale the amount.
- *  2. The Constitution+Wisdom pair doubles it below its threshold, because an
- *     attrition build should get *more* out of a heal exactly when it is losing.
- *  3. What fits goes into health.
- *  4. What does not fit goes to a shield (Constitution 50), or to resource
- *     (Wisdom 50), or nowhere. Both are capped -- the shield by `maxShield`, the
- *     conversion by `conversionCap` per event -- so neither is a loop.
- *
- * A body with no traits at all gets `min(max, health + amount)`, which is
- * exactly what `landSelf` did before this existed.
- */
-export function applyHealing(entity: ServerEntity, amount: number, tick: number): HealResult {
-  if (!(amount > 0)) return { entity, healed: 0, overheal: 0, salvaged: 0, wasted: 0 };
-  const traits = entity.stats.traits;
-
-  const surge =
-    traits.healingSurge > 0 &&
-    entity.stats.maxHealth > 0 &&
-    entity.health / entity.stats.maxHealth <= traits.healingSurgeBelow
-      ? 1 + traits.healingSurge
-      : 1;
-  const total = amount * traits.healingScale * surge;
-
-  const room = Math.max(0, entity.stats.maxHealth - entity.health);
-  const healed = Math.min(room, total);
-  const overheal = total - healed;
-
-  let shield = tick < entity.shieldUntilTick ? entity.shield : 0;
-  let shieldUntilTick = entity.shieldUntilTick;
-  let resource = entity.resource;
-
-  // What none of the outlets caught. Tracked rather than inferred, because
-  // Wisdom's salvage is applied to *what is actually left* (spec 156) -- a
-  // salvage that read the whole overheal would pay twice for the part
-  // Constitution's shield or Wisdom's own conversion had already taken.
-  let leftover = overheal;
-  if (overheal > 0) {
-    if (traits.overhealShieldTicks > 0 && traits.maxShield > 0) {
-      const before = shield;
-      shield = Math.min(traits.maxShield, shield + overheal);
-      shieldUntilTick = tick + traits.overhealShieldTicks;
-      leftover -= shield - before;
-    } else if (traits.conversionCap > 0) {
-      const before = resource;
-      resource = Math.min(
-        entity.stats.maxResource,
-        resource + Math.min(traits.conversionCap, overheal),
-      );
-      leftover -= resource - before;
-    }
-  }
-
-  // The last outlet, and the only path in the game from healing back to the
-  // restoration meter. Bounded twice -- by the fraction Wisdom has bought and by
-  // a cap under one threshold -- so no amount of overhealing funds a mote
-  // outright, and a build with no Wisdom simply loses the remainder.
-  const salvaged = salvageFrom(entity, leftover);
-
-  return {
-    healed,
-    overheal,
-    salvaged,
-    wasted: Math.max(0, leftover - salvaged),
-    entity: {
-      ...entity,
-      health: entity.health + healed,
-      shield,
-      shieldUntilTick,
-      resource,
-      restoration: entity.restoration + salvaged,
-    },
   };
 }
 

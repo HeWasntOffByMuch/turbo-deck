@@ -18,6 +18,7 @@ import { itemById, maxStackOf } from '../data/items.js';
 import {
   EQUIP_SLOTS,
   INVENTORY_SLOTS,
+  slotFamily,
   type Equipment,
   type EquipSlot,
   type Inventory,
@@ -130,7 +131,11 @@ function equipRefusal(stack: ItemStack, index: number, level: number): string | 
   if (slot === null) return `no such equipment slot: ${index}`;
   const definition = itemById(stack.defId);
   if (!definition) return `no such item: ${stack.defId}`;
-  if (definition.slot !== slot) return `${definition.name} does not go in ${slot}`;
+  // Families rather than names since spec 184: the four skill slots all accept
+  // `slot: 'skill'`, and everything else still accepts exactly one thing. An
+  // item that named one particular skill slot would be an item that can only
+  // ever be your second skill, which is not a thing anybody wants to author.
+  if (definition.slot !== slotFamily(slot)) return `${definition.name} does not go in ${slot}`;
   if (level < definition.levelRequirement) {
     return `${definition.name} requires level ${definition.levelRequirement}`;
   }

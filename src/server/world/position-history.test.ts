@@ -100,6 +100,7 @@ const STATS = {
   maxResource: 100,
   resourceRegen: 0,
   basicAttackId: ATTACK,
+  skillAbilityIds: [],
   traits: NEUTRAL_TRAITS,
 };
 

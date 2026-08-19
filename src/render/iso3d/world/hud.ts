@@ -24,6 +24,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import type { ScreenAnchor } from './scene.js';
 import {
   abilityById,
+  barNameOf,
   BASIC_ATTACK_ID,
   type AbilityDefinition,
 } from '../../../server/data/abilities.js';
@@ -66,7 +67,7 @@ import {
 } from './hud-layout.js';
 import { slotIconSvg, stunIconSvg, systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
 import { stunMark } from './stun-icon.js';
-import { ACTION_BAR, type ActionSlot } from './action-bar.js';
+import { ACTION_BAR, sameBar, type ActionSlot } from './action-bar.js';
 import { deathOverlay } from './death.js';
 import { poolBars } from './pool-bars.js';
 import { xpBar, XP_SUBDIVISIONS } from './xp-bar.js';
@@ -291,6 +292,16 @@ export interface HudHandle {
    * about whether it is open.
    */
   showOpenWindows(open: readonly WindowId[]): void;
+  /**
+   * Replace what the five slots hold (spec 184).
+   *
+   * Pushed in every frame from the player's equipment, for the same reason
+   * {@link showOpenWindows} is pushed rather than read: the equipment is the
+   * state, and a bar that remembered what was last equipped would be a second
+   * opinion about what the player is carrying. A plan that matches what is
+   * already drawn costs a comparison.
+   */
+  setSlots(plan: readonly ActionSlot[]): void;
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
   /**
@@ -472,7 +483,20 @@ export function createHud(
    * update loop below free of a branch per slot kind: everything it does to a
    * slot is a function of `slot.ability`, which is simply null for four of them.
    */
-  const slots = slotPlan.map((entry, index) => {
+  /**
+   * One built slot: its plan entry, the ability behind it, and the four
+   * elements the update loop writes into.
+   */
+  interface SlotView extends ActionSlot {
+    readonly ability: AbilityDefinition | null;
+    readonly button: HTMLButtonElement;
+    readonly sweep: HTMLDivElement;
+    readonly remaining: HTMLSpanElement;
+    readonly charges: HTMLSpanElement;
+  }
+
+  const buildSlots = (plan: readonly ActionSlot[]): readonly SlotView[] =>
+    plan.map((entry, index) => {
     const ability = entry.abilityId === null ? null : abilityById(entry.abilityId);
     const button = document.createElement('button');
     button.style.cssText =
@@ -531,7 +555,7 @@ export function createHud(
         centred(
           layout.slotIconOnly
             ? weaponIconSvg(ability.id, { size: 24 })
-            : pixelTextSvg(ability.name.toUpperCase(), {
+            : pixelTextSvg(barNameOf(ability).toUpperCase(), {
                 scale: layout.slotNameScale,
                 fill: '#cfd6e0',
                 outline: '#0a0d14',
@@ -586,6 +610,30 @@ export function createHud(
     bar.append(button);
     return { ...entry, ability, button, sweep, remaining, charges };
   });
+
+  let slots = buildSlots(slotPlan);
+
+  /**
+   * Rebuild the row when what is in it changes (spec 184).
+   *
+   * A rebuild rather than an in-place edit of five labels, and the reason is
+   * the one this file already gives about the slot's contents: a slot's markup
+   * differs by *kind* -- an icon for the vial, a name or an icon for a skill, a
+   * dashed square for an empty one -- so editing would be a second, partial
+   * copy of the eighty lines above, free to disagree with them about what a
+   * slot with a newly-equipped skill looks like. Five buttons is a handful of
+   * DOM nodes, and it happens when a player changes a skill rather than per
+   * frame.
+   *
+   * Guarded on the ids so an equipment resend twenty times a second is a
+   * comparison rather than a teardown -- and so the button under the cursor is
+   * still the same object between two frames in which nothing changed.
+   */
+  const setSlots = (plan: readonly ActionSlot[]): void => {
+    if (sameBar(plan, slots)) return;
+    bar.replaceChildren();
+    slots = buildSlots(plan);
+  };
 
   /**
    * The two pools, immediately left of the slots (spec 164).
@@ -1507,6 +1555,9 @@ export function createHud(
         // screen reader has no border to look at.
         slot.button.setAttribute('aria-pressed', String(on));
       }
+    },
+    setSlots(plan) {
+      setSlots(plan);
     },
     onUse(handler) {
       useHandler = handler;

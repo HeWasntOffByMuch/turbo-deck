@@ -32,7 +32,7 @@ import { ALL_MONSTERS, monsterById } from '../src/server/data/monsters.js';
 import { RESTORATION } from '../src/server/data/restoration.js';
 import { startingBaseStats } from '../src/server/player/attributes.js';
 import { computeEffectiveStats } from '../src/server/player/stats.js';
-import { applyHealing } from '../src/server/sim/abilities.js';
+import { applyHealing } from '../src/server/sim/healing.js';
 import {
   advanceMeter,
   baseContributionOf,

@@ -56,13 +56,13 @@ import { abilityById } from '../data/abilities.js';
 import {
   advanceCast,
   applyDamage,
-  applyHealing,
   cancelCast,
   projectileHits,
   startCast,
   type CastAttempt,
   type ProjectileSpawn,
 } from './abilities.js';
+import { applyHealing } from './healing.js';
 import {
   assistsOn,
   attractRadiusFor,
@@ -131,6 +131,7 @@ function blankEntity(id: number): ServerEntity {
       maxResource: 0,
       resourceRegen: 0,
       basicAttackId: '',
+      skillAbilityIds: [],
       traits: NEUTRAL_TRAITS,
     },
     activity: ActivityValue.Idle,
@@ -484,6 +485,11 @@ export function step(
     world: context.world,
     terrain: context.terrain,
     config: context.config,
+    // So a slow can be read where speed is (spec 184). This pass already runs
+    // once per tick with the tick in hand; handing it down is cheaper than any
+    // of the alternatives and keeps `resolveMovement` a pure function of its
+    // arguments.
+    tick,
   };
 
   const isSimulated = (entity: ServerEntity): boolean =>

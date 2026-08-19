@@ -155,6 +155,17 @@ export interface CastState {
    * better than not starting it.
    */
   readonly spentCharges: number;
+  /**
+   * Guard this cast paid at the commit (spec 184).
+   *
+   * Beside `spentResource` and `spentCharges` for the reason they are beside
+   * each other: a withdrawal has to hand back **what was paid**, whatever it was
+   * priced in, or the price of a wind-up somebody stepped out of stops being
+   * "the time it took". Health has no field of its own because `spentHealth`
+   * already existed for Arcane Overflow and a skill's blood price adds to it --
+   * one number to refund rather than two that have to agree.
+   */
+  readonly spentPoise: number;
   /** Tick the request was committed to, turn included. */
   readonly startedTick: number;
   /**

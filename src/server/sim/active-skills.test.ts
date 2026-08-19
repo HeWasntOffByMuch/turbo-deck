@@ -1,0 +1,604 @@
+/**
+ * Active skills, driven through the real `step` (spec 184).
+ *
+ * Nothing here calls `startCast` or `applyEffects` directly, for the reason
+ * `abilities.test.ts` gives about the abilities it tests: a skill is only
+ * correct if it behaves correctly *in a tick*, next to movement, monsters and
+ * everything else that runs in one. What is asserted is the whole lifecycle the
+ * brief names -- activation, validation, wind-up, resolution, effects, cooldown
+ * -- and the fact that every one of those steps is the one the game already had.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { DEFAULT_WORLD } from '../../sim/collision.js';
+import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
+import { abilityById } from '../data/abilities.js';
+import { monsterById } from '../data/monsters.js';
+import { computeEffectiveStats } from '../player/stats.js';
+import { skillAbilityIdsOf } from '../player/skill-slots.js';
+import {
+  EMPTY_EQUIPMENT,
+  emptyInventory,
+  type EffectiveStats,
+  type Equipment,
+  type PersistedPlayer,
+} from '../state/types.js';
+import { chunkKeyOf } from '../world/chunks.js';
+import { FLAT_TERRAIN } from '../world/terrain.js';
+import { ZoneManager } from '../world/zone-manager.js';
+import { extraCostsFor } from './abilities.js';
+import { MIN_MOVE_SCALE } from './movement.js';
+import { moveScaleOf, statusOf, StatusId } from './statuses.js';
+import {
+  ActivityValue,
+  CastPhase,
+  EntityKindValue,
+  type ServerEntity,
+  type ServerInput,
+  type ServerSimEvent,
+  type ServerWorldState,
+} from './types.js';
+import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
+
+const SIGILS: Equipment = {
+  ...EMPTY_EQUIPMENT,
+  skill1: 'sigil.guardBreak',
+  skill2: 'sigil.stunningBlow',
+  skill3: 'sigil.whirlwind',
+  skill4: 'sigil.cripplingStrike',
+};
+
+function record(equipment: Equipment = SIGILS): PersistedPlayer {
+  return {
+    id: 'p1',
+    displayName: 'P1',
+    baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+    skills: [],
+    equipment,
+    inventory: emptyInventory(),
+    coins: 0,
+    position: { x: 600, y: 450, z: 0 },
+    facing: 0,
+    currentZone: 'greenmarch',
+    // High enough to wear every sigil, since a level requirement refused on the
+    // way in would be a different test failing.
+    level: 10,
+    experience: 0,
+    unspentSkillPoints: 0,
+    unspentAttributePoints: 0,
+    health: 100,
+    resource: 100,
+  };
+}
+
+/** Crit off and spell power flat, so a damage assertion is arithmetic. */
+function statsFor(equipment: Equipment = SIGILS): EffectiveStats {
+  return { ...computeEffectiveStats(record(equipment)), spellPower: 1, critChance: 0 };
+}
+
+const CHUNK = 100;
+
+function activeAround(x: number, y: number): Set<string> {
+  const keys = new Set<string>();
+  for (let dy = -4; dy <= 4; dy++) {
+    for (let dx = -4; dx <= 4; dx++) keys.add(chunkKeyOf(x + dx * CHUNK, y + dy * CHUNK, CHUNK));
+  }
+  return keys;
+}
+
+function context(): StepContext {
+  return {
+    world: DEFAULT_WORLD,
+    terrain: FLAT_TERRAIN,
+    zones: new ZoneManager(),
+    config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
+    activeChunks: activeAround(600, 450),
+    chunkSize: CHUNK,
+    spawnPoints: [],
+  };
+}
+
+function withPlayer(
+  state: ServerWorldState,
+  x: number,
+  y: number,
+  stats: EffectiveStats = statsFor(),
+): { state: ServerWorldState; id: number } {
+  const result = spawnEntity(state, {
+    kind: EntityKindValue.Player,
+    typeId: 'player',
+    ownerPlayerId: 'p1',
+    position: { x, y, z: 0 },
+    stats,
+    radius: 16,
+    zoneId: 'greenmarch',
+  });
+  return { state: result.state, id: result.entity.id };
+}
+
+function withDummy(
+  state: ServerWorldState,
+  x: number,
+  y: number,
+): { state: ServerWorldState; id: number } {
+  const definition = monsterById('dummy');
+  if (!definition) throw new Error('no dummy');
+  const result = spawnEntity(state, {
+    kind: EntityKindValue.Monster,
+    typeId: 'dummy',
+    position: { x, y, z: 0 },
+    stats: definition.stats,
+    radius: definition.radius,
+    zoneId: 'greenmarch',
+  });
+  return { state: result.state, id: result.entity.id };
+}
+
+function input(entityId: number, overrides: Partial<ServerInput> = {}): ServerInput {
+  return {
+    entityId,
+    seq: 1,
+    moveX: 0,
+    moveY: 0,
+    facing: 0,
+    buttons: 0,
+    predictedX: 0,
+    predictedY: 0,
+    hasPrediction: false,
+    seqSpan: 1,
+    castAbilityId: '',
+    castTargetX: 0,
+    castTargetY: 0,
+    castTargetEntityId: 0,
+    cancelCast: false,
+    ...overrides,
+  };
+}
+
+interface Run {
+  state: ServerWorldState;
+  events: ServerSimEvent[];
+}
+
+function run(
+  state: ServerWorldState,
+  ticks: number,
+  frames: Record<number, ServerInput[]> = {},
+  ctx: StepContext = context(),
+): Run {
+  const events: ServerSimEvent[] = [];
+  let current = state;
+  for (let i = 0; i < ticks; i++) {
+    const result = step(current, frames[i] ?? [], ctx);
+    current = result.state;
+    events.push(...result.events);
+  }
+  return { state: current, events };
+}
+
+const rejections = (events: readonly ServerSimEvent[]): string[] =>
+  events.filter((event) => event.kind === 'castRejected').map((event) => event.reason);
+
+const hits = (events: readonly ServerSimEvent[]): Extract<ServerSimEvent, { kind: 'hit' }>[] =>
+  events.filter((event): event is Extract<ServerSimEvent, { kind: 'hit' }> => event.kind === 'hit');
+
+/** A caster and a dummy in reach of every melee skill in the table. */
+function duel(equipment: Equipment = SIGILS): {
+  state: ServerWorldState;
+  casterId: number;
+  targetId: number;
+} {
+  const empty = createWorldState(7);
+  const caster = withPlayer(empty, 600, 450, statsFor(equipment));
+  const target = withDummy(caster.state, 660, 450);
+  return { state: target.state, casterId: caster.id, targetId: target.id };
+}
+
+function cast(entityId: number, abilityId: string, target: ServerEntity | null): ServerInput {
+  return input(entityId, {
+    castAbilityId: abilityId,
+    castTargetX: target?.position.x ?? 0,
+    castTargetY: target?.position.y ?? 0,
+    castTargetEntityId: target?.id ?? 0,
+  });
+}
+
+describe('the four skills as data', () => {
+  /**
+   * The review criterion the spec states, as a test: a skill is
+   * `targeting + casting + costs + cooldown + effects`, and if any of the four
+   * rows stops being expressible that way it has grown a special case.
+   */
+  it('says everything it does in its own row', () => {
+    for (const id of [
+      'skill.guardBreak',
+      'skill.stunningBlow',
+      'skill.whirlwind',
+      'skill.cripplingStrike',
+    ]) {
+      const ability = abilityById(id);
+      expect(ability, id).toBeTruthy();
+      if (!ability) continue;
+      expect(ability.skill, id).toBe(true);
+      expect(ability.windupTicks, id).toBeGreaterThan(0);
+      expect(ability.cooldownTicks, id).toBeGreaterThan(0);
+      expect(ability.effects?.length, id).toBeGreaterThan(0);
+      // An area skill names a shape; everything else names a body or a point.
+      if (ability.kind === 'area') expect(ability.area, id).toBeDefined();
+      else expect(ability.targeting, id).toBe('unit');
+    }
+  });
+
+  it('is carried as an item, and the item is what makes it castable', () => {
+    expect(skillAbilityIdsOf(SIGILS)).toEqual([
+      'skill.guardBreak',
+      'skill.stunningBlow',
+      'skill.whirlwind',
+      'skill.cripplingStrike',
+    ]);
+    expect(skillAbilityIdsOf(EMPTY_EQUIPMENT)).toEqual([]);
+  });
+});
+
+describe('the server decides, not the client', () => {
+  it('refuses a skill the caster is not carrying', () => {
+    const { state, casterId, targetId } = duel(EMPTY_EQUIPMENT);
+    const target = state.entities.get(targetId);
+    const { events } = run(state, 4, { 0: [cast(casterId, 'skill.guardBreak', target ?? null)] });
+    expect(rejections(events)).toContain('notEquipped');
+  });
+
+  it('lets the same request through once the sigil is worn', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const { events } = run(state, 4, { 0: [cast(casterId, 'skill.guardBreak', target ?? null)] });
+    expect(rejections(events)).toHaveLength(0);
+  });
+
+  it('refuses a skill already on cooldown', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const windup = abilityById('skill.guardBreak')?.windupTicks ?? 0;
+    const { events } = run(state, windup + 6, {
+      0: [cast(casterId, 'skill.guardBreak', target ?? null)],
+      // Well past the release, so the first one landed and stamped its cooldown.
+      [windup + 3]: [cast(casterId, 'skill.guardBreak', target ?? null)],
+    });
+    expect(rejections(events)).toEqual(['onCooldown']);
+  });
+
+  it('refuses a skill the caster cannot pay for', () => {
+    const { state, casterId, targetId } = duel();
+    const caster = state.entities.get(casterId);
+    if (!caster) throw new Error('no caster');
+    // Whirlwind is the most expensive of the four; one point short is a refusal.
+    const cost = abilityById('skill.whirlwind')?.cost ?? 0;
+    const broke = replaceEntity(state, { ...caster, resource: cost - 1 });
+    const target = broke.entities.get(targetId);
+    const { events } = run(broke, 4, { 0: [cast(casterId, 'skill.whirlwind', target ?? null)] });
+    expect(rejections(events)).toContain('notEnoughResource');
+  });
+
+  it('refuses a unit skill asked for with nothing named', () => {
+    const { state, casterId } = duel();
+    const { events } = run(state, 4, { 0: [cast(casterId, 'skill.guardBreak', null)] });
+    expect(rejections(events)).toContain('noTarget');
+  });
+
+  it('refuses a unit skill asked for past its range', () => {
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450);
+    // Far outside Guard Break's 85 units, even allowing for the dummy's radius.
+    const far = withDummy(caster.state, 1200, 450);
+    const target = far.state.entities.get(far.id);
+    const { events } = run(far.state, 4, {
+      0: [cast(caster.id, 'skill.guardBreak', target ?? null)],
+    });
+    expect(rejections(events)).toContain('outOfRange');
+  });
+});
+
+describe('the cast lifecycle is the one the game already had', () => {
+  it('spends the cost at the commit and stamps no cooldown until the blow lands', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const cost = abilityById('skill.stunningBlow')?.cost ?? 0;
+    // Measured against what the body actually spawned with rather than against
+    // the record's number: a player's pool is *derived*, so hard-coding 100
+    // would be this test asserting a stat table it does not own.
+    const before = state.entities.get(casterId)?.resource ?? 0;
+    const started = step(state, [cast(casterId, 'skill.stunningBlow', target ?? null)], context());
+    const caster = started.state.entities.get(casterId);
+    expect(cost).toBeGreaterThan(0);
+    expect(caster?.resource).toBeCloseTo(before - cost, 5);
+    // The button does not grey out for a swing that has not happened.
+    expect(caster?.cooldowns['skill.stunningBlow']).toBeUndefined();
+    expect(caster?.cast?.phase).toBe(CastPhase.Windup);
+  });
+
+  it('starts the cooldown at the attack point, not at the commit', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const windup = abilityById('skill.stunningBlow')?.windupTicks ?? 0;
+    const landed = run(state, windup + 2, {
+      0: [cast(casterId, 'skill.stunningBlow', target ?? null)],
+    });
+    const caster = landed.state.entities.get(casterId);
+    expect(caster?.cooldowns['skill.stunningBlow']).toBeGreaterThan(landed.state.tick);
+  });
+
+  /**
+   * The decision this whole game is built on, and it has to hold for skills:
+   * a wind-up somebody stepped out of costs the time and nothing else.
+   */
+  it('refunds everything when the wind-up is withdrawn from', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const before = state.entities.get(casterId)?.resource ?? 0;
+    const { state: after } = run(state, 6, {
+      0: [cast(casterId, 'skill.stunningBlow', target ?? null)],
+      3: [input(casterId, { cancelCast: true })],
+    });
+    const caster = after.entities.get(casterId);
+    expect(caster?.cast).toBeNull();
+    // The pool regenerates during a wind-up, so the refund puts it back to at
+    // least where it started rather than to exactly there.
+    expect(caster?.resource ?? 0).toBeGreaterThanOrEqual(before);
+    expect(caster?.cooldowns['skill.stunningBlow']).toBeUndefined();
+  });
+
+  /**
+   * `castAngle` is the brief's, and it is the existing turn-before-the-wind-up
+   * rule with the tolerance made the row's to name. A body pointing the wrong
+   * way starts in `Turning` and its wind-up clock has not begun.
+   */
+  it('turns toward the target before winding up when it is not facing it', () => {
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450);
+    // Behind the caster, which faces +x by default.
+    const behind = withDummy(caster.state, 540, 450);
+    const body = behind.state.entities.get(caster.id);
+    if (!body) throw new Error('no caster');
+    const facing = replaceEntity(behind.state, { ...body, facing: 0, stats: statsFor() });
+    const target = facing.entities.get(behind.id);
+    const started = step(facing, [cast(caster.id, 'skill.guardBreak', target ?? null)], context());
+    expect(started.state.entities.get(caster.id)?.cast?.phase).toBe(CastPhase.Turning);
+  });
+
+  it('winds up immediately when it is already inside the cast angle', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const started = step(state, [cast(casterId, 'skill.guardBreak', target ?? null)], context());
+    expect(started.state.entities.get(casterId)?.cast?.phase).toBe(CastPhase.Windup);
+  });
+});
+
+describe('Guard Break', () => {
+  it('takes guard off its target through the existing pool', () => {
+    const { state, casterId, targetId } = duel();
+    const before = state.entities.get(targetId)?.poise ?? 0;
+    const target = state.entities.get(targetId);
+    const windup = abilityById('skill.guardBreak')?.windupTicks ?? 0;
+    const landed = run(state, windup + 2, {
+      0: [cast(casterId, 'skill.guardBreak', target ?? null)],
+    });
+    const after = landed.state.entities.get(targetId);
+    expect(before).toBeGreaterThan(0);
+    expect(after?.poise ?? 0).toBeLessThan(before);
+  });
+
+  it('deals its damage as well as taking the guard', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const windup = abilityById('skill.guardBreak')?.windupTicks ?? 0;
+    const landed = run(state, windup + 2, {
+      0: [cast(casterId, 'skill.guardBreak', target ?? null)],
+    });
+    const landedHits = hits(landed.events).filter((hit) => hit.targetId === targetId);
+    expect(landedHits).toHaveLength(1);
+    expect(landedHits[0]?.damage ?? 0).toBeGreaterThan(0);
+  });
+});
+
+describe('Stunning Blow', () => {
+  it('puts its target in the game’s own stunned state', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const windup = abilityById('skill.stunningBlow')?.windupTicks ?? 0;
+    const landed = run(state, windup + 2, {
+      0: [cast(casterId, 'skill.stunningBlow', target ?? null)],
+    });
+    const after = landed.state.entities.get(targetId);
+    expect(after?.activity).toBe(ActivityValue.Stunned);
+    expect(after?.activityUntilTick ?? 0).toBeGreaterThan(landed.state.tick);
+    // Announced on the same event a poise break uses, so the client's flinch and
+    // the swirl over the head are the ones already drawn.
+    expect(landed.events.some((event) => event.kind === 'poiseBroken')).toBe(true);
+  });
+
+  it('cannot chain-stun: a body inside its immunity window is not re-stunned', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    if (!target) throw new Error('no target');
+    // Already immune, which is what a body that was broken a moment ago is.
+    const immune = replaceEntity(state, {
+      ...target,
+      staggerImmuneUntilTick: state.tick + SERVER_TICK_RATE * 5,
+    });
+    const windup = abilityById('skill.stunningBlow')?.windupTicks ?? 0;
+    const landed = run(immune, windup + 2, {
+      0: [cast(casterId, 'skill.stunningBlow', immune.entities.get(targetId) ?? null)],
+    });
+    expect(landed.state.entities.get(targetId)?.activity).not.toBe(ActivityValue.Stunned);
+    // The damage still lands, so a skill thrown into the window is not wasted.
+    expect(hits(landed.events).filter((hit) => hit.targetId === targetId)).toHaveLength(1);
+  });
+});
+
+describe('Whirlwind', () => {
+  it('hits everything inside its circle and nothing outside it', () => {
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450);
+    const near = withDummy(caster.state, 660, 450);
+    const alsoNear = withDummy(near.state, 600, 520);
+    // Well outside the 160-unit radius.
+    const far = withDummy(alsoNear.state, 600, 900);
+    const windup = abilityById('skill.whirlwind')?.windupTicks ?? 0;
+    const landed = run(far.state, windup + 2, {
+      0: [cast(caster.id, 'skill.whirlwind', null)],
+    });
+    const struck = new Set(hits(landed.events).map((hit) => hit.targetId));
+    expect(struck.has(near.id)).toBe(true);
+    expect(struck.has(alsoNear.id)).toBe(true);
+    expect(struck.has(far.id)).toBe(false);
+    // And never its own caster, which is the one body inside every circle.
+    expect(struck.has(caster.id)).toBe(false);
+  });
+
+  it('needs no target at all', () => {
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450);
+    const { events } = run(caster.state, 4, { 0: [cast(caster.id, 'skill.whirlwind', null)] });
+    expect(rejections(events)).toHaveLength(0);
+  });
+});
+
+describe('Crippling Strike', () => {
+  it('applies Slow through the existing status system', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const windup = abilityById('skill.cripplingStrike')?.windupTicks ?? 0;
+    const landed = run(state, windup + 2, {
+      0: [cast(casterId, 'skill.cripplingStrike', target ?? null)],
+    });
+    const after = landed.state.entities.get(targetId);
+    const slow = statusOf(after?.statuses ?? {}, StatusId.Slowed, landed.state.tick);
+    expect(slow).toBeTruthy();
+    expect(slow?.magnitude).toBeCloseTo(0.4, 5);
+  });
+
+  it('makes the slowed body actually slower, and never stops it dead', () => {
+    const slowed = { ...({} as Record<string, never>) };
+    void slowed;
+    const statuses = {
+      [StatusId.Slowed]: { expiresAtTick: 100, stacks: 1, magnitude: 0.4 },
+    };
+    expect(moveScaleOf(statuses, 0, MIN_MOVE_SCALE)).toBeCloseTo(0.6, 5);
+    // A magnitude past the floor is a hard slow, never a root.
+    const brutal = { [StatusId.Slowed]: { expiresAtTick: 100, stacks: 1, magnitude: 5 } };
+    expect(moveScaleOf(brutal, 0, MIN_MOVE_SCALE)).toBe(MIN_MOVE_SCALE);
+    // And an expired one is not a slow at all.
+    expect(moveScaleOf(statuses, 100, MIN_MOVE_SCALE)).toBe(1);
+  });
+});
+
+describe('costs beyond the pool', () => {
+  /**
+   * The brief's "do not assume every skill uses pool". Guard Break is the row
+   * that pays in guard, and what is asserted here is that the second currency
+   * behaves exactly like the first: taken at the commit, refunded by a
+   * withdrawal, refused when it is not there.
+   */
+  it('takes guard from the caster at the commit', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const before = state.entities.get(casterId)?.poise ?? 0;
+    const cost = abilityById('skill.guardBreak')?.costs?.poise ?? 0;
+    expect(cost).toBeGreaterThan(0);
+    const started = step(state, [cast(casterId, 'skill.guardBreak', target ?? null)], context());
+    expect(started.state.entities.get(casterId)?.poise).toBeCloseTo(before - cost, 5);
+  });
+
+  it('gives the guard back when the wind-up is withdrawn from', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const before = state.entities.get(casterId)?.poise ?? 0;
+    const { state: after } = run(state, 6, {
+      0: [cast(casterId, 'skill.guardBreak', target ?? null)],
+      2: [input(casterId, { cancelCast: true })],
+    });
+    expect(after.entities.get(casterId)?.poise ?? 0).toBeGreaterThanOrEqual(before);
+  });
+
+  it('refuses the cast rather than letting a caster stagger itself', () => {
+    const { state, casterId, targetId } = duel();
+    const caster = state.entities.get(casterId);
+    if (!caster) throw new Error('no caster');
+    const cost = abilityById('skill.guardBreak')?.costs?.poise ?? 0;
+    const drained = replaceEntity(state, { ...caster, poise: cost - 1 });
+    const target = drained.entities.get(targetId);
+    const { events } = run(drained, 3, { 0: [cast(casterId, 'skill.guardBreak', target ?? null)] });
+    expect(rejections(events)).toContain('notEnoughPoise');
+  });
+
+  /**
+   * The health branch has no shipped row behind it yet, so it is asserted
+   * against the pure function rather than through a fight. The rule that
+   * matters is the one a row could not express on its own: **a cost may never
+   * be lethal**, so it is refused at "exactly enough" rather than at "not
+   * quite" -- a skill that could kill its user is unusable in the fight it was
+   * designed for, which makes the cost a fiction.
+   */
+  it('never lets a health cost be the thing that kills you', () => {
+    const bill = { costs: { health: 20 } } as unknown as Parameters<typeof extraCostsFor>[1];
+    expect(extraCostsFor({ health: 21, poise: 0 }, bill).refusal).toBeNull();
+    expect(extraCostsFor({ health: 20, poise: 0 }, bill).refusal).toBe('notEnoughHealth');
+    expect(extraCostsFor({ health: 3, poise: 0 }, bill).refusal).toBe('notEnoughHealth');
+  });
+
+  it('costs nothing extra for a row that names nothing', () => {
+    const free = { } as unknown as Parameters<typeof extraCostsFor>[1];
+    const paid = extraCostsFor({ health: 1, poise: 0 }, free);
+    expect(paid).toEqual({ health: 0, poise: 0, refusal: null });
+  });
+});
+
+describe('a channelled skill', () => {
+  /**
+   * The brief's rule, stated as a test: **an interrupted channel still counts
+   * as cast.** It falls out of where the cooldown is stamped rather than from a
+   * rule about channels -- the attack point is what stamps it, a channel's
+   * attack point is the tick it starts pulsing, and no cancellation path after
+   * the attack point writes it again.
+   */
+  it('keeps its cooldown when it is broken off part-way', () => {
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450);
+    const target = withDummy(caster.state, 660, 450);
+    const drain = abilityById('channel.drain');
+    if (!drain) throw new Error('no drain');
+    const started = drain.windupTicks + 1;
+    // Aimed straight ahead, so the body is already facing it and the wind-up
+    // clock starts on tick 0 -- an aim behind the caster would spend unknown
+    // ticks in `Turning` and make the arithmetic below a guess.
+    const broken = run(target.state, started + 4, {
+      0: [
+        input(caster.id, {
+          castAbilityId: 'channel.drain',
+          castTargetX: 800,
+          castTargetY: 450,
+        }),
+      ],
+      // Well inside the channel, which runs for `channelTicks` after the first
+      // pulse.
+      [started + 2]: [input(caster.id, { cancelCast: true })],
+    });
+    const body = broken.state.entities.get(caster.id);
+    expect(body?.cast).toBeNull();
+    expect(body?.cooldowns['channel.drain'] ?? 0).toBeGreaterThan(broken.state.tick);
+  });
+});
+
+describe('an instant skill', () => {
+  /**
+   * "Instant execution" is not a mode: it is `windupTicks` at its floor, which
+   * `seconds()` already clamps to one tick. Asserted against the shortest
+   * wind-up in the table so that a row authored at zero cannot silently become
+   * a cast that never releases.
+   */
+  it('is a wind-up of one tick rather than a mode of its own', () => {
+    for (const id of ['skill.guardBreak', 'skill.cripplingStrike']) {
+      expect(abilityById(id)?.windupTicks ?? 0).toBeGreaterThanOrEqual(1);
+    }
+  });
+});

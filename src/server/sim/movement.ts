@@ -37,12 +37,35 @@ import { SERVER_TICK_RATE } from '../config.js';
 import { CorrectionReason } from '../net/protocol.js';
 import type { Vec3 } from '../state/types.js';
 import { MAX_STEP_HEIGHT, WALKABLE_MIN_HEIGHT, type TerrainSampler } from '../world/terrain.js';
+import { moveScaleOf } from './statuses.js';
 import type { ServerEntity, ServerInput } from './types.js';
+
+/**
+ * The slowest a slow may leave a body, as a fraction of its own speed
+ * (spec 184).
+ *
+ * A quarter, and it is a floor rather than a clamp on the authored magnitude so
+ * that stacking sources -- when there are any -- still cannot cross it. What it
+ * protects is the difference between a slow and a root: a body that cannot move
+ * at all needs its own counterplay, its own duration budget and its own tell,
+ * and none of those come free with a movement multiplier.
+ */
+export const MIN_MOVE_SCALE = 0.25;
 
 export interface MovementContext {
   readonly world: WorldColliders;
   readonly terrain: TerrainSampler;
   readonly config: LiveConfig;
+  /**
+   * The tick being resolved (spec 184).
+   *
+   * Here because a slow is a *timed state* and this is where speed is read: a
+   * status is only live relative to a tick, so a mover that could not name one
+   * would have to be handed a pre-scaled speed instead -- which is a second
+   * place for "how fast is this body" to be answered, and the whole reason
+   * {@link moveScaleOf} exists is that there should be one.
+   */
+  readonly tick: number;
 }
 
 export interface MovementOutcome {
@@ -159,7 +182,13 @@ export function resolveMovement(
   let dx = 0;
   let dy = 0;
 
-  const maxStep = entity.stats.moveSpeed / SERVER_TICK_RATE;
+  // A slow multiplies the step and nothing else (spec 184): the collision, the
+  // terrain check and the facing are all unchanged, so a slowed body walks the
+  // same way it always did and gets less far doing it. `MIN_MOVE_SCALE` is the
+  // floor -- see `moveScaleOf` -- so no slow can turn into a root.
+  const maxStep =
+    (entity.stats.moveSpeed * moveScaleOf(entity.statuses, context.tick, MIN_MOVE_SCALE)) /
+    SERVER_TICK_RATE;
   if (input) {
     const direction = clampDirection(input.moveX, input.moveY);
     dx += direction.x * maxStep;

@@ -13,7 +13,14 @@
  */
 
 import { itemById } from '../../../server/data/items.js';
-import { EQUIP_SLOTS, type Equipment, type EquipSlot, type Inventory } from '../../../server/state/types.js';
+import {
+  EQUIP_SLOTS,
+  isSkillSlot,
+  SKILL_EQUIP_SLOTS,
+  type Equipment,
+  type EquipSlot,
+  type Inventory,
+} from '../../../server/state/types.js';
 import type { ContainerView, ItemView } from '../../../ui/screens/inventory.js';
 
 /**
@@ -41,6 +48,13 @@ const ICONS: Readonly<Record<string, string>> = {
   'trinket.swiftband': 'item:trinket',
   'trinket.bloodstone': 'item:trinket',
   'potion.minor': 'item:potion',
+  // The four sigils (spec 184). One picture between them on purpose: a sigil is
+  // a skill in a bag, and what tells them apart is the name in the tooltip and
+  // the ability behind it rather than four variants of the same lozenge.
+  'sigil.guardBreak': 'item:sigil',
+  'sigil.stunningBlow': 'item:sigil',
+  'sigil.whirlwind': 'item:sigil',
+  'sigil.cripplingStrike': 'item:sigil',
 };
 
 export const UNKNOWN_ICON = 'item:unknown';
@@ -57,10 +71,32 @@ const SLOT_LABELS: Readonly<Record<EquipSlot, string>> = {
   chest: 'Chest',
   legs: 'Legs',
   trinket: 'Charm',
+  // Numbered rather than named, because the number *is* the key you press
+  // (spec 184): the four cells beside the bag and the four along the bottom of
+  // the screen are the same four slots, and a cell labelled "Skill" would be
+  // the interface declining to say which.
+  skill1: 'Skill 1',
+  skill2: 'Skill 2',
+  skill3: 'Skill 3',
+  skill4: 'Skill 4',
 };
 
+/**
+ * The worn slots, which is every equipment slot that is not a skill (spec 184).
+ *
+ * Derived by exclusion rather than listed, so a seventh piece of armour appears
+ * on the paperdoll by being added to `EQUIP_SLOTS` and nothing here has to be
+ * remembered.
+ */
 export const EQUIPMENT_SLOT_VIEW: readonly { readonly id: string; readonly label: string }[] =
-  EQUIP_SLOTS.map((slot) => ({ id: slot, label: SLOT_LABELS[slot] }));
+  EQUIP_SLOTS.filter((slot) => !isSkillSlot(slot)).map((slot) => ({
+    id: slot,
+    label: SLOT_LABELS[slot],
+  }));
+
+/** The four skill slots, in bar order (spec 184). */
+export const SKILL_SLOT_VIEW: readonly { readonly id: string; readonly label: string }[] =
+  SKILL_EQUIP_SLOTS.map((slot) => ({ id: slot, label: SLOT_LABELS[slot] }));
 
 /**
  * One stack as the screen sees it, or null.
@@ -103,6 +139,7 @@ export function containerViewOf(source: ContainerSource): ContainerView {
       }),
     ),
     slots: EQUIPMENT_SLOT_VIEW,
+    skillSlots: SKILL_SLOT_VIEW,
     level: source.level,
   };
 }

@@ -87,6 +87,23 @@ export const StatusId = {
    * two and a quarter seconds apart.
    */
   InCombat: 'inCombat',
+  /**
+   * Movement taken away for a while (spec 184).
+   *
+   * The first status in this map that is **applied by a skill rather than
+   * earned by a build**, and it is in this map rather than in a debuff system
+   * of its own for exactly the reason the file's header gives: one map with one
+   * expiry rule is one place to get right. `magnitude` is the fraction of move
+   * speed removed, captured when it was applied -- so a slow is worth what the
+   * skill that landed it was worth, which is the same rule `Exposed` already
+   * follows and the reason `magnitude` exists at all.
+   *
+   * It does not stack: a second slow refreshes the clock and keeps the stronger
+   * magnitude, which is what {@link applyStatus} already does with a
+   * `maxStacks` of 1. Two slows that added would be a root, and a root is a
+   * different mechanic that should have to say so.
+   */
+  Slowed: 'slowed',
 } as const;
 
 /** Adaptation is per ability id: `adapt:bolt.arcane`. */
@@ -194,4 +211,25 @@ export function adaptationAgainst(
   const held = statusOf(statuses, adaptedKey(abilityId), tick);
   if (!held) return 0;
   return Math.min(cap, held.stacks * perStack);
+}
+
+/**
+ * What this body's move speed is multiplied by right now (spec 184).
+ *
+ * The one place a slow is *read*, so `resolveMovement` and the client's mirror
+ * of it cannot disagree about what "40% slower" means. Returns 1 for a body
+ * carrying nothing, which is the common case and the reason this is a lookup
+ * rather than a field on `EffectiveStats`: a slow is a timed state and
+ * `EffectiveStats` is derived on equip, so a slow living there would either be
+ * recomputed per tick or go stale.
+ *
+ * Floored rather than allowed to reach zero. A slow that stopped a body dead
+ * would be a root wearing a slow's name, and the two want different counters --
+ * so the floor is stated here, once, and a row that authors a magnitude past it
+ * gets a hard slow rather than a root.
+ */
+export function moveScaleOf(statuses: Statuses, tick: number, floor: number): number {
+  const slowed = statusOf(statuses, StatusId.Slowed, tick);
+  if (!slowed) return 1;
+  return Math.max(floor, 1 - Math.max(0, slowed.magnitude));
 }

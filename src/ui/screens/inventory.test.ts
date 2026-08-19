@@ -29,6 +29,13 @@ const SLOTS = [
   { id: 'trinket', label: 'Charm' },
 ];
 
+const SKILL_SLOTS = [
+  { id: 'skill1', label: 'Skill 1' },
+  { id: 'skill2', label: 'Skill 2' },
+  { id: 'skill3', label: 'Skill 3' },
+  { id: 'skill4', label: 'Skill 4' },
+];
+
 function item(defId: string, slot: string | null, count = 1, level = 1): ItemView {
   return { defId, name: defId, count, slot, icon: `item:${defId}`, levelRequirement: level };
 }
@@ -41,6 +48,7 @@ function viewOf(overrides: Partial<ContainerView> = {}): ContainerView {
     bag,
     worn: { mainHand: null, offHand: null, head: null, chest: null, legs: null, trinket: null },
     slots: SLOTS,
+    skillSlots: SKILL_SLOTS,
     level: 3,
     ...overrides,
   };
@@ -106,7 +114,10 @@ describe('the inventory screen', () => {
     expect(screen.cellAt(inv(0))?.item?.defId).toBe('sword');
     expect(screen.cellAt(inv(1))?.item?.count).toBe(6);
     expect(screen.cellAt(inv(2))?.item).toBeNull();
-    expect(screen.equipmentSlots).toHaveLength(SLOTS.length);
+    // Worn cells and skill cells share one list, indexed by equipment ordinal
+    // (spec 184): a `SlotRef` has to mean the same thing whichever group the
+    // cell was drawn in, or a drag into the skill row would address a helmet.
+    expect(screen.equipmentSlots).toHaveLength(SLOTS.length + SKILL_SLOTS.length);
   });
 
   it('emits one intent for a carry between two bag cells', () => {

@@ -758,6 +758,11 @@ export interface EntityDelta {
   readonly turnRate?: number;
   /** Guard left, 0..1 (spec 147). Quantised to a byte on the wire. */
   readonly poise?: number;
+  /**
+   * How fast this body may move, as a fraction of its own speed (spec 184).
+   * Absent means unchanged; 1 is not slowed.
+   */
+  readonly moveScale?: number;
   /** Absorb left in health units, and the tick the whole thing falls off. */
   readonly shield?: number;
   readonly shieldUntilTick?: number;
@@ -1185,6 +1190,7 @@ const FIELD_LEVEL = 1 << 5;
 const FIELD_IDENTITY = 1 << 6;
 const FIELD_POISE = 1 << 7;
 const FIELD_SHIELD = 1 << 8;
+const FIELD_MOVE_SCALE = 1 << 9;
 
 function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   // A varuint rather than a byte since spec 147: `Identity` took the eighth bit
@@ -1215,6 +1221,12 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   if (entity.fields & FIELD_SHIELD) {
     writer.f32(entity.shield ?? 0).u32(entity.shieldUntilTick ?? 0);
   }
+  // A fraction in one byte, like the guard above (spec 184). 255 is "not
+  // slowed", which is what an absent field has always meant and what a body
+  // carrying nothing is.
+  if (entity.fields & FIELD_MOVE_SCALE) {
+    writer.u8(Math.max(0, Math.min(255, Math.round((entity.moveScale ?? 1) * 255))));
+  }
 }
 
 function readEntityDelta(reader: BufferReader): EntityDelta {
@@ -1234,6 +1246,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let poise: number | undefined;
   let shield: number | undefined;
   let shieldUntilTick: number | undefined;
+  let moveScale: number | undefined;
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
@@ -1260,6 +1273,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     shield = reader.f32();
     shieldUntilTick = reader.u32();
   }
+  if (fields & FIELD_MOVE_SCALE) moveScale = reader.u8() / 255;
   return {
     id,
     fields,
@@ -1276,6 +1290,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     ...(turnRate === undefined ? {} : { turnRate }),
     ...(poise === undefined ? {} : { poise }),
     ...(shield === undefined ? {} : { shield, shieldUntilTick: shieldUntilTick ?? 0 }),
+    ...(moveScale === undefined ? {} : { moveScale }),
   };
 }
 
@@ -1302,6 +1317,13 @@ function readAttributes(reader: BufferReader): BaseStats {
   return values as unknown as BaseStats;
 }
 
+function readStringList(reader: BufferReader): readonly string[] {
+  const count = reader.count();
+  const ids: string[] = new Array<string>(count);
+  for (let i = 0; i < count; i++) ids[i] = reader.str();
+  return ids;
+}
+
 function readSkills(reader: BufferReader): readonly SkillAllocation[] {
   const count = reader.count();
   const skills: SkillAllocation[] = new Array<SkillAllocation>(count);
@@ -1326,6 +1348,14 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.maxResource)
     .f32(stats.resourceRegen)
     .str(stats.basicAttackId);
+  // The four skill slots' abilities (spec 184), count-prefixed like every other
+  // list on this wire. Owner-only already -- `Stats` is sent to the player it
+  // is about -- and sent because the client needs it for the same two reasons
+  // it needs `basicAttackId`: to know what its bar may ask for, and to grey out
+  // what it may not. It is still never *read* from a client: the server derives
+  // its own copy from equipment on every recalculation.
+  writer.varuint(stats.skillAbilityIds.length);
+  for (const id of stats.skillAbilityIds) writer.str(id);
   writeTraits(writer, stats.traits);
 }
 
@@ -1370,6 +1400,7 @@ function readStats(reader: BufferReader): EffectiveStats {
     maxResource: reader.f32(),
     resourceRegen: reader.f32(),
     basicAttackId: reader.str(),
+    skillAbilityIds: readStringList(reader),
     traits: readTraits(reader),
   };
 }

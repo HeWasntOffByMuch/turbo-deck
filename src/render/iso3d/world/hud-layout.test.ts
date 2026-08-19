@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ALL_ABILITIES } from '../../../server/data/abilities.js';
+import { ALL_ABILITIES, barNameOf } from '../../../server/data/abilities.js';
 import {
   bottomEdge,
   centredClearance,
@@ -61,8 +61,11 @@ describe('the HUD layout', () => {
   });
 
   it('fits the longest ability name inside a slot, in the game’s own font', () => {
+    // The *drawn* name, which is `shortName` where a row has one (spec 184).
+    // Measuring `name` would fail a row that already answered the constraint,
+    // and measuring nothing would let the next long one through silently.
     const longest = ALL_ABILITIES.reduce(
-      (worst, ability) => (ability.name.length > worst.length ? ability.name : worst),
+      (worst, ability) => (barNameOf(ability).length > worst.length ? barNameOf(ability) : worst),
       '',
     );
     // Only where a slot draws a name at all: on a finger it draws an icon,

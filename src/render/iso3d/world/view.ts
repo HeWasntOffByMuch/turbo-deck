@@ -74,7 +74,14 @@ import { createLoadingOverlay } from './loading-overlay.js';
 import { FrameMeter } from './fps-meter.js';
 import { createFpsOverlay } from './fps-overlay.js';
 import { PROP_REGION_SIZE } from '../props.js';
-import { abilityForSlot, actionBarFromQuery } from './action-bar.js';
+import {
+  abilityForSlot,
+  actionBarFor,
+  actionBarFromQuery,
+  ACTION_BAR,
+  sameBar,
+  type ActionSlot,
+} from './action-bar.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
@@ -939,7 +946,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * in slot 3, which is exactly the kind of disagreement `abilityForSlot` exists
    * to make impossible.
    */
-  const actionBar = actionBarFromQuery(location.search);
+  /**
+   * The bar `?slots=` forced, or null for "read it off the player's equipment"
+   * (spec 184).
+   *
+   * An override rather than the only source: a skill is an item worn in one of
+   * the four skill slots, so the ordinary bar is a view of the equipment and
+   * changes when the player changes one. The query parameter stays because the
+   * browser harnesses need to press an ability without looting a sigil for it
+   * first.
+   */
+  const forcedBar = actionBarFromQuery(location.search);
+  let actionBar: readonly ActionSlot[] = forcedBar ?? ACTION_BAR;
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift), actionBar);
   /** The overlay's current box, so it is only rewritten when the letterbox moves. */
   let hudBox = { x: -1, y: -1, width: -1, height: -1 };
@@ -2284,6 +2302,19 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       style.height = `${box.height}px`;
     }
 
+    // What the four skill slots hold, read off the equipment every frame
+    // (spec 184). Pushed rather than remembered, for the reason the window
+    // buttons are: the equipment is the state, and a bar that kept its own copy
+    // would be a second opinion about what the player is carrying -- which is
+    // exactly what a swap the server refused would leave behind. `setSlots`
+    // compares before it rebuilds, so a resend that changed nothing is free.
+    if (forcedBar === null) {
+      const next = actionBarFor(view.equipment);
+      if (!sameBar(next, actionBar)) {
+        actionBar = next;
+        hud.setSlots(next);
+      }
+    }
     hud.update(
       view,
       scene.screenAnchors(),

@@ -20,6 +20,8 @@
  */
 
 import { EntityField } from './protocol.js';
+import { MIN_MOVE_SCALE } from '../sim/movement.js';
+import { moveScaleOf } from '../sim/statuses.js';
 import type { DeltaMessage, EntityDelta } from './messages.js';
 import { ServerMessageType } from './protocol.js';
 import type { ServerEntity } from '../sim/types.js';
@@ -54,9 +56,10 @@ interface KnownEntity {
   poise: number;
   shield: number;
   shieldUntilTick: number;
+  moveScale: number;
 }
 
-function snapshotOf(entity: ServerEntity, name: string): KnownEntity {
+function snapshotOf(entity: ServerEntity, name: string, tick: number): KnownEntity {
   return {
     x: entity.position.x,
     y: entity.position.y,
@@ -72,6 +75,7 @@ function snapshotOf(entity: ServerEntity, name: string): KnownEntity {
     poise: poiseFractionOf(entity),
     shield: entity.shield,
     shieldUntilTick: entity.shieldUntilTick,
+    moveScale: moveScaleOf(entity.statuses, tick, MIN_MOVE_SCALE),
   };
 }
 
@@ -105,7 +109,7 @@ export class DeltaTracker {
       // Null means "nothing a table cannot answer" -- every monster, prop and
       // projectile. Only a player costs an `Identity` field (spec 145).
       const named = nameOf(entity);
-      const next = snapshotOf(entity, named ?? '');
+      const next = snapshotOf(entity, named ?? '', tick);
 
       if (!previous) {
         // First sight: everything, including identity.
@@ -120,6 +124,7 @@ export class DeltaTracker {
             EntityField.Level |
             EntityField.Poise |
             EntityField.Shield |
+            EntityField.MoveScale |
             (named === null ? 0 : EntityField.Identity),
           kind: entity.kind,
           typeId: entity.typeId,
@@ -133,6 +138,7 @@ export class DeltaTracker {
           poise: next.poise,
           shield: entity.shield,
           shieldUntilTick: entity.shieldUntilTick,
+          moveScale: next.moveScale,
           ...(named === null ? {} : { name: named, turnRate: entity.stats.turnRate }),
         });
         this.known.set(entity.id, next);
@@ -167,6 +173,12 @@ export class DeltaTracker {
         fields |= EntityField.Identity;
       }
       if (Math.abs(next.poise - previous.poise) > POISE_EPSILON) fields |= EntityField.Poise;
+      // The same epsilon and for the same reason: both ride the wire as a byte,
+      // so a change smaller than a 255th is not expressible and reporting it
+      // would be a field per tick that decoded to the number already held.
+      if (Math.abs(next.moveScale - previous.moveScale) > POISE_EPSILON) {
+        fields |= EntityField.MoveScale;
+      }
       if (
         Math.abs(next.shield - previous.shield) > HEALTH_EPSILON ||
         next.shieldUntilTick !== previous.shieldUntilTick
@@ -192,6 +204,7 @@ export class DeltaTracker {
           ? { name: named ?? '', turnRate: entity.stats.turnRate }
           : {}),
         ...(fields & EntityField.Poise ? { poise: next.poise } : {}),
+        ...(fields & EntityField.MoveScale ? { moveScale: next.moveScale } : {}),
         ...(fields & EntityField.Shield
           ? { shield: entity.shield, shieldUntilTick: entity.shieldUntilTick }
           : {}),

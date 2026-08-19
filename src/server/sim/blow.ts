@@ -39,13 +39,12 @@ import { SCALING } from '../data/scaling.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { applyArmor } from '../player/stats.js';
 import { provoke } from './aggro.js';
-import { applyPoiseDamage, isResolute, poiseDamageOf } from './poise.js';
+import { applyPoiseDamage, isResolute, poiseDamageOf, stagger } from './poise.js';
 import { markAssist } from './restoration.js';
 import {
   adaptationAgainst,
   adaptedKey,
   applyStatus,
-  clearStatus,
   hasStatus,
   stacksOf,
   statusOf,
@@ -246,24 +245,14 @@ export function resolveBlow(
     );
     target = poised.entity;
     if (poised.broke) {
-      target = {
-        ...target,
-        activity: ActivityValue.Stunned,
-        activityUntilTick: tick + D.staggerTicks,
-        // A break costs the broken body its Flow. Agility's momentum is
-        // explicitly a thing that can be taken away, which is what stops the
-        // stack from being a passive.
-        statuses: clearStatus(target.statuses, StatusId.Flow),
-      };
-      events.push({ kind: 'poiseBroken', entityId: target.id, breakerId: attacker.id, ticks: D.staggerTicks });
-      if (poised.interrupted) {
-        events.push({
-          kind: 'castEnded',
-          entityId: target.id,
-          abilityId: poised.interrupted.abilityId,
-          reason: CastEndReason.Interrupted,
-        });
-      }
+      // What a stagger *is* lives in `sim/poise.ts` since spec 184, because a
+      // skill can now apply one directly and two copies of these lines would be
+      // two answers to the same question. `applyPoiseDamage` has already
+      // checked the immunity and taken the cast off, so the cast it dropped is
+      // passed in rather than read back off a body that no longer has it.
+      const struck = stagger(target, attacker.id, D.staggerTicks, tick, poised.interrupted);
+      target = struck.entity;
+      events.push(...struck.events);
       attacker = rewardBreak(attacker, tick);
     }
   } else if (target.cast) {

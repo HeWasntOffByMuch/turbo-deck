@@ -7,6 +7,7 @@ import { EntityField } from './protocol.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { blankProgression } from '../sim/world.js';
+import { applyStatus, StatusId } from '../sim/statuses.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 100,
@@ -22,6 +23,7 @@ const STATS: EffectiveStats = {
   maxResource: 30,
   resourceRegen: 0.05,
   basicAttackId: 'melee.slash',
+  skillAbilityIds: [],
   traits: NEUTRAL_TRAITS,
 };
 
@@ -79,6 +81,7 @@ describe('delta tracking', () => {
       EntityField.Spawn |
         EntityField.Poise |
         EntityField.Shield |
+        EntityField.MoveScale |
         EntityField.Position |
         EntityField.Facing |
         EntityField.Health |
@@ -148,6 +151,7 @@ describe('delta tracking', () => {
       EntityField.Spawn |
         EntityField.Poise |
         EntityField.Shield |
+        EntityField.MoveScale |
         EntityField.Position |
         EntityField.Facing |
         EntityField.Health |
@@ -250,5 +254,37 @@ describe('delta tracking', () => {
       const delta = tracker.build(1, 0, [player(3), entity(9)], named);
       expect(decodeServerMessage(encodeServerMessage(delta))).toEqual(delta);
     });
+  });
+});
+
+describe('a slow on the wire (spec 184)', () => {
+  it('is sent on first sight, so a client never assumes full speed wrongly', () => {
+    const tracker = new DeltaTracker();
+    const frame = tracker.build(1, 0, [entity(1)]);
+    expect((frame.upserts[0]?.fields ?? 0) & EntityField.MoveScale).toBeTruthy();
+    expect(frame.upserts[0]?.moveScale).toBe(1);
+  });
+
+  it('is reported when it lands and again when it lifts', () => {
+    const tracker = new DeltaTracker();
+    const body = entity(1);
+    tracker.build(1, 0, [body]);
+
+    const slowed = {
+      ...body,
+      statuses: applyStatus(body.statuses, StatusId.Slowed, 1, 60, { magnitude: 0.4 }),
+    };
+    const during = tracker.build(2, 0, [slowed]);
+    expect((during.upserts[0]?.fields ?? 0) & EntityField.MoveScale).toBeTruthy();
+    expect(during.upserts[0]?.moveScale).toBeCloseTo(0.6, 5);
+
+    // Held: nothing changed, so nothing is said about it.
+    const held = tracker.build(3, 0, [slowed]);
+    expect((held.upserts[0]?.fields ?? 0) & EntityField.MoveScale).toBeFalsy();
+
+    // Expired -- a comparison against the tick, like every other status.
+    const after = tracker.build(70, 0, [slowed]);
+    expect((after.upserts[0]?.fields ?? 0) & EntityField.MoveScale).toBeTruthy();
+    expect(after.upserts[0]?.moveScale).toBe(1);
   });
 });

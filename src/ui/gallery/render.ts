@@ -242,6 +242,12 @@ export function demoContainers(): ContainerView {
       { id: 'legs', label: 'Legs' },
       { id: 'trinket', label: 'Charm' },
     ],
+    skillSlots: [
+      { id: 'skill1', label: 'Skill 1' },
+      { id: 'skill2', label: 'Skill 2' },
+      { id: 'skill3', label: 'Skill 3' },
+      { id: 'skill4', label: 'Skill 4' },
+    ],
     level: 4,
   };
 }

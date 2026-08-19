@@ -9,7 +9,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { ALL_ITEMS } from '../../../server/data/items.js';
-import { EMPTY_EQUIPMENT, emptyInventory, EQUIP_SLOTS } from '../../../server/state/types.js';
+import {
+  EMPTY_EQUIPMENT,
+  emptyInventory,
+  EQUIP_SLOTS,
+  SKILL_EQUIP_SLOTS,
+} from '../../../server/state/types.js';
 import { bakeAtlas } from '../../../ui/render/atlas.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import { containerViewOf, iconFor, itemViewOf, UNKNOWN_ICON } from './inventory-model.js';
@@ -49,7 +54,13 @@ describe('containerViewOf', () => {
       equipment: EMPTY_EQUIPMENT,
       level: 1,
     });
-    expect(view.slots.map((slot) => slot.id)).toEqual([...EQUIP_SLOTS]);
+    // The paperdoll's slots and the skill row's between them are every
+    // equipment slot the server has, in order (spec 184). Two lists because
+    // they are drawn in two places -- the worn things beside a body, the four
+    // skills in a row under the bag that mirrors the bar.
+    expect([...view.slots, ...view.skillSlots].map((slot) => slot.id)).toEqual([...EQUIP_SLOTS]);
+    expect(view.skillSlots.map((slot) => slot.id)).toEqual([...SKILL_EQUIP_SLOTS]);
+    for (const slot of view.skillSlots) expect(slot.label.length).toBeGreaterThan(0);
     for (const slot of view.slots) expect(slot.label.length).toBeGreaterThan(0);
   });
 

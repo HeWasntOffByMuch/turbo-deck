@@ -1,0 +1,209 @@
+/**
+ * What a landed skill actually does, effect by effect (spec 184).
+ *
+ * The whole of "a skill is assembled rather than written", and the file to read
+ * to see whether that claim is true: every case below is two or three lines
+ * that call a function which already owns the mechanic. Damage is
+ * {@link resolveBlow}. Guard is `applyPoiseDamage`. A stun is `stagger`, the
+ * same one a poise break calls. A status is `applyStatus`. Healing is
+ * `applyHealing`, so Wisdom's scale and Constitution's overheal apply to a
+ * skill's heal exactly as they apply to Mend's.
+ *
+ * **There is no case here that implements a mechanic**, and that is the review
+ * criterion rather than a boast: an effect that had to do its own arithmetic
+ * would be a mechanic living in the skill system instead of in the system it
+ * belongs to, which is the thing this spec exists to avoid. The day something
+ * needs one, the rule goes where it belongs and the case here calls it.
+ *
+ * Two orderings are load-bearing:
+ *
+ *  - **Effects run in the order the row lists them**, so Guard Break's
+ *    `poise: -50` comes off before its `poiseDamage: 25` is measured against
+ *    the pool. Reordering a row is a balance change and is meant to be.
+ *  - **The Rng is threaded**, exactly as it is everywhere else in this sim. Only
+ *    `damage` draws from it -- through `resolveBlow`, which rolls crit first and
+ *    always -- so a skill that lists two damage effects draws twice, every
+ *    replay, in the same order.
+ *
+ * Pure. The tick and the Rng are arguments and both come back out.
+ */
+
+import type { Rng } from '../../shared/prng.js';
+import type { AbilityDefinition } from '../data/abilities.js';
+import { subjectOf, type SkillEffect } from '../data/skill-effects.js';
+import { applyHealing } from './healing.js';
+import { resolveBlow } from './blow.js';
+import { applyPoiseDamage, isResolute, staggerImmune, stagger } from './poise.js';
+import { applyStatus, clearStatus } from './statuses.js';
+import type { ServerEntity, ServerSimEvent } from './types.js';
+
+export interface EffectResult {
+  /** The caster, with whatever the effects returned to it. */
+  readonly caster: ServerEntity;
+  /**
+   * The target, changed. Equal to {@link caster} when the two are the same
+   * body -- a self-targeted skill -- which callers must not write twice.
+   */
+  readonly target: ServerEntity;
+  readonly events: readonly ServerSimEvent[];
+  readonly rng: Rng;
+}
+
+/**
+ * Runs `ability.effects` against one target.
+ *
+ * The caster comes back too, because `resolveBlow` returns it: a weak point
+ * hands the attacker resource, ability damage hands it a shield, a break hands
+ * it momentum. Every existing caller of `applyDamage` already writes an attacker
+ * back and this is the same contract -- a caller that drops it silently loses
+ * every Perception and Wisdom payoff in the game.
+ *
+ * When the target *is* the caster the two are one body and only `target` is
+ * meaningful; `caster` is returned equal to it so a caller that writes both
+ * writes the same thing twice rather than losing half the work.
+ */
+export function applyEffects(
+  ability: AbilityDefinition,
+  casterIn: ServerEntity,
+  targetIn: ServerEntity,
+  tick: number,
+  rngIn: Rng,
+): EffectResult {
+  const isSelf = casterIn.id === targetIn.id;
+  let caster = casterIn;
+  // One body when the skill is aimed at its own caster, two otherwise. Held as
+  // separate variables rather than as a map keyed by id, because the two cases
+  // are genuinely different -- writing a self-cast through a map would leave
+  // two copies of one body to reconcile at the end -- and `isSelf` is the only
+  // branch that costs.
+  let target = isSelf ? casterIn : targetIn;
+  const events: ServerSimEvent[] = [];
+  let rng = rngIn;
+
+  for (const effect of ability.effects ?? []) {
+    // An effect the row points at the *caster* runs on the caster even inside a
+    // list applied to somebody else, so "damage them and heal me" is one row
+    // rather than two skills. On a self-cast there is nothing to distinguish.
+    const onCaster = !isSelf && subjectOf(effect) === 'caster';
+    const applied = applyOne(effect, ability, caster, onCaster ? caster : target, tick, rng, isSelf);
+    rng = applied.rng;
+    events.push(...applied.events);
+    if (onCaster) {
+      caster = applied.target;
+    } else if (isSelf) {
+      caster = applied.target;
+      target = applied.target;
+    } else {
+      caster = applied.caster;
+      target = applied.target;
+    }
+  }
+
+  return { caster, target, events, rng };
+}
+
+interface OneResult {
+  readonly caster: ServerEntity;
+  readonly target: ServerEntity;
+  readonly events: readonly ServerSimEvent[];
+  readonly rng: Rng;
+}
+
+function applyOne(
+  effect: SkillEffect,
+  ability: AbilityDefinition,
+  caster: ServerEntity,
+  target: ServerEntity,
+  tick: number,
+  rng: Rng,
+  selfDirected: boolean,
+): OneResult {
+  const still = (entity: ServerEntity, events: readonly ServerSimEvent[] = []): OneResult => ({
+    caster,
+    target: entity,
+    events,
+    rng,
+  });
+
+  switch (effect.kind) {
+    case 'damage': {
+      // A body cannot damage itself with a skill. Not a rule about hostility --
+      // the caller already filtered for that -- but about the one case the
+      // filter cannot see: a self-targeted skill listing damage would run
+      // `resolveBlow` with the same body on both sides.
+      if (selfDirected && caster.id === target.id) return still(target);
+      // The row with its damage replaced, so `resolveBlow` runs unchanged and a
+      // skill's blow is a blow: crit, weak point, exposure, armour, adaptation,
+      // shields, poise, aftermath, the `hit` event and the kill. Nothing about
+      // damage is reimplemented here and nothing may be.
+      const base = effect.amount ?? ability.damage;
+      const scaled = base * (effect.multiplier ?? 1);
+      const blow = resolveBlow({ ...ability, damage: scaled }, caster, target, tick, rng);
+      return { caster: blow.attacker, target: blow.target, events: blow.events, rng: blow.rng };
+    }
+
+    case 'poiseDamage': {
+      // Through the break machinery, so hyper-armour reduces it, the immunity
+      // window refuses the break, and emptying the pool staggers exactly the way
+      // a weapon emptying it does.
+      const poised = applyPoiseDamage(target, effect.amount, tick, false);
+      if (!poised.broke) return still(poised.entity);
+      const struck = stagger(
+        poised.entity,
+        caster.id,
+        poised.entity.stats.traits.staggerTicks,
+        tick,
+        poised.interrupted,
+      );
+      return still(struck.entity, struck.events);
+    }
+
+    case 'stun': {
+      // The same two guards a break is subject to, checked here because
+      // `stagger` deliberately does not check them -- see its note. Without
+      // these a stun skill would ignore the window that stops two casters
+      // holding a third permanently, which is the whole reason the window
+      // exists.
+      if (staggerImmune(target, tick) || isResolute(target) || target.health <= 0) {
+        return still(target);
+      }
+      const struck = stagger(target, caster.id, Math.max(1, Math.round(effect.ticks)), tick);
+      return still(struck.entity, struck.events);
+    }
+
+    case 'applyStatus':
+      return still({
+        ...target,
+        statuses: applyStatus(target.statuses, effect.statusId, tick, effect.durationTicks, {
+          ...(effect.maxStacks === undefined ? {} : { maxStacks: effect.maxStacks }),
+          ...(effect.magnitude === undefined ? {} : { magnitude: effect.magnitude }),
+        }),
+      });
+
+    case 'removeStatus':
+      return still({ ...target, statuses: clearStatus(target.statuses, effect.statusId) });
+
+    case 'heal': {
+      const amount = (effect.amount ?? 0) + target.stats.maxHealth * (effect.fraction ?? 0);
+      const restored = applyHealing(target, amount, tick);
+      return still(restored.entity);
+    }
+
+    case 'resource':
+      return still({
+        ...target,
+        resource: Math.max(0, Math.min(target.stats.maxResource, target.resource + effect.amount)),
+      });
+
+    case 'poise':
+      // The pool written directly, and it **cannot break**: clamped at zero
+      // rather than allowed to empty into a stagger. Stripping a guard and
+      // knocking somebody down are different asks, and one effect that
+      // sometimes did the other would make a skill's behaviour depend on how
+      // full its target happened to be.
+      return still({
+        ...target,
+        poise: Math.max(0, Math.min(target.stats.traits.maxPoise, target.poise + effect.amount)),
+      });
+  }
+}

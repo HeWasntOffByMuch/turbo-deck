@@ -28,6 +28,10 @@ const NO_EQUIPMENT: Equipment = {
   chest: null,
   legs: null,
   trinket: null,
+  skill1: null,
+  skill2: null,
+  skill3: null,
+  skill4: null,
 };
 
 /** Just enough of a `ClientView` for the three replicated screens to read. */

@@ -35,7 +35,15 @@
 
 import { SCALING } from '../data/scaling.js';
 import type { EffectiveStats } from '../state/types.js';
-import { ActivityValue, CastPhase, type CastState, type ServerEntity } from './types.js';
+import { clearStatus, StatusId } from './statuses.js';
+import {
+  ActivityValue,
+  CastEndReason,
+  CastPhase,
+  type CastState,
+  type ServerEntity,
+  type ServerSimEvent,
+} from './types.js';
 
 export const STAGGER_IMMUNE_TICKS = SCALING.combat.staggerImmuneTicks;
 
@@ -171,6 +179,70 @@ export function applyPoiseDamage(
       poise: traits.maxPoise,
       staggerImmuneUntilTick: tick + STAGGER_IMMUNE_TICKS,
       cast: null,
+    },
+  };
+}
+
+/**
+ * Everything that happens to a body that has just been staggered (spec 184).
+ *
+ * Lifted out of `blow.ts`, where it was written inline, because there are now
+ * two ways to be staggered -- a guard broken by a blow, and a skill that says
+ * `{ kind: 'stun' }` -- and a second copy of these five lines is a second
+ * answer to what a stagger *is*. The rooted legs, the refused hands, the lost
+ * Flow, the dropped cast, the immunity window and the `poiseBroken` the client
+ * flinches and draws its swirl from all come from here, so a skill's stun is
+ * the same state the game already has rather than one that looks like it.
+ *
+ * Two things it deliberately does **not** do, and both are the caller's:
+ *
+ *  - It does not check {@link staggerImmune} or {@link isResolute}. On the
+ *    break path {@link applyPoiseDamage} has already checked them *and* stamped
+ *    the immunity, so a check here would see the guard it just set and refuse
+ *    the very stagger it was called to apply. A caller that has not checked --
+ *    the `stun` effect -- must.
+ *  - It does not touch the poise pool. A break refills it as part of emptying
+ *    it; a stun applied directly never spent it, and refilling would *hand* the
+ *    victim guard for being stunned.
+ *
+ * `interrupted` is the cast that was dropped, if any, and is a parameter rather
+ * than read off `entity.cast` because on the break path `applyPoiseDamage` has
+ * already cleared it and only it still knows what was there.
+ */
+export function stagger(
+  entity: ServerEntity,
+  breakerId: number,
+  ticks: number,
+  tick: number,
+  interrupted: CastState | null = entity.cast,
+): { readonly entity: ServerEntity; readonly events: readonly ServerSimEvent[] } {
+  const events: ServerSimEvent[] = [
+    { kind: 'poiseBroken', entityId: entity.id, breakerId, ticks },
+  ];
+  // A client roots itself while it believes it is casting, so a cast dropped in
+  // silence leaves a player standing still for good (spec 062).
+  if (interrupted) {
+    events.push({
+      kind: 'castEnded',
+      entityId: entity.id,
+      abilityId: interrupted.abilityId,
+      reason: CastEndReason.Interrupted,
+    });
+  }
+  return {
+    events,
+    entity: {
+      ...entity,
+      cast: null,
+      activity: ActivityValue.Stunned,
+      activityUntilTick: tick + ticks,
+      // The window that stops two attackers holding a third permanently, and
+      // the reason a stun effect is a mechanic rather than a removal.
+      staggerImmuneUntilTick: tick + STAGGER_IMMUNE_TICKS,
+      // A break costs the broken body its Flow. Agility's momentum is
+      // explicitly a thing that can be taken away, which is what stops the
+      // stack from being a passive.
+      statuses: clearStatus(entity.statuses, StatusId.Flow),
     },
   };
 }

@@ -123,6 +123,7 @@ function casting(abilityId: string, phase: number): CastState {
     spentResource: 0,
     spentHealth: 0,
     spentCharges: 0,
+    spentPoise: 0,
     startedTick: 0,
     windupStartTick: 0,
     releaseTick: 30,

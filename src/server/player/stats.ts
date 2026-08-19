@@ -31,6 +31,7 @@ import { itemById } from '../data/items.js';
 import { above, SCALING } from '../data/scaling.js';
 import type { StatModifier } from '../data/modifiers.js';
 import { armorFromAttributes, deriveTraits } from './derived.js';
+import { skillAbilityIdsOf } from './skill-slots.js';
 import { heldModifiers, resolveProgression } from './progression.js';
 import { type BaseStats, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 
@@ -262,6 +263,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     maxResource,
     resourceRegen,
     basicAttackId: basicAttackFor(player),
+    skillAbilityIds: skillAbilityIdsOf(player.equipment),
     // Derived last, because two of its fields are fractions of maxHealth and
     // one is a duration in ticks -- it needs the pool it is a fraction of, and
     // the tick rate the sim actually runs at.

@@ -52,8 +52,34 @@ export const BASE_STAT_KEYS: readonly BaseStatKey[] = [
   'wisdom',
 ];
 
-export type EquipSlot = 'mainHand' | 'offHand' | 'head' | 'chest' | 'legs' | 'trinket';
+export type EquipSlot =
+  | 'mainHand'
+  | 'offHand'
+  | 'head'
+  | 'chest'
+  | 'legs'
+  | 'trinket'
+  /**
+   * The four active-skill slots (spec 184).
+   *
+   * Equipment slots rather than a container of their own, and that decision is
+   * most of what made the feature small: `applyMove` already knows how to put a
+   * thing in a slot, take it out, swap it and refuse it; `MoveItem` already
+   * addresses one; `Equipment` already persists one; the paperdoll already
+   * draws one; a trade already leaves worn items alone. A fifth container would
+   * have been a second inventory system, which is the thing the brief names
+   * first among what not to build.
+   */
+  | 'skill1'
+  | 'skill2'
+  | 'skill3'
+  | 'skill4';
 
+/**
+ * Canonical order. **Load-bearing**: it is the order equipment is written in on
+ * the wire and the ordinal a {@link SlotAddress} names, so a slot is *appended*
+ * and never inserted.
+ */
 export const EQUIP_SLOTS: readonly EquipSlot[] = [
   'mainHand',
   'offHand',
@@ -61,7 +87,48 @@ export const EQUIP_SLOTS: readonly EquipSlot[] = [
   'chest',
   'legs',
   'trinket',
+  'skill1',
+  'skill2',
+  'skill3',
+  'skill4',
 ];
+
+/**
+ * The four, in bar order (spec 184).
+ *
+ * Named once so that "which slot is slot 2" has one answer across the server,
+ * the HUD and the bag. The index into this array is the index into the action
+ * bar, which is what makes the four cells beside the backpack and the four
+ * along the bottom of the screen the *same* four.
+ */
+export const SKILL_EQUIP_SLOTS: readonly EquipSlot[] = ['skill1', 'skill2', 'skill3', 'skill4'];
+
+const SKILL_SLOT_SET: ReadonlySet<string> = new Set(SKILL_EQUIP_SLOTS);
+
+export function isSkillSlot(slot: string): boolean {
+  return SKILL_SLOT_SET.has(slot);
+}
+
+/**
+ * Where an item says it goes (spec 184).
+ *
+ * Wider than {@link EquipSlot} by exactly one value: `'skill'`, which means
+ * "any of the four". An item naming one particular skill slot would be an item
+ * that can only ever be your second skill, which is not a thing anybody wants
+ * to author -- so the four slots are a *family* and this is its name.
+ */
+export type EquipTarget = EquipSlot | 'skill';
+
+/**
+ * What an equipment slot accepts, which for the four skill slots is one family.
+ *
+ * The whole of how a skill item fits four slots: `equipRefusal` compares
+ * families rather than slot names, so `slot: 'skill'` fits any of the four and
+ * `slot: 'mainHand'` still fits exactly one.
+ */
+export function slotFamily(slot: EquipSlot): EquipTarget {
+  return isSkillSlot(slot) ? 'skill' : slot;
+}
 
 export function isEquipSlot(value: string): value is EquipSlot {
   return (EQUIP_SLOTS as readonly string[]).includes(value);
@@ -82,6 +149,10 @@ export const EMPTY_EQUIPMENT: Equipment = {
   chest: null,
   legs: null,
   trinket: null,
+  skill1: null,
+  skill2: null,
+  skill3: null,
+  skill4: null,
 };
 
 /**
@@ -596,6 +667,24 @@ export interface EffectiveStats {
    * what its right-click reaches with and asks for.
    */
   readonly basicAttackId: string;
+  /**
+   * The active skills this body may cast, derived from its four skill slots
+   * (spec 184).
+   *
+   * A stat for the reason {@link basicAttackId} is one: it is the difference
+   * between one character and another, it comes off equipment, and it is
+   * recomputed on every equip change by the one function that recomputes
+   * everything else. `startCast` refuses a `skill: true` ability that is not in
+   * here, which is the first ownership check the ability system has ever had.
+   *
+   * **Derived, never persisted, never read from a client.** A monster's is
+   * empty, which is what makes "monsters cannot cast player skills" a fact
+   * about the derivation rather than a check somewhere.
+   *
+   * Gaps closed, unlike the bar: this answers "may I cast this", and where a
+   * skill sits is the bag's question.
+   */
+  readonly skillAbilityIds: readonly string[];
   /**
    * Everything the six attributes derive (spec 147). See {@link TraitStats}.
    *

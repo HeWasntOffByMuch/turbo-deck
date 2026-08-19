@@ -49,6 +49,34 @@ export const WEAPON_ICONS: Readonly<Record<string, string>> = {
     '<path fill="currentColor" stroke="none" fill-rule="evenodd" ' +
     'd="M12 1.5 L14.6 9.4 L22.5 12 L14.6 14.6 L12 22.5 L9.4 14.6 L1.5 12 L9.4 9.4 Z ' +
     'M12 10.1 a1.9 1.9 0 1 0 0 3.8 a1.9 1.9 0 1 0 0 -3.8 Z"/>',
+  // --- active skills (spec 184) ---
+  //
+  // Keyed by ability id like the three above, so the compact bar draws a skill
+  // rather than the fallback lozenge. Silhouette rather than detail, for the
+  // reason the ability art already gives: these have to read at a glance while
+  // something is trying to kill you.
+  //
+  // A shield with a crack across it: the guard, broken.
+  'skill.guardBreak':
+    '<path d="M12 2.6 L20 5.6 V12 c0 5.2 -3.4 8 -8 9.4 C8 20 4.6 17.2 4.6 12 V5.6 Z"/>' +
+    '<path d="M15.5 6.4 L9.5 12.4 L13.5 13.6 L8 18.6" stroke-width="1.6"/>',
+  // A fist, and the shock coming off it: the blow that puts somebody down.
+  'skill.stunningBlow':
+    '<path d="M7.5 10.5 h6.2 a2.4 2.4 0 0 1 0 4.8 H7.5 Z"/>' +
+    '<path d="M7.5 10.9 V9 a2 2 0 0 1 2 -2 h3.6"/>' +
+    '<path d="M17.6 6.4 L20.6 4.2 M18.8 10 L22.4 9.4 M17.4 13.6 L20.6 15.2"/>',
+  // Two arcs round a centre: a sweep at everything at once.
+  'skill.whirlwind':
+    '<path d="M12 4.2 A 7.8 7.8 0 0 1 19.8 12"/>' +
+    '<path d="M12 19.8 A 7.8 7.8 0 0 1 4.2 12"/>' +
+    '<path d="M17 1.8 L19.9 4.4 L17 6.6"/>' +
+    '<path d="M7 22.2 L4.1 19.6 L7 17.4"/>' +
+    '<circle cx="12" cy="12" r="2.1"/>',
+  // A leg, and the cut behind the knee.
+  'skill.cripplingStrike':
+    '<path d="M10.4 2.8 V9.6 L14.6 14 V21.2"/>' +
+    '<path d="M14.6 21.2 h4"/>' +
+    '<path d="M6 10.6 L15.4 6.8" stroke-width="1.6"/>',
 };
 
 /**
