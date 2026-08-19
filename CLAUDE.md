@@ -62,6 +62,8 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 184) |
+| `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -157,7 +159,49 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  stitching the join by copying shared corners exactly and easing
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
-                 collision and pathfinding helpers the server collides against
+                 collision and pathfinding helpers the server collides against.
+                 avoidance.ts is how two bodies get past each other (spec 184):
+                 ORCA, van den Berg et al.'s reciprocal collision avoidance,
+                 RVO2's 2D solver transcribed rather than invented. Each
+                 neighbour contributes one half-plane of velocities safe with
+                 respect to it over the next second; the answer is the velocity
+                 nearest the wanted one satisfying all of them, found with a
+                 small linear program. Worth transcribing rather than replacing
+                 with a repulsion force for two properties, both about what it
+                 does *not* do. **It does not oscillate**: a repulsion force
+                 reacts to where a neighbour *is*, so two bodies swerve, stop
+                 overlapping, swerve back, and shudder down the corridor -- where
+                 a half-plane is built from where the neighbour is *going*, and
+                 each body assumes the other is solving the same problem and
+                 takes exactly half the correction, so one swerve settles the
+                 pair. **It does not stop**: the answer is the *nearest* safe
+                 velocity rather than a brake, so a body that can go round goes
+                 round; slowing down is what it does when there is nowhere to go.
+                 That last case is `linearProgram3` -- the relaxation that runs
+                 when no velocity satisfies every neighbour at once, finding the
+                 one that minimises the worst violation rather than refusing to
+                 move, and the single most important function in the file for a
+                 dense crowd. What it deliberately does not know about is walls:
+                 static obstacles are the nav grid's job and `slideCircle`'s, and
+                 ORCA obstacle lines would be a third description of the world's
+                 geometry. The failure mode of omitting them is a body that hugs
+                 a wall rather than one that walks through it. If they are ever
+                 added, `linearProgram3` must be given `numObstLines` and must
+                 seed its projection with them -- obstacle constraints are hard
+                 where agent constraints are relaxable.
+                 neighbours.ts is who is near enough to matter: a hashed uniform
+                 grid over body positions, rebuilt each tick by counting sort
+                 into flat typed arrays. Rebuilt rather than maintained because
+                 every body moves every tick; hashed rather than dense over the
+                 world because the map is grown by editing a document and has no
+                 extent this module should have an opinion about; and a cell is
+                 exactly the search radius wide, so a query is always the 3x3
+                 block and never a loop whose length depends on the radius.
+                 Results come back in bucket order then insertion order, which is
+                 deterministic and is *not* anything a reader would recognise --
+                 so `crowd.ts` re-sorts by distance and breaks ties on entity id,
+                 because the linear program's answer can depend on the order its
+                 half-planes arrive in.
 src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
                  small document and explicitly none of the bind-pose, skinning,
                  retarget and family machinery src/units/ exists to manage for a
@@ -1319,6 +1363,107 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  take `staggered` as their own field, and the `moveIntent`
                  branch is *first*, ahead of a held key, since the key is the
                  one branch a player is actively driving.
+                 `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
+                 to a body because of the bodies around it (spec 184). Until they
+                 existed nothing on the server knew that two units were in the
+                 same place: `resolveMovement` is handed `{ world, terrain,
+                 config }` and has never once looked at another entity, so a herd
+                 walked as one point and a pack chasing a player converged into a
+                 single stack. (`src/sim/collision.ts`'s `resolveOverlaps` was the
+                 closest thing to a fix and had no caller anywhere -- a survivor
+                 of the single-player sim spec 062 deleted.)
+                 crowd.ts is two halves, deliberately different in kind, and the
+                 difference is why neither alone is enough. `solveAvoidance` runs
+                 **before** anybody moves and is a *velocity* rule, so it is
+                 invisible until a body is on a collision course and never fights
+                 the body's own intent. `resolveCrowding` runs **after** everybody
+                 has moved and is a *position* rule, so it works on bodies that
+                 are not moving at all -- what a spawn, a stagger, a wall or a
+                 body with no legal velocity leaves behind -- but it is exactly
+                 the rule that shudders if you lean on it, which is why it is a
+                 fraction of the overlap per tick and a safety net rather than the
+                 mechanism.
+                 Three fields carry the policy and the last two are separate
+                 questions: `pinned` (not solved for, everybody else takes the
+                 whole avoidance against it), `bumps` (in the overlap pass at
+                 all), `pushLimit` (how far it may be displaced in a tick). A
+                 player is pinned *and* does not bump, and both are stated limits
+                 rather than simplifications -- their movement is predicted on
+                 their own machine (spec 067), so deflecting it here would cost a
+                 correction every tick a monster came near; and shoving bodies
+                 aside by walking into them is a design decision with consequences
+                 for every reach and chase in the game, which this is not. The
+                 push cap is a fraction of the body's own **speed**, and that was
+                 learned the hard way: capped at a fraction of its *radius* it was
+                 eleven units a tick for a grazer -- six hundred a second against
+                 a walking speed of forty -- so a player walking into one
+                 bulldozed it across the map faster than it could run, and it
+                 could not be caught. Every number was small and the product was
+                 absurd, which is the same failure `turn-swing.ts` exists to
+                 catch.
+                 `symmetryBreak` gives each body a constant tenth of a degree of
+                 asymmetry hashed off its id, because *exact* mirror symmetry is
+                 the one configuration reciprocal avoidance is bad at and a game
+                 spawns bodies on grids and marches them in ranks. Hashed rather
+                 than drawn, since the sim's `Rng` draw *count* is load-bearing;
+                 and applied as a rotation by `atan(slope)` built from `Math.sqrt`
+                 rather than from `Math.cos`/`Math.sin`, which ECMAScript permits
+                 an implementation to approximate differently -- a
+                 replay-divergence hazard hiding inside a constant nobody would
+                 ever look at again.
+                 attack-slots.ts is where a target's attackers stand, and it
+                 exists because avoidance alone cannot fix a pack: avoidance
+                 answers "how do I not walk into you", and the problem when twelve
+                 bodies chase one player is that everybody genuinely wants the
+                 same place. So the surroundings are cut into evenly spaced angles
+                 on a ring at the attacker's own standoff, one body to a slot, and
+                 an attacker aims at its slot **while it closes** and stops when
+                 it is in reach, wherever on the way that happens. The ring is an
+                 approach preference and never a destination -- marching to an
+                 exact standing position is what makes a pack of animals look like
+                 a drill squad, and what makes them shuffle forever when the
+                 target moves. Three rules. **The ring is cut once per target, for
+                 the widest body on it**: cut per attacker, a spider's ring is
+                 seventeen slots and a ravager's is six, the two sets of angles do
+                 not line up, neither excludes the other, and the pair stack on
+                 exactly the ground the ring exists to keep them off. **Claims are
+                 two passes, reservations then new claims**: "your held slot wins
+                 if it is free" only protects a body from those processed after
+                 it, and claims are taken in creation order, so an older body with
+                 no slot walked off with the angle a younger one had been walking
+                 toward for a second. A body stopped in reach reserves too,
+                 because its slot is the ground it is standing on. And **the board
+                 is rebuilt every tick, never released by event**, since a body
+                 leaves a fight in half a dozen ways no release covers -- it dies,
+                 it is dragged past its leash, it loses interest, its chunk stops
+                 being simulated.
+                 The ring aim only applies where the straight line to the target
+                 is clear, and that is not a simplification either: a ring point
+                 is a place nobody has checked, so it can be inside the wall the
+                 target is standing behind, and handing one to `findPath` turns
+                 "there is no way to my target" into "there is a way to this other
+                 spot" -- which parks a body against a palisade instead of
+                 pressing at the gate, and quietly retires the retry cadence spec
+                 073 put on hopeless searches.
+                 The pass they hang off restructured the tick: the movement loop
+                 decided and moved each body before the next was asked anything,
+                 which is the one shape reciprocal avoidance cannot be built in --
+                 a body that has already moved is one its neighbours avoid in the
+                 wrong place, and one that has not is one whose velocity is a tick
+                 stale. It is three passes over the same list in the same creation
+                 order now -- decide, solve, move -- plus the overlap pass after.
+                 `ServerEntity` gained `velocity`, which is what the body
+                 *actually* travelled at rather than what it asked for, so a body
+                 pressed into a tree tells its neighbours it is going nowhere.
+                 Nothing is replicated and nothing is asked of the client.
+                 `npx tsx scripts/preview-crowd.ts` is the picture and `npx tsx
+                 scripts/bench-crowd.ts` the cost; both share
+                 `scripts/crowd-scenarios.ts` with `sim/crowd.test.ts`, so a panel
+                 that looks wrong and a green test cannot both be true. The
+                 shipped map cannot field these crowds -- fourteen spawners, one
+                 monster each, five self-initiating attackers at the tightest
+                 cluster -- so the bodies are placed, which is what an admin
+                 conjuring a fight does.
                  `sim/statuses.ts` is one small timer map and everything the
                  progression needs to remember between ticks goes in it, because
                  twelve mechanics as twenty-four entity fields is twenty-four
