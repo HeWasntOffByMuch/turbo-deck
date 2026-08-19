@@ -410,6 +410,25 @@ export const EntityField = {
   Poise: 1 << 7,
   /** Absorb left, in health units, and the tick it falls off whole. */
   Shield: 1 << 8,
+  /**
+   * The timed states this body is carrying, as far as anybody may see them
+   * (spec 185).
+   *
+   * `u8 count`, then per status `u8 wire`, `u8 stacks`, `u32 expiresAtTick`.
+   * The index is `StatusVisual.wire` rather than the string id -- a content id
+   * per status per body per delta is what "an entity only ever stores an id"
+   * exists to prevent, and the table is shared code.
+   *
+   * An **absolute** expiry, like `activityUntilTick` and `shieldUntilTick` above
+   * it, and for the same reason: it is what lets a client draw the mark as a
+   * pure function of what it was told and the tick it is drawing, with nothing
+   * observed and nothing kept. A late delta cannot leave a mark up, because the
+   * drawing refuses a passed window the way `statusOf` refuses a stale entry.
+   *
+   * Bounded by `MAX_VISIBLE_STATUSES`, and set only in the deltas where the set
+   * actually changed -- which for most bodies is never.
+   */
+  Statuses: 1 << 9,
 } as const;
 
 export const EntityKind = {

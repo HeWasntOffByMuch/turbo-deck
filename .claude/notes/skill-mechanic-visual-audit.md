@@ -1,5 +1,12 @@
 # Effects with no visual representation (audit, 2026-08-18)
 
+> **Status, 2026-08-19.** Finding 1 is **closed** by spec 185: eight of the
+> twelve statuses now ride a tenth entity field and are drawn as marks over the
+> body, on the stun icon's stateless pattern. The other four are withheld
+> deliberately and the note below is now the record of *why*. Finding 2 is
+> **one step shorter** -- `aurasFor`'s `statuses` parameter can now be fed, but
+> the tracker is still mounted by nothing. Everything else stands.
+
 Traced against `main` at 70b1134. A map of *what the sim does that nothing
 draws*, not a spec — every finding below is a statement about the code as it
 stands, with the file and line that supports it.
@@ -23,23 +30,25 @@ shieldUntilTick — and no status list.
 121: *"no status is replicated ... there is no buff or debuff list on the wire
 at all."*
 
-So every one of these is a live mechanic with no picture, no icon, no readout
-and no wire field:
+So every one of these was a live mechanic with no picture, no icon, no readout
+and no wire field. **Spec 185 has since replicated the eight marked "now shown"
+below**; the four marked "withheld" stay off by the rule that the wire carries
+conditions somebody could point at, not the timers the sim keeps for itself:
 
 | Status | Attribute | What it does | Seen by |
 |---|---|---|---|
-| `flow` | Agility | Stacking backswing cut, damage reduction, weak-point chance | nobody |
-| `momentum` | Str+Agi | A break shortens the next wind-up | nobody |
-| `prepared` | Intelligence | Stillness primes the next cast (halves wind-up at the milestone) | nobody |
-| `exposed` | Perception | Target takes +15% from **everyone** | nobody |
-| `vulnerable` | Perception | A committed enemy takes double weak-point chance | nobody |
-| `sundered` | Str+Int | Armour reduced | nobody |
-| `attuned` | Wisdom | Stacking cost reduction on the next cast | nobody |
-| `adapt:<ability>` | Wisdom | Stacking resistance to a repeated ability, up to 30% | nobody |
-| `secondWind.spent` | Constitution | Whether the comeback heal has re-armed | nobody |
-| `perfectExit.spent` | Agility | Whether Perfect Exit has re-armed | nobody |
-| `recentlyHit` | Agility | The 0.2s window Perfect Exit reads | nobody |
-| `inCombat` | — | Gates resting | nobody |
+| `flow` (now shown) | Agility | Stacking backswing cut, damage reduction, weak-point chance | nobody |
+| `momentum` (now shown) | Str+Agi | A break shortens the next wind-up | nobody |
+| `prepared` (now shown) | Intelligence | Stillness primes the next cast (halves wind-up at the milestone) | nobody |
+| `exposed` (now shown) | Perception | Target takes +15% from **everyone** | nobody |
+| `vulnerable` (now shown) | Perception | A committed enemy takes double weak-point chance | nobody |
+| `sundered` (now shown) | Str+Int | Armour reduced | nobody |
+| `attuned` (now shown) | Wisdom | Stacking cost reduction on the next cast | nobody |
+| `adapt:<ability>` (now shown, collapsed) | Wisdom | Stacking resistance to a repeated ability, up to 30% | nobody |
+| `secondWind.spent` (withheld) | Constitution | Whether the comeback heal has re-armed | nobody |
+| `perfectExit.spent` (withheld) | Agility | Whether Perfect Exit has re-armed | nobody |
+| `recentlyHit` (withheld) | Agility | The 0.2s window Perfect Exit reads | nobody |
+| `inCombat` (withheld) | — | Gates resting | nobody |
 
 Two of these are worse than the rest because they are **cross-player by
 design**. `per.huntersEye` is described as *"What you have marked stays marked,
@@ -247,5 +256,6 @@ Ordered by cost, not by importance:
    `REDUNDANT_SERVER_EFFECTS`, so the debug disc stops shipping.
 7. **`blocked`** — decide whether it means armour or a guard, and stop it
    early-returning past blood and crit.
-8. **The status layer** — the real one, and a protocol change. Everything in
-   finding 1 waits on it.
+8. ~~**The status layer**~~ — **done** (spec 185). Protocol 18 carries eight of
+   the twelve on a tenth entity field, drawn as marks on the stun icon's
+   stateless pattern.

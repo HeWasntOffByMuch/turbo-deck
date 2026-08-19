@@ -91,7 +91,7 @@ only in the deltas where the set actually changed.
 the drawing stateless: every client watching a body agrees on when its Flow ends
 without anybody having had to watch it start.
 
-`ReplicatedEntity` gains `readonly statuses: readonly ReplicatedStatus[]`,
+`ReplicatedEntity` gains `readonly statuses: readonly WireStatus[]`,
 defaulting to empty for everything that has none — which is most bodies most of
 the time.
 
@@ -115,7 +115,7 @@ export interface StatusMark {
 }
 
 export function statusMarks(
-  statuses: readonly ReplicatedStatus[],
+  statuses: readonly WireStatus[],
   drawnTick: number,
 ): readonly StatusMark[];
 ```
@@ -175,6 +175,25 @@ picture.
 - **Presentation only.** `presentation-only.test.ts` runs the same seed and
   inputs with the marks driven and without, and the authoritative state is
   identical.
+- **It shows something with no build at all.** Almost every row needs a
+  milestone behind it, so a fresh character could have gone on seeing an empty
+  row forever with nobody noticing the wire was wrong. `Vulnerable` is written
+  on *commit*, for anybody who swings at anything, and a test asserts a mark
+  appears from one ordinary swing.
+
+## The developer path
+
+`admin:triggerEvent 'status' x y <radius>` puts every visible row on every body
+in range for ten seconds, in the same register as spec 158's `'drop'` and
+`'reveal'`. It exists because the rows are milestone-gated, and the alternative
+to it is levelling a Perception character every time somebody wants to look at
+the marks — the same argument the action bar's `?slots=` makes about a bar that
+is empty by design.
+
+It writes only into `statuses`, so it can no more change an outcome than the
+real thing can: every row is read by the sim through the same `statusOf`, and
+what a demo Exposed does to a blow is exactly what a real one does. It draws
+nothing from `state.rng`, so triggering one cannot shift a roll.
 
 ## Out of scope
 

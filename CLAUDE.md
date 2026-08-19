@@ -1348,12 +1348,67 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  take `staggered` as their own field, and the `moveIntent`
                  branch is *first*, ahead of a held key, since the key is the
                  one branch a player is actively driving.
+                 `world/status-marks.ts` is that same swirl generalised to the
+                 rest of the progression (spec 185), and it is built to the
+                 stun icon's three rules on purpose, because they were the right
+                 ones and a second answer to "how does a timed state get drawn"
+                 is a second thing to keep in step. **Stateless**, so a body
+                 that walks into view already Exposed is marked -- there is no
+                 start to have missed, which is exactly what separates a *state*
+                 from the flinch's *contact*. **A stale entry is refused on
+                 read**, the same comparison `statusOf` makes in the sim, which
+                 is what makes correctness independent of whether the delta
+                 saying "it fell off" has arrived. And **the fade is a count of
+                 ticks**, since the function is handed an end and not a length
+                 -- more clearly right here than there, because these windows
+                 vary from a 1.2s Flow to a several-second Adaptation and a
+                 fraction would fade the long one for seconds. Order is by wire
+                 index rather than by arrival, for the reason `AURA_ORDER` is
+                 fixed: a mark must not slide along the row because something
+                 else was applied. Colour is by `kind` and by nothing else --
+                 eight colours over a head is a legend rather than a picture,
+                 and "is that good for them or bad for them" is the question a
+                 player asks first. The thing that keeps it from shipping dark:
+                 almost every row is milestone-gated, so a fresh character could
+                 have gone on seeing an empty row forever with nobody noticing
+                 the wire was wrong. `Vulnerable` is written on *commit*, for
+                 anybody who swings at anything, and a test asserts a mark
+                 appears from one ordinary swing.
+                 `admin:triggerEvent 'status'` is the developer path beside it,
+                 in the same register as spec 158's `'drop'` and `'reveal'` and
+                 for the same reason -- it writes only into `statuses` and draws
+                 nothing from `state.rng`, so it can no more change an outcome
+                 than the real thing can.
                  `sim/statuses.ts` is one small timer map and everything the
                  progression needs to remember between ticks goes in it, because
                  twelve mechanics as twenty-four entity fields is twenty-four
                  places for an expiry to be forgotten. Expiry is a comparison and
                  never a sweep, so reading a stale entry cannot produce a live
-                 effect. `sim/blow.ts` is one blow with all of it applied, in one
+                 effect.
+                 `data/status-visuals.ts` is which of those a player may see
+                 (spec 185), and it exists because that map is deliberately
+                 wider than anything anybody should be shown: some of what it
+                 remembers is a condition -- Flow building, a target left
+                 Exposed -- and some is bookkeeping, a 0.2s window Perfect Exit
+                 reads or an inverted "your comeback has been spent". The rule
+                 is one sentence: **the wire carries the conditions somebody
+                 could point at, not the timers the sim keeps for itself**, and
+                 absent is the default -- `visualFor` answers null for anything
+                 with no row, so a status added to the sim is invisible until
+                 somebody decides it should not be. Eight rows ride, four
+                 `StatusId`s and every internal family (`dmg:`,
+                 `exposed.bounty`, the restoration keys) do not. Two things in
+                 it are load-bearing. `wire` is **append-only**, because it is
+                 the number that crosses in place of the string and renumbering
+                 a row silently re-labels every mark on a client that has not
+                 been rebuilt. And `adapted` is the one entry that is not an id
+                 the sim ever writes: adaptation is per ability, so the packer
+                 folds every `adapt:<ability>` into it keeping the largest stack
+                 -- a mark over a head cannot name the ability, and what is left
+                 is still true. `magnitude` does not ride at all, on the same
+                 argument that made poise a fraction: the picture says *that* a
+                 body is Exposed, never by how much.
+                 `sim/blow.ts` is one blow with all of it applied, in one
                  order, written once -- and the line in it that must not move is
                  that **crit is rolled before the weak point and always**: the Rng
                  is threaded through the whole sim and a body that draws a

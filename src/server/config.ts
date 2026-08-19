@@ -119,8 +119,14 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * so every client draws the same arc, and a `PickUpItem` to take it. The bump
  * also covers spec 156's `Restoration` and its mote kind, which landed without
  * one.
+ * 18: a tenth entity field carrying the statuses a body is visibly holding
+ * (spec 185). Spec 147 built a progression that is almost entirely
+ * status-driven and replicated none of it; this is the wire half of showing it.
+ * Only the ids `data/status-visuals.ts` names ride, as a table index rather
+ * than a string, and each carries an absolute expiry so the mark drawn from it
+ * needs no client state.
  */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
