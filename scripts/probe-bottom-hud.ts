@@ -301,6 +301,121 @@ async function main(): Promise<void> {
     await page.screenshot({ path: join(outDir, 'bottom-hud.png') });
     console.log('  wrote bottom-hud.png');
 
+    // --- the player's own status row (spec 189) ---------------------------
+    //
+    // Everything this row decides is asserted in Node by `status-marks.test.ts`.
+    // What none of it can say is whether the row is wired to anything, which is
+    // the exact failure mode spec 189 was written against: the floating marks
+    // had a complete green test suite beside a mark that could not tell a player
+    // what it meant.
+    //
+    // The rig draws at tick 400, so every expiry below is that plus a window.
+    console.log('the status row');
+    const barsBefore = await box(page, '[data-pool="health"]');
+    await set(page, {
+      entities: [
+        {
+          id: 1,
+          kind: 0,
+          typeId: 'player',
+          x: 0,
+          y: 0,
+          z: 0,
+          health: 96,
+          maxHealth: 140,
+          poise: 1,
+          statuses: [
+            // Flow: stacking, so it draws a count, and 2.5s left.
+            { wire: 0, stacks: 2, expiresAtTick: 400 + 150 },
+            // Prepared: the indefinite one. It must draw no timer at all.
+            { wire: 2, stacks: 1, expiresAtTick: 0xffffffff },
+            // Slowed: does not stack, so no count, and 1.5s left.
+            { wire: 8, stacks: 1, expiresAtTick: 400 + 90 },
+          ],
+        },
+      ],
+    });
+    await page.waitForTimeout(50);
+
+    const row = await box(page, '[data-bar="selfStatuses"]');
+    check(row !== null, 'the row is drawn when the player carries something');
+
+    const statusRow = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-self-status]'))
+        .filter((node) => getComputedStyle(node as HTMLElement).display !== 'none')
+        .map((node) => {
+          const element = node as HTMLElement;
+          const children = Array.from(element.children) as HTMLElement[];
+          return {
+            id: element.dataset['selfStatus'] ?? '',
+            title: element.title,
+            count: (children[0]?.querySelector('div')?.textContent ?? '').trim(),
+            timer: (children[1]?.textContent ?? '').trim(),
+            width: element.getBoundingClientRect().width,
+          };
+        }),
+    );
+
+    check(statusRow.length === 3, `all three marks are drawn (${String(statusRow.length)})`);
+
+    const flow = statusRow.find((mark) => mark.id === 'flow');
+    const prepared = statusRow.find((mark) => mark.id === 'prepared');
+    const slowed = statusRow.find((mark) => mark.id === 'slowed');
+
+    check(flow?.timer === '2.5', `a finite status counts down (${flow?.timer ?? 'none'})`);
+    check(flow?.count === '2', `a stacking status shows its count (${flow?.count ?? 'none'})`);
+    check(slowed?.timer === '1.5', `and so does the second one (${slowed?.timer ?? 'none'})`);
+    check(slowed?.count === '', 'a status that cannot stack shows no count');
+
+    // The headline rule of the whole feature, and the one that is easiest to
+    // get wrong silently: what arrives for Prepared is the u32 truncation of
+    // `MAX_SAFE_INTEGER - tick`, so a timer drawn from it would read in days.
+    check(
+      prepared !== undefined && prepared.timer === '',
+      `an indefinite status shows no timer at all (${prepared?.timer ?? 'no mark'})`,
+    );
+
+    // Hovering says what it does, from the one writer.
+    check(
+      (flow?.title ?? '').startsWith('Flow\n'),
+      'the mark is titled with its own name',
+    );
+    check(
+      (flow?.title ?? '').includes('Stacks up to 3 times.'),
+      'the tooltip carries the Technical Description',
+    );
+    check(
+      (prepared?.title ?? '').includes('Lasts until it is spent.'),
+      'and says the indefinite one has no clock',
+    );
+    check(
+      !(slowed?.title ?? '').toLowerCase().includes('poise'),
+      'no internal pool name reaches a player',
+    );
+
+    // The rule the floating row already obeys, asserted for this one: the block
+    // is anchored by its bottom, so a status appearing grows it upward and the
+    // bars a player is reading hold still.
+    const barsAfter = await box(page, '[data-pool="health"]');
+    check(
+      barsBefore !== null &&
+        barsAfter !== null &&
+        Math.abs(barsBefore.y - barsAfter.y) < 0.5,
+      `the health bar does not move when the row appears (by ${
+        barsBefore && barsAfter ? Math.abs(barsBefore.y - barsAfter.y).toFixed(1) : '?'
+      }px)`,
+    );
+
+    await page.screenshot({ path: join(outDir, 'bottom-hud-statuses.png') });
+    console.log('  wrote bottom-hud-statuses.png');
+
+    await set(page, {});
+    await page.waitForTimeout(30);
+    check(
+      (await box(page, '[data-bar="selfStatuses"]')) === null,
+      'the row goes away with the last status',
+    );
+
     // --- death ------------------------------------------------------------
     console.log('dying');
     check((await box(page, '[data-death]')) === null, 'no overlay while alive');

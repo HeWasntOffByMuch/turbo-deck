@@ -471,7 +471,13 @@ player can point at, so that is where the readable detail goes.
 ### 3.2 Timers
 
 A status with a finite duration shows its remaining time, counting down, in
-seconds.
+seconds — **one decimal below ten seconds, whole seconds above**.
+
+That is a deliberately different rule from §2.3's stated durations, which carry
+up to two decimals. A stated duration is read once, at leisure, and wants to be
+exact; a countdown is read while it moves, and two decimals changing sixty times
+a second is a number nobody can take in. The countdown also rounds **up**, so a
+mark that is still on a body never reads `0.0`.
 
 A status that **does not end shows no timer at all** — not a dash, not a full
 bar, not a large number. Nothing in the sim is indefinite today; the rule is
@@ -509,6 +515,11 @@ The ones deliberately **not** introduced, and what would justify each:
 
 The bar for a third category is that it changes what a player would *do*. A
 category that only sorts is a legend to learn, not a picture to read.
+
+The category is also **stated in words**, not only in colour: every status
+tooltip ends in `Beneficial.` or `Harmful.`. Colour alone is a distinction a
+colour-blind player does not have, and the two marks are a warm red against a
+cool blue — the single most common confusion there is.
 
 ---
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { WireStatus } from '../../../server/net/messages.js';
-import { STATUS_VISUALS, visualFor } from '../../../server/data/status-visuals.js';
+import { ADAPTED_ID, STATUS_VISUALS, visualFor } from '../../../server/data/status-visuals.js';
 import { StatusId } from '../../../server/sim/statuses.js';
-import { FADE_TICKS, statusMarks } from './status-marks.js';
+import { FADE_TICKS, formatTimer, statusMarks } from './status-marks.js';
 
 /** The wire index for a status id, so a test reads by name rather than by number. */
 function wireOf(id: string): number {
@@ -133,5 +133,56 @@ describe('statusMarks (spec 186)', () => {
       expect(['boon', 'affliction'], mark.id).toContain(mark.kind);
       expect(mark.name, mark.id).toBeTruthy();
     }
+  });
+});
+
+describe('countdowns (spec 189)', () => {
+  it('counts down against the drawn tick', () => {
+    const marks = statusMarks([status(StatusId.Exposed, 200)], 80);
+    expect(marks[0]?.remainingTicks).toBe(120);
+    expect(marks[0]?.timer).toBe('2.0');
+  });
+
+  it('shows one decimal below ten seconds and whole seconds above', () => {
+    // A stated duration is read once; a countdown is read while it moves, so it
+    // is rounded harder than the description standard's two decimals.
+    expect(formatTimer(60 * 2.4)).toBe('2.4');
+    expect(formatTimer(60 * 9.9)).toBe('9.9');
+    expect(formatTimer(60 * 10)).toBe('10');
+    expect(formatTimer(60 * 42.3)).toBe('43');
+  });
+
+  it('never reads as finished while the mark is still up', () => {
+    // A mark with one tick left is still on the body, so a timer that had
+    // already reached zero would be describing a status that is gone.
+    expect(formatTimer(1)).not.toBe('0.0');
+    const marks = statusMarks([status(StatusId.Slowed, 101)], 100);
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.timer).not.toBe('0.0');
+  });
+
+  it('draws no timer for a status the design says has no clock', () => {
+    // Prepared is applied with an effectively infinite window and ends by being
+    // spent. A countdown toward that is a clock nothing is running.
+    const marks = statusMarks([status(StatusId.Prepared, 500)], 0);
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.remainingTicks).toBeNull();
+    expect(marks[0]?.timer).toBeNull();
+  });
+
+  it('draws no timer for a remaining time that cannot be trusted', () => {
+    // What the u32 truncation of `MAX_SAFE_INTEGER - tick` actually delivers.
+    // Flow is a row with no `indefinite` flag, so this is the *value* rule
+    // rather than the design one, and it has to hold on its own.
+    const marks = statusMarks([status(StatusId.Flow, 0xffffffff)], 0);
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.remainingTicks).toBeNull();
+    expect(marks[0]?.timer).toBeNull();
+  });
+
+  it('still times a status whose window is merely long', () => {
+    const marks = statusMarks([status(ADAPTED_ID, 60 * 600)], 0);
+    expect(marks[0]?.remainingTicks).toBe(60 * 600);
+    expect(marks[0]?.timer).toBe('600');
   });
 });
