@@ -196,16 +196,27 @@ const BAR_GUARD = '#8fa6c8';
 const POOL_RESOURCE = '#4f9fe0';
 
 /**
- * The experience strip (spec 164).
+ * Experience (specs 164, 184). One palette, because experience now has two
+ * places it is shown -- the number that floats off a kill and the strip along
+ * the bottom edge -- and they are the same fact: what that body was worth, and
+ * how far it moved you. A player who learns the colour from one reads the other
+ * for free, which is only true if there is one colour to learn.
  *
- * Gold on black. Nothing else in this HUD is gold except a cast that can still
- * be called off, and the two never share a corner -- a cast bar is over a body
- * and this is the frame's own edge. The lit line is an inset highlight along the
- * top, which is what stops six pixels of flat fill reading as a coloured border.
+ * Purple rather than the gold this strip opened with, and the swap is what
+ * makes the pair possible: gold is already a cast that can still be called off,
+ * and a floating gold number is a critical hit. Both of those are over a body,
+ * which is exactly where the reward now floats too -- the strip could get away
+ * with sharing a hue from the frame's own edge and a number cannot.
+ *
+ * Light on dark in both places. `XP_PURPLE_LIT` is the strip's inset highlight
+ * along the top, which is what stops six pixels of flat fill reading as a
+ * coloured border; `XP_PURPLE_DARK` is the number's outline and the empty half
+ * of the strip, so what the fill is drawn against and what the digits are cut
+ * out of are the same colour.
  */
-const XP_GOLD = '#d8a52c';
-const XP_GOLD_LIT = '#ffdd80';
-const XP_EMPTY = '#0a0b0d';
+const XP_PURPLE = '#a878e8';
+const XP_PURPLE_LIT = '#d3b6ff';
+const XP_PURPLE_DARK = '#200d36';
 
 /**
  * The death banner (spec 164). Brighter than `BAR_ENEMY` and than the blood: it
@@ -257,6 +268,20 @@ export interface HudHandle {
    * fan a burst out into lanes.
    */
   addDamage(entityId: number, at: WorldAnchor, damage: number, crit: boolean): void;
+  /**
+   * `amount` experience was earned, at the world point `at` (spec 184).
+   *
+   * The same field and the same rules as {@link addDamage} -- a world point
+   * taken once and re-projected, so the reward for a kill stays on the ground
+   * the body fell on. What differs is the path and the colour, and both are
+   * about the one number this shares a frame with: the killing blow's, spawned
+   * on the same tick from the same anchor.
+   *
+   * `group` is the body that died, for the same reason a blow's is the body it
+   * landed on -- it is never resolved to anything, and here it is what lets the
+   * field sweep the reward away from the lane that blow's number took.
+   */
+  addExperience(group: number, at: WorldAnchor, amount: number): void;
   /**
    * Something was refused, and this is what to say about it (spec 143).
    *
@@ -707,15 +732,15 @@ export function createHud(
   xpStrip.dataset['xpBar'] = 'true';
   xpStrip.style.cssText =
     `position:absolute;left:0;right:0;bottom:0;height:${layout.xpBarHeight}px;` +
-    `background:${XP_EMPTY};border-top:1px solid #000;box-sizing:content-box;` +
+    `background:${XP_PURPLE_DARK};border-top:1px solid #000;box-sizing:content-box;` +
     // Auto, so it can be hovered: it is the only thing in the HUD whose detail
     // is *only* available on hover, and a strip that ignored the pointer would
     // have no way to be asked.
     'pointer-events:auto;overflow:hidden;';
   const xpFill = document.createElement('div');
   xpFill.style.cssText =
-    `position:absolute;left:0;top:0;bottom:0;width:0;background:${XP_GOLD};` +
-    `box-shadow:inset 0 1px 0 ${XP_GOLD_LIT};`;
+    `position:absolute;left:0;top:0;bottom:0;width:0;background:${XP_PURPLE};` +
+    `box-shadow:inset 0 1px 0 ${XP_PURPLE_LIT};`;
   const xpTicks = document.createElement('div');
   xpTicks.style.cssText =
     'position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(' +
@@ -1481,6 +1506,36 @@ export function createHud(
       popupElements.set(added.id, element);
       // The field caps how many float at once; whatever it dropped to make room
       // is an element nobody will place again.
+      for (const id of added.expired) dropPopup(id);
+    },
+    addExperience(group, at, amount) {
+      // Nothing to say about a gain of nothing. `XpGains` already reports 0
+      // rather than a negative, so this is the rounding's floor and not a
+      // second opinion about whether experience can go backwards.
+      const whole = Math.round(amount);
+      if (whole <= 0) return;
+      const element = document.createElement('div');
+      element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);display:none;';
+      // Labelled, because the colour and the column say "this is not damage"
+      // and neither of them says what it *is*: a purple number under a white
+      // one is a second quantity, and which quantity is the whole point.
+      //
+      // What the label cost was measured before it was kept -- `+24 XP` is
+      // three times the width of the `24` alone, which is why this is the
+      // smallest text of the pair, at half a critical's scale. It is the
+      // second number spawned on one tick and its job is to be readable
+      // rather than to be the headline.
+      element.innerHTML = pixelTextSvg(`+${whole} XP`, {
+        scale: 2,
+        fill: XP_PURPLE,
+        outline: XP_PURPLE_DARK,
+      });
+      root.append(element);
+      const added = popups.add(group, at, 'xp');
+      // Stamped the way a damage number is, so one can be followed across
+      // frames from outside without re-deriving the camera.
+      element.dataset['xpPopup'] = String(added.id);
+      popupElements.set(added.id, element);
       for (const id of added.expired) dropPopup(id);
     },
     error(text) {
