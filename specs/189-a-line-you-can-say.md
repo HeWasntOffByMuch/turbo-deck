@@ -68,25 +68,71 @@ export const WIPE_MS = 260;       // how long leaving takes
 export function revealAt(lastAtMs: number, nowMs: number, open: boolean): number;
 ```
 
-**It wipes rather than fades, and that is not a preference.** Nothing in this
-framework blends: `budget.test.ts` asserts every quad comes out at alpha 255 and
-every palette colour is opaque, because a source-over blend is the one operation
-`raster.ts` and a browser canvas round differently — `preview-ui-gallery.ts`
-caught exactly that once, a cooldown scrim off by one in two channels. `fade()`
-sits unused in `color.ts` for that reason, and both slot widgets composite to an
-opaque colour rather than blending at draw time.
+**It wipes rather than fades.** The two are not the same thing and this feature
+needed both: the log *leaves* by wiping, and while it is there it sits on a
+plate you can see through.
 
-An alpha fade over the world is worse than a scrim, not better: the UI canvas is
-cleared to transparent, so a translucent quad is composited against *nothing*,
-and `raster.ts` writes the source straight through on an empty pixel
-(`existing === 0`) where a browser stores it premultiplied and rounds. The two
-backends would disagree by construction and the golden comparison would be the
-thing that noticed.
+Leaving is a **clip**, the way a window arrives (spec 133), computed while
+painting from the time it was handed. Paint-time, so it costs no layout, and
+`animate` already answers reduce-motion centrally — for a player who asked for
+less motion the log is simply there or not there. A fade-to-nothing would have
+to blend against the world, and there is nothing to blend against: the UI canvas
+is cleared to transparent, so the "background" a departing log would dissolve
+into is not a colour anything here can name.
 
-So the log leaves the way a window arrives (spec 133): a **clip**, computed
-while painting from the time it was handed. It is paint-time, so it costs no
-layout, and `animate` already answers reduce-motion centrally — for a player who
-asked for less motion the log is simply there or not there.
+### The plate, and the one blend in the framework
+
+`budget.test.ts` asserts every quad comes out at alpha 255 and every palette
+colour is opaque, because a source-over blend is the one operation `raster.ts`
+and a browser canvas round differently — `preview-ui-gallery.ts` caught exactly
+that once, a cooldown scrim off by one in two channels.
+
+The chat is the exception, and it is allowed to be because the exception is
+**measured rather than waived**. It is the only surface drawn over the *world*,
+and a solid rectangle in the corner of a game is a hole in it.
+
+```ts
+export const PLATE_TOKEN = 'panelSunken';
+export const PLATE_ALPHA = 156;   // a byte, and a chosen one
+```
+
+A browser canvas stores premultiplied 8-bit and `getImageData` unpremultiplies
+it, so a straight-alpha colour written over a transparent pixel comes back
+rounded where `raster.ts` writes it through untouched. At 0.62 this plate came
+back `rgb(27,24,39)` in Chromium against `rgb(28,25,39)` in the rasterizer —
+which is what the browser script reported before the number was chosen.
+
+But the round trip is lossy only for *some* alphas. For this colour, 156 is one
+of the values where `round(round(c * a / 255) * 255 / a) === c` holds on every
+channel, so the two backends agree byte for byte and the **exact** comparison
+keeps working. A tolerance would have hidden every future blending mistake along
+with this one; a chosen constant hides nothing. `budget.test.ts` asserts the
+property, so a change to `panelSunken` or to the constant fails in `npm test`
+rather than in a browser months later — and the fix if it does is a neighbouring
+alpha, never a looser check.
+
+One plate for the whole surface, drawn by the screen rather than by the scroller
+and the field separately: two would overlap where they met and the seam would be
+a third colour, which is what a translucent widget inside a translucent widget
+always looks like. So the scroller and the field are drawn without their own
+chrome — the field keeps its frame and focus ring, which are what say "you can
+type here", and loses only its fill.
+
+Everything else stays opaque, every glyph included. What is see-through is the
+backing and nothing else, so the text is exactly as legible as it was.
+
+### Nothing is drawn when nothing has been said
+
+An empty plate over the world is a black bar announcing that the chat exists,
+and the chat announcing itself is the opposite of furniture. So the log, its
+lines and the plate under them are all hidden while there is nothing in them —
+opening the chat before anybody has spoken shows the input line and nothing
+above it.
+
+The decision is taken *before* the "have the lines changed" early-out, because
+an empty list is the one case that matches what is already shown: `sameLines` is
+true from the first frame, so a visibility settled after it is a decision never
+taken.
 
 ### The screen (`src/ui/screens/chat.ts`)
 
@@ -158,7 +204,11 @@ window is not a window.
 ### The mount (`ui-screens.ts`, `view.ts`)
 
 `layers.place('hud', chat)` — the `hud` layer's first occupant in the Play tab,
-which has been `interactive: true` since phase 5 for exactly this reason.
+which has been `interactive: true` since phase 5 for exactly this reason. It is
+docked inside an `Anchor` whose bottom inset is the measured height of the HUD's
+own furniture **plus** a margin: clearing something by nothing is still sitting
+on it, and the gap is what makes the log read as its own thing rather than as
+another row of the bottom band.
 `view.ts` registers `client.onChat` into the log and points `chat.onSend` at
 `client.say`.
 
@@ -203,8 +253,12 @@ the same path as everyone else's. Echoing locally would draw it twice.
   context stack, so a gameplay key does not reach the game while typing.
 - Submitting a non-empty line calls `onSend` once with the text and clears the
   field; submitting an empty one calls `onSend` not at all and closes.
-- Nothing is drawn translucent: the chat scene joins `budget.test.ts`'s list and
-  every command in it comes out at alpha 255.
+- The plate colour survives premultiplied 8-bit storage exactly at
+  `PLATE_ALPHA`, on every channel — which is what lets the cross-backend
+  comparison stay exact rather than gaining a tolerance.
+- The plate is the *only* translucent thing the chat draws: every other command
+  in the scene comes out at alpha 255.
+- An empty log draws no plate and no scroller, from the very first frame.
 - The mount is presentation only: `mount-presentation.test.ts` plays the same
   fight with the chat driven and without, and the authoritative state is
   identical.

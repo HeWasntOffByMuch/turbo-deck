@@ -636,21 +636,49 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  broadcast were encoded, framed, sent, decoded and handed to an
                  empty listener list.
                  Three rules, and the first is the one that decided its whole
-                 shape. **It wipes rather than fades.** Nothing in this framework
-                 blends -- `budget.test.ts` asserts every quad at alpha 255,
-                 because a source-over is the one operation `raster.ts` and a
-                 browser canvas round differently -- and over the *world* an
-                 alpha would be worse rather than better: the UI canvas is
-                 cleared to transparent, so a translucent quad composites
-                 against nothing, and `raster.ts` writes the source straight
-                 through on an empty pixel where a browser stores it
-                 premultiplied and rounds. The two backends would disagree by
-                 construction, which is exactly what the cross-backend
-                 comparison exists to catch. So the log leaves the way a window
-                 arrives (spec 133): a clip computed while painting, anchored at
-                 the bottom so the oldest line goes first and the one somebody
-                 is still reading goes last. It costs no layout, and `animate`
-                 answers reduce-motion centrally by snapping.
+                 shape. **It wipes rather than fades**, and it sits on the one
+                 plate in this framework that blends. Leaving is a clip, the way
+                 a window arrives (spec 133): computed while painting, anchored
+                 at the bottom so the oldest line goes first and the one
+                 somebody is still reading goes last. It costs no layout, and
+                 `animate` answers reduce-motion centrally by snapping. A
+                 fade-to-nothing has nothing to fade *into* -- the UI canvas is
+                 cleared to transparent, so the background a departing log would
+                 dissolve towards is not a colour anything here can name.
+                 The plate is the framework's **only** blend, and the reason it
+                 is allowed is that the exception is measured rather than
+                 waived. `budget.test.ts` refuses a translucent quad because a
+                 source-over is the one operation `raster.ts` and a browser
+                 canvas round differently: a canvas stores premultiplied 8-bit
+                 and `getImageData` unpremultiplies, so a straight-alpha colour
+                 over a transparent pixel comes back rounded where `raster.ts`
+                 writes it through untouched. At 0.62 this plate came back
+                 `rgb(27,24,39)` in Chromium against `rgb(28,25,39)` in the
+                 rasterizer -- which is what `preview-ui-gallery.ts` reported
+                 before the number was chosen. But the round trip is lossy only
+                 for *some* alphas, and `PLATE_ALPHA` is one of the values where
+                 `round(round(c * a / 255) * 255 / a) === c` holds on every
+                 channel of `panelSunken`, so both backends agree byte for byte
+                 and the comparison stays **exact**. A tolerance would have
+                 hidden every future blending mistake along with this one; a
+                 chosen constant hides nothing, and `budget.test.ts` asserts the
+                 property so a change to either end of it fails in `npm test`.
+                 The fix if it ever does is a neighbouring alpha, never a looser
+                 check. One plate for the whole surface, drawn by the screen
+                 rather than by the scroller and the field separately, because
+                 two would overlap where they meet and the seam would be a third
+                 colour -- so those two are drawn chromeless, the field keeping
+                 the frame and focus ring that say "you can type here" and
+                 losing only its fill. Every glyph stays opaque: what is
+                 see-through is the backing and nothing else.
+                 And **nothing is drawn when nothing has been said** -- not the
+                 lines, not the scroller, not the plate. An empty plate over the
+                 world is a black bar announcing that the chat exists, which is
+                 the opposite of furniture. That decision is taken *before* the
+                 "have the lines changed" early-out, because an empty list is the
+                 one case that matches what is already shown: `sameLines` is true
+                 from the first frame, so a visibility settled after it is a
+                 decision never taken.
                  **The field pushes `textEntry`**, which is what makes a typed
                  `1` a one rather than a cast. That context has existed since
                  spec 123 to justify `TextField` and nothing had ever pushed it:
@@ -692,11 +720,15 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  weapon switch, because `setSafeBottom` had been *derived* from
                  the pool bars, which sit lower and further right than the thing
                  actually in that corner. It is measured off `data-hud-bottom`
-                 now, and the probe reports which furniture it found lowest,
-                 because its own first cut measured the pool bars and passed
-                 while the log sat on the switch beside them: a clearance check
-                 against the wrong thing is worse than none, since it reads as
-                 evidence.
+                 now -- *plus* a margin, since clearing something by nothing is
+                 still sitting on it -- and the probe reports which furniture it
+                 found lowest, because its own first cut measured the pool bars
+                 and passed while the log sat on the switch beside them: a
+                 clearance check against the wrong thing is worse than none,
+                 since it reads as evidence. Its walk check is every direction
+                 rather than one, for the same reason in miniature: a body
+                 pressed into one of the arena's trees reports a working
+                 keyboard as a broken one, and it did exactly that once.
                  Since spec 137 the bag is a *pointer* surface: one press and
                  one release on a cell is the whole gesture vocabulary (left
                  takes a stack, right takes half, shift+right takes one,

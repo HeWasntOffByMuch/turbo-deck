@@ -295,6 +295,26 @@ async function type(page: Page, text: string): Promise<void> {
   }
 }
 
+/**
+ * Hold each movement key in turn until the body moves, and report the furthest.
+ *
+ * Measured on the other player's page, for the reason {@link bodyAt} gives.
+ */
+async function walksAnyDirection(walker: Page, watcher: Page, them = 'Ana'): Promise<number> {
+  let best = 0;
+  for (const key of ['KeyW', 'KeyA', 'KeyS', 'KeyD']) {
+    const before = await bodyAt(watcher, them);
+    await walker.keyboard.down(key);
+    await walker.waitForTimeout(900);
+    await walker.keyboard.up(key);
+    await walker.waitForTimeout(300);
+    const distance = moved(before, await bodyAt(watcher, them));
+    if (Number.isFinite(distance)) best = Math.max(best, distance);
+    if (best > STILL_PX) return best;
+  }
+  return best;
+}
+
 async function main(): Promise<void> {
   for (const [port, what] of [[GAME_PORT, 'game server'], [DEV_PORT, 'dev server']] as const) {
     if (await answers(port)) {
@@ -330,6 +350,15 @@ async function main(): Promise<void> {
     check('nothing is open to start with', !(await readout(ana)).open);
     await ana.keyboard.press('Enter');
     check('Enter opens it', await waitFor(ana, (state) => state.open));
+    check('...with no log yet, because nothing has been said', (await readout(ana)).lines.length === 0);
+    // Photographed here rather than described: the failure this state used to
+    // have -- an empty plate over the world above the field -- is one nothing in
+    // the readout can see, because a rectangle with nothing in it reports the
+    // same empty line list as no rectangle at all.
+    const shots = join(process.cwd(), '.claude', 'screenshots');
+    mkdirSync(shots, { recursive: true });
+    await ana.waitForTimeout(500);
+    await ana.screenshot({ path: join(shots, 'chat-empty.png'), clip: { x: 0, y: 560, width: 520, height: 240 } });
 
     // --- typing does not play the game ---------------------------------------
     console.log('typing goes into the field, not into the game');
@@ -389,13 +418,29 @@ async function main(): Promise<void> {
 
     // --- the keyboard comes back ---------------------------------------------
     console.log('the game has the keyboard again');
-    const parked = await bodyAt(ben, 'Ana');
-    await ana.keyboard.down('KeyW');
-    await ana.waitForTimeout(900);
-    await ana.keyboard.up('KeyW');
-    await ana.waitForTimeout(300);
-    const walked = moved(parked, await bodyAt(ben, 'Ana'));
-    check('W walks again', walked > STILL_PX, `moved ${walked.toFixed(1)}px`);
+    // Two questions, and the first is the one with a definite answer. Opening
+    // the bag proves the key reached the gameplay path, with no terrain in the
+    // way; walking proves the same thing about the keys a player actually holds.
+    await ana.keyboard.press('KeyI');
+    check(
+      'a gameplay key reaches the game',
+      await ana
+        .waitForFunction(
+          () => (document.querySelector<HTMLElement>('[data-ui-windows]')?.dataset['uiWindows'] ?? '').includes('inventory'),
+          undefined,
+          { timeout: 8000 },
+        )
+        .then(() => true)
+        .catch(() => false),
+    );
+    await ana.keyboard.press('Escape');
+
+    // Every direction, until one of them moves her. A single direction is a
+    // measurement of what she happens to be standing against: the arena has
+    // trees, rocks and a palisade, and a body pressed into one of them reports
+    // a working keyboard as a broken one. This reported exactly that once.
+    const walked = await walksAnyDirection(ana, ben);
+    check('...and the movement keys walk again', walked > STILL_PX, `best of four directions: ${walked.toFixed(1)}px`);
 
     // --- Up recalls what was sent --------------------------------------------
     console.log('Up walks back through what was said');
@@ -429,8 +474,7 @@ async function main(): Promise<void> {
       }
     }
 
-    const outDir = join(process.cwd(), '.claude', 'screenshots');
-    mkdirSync(outDir, { recursive: true });
+    const outDir = shots;
     await ana.keyboard.press('Enter');
     await waitFor(ana, (state) => state.open);
     await type(ana, 'and this is what it looks like');
@@ -439,7 +483,8 @@ async function main(): Promise<void> {
     await ana.keyboard.press('Escape');
     await ana.waitForTimeout(400);
     await ana.screenshot({ path: join(outDir, 'chat-log.png') });
-    console.log('wrote .claude/screenshots/chat-{open,log}.png');
+    await ana.screenshot({ path: join(outDir, 'chat-corner.png'), clip: { x: 0, y: 560, width: 520, height: 240 } });
+    console.log('wrote .claude/screenshots/chat-{empty,open,log,corner}.png');
   } catch (error) {
     console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
     failures += 1;

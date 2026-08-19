@@ -614,6 +614,8 @@ export interface ChatRenderOptions {
   readonly reveal?: number;
   /** Something half-typed, so the field has a caret in it and content behind it. */
   readonly typing?: string;
+  /** Nothing said yet, which is what a fresh session opens on. */
+  readonly empty?: boolean;
 }
 
 /**
@@ -653,7 +655,7 @@ export function renderChat(options: ChatRenderOptions = {}): ChatFrame {
     chat.open(focus);
     if (options.typing !== undefined) chat.setInputText(options.typing);
   }
-  chat.setView({ lines: DEMO_CHAT, reveal: options.reveal ?? 1 });
+  chat.setView({ lines: options.empty === true ? [] : DEMO_CHAT, reveal: options.reveal ?? 1 });
   root.update(0);
   chat.settle();
   root.update(0);

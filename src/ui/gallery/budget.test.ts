@@ -10,6 +10,7 @@ import { WindowManager } from '../core/window-manager.js';
 import { UiWindow } from '../widgets/window.js';
 import { Label } from '../widgets/label.js';
 import { REDUCED_MOTION } from '../core/motion.js';
+import { PLATE_ALPHA, PLATE_TOKEN } from '../screens/chat.js';
 
 /**
  * The brief's budget is "full UI update + draw under 1.5 ms with 6 windows
@@ -187,11 +188,6 @@ describe('nothing is drawn translucent', () => {
       }),
     play: () => renderPlay({ cast: 0.5, cooldowns: { 0: 0.4, 3: 0.9 } }),
     shop: () => renderShop({ confirmRow: 0, buyback: true }),
-    // Caught partway out (spec 189). The chat is the one surface with a reason
-    // to want a fade -- it sits over the world and gets out of the way when
-    // nothing is happening -- so it is the one most likely to grow one, and a
-    // wipe half-done is the frame where an alpha would show up.
-    chat: () => renderChat({ reveal: 0.5, typing: 'on my way' }),
   };
 
   for (const [name, build] of Object.entries(scenes)) {
@@ -208,5 +204,72 @@ describe('nothing is drawn translucent', () => {
     for (const [name, color] of Object.entries(THEME.palette)) {
       expect(color.a, name).toBe(255);
     }
+  });
+});
+
+/**
+ * ...except the chat's plate, and that exception is a measurement (spec 189).
+ *
+ * The chat is the only surface drawn over the *world*, and a solid rectangle in
+ * the corner of a game is a hole in it. So it blends -- and the reason that is
+ * allowed is not that the rule above was relaxed, it is that this particular
+ * blend is one the two backends round identically.
+ *
+ * A browser canvas stores premultiplied 8-bit and `getImageData` unpremultiplies
+ * it, so a straight-alpha colour written over a transparent pixel comes back
+ * rounded, where `raster.ts` writes it through untouched. For most alphas that
+ * costs a byte or two per channel -- at 0.62 this plate came back `rgb(27,24,39)`
+ * against `rgb(28,25,39)`, which is what `preview-ui-gallery.ts` reported before
+ * the number below was chosen. For some it costs nothing, and `PLATE_ALPHA` is
+ * one of those.
+ *
+ * Asserted here rather than left to the browser script, so a change to
+ * `panelSunken` or to that constant fails in `npm test`. The fix if it does is a
+ * neighbouring alpha, never a tolerance: a tolerance would hide every future
+ * blending mistake along with this one.
+ */
+describe('the one thing that does blend', () => {
+  /** What a browser canvas gives back after storing this colour premultiplied. */
+  function throughPremultiplied(channel: number, alpha: number): number {
+    return Math.round((Math.round((channel * alpha) / 255) * 255) / alpha);
+  }
+
+  it('survives premultiplied storage exactly, so both backends agree', () => {
+    const plate = THEME.color(PLATE_TOKEN);
+    for (const [name, channel] of Object.entries({ r: plate.r, g: plate.g, b: plate.b })) {
+      expect(throughPremultiplied(channel, PLATE_ALPHA), `${name} at alpha ${PLATE_ALPHA}`).toBe(channel);
+    }
+  });
+
+  it('is the only translucent thing the chat draws', () => {
+    // Everything else -- every glyph, the field's frame, the scrollbar -- stays
+    // opaque. What is see-through is the backing and nothing else, so the text
+    // is exactly as legible as it was.
+    const translucent = renderChat({ typing: 'on my way' })
+      .root.paint()
+      .finish()
+      .filter((command) => {
+        const alpha = command.kind === 'solid' ? command.color.a : command.kind === 'sprite' ? command.tint.a : 255;
+        return alpha !== 255;
+      });
+    expect(translucent.length).toBeGreaterThan(0);
+    for (const command of translucent) {
+      expect(command.kind).toBe('solid');
+      if (command.kind !== 'solid') continue;
+      expect(command.color.a).toBe(PLATE_ALPHA);
+      expect({ r: command.color.r, g: command.color.g, b: command.color.b }).toEqual({
+        r: THEME.color(PLATE_TOKEN).r,
+        g: THEME.color(PLATE_TOKEN).g,
+        b: THEME.color(PLATE_TOKEN).b,
+      });
+    }
+  });
+
+  it('draws no plate at all when nothing has been said', () => {
+    // An empty plate over the world is a black bar announcing that the chat
+    // exists, and the chat announcing itself is the opposite of furniture.
+    const commands = renderChat({ typing: '', empty: true }).root.paint().finish();
+    const plates = commands.filter((command) => command.kind === 'solid' && command.color.a !== 255);
+    expect(plates).toHaveLength(1);
   });
 });

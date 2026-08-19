@@ -31,8 +31,8 @@
 
 import { Column } from '../core/containers.js';
 import type { DrawList } from '../core/draw-list.js';
-import { uniformInsets, type Constraint, type Insets, type Size } from '../core/geom.js';
-import { drawTextClipped } from '../core/paint.js';
+import { uniformInsets, type Constraint, type Insets, type Rect, type Size } from '../core/geom.js';
+import { drawFocusRing, drawNineSlice, drawTextClipped } from '../core/paint.js';
 import type { LayoutContext, PaintContext, Widget } from '../core/widget.js';
 import { advance, BODY_FONT } from '../text/font.js';
 import type { Theme } from '../theme/theme.js';
@@ -79,6 +79,35 @@ export const LOG_LINES = 8;
 
 /** The longest line the server will keep -- `text.slice(0, 240)` in `server.ts`. */
 export const MAX_CHARS = 240;
+
+/**
+ * Which palette colour the chat sits on, and how opaque that plate is.
+ *
+ * The one place in this framework that blends, and the alpha is **chosen rather
+ * than picked**, which is the whole of why it is allowed to.
+ *
+ * The rule it is the exception to is real (`budget.test.ts`): a browser canvas
+ * stores premultiplied 8-bit and `getImageData` unpremultiplies it, so a
+ * straight-alpha colour written over a transparent pixel comes back rounded --
+ * where `raster.ts` writes it through untouched. At 0.62 this plate came back
+ * `rgb(27,24,39)` in Chromium against `rgb(28,25,39)` in the rasterizer, off by
+ * one in two channels, which is exactly the divergence the rule exists to stop.
+ *
+ * But the round trip is only lossy for *some* alphas. For this colour, 156 is
+ * one of the values where `round(round(c * a / 255) * 255 / a) === c` holds on
+ * every channel -- so the two backends agree byte for byte, and the exact
+ * comparison in `preview-ui-gallery.ts` keeps working rather than being given a
+ * tolerance that would hide every future blending mistake as well as this one.
+ *
+ * `budget.test.ts` asserts that property, so a change to `panelSunken` or to
+ * this number fails in `npm test` rather than in a browser months later. If it
+ * does fail: the fix is a neighbouring alpha, not a looser check.
+ *
+ * A byte rather than a fraction, because the fraction is a way of writing the
+ * byte down and only the byte is the thing that has to be exact.
+ */
+export const PLATE_TOKEN = 'panelSunken';
+export const PLATE_ALPHA = 156;
 
 export interface ChatLineView {
   readonly id: number;
@@ -172,8 +201,42 @@ class ChatLine extends Label {
   }
 }
 
+/**
+ * The log's scroller, with its plate taken off.
+ *
+ * A subclass rather than a flag on `ScrollView`, because "draw no background"
+ * is true of this one scroller over the world and of nothing else in the
+ * interface -- and the chat draws one plate behind its whole self, so a second
+ * one here would be the blend applied twice and a rectangle inside a rectangle.
+ * The scrollbar is left alone: it only appears when there is something to
+ * scroll, and a position indicator you can see through is not one.
+ */
+class ChatLogView extends ScrollView {
+  protected override paintSelf(): void {
+    // Intentionally empty. See the class comment.
+  }
+}
+
+/**
+ * The input line, with its fill taken off and its frame kept.
+ *
+ * The frame and the focus ring are what say "this is a thing you type into",
+ * and they are the whole of what the chrome is for here -- the fill is a plate,
+ * and the plate is the screen's job.
+ */
+class ChatField extends TextField {
+  protected override drawChrome(out: DrawList, context: PaintContext, box: Rect): void {
+    const style = this.style(context);
+    const state = style.state(this.stateFor(context));
+    drawNineSlice(out, context.atlas.patch(style.frame), box, state.frameTint);
+    if (context.focused === (this as unknown as Widget) && this.enabled) {
+      drawFocusRing(out, context.atlas, box, context.theme.color('focus'));
+    }
+  }
+}
+
 export class ChatScreen extends Column {
-  readonly field = new TextField('', 'chat:input');
+  readonly field = new ChatField('', 'chat:input');
   readonly log: ScrollView;
 
   /**
@@ -211,13 +274,17 @@ export class ChatScreen extends Column {
     this.pointerTransparent = true;
 
     this.lines.pointerTransparent = true;
-    this.log = new ScrollView(this.lines, 'chat:log');
+    this.log = new ChatLogView(this.lines, 'chat:log');
     this.log.maxHeight = LOG_LINES * BODY_FONT.height + theme.spacing.xs;
     this.log.pointerTransparent = true;
 
     this.field.maxLength = MAX_CHARS;
     this.field.placeholder = 'Say something...';
     this.field.visible = false;
+    // Both start hidden: a session opens with nothing said, and the first frame
+    // is drawn before anything has had a chance to call `setView`.
+    this.log.visible = false;
+    this.lines.visible = false;
     this.field.onSubmit = (text) => {
       this.onSubmit?.(text.trim());
     };
@@ -284,6 +351,22 @@ export class ChatScreen extends Column {
    */
   setView(view: ChatView): void {
     this.reveal = Math.max(0, Math.min(1, view.reveal));
+
+    // An empty log is not drawn at all -- not the lines, not the scroller, not
+    // the plate under them. Opening the chat before anybody has said anything
+    // used to put an empty black rectangle over the world above the field, which
+    // is the interface taking up room to say nothing.
+    //
+    // Answered *before* the early-out below, because an empty list is the one
+    // case that matches what is already shown: `sameLines` is true from the
+    // first frame, so a visibility decided after it is a decision never taken.
+    const holdsSomething = view.lines.length > 0;
+    if (this.log.visible !== holdsSomething) {
+      this.log.visible = holdsSomething;
+      this.lines.visible = holdsSomething;
+      this.invalidateMeasure();
+    }
+
     if (this.sameLines(view.lines)) return;
 
     this.shown.length = 0;
@@ -364,6 +447,24 @@ export class ChatScreen extends Column {
    * `reduced` snaps rather than easing: a player who asked their system for less
    * motion asked for a reason, and a faster wipe is refusing it politely.
    */
+  /**
+   * The plate the chat sits on, translucent, behind everything it holds.
+   *
+   * Drawn here rather than by the scroller and the field, so it is **one**
+   * blend over the whole surface. Two would overlap wherever they met and the
+   * seam would be a different colour from either -- which is what a translucent
+   * widget inside a translucent widget always looks like.
+   *
+   * Nothing is drawn when there is nothing to say: an empty plate over the
+   * world is a black bar announcing that the chat exists, and the chat
+   * announcing itself is the opposite of furniture.
+   */
+  protected override paintSelf(out: DrawList, context: PaintContext): void {
+    const plate = { ...context.theme.color(PLATE_TOKEN), a: PLATE_ALPHA };
+    if (this.lines.visible) out.solid(this.log.rect, plate);
+    if (this.field.visible) out.solid(this.field.rect, plate);
+  }
+
   override paint(out: DrawList, context: PaintContext): void {
     if (!this.visible) return;
     const shown = context.motion.reduced ? (this.reveal >= 1 ? 1 : 0) : this.reveal;
@@ -384,7 +485,14 @@ export class ChatScreen extends Column {
   }
 }
 
-/** The insets that keep the log off the frame's edge and clear of the HUD. */
+/**
+ * The insets that keep the log off the frame's edge and clear of the HUD.
+ *
+ * The bottom is the measured furniture *plus* a margin rather than the larger
+ * of the two: clearing something by nothing is still sitting on it, and the gap
+ * is what makes the log read as its own thing instead of as another row of the
+ * bottom band.
+ */
 export function chatInsets(theme: Theme, safeBottom: number): Insets {
-  return { ...uniformInsets(theme.spacing.sm), bottom: Math.max(theme.spacing.sm, safeBottom) };
+  return { ...uniformInsets(theme.spacing.sm), bottom: safeBottom + theme.spacing.xl };
 }
