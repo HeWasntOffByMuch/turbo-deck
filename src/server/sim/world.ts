@@ -23,6 +23,8 @@
  */
 
 import { Rng } from '../../shared/prng.js';
+import { pushOutOfObstacles } from '../../sim/collision.js';
+import type { AvoidanceParams } from '../../sim/avoidance.js';
 import { findPath, navGridFor, pathClear } from '../../sim/pathfinding.js';
 import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
 import type { Vec2, WorldColliders } from '../../sim/types.js';
@@ -34,7 +36,17 @@ import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { FLEE_DISTANCE, notice, rally, settle } from './aggro.js';
+import { SlotBoard, slotAngle, slotNearest } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
+import {
+  AVOID_HORIZON_SECONDS,
+  SEPARATION_MAX_SPEED,
+  createCrowdScratch,
+  resolveCrowding,
+  solveAvoidance,
+  type CrowdBody,
+  type CrowdPush,
+} from './crowd.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
 import { regenPoise, staggered } from './poise.js';
@@ -74,7 +86,7 @@ import {
   type MoteSpawn,
 } from './restoration.js';
 import { shotHeightAt, SHOT_IMPACT_HEIGHT } from './ballistics.js';
-import { resolveMovement, type MovementContext } from './movement.js';
+import { isWalkable, resolveMovement, type MovementContext } from './movement.js';
 import { regenerated } from './resource.js';
 import {
   ActivityValue,
@@ -136,6 +148,7 @@ function blankEntity(id: number): ServerEntity {
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
     radius: 4,
+    velocity: { x: 0, y: 0 },
     targetId: null,
     aggro: AggroValue.Calm,
     aggroUntilTick: 0,
@@ -143,6 +156,7 @@ function blankEntity(id: number): ServerEntity {
     pathIndex: 0,
     repathAtTick: 0,
     pathGoal: null,
+    attackSlot: -1,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
@@ -283,6 +297,7 @@ export function spawnEntity(
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
     radius: spec.radius,
+    velocity: { x: 0, y: 0 },
     targetId: spec.targetId ?? null,
     // A body handed a target at spawn is already committed to it -- that is
     // what a test seeding a fight means by it, and what an admin conjuring an
@@ -293,6 +308,7 @@ export function spawnEntity(
     pathIndex: 0,
     repathAtTick: 0,
     pathGoal: null,
+    attackSlot: -1,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
@@ -464,6 +480,202 @@ export function isHostile(
   return attacker.kind !== EntityKindValue.Prop && target.kind !== EntityKindValue.Prop;
 }
 
+/**
+ * What one body decided this tick, before anything moved (spec 184).
+ *
+ * The movement pass used to decide and move a body in the same breath; the
+ * crowd pass needs every decision in hand before the first body moves, so the
+ * decision is parked here in between.
+ */
+interface DecidedMove {
+  /** The body after deciding -- a route planned or dropped is entity state. */
+  readonly entity: ServerEntity;
+  /** The client frame this body's decision came from, or null. */
+  readonly input: ServerInput | null;
+  /**
+   * What it wants to do, after the cast and stagger pins. Rewritten by the
+   * crowd pass, which is the whole reason this is not readonly.
+   */
+  intent: ServerInput | null;
+  /** The body it is charging and so will not dodge, or null. */
+  readonly charging: number | null;
+  /** Events from a wind-up this body withdrew from, held until it moves. */
+  readonly withdrawal: readonly ServerSimEvent[];
+}
+
+const NO_EVENTS: readonly ServerSimEvent[] = [];
+
+/**
+ * The crowd pass's working buffers, and the one board a tick's attack slots are
+ * claimed on.
+ *
+ * Module level rather than per-call, and the argument is the one
+ * `pathfinding.ts` already makes about its search scratch: `step` is
+ * synchronous and never yields, so nothing can observe these between the write
+ * and the read, and the alternative is a few hundred kilobytes of typed array
+ * built and thrown away sixty times a second. Both are cleared at the top of
+ * the pass that uses them, so nothing survives a tick.
+ */
+const CROWD = createCrowdScratch();
+const SLOTS = new SlotBoard();
+
+/** How far ahead a body plans its way round another. See `crowd.ts`. */
+const AVOIDANCE: AvoidanceParams = {
+  horizon: AVOID_HORIZON_SECONDS,
+  timeStep: 1 / SERVER_TICK_RATE,
+};
+
+/**
+ * Below this fraction of its own speed, a solved velocity is not a heading.
+ *
+ * A body the solver has nearly stopped has a direction made of rounding, and
+ * facing it would spin the body on the spot. It keeps the heading its own
+ * decision asked for instead, which is where it is still trying to go.
+ */
+const FACING_FROM_VELOCITY = 0.05;
+
+/**
+ * The crowd, as the avoidance solver wants it: one record per body that has a
+ * position this tick, in creation order.
+ *
+ * Two kinds go in. A body with somewhere to be is *solved*: its wanted velocity
+ * is what its decision asked for, scaled up from the unit-ish direction an
+ * input carries to the world units a second the solver speaks. Everything else
+ * -- a player, a body rooted by a cast or a stagger, a body standing at its
+ * target, a training dummy that cannot move at all -- goes in **pinned**: it is
+ * never solved for, and everybody else takes the whole of the avoidance against
+ * it rather than half.
+ *
+ * A player is pinned for a specific reason rather than as a simplification.
+ * Their movement is predicted on their own machine and reconciled against this
+ * server (spec 067); deflecting it here would be a divergence the client cannot
+ * reproduce, so every tick a monster came near would cost a correction. What a
+ * player gets instead is right of way, which is also what a player wants.
+ */
+function buildCrowd(decided: readonly DecidedMove[], tick: number): CrowdBody[] {
+  const crowd: CrowdBody[] = [];
+  for (const move of decided) {
+    const entity = move.entity;
+    const intent = move.intent;
+    const speed = entity.stats.moveSpeed;
+    const wants =
+      intent !== null &&
+      speed > 0 &&
+      entity.kind !== EntityKindValue.Player &&
+      (intent.moveX !== 0 || intent.moveY !== 0) &&
+      entity.cast === null &&
+      !staggered(entity, tick);
+    crowd.push({
+      id: entity.id,
+      x: entity.position.x,
+      y: entity.position.y,
+      vx: entity.velocity.x,
+      vy: entity.velocity.y,
+      radius: entity.radius,
+      pinned: !wants,
+      bumps: entity.kind !== EntityKindValue.Player,
+      pushLimit: (speed / SERVER_TICK_RATE) * SEPARATION_MAX_SPEED,
+      ignoreId: move.charging ?? -1,
+      maxSpeed: speed,
+      prefX: wants ? intent.moveX * speed : 0,
+      prefY: wants ? intent.moveY * speed : 0,
+      outX: 0,
+      outY: 0,
+    });
+  }
+  return crowd;
+}
+
+/**
+ * Write the solved velocities back onto the intents the movement pass will
+ * walk.
+ *
+ * The conversion is the interesting half. `resolveMovement` reads a *direction*
+ * of length at most one and multiplies it by the body's own top speed, so a
+ * shorter vector is the only way to say "slower than I can go" -- and saying
+ * that is most of what avoidance does. Dividing the solved velocity by the same
+ * top speed makes the round trip exact: a body solved to 40 units a second out
+ * of a possible 105 walks 40 units a second, and a body solved to its full
+ * speed walks exactly what it did before any of this existed.
+ *
+ * The facing follows the solved velocity rather than the wanted one, because a
+ * body that is stepping aside should look where it is stepping. It is the drawn
+ * heading only -- a melee cone is measured from the cast's own aim (spec 062),
+ * so nothing here can change what a blow hits.
+ */
+function applyCrowd(decided: readonly DecidedMove[], crowd: readonly CrowdBody[]): void {
+  for (let i = 0; i < decided.length; i++) {
+    const move = decided[i];
+    const body = crowd[i];
+    if (!move || !body || body.pinned) continue;
+    const intent = move.intent;
+    if (!intent) continue;
+    const moveX = body.outX / body.maxSpeed;
+    const moveY = body.outY / body.maxSpeed;
+    const length = Math.hypot(moveX, moveY);
+    move.intent = {
+      ...intent,
+      moveX,
+      moveY,
+      facing: length > FACING_FROM_VELOCITY ? Math.atan2(moveY, moveX) : intent.facing,
+    };
+  }
+}
+
+/**
+ * Push apart whatever ended the tick inside something else.
+ *
+ * Reads the positions the movement pass just wrote, asks `crowd.ts` how far
+ * each body should give, and then puts every push through the same three
+ * refusals a step is subject to: the colliders, the heightfield's cliffs and
+ * its water line. A push that lands somewhere a body may not stand is dropped
+ * whole rather than clamped, because half of a separation vector points
+ * somewhere nobody chose.
+ */
+function separateCrowd(
+  crowd: readonly CrowdBody[],
+  working: Map<number, ServerEntity>,
+  context: StepContext,
+): void {
+  if (crowd.length === 0) return;
+
+  const positions: CrowdPush[] = [];
+  for (const body of crowd) {
+    const entity = working.get(body.id);
+    positions.push(
+      entity ? { x: entity.position.x, y: entity.position.y } : { x: body.x, y: body.y },
+    );
+  }
+
+  const pushes: CrowdPush[] = crowd.map(() => ({ x: 0, y: 0 }));
+  resolveCrowding(crowd, positions, CROWD, pushes);
+
+  for (let i = 0; i < crowd.length; i++) {
+    const body = crowd[i];
+    const push = pushes[i];
+    const at = positions[i];
+    if (!body || !push || !at) continue;
+    if (push.x === 0 && push.y === 0) continue;
+    const entity = working.get(body.id);
+    if (!entity) continue;
+
+    const wanted = { x: at.x + push.x, y: at.y + push.y };
+    const settled = pushOutOfObstacles(wanted, entity.radius, context.world);
+    if (!isWalkable(entity.position, settled.x, settled.y, context.terrain)) continue;
+    // `velocity` deliberately does not take the push in. It is what the crowd
+    // reads about this body next tick, and being shoved out of somebody is not
+    // travelling: a body that reported a push as velocity would have its
+    // neighbours plan a whole second of avoidance around a movement that is
+    // over. `moved` is settled above for the same reason -- a body that only
+    // moved because it was leaned on is still Idle.
+    working.set(entity.id, {
+      ...entity,
+      position: { x: settled.x, y: settled.y, z: context.terrain.heightAt(settled.x, settled.y) },
+      zoneId: context.zones.zoneIdAt(settled.x, settled.y),
+    });
+  }
+}
+
 export function step(
   state: ServerWorldState,
   inputs: readonly ServerInput[],
@@ -490,11 +702,39 @@ export function step(
     entity.kind === EntityKindValue.Player ||
     context.activeChunks.has(chunkKeyOf(entity.position.x, entity.position.y, context.chunkSize));
 
-  // --- 1 + 2: timers and movement, in creation order -------------------
+  // --- 1 + 2: timers, intent, the crowd and movement, in creation order --
+  //
+  // Until spec 184 this was one loop: each body decided and moved before the
+  // next one was asked anything. That is the one shape reciprocal avoidance
+  // cannot be built in, because it rests on every body solving against the same
+  // snapshot -- a body that has already moved is a body its neighbours are
+  // avoiding in the wrong place, and a body that has not is one whose velocity
+  // is a tick stale. Half a tick of asymmetry per pair is exactly the
+  // disagreement that makes a crowd shudder.
+  //
+  // So it is three passes over the same list, in the same creation order:
+  //
+  //  1a. every body decides what it wants, and nothing moves;
+  //  1b. the crowd pass answers all of them at once (`crowd.ts`);
+  //  1c. every body moves, and the tick's state is written.
+  //
+  // What that costs is that a monster now decides against where the bodies
+  // around it were at the *top* of the tick rather than against a world half
+  // advanced. That is a tick of staleness on a target's position, which is less
+  // than the 48 units of drift a route already tolerates before replanning --
+  // and it buys the property that two bodies asked in either order get the same
+  // answer, which is what "creation order" was silently deciding before.
   const casters: number[] = [];
   // Monsters decide their intent during the movement pass; the cast pass needs
   // the same decision rather than a second, differently-timed one.
   const monsterIntentCache = new Map<number, ServerInput>();
+  const decided: DecidedMove[] = [];
+  // One board per tick, rebuilt rather than carried: a claim nobody released
+  // would wall off a side of a target forever, and a body can leave a fight in
+  // half a dozen ways that no release event covers -- it dies, it is dragged
+  // past its leash, it loses interest, its chunk stops being simulated
+  // (spec 184).
+  openSlotBoard(SLOTS, state.entities, isSimulated);
   for (const entity of state.entities.values()) {
     const current = working.get(entity.id) ?? entity;
     if (current.health <= 0) {
@@ -522,14 +762,18 @@ export function step(
     const input = inputByEntity.get(current.id) ?? null;
     let rawIntent: ServerInput | null;
     let steered = current;
+    // Which body this one is charging, and so the one body it does not dodge
+    // (spec 184). Null for a player, who dodges nobody in any case.
+    let charging: number | null = null;
     if (current.kind === EntityKindValue.Player) {
       rawIntent = input;
     } else {
       // A monster's route is entity state, so deciding where to walk can change
       // the entity -- see `monsterIntent`.
-      const decided = monsterIntent(current, working, tick, context);
-      rawIntent = decided.input;
-      steered = decided.entity;
+      const decision = monsterIntent(current, working, tick, context, SLOTS);
+      rawIntent = decision.input;
+      steered = decision.entity;
+      charging = decision.charging;
     }
     // Asking to move is how a body withdraws from a blow it has committed to
     // (spec 079), and it is settled *here* rather than deferred to the cast
@@ -545,11 +789,15 @@ export function step(
     //    arrow is in the air, the interval is running, and all that is returned
     //    is the legs. Which is the whole feature: cancelling the follow-through
     //    buys movement, and can never buy a faster next attack.
+    let withdrawal: readonly ServerSimEvent[] = NO_EVENTS;
     if (steered.cast !== null && asksToMove(rawIntent)) {
       const withdrawn = cancelCast(steered, tick, CastEndReason.Cancelled);
       if (withdrawn.cancelled) {
         steered = withdrawn.entity;
-        events.push(...withdrawn.events);
+        // Held rather than pushed, so it still lands ahead of this body's own
+        // correction and ahead of anything the next body produces -- the order
+        // it had when deciding and moving were one loop.
+        withdrawal = withdrawn.events;
       }
     }
 
@@ -579,7 +827,28 @@ export function step(
         : steered.cast !== null
           ? { ...rawIntent, moveX: 0, moveY: 0 }
           : rawIntent;
-    if (intent && current.kind !== EntityKindValue.Player) monsterIntentCache.set(current.id, intent);
+    decided.push({ entity: steered, input, intent, charging, withdrawal });
+  }
+
+  // --- 1b: the crowd (spec 184) ----------------------------------------
+  //
+  // Every body's wanted velocity is now known and nothing has moved, which is
+  // the one instant in the tick where reciprocal avoidance is a well-posed
+  // question. It rewrites `intent.moveX/moveY` in place of the direction the
+  // body asked for -- so movement, collision, terrain and the correction rules
+  // below are all the code they already were, and a monster is still subject to
+  // exactly what a player is.
+  const crowd = buildCrowd(decided, tick);
+  solveAvoidance(crowd, CROWD, AVOIDANCE);
+  applyCrowd(decided, crowd);
+
+  // --- 1c: movement, in the same creation order ------------------------
+  for (const move of decided) {
+    const steered = move.entity;
+    const input = move.input;
+    const intent = move.intent;
+    if (move.withdrawal.length > 0) events.push(...move.withdrawal);
+    if (intent && steered.kind !== EntityKindValue.Player) monsterIntentCache.set(steered.id, intent);
 
     const outcome = resolveMovement(steered, intent, movement);
     const moved =
@@ -589,6 +858,14 @@ export function step(
       ...steered,
       position: outcome.position,
       facing: outcome.facing,
+      // What the body actually did, for the crowd around it next tick
+      // (spec 184). Measured from the step it ended up taking rather than from
+      // the one it asked for, so a body pressed into a tree tells its
+      // neighbours it is going nowhere.
+      velocity: {
+        x: (outcome.position.x - steered.position.x) * SERVER_TICK_RATE,
+        y: (outcome.position.y - steered.position.y) * SERVER_TICK_RATE,
+      },
       zoneId: context.zones.zoneIdAt(outcome.position.x, outcome.position.y),
       // Remember what this client claimed, so the next input's speed is measured
       // against its own previous claim rather than against our position.
@@ -620,14 +897,14 @@ export function step(
         : steered.pardon,
     };
     next = expireActivity(next, tick, moved ? ActivityValue.Moving : ActivityValue.Idle);
-    // --- 1c: resting (spec 156) ------------------------------------------
+    // resting (spec 156) --------------------------------------------------
     // Here rather than in `advanceProgression` because it is the one thing in
     // the tick that depends on *where* the body is, and the zone it is in was
     // settled three lines up. Deliberately a place rather than a timer: the
     // flask refills by walking back, which is the "return, rest" leg of the
     // loop and the reason the fallback is insurance rather than a heal button.
     next = advanceRest(next, tick, context.zones.byIdOrWilderness(next.zoneId).rest === true);
-    // --- 1b: the progression timers (spec 147) --------------------------
+    // the progression timers (spec 147) -----------------------------------
     // One pass, here, because all four read the same three facts this pass has
     // just settled -- did the body move, is it committed, is it staggered -- and
     // a second loop would have to re-derive them or take them on trust.
@@ -658,6 +935,23 @@ export function step(
     // quiet -- which, at 60Hz against a 20Hz-ish input stream, is most ticks.
     if (intent !== null || next.cast !== null) casters.push(next.id);
   }
+
+  // --- 1d: the overlaps avoidance could not prevent (spec 184) ----------
+  //
+  // Avoidance keeps bodies from walking into each other; it cannot undo an
+  // overlap that already exists, and there are several honest ways to get one:
+  // a spawner filling a point somebody is standing on, a body that had no legal
+  // velocity at all and took the least-bad one, a wall that stopped a body
+  // where its neighbour was going, a stagger that rooted one mid-swerve.
+  // Without this they stay overlapped forever, because nothing else in the tick
+  // is looking. (A player walking into a monster is *not* in that list: a player
+  // is outside this pass entirely, which is spec 184's stated limit.)
+  //
+  // A fraction of the overlap per tick, and refused outright wherever the
+  // ground refuses it -- this pass moves a body without its consent, so it is
+  // subject to the same walls, cliffs and water `resolveMovement` is, and a
+  // push that cannot be taken is simply not taken.
+  separateCrowd(crowd, working, context);
 
   // --- 3: casts, in id order so a multi-way fight resolves the same way
   //        every replay regardless of who was created first ---------------
@@ -1545,11 +1839,64 @@ function expireActivity(entity: ServerEntity, tick: number, resting: number): Se
   return { ...entity, activity: resting, activityUntilTick: 0 };
 }
 
+/**
+ * How close this body tries to get to `target` before it stops and swings.
+ *
+ * What it swings *with* is a stat (spec 079), so a slinger stands off at its
+ * throw's range and a stalker at its sword's, off the same two lines. The
+ * monster's own radius is deliberately absent: `melee.slash` reaches 70 from a
+ * body's centre, so charging a ravager the extra thirty its radius would ask
+ * for would stand it outside its own reach and it would never swing.
+ */
+function standoffFrom(monster: ServerEntity, target: ServerEntity): number {
+  const swing = abilityById(monster.stats.basicAttackId);
+  return ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
+}
+
+/**
+ * Open this tick's slot board: measure every target's ring, then hold every
+ * slot somebody is already standing in or walking to (spec 184).
+ *
+ * Two sweeps rather than one because the two facts depend on each other -- how
+ * finely a ring is cut is decided by the widest body fighting that target, and
+ * a reservation is a bit in a mask whose width is that number. Both are read
+ * off entity state at the top of the tick, so neither depends on anything any
+ * body decides afterwards.
+ */
+function openSlotBoard(
+  board: SlotBoard,
+  entities: ReadonlyMap<number, ServerEntity>,
+  simulated: (entity: ServerEntity) => boolean,
+): void {
+  board.clear();
+  for (const entity of entities.values()) {
+    if (entity.kind === EntityKindValue.Player || entity.health <= 0) continue;
+    if (entity.targetId === null || !simulated(entity)) continue;
+    const target = entities.get(entity.targetId);
+    if (!target || target.health <= 0) continue;
+    board.note(entity.targetId, standoffFrom(entity, target), entity.radius);
+  }
+  for (const entity of entities.values()) {
+    if (entity.attackSlot < 0 || entity.targetId === null) continue;
+    if (entity.health <= 0 || !simulated(entity)) continue;
+    board.reserve(entity.targetId, entity.attackSlot);
+  }
+}
+
 /** What a monster decided this tick: how to move, and any route state it changed. */
 interface MonsterDecision {
   /** Null when there is nothing to chase; the body simply stands. */
   readonly input: ServerInput | null;
   readonly entity: ServerEntity;
+  /**
+   * The body it is charging, and so the one body it will not dodge (spec 184).
+   *
+   * Null for a body with nothing to charge -- walking home, running away, or
+   * standing about -- and null while fleeing in particular, because the whole
+   * point of running is to get away from something and a body that ignored its
+   * pursuer would run through it.
+   */
+  readonly charging: number | null;
 }
 
 /**
@@ -1565,7 +1912,12 @@ function monsterIntent(
   entities: ReadonlyMap<number, ServerEntity>,
   tick: number,
   context: StepContext,
+  slots: SlotBoard,
 ): MonsterDecision {
+  // Read before `settle` and `notice` get a say, because it is what the held
+  // attack slot was taken against: a slot means nothing once the body has
+  // changed its mind about who it is fighting (spec 184).
+  const heldSlotFor = monster.targetId;
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
 
@@ -1604,7 +1956,7 @@ function monsterIntent(
   if (!target) {
     const home = walkHome(monster, tick, context);
     if (home) return home;
-    return { input: null, entity: forgetPath(monster) };
+    return { input: null, entity: forgetPath(monster), charging: null };
   }
 
   // Running away, and swinging at nothing whatever it ends up standing next to.
@@ -1618,7 +1970,7 @@ function monsterIntent(
   // What it swings with is a stat now (spec 079), so a slinger stands off at
   // its throw's range and a stalker at its sword's, off the same two lines.
   const swing = abilityById(monster.stats.basicAttackId);
-  const reach = ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
+  const reach = standoffFrom(monster, target);
   // An alert body has noticed and not yet committed, so it does not close and it
   // does not swing -- it stands where it is and looks. Expressed as "never in
   // reach, never wanting to swing" rather than as a fourth movement mode,
@@ -1627,10 +1979,40 @@ function monsterIntent(
   const alert = monster.aggro === AggroValue.Alert;
   const closing = !alert && distance > reach;
 
+  // Where on the ring around this target to walk (spec 184). Not a destination
+  // -- the body still stops the moment it is in reach, wherever on the way that
+  // happens -- but an *offset aim*, so a pack closing from one side fans out
+  // across the near arc instead of arriving one behind another on the same
+  // bearing. The slot nearest where the body is already coming from is the one
+  // it asks for, so the assignment agrees with the walk already in progress and
+  // nobody is ever sent the long way round.
+  let slot = -1;
+  let ring: Vec2 | null = null;
+  if (closing) {
+    const cuts = slots.cuts(target.id);
+    const approach = Math.atan2(-dy, -dx);
+    slot = slots.take(
+      target.id,
+      slotNearest(approach, cuts),
+      heldSlotFor === target.id ? monster.attackSlot : -1,
+    );
+    if (slot >= 0) {
+      const angle = slotAngle(slot, cuts);
+      ring = {
+        x: target.position.x + Math.cos(angle) * reach,
+        y: target.position.y + Math.sin(angle) * reach,
+      };
+    }
+  }
+
   const steer = closing
-    ? routeToward(monster, target.position, tick, context)
+    ? routeToward(monster, target.position, tick, context, ring)
     : { direction: null, entity: forgetPath(monster) };
-  const entity = steer.entity;
+  // A body that has stopped in reach keeps the slot it held. It claims nothing
+  // more this tick -- it is not walking anywhere -- but `openSlotBoard`
+  // reserved it at the top of the tick, which is what stops a newcomer being
+  // routed onto the ground it is standing on.
+  const entity = closing ? { ...steer.entity, attackSlot: slot } : steer.entity;
 
   // Face where it is walking; face the target once it has stopped to swing.
   const facing = steer.direction
@@ -1645,6 +2027,7 @@ function monsterIntent(
   const wantsToSwing = !alert && !closing && monster.cast === null && swing !== null;
   return {
     entity,
+    charging: target.id,
     input: {
       entityId: monster.id,
       seq: 0,
@@ -1701,6 +2084,11 @@ function fleeFrom(
   const direction = steer.direction ?? heading;
   return {
     entity: steer.entity,
+    // Still the one body it does not dodge, and for the same reason as a chase
+    // (spec 184): what a body does about the thing it is engaged with is
+    // aggro's business and combat's, and a crowd rule that made prey harder to
+    // catch would be this feature reaching somewhere it has no business.
+    charging: from.id,
     input: {
       entityId: monster.id,
       seq: 0,
@@ -1752,10 +2140,11 @@ function walkHome(monster: ServerEntity, tick: number, context: StepContext): Mo
   if (Math.hypot(dx, dy) <= monster.radius) return null;
 
   const steer = routeToward(monster, { x: anchor.x, y: anchor.y, z: monster.position.z }, tick, context);
-  if (!steer.direction) return { input: null, entity: forgetPath(steer.entity) };
+  if (!steer.direction) return { input: null, entity: forgetPath(steer.entity), charging: null };
 
   return {
     entity: steer.entity,
+    charging: null,
     input: {
       entityId: monster.id,
       seq: 0,
@@ -1814,6 +2203,7 @@ function routeToward(
   goal: Vec3,
   tick: number,
   context: StepContext,
+  ring: Vec2 | null = null,
 ): SteerResult {
   const from: Vec2 = { x: monster.position.x, y: monster.position.y };
   const to: Vec2 = { x: goal.x, y: goal.y };
@@ -1823,7 +2213,22 @@ function routeToward(
   // seventy-unit wall without ever asking for a route.
   const grid = navGridFor(monster.radius, context.world, context.terrain);
   if (pathClear(grid, from, to)) {
-    return { direction: unit(to.x - from.x, to.y - from.y), entity: forgetPath(monster) };
+    // Open ground, so a place on the ring around the target is worth aiming at
+    // rather than the target itself (spec 184) -- which is what fans a pack out
+    // across the near arc instead of stacking it on one bearing.
+    //
+    // Only on this branch, and that is the whole rule. A ring point is a place
+    // nobody has checked: it can be inside the wall the target is standing
+    // behind, in the lake, or on the far side of a cliff, and handing one to
+    // `findPath` turns "there is no way to my target" into "there is a way to
+    // this other spot" -- which walks a body up to a palisade and parks it
+    // there instead of pressing at the gate, and quietly retires the retry
+    // cadence spec 073 put on hopeless searches. When the way is blocked the
+    // route is to the target, exactly as it was; crowding is an open-ground
+    // problem, and the corridor case is avoidance's to solve rather than the
+    // router's.
+    const aim = ring ?? to;
+    return { direction: unit(aim.x - from.x, aim.y - from.y), entity: forgetPath(monster) };
   }
 
   // An empty path is the record of a search that failed, not a route walked to

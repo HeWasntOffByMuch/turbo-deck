@@ -362,7 +362,19 @@ describe('a standing attack order, over a real session (spec 080)', () => {
         // hold when they *disagree* is pinned directly in `target.test.ts`.
         // What it does catch is the loop asking twice for one commit, which is
         // what any future brake on the ask would break first.
-        expect(result.asks - result.commits, seen).toBeLessThanOrEqual(1);
+        //
+        // The allowance is `withdrawals + 1`, and both terms are a named thing
+        // rather than slack. An ask can fail to become a commit in exactly two
+        // ways: the run ended between the two, which is the +1; or this client
+        // called the blow off in the tick or two between asking and the server
+        // committing, because the mark died in that window (spec 155) -- and a
+        // cancel outranks a commit asked for on the same tick, so it eats the
+        // ask. That second term was zero on the trajectory this was first
+        // measured on, which made the constant look like the rule; spec 184
+        // moved a grazer by a few units and it stopped being. For melee, where
+        // `withdrawals` is asserted to be zero just above, this is still
+        // exactly `asks - commits <= 1`.
+        expect(result.asks - result.commits, seen).toBeLessThanOrEqual(result.withdrawals + 1);
         expect(result.rejects, seen).toEqual([]);
       }, 30_000);
     }
