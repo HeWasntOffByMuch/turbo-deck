@@ -1,4 +1,5 @@
 import { ARENA_OBSTACLES, SEPARATION_ITERATIONS, WORLD_BOUNDS } from './constants.js';
+import { NeighbourGrid } from './neighbours.js';
 import type { Circle, Rect, Vec2, WorldColliders } from './types.js';
 
 /**
@@ -69,10 +70,98 @@ export function circleHitsCircle(centre: Vec2, radius: number, circle: Circle): 
   return dx * dx + dy * dy < reach * reach;
 }
 
+/**
+ * A broadphase over the world's vegetation (spec 184).
+ *
+ * `world.circles` is every tree and bush on the map -- 28,919 of them on the
+ * shipped arena -- and both `circleBlocked` and `pushOutOfObstacles` walked all
+ * of it, for every body, several times a tick. `scripts/bench-collision.ts` has
+ * measured that at 321us per body per tick since long before this spec, which
+ * put forty bodies at three quarters of a frame with nothing else running. It
+ * is not a crowd problem, but it is the ceiling a crowd runs into first, and
+ * the grid the crowd already needed indexes a static field just as well as a
+ * moving one.
+ *
+ * Cached on the array itself rather than on the `WorldColliders`, because that
+ * is the thing that actually changes when a client pages a chunk in, and it is
+ * the same memoization key `navGridFor` uses for the same reason.
+ *
+ * Built only past {@link INDEX_THRESHOLD}: a handful of colliders is faster
+ * scanned than hashed, and every headless test in the tree has a handful.
+ */
+const INDEX_THRESHOLD = 64;
+
+/** Cell pitch. A little over the widest query, so a lookup sweeps 3x3 cells. */
+const INDEX_CELL = 64;
+
+/**
+ * How many neighbours one lookup will hold. Comfortably past what can physically
+ * fit in the query radius -- circles that overlap each other still each need
+ * their own space -- and a lookup that somehow fills it falls back to the full
+ * scan rather than quietly answering from a truncated list.
+ */
+const INDEX_CAPACITY = 256;
+
+interface CircleIndex {
+  readonly grid: NeighbourGrid;
+  readonly widest: number;
+}
+
+const CIRCLE_INDEX = new WeakMap<readonly Circle[], CircleIndex>();
+const INDEX_HANDLES = new Int32Array(INDEX_CAPACITY);
+const NEARBY: Circle[] = [];
+
+function indexOf(circles: readonly Circle[]): CircleIndex | null {
+  if (circles.length < INDEX_THRESHOLD) return null;
+  const held = CIRCLE_INDEX.get(circles);
+  if (held) return held;
+  const grid = new NeighbourGrid(INDEX_CELL);
+  grid.reset(circles.length);
+  let widest = 0;
+  for (let i = 0; i < circles.length; i++) {
+    const circle = circles[i];
+    if (!circle) continue;
+    grid.insert(i, circle.x, circle.y);
+    if (circle.r > widest) widest = circle.r;
+  }
+  const built: CircleIndex = { grid, widest };
+  CIRCLE_INDEX.set(circles, built);
+  return built;
+}
+
+/**
+ * Every circle that could overlap a body of `radius` at `centre`, or the whole
+ * array when there is no index to consult.
+ *
+ * The returned array is reused by the next call. Both callers below consume it
+ * inside one synchronous pass, which is the only use it has.
+ *
+ * The query radius is the body plus the *widest* circle in the field, so a
+ * circle excluded here is one whose centre is further away than the two radii
+ * put together -- which is exactly the test the caller was going to apply.
+ * Nothing is approximated: this returns a superset of what can matter.
+ */
+function circlesNear(circles: readonly Circle[], centre: Vec2, radius: number): readonly Circle[] {
+  const index = indexOf(circles);
+  if (!index) return circles;
+  // Unsorted: the only question asked of this list is whether anything in it
+  // overlaps, which no ordering and no repeat can change.
+  const found = index.grid.queryUnsorted(centre.x, centre.y, radius + index.widest, INDEX_HANDLES);
+  if (found >= INDEX_CAPACITY) return circles;
+  NEARBY.length = 0;
+  for (let i = 0; i < found; i++) {
+    const circle = circles[INDEX_HANDLES[i] ?? 0];
+    if (circle) NEARBY.push(circle);
+  }
+  return NEARBY;
+}
+
 /** True when a body of `radius` cannot stand at `centre`. */
 export function circleBlocked(centre: Vec2, radius: number, world: WorldColliders = DEFAULT_WORLD): boolean {
   for (const rect of world.rects) if (circleHitsRect(centre, radius, rect)) return true;
-  for (const circle of world.circles) if (circleHitsCircle(centre, radius, circle)) return true;
+  for (const circle of circlesNear(world.circles, centre, radius)) {
+    if (circleHitsCircle(centre, radius, circle)) return true;
+  }
   return false;
 }
 
@@ -134,6 +223,17 @@ function pushOutOfCircle(centre: Vec2, radius: number, circle: Circle): Vec2 {
  * Two passes, because escaping one shape can push into a neighbouring one.
  */
 export function pushOutOfObstacles(centre: Vec2, radius: number, world: WorldColliders = DEFAULT_WORLD): Vec2 {
+  // The overwhelmingly common call is a body standing in open ground, where the
+  // answer is the bounds clamp and nothing else. Settling that from the indexed
+  // neighbourhood costs one grid lookup; anything that *is* overlapping falls
+  // through to the loop below and reads the whole field, so the escape is
+  // exact rather than merely close -- the loop moves `at` as it goes, and a
+  // neighbourhood computed around where the body started is not a claim about
+  // where it ends up.
+  if (!circleBlocked(centre, radius, world)) {
+    return clampCircleToBounds(centre.x, centre.y, radius, world.bounds);
+  }
+
   let at = centre;
   for (let pass = 0; pass < 2; pass++) {
     let moved = false;

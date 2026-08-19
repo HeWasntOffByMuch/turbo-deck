@@ -119,6 +119,54 @@ export class NeighbourGrid {
   }
 
   /**
+   * Every handle within `range`, in no particular order and possibly with
+   * repeats, returning how many were written.
+   *
+   * The cheap query, for callers whose answer cannot depend on the order or on
+   * seeing each handle once -- "is anything here at all", which is what a
+   * collision test asks. It skips the sort and the duplicate check that
+   * {@link query} pays for, and those are most of that method's cost.
+   *
+   * Do **not** reach for this to accumulate anything. Summing over an unordered
+   * result puts float addition in whatever order the hash chained the buckets,
+   * and a crowd settling two different ways from the same start is exactly the
+   * bug `query` is sorted to prevent.
+   *
+   * Returns `out.length` when it runs out of room, which is the caller's signal
+   * that the answer is truncated -- there is no way to say "and some more" in a
+   * count, so a caller that cannot tolerate a partial answer has to check.
+   */
+  queryUnsorted(x: number, y: number, range: number, out: Int32Array): number {
+    const limit = out.length;
+    if (limit === 0 || range <= 0) return 0;
+    const rangeSq = range * range;
+    const size = this.cellSize;
+    const minCx = Math.floor((x - range) / size);
+    const maxCx = Math.floor((x + range) / size);
+    const minCy = Math.floor((y - range) / size);
+    const maxCy = Math.floor((y + range) / size);
+
+    let found = 0;
+    for (let cy = minCy; cy <= maxCy; cy++) {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        for (
+          let handle = this.buckets[bucketOf(cx, cy, this.mask)] ?? NONE;
+          handle !== NONE;
+          handle = this.next[handle] ?? NONE
+        ) {
+          const dx = (this.xs[handle] ?? 0) - x;
+          const dy = (this.ys[handle] ?? 0) - y;
+          if (dx * dx + dy * dy > rangeSq) continue;
+          if (found === limit) return limit;
+          out[found] = handle;
+          found += 1;
+        }
+      }
+    }
+    return found;
+  }
+
+  /**
    * Every handle whose recorded point lies within `range`, written into `out`
    * in **ascending** order, returning how many were written.
    *
