@@ -236,11 +236,21 @@ try {
     return reading;
   };
 
-  const setSpared = async (on: boolean): Promise<void> => {
-    await page.click('button[aria-label="Retro filter"]');
-    const box = page.locator('label', { hasText: 'Spare the player' }).first().locator('input[type=checkbox]');
+  // The tab opens with the filter switched off, so this probe has to switch it
+  // on: every measurement below is "which pixels escaped the quantize", and with
+  // nothing quantizing, the whole frame escapes and check 1 fails on a working
+  // build. Asked as a state rather than as a click, so it stays right whichever
+  // way that default goes.
+  const setChecked = async (label: string, on: boolean): Promise<void> => {
+    const box = page.locator('label', { hasText: label }).first().locator('input[type=checkbox]');
     if (on) await box.check();
     else await box.uncheck();
+  };
+
+  const setSpared = async (on: boolean): Promise<void> => {
+    await page.click('button[aria-label="Retro filter"]');
+    await setChecked('Retro filter', true);
+    await setChecked('Spare the player', on);
     await page.click('button[aria-label="Retro filter"]');
     await page.waitForTimeout(1200);
   };

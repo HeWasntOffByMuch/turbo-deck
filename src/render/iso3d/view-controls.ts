@@ -491,7 +491,12 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const spawners = makeCheckbox('Spawners', false,
     'Mark every spawn point the map places, with what it spawns and how long until it comes back.');
 
-  const retroOn = makeCheckbox('Retro filter', RETRO_DEFAULTS.enabled,
+  // Off by default: every other row here is RETRO_DEFAULTS, which is what the
+  // filter looks like once it is on -- this one is whether it is, and the two are
+  // different questions. The pass is a look laid over the finished frame rather
+  // than a step of the render, so the tab opens on the image the world actually
+  // drew and the row is what puts the quantize and the weave over it.
+  const retroOn = makeCheckbox('Retro filter', false,
     'Quantize the image to a few colours per channel and dither across the bands, ' +
     'the way a machine with too few colours would.');
   const levels = makeSlider('Colour steps', 2, 16, 1, RETRO_DEFAULTS.levels, '',
