@@ -96,9 +96,9 @@ What the roster does after the change, per basic attack before mitigation:
 Two of those move a long way and both are the point. The ravager swings once
 every 2.25s and is the one body on the map that starts nothing, so a player
 walks into that 42 by choosing to; the spider swings every 0.8s and comes in
-fours, and four of them at 14 was 56 damage a second against a 100-health
-player -- the fight the row's comment describes as "one you win by swinging"
-was one nobody could survive.
+fours, and four of them at 14 was 65.8 damage a second after a starting
+player's armour -- which is a 200-health character dead in 3.0s, against 4.9s
+at the 8.75 its row actually authors.
 
 ## Invariants tested
 
@@ -124,6 +124,20 @@ was one nobody could survive.
   does not change one of them. If 42 is the wrong number for the ravager, that
   is now a one-line edit in `monsters.ts` that visibly does something, which is
   the state this spec exists to reach.
+
+  It is worth writing down that the rows probably **do** want retuning, because
+  the evidence is that they were authored under the other reading of the field.
+  `attackDamage` is a *power* stat -- a multiplier against the player's unarmed
+  reference, which is what it has always meant on the player's side -- and the
+  spider's row comment calls its 5 "5 damage", as though the number were what
+  lands. Under this spec the spider lands 8.75. The same comment says "22 health
+  is two player swings", and a starting player's own slash is 20.5625, so 22 is
+  1.07 swings: that half of the comment went stale when spec 147 gave the
+  *player* a `weaponPower`, and nobody noticed then either, for the same reason
+  nobody noticed this -- a number nothing reads cannot be observed to be wrong.
+  What this spec fixes is that the roster's damage is now ordered and spaced the
+  way the table says it is. Whether the absolute values are the ones a designer
+  wants is a separate pass, and one that can now be made by editing the table.
 - **`spellPower` for monsters.** Every row's `basicAttackId` names a
   `basicAttack: true` ability, so the non-basic multiplier is not on any monster's
   path today. A row that names a non-basic ability would scale with its
