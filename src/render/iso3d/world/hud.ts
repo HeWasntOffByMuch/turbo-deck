@@ -76,7 +76,7 @@ import {
 import { stunMark } from './stun-icon.js';
 import { statusMarks } from './status-marks.js';
 import { MAX_VISIBLE_STATUSES, visualFor } from '../../../server/data/status-visuals.js';
-import { describeStatus, technicalText } from '../../../server/data/description.js';
+import { describeAbility, describeStatus, technicalText } from '../../../server/data/description.js';
 import {
   barSlotOf,
   swapLabel,
@@ -252,6 +252,26 @@ const STATUS_BOON = BAR_GUARD;
 const STATUS_AFFLICTION = '#d0796f';
 /** Small enough that eight fit over a body, big enough to tell apart. */
 const STATUS_ICON_PX = 13;
+
+/**
+ * What hovering an ability says (spec 189).
+ *
+ * The name, then its Technical Description, then the flavour -- separated by a
+ * blank line, because the standard's §2.6 is that flavour is never mixed into
+ * the mechanical block.
+ *
+ * One function for the action bar, the vial and the weapon switch, which used
+ * to hold three different formulations of it and all three showed only
+ * `ability.description`. That string is flavour and only flavour now, so before
+ * this the bar's hover said "Both hands, and everything you weigh, put behind
+ * one swing" and nothing about 42 damage, 1.1s or a 3s cooldown.
+ */
+function abilityTitle(ability: AbilityDefinition): string {
+  const described = describeAbility(ability);
+  const body = technicalText(described);
+  const flavour = described.flavor === null ? '' : `\n\n${described.flavor}`;
+  return `${ability.name}\n${body}${flavour}`;
+}
 /**
  * The resource pool (spec 164). Blue, and the one bar on screen that is *spent*
  * rather than lost -- health and guard are both taken off you by somebody else.
@@ -636,7 +656,7 @@ export function createHud(
     if (entry.kind === 'vial') {
       button.innerHTML = key + centred(slotIconSvg('vial', { size: layout.compact ? 26 : 22 }));
       button.setAttribute('aria-label', ability?.name ?? 'Vial');
-      button.title = ability ? `${ability.name} -- ${ability.description}` : 'Vial';
+      button.title = ability ? abilityTitle(ability) : 'Vial';
     } else if (ability) {
       // An icon on a finger and a name on a desktop, the same way the weapon
       // switch and the window buttons answer it: no name in the table fits a
@@ -653,7 +673,7 @@ export function createHud(
               }),
         );
       button.setAttribute('aria-label', ability.name);
-      button.title = ability.description;
+      button.title = abilityTitle(ability);
     } else {
       button.innerHTML =
         key +
@@ -1119,7 +1139,7 @@ export function createHud(
       });
       button.append(name);
     }
-    button.title = ability ? `${ability.name} -- ${ability.description}` : weapon.itemId;
+    button.title = ability ? abilityTitle(ability) : weapon.itemId;
     button.addEventListener('click', () => equipHandler(weapon.itemId));
     weapons.append(button);
     return { ...weapon, button };
