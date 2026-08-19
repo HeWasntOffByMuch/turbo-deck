@@ -20,7 +20,9 @@
  */
 
 import * as THREE from 'three';
-import type { RarityId } from '../../server/data/items.js';
+import { RARITY_IDS, type RarityId } from '../../server/data/items.js';
+import { rarityToken } from '../../ui/widgets/item-slot.js';
+import { THEME } from '../../ui/theme/theme.js';
 import type { Pop } from './world/loot-drop.js';
 
 /**
@@ -30,12 +32,21 @@ import type { Pop } from './world/loot-drop.js';
  * must never learn what a drop looks like. The tiers read cool-to-warm and
  * lift in value with the tier, so which one something is survives the retro
  * pass quantizing every channel to a handful of steps.
+ *
+ * Read out of the interface's palette since spec 185, rather than authored here
+ * beside it. The values did not move -- what moved is that there is now one
+ * place they are written, so an item is the same colour in the bag as it was in
+ * the grass and neither end can be retuned without the other. Converted to a
+ * hex integer rather than through `setRGB`, because `new THREE.Color(hex)` reads
+ * sRGB and `setRGB` does not: the same three bytes down either path is the
+ * whole point.
  */
-const TIER_COLOR: Record<RarityId, number> = {
-  common: 0xb9c2cc,
-  rare: 0x6fb4ff,
-  exceptional: 0xffc861,
-};
+const TIER_COLOR: Record<RarityId, number> = Object.fromEntries(
+  RARITY_IDS.map((id) => {
+    const { r, g, b } = THEME.color(rarityToken(id));
+    return [id, (r << 16) | (g << 8) | b];
+  }),
+) as Record<RarityId, number>;
 
 /**
  * What an unrevealed drop is drawn in (spec 158).

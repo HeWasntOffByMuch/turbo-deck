@@ -210,6 +210,12 @@ export const INVENTORY_GOLDEN_CASES: readonly InventoryGoldenCase[] = [
     covers: 'a stack named and counted, over the cell it belongs to',
   },
   {
+    name: 'bag-tooltip-rare',
+    options: { tooltipOver: { container: 'inventory', index: 3 } },
+    covers:
+      'an item described (spec 185): its name and tier in the tier\'s own colour, a benefit, a drawback and what it is worth',
+  },
+  {
     name: 'bag-small',
     options: { viewport: { width: 300, height: 140 } },
     covers: 'the smallest supported viewport, where the window scrolls rather than the cells squashing',
