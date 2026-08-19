@@ -11,7 +11,16 @@ import { describe, expect, it } from 'vitest';
 import { ALL_ABILITIES, abilityById } from './abilities.js';
 import { ALL_ITEMS } from './items.js';
 import { STATUS_VISUALS } from './status-visuals.js';
-import { describeAbility, describeStatus, formatSeconds, technicalText } from './description.js';
+import { ALL_SKILLS } from './skills.js';
+import {
+  GRANT_LABELS,
+  describeAbility,
+  describeStatSkill,
+  describeStatus,
+  formatSeconds,
+  grantsOf,
+  technicalText,
+} from './description.js';
 
 const SECONDS = 60;
 
@@ -25,6 +34,16 @@ function everyDescription(): readonly { readonly what: string; readonly text: st
     ...STATUS_VISUALS.map((visual) => ({
       what: visual.id,
       text: technicalText(describeStatus(visual)),
+    })),
+    // Both readings of every stat skill: the rate a fresh row states, and the
+    // total a held one does. They are different strings and both are shown.
+    ...ALL_SKILLS.map((skill) => ({
+      what: `${skill.id}@0`,
+      text: technicalText(describeStatSkill(skill, 0)),
+    })),
+    ...ALL_SKILLS.map((skill) => ({
+      what: `${skill.id}@max`,
+      text: technicalText(describeStatSkill(skill, skill.maxLevel)),
     })),
   ];
 }
@@ -77,10 +96,17 @@ describe('grammar conformance', () => {
     }
   });
 
-  it('writes every percentage as an integer', () => {
+  it('writes every percentage to at most one decimal, trimmed', () => {
+    // The standard said *integer* until the skill tree was run through it, and
+    // Lightfoot's `armor: 0.008` broke it honestly: 0.8% rounded to an integer
+    // is 1%, which overstates it by a quarter. Accuracy outranks consistency in
+    // this document's own priority order, so the rule moved rather than the
+    // number -- and it moved to what the item tooltip has always done.
     for (const { what, text } of everyDescription()) {
       for (const match of text.matchAll(/(\d+(?:\.\d+)?)%/g)) {
-        expect(match[1], `${what}: ${match[0]}`).not.toContain('.');
+        const decimals = (match[1] ?? '').split('.')[1] ?? '';
+        expect(decimals.length, `${what}: ${match[0]}`).toBeLessThanOrEqual(1);
+        expect(decimals, `${what}: ${match[0]} has a trailing zero`).not.toBe('0');
       }
     }
   });
@@ -282,5 +308,135 @@ describe('sigils', () => {
       // sigil -- a second copy would be a second place to retune.
       expect(Object.keys(item.modifiers), item.id).toHaveLength(0);
     }
+  });
+});
+
+describe('the passive skill tree (spec 189)', () => {
+  it('describes every row with at least its requirement and its trigger', () => {
+    for (const skill of ALL_SKILLS) {
+      const lines = describeStatSkill(skill, 0).lines;
+      expect(lines.length, skill.id).toBeGreaterThanOrEqual(2);
+      const text = lines.map((line) => line.text).join('\n');
+      expect(text, skill.id).toContain('Requires ');
+      expect(text, skill.id).toMatch(/Trigger: |Always active\./);
+    }
+  });
+
+  it('states a number for every row that grants one', () => {
+    // The gap this closes. Before it, the sheet showed the authored sentence
+    // and the trigger, and a player could not read a single figure off any of
+    // the thirty-six rows.
+    for (const skill of ALL_SKILLS) {
+      if (grantsOf(skill.perLevel).length === 0) continue;
+      const text = technicalText(describeStatSkill(skill, 0));
+      expect(text, skill.id).toMatch(/[+-]\d/);
+    }
+  });
+
+  it('scales the total with the level held, and keeps the rate beside it', () => {
+    const crushing = ALL_SKILLS.find((skill) => skill.id === 'str.crushingBlows');
+    expect(crushing).toBeDefined();
+    if (!crushing) return;
+    expect(technicalText(describeStatSkill(crushing, 0))).toContain('+18% Guard damage per level.');
+    expect(technicalText(describeStatSkill(crushing, 2))).toContain(
+      '+36% Guard damage (+18% per level).',
+    );
+    // One rank is the rate, so the parenthesis would say the same thing twice.
+    expect(technicalText(describeStatSkill(crushing, 1))).toContain('+18% Guard damage.');
+    expect(technicalText(describeStatSkill(crushing, 1))).not.toContain('per level');
+  });
+
+  it('clamps the level to what the row can actually hold', () => {
+    const crushing = ALL_SKILLS.find((skill) => skill.id === 'str.crushingBlows');
+    expect(crushing).toBeDefined();
+    if (!crushing) return;
+    expect(technicalText(describeStatSkill(crushing, 99))).toBe(
+      technicalText(describeStatSkill(crushing, crushing.maxLevel)),
+    );
+  });
+
+  it('skips a socket rather than claiming an effect', () => {
+    // A zero in `perLevel` is a documented "this row is about that trait" whose
+    // magnitude comes from a milestone or a synergy. Catalysis authors
+    // `appliesSundered: 0`, which reaches nothing, and Opening Read authors
+    // `vulnerableWeakPointFactor: 0`. Neither may produce a line.
+    for (const skill of ALL_SKILLS) {
+      expect(technicalText(describeStatSkill(skill, 0)), skill.id).not.toMatch(/[+-]0[^.\d]/);
+    }
+    const catalysis = ALL_SKILLS.find((skill) => skill.id === 'int.catalysis');
+    expect(catalysis).toBeDefined();
+    if (!catalysis) return;
+    expect(grantsOf(catalysis.perLevel)).toHaveLength(1);
+  });
+
+  it('never appends a rate to a flag', () => {
+    // Unstoppable grants `poiseArmorAllCasts: 1`, which is on or off. "Guard
+    // protection covers every cast per level" is what happens when a flag is
+    // run through the same path as a quantity.
+    const unstoppable = ALL_SKILLS.find((skill) => skill.id === 'str.unstoppable');
+    expect(unstoppable).toBeDefined();
+    if (!unstoppable) return;
+    const text = technicalText(describeStatSkill(unstoppable, 1));
+    expect(text).toContain('Guard protection covers every cast, not only attacks.');
+    expect(text).not.toContain('attacks per level');
+  });
+
+  it('reads a reduction as a reduction', () => {
+    // `backswingReduction: 0.1` is a positive number meaning *less* backswing.
+    // Named as the quantity rather than as the reduction, the line said the
+    // opposite of what the trait does.
+    const quick = ALL_SKILLS.find((skill) => skill.id === 'agi.quickRecovery');
+    expect(quick).toBeDefined();
+    if (!quick) return;
+    expect(technicalText(describeStatSkill(quick, 0))).toContain('+10% Backswing reduction');
+  });
+
+  it('marks a premium as bad and a benefit as good', () => {
+    const shaping = ALL_SKILLS.find((skill) => skill.id === 'int.shaping');
+    expect(shaping).toBeDefined();
+    if (!shaping) return;
+    const grants = grantsOf(shaping.perLevel);
+    const cost = grants.find((grant) => grant.text.includes('Cost of shaped abilities'));
+    const radius = grants.find((grant) => grant.text.includes('radius'));
+    expect(cost?.good).toBe(false);
+    expect(radius?.good).toBe(true);
+  });
+
+  it('keeps the flavour out of the mechanical lines', () => {
+    for (const skill of ALL_SKILLS) {
+      const described = describeStatSkill(skill, 1);
+      expect(described.flavor, skill.id).toBe(skill.description);
+      expect(technicalText(described), skill.id).not.toContain(skill.description);
+    }
+  });
+
+  it('reports which granted fields still have no label', () => {
+    // The safe default made measurable. A field with no row draws no line, so
+    // an unlabelled trait is a silent gap rather than a wrong sentence -- and
+    // this is the thing that stops it staying silent.
+    const labelled = new Set(GRANT_LABELS.map((label) => `${label.where}:${label.key}`));
+    const missing = new Set<string>();
+    for (const skill of ALL_SKILLS) {
+      const modifier = skill.perLevel as unknown as Record<string, unknown>;
+      for (const [key, value] of Object.entries(modifier)) {
+        if (key === 'traits' || value === 0) continue;
+        if (!labelled.has(`stat:${key}`)) missing.add(`stat:${key}`);
+      }
+      const traits = (modifier['traits'] ?? {}) as Record<string, unknown>;
+      for (const [key, value] of Object.entries(traits)) {
+        if (value === 0) continue;
+        if (!labelled.has(`trait:${key}`)) missing.add(`trait:${key}`);
+      }
+    }
+    // The three that cannot be turned into a signed quantity reading correctly
+    // in English, each left to its row's authored sentence on purpose:
+    // `juggernautBelow` is a health threshold, `masteryRelief` is a count that
+    // *lowers* a requirement, and `overflowHealthPerResource` is a price the
+    // skill charges for a benefit.
+    expect([...missing].sort()).toEqual([
+      'trait:juggernautBelow',
+      'trait:masteryRelief',
+      'trait:overflowHealthPerResource',
+    ]);
   });
 });

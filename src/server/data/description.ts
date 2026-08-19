@@ -42,6 +42,9 @@
 
 import { SERVER_TICK_RATE } from '../config.js';
 import type { AbilityDefinition } from './abilities.js';
+import type { StatModifier } from './modifiers.js';
+import type { SkillDefinition } from './skills.js';
+import { ATTRIBUTES } from './attributes.js';
 import { subjectOf, type SkillArea, type SkillEffect } from './skill-effects.js';
 import { visualFor, type StatusVisual } from './status-visuals.js';
 
@@ -437,6 +440,283 @@ function noteLines(ability: AbilityDefinition): readonly string[] {
     out.push('Flask charges return one at a time while resting out of combat.');
   }
   return out;
+}
+
+// --- what a modifier grants ---------------------------------------------
+
+/**
+ * How one field of a {@link StatModifier} is written out (spec 189).
+ *
+ * The naming table for the *other* half of the content: `describeAbility` reads
+ * an ability's own columns, and this reads the generic bag of numbers that
+ * items, milestones, synergies and the passive skill tree all grant through.
+ *
+ * It lives here rather than in `render/iso3d/world/inventory-model.ts`, where the
+ * item half of it has lived since spec 185, for the reason the whole standard
+ * exists: an item saying `+15% Attack Speed` and a skill saying something else
+ * about the same field would be two answers to one question. One table, two
+ * presentations -- the bag colours its lines by good and bad, the sheet does
+ * not, and neither decides what the field is *called*.
+ *
+ * **A field with no row here draws no line at all.** That is the same rule the
+ * item table has always had, and here it is load-bearing rather than defensive:
+ * the trait layer is not uniform the way `modifiers` is. Some of its fields are
+ * magnitudes, some are unlock flags, some are thresholds, and three of them
+ * (`juggernautBelow`, `masteryRelief`, `overflowHealthPerResource`) cannot be
+ * turned into a signed quantity that reads correctly in English. A missing line
+ * leaves the authored sentence to carry the skill; an invented one is a lie
+ * about a number, which is what this document was written to stop.
+ * `description.test.ts` reports which keys are uncovered, so the gap is
+ * measurable rather than silent.
+ */
+export interface GrantLabel {
+  /** A `StatModifier` field, or a `TraitModifier` one under `traits`. */
+  readonly key: string;
+  /** Where it is read from. */
+  readonly where: 'stat' | 'trait';
+  readonly name: string;
+  /**
+   * `flat` -- a bare number. `percent` -- a fraction as a percentage.
+   * `seconds` -- ticks. `flag` -- {@link name} is the whole sentence and the
+   * value is never shown.
+   */
+  readonly form: 'flat' | 'percent' | 'seconds' | 'flag';
+  /**
+   * Whether a bigger number is better for the player. Default true.
+   *
+   * Not decoration: `shapingCostPct` is a *premium* a skill charges you and
+   * `prepareTicks` is a delay it removes, so the sign alone cannot say which way
+   * a grant cuts.
+   */
+  readonly higherIsBetter?: boolean;
+}
+
+/**
+ * Every field either half of a modifier can grant, and what it is called.
+ *
+ * Ordered, and read in order, so two things granting the same fields list them
+ * the same way rather than in whatever order somebody authored the object in.
+ */
+export const GRANT_LABELS: readonly GrantLabel[] = [
+  // --- attributes: the biggest thing a grant can say -----------------------
+  { key: 'strength', where: 'stat', name: 'Strength', form: 'flat' },
+  { key: 'agility', where: 'stat', name: 'Agility', form: 'flat' },
+  { key: 'intelligence', where: 'stat', name: 'Intelligence', form: 'flat' },
+  { key: 'constitution', where: 'stat', name: 'Constitution', form: 'flat' },
+  { key: 'perception', where: 'stat', name: 'Perception', form: 'flat' },
+  { key: 'wisdom', where: 'stat', name: 'Wisdom', form: 'flat' },
+
+  // --- offence, defence, movement -----------------------------------------
+  { key: 'attackDamage', where: 'stat', name: 'Damage', form: 'flat' },
+  { key: 'attackDamagePct', where: 'stat', name: 'Damage', form: 'percent' },
+  { key: 'attackRange', where: 'stat', name: 'Range', form: 'flat' },
+  { key: 'attackSpeed', where: 'stat', name: 'Attack Speed', form: 'percent' },
+  { key: 'attackSpeedPct', where: 'stat', name: 'Attack Speed', form: 'percent' },
+  { key: 'attackCooldownTicks', where: 'stat', name: 'Attack Delay', form: 'flat', higherIsBetter: false },
+  { key: 'critChance', where: 'stat', name: 'Crit Chance', form: 'percent' },
+  { key: 'spellPower', where: 'stat', name: 'Spell Power', form: 'percent' },
+  { key: 'maxHealth', where: 'stat', name: 'Health', form: 'flat' },
+  { key: 'maxHealthPct', where: 'stat', name: 'Health', form: 'percent' },
+  { key: 'armor', where: 'stat', name: 'Armour', form: 'percent' },
+  { key: 'maxResource', where: 'stat', name: `Maximum ${RESOURCE_NAME}`, form: 'flat' },
+  { key: 'resourceRegen', where: 'stat', name: `${RESOURCE_NAME} regeneration`, form: 'flat' },
+  { key: 'moveSpeed', where: 'stat', name: 'Move Speed', form: 'flat' },
+  { key: 'moveSpeedPct', where: 'stat', name: 'Move Speed', form: 'percent' },
+  { key: 'turnRate', where: 'stat', name: 'Turn Rate', form: 'flat' },
+
+  // --- the trait half ------------------------------------------------------
+  //
+  // Guard, never poise: the pool has one player-facing name and the internal
+  // one does not appear (the standard's §1.7).
+  { key: 'maxPoise', where: 'trait', name: 'Maximum Guard', form: 'flat' },
+  { key: 'poiseDamagePct', where: 'trait', name: 'Guard damage', form: 'percent' },
+  { key: 'poiseRegenPct', where: 'trait', name: 'Guard regeneration', form: 'percent' },
+  { key: 'poiseRegenStaggered', where: 'trait', name: 'Guard regeneration while Staggered', form: 'percent' },
+  { key: 'windupPoiseArmor', where: 'trait', name: 'Guard protection while winding up', form: 'percent' },
+  { key: 'poiseArmorAllCasts', where: 'trait', form: 'flag', name: 'Guard protection covers every cast, not only attacks.' },
+
+  { key: 'backswingReduction', where: 'trait', name: 'Backswing reduction', form: 'percent' },
+  { key: 'handlingReduction', where: 'trait', name: 'Wind-up reduction for abilities that launch something', form: 'percent' },
+  { key: 'heavyWindupReduction', where: 'trait', name: 'Wind-up reduction for heavy abilities', form: 'percent' },
+
+  { key: 'flowTicks', where: 'trait', name: 'Flow duration', form: 'seconds' },
+  { key: 'flowDurationPct', where: 'trait', name: 'Flow duration', form: 'percent' },
+  { key: 'flowBackswingPct', where: 'trait', name: 'Backswing reduction per Flow stack', form: 'percent' },
+  { key: 'momentumTicks', where: 'trait', name: 'Momentum duration', form: 'seconds' },
+  { key: 'momentumWindupScale', where: 'trait', name: 'Wind-up reduction while Momentum is held', form: 'percent' },
+  { key: 'perfectExitResource', where: 'trait', name: `${RESOURCE_NAME} on a perfect exit`, form: 'flat' },
+  { key: 'perfectExitWindowTicks', where: 'trait', name: 'Perfect exit window', form: 'seconds' },
+  { key: 'overkillResource', where: 'trait', name: `${RESOURCE_NAME} on an overkill`, form: 'flat' },
+
+  // The two below are **not** reductions and their names must not become one.
+  // `prepareTicks` is authored negative -- the skill takes stillness *away* --
+  // and `preparedWindupScale` is a negative delta on a multiplier whose base is
+  // 1. Both read correctly as a signed quantity that is better when lower.
+  { key: 'prepareTicks', where: 'trait', name: 'Stillness needed to become Prepared', form: 'seconds', higherIsBetter: false },
+  { key: 'preparedWindupScale', where: 'trait', name: 'Wind-up while Prepared', form: 'percent', higherIsBetter: false },
+  { key: 'spellRadiusPct', where: 'trait', name: 'Ability radius', form: 'percent' },
+  { key: 'spellRangePct', where: 'trait', name: 'Ability range', form: 'percent' },
+  { key: 'shapingCostPct', where: 'trait', name: 'Cost of shaped abilities', form: 'percent', higherIsBetter: false },
+  { key: 'shapingCostRelief', where: 'trait', name: 'Relief on the shaping premium', form: 'percent' },
+  { key: 'vsAfflictedPct', where: 'trait', name: 'Damage against a target carrying a status', form: 'percent' },
+
+  { key: 'secondWindHeal', where: 'trait', name: 'Second Wind heal, of maximum health', form: 'percent' },
+  { key: 'resoluteReduction', where: 'trait', name: 'Damage reduction while badly hurt', form: 'percent' },
+  { key: 'overhealShieldTicks', where: 'trait', name: 'Shield duration', form: 'seconds' },
+
+  { key: 'weakPointChance', where: 'trait', name: 'Weak-point chance', form: 'percent' },
+  { key: 'weakPointResource', where: 'trait', name: `${RESOURCE_NAME} on a weak point`, form: 'flat' },
+  { key: 'weakPointKillHeal', where: 'trait', name: 'Health on a weak-point kill, of maximum health', form: 'percent' },
+  { key: 'exposeTicks', where: 'trait', name: 'Exposed duration', form: 'seconds' },
+  { key: 'exploitDamagePct', where: 'trait', name: 'Damage on a weak point against an Exposed target', form: 'percent' },
+  { key: 'openingReadTicks', where: 'trait', name: 'Vulnerable duration', form: 'seconds' },
+  { key: 'steadyAimPct', where: 'trait', name: 'Damage after standing still', form: 'percent' },
+
+  { key: 'costReduction', where: 'trait', name: 'Ability cost reduction', form: 'percent' },
+  { key: 'healingPct', where: 'trait', name: 'Healing received', form: 'percent' },
+  { key: 'attunedCostPct', where: 'trait', name: 'Ability cost reduction per Attuned stack', form: 'percent' },
+  { key: 'attunedTicks', where: 'trait', name: 'Attuned duration', form: 'seconds' },
+  { key: 'adaptationPerStack', where: 'trait', name: 'Adaptation per stack', form: 'percent' },
+  { key: 'adaptationTicks', where: 'trait', name: 'Adaptation duration', form: 'seconds' },
+  { key: 'conversionCap', where: 'trait', name: 'Overflow conversion cap', form: 'flat' },
+];
+
+/** A trailing full stop removed, so a line can be extended before it is closed. */
+function trimStop(text: string): string {
+  return text.endsWith('.') ? text.slice(0, -1) : text;
+}
+
+/** Just the signed quantity out of a grant line: `+18% Guard damage.` -> `+18%`. */
+function rateOf(text: string): string {
+  return /^[+-][\d.]+%?s?/.exec(text)?.[0] ?? trimStop(text);
+}
+
+/** One thing a modifier grants, written out. */
+export interface Grant {
+  readonly text: string;
+  /** Which way it cuts for the player, so a surface can colour it. */
+  readonly good: boolean;
+  /**
+   * A whole sentence already, carrying no number.
+   *
+   * A caller must not scale it, total it or append "per level" to it -- a flag
+   * is on or off, and "Guard protection covers every cast per level" is what
+   * happens when that is forgotten.
+   */
+  readonly whole?: boolean;
+}
+
+/** `8` -> `+8`; `-0.2` at percent -> `-20%`. Signed always: the `+` is the point. */
+function signed(value: number, form: GrantLabel['form']): string {
+  const scaled = form === 'percent' ? value * 100 : value;
+  const rounded =
+    form === 'seconds'
+      ? Math.round((value / SERVER_TICK_RATE) * 100) / 100
+      : Math.round(scaled * 10) / 10;
+  const sign = rounded >= 0 ? '+' : '-';
+  const unit = form === 'percent' ? '%' : form === 'seconds' ? 's' : '';
+  return `${sign}${String(Math.abs(rounded))}${unit}`;
+}
+
+/**
+ * What a `StatModifier` grants, one line per field it carries.
+ *
+ * Zero is skipped rather than written as `+0`. That is the item table's rule and
+ * it matters more here: the passive tree authors a zero as a *socket* -- a
+ * documented "this row is about that trait" whose magnitude comes from a
+ * milestone or a synergy -- so `appliesSundered: 0` and
+ * `vulnerableWeakPointFactor: 0` are inert and a line about either would claim
+ * an effect the row does not have.
+ *
+ * `times` multiplies every value, which is how a skill at rank 2 states its
+ * total rather than its per-level rate.
+ */
+export function grantsOf(modifier: StatModifier, times = 1): readonly Grant[] {
+  const traits = (modifier.traits ?? {}) as Readonly<Record<string, number | undefined>>;
+  const stats = modifier as unknown as Readonly<Record<string, number | undefined>>;
+  const out: Grant[] = [];
+  for (const label of GRANT_LABELS) {
+    const raw = label.where === 'trait' ? traits[label.key] : stats[label.key];
+    if (typeof raw !== 'number' || raw === 0) continue;
+    if (label.form === 'flag') {
+      out.push({ text: label.name, good: true, whole: true });
+      continue;
+    }
+    const value = raw * times;
+    out.push({
+      text: `${signed(value, label.form)} ${label.name}.`,
+      good: value > 0 === (label.higherIsBetter ?? true),
+    });
+  }
+  return out;
+}
+
+// --- the passive skill tree ---------------------------------------------
+
+/**
+ * The Technical Description for one row of the attuned tree (spec 189).
+ *
+ * The tree was the one thing the standard's first pass left out, and it is the
+ * largest body of unexplained mechanics in the game: thirty-six rows granting
+ * fifty-odd trait fields, of which a player could read only an authored sentence
+ * and a trigger. "Your blows carry more weight against an enemy's guard" is a
+ * true thing to say about +18% Guard damage per level and it is not the same
+ * thing, and nothing on the sheet was the number.
+ *
+ * `level` is what the character actually holds. At zero the lines are the row's
+ * *rate* -- what a point buys -- because that is the question somebody looking
+ * at an unspent skill has. Above zero they are the total, with the rate beside
+ * it, because that is the question somebody looking at their own build has.
+ */
+export function describeStatSkill(skill: SkillDefinition, level = 0): TechnicalDescription {
+  const lines: TechnicalLine[] = [];
+  const attribute = ATTRIBUTES.find((entry) => entry.key === skill.attribute);
+
+  lines.push({
+    tone: 'target',
+    text: `Requires ${attribute?.name ?? skill.attribute} ${amount(skill.requires)}.`,
+  });
+
+  // The trigger is authored, and it is the one part of a stat skill that could
+  // not be derived from anything: `perLevel` says what the row grants and
+  // nothing in it says when. Labelled rather than run into the sentence, the
+  // same way `Target:` labels an ability's.
+  lines.push({
+    tone: 'note',
+    text: skill.trigger === 'passive' ? 'Always active.' : `Trigger: ${skill.trigger}.`,
+  });
+
+  const held = Math.max(0, Math.min(skill.maxLevel, Math.floor(level)));
+  const perLevel = grantsOf(skill.perLevel);
+  const total = held > 0 ? grantsOf(skill.perLevel, held) : perLevel;
+
+  for (const [index, grant] of total.entries()) {
+    if (grant.whole === true) {
+      lines.push({ tone: 'effect', text: grant.text });
+      continue;
+    }
+    if (held === 0) {
+      // A comma where the name already contains a "per", or a trait scoped to
+      // something else reads as two rates run together: "+1% Backswing
+      // reduction per Flow stack per level".
+      const joiner = grant.text.includes(' per ') ? ', per level.' : ' per level.';
+      lines.push({ tone: 'effect', text: `${trimStop(grant.text)}${joiner}` });
+      continue;
+    }
+    // The total first, because that is what is true of this character right
+    // now; the rate after it, because that is what one more point buys. The
+    // rate is the *value* alone -- repeating the name inside its own
+    // parenthesis is how the first cut read, and it doubled every line.
+    const rate = perLevel[index];
+    const suffix = rate === undefined || held === 1 ? '' : ` (${rateOf(rate.text)} per level)`;
+    lines.push({ tone: 'effect', text: `${trimStop(grant.text)}${suffix}.` });
+  }
+
+  return {
+    name: skill.name,
+    lines,
+    flavor: skill.description.length > 0 ? skill.description : null,
+  };
 }
 
 // --- statuses -----------------------------------------------------------

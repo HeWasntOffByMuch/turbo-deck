@@ -21,7 +21,7 @@ import { Button, Separator } from '../widgets/button.js';
 import { Label } from '../widgets/label.js';
 import { Meter } from '../widgets/meter.js';
 import { TabPanel } from '../widgets/tabs.js';
-import { Tooltip } from '../widgets/tooltip.js';
+import { Tooltip, type TooltipContent, type TooltipLine } from '../widgets/tooltip.js';
 
 export interface SkillView {
   readonly id: string;
@@ -157,13 +157,26 @@ export class SkillRow extends Row {
     this.spendButton.enabled = next.canSpend;
   }
 
-  /** What a tooltip over this row should say. The description, or the refusal. */
-  tooltip(): string {
+  /**
+   * What a tooltip over this row should say. The description, or the refusal.
+   *
+   * Split into lines rather than handed over as prose (spec 189). A skill's
+   * description is now its Technical Description -- a requirement, a trigger and
+   * one line per thing it grants -- and `Tooltip` wraps *per line*, so passing
+   * the whole thing as one string would run every fact into one paragraph and
+   * lose exactly the scannability the standard is for.
+   *
+   * The refusal stays a line of its own at the bottom, where it reads as the
+   * answer to "why can I not spend here" rather than as part of the mechanics.
+   */
+  tooltip(): readonly TooltipLine[] {
     const view = this.view;
-    if (!view) return '';
-    return view.canSpend || view.blockedBecause.length === 0
-      ? view.description
-      : `${view.description} -- ${view.blockedBecause}`;
+    if (!view) return [];
+    const lines: TooltipLine[] = view.description.split('\n').map((text) => ({ text }));
+    if (!view.canSpend && view.blockedBecause.length > 0) {
+      lines.push({ text: view.blockedBecause, colorToken: 'danger' });
+    }
+    return lines;
   }
 }
 
@@ -368,7 +381,7 @@ export class CharacterScreen extends Column {
    * and a hover over an attribute was answered by whichever skill was laid out
    * behind it. Only the ancestor chain knows which tab a row is in.
    */
-  hintAt(at: Point): string {
+  hintAt(at: Point): TooltipContent {
     for (const row of this.attributeRows.values()) {
       if (this.showing(row) && contains(row.rect, at)) return row.tooltip();
     }
@@ -403,6 +416,9 @@ export class CharacterScreen extends Column {
   /** Point the tooltip at whatever is under the cursor. Driven by the mount. */
   pointerMoved(at: Point, nowMs: number): void {
     const hint = this.hintAt(at);
+    // Length reads the same either way -- an empty string and an empty line
+    // list both mean "nothing under the cursor" -- which is what lets the
+    // attribute rows and the stat lines go on answering with a plain string.
     this.tooltip.point(hint.length > 0 ? hint : null, at, nowMs);
   }
 

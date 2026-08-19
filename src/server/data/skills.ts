@@ -70,7 +70,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('str.committedSwing', 'strength', 'Committed Swing', T1, 3, 'while winding up an attack',
     { traits: { windupPoiseArmor: 0.2 } },
     'Harder to knock out of a swing you have already started.'),
-  skill('str.followThrough', 'strength', 'Brutal Follow-Through', T2, 3, 'on breaking an enemy’s poise',
+  skill('str.followThrough', 'strength', 'Brutal Follow-Through', T2, 3, 'on breaking an enemy’s guard',
     { traits: { momentumTicks: Math.round(SCALING.agility.flowTicks * 0.5), momentumWindupScale: 0.12 } },
     'A break opens a window: your next blow starts faster.'),
   skill('str.heavyHandling', 'strength', 'Heavy Handling', T2, 3, 'casting a heavy ability',

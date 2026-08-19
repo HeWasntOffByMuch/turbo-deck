@@ -15,13 +15,16 @@
  *   npx tsx scripts/print-descriptions.ts            # everything
  *   npx tsx scripts/print-descriptions.ts skills     # only the active skills
  *   npx tsx scripts/print-descriptions.ts statuses   # only the statuses
+ *   npx tsx scripts/print-descriptions.ts tree 2      # the passive tree at rank 2
  */
 
 import { ALL_ABILITIES, abilityById } from '../src/server/data/abilities.js';
 import { ALL_ITEMS } from '../src/server/data/items.js';
 import { STATUS_VISUALS } from '../src/server/data/status-visuals.js';
+import { ALL_SKILLS } from '../src/server/data/skills.js';
 import {
   describeAbility,
+  describeStatSkill,
   describeStatus,
   type TechnicalDescription,
 } from '../src/server/data/description.js';
@@ -78,6 +81,16 @@ if (only === 'all' || only === 'sigils') {
     console.log(`  Skill slot. Requires level ${String(item.levelRequirement)}.`);
     for (const line of described.lines) console.log(`  ${line.text}`);
     if (described.flavor !== null) console.log(`\n  "${described.flavor}"`);
+  }
+}
+
+if (only === 'all' || only === 'tree') {
+  // The passive tree, at rank 0 -- what a point buys, which is the question
+  // somebody looking at an unspent row has. Pass a rank to see the totals.
+  const rank = Number(process.argv[3] ?? 0);
+  section(`PASSIVE SKILL TREE (rank ${String(rank)})`);
+  for (const skill of ALL_SKILLS) {
+    show(describeStatSkill(skill, rank), skill.id);
   }
 }
 

@@ -112,10 +112,19 @@ describe('the character sheet', () => {
   });
 
   it('says why a skill cannot be taken, in the words the refusal would use', () => {
+    // A tooltip is a list of lines rather than one string since spec 189: a
+    // skill's description is its Technical Description, and `Tooltip` wraps per
+    // line, so handing it over as prose would run every fact into a paragraph.
     const { screen } = harness();
-    expect(screen.rowFor('wis.discipline')?.tooltip()).toContain('needs 10 Wisdom');
+    const refused = screen.rowFor('wis.discipline')?.tooltip() ?? [];
+    expect(refused.map((line) => line.text)).toContain('needs 10 Wisdom');
+    // The refusal is the *last* line and is coloured as one, so it reads as the
+    // answer to "why can I not spend here" rather than as part of the mechanics.
+    expect(refused[refused.length - 1]?.colorToken).toBe('danger');
+
     // A skill that *can* be taken says what it does, not why it cannot.
-    expect(screen.rowFor('str.crushingBlows')?.tooltip()).toBe('what str.crushingBlows does');
+    const allowed = screen.rowFor('str.crushingBlows')?.tooltip() ?? [];
+    expect(allowed.map((line) => line.text)).toEqual(['what str.crushingBlows does']);
   });
 
   it('emits the skill id when a spend button is pressed', () => {

@@ -254,7 +254,7 @@ numbers.
 
 ### 1.11 Chance and probability
 
-Written `X% chance to Y.` — an integer percentage, first in the clause.
+Written `X% chance to Y.` — a percentage, first in the clause.
 
 **Do not use:** *may*, *can*, *sometimes*, *rarely*, *a chance to*, *likely*,
 *occasionally*, odds (`1 in 4`).
@@ -375,16 +375,24 @@ it in that order and reordering it is a balance change. Guard Break strips guard
 |---|---|---|
 | Damage, healing, range, radius | Bare integer | `Deals 42 damage.` `Range 90.` |
 | Duration | Seconds, up to two decimals, zeros trimmed | `for 2.5s` `for 0.35s` |
-| Percentage | Integer, `%` | `40%` |
+| Percentage | At most one decimal, zeros trimmed, `%` | `40%` `0.8%` |
 | Proportion of a pool | Percentage of the named pool | `35% of maximum health` |
-| Chance | Integer percentage, leading | `4% chance to ...` |
+| Chance | Percentage, leading | `4% chance to ...` |
 | Target cap | `up to N` | `up to 6 enemies` |
 | Stack cap | `Stacks up to N times.` | |
 | Angle | Integer degrees, **full** opening angle | `in a 90° cone` |
 
-Rounding: durations to one decimal, everything else to the nearest integer. A
-number is never shown with more precision than the player can act on, and never
-with less than the sim uses in a way that changes the answer.
+Rounding: durations to two decimals, percentages to one, everything else to the
+nearest integer — trailing zeros trimmed throughout. A number is never shown with
+more precision than the player can act on, and never with less than the sim uses
+in a way that changes the answer.
+
+Both of those decimal allowances were bought by an accuracy failure rather than
+chosen. Durations went to two because 0.35s is 21 ticks and one decimal calls it
+0.4s. Percentages went to one because Lightfoot grants 0.8% armour a rank, and an
+integer percentage calls that 1% — a quarter more than it is. This document's own
+priority order puts accuracy above consistency, so in both cases the rule moved
+and the number did not.
 
 **Ticks never appear.** Neither do internal ids, internal pool names, or raw
 fractions where a percentage is meant.
@@ -609,9 +617,26 @@ Thirty-six rows granting `traits` keys — `windupPoiseArmor`, `flowBackswingPct
 anywhere a player can read; the character sheet shows the authored sentence and
 the trigger.
 
-*Needed:* a trait-to-sentence table, the same shape `STAT_LABELS` already is for
-modifiers. That is a follow-up spec, and until it exists these rows keep their
-authored prose and are the one place in the game not covered by this standard.
+**Closed.** `GRANT_LABELS` in `data/description.ts` is that table, over both
+halves of a `StatModifier`, and `describeStatSkill` composes it into a
+requirement, a trigger and one line per thing the row grants — the rate at rank
+0, the total with the rate beside it above.
+
+Three trait fields are deliberately **not** labelled, and the safe default is
+what makes that honest: a field with no row draws no line, so the row's authored
+sentence carries it and nothing is invented. They are `juggernautBelow` (a health
+threshold, not a magnitude), `masteryRelief` (a count that *lowers* a
+requirement, which no signed quantity reads correctly) and
+`overflowHealthPerResource` (a price the skill charges for a benefit, so a
+"+2" reads as a gain). `description.test.ts` asserts that list exactly, so a
+fourth gap fails rather than passing quietly.
+
+The other rule the tree forced: **a "reduction" trait is named as a reduction.**
+`backswingReduction: 0.1` is a positive number meaning *less* backswing, so
+`+10% Backswing` said the opposite of what the trait does and `+10% Backswing
+reduction` says what it is. Two fields are genuinely signed the other way —
+`prepareTicks` is authored negative and `preparedWindupScale` is a negative delta
+on a multiplier — and must not be renamed to match.
 
 ### 4.9 An arc buys nothing, and three strings say it does
 
@@ -675,3 +700,41 @@ supply it.
 
 *Needed:* either the scale applied at the point of description, or a decision
 that flight speed is not shown. The writer currently omits it.
+
+### 4.12 A pair and a status were both called Momentum
+
+Found by the rule that pairs are never named on the character sheet, when the
+tree's descriptions started naming the statuses they act on.
+
+`StatusId.Momentum` is a status: `STATUS_VISUALS` gives it a name, spec 186 draws
+it over every head in the world, and §1.3 requires any description of it to use
+that word. `pair.momentum` in `synergies.ts` was *also* called Momentum, and a
+pair's name is by design never shown anywhere — `character-model.test.ts` asserts
+it of the whole serialised view, because naming the fifteen pairs would turn
+things to discover into things to build toward.
+
+The two could not both hold. A sheet reading `+0.6s Momentum duration` beside a
+hidden pair called Momentum is exactly the "found it" a player would draw, and
+wrongly. The hidden half was renamed to **Breakthrough**, which changes nothing
+any player can see; the status keeps the name it already wears in the world.
+
+*Needed:* nothing. Recorded because the collision was invisible until something
+tried to describe the tree, and a second one would be too.
+
+### 4.13 `poise` is still in sixteen authored strings
+
+The standard's §1.7 says the pool is Guard in front of a player and the internal
+name never appears. `description.ts` obeys it and `description.test.ts` enforces
+it — **over the writer's output only.**
+
+Sixteen authored strings in `data/synergies.ts`, `data/milestones.ts` and
+`data/attributes.ts` still say "poise", and at least some of them are
+player-facing: `character-model.ts` renders a milestone's `name — effect` as the
+`nextEffect` line on an attribute row, so a player is already being shown the
+word. Two were fixed in passing because this work touched their rows (Brutal
+Follow-Through's trigger and the Breakthrough pair's effect); the rest were left
+alone rather than swept blind.
+
+*Needed:* a pass over those three tables, and a test that covers *authored*
+strings as well as generated ones. The generated half being clean is currently
+proving less than it appears to.
