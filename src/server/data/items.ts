@@ -6,7 +6,7 @@
  * recalculated. Buffing a sword buffs every sword already in the world.
  */
 
-import type { EquipSlot } from '../state/types.js';
+import type { EquipTarget } from '../state/types.js';
 import type { StatModifier } from './modifiers.js';
 
 /**
@@ -53,7 +53,7 @@ export interface ItemDefinition {
    * (spec 126). A null slot is what makes "this cannot be equipped" a fact about
    * the row rather than a list of exceptions somewhere else.
    */
-  readonly slot: EquipSlot | null;
+  readonly slot: EquipTarget | null;
   /** Character level required to equip; below it the equip is rejected. */
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
@@ -66,6 +66,19 @@ export interface ItemDefinition {
    * every bow at a different shot is one edit in `data/abilities.ts`.
    */
   readonly basicAttackId?: string;
+  /**
+   * The active skill this item *is* (spec 188).
+   *
+   * The same shape `basicAttackId` above already uses, and for the same stated
+   * reason: a bow is a row in this table rather than a class, and so is a skill.
+   * It names an ability id, so re-tuning what Guard Break does is one edit in
+   * `data/abilities.ts` and nothing here moves.
+   *
+   * Only ever read for an item in one of the four skill slots. An item that
+   * names one and cannot be worn there is inert, which is the same nothing a
+   * `basicAttackId` on a helmet already is.
+   */
+  readonly activeSkillId?: string;
   /**
    * Base worth in coins (spec 129).
    *
@@ -239,6 +252,54 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 8,
     modifiers: { maxHealthPct: 0.12, attackDamagePct: 0.05 },
   },
+  // --- active skills (spec 188) ---
+  //
+  // A skill is an item, so it drops, trades, sits in a bag and is worn -- and
+  // every one of those verbs is a system that already existed. What makes these
+  // rows different from a sword is one field: `activeSkillId`, which names the
+  // row in `data/abilities.ts` that says what the thing actually does. There
+  // are no numbers here, deliberately: a sigil's damage is the ability's, and a
+  // second copy in this table would be a second place to retune it.
+  //
+  // `slot: 'skill'` is the family, so one row fits any of the four slots.
+  {
+    id: 'sigil.guardBreak',
+    name: 'Sigil of Guard Break',
+    slot: 'skill',
+    levelRequirement: 1,
+    modifiers: {},
+    activeSkillId: 'skill.guardBreak',
+    value: 45,
+  },
+  {
+    id: 'sigil.stunningBlow',
+    rarity: 'rare',
+    name: 'Sigil of the Stunning Blow',
+    slot: 'skill',
+    levelRequirement: 4,
+    modifiers: {},
+    activeSkillId: 'skill.stunningBlow',
+    value: 130,
+  },
+  {
+    id: 'sigil.whirlwind',
+    rarity: 'rare',
+    name: 'Sigil of the Whirlwind',
+    slot: 'skill',
+    levelRequirement: 5,
+    modifiers: {},
+    activeSkillId: 'skill.whirlwind',
+    value: 145,
+  },
+  {
+    id: 'sigil.cripplingStrike',
+    name: 'Sigil of the Crippling Strike',
+    slot: 'skill',
+    levelRequirement: 2,
+    modifiers: {},
+    activeSkillId: 'skill.cripplingStrike',
+    value: 60,
+  },
   // --- carried ---
   // Nothing drinks this yet: consuming an item is its own spec, and it is here
   // because stacking has to be a rule about real rows to be worth testing. A
@@ -301,4 +362,9 @@ export const STARTING_KIT: readonly { readonly defId: string; readonly count: nu
   { defId: 'helm.leather', count: 1 },
   { defId: 'legs.traveller', count: 1 },
   { defId: 'potion.minor', count: 3 },
+  // One skill to start (spec 188). Not a nicety: with four empty slots and no
+  // sigil in the bag there is no way for a new character to reach the feature
+  // at all, and "it works once you have looted one" is how a system ships
+  // untested by everybody who has not.
+  { defId: 'sigil.guardBreak', count: 1 },
 ];

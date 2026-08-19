@@ -123,6 +123,7 @@ describe('the Stats message', () => {
       maxResource: 0,
       resourceRegen: 0,
       basicAttackId: '',
+      skillAbilityIds: [],
       traits: NEUTRAL_TRAITS,
     };
     const record = { ...built(), skills: [], baseStats: startingBaseStats() };

@@ -54,6 +54,14 @@ export interface ReplicatedEntity {
    * exactly as the sim's own `statusOf` does; nothing prunes this list.
    */
   readonly statuses: readonly WireStatus[];
+  /**
+   * How fast this body may move, as a fraction of its own speed (spec 188).
+   *
+   * 1 for a body carrying no slow, which is what a client that has not been
+   * told anything should assume: guessing *slower* than the server would make
+   * an unslowed player trail their own body for no reason.
+   */
+  readonly moveScale: number;
 }
 
 export class ReplicatedWorld {
@@ -107,6 +115,7 @@ export class ReplicatedWorld {
           name: record.name ?? '',
           turnRate: record.turnRate ?? 0,
           poise: record.poise ?? 1,
+          moveScale: record.moveScale ?? 1,
           shield: record.shield ?? 0,
           shieldUntilTick: record.shieldUntilTick ?? 0,
           statuses: record.statuses ?? NO_STATUSES,
@@ -145,6 +154,9 @@ export class ReplicatedWorld {
         // every test that only asks whether the number arrived.
         ...(record.fields & EntityField.Poise && record.poise !== undefined
           ? { poise: record.poise }
+          : {}),
+        ...(record.fields & EntityField.MoveScale && record.moveScale !== undefined
+          ? { moveScale: record.moveScale }
           : {}),
         ...(record.fields & EntityField.Shield && record.shield !== undefined
           ? { shield: record.shield, shieldUntilTick: record.shieldUntilTick ?? existing.shieldUntilTick }

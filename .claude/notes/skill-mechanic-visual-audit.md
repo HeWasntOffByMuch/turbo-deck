@@ -2,7 +2,12 @@
 
 > **Status, 2026-08-19.** Finding 1 is **closed** by spec 186: eight of the
 > twelve statuses now ride a tenth entity field and are drawn as marks over the
-> body, on the stun icon's stateless pattern. The other four are withheld
+> body, on the stun icon's stateless pattern. Spec 188 adds a ninth, `slowed`,
+> which is the first row a *skill* writes rather than a build earning -- and by
+> the table's own rule the most pointable-at of the lot. How much slower is not
+> on that field: it rides `EntityField.MoveScale` as the fraction a step is
+> multiplied by, because that is a number the mover's own predictor needs and a
+> watcher does not. The other four are withheld
 > deliberately and the note below is now the record of *why*. Finding 2 is
 > **one step shorter** -- `aurasFor`'s `statuses` parameter can now be fed, but
 > the tracker is still mounted by nothing. Everything else stands.

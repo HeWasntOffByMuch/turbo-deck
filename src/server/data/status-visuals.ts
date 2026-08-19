@@ -38,7 +38,8 @@ export type StatusIconId =
   | 'exposed'
   | 'vulnerable'
   | 'sundered'
-  | 'adapted';
+  | 'adapted'
+  | 'slowed';
 
 /**
  * Which way a status cuts.
@@ -96,6 +97,16 @@ const DEFINITIONS: readonly StatusVisual[] = [
   // which is the side the mark is read from: a body that has adapted is a body
   // your bolt is getting worse against.
   { id: ADAPTED_ID, wire: 7, name: 'Adapted', kind: 'affliction', icon: 'adapted', maxStacks: 8 },
+  // The first row here a *skill* writes rather than a build earning (spec 188),
+  // and by this table's own rule the most obvious one there is: a body moving
+  // at 60% of its own speed is a condition anybody can point at, and the player
+  // who spent a cooldown on it has the most reason of all to want it confirmed.
+  //
+  // It carries no magnitude, like every row here. How *much* slower is a fact
+  // the mover's own client needs and the watcher does not -- that one rides
+  // `EntityField.MoveScale`, which is the number a step is multiplied by rather
+  // than a picture.
+  { id: StatusId.Slowed, wire: 8, name: 'Slowed', kind: 'affliction', icon: 'slowed', maxStacks: 1 },
 ];
 
 export const STATUS_VISUALS: readonly StatusVisual[] = DEFINITIONS;

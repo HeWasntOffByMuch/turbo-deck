@@ -41,7 +41,7 @@ import { SCALING } from './scaling.js';
  * numbers per monster that nobody could tune relative to each other, and a row
  * added later would be a body that silently cannot be staggered.
  */
-export type AuthoredStats = Omit<EffectiveStats, 'traits'>;
+export type AuthoredStats = Omit<EffectiveStats, 'traits' | 'skillAbilityIds'>;
 
 /**
  * How a body meets a player (spec 163).
@@ -110,7 +110,17 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
   const power = monster.stats.attackDamage * 0.5 + SCALING.strength.staggerBase * 0.5;
   return {
     ...monster,
-    stats: { ...monster.stats, traits: monsterTraits(monster.stats.maxHealth, power) },
+    stats: {
+      ...monster.stats,
+      // Empty, and not authorable (spec 188). Active skills are carried in the
+      // four skill slots and a monster has no equipment, so "monsters cannot
+      // cast player skills" is a fact about the derivation rather than a check
+      // somewhere that could be forgotten. A monster that should throw one gets
+      // a row in `data/abilities.ts` without `skill: true`, which is what every
+      // ability in the table already is.
+      skillAbilityIds: [],
+      traits: monsterTraits(monster.stats.maxHealth, power),
+    },
   };
 }
 

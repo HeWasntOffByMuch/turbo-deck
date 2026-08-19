@@ -12,8 +12,10 @@
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
+import { StatusId } from '../sim/statuses.js';
+import type { SkillArea, SkillCosts, SkillEffect } from './skill-effects.js';
 
-export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel';
+export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel' | 'area';
 
 /**
  * How the client is expected to supply a target when it asks to cast.
@@ -146,6 +148,78 @@ export interface AbilityDefinition {
    * ability per unit should carry it.
    */
   readonly basicAttack?: boolean;
+  /**
+   * This ability is an **active skill** and may only be cast out of a skill slot
+   * (spec 188).
+   *
+   * The first ownership check the ability system has ever had. Before it,
+   * `STARTING_ABILITIES` was exported and read by nothing, so a client could
+   * send any id in this table on its first tick and the server would cast it.
+   * A flag rather than a list because the question is a property of the row --
+   * "is this something you have to be carrying" -- and a list somewhere else is
+   * a second place to forget.
+   *
+   * What it gates against is `EffectiveStats.skillAbilityIds`, derived from the
+   * four skill slots exactly as `basicAttackId` is derived from the main hand.
+   */
+  readonly skill?: boolean;
+  /**
+   * What the action bar calls this, when {@link name} does not fit a slot
+   * (spec 188).
+   *
+   * The bar draws a *name* in the game's own 5x7 face at a whole-number scale,
+   * so a slot 92px wide holds fifteen characters and there is no smaller size to
+   * fall back to -- the face has one. That was never a constraint worth stating
+   * while every row was under it; "Crippling Strike" is sixteen characters and
+   * makes it one.
+   *
+   * A field rather than a truncation, because a name clipped by arithmetic is
+   * decided by whoever happened to write the row, and this way the shorter name
+   * is authored, reviewed and asserted like the long one. Absent means the full
+   * name fits and `hud-layout.test.ts` fails a row where that stops being true.
+   */
+  readonly shortName?: string;
+  /**
+   * How closely the caster must be pointing at the aim before the wind-up may
+   * start, in degrees off the aim (spec 188).
+   *
+   * The brief's `castAngle`, and it is one number rather than a system because
+   * the sim already had the mechanism: spec 065 turns a body into its aim before
+   * the wind-up clock starts, and `facesAim` already takes the tolerance as an
+   * argument. This makes that argument the row's to name.
+   *
+   * Absent is {@link import('../sim/abilities.js').TURN_ALIGN_EPS} -- half a
+   * degree, which is "point at it exactly" and what every existing row has
+   * always meant. A wide angle is a skill you can throw while turning; a narrow
+   * one is a skill that makes you commit to a direction first.
+   */
+  readonly castAngleDeg?: number;
+  /**
+   * What this costs beside pool and flask charges (spec 188).
+   *
+   * Spent at the commit and refunded whole by a withdrawal, exactly as
+   * {@link cost} and {@link chargeCost} are -- so the price of a wind-up
+   * somebody stepped out of is the time and nothing else, whatever it was
+   * priced in.
+   */
+  readonly costs?: SkillCosts;
+  /**
+   * Who a landing picks, when the answer is a shape (spec 188).
+   *
+   * Read by `kind: 'area'` and by nothing else, so the existing five kinds
+   * resolve exactly as they always have.
+   */
+  readonly area?: SkillArea;
+  /**
+   * What happens to each body the landing picked (spec 188).
+   *
+   * Absent means "the damage, as before", which is what every row written
+   * before this spec means and why none of them had to change. A row that lists
+   * effects gets exactly those, in the order written -- so a skill that strips
+   * guard *before* it deals damage lands its damage on a body whose pool is
+   * already down, and reordering the two rows is a balance change.
+   */
+  readonly effects?: readonly SkillEffect[];
   readonly description: string;
 }
 
@@ -313,6 +387,127 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description:
       'A draught from the hearth flask. Limited charges, refilled by resting in a safe zone.',
   },
+  // --- active skills (spec 188) ------------------------------------------
+  //
+  // Four rows, and between them they are the whole argument for the feature:
+  // none of them is a class, none of them has a function anywhere with its name
+  // on it, and every number below is read at the moment it is used. Adding a
+  // fifth is a fifth entry here plus a row in `data/items.ts` to carry it.
+  //
+  // They are all `skill: true`, so none of them can be cast by a client that is
+  // not carrying one -- see `startCast`.
+  {
+    id: 'skill.guardBreak',
+    name: 'Guard Break',
+    kind: 'melee',
+    // A body, named. Single-target is the skill's identity and `landOnTarget`
+    // already measures reach to that body's edge and misses one that walked out
+    // of it during the wind-up.
+    targeting: 'unit',
+    skill: true,
+    windupTicks: seconds(0.4),
+    // Wide enough to throw at something you are roughly facing. This is an
+    // opening move rather than a committed one, so making it demand an exact
+    // heading first would cost it the tempo it exists for.
+    castAngleDeg: 35,
+    cooldownTicks: seconds(6),
+    cost: 3,
+    // **And some of your own guard** (spec 188). The one row in the table
+    // priced in something other than mana, and it is priced that way because
+    // that is what the skill *is*: you drop your guard to get inside theirs.
+    // Refunded whole by a withdrawal like every other cost, and refused rather
+    // than clamped when you have not got it -- a body that could pay guard it
+    // does not have would stagger itself.
+    costs: { poise: 15 },
+    range: 85,
+    damage: 12,
+    // Order is the skill. The guard comes off first, so the poise damage that
+    // follows lands on a pool that is already down -- which is what makes this
+    // a *setup* for somebody else's stagger rather than a stagger of its own.
+    effects: [
+      { kind: 'poise', amount: -50 },
+      { kind: 'poiseDamage', amount: 25 },
+      { kind: 'damage' },
+    ],
+    description: 'Strips an enemy’s guard and leaves what is left of it hanging.',
+  },
+  {
+    id: 'skill.stunningBlow',
+    name: 'Stunning Blow',
+    kind: 'melee',
+    targeting: 'unit',
+    skill: true,
+    // Long enough to be read and stepped out of, which is what a stun has to
+    // cost: the wind-up *is* the counterplay.
+    windupTicks: seconds(0.9),
+    castAngleDeg: 20,
+    cooldownTicks: seconds(14),
+    cost: 6,
+    range: 75,
+    damage: 24,
+    effects: [
+      { kind: 'damage' },
+      // Guard damage as well as the stun, so it is worth throwing at a body
+      // whose immunity window is still up: the pool it takes is real even when
+      // the stun is refused.
+      { kind: 'poiseDamage', amount: 30 },
+      { kind: 'stun', ticks: seconds(1.4) },
+    ],
+    description: 'A heavy, telegraphed blow that puts an enemy on the floor for a moment.',
+  },
+  {
+    id: 'skill.whirlwind',
+    name: 'Whirlwind',
+    // The kind that reads {@link AbilityDefinition.area}: no body is named and
+    // the shape decides who is caught.
+    kind: 'area',
+    // Nothing to aim: the circle is centred on the caster's own feet, so the
+    // aim is the caster and a request naming somebody else cannot move it.
+    targeting: 'self',
+    skill: true,
+    windupTicks: seconds(0.7),
+    cooldownTicks: seconds(9),
+    // The most expensive of the four, because it is the only one that can be
+    // worth more than one body.
+    cost: 9,
+    range: 0,
+    damage: 28,
+    area: { shape: 'circle', origin: 'caster', radius: 160, maxTargets: 6 },
+    // Damage and nothing else. A status here would be complexity bought with
+    // nothing -- the skill's whole statement is "everything near you, at once".
+    effects: [{ kind: 'damage' }],
+    description: 'A sweep at everything within reach. Costly, and worth it in a crowd.',
+  },
+  {
+    id: 'skill.cripplingStrike',
+    name: 'Crippling Strike',
+    // One character over what a 92px slot holds in a 5x7 face at scale 1.
+    shortName: 'Cripple',
+    kind: 'melee',
+    targeting: 'unit',
+    skill: true,
+    // The fastest of the four: this is the one you throw at something already
+    // walking away, and a long wind-up would mean it never catches anything.
+    windupTicks: seconds(0.3),
+    castAngleDeg: 35,
+    cooldownTicks: seconds(8),
+    cost: 4,
+    // Reduced damage, deliberately: what you are buying is the Slow.
+    damage: 9,
+    range: 80,
+    effects: [
+      { kind: 'damage' },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Slowed,
+        durationTicks: seconds(2.5),
+        // The fraction of move speed taken. Floored by `MIN_MOVE_SCALE` on the
+        // way out, so no amount authored here can turn this into a root.
+        magnitude: 0.4,
+      },
+    ],
+    description: 'A cut behind the knee. Little damage, and they are not going anywhere fast.',
+  },
   {
     id: 'channel.drain',
     name: 'Drain',
@@ -373,6 +568,17 @@ export const STARTING_ABILITIES: readonly string[] = [
  * on -- attack speed shortens all three for a basic attack. This is the base
  * shape, for a caller with no stats in hand.
  */
+/**
+ * What the action bar calls an ability (spec 188).
+ *
+ * One function so the HUD and the test that asserts it fits read the same
+ * string. A row with no {@link AbilityDefinition.shortName} is its own name,
+ * which is every row written before this spec.
+ */
+export function barNameOf(ability: AbilityDefinition): string {
+  return ability.shortName ?? ability.name;
+}
+
 export function totalCastTicks(ability: AbilityDefinition): number {
   const channel = ability.kind === 'channel' ? (ability.channelTicks ?? 0) : 0;
   return ability.windupTicks + channel + (ability.backswingTicks ?? 0);

@@ -20,6 +20,8 @@
  */
 
 import { EntityField } from './protocol.js';
+import { MIN_MOVE_SCALE } from '../sim/movement.js';
+import { moveScaleOf } from '../sim/statuses.js';
 import type { DeltaMessage, EntityDelta, WireStatus } from './messages.js';
 import { ServerMessageType } from './protocol.js';
 import type { ServerEntity } from '../sim/types.js';
@@ -57,6 +59,8 @@ interface KnownEntity {
   shieldUntilTick: number;
   /** Spec 185, already packed and sorted. Compared entry by entry. */
   statuses: readonly WireStatus[];
+  /** Spec 188. A fraction, because that is all a step is multiplied by. */
+  moveScale: number;
 }
 
 function snapshotOf(entity: ServerEntity, name: string, tick: number): KnownEntity {
@@ -76,6 +80,7 @@ function snapshotOf(entity: ServerEntity, name: string, tick: number): KnownEnti
     shield: entity.shield,
     shieldUntilTick: entity.shieldUntilTick,
     statuses: visibleStatusesOf(entity, tick),
+    moveScale: moveScaleOf(entity.statuses, tick, MIN_MOVE_SCALE),
   };
 }
 
@@ -198,6 +203,10 @@ export class DeltaTracker {
             // say "no statuses" is a cost every projectile and prop in the
             // world would carry for a field almost nothing uses.
             (next.statuses.length > 0 ? EntityField.Statuses : 0) |
+            // The same argument for the same reason (spec 188): almost nothing
+            // in the world is ever slowed, and a client told nothing assumes
+            // the full speed it would have assumed anyway.
+            (next.moveScale < 1 ? EntityField.MoveScale : 0) |
             (named === null ? 0 : EntityField.Identity),
           kind: entity.kind,
           typeId: entity.typeId,
@@ -212,6 +221,7 @@ export class DeltaTracker {
           shield: entity.shield,
           shieldUntilTick: entity.shieldUntilTick,
           ...(next.statuses.length > 0 ? { statuses: next.statuses } : {}),
+          ...(next.moveScale < 1 ? { moveScale: next.moveScale } : {}),
           ...(named === null ? {} : { name: named, turnRate: entity.stats.turnRate }),
         });
         this.known.set(entity.id, next);
@@ -246,6 +256,12 @@ export class DeltaTracker {
         fields |= EntityField.Identity;
       }
       if (Math.abs(next.poise - previous.poise) > POISE_EPSILON) fields |= EntityField.Poise;
+      // The same epsilon and for the same reason: both ride the wire as a byte,
+      // so a change smaller than a 255th is not expressible and reporting it
+      // would be a field per tick that decoded to the number already held.
+      if (Math.abs(next.moveScale - previous.moveScale) > POISE_EPSILON) {
+        fields |= EntityField.MoveScale;
+      }
       if (
         Math.abs(next.shield - previous.shield) > HEALTH_EPSILON ||
         next.shieldUntilTick !== previous.shieldUntilTick
@@ -277,6 +293,7 @@ export class DeltaTracker {
           ? { name: named ?? '', turnRate: entity.stats.turnRate }
           : {}),
         ...(fields & EntityField.Poise ? { poise: next.poise } : {}),
+        ...(fields & EntityField.MoveScale ? { moveScale: next.moveScale } : {}),
         ...(fields & EntityField.Shield
           ? { shield: entity.shield, shieldUntilTick: entity.shieldUntilTick }
           : {}),

@@ -53,6 +53,13 @@ import {
 import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
 import { facesAim } from './sim/abilities.js';
+import { SKILL_SWAP } from './data/skill-effects.js';
+import {
+  movesASkill,
+  skillSlotOnCooldown,
+  skillSwapRefusal,
+  swapKindOf,
+} from './player/skill-slots.js';
 import { headingToward } from './sim/movement.js';
 import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
@@ -80,6 +87,8 @@ import {
   encodeServerMessage,
   type DropItemMessage,
   type LootDropMessage,
+  type MoveItemMessage,
+  type PendingSkillSwap,
   type RequestChunkMessage,
   type ServerMessage,
   type SpawnerStatus,
@@ -289,6 +298,20 @@ interface Connection {
    * the rest are already facing the way they asked for.
    */
   readonly pendingDrops: PendingDrop[];
+  /**
+   * Skill-slot changes asked for and not yet applied (spec 188), oldest first.
+   *
+   * Here rather than in the sim for the reason {@link Connection.pendingDrops}
+   * is: what a swap does to a bag lives behind an async store the sim cannot
+   * reach. What the sim holds is the status the swapper carries while it is in
+   * flight, which is what makes rummaging in your pack mid-fight cost
+   * something.
+   *
+   * A queue rather than a slot, so that reorganising all four slots is four
+   * swaps in order rather than three requests thrown away -- and bounded by
+   * `SKILL_SWAP.maxPending` so it cannot be used to schedule work.
+   */
+  readonly pendingSwaps: PendingSwap[];
   /** The shop this connection has open, or '' (spec 129). */
   openVendorId: string;
   /** Bumped by every cast or cancel, so the two queues can be put back in order. */
@@ -322,6 +345,31 @@ interface PendingDrop {
   /** The tick it was asked on, so a turn that never lands is not forever. */
   readonly askedAtTick: number;
   /** Set while its `dropItem` is in flight, so a tick cannot serve it twice. */
+  serving: boolean;
+}
+
+/**
+ * One skill-slot change, waiting out its duration (spec 188).
+ *
+ * Carries the move rather than the resulting containers, and that is the whole
+ * of why swapping cannot be raced: the bag is read and written at the moment
+ * the swap *lands*, through the same `moveItem` a bag drag goes through, so a
+ * slot that changed underneath during the wait is refused by the ordinary
+ * rules instead of being overwritten by a snapshot taken a second and a half
+ * ago.
+ */
+interface PendingSwap {
+  readonly from: SlotAddress;
+  readonly to: SlotAddress;
+  /** 0 for the whole stack, as on the wire. */
+  readonly count: number;
+  /** Answered at this id, taken or refused, exactly as a `MoveItem` is. */
+  readonly requestId: number;
+  /** The tick it was asked on, so a bar has an origin to fill from. */
+  readonly startedTick: number;
+  /** The tick it lands on. Nothing happens before it. */
+  readonly readyAtTick: number;
+  /** Set while its `moveItem` is in flight, so a tick cannot serve it twice. */
   serving: boolean;
 }
 
@@ -490,6 +538,7 @@ export class GameServer implements AdminHost {
       pendingCasts: [],
       pendingCancels: [],
       pendingDrops: [],
+      pendingSwaps: [],
       openVendorId: '',
       asks: 0,
       appliedSeq: 0,
@@ -660,6 +709,18 @@ export class GameServer implements AdminHost {
 
       case ClientMessageType.MoveItem: {
         if (connection.playerId === null) return;
+        // A move that touches a skill slot is not a move (spec 188): it is
+        // refused outright if the skill leaving is on cooldown, and otherwise
+        // it *takes time*. `queueSwap` answers which -- a reason, or null for
+        // "queued, and it will be answered when it lands".
+        const swap = this.queueSwap(connection, message);
+        if (swap !== 'notASwap') {
+          if (swap !== null) {
+            this.reportAction(connection, swap);
+            this.sendInventory(connection, message.requestId);
+          }
+          break;
+        }
         const result = await this.players.moveItem(connection.playerId, {
           from: message.from,
           to: message.to,
@@ -1196,6 +1257,10 @@ export class GameServer implements AdminHost {
     // facing, so an aim left behind is a corpse-in-waiting turning toward
     // something nobody is going to throw.
     connection.pendingDrops.length = 0;
+    // And a swap that has not landed (spec 188). Nothing was taken out of the
+    // bag -- the move runs when the swap lands, not when it is asked for -- so
+    // dropping the queue loses the request and nothing else.
+    connection.pendingSwaps.length = 0;
     this.aimAtHeadDrop(connection);
     this.connections.delete(connection);
 
@@ -1536,6 +1601,263 @@ export class GameServer implements AdminHost {
   }
 
   /**
+   * Take a skill-slot change, refuse it, or say it is not one (spec 188).
+   *
+   * Three answers rather than two, because "this move has nothing to do with
+   * skills" is not a refusal and must not be reported as one: `'notASwap'`
+   * sends the caller back to the ordinary `moveItem` path untouched, `null`
+   * means it is queued and will be answered when it lands, and a string is a
+   * refusal to report now.
+   *
+   * The one hard rule the brief states about swapping is enforced here and
+   * nowhere else: **a skill on cooldown cannot leave its slot.** It is checked
+   * over both ends of the move, because swapping a fresh sigil *into* an
+   * occupied slot empties that slot just as surely as dragging the old one out.
+   *
+   * Everything else it refuses is the kind of thing that is true whatever
+   * happens next: no player, a corpse, and a queue deeper than anybody could
+   * have meant. What it deliberately does *not* check is whether the move is
+   * legal at all -- that is `applyMove`'s job and it runs when the swap lands,
+   * which is what stops a swap being a way to snapshot a bag and apply it a
+   * second and a half later.
+   */
+  private queueSwap(
+    connection: Connection,
+    message: MoveItemMessage,
+  ): string | null | 'notASwap' {
+    const request = { from: message.from, to: message.to };
+    if (!movesASkill(request)) return 'notASwap';
+
+    const playerId = connection.playerId;
+    if (playerId === null) return 'not logged in';
+    const session = this.players.get(playerId);
+    if (!session) return 'not logged in';
+
+    const body = this.state.entities.get(connection.entityId);
+    if (!body || body.health <= 0) return 'you cannot change skills right now';
+
+    // The cooldown rule, read off the body's own cooldown map and the server's
+    // own tick. Nothing here is client-supplied but the two addresses.
+    const refusal = skillSwapRefusal(
+      session.record.equipment,
+      request,
+      body.cooldowns,
+      this.state.tick,
+    );
+    if (refusal !== null) return refusal;
+
+    if (connection.pendingSwaps.length >= SKILL_SWAP.maxPending) {
+      return 'you are already changing skills';
+    }
+
+    const readyAtTick = this.state.tick + SKILL_SWAP.durationTicks;
+    connection.pendingSwaps.push({
+      from: message.from,
+      to: message.to,
+      count: message.count,
+      requestId: message.requestId,
+      startedTick: this.state.tick,
+      readyAtTick,
+      serving: false,
+    });
+    // The status goes on **now**, not when the swap lands: what it represents is
+    // being caught with your pack open, and the open pack is the wait. Applied
+    // through `applyStatus` like everything else, so it expires by the same
+    // comparison and shows up in the same map.
+    //
+    // And the body takes the *claim* (spec 188): `Swapping` until the change
+    // lands, which is what makes this a commitment rather than a hidden timer.
+    // It rides the field `activity` already rides, so every client draws the
+    // same body busy with the same thing -- and anything that takes the body
+    // takes the swap with it, which {@link serveSwaps} reads as one comparison.
+    this.state = replaceEntity(this.state, {
+      ...body,
+      activity: ActivityValue.Swapping,
+      activityUntilTick: readyAtTick,
+      statuses: applyStatus(
+        body.statuses,
+        SKILL_SWAP.statusId,
+        this.state.tick,
+        SKILL_SWAP.statusTicks,
+      ),
+    });
+    // Told at once rather than when it lands: the interface has to show the
+    // commitment *while* it is being made, and this message is what carries it.
+    this.sendInventory(connection, 0);
+    return null;
+  }
+
+  /**
+   * The swap this connection is committed to, or null (spec 188).
+   *
+   * Read off the queue rather than stored twice, so "is there a change in
+   * flight" has one answer. The *kind* is derived here rather than remembered
+   * from the request, because what the containers held when it was asked for is
+   * not what they hold now -- and it is the current state the player is looking
+   * at.
+   */
+  private pendingSwapView(connection: Connection): PendingSkillSwap | null {
+    const pending = connection.pendingSwaps[0];
+    if (!pending || connection.playerId === null) return null;
+    const session = this.players.get(connection.playerId);
+    if (!session) return null;
+    return {
+      kind: swapKindOf(session.record.inventory, session.record.equipment, {
+        from: pending.from,
+        to: pending.to,
+      }),
+      from: pending.from,
+      to: pending.to,
+      startedTick: pending.startedTick,
+      readyAtTick: pending.readyAtTick,
+    };
+  }
+
+  /**
+   * One pass over every connection's pending skill swaps (spec 188).
+   *
+   * Run beside {@link serveDrops} and shaped like it, because it is the same
+   * problem: an action that takes time, whose effect is behind an async store,
+   * answered at the request id whichever way it goes.
+   *
+   * The head is served when its clock runs out and the rest wait behind it, so
+   * reorganising all four slots is four swaps in order rather than four races.
+   * A body that died in the meantime has its whole queue refused -- nothing was
+   * taken out of the bag, so a refusal loses the request and nothing else.
+   */
+  private serveSwaps(): void {
+    for (const connection of this.connections) {
+      const pending = connection.pendingSwaps[0];
+      if (!pending || pending.serving) continue;
+
+      const body = this.state.entities.get(connection.entityId);
+      if (!body || body.health <= 0) {
+        this.giveUpSwaps(connection, 'you cannot change skills right now');
+        continue;
+      }
+
+      // **The claim is the commitment, and it is checked while it is being
+      // made** (spec 188).
+      //
+      // One comparison, and it covers every way a swap can be given up: the
+      // body walked off (the movement pass drops the claim), it was staggered
+      // or killed (the break writes `Stunned` over it), or it committed to a
+      // cast (`startCast` writes `Casting`). Watching the *state* rather than
+      // enumerating the causes is what stops a fifth cause arriving later and
+      // silently not cancelling anything.
+      //
+      // Asked only while the clock is still running, and that ordering is
+      // load-bearing rather than tidy: `expireActivity` drops the claim on the
+      // tick `activityUntilTick` is reached, and this pass runs *after* the sim
+      // in that same tick -- so a check before the readiness test would see the
+      // claim it was waiting for expire and give up every swap on the tick it
+      // was due to land. What it costs is a one-tick window in which a body
+      // that walks on the final tick still completes the change, which is the
+      // right way round: the commitment had already been held for its whole
+      // stated duration.
+      if (this.state.tick < pending.readyAtTick) {
+        if (body.activity !== ActivityValue.Swapping) {
+          this.giveUpSwaps(connection, 'you stopped changing skills');
+        }
+        continue;
+      }
+
+      pending.serving = true;
+      void this.completeSwap(connection, pending).catch((error: unknown) => {
+        console.warn('[server] skill swap failed', error);
+      });
+    }
+  }
+
+  /**
+   * Every waiting swap refused with one reason, and the claim let go (spec 188).
+   *
+   * Shaped like {@link refuseDrops} and for the same reason: nothing has left
+   * the bag, so a refusal costs the request and nothing else. The claim is
+   * cleared only if it is still ours -- a body that was staggered out of a swap
+   * is carrying `Stunned` now, and writing `Idle` over that would end somebody
+   * else's window early.
+   */
+  private giveUpSwaps(connection: Connection, reason: string): void {
+    const waiting = connection.pendingSwaps.splice(0, connection.pendingSwaps.length);
+    for (const swap of waiting) {
+      if (swap.serving) continue;
+      this.reportAction(connection, reason);
+      this.sendInventory(connection, swap.requestId);
+    }
+    const body = this.state.entities.get(connection.entityId);
+    if (body && body.activity === ActivityValue.Swapping) {
+      this.state = replaceEntity(this.state, {
+        ...body,
+        activity: ActivityValue.Idle,
+        activityUntilTick: 0,
+      });
+    }
+  }
+
+  /**
+   * The wait is over: run the move (spec 188).
+   *
+   * Through the ordinary `moveItem`, which is the point. The swap has cost its
+   * time and its status by now, and what is left is a bag edit -- so it goes
+   * through the same pure `applyMove` a bag drag goes through, obeys the same
+   * level requirement and slot family, and is refused by the same rules if the
+   * bag moved underneath it while it waited.
+   *
+   * The cooldown is re-checked, and not out of caution: the wait is long enough
+   * for the skill being removed to have been cast during it, and a rule that
+   * was only true when the request arrived is not a rule.
+   */
+  private async completeSwap(connection: Connection, pending: PendingSwap): Promise<void> {
+    const playerId = connection.playerId;
+    const finish = (reason: string | null): void => {
+      const index = connection.pendingSwaps.indexOf(pending);
+      if (index >= 0) connection.pendingSwaps.splice(index, 1);
+      this.reportAction(connection, reason);
+      this.sendInventory(connection, pending.requestId);
+    };
+    if (playerId === null) {
+      finish('not logged in');
+      return;
+    }
+    const session = this.players.get(playerId);
+    const body = this.state.entities.get(connection.entityId);
+    if (!session || !body) {
+      finish('you cannot change skills right now');
+      return;
+    }
+    const refusal = skillSwapRefusal(
+      session.record.equipment,
+      { from: pending.from, to: pending.to },
+      body.cooldowns,
+      this.state.tick,
+    );
+    if (refusal !== null) {
+      finish(refusal);
+      return;
+    }
+
+    const result = await this.players.moveItem(playerId, {
+      from: pending.from,
+      to: pending.to,
+      ...(pending.count === 0 ? {} : { count: pending.count }),
+    });
+    // The claim is done with either way. `activityUntilTick` has passed by now,
+    // so the movement pass would drop it on the next tick regardless -- this
+    // just means the body is free on the tick the change actually lands rather
+    // than one after it.
+    const done = this.state.entities.get(connection.entityId);
+    if (done && done.activity === ActivityValue.Swapping) {
+      this.state = replaceEntity(this.state, {
+        ...done,
+        activity: ActivityValue.Idle,
+        activityUntilTick: 0,
+      });
+    }
+    finish(result.ok ? null : result.reason);
+  }
+
+  /**
    * Take a drop request, or refuse it outright (spec 172). Null when it queued.
    *
    * Nothing leaves the bag here. Putting something down is an action that needs
@@ -1558,6 +1880,20 @@ export class GameServer implements AdminHost {
     if (!Number.isFinite(message.aimX) || !Number.isFinite(message.aimY)) return 'aim at something';
     if (connection.pendingDrops.length >= MAX_PENDING_DROPS) {
       return 'you are already putting things down';
+    }
+    // **A skill on cooldown may not leave its slot by any route** (spec 188).
+    //
+    // Throwing it on the ground is removing it, so the rule that governs a swap
+    // governs this too -- otherwise the lock would be a lock on one message
+    // rather than on the state, and the way round it would be a button the
+    // interface already has. Checked here rather than only at the landing so
+    // the player is told now, before the body turns for nothing.
+    const session = this.players.get(connection.playerId);
+    if (
+      session &&
+      skillSlotOnCooldown(session.record.equipment, message.at, body.cooldowns, this.state.tick)
+    ) {
+      return 'that skill is still on cooldown';
     }
 
     connection.pendingDrops.push({
@@ -1738,12 +2074,18 @@ export class GameServer implements AdminHost {
     if (connection.playerId === null) return;
     const session = this.players.get(connection.playerId);
     if (!session) return;
+    // Whatever change is in flight rides along (spec 188). Derived here rather
+    // than remembered, so every `Inventory` -- asked for, landed, refused, or
+    // sent for some unrelated reason -- carries the truth at the moment it left
+    // rather than a stale copy of it.
+    const pendingSwap = this.pendingSwapView(connection);
     this.send(connection, {
       type: ServerMessageType.Inventory,
       requestId,
       inventory: session.record.inventory,
       equipment: session.record.equipment,
       coins: session.record.coins,
+      ...(pendingSwap === null ? {} : { pendingSwap }),
     });
   }
 
@@ -2101,6 +2443,7 @@ export class GameServer implements AdminHost {
     // Bodies that have finished turning to what they were asked to put down
     // (spec 172). After the step, so the heading it reads is this tick's.
     this.serveDrops();
+    this.serveSwaps();
 
     for (const connection of this.connections) {
       if (connection.playerId === null || connection.entityId < 0) continue;

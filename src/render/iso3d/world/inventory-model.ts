@@ -15,8 +15,23 @@
 import { itemById, rarityOf } from '../../../server/data/items.js';
 import { rarityRow } from '../../../server/data/loot.js';
 import type { StatModifier } from '../../../server/data/modifiers.js';
-import { EQUIP_SLOTS, type Equipment, type EquipSlot, type Inventory } from '../../../server/state/types.js';
-import type { ContainerView, ItemDetail, ItemView } from '../../../ui/screens/inventory.js';
+import {
+  EQUIP_SLOTS,
+  isSkillSlot,
+  SKILL_EQUIP_SLOTS,
+  slotFamily,
+  type Equipment,
+  type EquipSlot,
+  type EquipTarget,
+  type Inventory,
+} from '../../../server/state/types.js';
+import type {
+  ContainerView,
+  ItemDetail,
+  ItemView,
+  SlotDescriptor,
+} from '../../../ui/screens/inventory.js';
+import type { SwapProgress } from './skill-swap-view.js';
 
 /**
  * An item id to a sprite name.
@@ -43,6 +58,13 @@ const ICONS: Readonly<Record<string, string>> = {
   'trinket.swiftband': 'item:trinket',
   'trinket.bloodstone': 'item:trinket',
   'potion.minor': 'item:potion',
+  // The four sigils (spec 188). One picture between them on purpose: a sigil is
+  // a skill in a bag, and what tells them apart is the name in the tooltip and
+  // the ability behind it rather than four variants of the same lozenge.
+  'sigil.guardBreak': 'item:sigil',
+  'sigil.stunningBlow': 'item:sigil',
+  'sigil.whirlwind': 'item:sigil',
+  'sigil.cripplingStrike': 'item:sigil',
 };
 
 export const UNKNOWN_ICON = 'item:unknown';
@@ -66,7 +88,28 @@ const SLOT_LABELS: Readonly<Record<EquipSlot, { readonly short: string; readonly
   chest: { short: 'Chest', long: 'Chest' },
   legs: { short: 'Legs', long: 'Legs' },
   trinket: { short: 'Charm', long: 'Trinket' },
+  // Numbered rather than named, because the number *is* the key you press
+  // (spec 188): the four cells beside the bag and the four along the bottom of
+  // the screen are the same four slots, and a cell labelled "Skill" would be
+  // the interface declining to say which.
+  skill1: { short: '1', long: 'Skill 1' },
+  skill2: { short: '2', long: 'Skill 2' },
+  skill3: { short: '3', long: 'Skill 3' },
+  skill4: { short: '4', long: 'Skill 4' },
 };
+
+/**
+ * What a *family* is called in a tooltip (spec 188).
+ *
+ * `ItemDefinition.slot` names where a thing is worn, and for a sigil that is
+ * the family `skill` rather than any one of the four -- so the tooltip needs a
+ * word for it that the paperdoll's per-slot table cannot supply. One line here
+ * rather than a fifth entry in the table above, because "which slot is this in"
+ * and "what kind of thing is this" are different questions.
+ */
+function wornName(target: EquipTarget): string {
+  return target === 'skill' ? 'Skill' : SLOT_LABELS[target].long;
+}
 
 /**
  * How a modifier is written out (spec 185).
@@ -146,8 +189,34 @@ function statDetails(modifiers: StatModifier): ItemDetail[] {
   return lines;
 }
 
-export const EQUIPMENT_SLOT_VIEW: readonly { readonly id: string; readonly label: string }[] =
-  EQUIP_SLOTS.map((slot) => ({ id: slot, label: SLOT_LABELS[slot].short }));
+function descriptorOf(slot: EquipSlot): SlotDescriptor {
+  // `accepts` is the **family**, which is what makes one `slot: 'skill'` sigil
+  // row fit any of the four skill slots (spec 188). It is the slot's own name
+  // for everything else, so nothing about the paperdoll changes.
+  //
+  // Derived here rather than in the screen because `slotFamily` is the server's
+  // rule and `src/ui/` may not import it -- and a screen with its own copy is a
+  // second answer to "will this cell take this", free to disagree with the one
+  // `applyMove` will give. It did disagree: the cell compared a sigil's `skill`
+  // against the cell's `skill1` and refused every drop the server would have
+  // taken, which made the whole feature unreachable with nothing on screen
+  // saying why.
+  return { id: slot, label: SLOT_LABELS[slot].short, accepts: slotFamily(slot) };
+}
+
+/**
+ * The worn slots, which is every equipment slot that is not a skill (spec 188).
+ *
+ * Derived by exclusion rather than listed, so a seventh piece of armour appears
+ * on the paperdoll by being added to `EQUIP_SLOTS` and nothing here has to be
+ * remembered.
+ */
+export const EQUIPMENT_SLOT_VIEW: readonly SlotDescriptor[] = EQUIP_SLOTS.filter(
+  (slot) => !isSkillSlot(slot),
+).map(descriptorOf);
+
+/** The four skill slots, in bar order (spec 188). */
+export const SKILL_SLOT_VIEW: readonly SlotDescriptor[] = SKILL_EQUIP_SLOTS.map(descriptorOf);
 
 /**
  * Everything an item says about itself under its name (spec 185).
@@ -167,7 +236,7 @@ export function detailsFor(defId: string): readonly ItemDetail[] {
   const tier = rarityRow(rarity).name;
   const slot = definition?.slot ?? null;
   const lines: ItemDetail[] = [
-    { text: slot === null ? tier : `${tier}  ${SLOT_LABELS[slot].long}`, tone: 'rarity' },
+    { text: slot === null ? tier : `${tier}  ${wornName(slot)}`, tone: 'rarity' },
   ];
   if (definition) {
     lines.push(...statDetails(definition.modifiers));
@@ -209,6 +278,8 @@ export interface ContainerSource {
   readonly inventory: Inventory;
   readonly equipment: Equipment;
   readonly level: number;
+  /** The skill-slot change in flight and how far through it is (spec 188). */
+  readonly swap?: SwapProgress | null;
 }
 
 /**
@@ -228,6 +299,19 @@ export function containerViewOf(source: ContainerSource): ContainerView {
       }),
     ),
     slots: EQUIPMENT_SLOT_VIEW,
+    skillSlots: SKILL_SLOT_VIEW,
     level: source.level,
+    // Passed straight through: `swapProgress` has already turned the two server
+    // ticks into a fraction, and this layer's job is to hand the screen plain
+    // data rather than to work anything out about it.
+    ...(source.swap
+      ? {
+          pendingSwap: {
+            from: source.swap.from,
+            to: source.swap.to,
+            progress: source.swap.progress,
+          },
+        }
+      : {}),
   };
 }

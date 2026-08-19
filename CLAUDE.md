@@ -637,6 +637,18 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
+                 Since spec 188 the bag has a **skill row** under the grid: the
+                 four `skill1..skill4` equipment slots, laid out four across in
+                 key order, which is the same four the action bar draws along
+                 the bottom of the screen. Under the bag rather than beside the
+                 paperdoll on purpose -- the paperdoll is a column of worn
+                 things beside a body, and these want to look like the bar they
+                 mirror -- and the cells share **one** list with the worn ones,
+                 indexed by equipment ordinal, so a `SlotRef` means the same
+                 thing whichever group it landed in and a drag into the skill
+                 row cannot address a helmet. `ContainerView.skillSlots` is the
+                 second list handed in; the screen still renders what it is
+                 given and decides nothing about how many slots there are.
                  Since spec 172 that vocabulary has one more word in it, and it
                  is the one the note on `placeOn` used to say did not exist:
                  letting go over the **world** puts the thing on the ground.
@@ -1101,6 +1113,134 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 **Active skills** are the fourth thing an `AbilityDefinition`
+                 can be (spec 188), and the point of them is how little is new:
+                 a skill is `targeting + casting + costs + cooldown + effects`
+                 and every one of those five was already a system here. So the
+                 row gains four optional fields -- `castAngleDeg` (the brief's
+                 castAngle, which is spec 065's turn-before-the-wind-up with the
+                 tolerance made the row's to name), `costs` (health and guard,
+                 beside the pool cost and the flask charge that already
+                 existed), `area` (a shape, for the landing that picks by
+                 geometry rather than by naming a body) and `effects` -- and
+                 every row written before it leaves all four absent and behaves
+                 exactly as it did. `data/skill-effects.ts` is the vocabulary:
+                 three small unions and one tuning block, no behaviour.
+                 `sim/skill-effects.ts` is the resolver, and it is the file to
+                 read to see whether the claim is true -- **there is no case in
+                 it that implements a mechanic.** Damage is `resolveBlow` with
+                 the row's damage swapped, so a skill's blow gets crit, weak
+                 points, armour, adaptation, shields, poise and the whole
+                 aftermath rather than a second damage path; guard is
+                 `applyPoiseDamage`; a stun is `stagger`, which came out of
+                 `blow.ts` for this and is now the one place a stagger's
+                 consequences live; a status is `applyStatus`; a heal is
+                 `applyHealing`. An effect that needed its own arithmetic would
+                 be a mechanic living in the skill system instead of in the
+                 system it belongs to, which is the thing the spec exists to
+                 avoid. `sim/skill-area.ts` is the geometry beside it -- circle
+                 at the caster or at the aim, cone, line -- and a fourth shape
+                 is a member of one union and a case in one switch.
+                 The one rule in the resolver that is not simply a hand-off:
+                 **a stun is not a guard break and is not rate-limited like
+                 one.** `staggerImmune` stops a *break* being repeatable, which
+                 it has to, because every basic attack carries poise; a skill's
+                 stun is gated by a readable cast time, a cost and a cooldown in
+                 seconds, which is stricter. Reading the window made Stunning
+                 Blow land three different ways from one row -- its own
+                 `poiseDamage` runs first, so on a body whose guard it broke it
+                 stamped the window a line before the `stun` read it: 1.4s
+                 against a ravager (guard 49, unbroken by 30), the target's own
+                 0.5s against a grazer (guard 20, always broken), and nothing at
+                 all against a body already inside somebody else's window. So
+                 the stun ignores the window and still stamps it, and
+                 `isResolute` still refuses it -- that one is an *earned*
+                 defence rather than a global guard. Stuns also do not stack:
+                 `stagger` writes `tick + ticks`, so a second replaces the first
+                 in both directions and a short stun on a long one shortens it.
+                 Three rules the design turns on. **A skill is an item**: four
+                 `skill1..skill4` entries on `EquipSlot`, an
+                 `ItemDefinition.activeSkillId` in the same shape a bow already
+                 uses to name `ranged.shot`, and `slot: 'skill'` as a *family*
+                 so one row fits any of the four. That is what makes dropping,
+                 trading, carrying, wearing and persisting a skill free: they
+                 are `applyMove`, `MoveItem`, `Equipment` and the loot tables,
+                 untouched. `StatusId.Slowed` is the first entry in the status
+                 map a *skill* applies rather than a build earning, and it is
+                 the one part of this that needed the wire: `moveScaleOf` is
+                 read by `resolveMovement`, and a slow the owner's client did
+                 not know about would be a client predicting full speed against
+                 a server walking at 60% -- one drift correction a tick for two
+                 and a half seconds, which is exactly what spec 067's nudges are
+                 not for. Spec 173 accepted one round trip of that for a
+                 stagger's onset *because* `Activity` is replicated and the
+                 client stops the moment it sees it; a slow has no such tell, so
+                 `EntityField.MoveScale` is a byte fraction on the delta beside
+                 `Poise`. That is the *number*; the **mark** is spec 186's, and
+                 `Slowed` is a row in `STATUS_VISUALS` like any other condition
+                 -- the two halves ride different fields because a watcher needs
+                 to know a body is slowed and only the mover's own predictor
+                 needs to know by how much. It rides the **input** into the predictor rather than
+                 being baked into it when the predictor is built, so a replay
+                 after a correction walks each buffered input at the speed that
+                 applied when it was made.
+                 **The caster has to be carrying it**:
+                 `EffectiveStats.skillAbilityIds` is derived off the four slots
+                 the way `basicAttackId` is derived off the main hand, and
+                 `startCast` refuses a `skill: true` ability that is not in it.
+                 That is the first ownership check the ability system has ever
+                 had -- `STARTING_ABILITIES` was exported and read by nothing
+                 for a hundred and twenty specs, so any client could send
+                 `ground.quake` on its first tick. And **a swap costs
+                 something**: `player/skill-slots.ts` refuses a move that would
+                 empty a slot whose skill is on cooldown (checked over *both*
+                 ends, since swapping something in empties a slot as surely as
+                 dragging the old one out), and `server.ts` holds the move in a
+                 queue for `SKILL_SWAP.durationTicks` the way spec 172's drop
+                 queue holds a throw, with the swapper carrying an *existing*
+                 status while it waits. The client deliberately does **not**
+                 predict a swap -- every other container edit is drawn on the
+                 frame it was released, and a swap drawn early would put a
+                 button on the bar that the server refuses for a second and a
+                 half.
+                 What it draws instead is the **commitment**, and that is the
+                 whole of `ActivityValue.Swapping`: the first cut made a swap
+                 take a second and a half and showed none of it, which is a
+                 delay rather than a cost. The state rides the field `activity`
+                 already rides, so every client sees it and nothing new is
+                 replicated, and it is a *claim on the body* -- walking away
+                 drops it in the movement pass exactly as asking to move
+                 withdraws from a wind-up, a break writes `Stunned` over it, a
+                 cast writes `Casting`. `serveSwaps` watches for the claim going
+                 away rather than listing the causes, so a fifth cause arriving
+                 later cannot silently fail to cancel anything. One ordering in
+                 it is load-bearing: `expireActivity` drops the claim on the tick
+                 `activityUntilTick` is reached and that pass runs *after* the
+                 sim in the same tick, so the claim is checked only while the
+                 clock is still running -- checked first, every swap is given up
+                 on the tick it was due to land.
+                 `world/skill-swap-view.ts` is the presentation, pure and shared
+                 by all three surfaces so one commitment cannot be drawn at three
+                 depths. The split between them is the information rule rather
+                 than an omission: the bag marks its two cells (red leaving,
+                 green arriving -- two *hues*, because at twenty pixels a cell
+                 the only difference a player can see is hue and two warm tones
+                 read as one mark applied twice) and the bar says the word
+                 (`EQUIPPING`/`SWAPPING`/`REMOVING`), both off the owner-only
+                 `PendingSkillSwap` that rides on `Inventory`; the body says
+                 only *that* a change is happening, off the replicated activity.
+                 Which slot and which direction are facts about a bag and a bag
+                 is its owner's business; that somebody is busy is a fact about
+                 the world.
+                 The other thing 184 shipped broken and this fixed: a cell
+                 accepts a **family**, not a slot name. `ItemSlot.acceptsSlot`
+                 compared a sigil's `skill` against the cell's `skill1` and
+                 refused every drop the server would have taken -- so nothing
+                 could be equipped and nothing said why, because an unlit cell
+                 *is* the refusal. `SlotDescriptor.accepts` is handed in from
+                 `inventory-model.ts` through `slotFamily`, because `src/ui/` may
+                 not import the server's rule and a screen with its own copy of
+                 it is a second answer to "will this cell take this".
                  `sim/aggro.ts` is whether one body has business with another
                  (spec 163), and it exists because until it did, the entire
                  aggro system was one line in `blow.ts` -- `targetId ??
@@ -1877,6 +2017,30 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  ground telegraph had nothing left to press. Deleting those
                  checks would have been the change quietly taking the coverage
                  with it. The vial can never be one of them.
+                 Since spec 188 the four slots are no longer empty by
+                 construction: `actionBarFor(equipment)` reads them off the
+                 player's four `skill1..skill4` equipment slots, so the bar is a
+                 *view of the equipment* and there is no second list to keep in
+                 step -- which is exactly what makes the four cells under the
+                 bag and the four along the bottom of the screen the same four.
+                 It is pushed into the HUD every frame rather than remembered,
+                 for the reason the window buttons are pushed: the equipment is
+                 the state, and a bar that kept its own copy would be a second
+                 opinion about what the player is carrying. `setSlots` compares
+                 the ids before it rebuilds, so a resend that changed nothing is
+                 free, and it *rebuilds* rather than editing five labels because
+                 a slot's markup differs by kind and a partial edit would be a
+                 second copy of the eighty lines that build one. `?slots=` still
+                 exists and now **overrides** the equipped skills rather than
+                 being the only way to fill a slot -- a harness that wants
+                 `ground.quake` on the bar should not have to loot a sigil for
+                 it first. `barNameOf` is what a slot draws: the bar sets a name
+                 in the game's own 5x7 face at a whole-number scale, so a 92px
+                 slot holds fifteen characters and there is no smaller size to
+                 fall back to. That was never worth stating while every row was
+                 under it; "Crippling Strike" is sixteen and makes it a rule,
+                 with `shortName` the authored answer and `hud-layout.test.ts`
+                 failing the row that stops obeying it.
                  xp-bar.ts measures against the server's own
                  `experienceForLevel` rather than a copy of the curve, because
                  the strip and the character sheet disagreeing about how far

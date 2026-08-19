@@ -60,6 +60,7 @@ import type { Widget } from '../../../ui/core/widget.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import { characterViewOf } from './character-model.js';
 import { containerViewOf } from './inventory-model.js';
+import { swapProgress, type SwapProgress } from './skill-swap-view.js';
 import { shopViewOf } from './shop-model.js';
 import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './key-actions.js';
@@ -279,6 +280,8 @@ export class UiScreens {
   private lastInventory: ClientView['inventory'] | null = null;
   private lastEquipment: ClientView['equipment'] | null = null;
   private lastLevel = -1;
+  /** The change in flight last frame, so the frame it ends on is noticed. */
+  private lastSwap: SwapProgress | null = null;
   private lastSkills: ClientView['skills'] | null = null;
   private lastStats: ClientView['stats'] = null;
   private lastSheetLevel = -1;
@@ -532,9 +535,20 @@ export class UiScreens {
     // happens when there isn't one.
     this.restoreLayout();
 
-    if (this.isOpen('inventory') && this.containersChanged(view)) {
+    // The change in flight, as of the tick being drawn (spec 188). Worked out
+    // once here and used twice -- the bag marks its two cells with it and the
+    // HUD's bar draws the same fraction -- because a swap is one commitment and
+    // two surfaces showing it at different depths would be worse than one
+    // showing it at all.
+    const swap = swapProgress(view.pendingSwap, view.estimatedTick);
+    if (this.isOpen('inventory') && this.containersChanged(view, swap)) {
       this.inventory.setContainers(
-        containerViewOf({ inventory: view.inventory, equipment: view.equipment, level: view.level }),
+        containerViewOf({
+          inventory: view.inventory,
+          equipment: view.equipment,
+          level: view.level,
+          swap,
+        }),
       );
     }
     if (this.isOpen('character') && view.stats && this.characterChanged(view)) {
@@ -666,8 +680,20 @@ export class UiScreens {
    * identity check answers the question exactly. A deep compare would be slower
    * than the rebuild it is trying to avoid.
    */
-  private containersChanged(view: ClientView): boolean {
+  private containersChanged(view: ClientView, swap: SwapProgress | null): boolean {
+    // A change in flight moves every frame, so the containers are re-pushed
+    // every frame while one is running. The guard exists to stop a resend
+    // twenty times a second becoming a teardown of thirty-odd cells; a swap
+    // lasts a second and a half and is the one thing on this screen that is
+    // *animated*, so paying for it while it happens is the whole point.
+    //
+    // The `!swap && !this.lastSwap` half is what turns the mark off: the frame
+    // after a swap ends still has to run once to clear the two cells it left
+    // marked, and comparing the two nulls is how that frame is noticed.
+    const swapping = swap !== null || this.lastSwap !== null;
+    this.lastSwap = swap;
     if (
+      !swapping &&
       view.inventory === this.lastInventory &&
       view.equipment === this.lastEquipment &&
       view.level === this.lastLevel

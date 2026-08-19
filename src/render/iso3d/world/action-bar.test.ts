@@ -4,11 +4,14 @@ import { SKILLBAR_SLOTS } from '../../../ui/input/actions.js';
 import {
   abilityForSlot,
   ACTION_BAR,
+  actionBarFor,
   actionBarFromQuery,
   buildActionBar,
+  sameBar,
   SKILL_SLOTS,
   VIAL_ABILITY_ID,
 } from './action-bar.js';
+import { EMPTY_EQUIPMENT, type Equipment } from '../../../server/state/types.js';
 
 describe('the action bar', () => {
   it('is four empty skill slots and the vial', () => {
@@ -56,27 +59,27 @@ describe('the action bar', () => {
  * as `?seed=` and `?wire=`.
  */
 describe('?slots=', () => {
-  it('is the shipped bar when it is not asked for', () => {
-    expect(actionBarFromQuery('')).toBe(ACTION_BAR);
-    expect(actionBarFromQuery('?seed=4')).toBe(ACTION_BAR);
+  it('is null when it is not asked for, so equipment decides (spec 188)', () => {
+    expect(actionBarFromQuery('')).toBeNull();
+    expect(actionBarFromQuery('?seed=4')).toBeNull();
   });
 
   it('fills the slots it names, in order', () => {
-    const bar = actionBarFromQuery('?slots=melee.heavy,bolt.seek');
+    const bar = actionBarFromQuery('?slots=melee.heavy,bolt.seek') ?? ACTION_BAR;
     expect(abilityForSlot(bar, 0)).toBe('melee.heavy');
     expect(abilityForSlot(bar, 1)).toBe('bolt.seek');
     expect(abilityForSlot(bar, 2)).toBeNull();
   });
 
   it('leaves an empty entry empty rather than shifting the rest along', () => {
-    const bar = actionBarFromQuery('?slots=melee.heavy,,ground.quake');
+    const bar = actionBarFromQuery('?slots=melee.heavy,,ground.quake') ?? ACTION_BAR;
     expect(abilityForSlot(bar, 1)).toBeNull();
     expect(abilityForSlot(bar, 2)).toBe('ground.quake');
   });
 
   it('never lets the vial be taken off the bar', () => {
     // Five names would overwrite the fifth slot if the vial were one of them.
-    const bar = actionBarFromQuery('?slots=a,b,c,d,e,f,g');
+    const bar = actionBarFromQuery('?slots=a,b,c,d,e,f,g') ?? ACTION_BAR;
     expect(bar).toHaveLength(SKILL_SLOTS + 1);
     expect(abilityForSlot(bar, SKILL_SLOTS)).toBe(VIAL_ABILITY_ID);
     expect(bar[SKILL_SLOTS]?.kind).toBe('vial');
@@ -84,5 +87,68 @@ describe('?slots=', () => {
 
   it('keeps the key numbers whatever is in the slots', () => {
     expect(buildActionBar(['x']).map((slot) => slot.keyNumber)).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+/**
+ * The bar is a view of the equipment (spec 188).
+ *
+ * Which is the whole of "the four slots beside the backpack mirror the four
+ * along the bottom": there is no second list to keep in step, because there is
+ * no second list. Both are `SKILL_EQUIP_SLOTS` read through one function.
+ */
+describe('the bar the equipment produces', () => {
+  const worn = (over: Partial<Record<string, string | null>>): Equipment => ({
+    ...EMPTY_EQUIPMENT,
+    ...over,
+  });
+
+  it('is four empty slots and the vial for a character carrying nothing', () => {
+    const bar = actionBarFor(EMPTY_EQUIPMENT);
+    expect(bar).toHaveLength(SKILL_SLOTS + 1);
+    for (let i = 0; i < SKILL_SLOTS; i++) expect(abilityForSlot(bar, i)).toBeNull();
+    expect(abilityForSlot(bar, SKILL_SLOTS)).toBe(VIAL_ABILITY_ID);
+  });
+
+  it('puts a worn sigil’s ability in the slot it is worn in', () => {
+    const bar = actionBarFor(worn({ skill2: 'sigil.whirlwind' }));
+    expect(abilityForSlot(bar, 0)).toBeNull();
+    expect(abilityForSlot(bar, 1)).toBe('skill.whirlwind');
+  });
+
+  /**
+   * Positional, so emptying slot 2 does not silently renumber the keys: the
+   * index into the bar *is* the key the player presses.
+   */
+  it('leaves a gap where a slot is empty rather than closing it up', () => {
+    const bar = actionBarFor(worn({ skill1: 'sigil.guardBreak', skill3: 'sigil.whirlwind' }));
+    expect(abilityForSlot(bar, 0)).toBe('skill.guardBreak');
+    expect(abilityForSlot(bar, 1)).toBeNull();
+    expect(abilityForSlot(bar, 2)).toBe('skill.whirlwind');
+  });
+
+  it('ignores a worn thing that is not a skill', () => {
+    expect(abilityForSlot(actionBarFor(worn({ mainHand: 'sword.worn' })), 0)).toBeNull();
+  });
+
+  it('never lets equipment reach the vial’s slot', () => {
+    const bar = actionBarFor(
+      worn({
+        skill1: 'sigil.guardBreak',
+        skill2: 'sigil.stunningBlow',
+        skill3: 'sigil.whirlwind',
+        skill4: 'sigil.cripplingStrike',
+      }),
+    );
+    expect(abilityForSlot(bar, SKILL_SLOTS)).toBe(VIAL_ABILITY_ID);
+  });
+});
+
+describe('telling two bars apart', () => {
+  it('is the ability ids in order and nothing else', () => {
+    expect(sameBar(buildActionBar(['a', 'b']), buildActionBar(['a', 'b']))).toBe(true);
+    expect(sameBar(buildActionBar(['a']), buildActionBar(['b']))).toBe(false);
+    expect(sameBar(buildActionBar(['a', null]), buildActionBar([null, 'a']))).toBe(false);
+    expect(sameBar(buildActionBar([]), [])).toBe(false);
   });
 });

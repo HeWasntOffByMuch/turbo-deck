@@ -68,13 +68,13 @@ import { abilityById } from '../data/abilities.js';
 import {
   advanceCast,
   applyDamage,
-  applyHealing,
   cancelCast,
   projectileHits,
   startCast,
   type CastAttempt,
   type ProjectileSpawn,
 } from './abilities.js';
+import { applyHealing } from './healing.js';
 import {
   assistsOn,
   attractRadiusFor,
@@ -143,6 +143,7 @@ function blankEntity(id: number): ServerEntity {
       maxResource: 0,
       resourceRegen: 0,
       basicAttackId: '',
+      skillAbilityIds: [],
       traits: NEUTRAL_TRAITS,
     },
     activity: ActivityValue.Idle,
@@ -696,6 +697,11 @@ export function step(
     world: context.world,
     terrain: context.terrain,
     config: context.config,
+    // So a slow can be read where speed is (spec 188). This pass already runs
+    // once per tick with the tick in hand; handing it down is cheaper than any
+    // of the alternatives and keeps `resolveMovement` a pure function of its
+    // arguments.
+    tick,
   };
 
   const isSimulated = (entity: ServerEntity): boolean =>
@@ -799,6 +805,20 @@ export function step(
         // it had when deciding and moving were one loop.
         withdrawal = withdrawn.events;
       }
+    }
+
+    // And asking to move gives up a skill swap (spec 188), which is the same
+    // idea one line up and the reason a swap is a body *state* rather than a
+    // timer on the connection: changing what you are carrying is a commitment,
+    // and walking away from it is how you decline to make it.
+    //
+    // Only the claim is dropped here. What the swap would have *done* lives
+    // behind an async store the sim cannot reach, so `server.ts` watches for
+    // this state going away and refuses the queued move -- one comparison that
+    // covers walking off, being staggered, casting and dying, instead of four
+    // cancellation paths that could each be forgotten.
+    if (steered.activity === ActivityValue.Swapping && asksToMove(rawIntent)) {
+      steered = { ...steered, activity: ActivityValue.Idle, activityUntilTick: 0 };
     }
 
     // A committed cast roots the caster. The intent still carries the facing so

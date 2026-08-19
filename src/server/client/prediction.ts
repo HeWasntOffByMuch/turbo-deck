@@ -41,6 +41,17 @@ export interface PredictedInput {
   readonly moveY: number;
   readonly facing: number;
   readonly buttons: number;
+  /**
+   * How fast the body could move on the tick this input was made for, as a
+   * fraction of its own speed (spec 188). Absent is 1.
+   *
+   * On the *input* rather than on the predictor, because a slow is a timed
+   * state: a predictor built with one scale would keep it for the whole
+   * session, and a **replay** of buffered inputs after a correction has to walk
+   * each of them at the speed that applied when it was sent rather than at the
+   * speed that applies now.
+   */
+  readonly moveScale?: number;
 }
 
 export interface Point {
@@ -66,7 +77,7 @@ export function createFlatPredictor(speed: number, tickRate: number): PredictSte
   return (from, input) => {
     const length = Math.hypot(input.moveX, input.moveY);
     if (length <= 1e-6) return from;
-    const scale = (length > 1 ? 1 / length : 1) * perTick;
+    const scale = (length > 1 ? 1 / length : 1) * perTick * (input.moveScale ?? 1);
     return { x: from.x + input.moveX * scale, y: from.y + input.moveY * scale };
   };
 }
@@ -98,7 +109,7 @@ export function createWorldPredictor(options: {
   return (from, input) => {
     const length = Math.hypot(input.moveX, input.moveY);
     if (length <= 1e-6) return from;
-    const scale = (length > 1 ? 1 / length : 1) * perTick;
+    const scale = (length > 1 ? 1 / length : 1) * perTick * (input.moveScale ?? 1);
     const dx = input.moveX * scale;
     const dy = input.moveY * scale;
 

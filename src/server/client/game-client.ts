@@ -28,6 +28,7 @@ import {
   type CombatResultMessage,
   type EffectMessage,
   type MapInfoMessage,
+  type PendingSkillSwap,
   type ServerChatMessage,
   type SpawnerStatus,
   type TradeSideView,
@@ -98,6 +99,7 @@ import {
 import { ordinalOfAttribute } from '../data/attributes.js';
 import { startingBaseStats } from '../player/attributes.js';
 import { applyMove, removeFromSlot, type MoveRequest } from '../player/inventory.js';
+import { movesASkill } from '../player/skill-slots.js';
 import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
@@ -324,6 +326,21 @@ export interface ClientView {
   readonly equipment: Equipment;
   /** What the player can spend (spec 129). */
   readonly coins: number;
+  /**
+   * A skill-slot change in flight, or null (spec 188).
+   *
+   * The one container edit this client does **not** predict, and this is what
+   * it draws instead: the server holds the change for `SKILL_SWAP.durationTicks`
+   * on purpose, so what the interface has to show is not the new arrangement
+   * but the commitment to it -- which slot, which direction, and how far
+   * through.
+   *
+   * Both ticks are the server's, so progress is a comparison against
+   * {@link estimatedTick} rather than a clock this client keeps. Cleared by any
+   * `Inventory` that arrives without one, which is what the message ending a
+   * swap looks like whether it landed or was given up.
+   */
+  readonly pendingSwap: PendingSkillSwap | null;
   /**
    * The shop that is open, or null.
    *
@@ -631,6 +648,7 @@ export class GameClient {
   private serverEquipment: Equipment = EMPTY_EQUIPMENT;
   private inventory: Inventory = [];
   private coins = 0;
+  private pendingSwap: PendingSkillSwap | null = null;
   private vendorView: VendorView | null = null;
   /**
    * Drops by entity id, exactly as the server described them (spec 158).
@@ -899,7 +917,16 @@ export class GameClient {
     // it drops is dropped whole.
     const rooted = this.staggeredNow();
     const intended = rooted ? { ...intent, moveX: 0, moveY: 0 } : intent;
-    const input: PredictedInput = { ...intended, seq: this.seq };
+    // The slow the server last told us about (spec 188). Carried on the input
+    // rather than baked into the predictor, so a replay after a correction
+    // walks each buffered input at the speed that applied when it was made.
+    //
+    // Unlike a stagger's onset, this **is** predictable: `EntityField.MoveScale`
+    // rides the delta, so the client knows it is slowed a broadcast interval
+    // after the blow lands rather than never. Without it a two-and-a-half-second
+    // slow would be a correction every tick for its whole duration, which is
+    // the one thing spec 067's drift nudges are not for.
+    const input: PredictedInput = { ...intended, seq: this.seq, moveScale: this.selfMoveScale() };
     const predicted = this.prediction.apply(input);
     this.channel.send(
       encodeClientMessage({
@@ -937,8 +964,22 @@ export class GameClient {
     if (!this.connected) return 0;
     const requestId = this.nextRequestId();
     const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
-    this.pendingMoves.push({ requestId, kind: 'move', request });
-    this.replayMoves();
+    // **A skill swap is not predicted** (spec 188).
+    //
+    // Every other move is: the rule is pure, the slots are ones this client can
+    // see, and the answer comes back inside a round trip. A swap does not --
+    // the server holds it for `SKILL_SWAP.durationTicks` on purpose, and a
+    // guess drawn immediately would put the new skill in the bar, and in the
+    // *bar's* ability list, for a second and a half during which the server
+    // refuses to cast it. That is worse than a slower-looking bag: it is a
+    // button that lies about what it does.
+    //
+    // So the item stays where it is until the swap lands, which is also the
+    // only honest picture of "this takes time".
+    if (!movesASkill(request)) {
+      this.pendingMoves.push({ requestId, kind: 'move', request });
+      this.replayMoves();
+    }
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.MoveItem, requestId, from, to, count }),
     );
@@ -1405,6 +1446,20 @@ export class GameClient {
    * sim's own {@link staggered}, so the client and the server cannot disagree
    * about where the window ends.
    */
+  /**
+   * How fast this client believes its own body may move, 0..1 (spec 188).
+   *
+   * Read off the *replicated* body rather than from anything local, because a
+   * slow is the server's to apply and this is the client agreeing with it. 1
+   * before the first delta and 1 for a body carrying nothing, which is the
+   * right way round to be wrong: guessing slower than the server would make an
+   * unslowed player trail their own body for no reason.
+   */
+  private selfMoveScale(): number {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    return self?.moveScale ?? 1;
+  }
+
   private staggeredNow(): boolean {
     const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
     if (!self) return false;
@@ -1484,6 +1539,7 @@ export class GameClient {
         // refund is the server's, and the `Restoration` message tells this
         // client what it actually has left.
         spentCharges: 0,
+        spentPoise: 0,
         startedTick: confirmed.startTick,
         windupStartTick: confirmed.startTick,
         releaseTick: confirmed.releaseTick,
@@ -1761,6 +1817,7 @@ export class GameClient {
       inventory: this.inventory,
       equipment: this.equipment,
       coins: this.coins,
+      pendingSwap: this.pendingSwap,
       vendor: this.vendorView,
       vendorRevision: this.vendorReplies,
       trade: this.tradeView,
@@ -2034,6 +2091,11 @@ export class GameClient {
         this.serverInventory = message.inventory;
         this.serverEquipment = message.equipment;
         this.coins = message.coins;
+        // The change in flight, or none (spec 188). Replaced rather than
+        // merged, because every `Inventory` carries the truth at the moment it
+        // left: a message with no block is the server saying there is nothing
+        // in flight, which is exactly what the one that ends a swap says.
+        this.pendingSwap = message.pendingSwap ?? null;
         // Everything up to and including the answered request has been settled,
         // whether it was taken or refused -- the containers that arrived are the
         // truth about both. What is left is what is still in flight.

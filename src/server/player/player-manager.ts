@@ -16,6 +16,7 @@ import {
   EQUIP_SLOTS,
   emptyInventory,
   isEquipSlot,
+  isSkillSlot,
   type BaseStats,
   type EffectiveStats,
   type Equipment,
@@ -415,6 +416,12 @@ export class PlayerManager {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
     if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
+    // **Not a skill slot** (spec 188). This is the weapon switch's path and it
+    // is instantaneous by design; a skill slot costs time and is refused while
+    // its skill is on cooldown, and neither rule lives here. Left reachable it
+    // would be the whole of spec 188's swap gate bypassed by a message the HUD
+    // already sends.
+    if (isSkillSlot(slot)) return { ok: false, reason: 'change a skill from the bag' };
 
     const index = session.record.inventory.findIndex((stack) => stack?.defId === itemId);
     if (index < 0) return { ok: false, reason: `you are not carrying ${itemId}` };
@@ -431,6 +438,8 @@ export class PlayerManager {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
     if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
+    // The other half of the same gate: taking a skill *off* is a swap too.
+    if (isSkillSlot(slot)) return { ok: false, reason: 'change a skill from the bag' };
     if (session.record.equipment[slot] === null) return { ok: false, reason: `${slot} is empty` };
 
     const free = session.record.inventory.findIndex((stack) => stack === null);

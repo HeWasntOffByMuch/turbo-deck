@@ -429,6 +429,22 @@ export const EntityField = {
    * actually changed -- which for most bodies is never.
    */
   Statuses: 1 << 9,
+  /**
+   * How fast this body may move right now, as a fraction of its own speed
+   * (spec 188).
+   *
+   * On the wire because a slow the owner's client does not know about is a
+   * client predicting full speed against a server walking at 60% -- which the
+   * correction machinery would dutifully fix, once a tick, for the whole
+   * duration. Spec 173 accepted one round trip of that for a stagger *because*
+   * `Activity` is replicated and the client stops the moment it sees it; a slow
+   * has no such tell, so it gets one.
+   *
+   * A byte fraction, exactly like {@link Poise}, and sent to everyone rather
+   * than only to the owner: a remote body being slowed changes how far the
+   * interpolator should expect it to have travelled, and it is one byte.
+   */
+  MoveScale: 1 << 10,
 } as const;
 
 export const EntityKind = {
@@ -459,6 +475,8 @@ export const EntityActivity = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
+  /** Changing an active skill (spec 188). Mirrors `ActivityValue.Swapping`. */
+  Swapping: 5,
 } as const;
 
 /** Mirrors `sim/types.ts`; the client animates from this. */

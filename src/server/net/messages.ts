@@ -758,6 +758,11 @@ export interface EntityDelta {
   readonly turnRate?: number;
   /** Guard left, 0..1 (spec 147). Quantised to a byte on the wire. */
   readonly poise?: number;
+  /**
+   * How fast this body may move, as a fraction of its own speed (spec 188).
+   * Absent means unchanged; 1 is not slowed.
+   */
+  readonly moveScale?: number;
   /** Absorb left in health units, and the tick the whole thing falls off. */
   readonly shield?: number;
   readonly shieldUntilTick?: number;
@@ -878,6 +883,37 @@ export interface InventoryMessage {
    * instant, and two messages for one event is two things to keep in step.
    */
   readonly coins: number;
+  /**
+   * A skill-slot change in flight, or absent (spec 188).
+   *
+   * On this message rather than on one of its own, for the reason the coins are
+   * on it: a swap being asked for, landing, or being given up are all container
+   * events, and two messages for one event is two things to keep in step.
+   *
+   * It rides only on the messages that bracket the change -- one when it is
+   * asked for, one when it ends -- because the client needs no ticking: the two
+   * ticks are enough to draw a bar from, which is the same trick the loot
+   * reveal uses. A resend for any other reason simply carries whatever is true
+   * at the time.
+   */
+  readonly pendingSwap?: PendingSkillSwap;
+}
+
+/**
+ * A skill-slot change the server has committed the player to (spec 188).
+ *
+ * Both addresses, both ticks, and which of the three kinds it is -- everything
+ * the interface needs to say *what* is happening to *which* slot and how far
+ * through it is. Nothing here is a client's claim: the server derived the kind
+ * from its own containers and stamped both ticks off its own clock.
+ */
+export interface PendingSkillSwap {
+  /** A {@link SkillSwapKind}. */
+  readonly kind: number;
+  readonly from: SlotAddress;
+  readonly to: SlotAddress;
+  readonly startedTick: number;
+  readonly readyAtTick: number;
 }
 
 /** What a vendor is offering, and what can be undone (spec 129). */
@@ -1204,6 +1240,7 @@ const FIELD_IDENTITY = 1 << 6;
 const FIELD_POISE = 1 << 7;
 const FIELD_SHIELD = 1 << 8;
 const FIELD_STATUSES = 1 << 9;
+const FIELD_MOVE_SCALE = 1 << 10;
 
 function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   // A varuint rather than a byte since spec 147: `Identity` took the eighth bit
@@ -1247,6 +1284,12 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
         .u32(Math.max(0, status.expiresAtTick));
     }
   }
+  // A fraction in one byte, like the guard above (spec 188). 255 is "not
+  // slowed", which is what an absent field has always meant and what a body
+  // carrying nothing is.
+  if (entity.fields & FIELD_MOVE_SCALE) {
+    writer.u8(Math.max(0, Math.min(255, Math.round((entity.moveScale ?? 1) * 255))));
+  }
 }
 
 function readEntityDelta(reader: BufferReader): EntityDelta {
@@ -1267,6 +1310,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let shield: number | undefined;
   let shieldUntilTick: number | undefined;
   let statuses: WireStatus[] | undefined;
+  let moveScale: number | undefined;
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
@@ -1305,6 +1349,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     }
     statuses = read;
   }
+  if (fields & FIELD_MOVE_SCALE) moveScale = reader.u8() / 255;
   return {
     id,
     fields,
@@ -1322,6 +1367,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     ...(poise === undefined ? {} : { poise }),
     ...(shield === undefined ? {} : { shield, shieldUntilTick: shieldUntilTick ?? 0 }),
     ...(statuses === undefined ? {} : { statuses }),
+    ...(moveScale === undefined ? {} : { moveScale }),
   };
 }
 
@@ -1348,6 +1394,13 @@ function readAttributes(reader: BufferReader): BaseStats {
   return values as unknown as BaseStats;
 }
 
+function readStringList(reader: BufferReader): readonly string[] {
+  const count = reader.count();
+  const ids: string[] = new Array<string>(count);
+  for (let i = 0; i < count; i++) ids[i] = reader.str();
+  return ids;
+}
+
 function readSkills(reader: BufferReader): readonly SkillAllocation[] {
   const count = reader.count();
   const skills: SkillAllocation[] = new Array<SkillAllocation>(count);
@@ -1372,6 +1425,14 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.maxResource)
     .f32(stats.resourceRegen)
     .str(stats.basicAttackId);
+  // The four skill slots' abilities (spec 188), count-prefixed like every other
+  // list on this wire. Owner-only already -- `Stats` is sent to the player it
+  // is about -- and sent because the client needs it for the same two reasons
+  // it needs `basicAttackId`: to know what its bar may ask for, and to grey out
+  // what it may not. It is still never *read* from a client: the server derives
+  // its own copy from equipment on every recalculation.
+  writer.varuint(stats.skillAbilityIds.length);
+  for (const id of stats.skillAbilityIds) writer.str(id);
   writeTraits(writer, stats.traits);
 }
 
@@ -1416,6 +1477,7 @@ function readStats(reader: BufferReader): EffectiveStats {
     maxResource: reader.f32(),
     resourceRegen: reader.f32(),
     basicAttackId: reader.str(),
+    skillAbilityIds: readStringList(reader),
     traits: readTraits(reader),
   };
 }
@@ -1512,12 +1574,23 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writer.varuint(message.unspentAttributePoints);
       writeStats(writer, message.stats);
       break;
-    case ServerMessageType.Inventory:
+    case ServerMessageType.Inventory: {
       writer.varuint(message.requestId);
       writeInventory(writer, message.inventory);
       writeEquipment(writer, message.equipment);
       writer.varuint(message.coins);
+      // A presence byte then the block, which is how every optional payload on
+      // this wire is written: absent is one byte and the common case.
+      const swap = message.pendingSwap;
+      writer.u8(swap ? 1 : 0);
+      if (swap) {
+        writer.u8(swap.kind);
+        writeAddress(writer, swap.from);
+        writeAddress(writer, swap.to);
+        writer.u32(swap.startedTick).u32(swap.readyAtTick);
+      }
       break;
+    }
     case ServerMessageType.LootDrop:
       writer
         .varuint(message.entityId)
@@ -1684,14 +1757,30 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         unspentAttributePoints: reader.varuint(),
         stats: readStats(reader),
       };
-    case ServerMessageType.Inventory:
+    case ServerMessageType.Inventory: {
+      const requestId = reader.varuint();
+      const inventory = readInventory(reader);
+      const equipment = readEquipment(reader);
+      const coins = reader.varuint();
+      const hasSwap = reader.u8() === 1;
+      const pendingSwap = hasSwap
+        ? {
+            kind: reader.u8(),
+            from: readAddress(reader),
+            to: readAddress(reader),
+            startedTick: reader.u32(),
+            readyAtTick: reader.u32(),
+          }
+        : undefined;
       return {
         type: ServerMessageType.Inventory,
-        requestId: reader.varuint(),
-        inventory: readInventory(reader),
-        equipment: readEquipment(reader),
-        coins: reader.varuint(),
+        requestId,
+        inventory,
+        equipment,
+        coins,
+        ...(pendingSwap === undefined ? {} : { pendingSwap }),
       };
+    }
     case ServerMessageType.LootDrop:
       return {
         type: ServerMessageType.LootDrop,

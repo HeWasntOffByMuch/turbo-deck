@@ -261,3 +261,34 @@ describe('easing a drift correction (spec 067)', () => {
     expect(local.position.x).toBeCloseTo(PER_TICK * 3, 9);
   });
 });
+
+describe('a slow the client has been told about (spec 188)', () => {
+  /**
+   * The one thing that keeps a two-and-a-half-second slow from being a
+   * correction every tick for its whole duration: the scale rides the *input*,
+   * so the client walks at the speed the server is walking it at.
+   */
+  it('shortens the step by the scale the input carries', () => {
+    const step = createFlatPredictor(60, 60);
+    const from = { x: 0, y: 0 };
+    const full = step(from, { seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    const slowed = step(from, { seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0, moveScale: 0.6 });
+    expect(full.x).toBeCloseTo(1, 6);
+    expect(slowed.x).toBeCloseTo(0.6, 6);
+  });
+
+  /**
+   * A replay after a correction walks each buffered input at the speed that
+   * applied when it was *made*, which is why the scale is on the input rather
+   * than baked into the predictor when it is built.
+   */
+  it('replays each input at its own scale rather than at the latest one', () => {
+    const buffer = new PredictionBuffer({ x: 0, y: 0 }, createFlatPredictor(60, 60));
+    buffer.apply({ seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0, moveScale: 0.5 });
+    buffer.apply({ seq: 2, moveX: 1, moveY: 0, facing: 0, buttons: 0, moveScale: 1 });
+    expect(buffer.position.x).toBeCloseTo(1.5, 6);
+    // Corrected as of input 1, then input 2 replayed -- at *its* scale.
+    buffer.reconcile(1, { x: 10, y: 0 });
+    expect(buffer.position.x).toBeCloseTo(11, 6);
+  });
+});

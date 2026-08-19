@@ -352,6 +352,29 @@ export const ITEM_ICONS: Readonly<Record<string, readonly string[]>> = {
     '....TAAT....',
     '.....TT.....',
   ],
+  /**
+   * A sigil (spec 188): a carried skill.
+   *
+   * A disc with a mark cut through it rather than a scroll or a book, because
+   * every other icon in this table is a *thing you hold* and a skill has to
+   * read as one too -- and because a rune stamped in metal is the only shape at
+   * twelve pixels that says "this does something" without saying which. Which
+   * one it is, is the name in the tooltip and the slot it sits in.
+   */
+  sigil: [
+    '....TTTT....',
+    '..TTAAAATT..',
+    '..TAAAAAAT..',
+    '.TAAAWWAAAT.',
+    '.TAAWWWWAAT.',
+    'TAAAAWWAAAAT',
+    'TAAAAWWAAAAT',
+    '.TAAWWWWAAT.',
+    '.TAAAWWAAAT.',
+    '..TAAAAAAT..',
+    '..TTAAAATT..',
+    '....TTTT....',
+  ],
   potion: [
     '....TTTT....',
     '....T..T....',

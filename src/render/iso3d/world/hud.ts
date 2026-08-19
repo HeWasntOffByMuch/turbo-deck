@@ -24,6 +24,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import type { ScreenAnchor } from './scene.js';
 import {
   abilityById,
+  barNameOf,
   BASIC_ATTACK_ID,
   type AbilityDefinition,
 } from '../../../server/data/abilities.js';
@@ -75,7 +76,13 @@ import {
 import { stunMark } from './stun-icon.js';
 import { statusMarks } from './status-marks.js';
 import { MAX_VISIBLE_STATUSES } from '../../../server/data/status-visuals.js';
-import { ACTION_BAR, type ActionSlot } from './action-bar.js';
+import {
+  barSlotOf,
+  swapLabel,
+  swapOverhead,
+  swapProgress,
+} from './skill-swap-view.js';
+import { ACTION_BAR, sameBar, type ActionSlot } from './action-bar.js';
 import { deathOverlay } from './death.js';
 import { poolBars } from './pool-bars.js';
 import { xpBar, XP_SUBDIVISIONS } from './xp-bar.js';
@@ -169,6 +176,17 @@ interface Bar {
   readonly guardFill: HTMLElement;
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
+  /**
+   * Changing a skill (spec 188).
+   *
+   * The third timed commitment a body can be in and the only one with nothing
+   * else on screen saying so: a cast has its bar, a stagger has the swirl, and
+   * a swap used to be a second and a half in which the player simply stood
+   * there. Driven off `activity` and `activityUntilTick`, both already
+   * replicated, so every observer sees it and nothing new rides the wire.
+   */
+  readonly swap: HTMLElement;
+  readonly swapFill: HTMLElement;
   /**
    * The swirl over a stunned body (spec 173).
    *
@@ -360,6 +378,16 @@ export interface HudHandle {
    * about whether it is open.
    */
   showOpenWindows(open: readonly WindowId[]): void;
+  /**
+   * Replace what the five slots hold (spec 188).
+   *
+   * Pushed in every frame from the player's equipment, for the same reason
+   * {@link showOpenWindows} is pushed rather than read: the equipment is the
+   * state, and a bar that remembered what was last equipped would be a second
+   * opinion about what the player is carrying. A plan that matches what is
+   * already drawn costs a comparison.
+   */
+  setSlots(plan: readonly ActionSlot[]): void;
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
   /**
@@ -541,7 +569,24 @@ export function createHud(
    * update loop below free of a branch per slot kind: everything it does to a
    * slot is a function of `slot.ability`, which is simply null for four of them.
    */
-  const slots = slotPlan.map((entry, index) => {
+  /**
+   * One built slot: its plan entry, the ability behind it, and the four
+   * elements the update loop writes into.
+   */
+  interface SlotView extends ActionSlot {
+    readonly ability: AbilityDefinition | null;
+    readonly button: HTMLButtonElement;
+    readonly sweep: HTMLDivElement;
+    readonly remaining: HTMLSpanElement;
+    readonly charges: HTMLSpanElement;
+    /** The overlay a skill-slot change in flight draws (spec 188). */
+    readonly change: HTMLDivElement;
+    readonly changeLabel: HTMLSpanElement;
+    readonly changeFill: HTMLDivElement;
+  }
+
+  const buildSlots = (plan: readonly ActionSlot[]): readonly SlotView[] =>
+    plan.map((entry, index) => {
     const ability = entry.abilityId === null ? null : abilityById(entry.abilityId);
     const button = document.createElement('button');
     button.style.cssText =
@@ -600,7 +645,7 @@ export function createHud(
         centred(
           layout.slotIconOnly
             ? weaponIconSvg(ability.id, { size: 24 })
-            : pixelTextSvg(ability.name.toUpperCase(), {
+            : pixelTextSvg(barNameOf(ability).toUpperCase(), {
                 scale: layout.slotNameScale,
                 fill: '#cfd6e0',
                 outline: '#0a0d14',
@@ -652,9 +697,65 @@ export function createHud(
     charges.style.cssText = 'position:absolute;right:2px;bottom:1px;pointer-events:none;';
     if (entry.kind === 'vial') button.append(charges);
 
+    /**
+     * A skill-slot change in flight, over the slot it is happening to
+     * (spec 188).
+     *
+     * Its own overlay rather than a reuse of the cooldown sweep, because the
+     * two say opposite things: a sweep is "this is not ready yet" and drains
+     * *down*, and this is "this is becoming something else" and fills *up*.
+     * Sharing the element would have made a swap look like a cooldown, which is
+     * the one other reason a slot is unusable.
+     *
+     * Built for every slot including the vial and the empty ones, since a
+     * change into an empty slot is the commonest case there is -- putting your
+     * first skill on.
+     */
+    const change = document.createElement('div');
+    change.style.cssText =
+      'position:absolute;inset:0;display:none;flex-direction:column;align-items:center;' +
+      'justify-content:center;gap:3px;background:rgba(8,14,20,.78);pointer-events:none;';
+    const changeLabel = document.createElement('span');
+    changeLabel.style.cssText = 'display:flex;justify-content:center;';
+    const changeTrack = document.createElement('div');
+    changeTrack.style.cssText =
+      'position:absolute;left:3px;right:3px;bottom:3px;height:4px;border-radius:2px;' +
+      'background:rgba(0,0,0,.6);overflow:hidden;';
+    const changeFill = document.createElement('div');
+    // The teal the bar over the body uses, so the two surfaces showing one
+    // commitment are visibly the same commitment.
+    changeFill.style.cssText = 'height:100%;width:0;background:#6bd7cf;';
+    changeTrack.append(changeFill);
+    change.append(changeLabel, changeTrack);
+    button.append(change);
+
     bar.append(button);
-    return { ...entry, ability, button, sweep, remaining, charges };
+    return { ...entry, ability, button, sweep, remaining, charges, change, changeLabel, changeFill };
   });
+
+  let slots = buildSlots(slotPlan);
+
+  /**
+   * Rebuild the row when what is in it changes (spec 188).
+   *
+   * A rebuild rather than an in-place edit of five labels, and the reason is
+   * the one this file already gives about the slot's contents: a slot's markup
+   * differs by *kind* -- an icon for the vial, a name or an icon for a skill, a
+   * dashed square for an empty one -- so editing would be a second, partial
+   * copy of the eighty lines above, free to disagree with them about what a
+   * slot with a newly-equipped skill looks like. Five buttons is a handful of
+   * DOM nodes, and it happens when a player changes a skill rather than per
+   * frame.
+   *
+   * Guarded on the ids so an equipment resend twenty times a second is a
+   * comparison rather than a teardown -- and so the button under the cursor is
+   * still the same object between two frames in which nothing changed.
+   */
+  const setSlots = (plan: readonly ActionSlot[]): void => {
+    if (sameBar(plan, slots)) return;
+    bar.replaceChildren();
+    slots = buildSlots(plan);
+  };
 
   /**
    * The two pools, immediately left of the slots (spec 164).
@@ -1155,7 +1256,26 @@ export function createHud(
       statusSlots.push({ root: slot, glyph, count, drawn: '' });
     }
 
-    holder.append(statusRow, stun, name, healthTrack, guard, cast);
+    // Changing a skill (spec 188). The cast bar's shape in a different colour,
+    // because it means the same kind of thing -- this body is committed to
+    // something with a clock on it -- and a fourth vocabulary for the fourth
+    // timed thing would be three too many. Below the cast bar rather than in
+    // place of it: the two cannot both be running (committing to a cast gives
+    // up the swap), but stacking them keeps either from moving when the other
+    // appears.
+    const swap = document.createElement('div');
+    swap.dataset['bar'] = 'swap';
+    swap.style.cssText =
+      'position:absolute;left:0;right:0;top:calc(100% + 2px);height:4px;' +
+      'background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;display:none;';
+    const swapFill = document.createElement('div');
+    // Teal: not the cast bar's amber, not the guard's blue, not the health
+    // reds. A body changing a skill has to be distinguishable at a glance from
+    // one winding up a blow, because the answer to the two is different.
+    swapFill.style.cssText = 'height:100%;width:0;background:#6bd7cf;';
+    swap.append(swapFill);
+
+    holder.append(statusRow, stun, name, healthTrack, guard, cast, swap);
     root.append(holder);
     const made: Bar = {
       root: holder,
@@ -1169,6 +1289,8 @@ export function createHud(
       stun,
       statusRow,
       statusSlots,
+      swap,
+      swapFill,
     };
     bars.set(id, made);
     return made;
@@ -1333,6 +1455,15 @@ export function createHud(
         slot.root.dataset['status'] = mark.id;
       }
 
+      // Changing a skill (spec 188). Stateless like the swirl above and for the
+      // same reason: a body that is busy right now is busy whether or not this
+      // client watched it start, so there is nothing per-body to retain.
+      const changing = swapOverhead(entity.activity, entity.activityUntilTick, tick);
+      element.swap.style.display = changing.visible ? 'block' : 'none';
+      if (changing.visible) {
+        element.swapFill.style.width = `${changing.progress * 100}%`;
+      }
+
       const fill = flashes.read(anchor.id, entity.health, entity.maxHealth, tick * TICK_MS);
       // The flinch moves the *bar*, not the body: it is added to the anchor
       // here rather than being a transform of its own, because the holder's
@@ -1431,7 +1562,38 @@ export function createHud(
       weapon.button.style.color = current ? '#f2f6fb' : '#98a4b4';
     }
 
-    for (const slot of slots) {
+    // Which slot is being changed, and how far through (spec 188). Worked out
+    // once outside the loop: it is one change at a time and asking per slot
+    // would be four answers to a question with one.
+    const changing = swapProgress(view.pendingSwap, tick);
+    const changingSlot = barSlotOf(changing);
+
+    for (const [index, slot] of slots.entries()) {
+      // The change in flight, drawn **before** the empty-slot branch below:
+      // putting your first skill into an empty slot is the commonest change
+      // there is, and it is exactly the case that branch would have skipped.
+      const marked = changing !== null && index === changingSlot;
+      slot.change.style.display = marked ? 'flex' : 'none';
+      if (marked && changing) {
+        slot.changeFill.style.width = `${changing.progress * 100}%`;
+        // Words, and only where there is room for them: a 46px square cannot
+        // hold "EQUIPPING" at any scale this face has, so a phone gets the bar
+        // alone -- which still says "something is happening here, and how far
+        // along it is", which is the half that matters.
+        const label = layout.slotIconOnly ? '' : swapLabel(changing.kind);
+        if (slot.changeLabel.dataset['text'] !== label) {
+          slot.changeLabel.dataset['text'] = label;
+          slot.changeLabel.innerHTML =
+            label === ''
+              ? ''
+              : pixelTextSvg(label, {
+                  scale: layout.slotNameScale,
+                  fill: '#a8ece6',
+                  outline: '#06181a',
+                });
+        }
+      }
+
       // An empty slot has nothing to be lit by, on cooldown, or unaffordable
       // (spec 164). Dimmed once, here, rather than being asked every question
       // below with `null` standing in for an ability.
@@ -1732,6 +1894,9 @@ export function createHud(
         // screen reader has no border to look at.
         slot.button.setAttribute('aria-pressed', String(on));
       }
+    },
+    setSlots(plan) {
+      setSlots(plan);
     },
     onUse(handler) {
       useHandler = handler;

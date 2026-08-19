@@ -42,6 +42,7 @@ const STATS: EffectiveStats = {
   maxResource: 20,
   resourceRegen: 0.1,
   basicAttackId: 'melee.slash',
+  skillAbilityIds: [],
   traits: NEUTRAL_TRAITS,
 };
 

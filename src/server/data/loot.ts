@@ -215,6 +215,10 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
       entries: [
         { defId: 'potion.minor', count: 1, weight: 10 },
         { defId: 'helm.leather', count: 1, weight: 4 },
+        // A skill is an item, so it drops like one (spec 188). Crippling
+        // Strike is the level-2 sigil, which puts it on the earliest body that
+        // drops anything worth walking over to.
+        { defId: 'sigil.cripplingStrike', count: 1, weight: 2 },
         { defId: 'trinket.swiftband', count: 1, weight: 1 },
       ],
     },
@@ -226,6 +230,7 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
       entries: [
         { defId: 'potion.minor', count: 2, weight: 10 },
         { defId: 'stars.weighted', count: 1, weight: 4 },
+        { defId: 'sigil.cripplingStrike', count: 1, weight: 2 },
         { defId: 'focus.quartz', count: 1, weight: 1 },
       ],
     },
@@ -239,6 +244,11 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
         { defId: 'chest.leather', count: 1, weight: 6 },
         { defId: 'sword.keen', count: 1, weight: 3 },
         { defId: 'maul.iron', count: 1, weight: 3 },
+        // The two rare sigils, on the only body in the table that drops
+        // anything else rare. Weighted like the weapons they sit beside,
+        // because a skill is worth roughly what a weapon is worth.
+        { defId: 'sigil.stunningBlow', count: 1, weight: 3 },
+        { defId: 'sigil.whirlwind', count: 1, weight: 3 },
         { defId: 'trinket.bloodstone', count: 1, weight: 1 },
       ],
     },
