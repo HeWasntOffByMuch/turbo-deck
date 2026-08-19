@@ -98,6 +98,7 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
     pathIndex: 0,
     repathAtTick: 0,
     pathGoal: null,
+    stuckSinceTick: 0,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,

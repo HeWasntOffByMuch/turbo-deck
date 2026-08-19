@@ -111,6 +111,7 @@ export function asEntity(mirror: Mirror): ServerEntity {
     pathIndex: 0,
     repathAtTick: 0,
     pathGoal: null,
+    stuckSinceTick: 0,
     resource: mirror.resource,
     cast: mirror.cast,
     cooldowns: mirror.cooldowns,

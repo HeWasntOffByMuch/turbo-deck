@@ -713,7 +713,13 @@ describe('aggro and the leash', () => {
     }
     const at = state.entities.get(monster.id);
     expect(at?.targetId).toBeNull();
-    expect(at?.position.x).toBe(640);
+    // It stepped out of the player rather than staying inside it (spec 184): a
+    // ravager is radius 30 and a player 16, so bodies 40 apart are overlapping,
+    // and a body with nowhere to be walks out of an overlap under its own
+    // power. What this test is about is that it never *chased* -- so the claim
+    // is that it is still where it was standing, give or take the body it was
+    // standing in, rather than that it did not move at all.
+    expect(at?.position.x).toBeLessThan(640 + 46);
   });
 
   it('drops a target it has been dragged too far from, and walks home', () => {

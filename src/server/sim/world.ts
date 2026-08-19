@@ -24,7 +24,13 @@
 
 import { Rng } from '../../shared/prng.js';
 import { findPath, navGridFor, pathClear } from '../../sim/pathfinding.js';
-import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
+import {
+  CROWD_STUCK_PROGRESS,
+  CROWD_STUCK_TICKS,
+  PATH_REPLAN_TICKS,
+  PATH_RETRY_TICKS,
+  PATH_WAYPOINT_EPS,
+} from '../../sim/constants.js';
 import type { Circle, Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
@@ -35,7 +41,7 @@ import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { FLEE_DISTANCE, notice, rally, settle } from './aggro.js';
 import { approachPoints, type Approach } from './attack-slots.js';
-import { CrowdIndex, steer, type CrowdBody } from './crowd.js';
+import { CrowdIndex, escapes, steer, type CrowdBody } from './crowd.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
@@ -167,6 +173,7 @@ function blankEntity(id: number): ServerEntity {
     pathIndex: 0,
     repathAtTick: 0,
     pathGoal: null,
+    stuckSinceTick: 0,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
@@ -317,6 +324,7 @@ export function spawnEntity(
     pathIndex: 0,
     repathAtTick: 0,
     pathGoal: null,
+    stuckSinceTick: 0,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
@@ -653,20 +661,70 @@ export function step(
         ? intent
         : crowdedIntent(steered, intent, neighbours, tick);
 
-    const outcome = resolveMovement(
-      steered,
-      crowded,
-      movement,
-      blockersFor(steered, neighbours, working),
-    );
-    const moved =
+    const blockers = blockersFor(steered, neighbours, working);
+    let outcome = resolveMovement(steered, crowded, movement, blockers);
+    let moved =
       outcome.position.x !== steered.position.x || outcome.position.y !== steered.position.y;
+    // A quarter of a step. `moved` is what the *activity* is derived from and
+    // stays "did the position change at all"; getting somewhere is a different
+    // and stricter question, and it is the one the stuck clock asks.
+    const stride = steered.stats.moveSpeed / SERVER_TICK_RATE;
+    const wentSomewhere = (landed: Vec3): boolean =>
+      Math.hypot(landed.x - steered.position.x, landed.y - steered.position.y) >=
+      stride * CROWD_STUCK_PROGRESS;
+    const progressed = (): boolean => wentSomewhere(outcome.position);
+
+    // Wedged: it asked to walk, it got nowhere, and it has been getting nowhere
+    // for long enough that this is a corner rather than a brush. Try either
+    // side of where it wanted to go and take the first direction that is
+    // actually a step. See `escapes` for why this exists at all -- there is no
+    // shove in this game to grind a stuck body past anything, so a body that
+    // cannot find its own way out never leaves.
+    const wedged =
+      !progressed() &&
+      asksToMove(crowded) &&
+      steered.stuckSinceTick !== 0 &&
+      tick - steered.stuckSinceTick >= CROWD_STUCK_TICKS;
+    if (wedged) {
+      // The route rather than the steered direction: see `escapes`.
+      const wanted = intent ? unit(intent.moveX, intent.moveY) : null;
+      if (wanted && crowded) {
+        for (const escape of escapes(wanted, steered.id)) {
+          const attempt = resolveMovement(
+            steered,
+            { ...crowded, moveX: escape.x, moveY: escape.y },
+            movement,
+            blockers,
+          );
+          // Judged on the same measure that called this body stuck, and that
+          // is not a detail: on "did the position change at all" the very
+          // first candidate always wins, because a body wedged on a wall
+          // slides a thousandth of a unit along it and that counts. The probe
+          // then congratulates itself and stops, having moved nothing, every
+          // tick, for ever.
+          if (wentSomewhere(attempt.position)) {
+            outcome = attempt;
+            moved = true;
+            break;
+          }
+        }
+      }
+    }
 
     let next: ServerEntity = {
       ...steered,
       position: outcome.position,
       facing: outcome.facing,
       zoneId: context.zones.zoneIdAt(outcome.position.x, outcome.position.y),
+      // The stuck clock: stamped the first tick a request to walk produces no
+      // walking, and cleared the moment one does. A body standing still because
+      // it has arrived is not stuck and never stamps it.
+      stuckSinceTick:
+        !progressed() && asksToMove(crowded)
+          ? steered.stuckSinceTick === 0
+            ? tick
+            : steered.stuckSinceTick
+          : 0,
       // Remember what this client claimed, so the next input's speed is measured
       // against its own previous claim rather than against our position.
       claimedPosition:
@@ -1684,11 +1742,57 @@ function crowdedIntent(
 
   const self = crowdBodyOf(entity, intent);
   const wanted = intent && asksToMove(intent) ? unit(intent.moveX, intent.moveY) : null;
-  const adjusted = steer(self, wanted, neighbours);
+  const adjusted = steer(self, wanted, avoidable(entity, neighbours));
   if (!adjusted) return intent;
   return intent
     ? { ...intent, moveX: adjusted.x, moveY: adjusted.y }
     : standingIntent(entity, adjusted);
+}
+
+/**
+ * The neighbours this body should avoid, which is all of them except the one it
+ * is walking at.
+ *
+ * **You do not avoid what you are attacking.** The side-step fires on anything
+ * ahead and closing, and a body closing on its own target is the definition of
+ * that -- so without this line a monster steers around the thing it is chasing,
+ * arriving beside it in a slow curve and never quite stopping. It is not a
+ * rounding error either: a lone stalker walking a straight line at a stationary
+ * player drifted off it immediately, which is how this was found.
+ *
+ * Excluded from the separation term too, and that costs nothing to state
+ * because it costs nothing in fact: every monster's standoff is further out
+ * than its personal space (`monster-reach.test.ts` is what keeps that true), so
+ * separation against a target it has stopped in front of never fires anyway.
+ * One rule -- "not the thing you are walking at" -- reads better than two.
+ *
+ * The target stays a *blocker*, because not avoiding something is not the same
+ * as being allowed to stand in it.
+ *
+ * Filtered into a reused array, since this runs once per body per tick and the
+ * common case (nothing to filter) returns the caller's array untouched.
+ */
+const AVOIDABLE: CrowdBody[] = [];
+
+function avoidable(
+  entity: ServerEntity,
+  neighbours: readonly CrowdBody[],
+): readonly CrowdBody[] {
+  const targetId = entity.targetId;
+  if (targetId === null) return neighbours;
+  let holdsTarget = false;
+  for (const neighbour of neighbours) {
+    if (neighbour.id === targetId) {
+      holdsTarget = true;
+      break;
+    }
+  }
+  if (!holdsTarget) return neighbours;
+  AVOIDABLE.length = 0;
+  for (const neighbour of neighbours) {
+    if (neighbour.id !== targetId) AVOIDABLE.push(neighbour);
+  }
+  return AVOIDABLE;
 }
 
 /** An intent for a body that was not going to send one, so it can step aside. */

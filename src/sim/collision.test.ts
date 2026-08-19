@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_WORLD,
+  bodyBlocked,
   circleBlocked,
   circleHitsCircle,
   circleHitsRect,
@@ -178,5 +180,92 @@ describe('separation pass', () => {
       expect(circleBlocked(spot, ENEMY_RADIUS, WALLS)).toBe(false);
       expect(insideWorld(spot, ENEMY_RADIUS)).toBe(true);
     }
+  });
+});
+
+describe('bodyBlocked', () => {
+  const BODY: Circle = { x: 100, y: 0, r: 20 };
+  const RADIUS = 20;
+
+  it('refuses a step that would land inside another body', () => {
+    expect(bodyBlocked({ x: 0, y: 0 }, { x: 65, y: 0 }, RADIUS, [BODY])).toBe(true);
+  });
+
+  it('permits a step that stops short of one', () => {
+    expect(bodyBlocked({ x: 0, y: 0 }, { x: 55, y: 0 }, RADIUS, [BODY])).toBe(false);
+  });
+
+  it('permits any step at all when there is nobody in the way', () => {
+    expect(bodyBlocked({ x: 0, y: 0 }, { x: 100, y: 0 }, RADIUS, [])).toBe(false);
+  });
+
+  describe('already overlapping', () => {
+    // The escape-permissive clause, which is the whole difference between a
+    // block and a trap. Nothing displaces a body in this game, so a body that
+    // has ended up inside another one -- a respawn, an admin conjuring one on
+    // top of another -- has to be able to walk out under its own power. A plain
+    // overlap test refuses every direction, including the one that leaves.
+    const inside = { x: 90, y: 0 };
+
+    it('permits a step that opens the gap', () => {
+      expect(bodyBlocked(inside, { x: 85, y: 0 }, RADIUS, [BODY])).toBe(false);
+    });
+
+    it('refuses a step that closes it further', () => {
+      expect(bodyBlocked(inside, { x: 95, y: 0 }, RADIUS, [BODY])).toBe(true);
+    });
+
+    it('refuses a step that keeps the same distance', () => {
+      // Sliding around inside another body at a constant radius is not
+      // escaping, and letting it through would let a body orbit inside one.
+      const sideways = { x: 100 + (inside.x - 100) * Math.cos(0.3), y: 10 * Math.sin(0.3) };
+      const before = Math.hypot(inside.x - BODY.x, inside.y - BODY.y);
+      const after = Math.hypot(sideways.x - BODY.x, sideways.y - BODY.y);
+      expect(after).toBeLessThanOrEqual(before + 1e-9);
+      expect(bodyBlocked(inside, sideways, RADIUS, [BODY])).toBe(true);
+    });
+
+    it('lets a body walk all the way out over several steps', () => {
+      // The property that matters, rather than one step of it: from inside,
+      // repeatedly stepping away is never refused, so nothing is ever stranded.
+      let at = { x: 95, y: 0 };
+      for (let step = 0; step < 40; step++) {
+        const next = { x: at.x - 2, y: at.y };
+        expect(bodyBlocked(at, next, RADIUS, [BODY])).toBe(false);
+        at = next;
+      }
+      expect(Math.hypot(at.x - BODY.x, at.y - BODY.y)).toBeGreaterThan(RADIUS + BODY.r);
+    });
+  });
+
+  it('refuses when any one of several bodies is in the way', () => {
+    const crowd: Circle[] = [
+      { x: -100, y: 0, r: 20 },
+      { x: 100, y: 0, r: 20 },
+    ];
+    expect(bodyBlocked({ x: 0, y: 0 }, { x: 61, y: 0 }, RADIUS, crowd)).toBe(true);
+    expect(bodyBlocked({ x: 0, y: 0 }, { x: 0, y: 61 }, RADIUS, crowd)).toBe(false);
+  });
+});
+
+describe('slideCircle against bodies', () => {
+  it('slides along a body the way it slides along a wall', () => {
+    const body: Circle = { x: 30, y: 0, r: 20 };
+    // Straight at it and diagonally past it: the diagonal keeps its y.
+    const landed = slideCircle({ x: 0, y: 0 }, 6, 6, 16, DEFAULT_WORLD, [body]);
+    expect(landed.y).toBeGreaterThan(0);
+  });
+
+  it('stops a body walking dead-on into another', () => {
+    const body: Circle = { x: 40, y: 0, r: 20 };
+    const landed = slideCircle({ x: 0, y: 0, }, 6, 0, 16, DEFAULT_WORLD, [body]);
+    expect(landed).toEqual({ x: 0, y: 0 });
+  });
+
+  it('is unchanged when no bodies are passed', () => {
+    const from = { x: 0, y: 0 };
+    expect(slideCircle(from, 6, 6, 16, DEFAULT_WORLD)).toEqual(
+      slideCircle(from, 6, 6, 16, DEFAULT_WORLD, []),
+    );
   });
 });

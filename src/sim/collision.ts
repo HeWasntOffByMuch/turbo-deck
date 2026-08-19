@@ -195,7 +195,7 @@ export function bodyBlocked(
     if (afterSq >= reach * reach) continue;
     const wasX = from.x - body.x;
     const wasY = from.y - body.y;
-    if (afterSq < wasX * wasX + wasY * wasY) continue;
+    if (afterSq > wasX * wasX + wasY * wasY) continue;
     return true;
   }
   return false;

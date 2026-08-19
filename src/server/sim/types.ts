@@ -368,6 +368,18 @@ export interface ServerEntity {
   readonly repathAtTick: number;
   /** Where the target was when `path` was planned, to notice it moving away. */
   readonly pathGoal: Vec2 | null;
+  /**
+   * When this body last asked to walk and got nowhere (spec 184), or 0 when it
+   * is moving freely.
+   *
+   * Server-only and off the wire: it changes nothing a client draws, and what
+   * it exists for is a decision the sim makes on the body's behalf. A crowd
+   * with no shove in it can wedge -- a body cornered between a wall and a
+   * neighbour has a free direction and no blend of route and avoidance that
+   * points at it -- and the way out is to notice that it has been trying for a
+   * while and go looking. This is the "for a while".
+   */
+  readonly stuckSinceTick: number;
   /** Ability resource. Live, clamped to `stats.maxResource` on recalculation. */
   readonly resource: number;
   /** The cast in progress, or null when free (spec 062). */

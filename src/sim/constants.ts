@@ -207,6 +207,37 @@ export const CROWD_SIDESTEP_WEIGHT = 1;
 // can never be as long as the direction it is added to, the sum can never be
 // zero: no arrangement of neighbours cancels a body's route and strands it.
 export const CROWD_MAX_AVOID = 0.8;
+// How long a body may ask to walk and get nowhere before it starts looking for
+// a way round (spec 184).
+//
+// A sixth of a second, which is long enough that a body brushing past another
+// never triggers it and short enough that a wedged one is not left standing.
+// The delay is the point: probing is the expensive branch and the jittery one,
+// so it is reserved for a body that is demonstrably stuck rather than one that
+// lost a single step.
+export const CROWD_STUCK_TICKS = 10;
+// What counts as getting somewhere, as a fraction of a full step.
+//
+// The stuck clock cannot be "did not move at all", and that was learned by
+// writing it that way: a body wedged on a wall corner still slides a few
+// thousandths of a unit most ticks, which cleared the clock every time and left
+// it inching for ever without once qualifying for a way out.
+//
+// It cannot be too small either. Measured against a pack of sixteen filing
+// through a two-body gap, a fiftieth of a step never clears the jam at all and
+// a fifth over-diverts; a tenth empties it fastest, and the shape of that curve
+// is why this is a measured number rather than a chosen one. What it has to
+// separate is a body *waiting* -- which is what most of a queue is doing, and
+// which must not count -- from a body that has nowhere left to go.
+export const CROWD_STUCK_PROGRESS = 0.1;
+// The directions a stuck body tries, in degrees off the one it wanted, nearest
+// first. Both signs of each are tried, so this is six candidates.
+//
+// It stops at 135 rather than reaching 180 because a body that can only go
+// backwards is behind something rather than beside it, and reversing puts it at
+// the back of a queue it was already in -- the route will bring it round again
+// on its own once whatever is in front has moved.
+export const CROWD_FAN_DEGREES: readonly number[] = [40, 80, 135];
 
 // --- Walking on ground that has height (spec 056) ---
 // The steepest single-tick climb a body may make. A move that would gain more

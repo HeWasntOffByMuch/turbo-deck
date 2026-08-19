@@ -50,6 +50,7 @@
 
 import {
   CROWD_CELL_SIZE,
+  CROWD_FAN_DEGREES,
   CROWD_LOOKAHEAD,
   CROWD_MARGIN,
   CROWD_MAX_AVOID,
@@ -129,9 +130,24 @@ export function steer(
     const awayY = dy / distance;
 
     // --- separation ------------------------------------------------------
+    // Ramped across the *margin* rather than across the whole distance, so it
+    // reaches full strength exactly where the bodies touch and fades to nothing
+    // at the edge of their personal space.
+    //
+    // Measured from zero instead -- which is the obvious way to write it -- two
+    // bodies at touching distance get a fifth of the available push, and a
+    // fifth is not enough to get either of them out of the other's way. That is
+    // fine in the open, where there is time, and deadlocks a funnel: two bodies
+    // arriving side by side at a gap end up blocked by each other and by the
+    // wall, each nudging the other far too gently to break the symmetry, and
+    // with no shove in the game to grind them past it they simply stop. The
+    // steepness has to be here, at contact, because contact is the point past
+    // which blocking makes it unrecoverable.
     const personal = desired ? touch + CROWD_MARGIN : touch;
     if (distance < personal) {
-      const weight = ((personal - distance) / personal) * CROWD_SEPARATION_WEIGHT;
+      const band = personal - touch;
+      const closeness = band > 1e-9 ? Math.min(1, (personal - distance) / band) : 1;
+      const weight = closeness * CROWD_SEPARATION_WEIGHT;
       avoidX += awayX * weight;
       avoidY += awayY * weight;
     }
@@ -249,5 +265,50 @@ export class CrowdIndex {
       if (other && other.id !== body.id) this.found.push(other);
     }
     return this.found;
+  }
+}
+
+/**
+ * The directions a wedged body tries, after the one it actually wanted.
+ *
+ * A crowd with no shove in it can reach a standstill that no blend of route and
+ * avoidance escapes: a body cornered between a wall and a neighbour often *has*
+ * a free direction, and the sum of "where I am going" and "get away from you"
+ * simply does not point at it. So a body that has been stuck long enough stops
+ * blending and starts asking -- which is context steering, and is the cheapest
+ * established answer to exactly this.
+ *
+ * The fan opens around the **route**, not around the steered direction. Fanning
+ * around the bent one was the first version and it is subtly wrong twice over:
+ * the candidates are measured from a direction the body never chose, and the
+ * route itself -- the single most likely answer, and free -- is not among them.
+ *
+ * It runs only for a body that has been unable to move for `CROWD_STUCK_TICKS`,
+ * which is what keeps it affordable: every candidate costs a collision query,
+ * and in open ground nothing is ever stuck, so nothing ever probes.
+ *
+ * **The side is broken on id parity, and that is the opposite of the rule the
+ * side-step uses on purpose.** Two bodies passing each other need the *same*
+ * handedness, because they point opposite ways and one shared rule sends them
+ * down opposite sides. Two bodies wedged against each other are pointing the
+ * same way at the same obstacle, so a shared rule sends them both at the same
+ * gap and neither gets through: here the symmetry is the problem rather than
+ * the solution, and the ids are what break it.
+ */
+export function* escapes(desired: Vec2, tieBreak: number): Generator<Vec2> {
+  const leftFirst = (tieBreak & 1) === 0;
+  // The route itself, first and unbent. The caller hands in what the body
+  // *wanted* rather than what avoidance made of it, so this candidate is the
+  // rule that avoidance is a preference and never a veto: a crowd that has
+  // steered a body into a wall must not also be what keeps it there.
+  yield desired;
+  for (const degrees of CROWD_FAN_DEGREES) {
+    const radians = (degrees * Math.PI) / 180;
+    for (const sign of leftFirst ? [1, -1] : [-1, 1]) {
+      const angle = radians * sign;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      yield { x: desired.x * cos - desired.y * sin, y: desired.x * sin + desired.y * cos };
+    }
   }
 }
