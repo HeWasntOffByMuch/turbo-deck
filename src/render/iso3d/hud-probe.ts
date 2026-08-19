@@ -34,7 +34,7 @@ interface ProbeApi {
   used(): string[];
   /** Land a blow at the rig's one world point (spec 096). */
   hit(damage: number, crit: boolean): void;
-  /** Earn `amount` experience at the same point (spec 183). */
+  /** Earn `amount` experience at the same point (spec 184). */
   reward(amount: number): void;
   /** Draw `frames` more frames, so a floating number gets somewhere. */
   advance(frames: number): void;
@@ -95,7 +95,7 @@ const used: string[] = [];
 let overrides: Record<string, unknown> = {};
 
 /**
- * One world point, in the middle of the frame (spec 183).
+ * One world point, in the middle of the frame (spec 184).
  *
  * It used to answer `onScreen: false` from the origin, which was fine while
  * nothing here spawned a floating number -- the projector's only other caller

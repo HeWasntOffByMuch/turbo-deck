@@ -189,7 +189,7 @@ describe('DamagePopups', () => {
 });
 
 /**
- * The experience number's path (spec 183).
+ * The experience number's path (spec 184).
  *
  * Every one of these is about the *pair*: the reward is spawned on the same
  * tick, on the same body, from the same anchor as the killing blow's number, so

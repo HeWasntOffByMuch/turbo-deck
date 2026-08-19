@@ -20,7 +20,7 @@
  * `hud.ts` owns the elements and nothing else; every judgement about lifetime,
  * lanes, fade and placement lives here, where a test can reach it.
  *
- * Since spec 183 the field carries a second kind of number -- what a kill was
+ * Since spec 184 the field carries a second kind of number -- what a kill was
  * worth -- and the two differ only in the path they take. Everything else about
  * a floating number was already right for both: one capacity over the pair, one
  * projection, one expiry, one place a test can reach any of it.
@@ -83,7 +83,7 @@ export const NUMBER_LANES: readonly { readonly x: number; readonly y: number }[]
 ];
 
 /**
- * Which path a number takes (spec 183).
+ * Which path a number takes (spec 184).
  *
  * A property of one popup rather than of the field, so both kinds share the
  * capacity, the projection and the expiry spec 096 already got right.

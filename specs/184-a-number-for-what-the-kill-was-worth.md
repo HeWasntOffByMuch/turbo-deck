@@ -1,4 +1,4 @@
-# 183 — A number for what the kill was worth
+# 184 — A number for what the kill was worth
 
 ## Problem
 
@@ -96,7 +96,7 @@ const XP_PURPLE_DARK = '#200d36';  // the number's outline and the strip's groun
 and a second entry beside `addDamage`:
 
 ```ts
-/** `amount` experience was earned, at the world point `at` (spec 183). */
+/** `amount` experience was earned, at the world point `at` (spec 184). */
 addExperience(group: number, at: WorldAnchor, amount: number): void;
 ```
 

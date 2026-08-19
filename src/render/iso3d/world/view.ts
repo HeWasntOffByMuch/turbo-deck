@@ -1024,7 +1024,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const BLOOD_HEIGHT = 26;
 
   /**
-   * Experience, as gains rather than as a running total (spec 183).
+   * Experience, as gains rather than as a running total (spec 184).
    *
    * The arithmetic is pure and lives in `xp-gain.ts`; this is the memory it
    * needs between frames and nothing else.
@@ -1077,7 +1077,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (!at) return;
     hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
     // Where the reward for this body will go, if there turns out to be one
-    // (spec 183). Remembered rather than acted on, because the experience is not
+    // (spec 184). Remembered rather than acted on, because the experience is not
     // in this message: the server grants it against the store and sends a whole
     // `Stats` some frames later, with nothing in it saying which kill it was
     // for. This is the client's half of that join -- the same anchor the damage
@@ -2302,7 +2302,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       style.height = `${box.height}px`;
     }
 
-    // What the last kill was worth, once the server has said (spec 183).
+    // What the last kill was worth, once the server has said (spec 184).
     //
     // Read here rather than in a message handler because the reward has no
     // message of its own: a `Stats` arrives, and the only way to tell a gain

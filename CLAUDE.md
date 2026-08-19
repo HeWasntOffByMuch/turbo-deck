@@ -1638,7 +1638,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  `experienceForLevel` rather than a copy of the curve, because
                  the strip and the character sheet disagreeing about how far
                  along somebody is is the kind of bug nobody reports -- they
-                 just stop trusting the bar. Since spec 183 it is purple rather
+                 just stop trusting the bar. Since spec 184 it is purple rather
                  than gold, and the recolour is the smaller half of that spec:
                  experience now has *two* places it is shown -- the strip and a
                  number that floats off a kill -- and one colour to learn is
@@ -1647,7 +1647,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  can still be called off and a floating gold number is a
                  critical hit; a strip at the frame's own edge could get away
                  with sharing a hue and a number cannot.
-                 xp-gain.ts is the other half (spec 183), and it exists because
+                 xp-gain.ts is the other half (spec 184), and it exists because
                  **the server never says "you earned 12"**: experience arrives
                  as a whole `Stats` message with a level and a count in it,
                  replacing whatever was there, so a gain is a difference -- and

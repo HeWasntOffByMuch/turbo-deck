@@ -1,5 +1,5 @@
 /**
- * How much experience just arrived (spec 183).
+ * How much experience just arrived (spec 184).
  *
  * The server never says "you earned 12". It sends a whole `Stats` message with
  * a level and a count in it, replacing whatever was there before, so a gain is

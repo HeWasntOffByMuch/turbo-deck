@@ -189,7 +189,7 @@ const BAR_GUARD = '#8fa6c8';
 const POOL_RESOURCE = '#4f9fe0';
 
 /**
- * Experience (specs 164, 183). One palette, because experience now has two
+ * Experience (specs 164, 184). One palette, because experience now has two
  * places it is shown -- the number that floats off a kill and the strip along
  * the bottom edge -- and they are the same fact: what that body was worth, and
  * how far it moved you. A player who learns the colour from one reads the other
@@ -262,7 +262,7 @@ export interface HudHandle {
    */
   addDamage(entityId: number, at: WorldAnchor, damage: number, crit: boolean): void;
   /**
-   * `amount` experience was earned, at the world point `at` (spec 183).
+   * `amount` experience was earned, at the world point `at` (spec 184).
    *
    * The same field and the same rules as {@link addDamage} -- a world point
    * taken once and re-projected, so the reward for a kill stays on the ground
@@ -1481,15 +1481,16 @@ export function createHud(
       if (whole <= 0) return;
       const element = document.createElement('div');
       element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);display:none;';
-      // The bare count, with nothing spelling out what it is. The colour and
-      // the place already say that -- it is under the blow's number, in the
-      // strip's own purple -- and `+24 XP` was three times the width of the
-      // number it is stacked beneath, which made a column read as a caption.
+      // Labelled, because the colour and the column say "this is not damage"
+      // and neither of them says what it *is*: a purple number under a white
+      // one is a second quantity, and which quantity is the whole point.
       //
-      // Smaller than a blow's and smaller still than a critical's: this is the
-      // second number in a pair spawned on one tick, and the one whose job is
-      // to be distinguishable rather than to be the headline.
-      element.innerHTML = pixelTextSvg(String(whole), {
+      // What the label cost was measured before it was kept -- `+24 XP` is
+      // three times the width of the `24` alone, which is why this is the
+      // smallest text of the pair, at half a critical's scale. It is the
+      // second number spawned on one tick and its job is to be readable
+      // rather than to be the headline.
+      element.innerHTML = pixelTextSvg(`+${whole} XP`, {
         scale: 2,
         fill: XP_PURPLE,
         outline: XP_PURPLE_DARK,

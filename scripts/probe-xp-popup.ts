@@ -1,5 +1,5 @@
 /**
- * The reward number, in a real browser (spec 183).
+ * The reward number, in a real browser (spec 184).
  *
  *   npx tsx scripts/probe-xp-popup.ts
  *
