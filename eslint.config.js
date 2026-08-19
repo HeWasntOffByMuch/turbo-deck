@@ -142,7 +142,7 @@ const PURE_RENDER = [
   'src/render/iso3d/world/monster-look.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',
-  'src/render/iso3d/world/key-actions.ts',
+  'src/render/iso3d/world/control-actions.ts',
   'src/render/iso3d/world/interpolate.ts',
   'src/render/iso3d/world/pixel-font.ts',
   'src/render/iso3d/world/spawner-overlay.ts',
@@ -442,12 +442,20 @@ export default tseslint.config(
     },
   },
   {
-    // Nothing in the Play tab branches on a raw key (spec 125).
+    // Nothing in the Play tab branches on a raw key or a raw button (specs 125,
+    // 189).
     //
     // `world/view.ts` is the one adapter: it asks the InputMap what actions a
-    // KeyboardEvent fires and acts on those, so every key there is rebindable.
-    // Anything else in this directory reading `.key` or comparing a `.code` is
-    // a decision the player cannot reach, which is the thing this phase removed.
+    // KeyboardEvent or a MouseEvent fires and acts on those, so every control
+    // there is rebindable. Anything else in this directory reading `.key` or
+    // `.button`, or comparing a `.code`, is a decision the player cannot reach,
+    // which is the thing these two phases removed.
+    //
+    // `button` is prophylactic exactly as `key` is -- view.ts is the only file
+    // here that ever read one, and it is in `ignores`. What the rule buys is that
+    // the next file to want the mouse has to go through the map, rather than
+    // rediscovering `if (event.button === 2)` and putting the primary verbs back
+    // out of the player's reach.
     //
     // The editor and the sandboxes are deliberately not covered: they are dev
     // surfaces, not player-facing input (docs/ui/00-architecture.md, decision 6).
@@ -461,6 +469,12 @@ export default tseslint.config(
           property: 'key',
           message:
             'Gameplay does not read raw keys. Ask the InputMap what actions fired (src/ui/input/), so the binding is one a player can change.',
+        },
+        {
+          object: 'event',
+          property: 'button',
+          message:
+            'Gameplay does not read raw mouse buttons. Ask the InputMap what actions fired (src/ui/input/), so the binding is one a player can change.',
         },
       ],
     },

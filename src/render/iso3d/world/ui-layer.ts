@@ -32,11 +32,11 @@ import type { Color } from '../../../ui/core/color.js';
 import { Canvas2dSurface } from '../../../ui/render/canvas2d.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
-import type { WindowId } from './key-actions.js';
+import type { WindowId } from './control-actions.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
 import { DEFAULT_SHOW_FPS, type ScaleChoice } from '../../../ui/input/display-store.js';
 
-export type { WindowId } from './key-actions.js';
+export type { WindowId } from './control-actions.js';
 export interface UiLayerOptions extends UiScreensOptions {
   /** The saved scale preference, read at the DOM edge. `'auto'` by default. */
   readonly scale?: ScaleChoice;

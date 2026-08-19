@@ -63,7 +63,7 @@ import { containerViewOf } from './inventory-model.js';
 import { swapProgress, type SwapProgress } from './skill-swap-view.js';
 import { shopViewOf } from './shop-model.js';
 import { tradeViewOf } from './trade-model.js';
-import type { WindowId } from './key-actions.js';
+import type { WindowId } from './control-actions.js';
 import { escapeTaken, reachesGameplay, type Routing } from './ui-routing.js';
 
 export interface UiScreensOptions {
@@ -1068,6 +1068,23 @@ export class UiScreens {
    * the *press*, and the router's job is delivery.
    */
   handlePointer(phase: 'down' | 'up' | 'move', pos: Point, button: number, mods: Modifiers): boolean {
+    // A rebind row waiting for a chord owns every press, wherever it lands
+    // (spec 189) -- the same three lines `handleKey` opens with, and handed
+    // directly for the same reason: a press does not take focus (spec 137), so
+    // the screen the button has to reach is not holding anything.
+    //
+    // The *release* is consumed too, and that is not symmetry for its own sake:
+    // the router only emits a click from the widget that took the press, so a
+    // press it never saw cannot become one -- but a release it *does* see while
+    // the capture is still open would go to whatever is under the cursor.
+    //
+    // `move` is deliberately not consumed. `view.ts` reads a consumed move as
+    // "the cursor is over a window" and nulls it, so swallowing moves would
+    // freeze every hover in the interface for the length of a capture.
+    if (phase !== 'move' && this.keybindings.capturing) {
+      if (phase === 'down') this.keybindings.capturePointer(button, mods);
+      return true;
+    }
     if (phase === 'down') this.focusOnPress(pos);
     // A press on the world with something in hand puts it down (spec 172), and
     // is not passed on: the button that drops an item must not also order the
@@ -1116,6 +1133,10 @@ export class UiScreens {
   }
 
   handleWheel(pos: Point, delta: number, mods: Modifiers): boolean {
+    // A capture takes a notch as readily as a press (spec 189): `WheelUp` and
+    // `WheelDown` are what the camera ships bound to, so a player who wants them
+    // swapped has to be able to turn the wheel at an armed row.
+    if (this.keybindings.capturing && this.keybindings.captureWheel(delta, mods)) return true;
     const consumed = this.root.handle({ kind: 'wheel', pos, delta, mods, time: this.now });
     return !reachesGameplay(this.routingOf(consumed, 'wheel'));
   }

@@ -15,7 +15,7 @@ import type { Rect } from '../../../ui/core/geom.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
 import { captureLayout, LAYOUT_VERSION, type StoredLayout } from '../../../ui/core/layout-store.js';
-import type { WindowId } from './key-actions.js';
+import type { WindowId } from './control-actions.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 
 const VIEWPORT = { width: 400, height: 300 };
@@ -673,6 +673,106 @@ describe('the options window (spec 135)', () => {
     screens.update(viewFixture(), 16);
     expect(screens.root.contexts.ids()).not.toContain('textEntry');
     expect(screens.handleKey('KeyW', 'down', NONE)).toBe(false);
+  });
+
+  /**
+   * The same path for a mouse button (spec 189).
+   *
+   * Every step through the mount's own doors again, because the interesting half
+   * is the routing rather than the screen: an armed capture has to be offered a
+   * press *before* the router gets it, or the press goes to whatever widget is
+   * under the cursor and the binding never happens.
+   */
+  /**
+   * A point the interface does not want, found rather than assumed.
+   *
+   * The window is placed by the mount and moves whenever its content does, so a
+   * hard-coded corner is a test that passes until somebody widens a row. The
+   * whole claim being made here is about a press the interface would otherwise
+   * have let through, so the point has to be one it lets through.
+   */
+  function overTheWorld(screens: UiScreens): { x: number; y: number } {
+    // The options window fills all but an eight-pixel margin of this viewport, so
+    // the candidates start in the margin and the middle is only the fallback.
+    for (const y of [2, 297, 150]) {
+      for (const x of [2, 397, 200]) {
+        if (!screens.handlePointer('move', { x, y }, -1, NONE)) return { x, y };
+      }
+    }
+    throw new Error('the interface wanted every candidate point');
+  }
+
+  it('binds the next mouse button pressed after the button', () => {
+    // `move.north` rather than one of the new rows, and not for convenience: a
+    // movement action landing on a mouse button is the claim spec 189 is really
+    // making -- an action does not know what pressed it, so the vocabulary is
+    // shared in both directions.
+    const map = new InputMap();
+    const { screens, requests } = harness({ map });
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+    const world = overTheWorld(screens);
+
+    pressBindButton(screens, 'move.north');
+    // Over the world, which is where a player's next click most likely lands --
+    // and the one place a press would otherwise have reached gameplay.
+    expect(screens.handlePointer('down', world, 1, NONE)).toBe(true);
+
+    expect(map.bindingsFor('move.north').primary?.code).toBe('MouseMiddle');
+    expect(requests).toContain('bindings');
+  });
+
+  it('eats the release of the press it bound', () => {
+    // The router only emits a click from the widget that took the press, so a
+    // press it never saw cannot become one -- but a release it *does* see while
+    // the capture is open would still reach whatever is under the cursor.
+    const { screens } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+    const world = overTheWorld(screens);
+
+    pressBindButton(screens, 'move.north');
+    expect(screens.handlePointer('down', world, 2, NONE)).toBe(true);
+    expect(screens.handlePointer('up', world, 2, NONE)).toBe(false);
+    // And the capture is over, so the next press is the world's again.
+    expect(screens.root.contexts.ids()).not.toContain('textEntry');
+    expect(screens.handlePointer('down', world, 2, NONE)).toBe(false);
+  });
+
+  it('lets a move through to the router while it waits', () => {
+    // A capture consumes presses and releases and deliberately not moves. Not
+    // symmetry: consuming a move means the router never sees it, so hover stops
+    // updating -- the tooltip, the carry and every button's pressed look freeze
+    // for the length of the capture, which is exactly when a player is moving
+    // the cursor around looking at rows.
+    //
+    // The *return* is true either way and says nothing about this: a capture
+    // pushes `textEntry`, which blocks pointer routing to gameplay whatever
+    // happens here. What is being asserted is that the event still arrived.
+    const { screens } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+
+    const secondary = [...screens.root.content.walk()].find(
+      (widget) => widget.name === 'bind:move.north:secondary',
+    );
+    if (!secondary) throw new Error('no secondary bind button');
+
+    pressBindButton(screens, 'move.north');
+    screens.handlePointer('move', { x: secondary.rect.x + 2, y: secondary.rect.y + 2 }, -1, NONE);
+    expect(screens.root.paintContext().hovered).toBe(secondary);
+  });
+
+  it('binds a wheel notch turned at an armed row', () => {
+    const map = new InputMap();
+    const { screens } = harness({ map });
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+    const world = overTheWorld(screens);
+
+    pressBindButton(screens, 'move.north');
+    expect(screens.handleWheel(world, -1, NONE)).toBe(true);
+    expect(map.bindingsFor('move.north').primary?.code).toBe('WheelDown');
   });
 });
 

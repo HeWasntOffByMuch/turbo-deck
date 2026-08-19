@@ -50,11 +50,11 @@ export interface Chord {
 
 /** Every pointer control that can carry a binding. A closed table, not a prefix. */
 export const POINTER_CODES = {
-  MouseLeft: 'Left Click',
-  MouseMiddle: 'Middle Click',
-  MouseRight: 'Right Click',
-  MouseBack: 'Mouse Back',
-  MouseForward: 'Mouse Fwd',
+  MouseLeft: 'LMB',
+  MouseMiddle: 'MMB',
+  MouseRight: 'RMB',
+  Mouse4: 'Mouse 4',
+  Mouse5: 'Mouse 5',
   WheelUp: 'Wheel Up',
   WheelDown: 'Wheel Down',
 } as const;
@@ -70,6 +70,16 @@ A **table** rather than a `startsWith('Mouse')` heuristic, for the reason
 `naming.ts` is a table: a heuristic is a second, invisible answer to "is this a
 pointer chord", and there is no place to put the label. `keyLabel` consults it
 first, so `chordLabel` needs no branch and every existing label is unchanged.
+
+The labels are abbreviations, and they were words first. `Right Click` is
+eleven characters and `Shift+Right Click` is seventeen, which is two more than a
+chord button holds at the gallery's viewport -- so the one row this spec exists
+to add drew as `hift+Right Clic`. A label is *drawn* rather than typeset, so it
+clips in silence, and widening the button only moved the clip onto
+`Previous control` in the column beside it. They also have to avoid every word
+`keyLabel` already produces: `Right` alone would have been the obvious short one
+and is taken -- `keyLabel('ArrowRight')` returns it -- so a movement row and a
+pointer row would have read identically in the same window.
 
 The version does **not** move. A stored profile is untouched — `readChord`
 already accepts `{"code":"MouseRight"}` and always has — and a build that
@@ -173,9 +183,12 @@ three of the five rows it can be sitting on.
 - Every pointer code in `POINTER_CODES` has a label, `pointerCode` is a bijection
   onto the five button codes for buttons 0-4 and null past them, and `wheelCode`
   is null for zero notches.
-- `chordLabel({code:'MouseRight', shift:true})` is `Shift+Right Click`, and no
-  pointer label collides with a key label — `keyLabel('ArrowLeft')` is already
-  `Left`.
+- `chordLabel({code:'MouseRight', shift:true})` is `Shift+RMB`, and no pointer
+  label collides with a key label — `keyLabel('ArrowLeft')` is already `Left`.
+- Every shipped chord label and every action name fits the box it is drawn in,
+  at the viewport the goldens are judged at, measured with the same
+  `measureText` the widget lays itself out with. `keys-pointer.png` is the
+  picture beside it, and it is the only reason the clip above was found.
 - Resolution is exact in modifiers, on a button as on a key: `MouseRight` fires
   `world.order` and not `world.trade`; `Shift+MouseRight` fires `world.trade` and
   not `world.order`.

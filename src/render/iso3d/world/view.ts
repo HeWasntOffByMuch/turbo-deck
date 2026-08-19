@@ -89,7 +89,8 @@ import { effectsForBlow, REDUNDANT_SERVER_EFFECTS, type GoreLevel } from './vfx-
 import { moveIntent, RoutePlanner } from './intent.js';
 import { pickupLead, pickupOrderFor } from './loot-drop.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
-import { decideKeyDown, decideKeyUp } from './key-actions.js';
+import { decideControlDown, decideControlUp, type ControlDecision } from './control-actions.js';
+import { pointerCode, wheelCode } from '../../../ui/input/actions.js';
 import { UiLayer } from './ui-layer.js';
 import { nearestVendorTo } from './shop-model.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
@@ -1499,11 +1500,30 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // does not know about (spec 140).
     heldKeys.add(event.code);
 
-    const decision = decideKeyDown(inputMap, event.code, modifiersOf(event));
+    if (applyDecision(decideControlDown(inputMap, event.code, modifiersOf(event)))) {
+      event.preventDefault();
+    }
+  };
+
+  /**
+   * Everything the Play tab does about one control press (specs 125, 189).
+   *
+   * One applier for the keyboard, the mouse and the wheel, because a decision is
+   * about an *action* and an action does not know what pressed it. Two appliers
+   * would be two answers to "what does `skillbar.3` do", and the one that a
+   * player could not reach from a mouse button would be the one that quietly
+   * stopped matching.
+   *
+   * Returns whether the browser's own default should be prevented. Only the
+   * branches that had a default worth taking say so, which is exactly the set
+   * that said so while this was inline.
+   */
+  function applyDecision(decision: ControlDecision): boolean {
+    let prevent = false;
 
     for (const id of decision.windows) {
       ui.toggle(id);
-      event.preventDefault();
+      prevent = true;
     }
 
     for (const action of decision.move) {
@@ -1527,7 +1547,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // gets here.
     if (decision.toggleStats) {
       hud.toggleReadout();
-      event.preventDefault();
+      prevent = true;
     }
 
     for (const slot of decision.skillbar) {
@@ -1538,7 +1558,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       const ability = abilityForSlot(actionBar, slot);
       if (!ability) continue;
       pressAbility(ability);
-      event.preventDefault();
+      prevent = true;
     }
 
     // Cancelling calls off a wind-up. It refunds the cost and the cooldown, so
@@ -1564,7 +1584,44 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       clearAim();
       if (!committed) ui.toggle('options');
     }
-  };
+
+    // The verbs the pointer ships bound to, and they are branches on an action
+    // exactly like every other one above (spec 189). Which is the whole change:
+    // they used to be `if (event.button === 2)` a hundred lines down, with no id,
+    // no label and no row in the window that offers to rebind everything else.
+    // Nothing here asks what pressed them, so a key bound to `world.order` gives
+    // an order at the cursor and a button bound to `skillbar.3` casts.
+    if (decision.confirmAim) confirmAim();
+
+    if (decision.trade) offerTradeAtCursor();
+
+    if (decision.order) {
+      // An order over a pending aim means *no*, and only that: no move order, no
+      // attack order, nothing under the cursor acted on. The control that calls a
+      // blow off cannot also mean "and go there instead" -- and it is the only
+      // reading under which changing your mind is genuinely free.
+      if (pendingAim) pendingAim = null;
+      else issueOrder();
+    }
+
+    return prevent;
+  }
+
+  /**
+   * Offer a trade to the player under the cursor (spec 134).
+   *
+   * Anything that is not another player is left alone, and the server checks
+   * again. Its own function since spec 189, because it is now reachable from
+   * whatever `world.trade` is bound to rather than from one `if` inside the
+   * right-button branch.
+   */
+  function offerTradeAtCursor(): void {
+    const under = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
+    const picked = under === null ? null : client.view().entities.find((e) => e.id === under);
+    if (picked && picked.kind === EntityKind.Player && picked.id !== client.view().selfEntityId) {
+      client.inviteToTrade(picked.id);
+    }
+  }
 
   const onKeyUp = (event: KeyboardEvent): void => {
     ui.handleKey(event.code, 'up', modifiersOf(event));
@@ -1574,7 +1631,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Released whatever the interface said, always. A release that the UI
     // swallowed is a held action with no way out, and the symptom is walking
     // into a wall until the same key is pressed and released again.
-    for (const action of decideKeyUp(inputMap, event.code)) held.delete(action);
+    for (const action of decideControlUp(inputMap, event.code)) held.delete(action);
   };
 
   const mouseModifiers = (event: MouseEvent): Modifiers => ({
@@ -1599,50 +1656,32 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     cursor = null;
   };
   const onMouseUp = (event: MouseEvent): void => {
-    // The world has nothing to do with a mouse release -- an order is given on
-    // the press -- but a drag ends on one, so the interface has to hear it.
+    // The world gives its orders on the press -- but a drag ends on a release, so
+    // the interface has to hear it.
     ui.handlePointer('up', pointIn(event), event.button, mouseModifiers(event));
+    // And a *held* action can be on a button since spec 189, so a release has to
+    // clear one. Unconditionally, exactly as `onKeyUp` does and for the same
+    // reason: a release the interface swallowed is an action held forever, and
+    // the symptom is walking into a wall until the same button is pressed and
+    // released again.
+    const code = pointerCode(event.button);
+    if (code === null) return;
+    for (const action of decideControlUp(inputMap, code)) held.delete(action);
   };
   const onMouseDown = (event: MouseEvent): void => {
     if (offerPress(pointIn(event), event.button, mouseModifiers(event))) return;
+    // Before the decision is applied, because three of the four pointer verbs
+    // read it: an order, a trade and an aim are all aimed at a point.
     const rect = canvas.getBoundingClientRect();
     cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
-    // Left-click confirms an aim, and does nothing at all without one
-    // (spec 080). It used to fire the first hotbar slot at the cursor, which is
-    // a click race rather than a decision.
-    if (event.button === 0) {
-      confirmAim();
-      return;
-    }
-
-    // One button does both, and which one it does is decided by what is under
-    // it (spec 070).
-    if (event.button !== 2) return;
-
-    // ...and shift makes it a third thing (spec 134): an offer to trade with the
-    // player under the cursor. On the button that already means "act on that
-    // body" rather than a key of its own, because a trade is aimed at somebody
-    // and a key is not. Anything that is not another player is left alone --
-    // and the server checks again.
-    if (event.shiftKey) {
-      const under = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
-      const picked = under === null ? null : client.view().entities.find((e) => e.id === under);
-      if (picked && picked.kind === EntityKind.Player && picked.id !== client.view().selfEntityId) {
-        client.inviteToTrade(picked.id);
-      }
-      return;
-    }
-
-    // Right-click over a pending aim means *no*, and only that: no move order,
-    // no attack order, nothing under the cursor acted on. The button that calls
-    // a blow off cannot also mean "and go there instead" -- and it is the only
-    // reading under which changing your mind is genuinely free.
-    if (pendingAim) {
-      pendingAim = null;
-      return;
-    }
-    issueOrder();
+    // And that is the whole handler now (spec 189). A button past the fifth has
+    // no code, so it has no binding and nothing happens -- which is what the
+    // middle button and the thumb buttons already did, said once instead of by
+    // falling off the end of a chain of `if`s.
+    const code = pointerCode(event.button);
+    if (code === null) return;
+    applyDecision(decideControlDown(inputMap, code, mouseModifiers(event)));
   };
 
   /**
@@ -1823,19 +1862,38 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   };
 
   /**
-   * The wheel, offered to the interface before the camera zoom takes it.
-   *
-   * On `root` and in the capture phase because the zoom listener is on the
-   * canvas (`scene.controls.attachWheelZoom`), and stopping propagation here is
-   * the only way to reach it first without that function learning about this
-   * one. Scrolling a shop's stock must not also pull the camera in.
+   * The wheel, offered to the interface before the camera takes it.
    *
    * `deltaY` is converted rather than forwarded: the interface counts notches
    * and points the other way (`wheelNotches`). Handed the raw number, every
    * window in the game scrolled backwards and a notch of it went end to end.
+   *
+   * The zoom is decided here rather than by a listener the scene attaches
+   * (spec 189). A notch is a chord -- `WheelUp` and `WheelDown` -- so which way
+   * the view moves comes from the action that fired and how far comes from the
+   * browser, which is what makes the two rows in the window rebindable rather
+   * than merely listed: swap them and the zoom inverts, unbind both and the
+   * wheel does nothing. Told only that *some* zoom fired, and zooming by raw
+   * `deltaY`, they would be two rows a player can capture and cannot change.
+   *
+   * Nothing is prevented when the notch resolves to nothing, on purpose: this
+   * listener is on `root` in the capture phase, so it also sees the wheel over
+   * the settings popovers, and an unconditional `preventDefault` here would stop
+   * those scrolling.
    */
   const onWheel = (event: WheelEvent): void => {
-    if (!ui.handleWheel(pointIn(event), wheelNotches(event.deltaY), mouseModifiers(event))) return;
+    const notches = wheelNotches(event.deltaY);
+    if (ui.handleWheel(pointIn(event), notches, mouseModifiers(event))) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const code = wheelCode(notches);
+    if (code === null) return;
+    const decision = decideControlDown(inputMap, code, mouseModifiers(event));
+    const acted = applyDecision(decision);
+    if (decision.zoom !== 0) scene.controls.zoomNotch(decision.zoom, event.deltaY, event.deltaMode);
+    if (!acted && decision.zoom === 0) return;
     event.preventDefault();
     event.stopPropagation();
   };

@@ -16,12 +16,34 @@
   },
   "definitions": {
     "chord": {
-      "description": "A physical key and its modifiers. `code` is KeyboardEvent.code, so a binding is to a position on the keyboard and survives a layout change.",
+      "description": "A physical control and its modifiers. `code` is KeyboardEvent.code for a key -- so a binding is to a position on the keyboard and survives a layout change -- or one of the pointer codes (spec 189). The pointer half is an enum rather than a free string because those codes are invented here rather than by the DOM: a typo'd \"Mouse5\" would be a row that validates, ships, and binds nothing.",
       "type": "object",
       "additionalProperties": false,
       "required": ["code"],
       "properties": {
-        "code": { "type": "string", "minLength": 1 },
+        "code": {
+          "anyOf": [
+            {
+              "description": "A mouse button or a wheel notch. Must match POINTER_CODES in src/ui/input/actions.ts.",
+              "type": "string",
+              "enum": [
+                "MouseLeft",
+                "MouseMiddle",
+                "MouseRight",
+                "Mouse4",
+                "Mouse5",
+                "WheelUp",
+                "WheelDown"
+              ]
+            },
+            {
+              "description": "A KeyboardEvent.code. Left open: the DOM owns that vocabulary and it is long.",
+              "type": "string",
+              "minLength": 1,
+              "not": { "pattern": "^(Mouse|Wheel)" }
+            }
+          ]
+        },
         "shift": { "type": "boolean" },
         "ctrl": { "type": "boolean" },
         "alt": { "type": "boolean" },
@@ -40,7 +62,7 @@
         },
         "category": {
           "type": "string",
-          "enum": ["movement", "combat", "skillbar", "ui", "debug"]
+          "enum": ["movement", "combat", "world", "skillbar", "camera", "ui", "debug"]
         },
         "label": { "type": "string", "minLength": 1 },
         "context": {

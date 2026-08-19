@@ -86,7 +86,7 @@ import { ACTION_BAR, sameBar, type ActionSlot } from './action-bar.js';
 import { deathOverlay } from './death.js';
 import { poolBars } from './pool-bars.js';
 import { xpBar, XP_SUBDIVISIONS } from './xp-bar.js';
-import type { WindowId } from './key-actions.js';
+import type { WindowId } from './control-actions.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
 const AIM_HIGHLIGHT = '#7fd4ff';
