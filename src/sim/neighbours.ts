@@ -1,5 +1,5 @@
 /**
- * Who is near enough to matter (spec 186).
+ * Who is near enough to matter (spec 187).
  *
  * Local avoidance asks one question of every moving body, sixty times a second:
  * *which other bodies are within a few of my own lengths?* Answered by looking

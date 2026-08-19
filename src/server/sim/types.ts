@@ -345,7 +345,7 @@ export interface ServerEntity {
   readonly radius: number;
   /**
    * How fast this body actually travelled last tick, world units per second
-   * (spec 186).
+   * (spec 187).
    *
    * The *actual* velocity, measured from where the body ended up, not the one
    * it asked for -- a body that walked into a tree has a velocity of nearly
@@ -385,7 +385,7 @@ export interface ServerEntity {
   /** Where the target was when `path` was planned, to notice it moving away. */
   readonly pathGoal: Vec2 | null;
   /**
-   * Which slot on its target's ring this body is walking to, or -1 (spec 186).
+   * Which slot on its target's ring this body is walking to, or -1 (spec 187).
    *
    * Held on the entity rather than recomputed, because the recomputation is
    * correct every tick and that is exactly the problem: a body that took the

@@ -38,6 +38,16 @@ interface ProbeApi {
   reward(amount: number): void;
   /** Draw `frames` more frames, so a floating number gets somewhere. */
   advance(frames: number): void;
+  /**
+   * Put one body's floating bar at a screen point, or take it away (spec 186).
+   *
+   * The per-body holder -- name, health, guard, cast bar, stun swirl, status row
+   * -- is drawn from `anchors` rather than from the view, because in the game a
+   * body's screen position is something the scene works out. There is no scene
+   * here, so a rig that wants to look at that holder has to say where the body
+   * is; nothing before spec 186 did, so it defaulted to none and stayed there.
+   */
+  anchor(at: { id: number; x: number; y: number } | null): void;
 }
 
 declare global {
@@ -71,7 +81,22 @@ const STATS = {
 function baseView(): Record<string, unknown> {
   return {
     tick: 400,
-    entities: [{ id: 1, kind: 0, typeId: 'player', x: 0, y: 0, z: 0, health: 96, maxHealth: 140, poise: 1 }],
+    entities: [
+      {
+        id: 1,
+        kind: 0,
+        typeId: 'player',
+        x: 0,
+        y: 0,
+        z: 0,
+        health: 96,
+        maxHealth: 140,
+        poise: 1,
+        // Spec 185. Empty by default so the row is off unless a case asks for
+        // it, which is what the shipped HUD does for a body carrying nothing.
+        statuses: [],
+      },
+    ],
     selfEntityId: 1,
     self: { x: 0, y: 0 },
     drops: [],
@@ -112,9 +137,19 @@ hud.onUse((abilityId) => used.push(abilityId));
 app.append(hud.element);
 hud.element.style.inset = '0';
 
+/**
+ * The floating bars this rig draws, if any (spec 186).
+ *
+ * Empty by default, which is what every case before spec 186 wanted: the bottom
+ * band is drawn from the view alone, and a body's own bar needs an *anchor* --
+ * a screen point the scene worked out. There is no scene here, so a rig that
+ * wants the per-body holder has to say where the body is.
+ */
+let anchors: { id: number; x: number; y: number; onScreen: boolean }[] = [];
+
 function draw(): void {
   const view = { ...baseView(), ...overrides } as unknown as ClientView;
-  hud.update(view, [], 400, 0, null, { abilityId: null, pending: false }, null, 1000);
+  hud.update(view, anchors, 400, 0, null, { abilityId: null, pending: false }, null, 1000);
 }
 
 draw();
@@ -123,6 +158,10 @@ window.hudProbe = {
   ready: true,
   set(next) {
     overrides = next;
+    draw();
+  },
+  anchor(at) {
+    anchors = at === null ? [] : [{ id: at.id, x: at.x, y: at.y, onScreen: true }];
     draw();
   },
   respawns: () => respawnCount,

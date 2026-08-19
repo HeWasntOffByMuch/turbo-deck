@@ -1,5 +1,5 @@
 /**
- * The ring a target's attackers stand on (spec 186).
+ * The ring a target's attackers stand on (spec 187).
  */
 
 import { describe, expect, it } from 'vitest';

@@ -1,4 +1,4 @@
-// Dev-only: what a crowd actually does (spec 186).
+// Dev-only: what a crowd actually does (spec 187).
 // Not part of the app. `npx tsx scripts/preview-crowd.ts`
 //
 // Five scenarios, each flown through the **real `step`** -- real monsters, real

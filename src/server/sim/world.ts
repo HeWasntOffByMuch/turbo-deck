@@ -481,7 +481,7 @@ export function isHostile(
 }
 
 /**
- * What one body decided this tick, before anything moved (spec 186).
+ * What one body decided this tick, before anything moved (spec 187).
  *
  * The movement pass used to decide and move a body in the same breath; the
  * crowd pass needs every decision in hand before the first body moves, so the
@@ -704,7 +704,7 @@ export function step(
 
   // --- 1 + 2: timers, intent, the crowd and movement, in creation order --
   //
-  // Until spec 186 this was one loop: each body decided and moved before the
+  // Until spec 187 this was one loop: each body decided and moved before the
   // next one was asked anything. That is the one shape reciprocal avoidance
   // cannot be built in, because it rests on every body solving against the same
   // snapshot -- a body that has already moved is a body its neighbours are
@@ -733,7 +733,7 @@ export function step(
   // would wall off a side of a target forever, and a body can leave a fight in
   // half a dozen ways that no release event covers -- it dies, it is dragged
   // past its leash, it loses interest, its chunk stops being simulated
-  // (spec 186).
+  // (spec 187).
   openSlotBoard(SLOTS, state.entities, isSimulated);
   for (const entity of state.entities.values()) {
     const current = working.get(entity.id) ?? entity;
@@ -763,7 +763,7 @@ export function step(
     let rawIntent: ServerInput | null;
     let steered = current;
     // Which body this one is charging, and so the one body it does not dodge
-    // (spec 186). Null for a player, who dodges nobody in any case.
+    // (spec 187). Null for a player, who dodges nobody in any case.
     let charging: number | null = null;
     if (current.kind === EntityKindValue.Player) {
       rawIntent = input;
@@ -830,7 +830,7 @@ export function step(
     decided.push({ entity: steered, input, intent, charging, withdrawal });
   }
 
-  // --- 1b: the crowd (spec 186) ----------------------------------------
+  // --- 1b: the crowd (spec 187) ----------------------------------------
   //
   // Every body's wanted velocity is now known and nothing has moved, which is
   // the one instant in the tick where reciprocal avoidance is a well-posed
@@ -859,7 +859,7 @@ export function step(
       position: outcome.position,
       facing: outcome.facing,
       // What the body actually did, for the crowd around it next tick
-      // (spec 186). Measured from the step it ended up taking rather than from
+      // (spec 187). Measured from the step it ended up taking rather than from
       // the one it asked for, so a body pressed into a tree tells its
       // neighbours it is going nowhere.
       velocity: {
@@ -936,7 +936,7 @@ export function step(
     if (intent !== null || next.cast !== null) casters.push(next.id);
   }
 
-  // --- 1d: the overlaps avoidance could not prevent (spec 186) ----------
+  // --- 1d: the overlaps avoidance could not prevent (spec 187) ----------
   //
   // Avoidance keeps bodies from walking into each other; it cannot undo an
   // overlap that already exists, and there are several honest ways to get one:
@@ -945,7 +945,7 @@ export function step(
   // where its neighbour was going, a stagger that rooted one mid-swerve.
   // Without this they stay overlapped forever, because nothing else in the tick
   // is looking. (A player walking into a monster is *not* in that list: a player
-  // is outside this pass entirely, which is spec 186's stated limit.)
+  // is outside this pass entirely, which is spec 187's stated limit.)
   //
   // A fraction of the overlap per tick, and refused outright wherever the
   // ground refuses it -- this pass moves a body without its consent, so it is
@@ -1855,7 +1855,7 @@ function standoffFrom(monster: ServerEntity, target: ServerEntity): number {
 
 /**
  * Open this tick's slot board: measure every target's ring, then hold every
- * slot somebody is already standing in or walking to (spec 186).
+ * slot somebody is already standing in or walking to (spec 187).
  *
  * Two sweeps rather than one because the two facts depend on each other -- how
  * finely a ring is cut is decided by the widest body fighting that target, and
@@ -1889,7 +1889,7 @@ interface MonsterDecision {
   readonly input: ServerInput | null;
   readonly entity: ServerEntity;
   /**
-   * The body it is charging, and so the one body it will not dodge (spec 186).
+   * The body it is charging, and so the one body it will not dodge (spec 187).
    *
    * Null for a body with nothing to charge -- walking home, running away, or
    * standing about -- and null while fleeing in particular, because the whole
@@ -1916,7 +1916,7 @@ function monsterIntent(
 ): MonsterDecision {
   // Read before `settle` and `notice` get a say, because it is what the held
   // attack slot was taken against: a slot means nothing once the body has
-  // changed its mind about who it is fighting (spec 186).
+  // changed its mind about who it is fighting (spec 187).
   const heldSlotFor = monster.targetId;
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
@@ -1979,7 +1979,7 @@ function monsterIntent(
   const alert = monster.aggro === AggroValue.Alert;
   const closing = !alert && distance > reach;
 
-  // Where on the ring around this target to walk (spec 186). Not a destination
+  // Where on the ring around this target to walk (spec 187). Not a destination
   // -- the body still stops the moment it is in reach, wherever on the way that
   // happens -- but an *offset aim*, so a pack closing from one side fans out
   // across the near arc instead of arriving one behind another on the same
@@ -2085,7 +2085,7 @@ function fleeFrom(
   return {
     entity: steer.entity,
     // Still the one body it does not dodge, and for the same reason as a chase
-    // (spec 186): what a body does about the thing it is engaged with is
+    // (spec 187): what a body does about the thing it is engaged with is
     // aggro's business and combat's, and a crowd rule that made prey harder to
     // catch would be this feature reaching somewhere it has no business.
     charging: from.id,
@@ -2214,7 +2214,7 @@ function routeToward(
   const grid = navGridFor(monster.radius, context.world, context.terrain);
   if (pathClear(grid, from, to)) {
     // Open ground, so a place on the ring around the target is worth aiming at
-    // rather than the target itself (spec 186) -- which is what fans a pack out
+    // rather than the target itself (spec 187) -- which is what fans a pack out
     // across the near arc instead of stacking it on one bearing.
     //
     // Only on this branch, and that is the whole rule. A ring point is a place

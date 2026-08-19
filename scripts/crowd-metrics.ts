@@ -1,4 +1,4 @@
-// What a crowd trace is worth, as numbers (spec 186).
+// What a crowd trace is worth, as numbers (spec 187).
 //
 // Beside `crowd-scenarios.ts` rather than inside it, because a scenario is a
 // world and a metric is a question about one, and the two change for different
@@ -27,7 +27,7 @@ export function worstOverlap(trace: Trace): number {
         const b = actors[j];
         const there = frame.at[j];
         // Players are left out: a player and a monster overlap exactly as much
-        // as they always have, which is spec 186's stated limit rather than a
+        // as they always have, which is spec 187's stated limit rather than a
         // failure of it.
         if (!b || !there || b.player) continue;
         const reach = a.radius + b.radius;

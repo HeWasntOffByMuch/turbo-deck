@@ -64,8 +64,17 @@ import {
   readoutShown,
   stripWidth,
 } from './hud-layout.js';
-import { slotIconSvg, stunIconSvg, systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
+import {
+  slotIconSvg,
+  statusIconSvg,
+  stunIconSvg,
+  systemIconSvg,
+  weaponIconSvg,
+  type SystemIconId,
+} from './icons.js';
 import { stunMark } from './stun-icon.js';
+import { statusMarks } from './status-marks.js';
+import { MAX_VISIBLE_STATUSES } from '../../../server/data/status-visuals.js';
 import { ACTION_BAR, type ActionSlot } from './action-bar.js';
 import { deathOverlay } from './death.js';
 import { poolBars } from './pool-bars.js';
@@ -169,6 +178,27 @@ interface Bar {
    * holder as the rest, so it rides the body without a second projection.
    */
   readonly stun: HTMLElement;
+  /**
+   * The row of status marks (spec 186).
+   *
+   * Above the swirl, so the stack reads downward as state, then what is
+   * happening, then who this is, then how it is doing. Safe to hide with
+   * `display` -- unlike the guard bar, which has to keep its box -- because the
+   * holder is anchored by its *bottom*, so a row appearing at the top grows the
+   * holder upward and moves nothing a player is reading. The swirl above it has
+   * always relied on the same thing.
+   */
+  readonly statusRow: HTMLElement;
+  readonly statusSlots: readonly StatusSlot[];
+}
+
+/** One reusable mark in the row: its box, its glyph and its stack count. */
+interface StatusSlot {
+  readonly root: HTMLElement;
+  readonly glyph: HTMLElement;
+  readonly count: HTMLElement;
+  /** What is currently drawn, so an unchanged mark rewrites no markup. */
+  drawn: string;
 }
 
 /**
@@ -189,6 +219,20 @@ const BAR_LOST = '#f4f2ee';
  * player has to be able to tell at a glance which bar just moved.
  */
 const BAR_GUARD = '#8fa6c8';
+/**
+ * The two status colours (spec 186), and there are deliberately only two.
+ *
+ * A boon takes the guard blue the bar under it already uses for "this body is
+ * holding"; an affliction takes the debuff rust from the VFX palette, which is
+ * the colour a body already gets ringed in when something is wrong with it. One
+ * colour per status would be a legend a player has to learn before a fight
+ * tells them anything, and the question they actually ask -- is that good for
+ * them or bad for them -- has two answers.
+ */
+const STATUS_BOON = BAR_GUARD;
+const STATUS_AFFLICTION = '#d0796f';
+/** Small enough that eight fit over a body, big enough to tell apart. */
+const STATUS_ICON_PX = 13;
 /**
  * The resource pool (spec 164). Blue, and the one bar on screen that is *spent*
  * rather than lost -- health and guard are both taken off you by somebody else.
@@ -1042,9 +1086,90 @@ export function createHud(
     ].join(';');
     stun.innerHTML = stunIconSvg({ size: 18 });
 
-    holder.append(stun, name, healthTrack, guard, cast);
+    // The status row (spec 186). Built once at full width and hidden, like the
+    // swirl and the name: a body picks statuses up and drops them several times
+    // a fight, and creating elements per application would churn the DOM on
+    // every blow that lands.
+    //
+    // A fixed pool of slots rather than one element per status, so the row never
+    // allocates while a fight is running and a mark that goes away is a
+    // `display` write rather than a removal.
+    const statusRow = document.createElement('div');
+    statusRow.dataset['bar'] = 'statuses';
+    statusRow.style.cssText = [
+      'display:none',
+      'justify-content:center',
+      'align-items:center',
+      // Four rather than two. Each glyph's ink fills most of its own box -- the
+      // paths run nearly the full 24-unit viewBox -- so at two the row read as
+      // one continuous ribbon rather than as several marks, which is the one
+      // thing a row of marks must not do.
+      'gap:4px',
+      'margin-bottom:2px',
+      'pointer-events:none',
+      // Allowed to be wider than the holder, and centred on it.
+      //
+      // The holder is a fixed 52px -- the width of the health bar -- and four
+      // marks already need more than that. Left in flow the slots are flex items
+      // in a box too small for them, so they *shrink*: eight of them came out
+      // 3px wide each, which is a row of specks that passes every check about
+      // what is drawn and shows a player nothing. `max-content` takes the row
+      // out of that negotiation, and the half-shifts re-centre it over the body.
+      'width:max-content',
+      'position:relative',
+      'left:50%',
+      'transform:translateX(-50%)',
+    ].join(';');
+
+    const statusSlots: StatusSlot[] = [];
+    for (let index = 0; index < MAX_VISIBLE_STATUSES; index += 1) {
+      const slot = document.createElement('div');
+      slot.style.cssText = [
+        'display:none',
+        'position:relative',
+        `width:${STATUS_ICON_PX}px`,
+        `height:${STATUS_ICON_PX}px`,
+        // Belt and braces with the row's `max-content` above: a mark is a fixed
+        // size and must never be negotiated down to fit.
+        'flex:0 0 auto',
+        'filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))',
+      ].join(';');
+      const glyph = document.createElement('div');
+      glyph.style.cssText = 'position:absolute;inset:0;';
+      // Bottom-right, outside the glyph's own weight, so a two-stack Flow reads
+      // as a marked glyph rather than as a different glyph.
+      const count = document.createElement('div');
+      count.style.cssText = [
+        'position:absolute',
+        // Inside the box, not hanging off it. Outside, the digit sat in the gap
+        // and collided with the next mark's glyph, so a stacking status made the
+        // one after it unreadable.
+        'right:0',
+        'bottom:0',
+        'font:7px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+        'color:#f2f6fb',
+        'text-shadow:0 0 2px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,.95)',
+      ].join(';');
+      slot.append(glyph, count);
+      statusRow.append(slot);
+      statusSlots.push({ root: slot, glyph, count, drawn: '' });
+    }
+
+    holder.append(statusRow, stun, name, healthTrack, guard, cast);
     root.append(holder);
-    const made: Bar = { root: holder, name, health, ghost, guard, guardFill, cast, castFill, stun };
+    const made: Bar = {
+      root: holder,
+      name,
+      health,
+      ghost,
+      guard,
+      guardFill,
+      cast,
+      castFill,
+      stun,
+      statusRow,
+      statusSlots,
+    };
     bars.set(id, made);
     return made;
   }
@@ -1161,6 +1286,51 @@ export function createHud(
       if (stun.visible) {
         element.stun.style.transform = `rotate(${stun.spin.toFixed(1)}deg)`;
         element.stun.style.opacity = stun.opacity.toFixed(2);
+      }
+
+      // The status marks (spec 186), on the same terms as the swirl above: a
+      // pure function of what was replicated and the tick being drawn, with
+      // nothing kept between frames. A status whose window has passed is refused
+      // by `statusMarks` rather than by anything here, so a delta that has not
+      // arrived yet cannot leave a mark up.
+      // `?? []` for the same reason the guard above reads `entity.poise ?? 1`:
+      // several harnesses fabricate a view by hand (`hud-probe.ts`, the bot
+      // client) and a field added to `ReplicatedEntity` is not a field they
+      // know to set. The type says it is always there; the rigs say otherwise,
+      // and a HUD that throws on a missing field takes the whole frame.
+      const marks = statusMarks(entity.statuses ?? [], tick);
+      element.statusRow.style.display = marks.length > 0 ? 'flex' : 'none';
+      for (let index = 0; index < element.statusSlots.length; index += 1) {
+        const slot = element.statusSlots[index];
+        if (!slot) continue;
+        const mark = marks[index];
+        if (!mark) {
+          slot.root.style.display = 'none';
+          continue;
+        }
+        slot.root.style.display = 'block';
+        slot.root.style.opacity = mark.opacity.toFixed(2);
+        // The markup is rewritten only when the glyph in this position actually
+        // changes. A mark that merely fades or re-counts costs two style writes
+        // rather than an innerHTML parse, which matters because this runs for
+        // every body in interest range every frame.
+        const wanted = `${mark.icon}:${mark.kind}`;
+        if (slot.drawn !== wanted) {
+          slot.drawn = wanted;
+          // Colour by `kind` and by nothing else: eight colours over a head is a
+          // legend rather than a picture, and "is that good or bad for them"
+          // is the question a player asks first and answers fastest.
+          slot.glyph.innerHTML = statusIconSvg(mark.icon, {
+            size: STATUS_ICON_PX,
+            color: mark.kind === 'boon' ? STATUS_BOON : STATUS_AFFLICTION,
+          });
+        }
+        const count = mark.showsCount && mark.stacks > 1 ? String(mark.stacks) : '';
+        if (slot.count.textContent !== count) slot.count.textContent = count;
+        // Read by `scripts/probe-status-marks.ts`, for the same reason the health
+        // bar carries `data-entity`: so a probe can assert what is on a body
+        // without re-deriving the camera projection or reading SVG paths.
+        slot.root.dataset['status'] = mark.id;
       }
 
       const fill = flashes.read(anchor.id, entity.health, entity.maxHealth, tick * TICK_MS);

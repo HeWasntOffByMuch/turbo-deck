@@ -1,10 +1,10 @@
-// Dev-only: what the crowd pass costs (spec 186).
+// Dev-only: what the crowd pass costs (spec 187).
 // Not part of the app. `npx tsx scripts/bench-crowd.ts`
 //
 // Two measurements, because they answer different questions and only one of
 // them is about this feature.
 //
-// **The pass on its own** is the honest cost of spec 186: a synthetic crowd of
+// **The pass on its own** is the honest cost of spec 187: a synthetic crowd of
 // N bodies, `solveAvoidance` and `resolveCrowding` and nothing else, so the
 // number is not diluted by the tick around it. This is what has to stay small.
 //
@@ -120,4 +120,4 @@ for (const count of [10, 25, 50, 100]) {
 console.log('');
 console.log('Most of the second table is not this feature: a chasing body asks `pathClear`');
 console.log('every tick, which walks every collider in the world. The first table is the bill');
-console.log('spec 186 adds.');
+console.log('spec 187 adds.');

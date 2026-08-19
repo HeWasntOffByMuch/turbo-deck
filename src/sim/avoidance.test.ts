@@ -1,5 +1,5 @@
 /**
- * Reciprocal avoidance (spec 186).
+ * Reciprocal avoidance (spec 187).
  *
  * Most of these are *simulations* rather than single calls, and deliberately:
  * one solved velocity says almost nothing -- what the solver is for is what a
