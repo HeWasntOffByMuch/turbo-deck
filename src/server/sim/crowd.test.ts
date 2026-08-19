@@ -1,5 +1,5 @@
 /**
- * The four rules in `steer` (spec 184), each asked about the case it exists for.
+ * The four rules in `steer` (spec 186), each asked about the case it exists for.
  *
  * The one worth the most attention is reciprocity. Two bodies walking into each
  * other have to choose *opposite* sides without exchanging a word, or they

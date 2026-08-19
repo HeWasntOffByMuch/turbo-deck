@@ -1,5 +1,5 @@
 /**
- * The broadphase's two promises (spec 184): it finds exactly the bodies within
+ * The broadphase's two promises (spec 186): it finds exactly the bodies within
  * range, and it reports them in an order a float sum can depend on.
  *
  * The second is the one worth a test file. Chain order is deterministic on its

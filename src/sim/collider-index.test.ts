@@ -1,6 +1,6 @@
 /**
  * The broadphase over the world's vegetation changes speed and nothing else
- * (spec 184).
+ * (spec 186).
  *
  * `circleBlocked` and `pushOutOfObstacles` are in the deterministic core and
  * are called by the server, by the client's prediction and by the nav grid's

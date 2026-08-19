@@ -103,7 +103,7 @@ const STANDOFF_FRACTION = 0.8;
 
 /**
  * How near its approach slot a body has to get before it stands and swings
- * (spec 184).
+ * (spec 186).
  *
  * The ring is placed this far *inside* the reach rather than on it, which is
  * what makes the tolerance safe: a body that stops anywhere within this of its
@@ -114,7 +114,7 @@ const STANDOFF_FRACTION = 0.8;
 const SLOT_ARRIVE_EPS = 10;
 
 /**
- * The tick's neighbour index, reused rather than rebuilt (spec 184).
+ * The tick's neighbour index, reused rather than rebuilt (spec 186).
  *
  * Module-level scratch, exactly as `findPath` keeps its working set: `step` is
  * synchronous and `build` replaces everything it holds, so nothing survives
@@ -524,7 +524,7 @@ export function step(
 
   // --- 1 + 2: timers and movement, in creation order -------------------
   //
-  // Split in two since spec 184, because a crowd cannot be decided one body at
+  // Split in two since spec 186, because a crowd cannot be decided one body at
   // a time: steering a body around its neighbours needs to know which way those
   // neighbours are about to walk, and asking mid-loop would answer for the ones
   // already processed and guess for the rest. So every body decides first, the
@@ -633,7 +633,7 @@ export function step(
     decisions.push({ entity: steered, intent, input });
   }
 
-  // --- 2b: the crowd (spec 184) ----------------------------------------
+  // --- 2b: the crowd (spec 186) ----------------------------------------
   // Every body that decided to go somewhere, indexed by where it is and which
   // way it is about to walk, so the pass below can ask each one about the
   // handful of bodies that could touch it rather than about all of them.
@@ -1692,7 +1692,7 @@ interface Decision {
 
 /**
  * A body as the crowd sees it: where it is, how big it is, and which way it is
- * about to walk (spec 184).
+ * about to walk (spec 186).
  *
  * The velocity is the *intent* rather than the last tick's travel, because a
  * crowd is decided a tick at a time -- two bodies that have both just been told
@@ -1820,7 +1820,7 @@ function standingIntent(entity: ServerEntity, direction: Vec2): ServerInput {
 }
 
 /**
- * The bodies this one may not walk into (spec 184).
+ * The bodies this one may not walk into (spec 186).
  *
  * The asymmetry is the design rather than an oversight. A **player is blocked
  * only by another player**, because nothing may displace a body and two bodies
@@ -1854,7 +1854,7 @@ function blockersFor(
 }
 
 /**
- * Where every attacker in a pack should stand, keyed by attacker id (spec 184).
+ * Where every attacker in a pack should stand, keyed by attacker id (spec 186).
  *
  * Only targets with **two or more** attackers on them appear at all, which is
  * what keeps the common case free and the single-attacker case exactly what it
@@ -1989,7 +1989,7 @@ function monsterIntent(
   // "stopped, facing you"; what is withheld is the blow.
   const alert = monster.aggro === AggroValue.Alert;
 
-  // Where it walks, and how close it has to get before it stands (spec 184).
+  // Where it walks, and how close it has to get before it stands (spec 186).
   // With no slot both are what they always were -- the target itself, and its
   // own reach -- which is what makes a lone monster's approach unchanged.
   //

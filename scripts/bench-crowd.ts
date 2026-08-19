@@ -1,5 +1,5 @@
 /**
- * What the crowd layer costs a tick (spec 184).
+ * What the crowd layer costs a tick (spec 186).
  *
  * Measured against the real map's colliders and the real `step`, at the sizes a
  * fight actually reaches, because the whole design rests on the claim that

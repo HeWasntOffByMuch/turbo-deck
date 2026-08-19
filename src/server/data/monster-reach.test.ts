@@ -1,5 +1,5 @@
 /**
- * A monster has to be able to reach what it is walking at (spec 184).
+ * A monster has to be able to reach what it is walking at (spec 186).
  *
  * Since blocking arrived there are two distances in every melee approach and
  * nothing in the type system makes them agree. A monster closes until its

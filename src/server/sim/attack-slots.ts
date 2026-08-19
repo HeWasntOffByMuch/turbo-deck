@@ -1,5 +1,5 @@
 /**
- * Where a pack stands to fight one thing (spec 184).
+ * Where a pack stands to fight one thing (spec 186).
  *
  * Until this file, `monsterIntent` routed every attacker at `target.position`
  * *exactly*. With nothing colliding body against body that produced twelve

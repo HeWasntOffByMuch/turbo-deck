@@ -1,5 +1,5 @@
 /**
- * What a crowd actually does, driven through the real `step` (spec 184).
+ * What a crowd actually does, driven through the real `step` (spec 186).
  *
  * Every scenario in here is a whole tick: the real movement pass, the real
  * router, the real blocking rule, the real cast pass. Calling `steer` directly
@@ -662,7 +662,7 @@ describe('the sim itself', () => {
 
   it('leaves a lone monster’s approach exactly as it was', () => {
     // With one attacker there is no slot, and with nobody nearby there is no
-    // steering -- so the whole of spec 184 is inert and the body walks the line
+    // steering -- so the whole of spec 186 is inert and the body walks the line
     // it always walked. Asserted against the geometry rather than against a
     // recorded baseline: a straight run at the target, to the standoff, and no
     // lateral drift at all.

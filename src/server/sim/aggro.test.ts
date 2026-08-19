@@ -300,7 +300,7 @@ describe('defensive: it fights back, and starts nothing', () => {
     }
     expect(state.entities.get(ravager.id)?.targetId).toBeNull();
     expect(state.entities.get(ravager.id)?.aggro).toBe(AggroValue.Calm);
-    // It stepped out of the player rather than staying inside it (spec 184): a
+    // It stepped out of the player rather than staying inside it (spec 186): a
     // ravager is radius 30 and a player 16, so bodies 40 apart are overlapping,
     // and a body with nowhere to be walks out of an overlap under its own
     // power. What this test is about is that it never *chased* -- so the claim

@@ -62,7 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
-| `npx tsx scripts/preview-crowd.ts` | Five crowd scenarios through the real `step`, drawn as trails (spec 184) |
+| `npx tsx scripts/preview-crowd.ts` | Five crowd scenarios through the real `step`, drawn as trails (spec 186) |
 | `npx tsx scripts/bench-crowd.ts` | What a crowd costs a tick, at 10 to 200 bodies against the real map |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
@@ -160,7 +160,7 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against.
-                 neighbours.ts is the broadphase both halves of spec 184 rest on
+                 neighbours.ts is the broadphase both halves of spec 186 rest on
                  -- a uniform grid, rebuilt per tick for bodies and built once
                  for the world's vegetation, allocation-free either way. It has
                  two queries and the difference between them is a rule rather
@@ -182,7 +182,7 @@ src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  It also indexes `world.circles` now, which is every tree on the
                  map and which `circleBlocked` used to walk in full for every
                  body several times a tick -- 321us per body, measured by
-                 `scripts/bench-collision.ts` long before spec 184 and enough to
+                 `scripts/bench-collision.ts` long before spec 186 and enough to
                  put forty bodies at three quarters of a frame on their own.
                  `slideCircle` is 1.5us. The index is exact rather than close and
                  `collider-index.test.ts` holds a full copy of the loop it
@@ -1094,7 +1094,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `sim/crowd.ts` and `sim/attack-slots.ts` are how a pack
-                 moves (spec 184), and the rule they exist to respect is that
+                 moves (spec 186), and the rule they exist to respect is that
                  **nothing in this game displaces a body**. What makes a shove
                  look wrong is not the displacement, it is that a shoved body
                  *slides* while its animation says it is standing still -- and

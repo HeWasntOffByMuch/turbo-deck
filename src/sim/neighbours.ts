@@ -1,5 +1,5 @@
 /**
- * Which bodies are near enough to matter (spec 184).
+ * Which bodies are near enough to matter (spec 186).
  *
  * Local avoidance is only cheap if it never considers a body it could not
  * touch. This is the broadphase that makes that true: a uniform grid over the

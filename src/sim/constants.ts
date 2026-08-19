@@ -169,7 +169,7 @@ export const ARENA_OBSTACLES: readonly Rect[] = [
 // holds a few dozen units at most.
 export const SEPARATION_ITERATIONS = 4;
 
-// --- Crowds (spec 184) ---
+// --- Crowds (spec 186) ---
 // Local avoidance, for a game with no shoving in it. Nothing here displaces a
 // body: these numbers shape a body's own desired direction, and the hard
 // guarantee is `bodyBlocked` refusing a step into an occupied spot.
@@ -208,7 +208,7 @@ export const CROWD_SIDESTEP_WEIGHT = 1;
 // zero: no arrangement of neighbours cancels a body's route and strands it.
 export const CROWD_MAX_AVOID = 0.8;
 // How long a body may ask to walk and get nowhere before it starts looking for
-// a way round (spec 184).
+// a way round (spec 186).
 //
 // A sixth of a second, which is long enough that a body brushing past another
 // never triggers it and short enough that a wedged one is not left standing.

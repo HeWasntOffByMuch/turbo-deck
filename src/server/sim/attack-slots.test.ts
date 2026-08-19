@@ -1,5 +1,5 @@
 /**
- * The ring around a target (spec 184).
+ * The ring around a target (spec 186).
  *
  * The properties worth asserting are the ones that made angular separation
  * preferable to a lattice of slots, so most of this file is about what *does

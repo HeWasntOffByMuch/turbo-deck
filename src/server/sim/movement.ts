@@ -152,7 +152,7 @@ export function isWalkable(
 const NO_BLOCKERS: readonly Circle[] = [];
 
 /**
- * `blockers` are the other bodies this one may not walk into (spec 184).
+ * `blockers` are the other bodies this one may not walk into (spec 186).
  *
  * A body rather than a wall, so it is refused through `bodyBlocked` and its
  * escape-permissive rule rather than through `circleBlocked` -- and refused

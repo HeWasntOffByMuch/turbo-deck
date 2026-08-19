@@ -1,5 +1,5 @@
 /**
- * What a crowd actually looks like (spec 184), as a picture rather than as a
+ * What a crowd actually looks like (spec 186), as a picture rather than as a
  * number.
  *
  * Every scenario here is flown through the **real `step`** -- the real router,

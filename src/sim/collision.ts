@@ -71,7 +71,7 @@ export function circleHitsCircle(centre: Vec2, radius: number, circle: Circle): 
 }
 
 /**
- * A broadphase over the world's vegetation (spec 184).
+ * A broadphase over the world's vegetation (spec 186).
  *
  * `world.circles` is every tree and bush on the map -- 28,919 of them on the
  * shipped arena -- and both `circleBlocked` and `pushOutOfObstacles` walked all
@@ -261,7 +261,7 @@ export function pushOutOfObstacles(centre: Vec2, radius: number, world: WorldCol
 const NO_BLOCKERS: readonly Circle[] = [];
 
 /**
- * True when a step from `from` to `to` is refused by another body (spec 184).
+ * True when a step from `from` to `to` is refused by another body (spec 186).
  *
  * This is how a crowd stays a crowd in a game with no shoving in it. Nothing
  * displaces a body here, so an overlap cannot be repaired after the fact and
@@ -307,7 +307,7 @@ export function bodyBlocked(
  * angle therefore slides along it rather than stopping dead. Returns `from`
  * unchanged when every candidate is blocked.
  *
- * `blockers` are other *bodies* (spec 184), and they are refused through
+ * `blockers` are other *bodies* (spec 186), and they are refused through
  * {@link bodyBlocked} rather than through `circleBlocked` because the two
  * questions are not the same one: a wall is somewhere a body may not be, and
  * another body is somewhere it may not *go*. That distinction is what keeps the

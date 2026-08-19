@@ -369,7 +369,7 @@ export interface ServerEntity {
   /** Where the target was when `path` was planned, to notice it moving away. */
   readonly pathGoal: Vec2 | null;
   /**
-   * When this body last asked to walk and got nowhere (spec 184), or 0 when it
+   * When this body last asked to walk and got nowhere (spec 186), or 0 when it
    * is moving freely.
    *
    * Server-only and off the wire: it changes nothing a client draws, and what

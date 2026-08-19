@@ -53,7 +53,7 @@ async function harness(): Promise<Harness> {
    * exercises the thing a player actually does.
    */
   const walkApart = async (apart: number): Promise<number> => {
-    // Away from Ben, rather than along +x. Since spec 184 a player is blocked
+    // Away from Ben, rather than along +x. Since spec 186 a player is blocked
     // by another player, and Ben spawns on Ana's +x -- so walking +x pressed
     // her into him and measured a gap that had stopped growing. It passed for
     // as long as it did because bodies used to walk through each other.

@@ -1,6 +1,6 @@
 /**
  * Where a body actually walks, once its neighbours are taken into account
- * (spec 184).
+ * (spec 186).
  *
  * The rule the whole module is built to respect: **nothing here moves
  * anything.** `steer` returns a *direction*, which the caller hands to the same
