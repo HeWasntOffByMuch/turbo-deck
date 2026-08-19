@@ -719,6 +719,40 @@ describe('the tooltip, over the world (spec 136)', () => {
     expect(requests.filter((request) => request.startsWith('move:'))).toEqual([]);
   });
 
+  /**
+   * The whole chain, end to end (spec 185).
+   *
+   * Every part of this is asserted somewhere on its own -- the table has the
+   * numbers, `detailsFor` turns them into lines, the screen colours them. What
+   * only this can say is that they are *connected*: a real bag, through the real
+   * mount, reading the real item table, says what the item actually does.
+   */
+  it('describes the item under the cursor, out of the real table', () => {
+    const bag = [...starterInventory()];
+    bag[0] = { defId: 'sword.keen', count: 1 };
+    const view = viewFixture({ inventory: bag });
+    const { screens } = harness();
+    screens.show('inventory');
+    screens.update(view, 0);
+
+    const cell = [...screens.root.content.walk()].find((widget) => widget.name === 'bag:0');
+    if (!cell) throw new Error('the bag drew no cells');
+    screens.handlePointer('move', { x: cell.rect.x + 2, y: cell.rect.y + 2 }, 0, NONE);
+    screens.update(view, 1000);
+
+    expect(screens.tooltipText.split('\n')).toEqual([
+      'Keen Longsword',
+      'Rare  Main Hand',
+      '+8 Damage',
+      '+6 Range',
+      '+15% Attack Speed',
+      'Worth 90 coins',
+      // The fixture's character is below the sword's level, and that line is
+      // the one thing decided against *who is looking* rather than off the row.
+      'Requires level 5',
+    ]);
+  });
+
   it('shuts up when the bag does', () => {
     // The tooltip is in a layer above every window rather than inside one, and
     // the bag closes on a key -- so nothing else would ever clear it, and the

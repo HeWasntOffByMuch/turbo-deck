@@ -12,6 +12,13 @@
  * **It flips rather than overflows.** Near the right edge it opens to the left;
  * near the bottom it opens above. A tooltip clipped by the screen edge is a
  * tooltip you cannot read, and the viewport is small and variable since spec 123.
+ *
+ * Since spec 185 it draws either a run of prose or a list of {@link TooltipLine}s,
+ * and the difference is only what the caller hands it: the character sheet passes
+ * a string and gets exactly what it got before, while the bag passes lines and
+ * gets an item described in its tier's own colour. Wrapping is **per line** --
+ * each one folds on its own and every fragment keeps its line's colour, so a long
+ * name cannot run into the stat underneath it.
  */
 
 import type { DrawList } from '../core/draw-list.js';
@@ -32,19 +39,56 @@ const CURSOR_GAP = 8;
 /** Widest a tooltip gets before it wraps. */
 const MAX_WIDTH = 140;
 
+/**
+ * One line of a tooltip (spec 185).
+ *
+ * The colour is a palette *token*, resolved against the theme at paint: a widget
+ * that carried four bytes would be a widget with a colour spelled out in it, and
+ * a screen naming a token is what `Label.colorToken` has always done.
+ *
+ * Absent means the tooltip's own text colour, which is what every line of prose
+ * has always been drawn in.
+ */
+export interface TooltipLine {
+  readonly text: string;
+  readonly colorToken?: string;
+}
+
+/** Prose, or lines. A string is the single unstyled line it always was. */
+export type TooltipContent = string | readonly TooltipLine[];
+
+/** The identity a repeat hover is judged by: the text *and* the colour. */
+function contentKey(lines: readonly TooltipLine[]): string {
+  return lines.map((line) => `${line.colorToken ?? ''}|${line.text}`).join('\n');
+}
+
+function asLines(content: TooltipContent): readonly TooltipLine[] {
+  if (typeof content === 'string') return content.length === 0 ? [] : [{ text: content }];
+  return content.filter((line) => line.text.length > 0);
+}
+
 export class Tooltip extends StyledWidget {
   /** The viewport, so the flip has something to flip against. */
   viewport: Size = { width: 0, height: 0 };
 
-  private text = '';
+  /** What was handed in, before wrapping. */
+  private source: readonly TooltipLine[] = [];
+  /** Its identity, so a re-point with the same content does not restart the wait. */
+  private key = '';
 
-  /** What it is currently saying. Read by tests and by nothing else. */
+  /**
+   * What it is currently saying, as plain text. Read by tests and by probes.
+   *
+   * Newline-joined, because the lines are lines: joining with spaces would make
+   * a stat table read as one long sentence in exactly the place somebody is
+   * asserting on what it says.
+   */
   get label(): string {
-    return this.text;
+    return this.source.map((line) => line.text).join('\n');
   }
   private anchor: Point = { x: 0, y: 0 };
   private since = -1;
-  private lines: readonly string[] = [];
+  private lines: readonly TooltipLine[] = [];
 
   constructor(name = 'tooltip') {
     super('tooltip', name);
@@ -55,38 +99,45 @@ export class Tooltip extends StyledWidget {
   /**
    * The pointer moved.
    *
-   * Passing null clears; passing the same text again keeps the timer running, so
-   * moving the cursor *within* one widget does not restart the wait.
+   * Passing null clears; passing the same content again keeps the timer running,
+   * so moving the cursor *within* one widget does not restart the wait. "Same"
+   * is the text and the colour together (spec 185) -- an item whose tier changed
+   * under the cursor is a different thing being described, even at the same name.
    */
-  point(text: string | null, at: Point, now: number): void {
+  point(content: TooltipContent | null, at: Point, now: number): void {
     this.anchor = at;
-    if (text === null || text.length === 0) {
-      this.text = '';
+    const lines = content === null ? [] : asLines(content);
+    if (lines.length === 0) {
+      this.source = [];
+      this.key = '';
       this.since = -1;
       this.setVisible(false);
       return;
     }
-    if (text !== this.text) {
-      this.text = text;
+    const key = contentKey(lines);
+    if (key !== this.key) {
+      this.source = lines;
+      this.key = key;
       this.since = now;
       this.lines = [];
       this.setVisible(false);
       this.invalidateMeasure();
       return;
     }
-    // Same text, cursor moved: the box follows without waiting again.
+    // Same content, cursor moved: the box follows without waiting again.
     if (this.visible) this.invalidateArrange();
   }
 
   /** Called each frame with the current time. Returns whether it is showing. */
   update(now: number, delayMs: number): boolean {
     const due = this.since >= 0 && now - this.since >= delayMs;
-    this.setVisible(due && this.text.length > 0);
+    this.setVisible(due && this.source.length > 0);
     return this.visible;
   }
 
-  get content(): string {
-    return this.text;
+  /** The lines it was handed, unwrapped. */
+  get content(): readonly TooltipLine[] {
+    return this.source;
   }
 
   private setVisible(next: boolean): void {
@@ -115,12 +166,20 @@ export class Tooltip extends StyledWidget {
   }
 
   protected override measureSelf(_constraint: Constraint, context: LayoutContext): Size {
-    if (this.text.length === 0) return { width: 0, height: 0 };
+    if (this.source.length === 0) return { width: 0, height: 0 };
     const style = context.theme.widget(this.styleKey);
     const font = fontById('body');
-    this.lines = wrapText(font, this.text, MAX_WIDTH);
+    // Wrapped per line, and each fragment keeps its line's colour: a name too
+    // long for the box folds without swallowing the stat under it.
+    const wrapped: TooltipLine[] = [];
+    for (const line of this.source) {
+      for (const part of wrapText(font, line.text, MAX_WIDTH)) {
+        wrapped.push(line.colorToken === undefined ? { text: part } : { text: part, colorToken: line.colorToken });
+      }
+    }
+    this.lines = wrapped;
     let width = 0;
-    for (const line of this.lines) width = Math.max(width, measureText(font, line));
+    for (const line of this.lines) width = Math.max(width, measureText(font, line.text));
     return {
       width: width + style.padding * 2,
       height: this.lines.length * font.height + style.padding * 2,
@@ -140,7 +199,7 @@ export class Tooltip extends StyledWidget {
   }
 
   protected override paintSelf(out: DrawList, context: PaintContext): void {
-    if (this.text.length === 0) return;
+    if (this.source.length === 0) return;
     const style = this.style(context);
     const state = style.state('normal');
     out.solid(this.rect, state.fill);
@@ -150,7 +209,8 @@ export class Tooltip extends StyledWidget {
     const inner = uniformInsets(style.padding);
     let y = this.rect.y + inner.top;
     for (const line of this.lines) {
-      drawText(out, context.atlas, font, line, this.rect.x + inner.left, y, state.text);
+      const tint = line.colorToken === undefined ? state.text : context.theme.color(line.colorToken);
+      drawText(out, context.atlas, font, line.text, this.rect.x + inner.left, y, tint);
       y += font.height;
     }
   }

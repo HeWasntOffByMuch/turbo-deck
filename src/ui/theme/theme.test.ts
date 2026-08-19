@@ -25,8 +25,12 @@ describe('theme.json against its schema', () => {
     expect(validate(typo)).toBe(false);
   });
 
-  it('keeps the palette to sixteen colours', () => {
-    expect(Object.keys(THEME.palette).length).toBeLessThanOrEqual(16);
+  // Sixteen until spec 185, which added the three rarity tiers. The cap is
+  // against invented colour: those three are the world's own, already drawn on
+  // every drop in the grass, and importing them is what keeps the bag and the
+  // ground from drifting.
+  it('keeps the palette to nineteen colours', () => {
+    expect(Object.keys(THEME.palette).length).toBeLessThanOrEqual(19);
   });
 });
 
