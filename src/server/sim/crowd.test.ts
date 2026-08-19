@@ -78,7 +78,7 @@ describe('a herd crossing open ground', () => {
 });
 
 describe('fast bodies behind slow ones', () => {
-  const trace = run(overtake(), 1500, 1);
+  const trace = run(overtake(), 1500, 2);
 
   it('lets the fast ones past rather than queueing them behind', () => {
     // Eight small spiders at 115 a second behind eight grazers at 40. Without
@@ -99,7 +99,7 @@ describe('fast bodies behind slow ones', () => {
 });
 
 describe('a crowd at a narrow opening', () => {
-  const trace = run(gate(16), 1500, 1);
+  const trace = run(gate(16), 1500, 2);
 
   it('gets every body through rather than arching across the gap', () => {
     // The gap is 140 units and a stalker is 40 across, so three abreast do not
@@ -125,7 +125,7 @@ describe('a crowd at a narrow opening', () => {
    * centre at all.
    */
   it('still clears a gap not much wider than one body', () => {
-    const tight = run(gate(8, 35), 1400, 1);
+    const tight = run(gate(8, 35), 1400, 2);
     expect(reached(tight, 1, { x: 1700, y: 900 }, 520)).toBe(sizeOf(tight, 1));
     expect(worstOverlap(tight)).toBeLessThan(0.12);
   });
@@ -133,7 +133,7 @@ describe('a crowd at a narrow opening', () => {
 
 describe('a pack converging on one quarry', () => {
   const centre = { x: 1200, y: 900 };
-  const trace = run(converge(12), 900, 1);
+  const trace = run(converge(12), 900, 2);
 
   it('surrounds it rather than stacking on the side it came from', () => {
     // The widest empty arc round the quarry. A pack that all arrived on one

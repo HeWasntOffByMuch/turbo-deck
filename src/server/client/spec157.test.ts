@@ -158,6 +158,12 @@ describe('a second login for a player who is already playing', () => {
     expect(r.bodies()).toBe(1);
   });
 
+  // 15s rather than the default 5, because what this test spends its time on is
+  // real clock: two reconnect graces and a reap, waited out rather than
+  // simulated. It measures 4.5s of that on an idle machine, which is a 10%
+  // margin against the default and not a margin at all on a loaded one -- it
+  // went red the first time the suite grew by a few files. Every sibling in
+  // this file is 3.2s for the same reason; this one waits out one grace more.
   it('orphans nothing: two drops on one id leave no body behind', async () => {
     const r = rig();
     const a = await join(r, 'eve');
@@ -173,7 +179,7 @@ describe('a second login for a player who is already playing', () => {
     await r.tick(RESUME_GRACE_TICKS * 2 + 120);
     expect(r.bodies()).toBe(0);
     expect(r.server.isLoggedIn('eve')).toBe(false);
-  });
+  }, 15_000);
 
   // The invariant this change could plausibly break: the ownership check must
   // not make a session immortal.
