@@ -83,8 +83,27 @@ export interface ViewControls {
   cameraOffset(): Vec3;
   /** Orthographic half-width (zoom); smaller frames a tighter region. */
   viewHalfWidth(): number;
-  /** Let the wheel over `target` zoom the view span, as well as the slider (spec 042). */
+  /**
+   * Let the wheel over `target` zoom the view span, as well as the slider
+   * (spec 042).
+   *
+   * The movement sandbox's way in, and since spec 189 only its way in: the Play
+   * tab binds `camera.zoomIn`/`camera.zoomOut` and calls {@link zoomNotch}, so
+   * that a wheel notch is a chord a player can move rather than a listener
+   * nothing can reach. A sandbox is a dev surface and keeps its own pointer
+   * handling, exactly as the editor does.
+   */
   attachWheelZoom(target: HTMLElement): void;
+  /**
+   * Zoom one notch the way an action asked for (spec 189).
+   *
+   * `direction` is +1 in and -1 out and comes from which of the two bindings
+   * fired; `magnitude` is the browser's own `deltaY`, whose *sign* is
+   * deliberately discarded here and whose size is not -- a trackpad's notch and
+   * a wheel's are different distances, and that is a fact about the device
+   * rather than about the binding.
+   */
+  zoomNotch(direction: number, magnitude: number, deltaMode: number): void;
   /**
    * Zoom by a pinch's spread ratio (spec 093). Writes the same slider the wheel
    * writes, because the slider *is* the zoom -- a pinch that kept its own number
@@ -742,6 +761,14 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         },
         { passive: false },
       );
+    },
+    zoomNotch: (direction: number, magnitude: number, deltaMode: number) => {
+      // `zoomViewHalfWidth` reads the sign off the delta -- negative is in, the
+      // browser's own convention -- so the direction is re-applied to a magnitude
+      // stripped of it. Rebuilding the delta rather than adding a second zoom
+      // path keeps one curve, and the curve is what a session's muscle memory is
+      // built on.
+      zoom.setValue(zoomViewHalfWidth(zoom.value(), -direction * Math.abs(magnitude), deltaMode));
     },
     pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
     orbitBy: (degrees: number) => camAz.setValue(wrapTurn(camAz.value() + degrees)),

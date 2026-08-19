@@ -604,11 +604,46 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  nine (the HUD, the bag, the sheet, the shop, the keybindings,
                  the trade table, the options window, its display page and the
                  chat);
-                 input/ is the actions, the key map and the two preferences that
+                 input/ is the actions, the control map and the two preferences
+                 that
                  outlive a session -- the bindings and the interface scale, each
                  a versioned document over an injected `StorageLike` that never
                  throws, because a corrupt preference must cost defaults rather
-                 than a black screen;
+                 than a black screen.
+                 Since spec 189 a `Chord` names a **control** rather than a key,
+                 and the mouse is in it. Spec 125 deferred this with one line --
+                 "the chord type has no button field yet" -- and the cost was not
+                 a few missing bindings: the window listed the skillbar and the
+                 debug readout while the four things a player does all session
+                 were `if (event.button === 2)` in `world/view.ts`, with no id, no
+                 label and no row. The type still has no button field, because
+                 nothing between `chordOf` and the index ever opened `code` --
+                 `chordKey` joins it into a string, `chordsEqual` compares the
+                 join, `reindex` keys on it, `readChord` takes any non-empty
+                 string, `actionsForCode` compares with `===`, and only `keyLabel`
+                 and `UNBINDABLE` look inside. So `code` carries `MouseRight` and
+                 `WheelUp` beside `KeyW`, and the persistence, the index, the
+                 conflict report and the release path cost nothing and needed no
+                 version bump. What decides whether a code is a pointer one is
+                 `POINTER_CODES`, a **closed table** rather than a `Mouse` prefix,
+                 for the reason `naming.ts` is a table: a heuristic is a second,
+                 invisible answer that every boundary has to re-derive, and it has
+                 nowhere to put the label. The version deliberately does not move
+                 -- an older build reading a profile with `world.order` in it
+                 skips an override naming an action it has never heard of and
+                 keeps every other binding, where a bump to 2 would make
+                 `migrateBindings` throw the whole document away, so trying this
+                 build and going back would cost a player every keyboard rebind
+                 they had ever made. Five rows cover the seven verbs, and the
+                 arithmetic is the design: pick up / attack / walk are **one**
+                 press whose meaning is read off what is under the cursor (spec
+                 070), and refusing a pending aim is the same shape one level up,
+                 so `world.order` is one action with four readings exactly as it
+                 was one branch with four. Three bindings a player could put on
+                 three different buttons is not a preference, it is a broken
+                 order. The labels avoid every word `keyLabel` already makes:
+                 `Right` alone is taken -- it is what `ArrowRight` comes back as
+                 -- so the pointer says `Right Click`;
                  render/ is the only impure part. Everything else runs in Node.
                  Since spec 131 all but the HUD are in the Play tab, over
                  the world -- mounted by src/render/iso3d/world/ui-screens.ts,

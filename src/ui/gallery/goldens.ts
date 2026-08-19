@@ -199,6 +199,15 @@ export const KEYBINDING_GOLDEN_CASES: readonly KeybindingsGoldenCase[] = [
     options: { tab: 'combat', unbind: 'combat.stop' },
     covers: 'an unbound action flagged in words rather than left blank',
   },
+  {
+    name: 'keys-pointer',
+    options: { tab: 'world' },
+    // The picture spec 189 is really about, and the only check on the one thing
+    // that could not be reasoned about: `Shift+Right Click` is the longest label
+    // this window has ever had to hold, and the face is drawn rather than
+    // typeset, so a button too narrow for it clips in silence.
+    covers: 'the pointer verbs, named -- and the widest chord label the window can hold',
+  },
 ];
 
 export interface InventoryGoldenCase {

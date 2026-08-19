@@ -68,6 +68,34 @@
       }
     },
     {
+      "id": "world.confirmAim",
+      "category": "world",
+      "label": "Confirm aim",
+      "context": "gameplay",
+      "primary": {
+        "code": "MouseLeft"
+      }
+    },
+    {
+      "id": "world.order",
+      "category": "world",
+      "label": "Move / attack",
+      "context": "gameplay",
+      "primary": {
+        "code": "MouseRight"
+      }
+    },
+    {
+      "id": "world.trade",
+      "category": "world",
+      "label": "Offer trade",
+      "context": "gameplay",
+      "primary": {
+        "code": "MouseRight",
+        "shift": true
+      }
+    },
+    {
       "id": "skillbar.1",
       "category": "skillbar",
       "label": "Skillbar 1",
@@ -155,6 +183,24 @@
       "context": "gameplay",
       "primary": {
         "code": "Digit0"
+      }
+    },
+    {
+      "id": "camera.zoomIn",
+      "category": "camera",
+      "label": "Zoom in",
+      "context": "gameplay",
+      "primary": {
+        "code": "WheelUp"
+      }
+    },
+    {
+      "id": "camera.zoomOut",
+      "category": "camera",
+      "label": "Zoom out",
+      "context": "gameplay",
+      "primary": {
+        "code": "WheelDown"
       }
     },
     {
