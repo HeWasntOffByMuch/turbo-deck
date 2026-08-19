@@ -15,7 +15,7 @@
  * real blow and earns a real reward at the same world point, and measures the
  * pair off the real DOM. Three things, and each is one the tests cannot reach:
  *
- * - the reward has an element at all, and it holds a bare count;
+ * - the reward has an element at all, and it holds a labelled count;
  * - it sits under the blow's number, in its column, and stays there while the
  *   two rise -- then outlives it by half a second, still climbing;
  * - the number is drawn in the strip's own purple, read out of the SVG fill
@@ -124,13 +124,13 @@ async function main(): Promise<void> {
       (drawn?.html ?? '').includes(XP_PURPLE_DARK),
       `it is outlined in the dark purple (${XP_PURPLE_DARK})`,
     );
-    // A bare count and nothing else. Measured as a width rather than as a
-    // string, because the page draws paths and not text: at scale 2 the 5x7
-    // face puts `24` at about 22px, where the `+24 XP` this replaced was 70.
+    // The label is there. Measured as a width rather than as a string, because
+    // the page draws paths and not text: at scale 2 the 5x7 face puts `+24 XP`
+    // at about 70px, where the count alone is 26.
     const drawnBox = await page.$('[data-xp-popup]').then((node) => node?.boundingBox() ?? null);
     check(
-      (drawnBox?.width ?? 0) > 0 && (drawnBox?.width ?? 999) < 40,
-      `it is the count alone (${(drawnBox?.width ?? 0).toFixed(0)}px wide)`,
+      (drawnBox?.width ?? 0) > 50,
+      `it is the count and its label (${(drawnBox?.width ?? 0).toFixed(0)}px wide)`,
     );
 
     // The strip along the bottom, read off the computed style rather than off

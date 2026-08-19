@@ -1692,9 +1692,13 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  one, so a kill's reward cannot shift where the next blow on
                  that body draws its number, and successive rewards on one group
                  step down through `XP_STACK` gaps rather than piling up. The
-                 text is the **bare count** -- the colour and the place already
-                 say what it is, and `+24 XP` was three times the width of the
-                 number it hangs under, which made a column read as a caption.
+                 text is `+N XP` and stays labelled: the colour and the column
+                 say "this is not damage" and neither of them says what it *is*,
+                 and a purple number under a white one is a second quantity
+                 whose identity is the whole point. The label costs three times
+                 the width of the count alone, which was measured rather than
+                 assumed and is why this is the smallest text of the pair, at
+                 half a critical's scale.
                  `npx tsx scripts/probe-xp-popup.ts` is the half no headless
                  test can see, over spec 164's `hud-probe.html` rig: it lands a
                  real blow and earns a real reward at one point and measures the

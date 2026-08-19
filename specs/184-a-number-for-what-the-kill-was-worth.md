@@ -142,9 +142,9 @@ place it could honestly go.
 `hud-probe.html` rig spec 164 built, because the way this feature fails is "the
 field changed and nothing was drawn":
 
-- The reward has an element, and it is the count alone: measured as a width,
-  because the page draws paths and not text, and `24` is 26px where the `+24 XP`
-  this replaced was 70.
+- The reward has an element, and it carries its label: measured as a width,
+  because the page draws paths and not text — `+24 XP` is ~70px where the count
+  alone is 26.
 - Its fill and its outline are the purple palette, read out of the SVG rather
   than out of the constant — a number that reached the DOM in the damage colours
   fails here.
