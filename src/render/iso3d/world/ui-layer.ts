@@ -32,6 +32,8 @@ import type { Color } from '../../../ui/core/color.js';
 import { Canvas2dSurface } from '../../../ui/render/canvas2d.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
+import { isHandheldDevice } from '../device.js';
+import { hudLayout, leftBandHeight } from './hud-layout.js';
 import type { WindowId } from './key-actions.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
 import { DEFAULT_SHOW_FPS, type ScaleChoice } from '../../../ui/input/display-store.js';
@@ -319,6 +321,13 @@ export class UiLayer {
     this.applyCssSize();
     this.screens.resize({ width: next.width, height: next.height });
     this.screens.setSafeTop(this.toUi({ x: 0, y: chromeBottomCss() }).y);
+    // ...and the other edge (spec 189). The chat is docked bottom-left, which is
+    // where the pool bars are, so it is given the same treatment: measured in
+    // CSS pixels out here and converted through the one place the two coordinate
+    // systems meet. A `y` is an absolute position and this is a *height*, so it
+    // is converted as the distance between two points rather than as a point.
+    const band = leftBandHeight(hudLayout(isHandheldDevice()));
+    this.screens.setSafeBottom(this.toUi({ x: 0, y: band }).y - this.toUi({ x: 0, y: 0 }).y);
     // The canvas's backing store was just reallocated, so whatever was on it is
     // gone -- and the same draw list would otherwise be skipped as unchanged and
     // leave the interface blank until something moved.
@@ -369,6 +378,25 @@ export class UiLayer {
 
   moveFocus(step: number): void {
     this.screens.moveFocus(step);
+  }
+
+  // --- chat (spec 189) ------------------------------------------------------
+
+  /** A line arrived from the server. */
+  pushChat(channel: number, from: string, text: string): void {
+    this.screens.pushChat(channel, from, text);
+  }
+
+  get chatOpen(): boolean {
+    return this.screens.chatOpen;
+  }
+
+  openChat(): void {
+    this.screens.openChat();
+  }
+
+  closeChat(): void {
+    this.screens.closeChat();
   }
 
   /** CSS pixels relative to the host, to UI pixels. The one conversion. */

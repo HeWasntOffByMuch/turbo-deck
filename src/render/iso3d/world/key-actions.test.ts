@@ -15,6 +15,7 @@ describe('what a key press means to the Play tab', () => {
       cancel: false,
       windows: [],
       toggleStats: false,
+      chat: false,
     });
     expect(decideKeyDown(map, 'KeyD', NONE).move).toEqual(['move.east']);
   });
@@ -50,6 +51,7 @@ describe('what a key press means to the Play tab', () => {
       cancel: false,
       windows: [],
       toggleStats: true,
+      chat: false,
     });
   });
 
