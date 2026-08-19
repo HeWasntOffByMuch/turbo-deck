@@ -59,11 +59,20 @@ export type PopupTrail = 'damage' | 'xp';
 add(group: number, at: WorldAnchor, trail?: PopupTrail): { id, expired }
 ```
 
-`damage` is a fixed lane offset and a linear rise. `xp` is a curve: it sweeps
-sideways *away from the side the group's last damage number took* and rises on
-an ease-out, so the two separate immediately and keep separating. Away-from
-rather than a fixed side, because the whole point is the pair, and a constant
-right-hand drift collides with lane 3 of every burst.
+`damage` is a fixed lane offset and a linear rise. `xp` is a curve: it starts a
+number's width to one side, keeps sweeping that way, and rises on an ease-out,
+so the two are clear on the first frame and keep separating. Three choices in
+that, each of which is the fix for the version without it:
+
+- **Away from the side the group's last damage number took**, rather than a
+  fixed side, because the whole point is the pair and a constant right-hand
+  drift runs through lane 2 of every burst.
+- **A lead (`XP_LEAD`) and not only a sweep**, because the gap the paths open is
+  between two *centres* and `+24 XP` is three times the width of `38`. Measured
+  on the page, a sweep from zero left the two boxes on top of each other for the
+  first third of the flight — clear by the arithmetic and overlapping to look at.
+- **It reads the lane counter without consuming one**, so a kill's reward cannot
+  shift where the next blow on that body draws its number.
 
 `hud.ts` — one palette for the two places experience is shown, replacing
 `XP_GOLD`/`XP_GOLD_LIT`/`XP_EMPTY`:
@@ -108,16 +117,28 @@ place it could honestly go.
   lives, and the horizontal gap between them only grows.
 - The xp trail drifts to the side the group's last damage lane did not take,
   for a lane on the left and for one on the right.
+- Two rewards on one group alternate sides, so a grant landing twice on the
+  player's own body is two numbers rather than one.
+- An xp number does not consume a damage lane: a blow, a reward and a second
+  blow puts the second blow in lane 1.
 - The xp rise is an ease-out: more than half of it is spent in the first half of
   its life. The damage rise stays linear — spec 096's numbers are unchanged, and
   the existing tests are the assertion.
-- An xp popup with no damage before it still picks a side and still leaves the
-  centre lane free.
+- An xp popup with no damage before it still picks a side, and is `XP_LEAD`
+  clear of the centre lane on its very first frame.
 - Both kinds count against the one capacity and expire through the one path.
 
-`hud.ts`'s wiring, via the existing `presentation-only.test.ts`
+`scripts/probe-xp-popup.ts` — the half that only exists in a browser, over the
+`hud-probe.html` rig spec 164 built, because the way this feature fails is "the
+field changed and nothing was drawn":
 
-- Driving experience popups changes no authoritative state.
+- The reward has an element, with `+N XP` in it.
+- Its fill and its outline are the purple palette, read out of the SVG rather
+  than out of the constant — a number that reached the DOM in the damage colours
+  fails here.
+- The strip's computed background is the same purple, so the two ends agree.
+- Sampled across the flight, the two boxes' centres separate and the gap only
+  grows.
 
 ## Out of scope
 

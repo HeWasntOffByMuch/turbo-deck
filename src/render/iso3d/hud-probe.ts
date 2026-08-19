@@ -32,6 +32,12 @@ interface ProbeApi {
   respawns(): number;
   /** Which ability ids the slot buttons have asked to cast, in order. */
   used(): string[];
+  /** Land a blow at the rig's one world point (spec 096). */
+  hit(damage: number, crit: boolean): void;
+  /** Earn `amount` experience at the same point (spec 183). */
+  reward(amount: number): void;
+  /** Draw `frames` more frames, so a floating number gets somewhere. */
+  advance(frames: number): void;
 }
 
 declare global {
@@ -88,7 +94,17 @@ let respawnCount = 0;
 const used: string[] = [];
 let overrides: Record<string, unknown> = {};
 
-const hud = createHud(() => ({ x: 0, y: 0, onScreen: false }));
+/**
+ * One world point, in the middle of the frame (spec 183).
+ *
+ * It used to answer `onScreen: false` from the origin, which was fine while
+ * nothing here spawned a floating number -- the projector's only other caller
+ * is the hovered drop's label, and this rig hovers nothing. A number needs a
+ * place to be photographed at, and the honest one is the point the rig claims
+ * every body is standing on.
+ */
+const PROBE_POINT = { x: 560, y: 300 };
+const hud = createHud(() => ({ x: PROBE_POINT.x, y: PROBE_POINT.y, onScreen: true }));
 hud.onRespawn(() => {
   respawnCount += 1;
 });
@@ -111,4 +127,15 @@ window.hudProbe = {
   },
   respawns: () => respawnCount,
   used: () => [...used],
+  hit(damage, crit) {
+    hud.addDamage(7, { x: 0, y: 0, lift: 0 }, damage, crit);
+    draw();
+  },
+  reward(amount) {
+    hud.addExperience(7, { x: 0, y: 0, lift: 0 }, amount);
+    draw();
+  },
+  advance(frames) {
+    for (let frame = 0; frame < frames; frame++) draw();
+  },
 };
