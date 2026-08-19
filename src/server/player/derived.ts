@@ -147,19 +147,6 @@ export const NEUTRAL_TRAITS: TraitStats = {
 };
 
 /**
- * The Damage row, expressed as a multiplier a basic attack is multiplied by.
- *
- * A body with the reference damage hits for exactly what the ability says, and
- * one with twice it hits twice as hard. One function rather than one expression
- * per caller because there are two bodies that need it -- a player's derived
- * damage and a monster's authored one (spec 184) -- and {@link DeriveContext}
- * already states the rule this keeps: there must not be two of it.
- */
-export function weaponPowerFor(attackDamage: number): number {
-  return Math.max(0, attackDamage / PLAYER_ATTACK_DAMAGE);
-}
-
-/**
  * A monster's traits (spec 147).
  *
  * Sized off its own health rather than off attributes it does not have, so that
@@ -167,13 +154,19 @@ export function weaponPowerFor(attackDamage: number): number {
  * world. A big monster has a lot of poise and a small one has little, which is
  * the behaviour a player expects without a single number being authored per row.
  *
- * `attackDamage` is the third argument for the reason spec 184 exists: it is a
- * number a row authors and, until then, the one number a monster fights with
- * that never reached a blow. `weaponPower` fell through at its neutral 1, so
- * every body swinging `melee.slash` hit for the ability's own 14 -- the
- * ravager's 24 and the spider's 5 were the same blow. It is required rather
- * than defaulted, because a default is how the one caller that matters silently
- * keeps not passing it.
+ * `weaponPower` is the third argument, and it arrives already worked out rather
+ * than as an `attackDamage` this function divides down (spec 184). A player's is
+ * a *power* -- damage against the unarmed reference, because a player's damage
+ * comes from attributes and gear and is a different number every level. A
+ * monster's row states the damage it lands outright, so the arithmetic that
+ * turns one into a multiplier needs the ability the row names, and this function
+ * has no business knowing the ability table. `withTraits` in `data/monsters.ts`
+ * is where that division belongs and is the only caller.
+ *
+ * It is required rather than defaulted, because a default is how a body ends up
+ * back at the neutral 1 with nobody noticing -- which is the state spec 184
+ * found, and which spec 147 had chosen deliberately at a time when the rows had
+ * nothing better to say.
  *
  * Everything else stays neutral: monsters do not weak-point, do not gain flow
  * and do not adapt. Those are progression, and progression is the player's --
@@ -182,7 +175,7 @@ export function weaponPowerFor(attackDamage: number): number {
 export function monsterTraits(
   maxHealth: number,
   staggerPower: number,
-  attackDamage: number,
+  weaponPower: number,
 ): TraitStats {
   const health = Number.isFinite(maxHealth) && maxHealth > 0 ? maxHealth : 1;
   return {
@@ -190,7 +183,7 @@ export function monsterTraits(
     maxPoise: Math.max(SCALING.combat.minPoise, health * SCALING.combat.monsterPoiseFraction),
     poiseRegen: SCALING.combat.monsterPoiseRegen / 60,
     staggerPower: Math.max(0, staggerPower),
-    weaponPower: weaponPowerFor(attackDamage),
+    weaponPower: Math.max(0, weaponPower),
     maxShield: 0,
   };
 }
@@ -348,7 +341,9 @@ export function deriveTraits(
     executeBonus: Math.max(0, t.executeBonus),
     executeBelow: clamp(t.executeBelow, 0, 1),
     overkillResource: Math.max(0, t.overkillResource),
-    weaponPower: weaponPowerFor(context.attackDamage),
+    // The Damage row, expressed as a multiplier a blow can be multiplied by.
+    // A body with the reference damage hits for exactly what the ability says.
+    weaponPower: Math.max(0, context.attackDamage / PLAYER_ATTACK_DAMAGE),
     momentumTicks: Math.max(0, Math.round(t.momentumTicks)),
     momentumWindupScale: clamp(t.momentumWindupScale, 0, 0.9),
     heavyWindupScale: reduction(t.heavyWindupReduction),

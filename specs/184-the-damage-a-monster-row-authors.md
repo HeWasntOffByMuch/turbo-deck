@@ -18,132 +18,145 @@ small_spider   attackDamage=  5   weaponPower=1   melee.slash (14)  -> 14
 slinger        attackDamage=  9   weaponPower=1   ranged.star  (8)  ->  8
 ```
 
-The cause is one line that was never written. `sim/blow.ts` multiplies a basic
-attack by `traits.weaponPower`, and `player/derived.ts` derives that from a
-body's `attackDamage` against the unarmed reference -- but only in
-`deriveTraits`, the player's path. `monsterTraits` beside it takes `maxHealth`
-and a stagger power and returns `NEUTRAL_TRAITS` with the poise fields
-overridden, so `weaponPower` falls through at its neutral 1 and a monster's blow
-is the ability's own authored damage. Every body swinging `melee.slash` is
-therefore the same blow, and the ravager's 24 and the spider's 5 -- a range of
-nearly five to one -- are the same number to the resolver.
+`sim/blow.ts` multiplies a basic attack by `traits.weaponPower`, and
+`monsterTraits` returns `NEUTRAL_TRAITS` with the poise fields overridden -- so
+`weaponPower` is 1 for every body in the table and a monster's blow is the
+ability's own authored damage. The ravager's 24 and the spider's 5 are the same
+blow.
 
-This is exactly the hole spec 147 found and closed, one body short: *"`applyDamage`
-multiplied every blow by `spellPower` and read `attackDamage` nowhere at all, so
-Strength's damage coefficient had been decorative since spec 062."* The fix
-introduced `weaponPower` and routed the player's damage stat into it. Monsters
-went on being the earlier bug, and stayed inside a function whose doc comment
-says "everything else stays neutral" -- which is right about weak points, flow
-and adaptation, and wrong about how hard the body hits.
+### This was a decision, not an oversight
 
-What made it survive is that the number is *live everywhere except in a blow*.
-It is authored, it is summed into stagger power (`withTraits` reads it two lines
-above), it rides the wire in `EffectiveStats`, and the admin console prints it in
-the player table. Nothing looks unplugged.
+Worth stating plainly, because the first draft of this spec got it wrong and
+that is the more useful finding. Spec 147 introduced `weaponPower` to close the
+same hole on the player's side -- `applyDamage` had multiplied every blow by
+`spellPower` and read `attackDamage` nowhere since spec 062 -- and it explicitly
+declined to extend it here:
 
-What the bug costs is the design intent of the whole roster: the ravager is
-authored as the heaviest thing on the map and hits like the grazer, the four
-spiders you are meant to win against by swinging hit as hard as the thing that
-takes 140 damage to kill, and the slinger's throw is under-tuned in the other
-direction.
+> Monsters keep `weaponPower: 1` through `monsterTraits`, so nothing in the
+> existing content is re-tuned by this.
+
+That was the right call *for 147*, whose subject was six player attributes and
+which had no business silently rescaling five monsters on its way past. But it
+left the field parked: authored, replicated in `EffectiveStats`, summed into
+stagger power two lines above in `withTraits`, printed in the admin console, and
+reaching no blow. Nothing looks unplugged, and `npm run balance` fights the
+twelve player presets against each other, so no instrument in the tree was ever
+going to object.
+
+Before 147 the formula was `ability.damage * spellPower` with monsters at
+`spellPower: 1`, so a monster's blow has been flat ability damage since spec 062
+and its `attackDamage` has never reached one in any version of this game.
+
+### The reading the rows were authored under
+
+The rows say which one they meant. The spider's comment:
+
+> the fastest base attack time in the table is the only thing that makes **5
+> damage** matter
+
+It calls the 5 damage -- the thing that lands. So does the shape of the numbers:
+6, 11, 24, 5, 9 are damage figures, not multipliers, and the pre-062 constant
+they descend from (`ENEMY_ATTACK_DAMAGE = 15`) was flat damage per blow.
+
+The same comment also says "22 health is two player swings", and a starting
+player's slash is 20.5625, so 22 is 1.07 swings. That half went stale when 147
+gave the *player* a `weaponPower`, and nobody noticed then either -- for exactly
+the reason nobody noticed this. A number nothing reads cannot be observed to be
+wrong.
 
 ## Shape
 
-`player/derived.ts` -- one rule, one place, because there are now two bodies
-that need it and the `DeriveContext` doc already states that there must not be
-two of it:
+**A row's `attackDamage` is the damage it lands**, per blow, before the target's
+armour. Five is five.
+
+That is a different rule from the player's, where `attackDamage` is a *power*
+measured against the unarmed reference, and the difference is the point rather
+than an inconsistency. A player's damage is derived from attributes, level and
+gear and is a different number every session, so it can only be stated relative
+to something. A monster's row is authored by hand and read by a person deciding
+whether a fight is fair, and relative-to-what is a question that person should
+never have to ask.
+
+`resolveBlow` does not move. It computes `ability.damage * weaponPower` for
+every body in the world, and what changes is only how a monster's multiplier is
+arrived at -- in `data/monsters.ts`, which is the one file holding both the row
+and the ability it names:
 
 ```ts
-/** The Damage row, as a multiplier a basic attack is multiplied by. */
-export function weaponPowerFor(attackDamage: number): number;
+/** The multiplier that makes this row's blow land its authored damage. */
+function weaponPowerOf(stats: AuthoredStats): number {
+  const ability = abilityById(stats.basicAttackId);
+  if (!ability || ability.damage <= 0) return 0;
+  return Math.max(0, stats.attackDamage / ability.damage);
+}
 ```
 
-`deriveTraits` calls it where it inlined the expression. `monsterTraits` gains
-the argument it was missing:
+`player/derived.ts` is left as spec 147 wrote it, and `monsterTraits` takes the
+multiplier already worked out rather than an `attackDamage` to divide down:
 
 ```ts
 export function monsterTraits(
   maxHealth: number,
   staggerPower: number,
-  attackDamage: number,
+  weaponPower: number,
 ): TraitStats;
 ```
 
-Required rather than defaulted, and third rather than optional: a default is how
-the one caller that matters silently keeps not passing it, which is the shape
-this bug already had once.
+Required rather than defaulted, because a default is how a body ends up back at
+the neutral 1 with nobody noticing. That function has no business knowing the
+ability table, and the division cannot be done without it.
 
-`data/monsters.ts` -- `withTraits` passes `monster.stats.attackDamage`, which it
-is already holding for the stagger power on the line above.
+The degenerate rows answer **0, not 1**. The training dummy names no ability;
+a row naming a damageless one has nothing for a multiplier to scale. 1 is the
+neutral, and the neutral is precisely the value that made a monster deal its
+ability's damage regardless of its row.
 
-**The reference is the player's**, not a per-row scale: `attackDamage` divided
-by `PLAYER_ATTACK_DAMAGE` (8), the same denominator a player's swing is measured
-against. That is what keeps "one shape, one code path" -- monsters.ts's own
-stated reason for expressing a row as a full `EffectiveStats` -- a fact about
-the module graph rather than a claim. A body authored at the reference damage
-hits for exactly what the ability says, whoever it is.
+What the roster does after the change -- per basic attack, before mitigation,
+which is the column the table already authored:
 
-What the roster does after the change, per basic attack before mitigation:
+| row | attackDamage | ability | was | is |
+|---|---|---|---|---|
+| grazer | 6 | melee.slash (14) | 14 | 6 |
+| stalker | 11 | melee.slash (14) | 14 | 11 |
+| ravager | 24 | melee.slash (14) | 14 | 24 |
+| small_spider | 5 | melee.slash (14) | 14 | 5 |
+| slinger | 9 | ranged.star (8) | 8 | 9 |
 
-| row | attackDamage | was | is |
-|---|---|---|---|
-| grazer | 6 | 14 | 10.5 |
-| stalker | 11 | 14 | 19.25 |
-| ravager | 24 | 14 | 42 |
-| small_spider | 5 | 14 | 8.75 |
-| slinger | 9 | 8 | 9 |
-
-Two of those move a long way and both are the point. The ravager swings once
-every 2.25s and is the one body on the map that starts nothing, so a player
-walks into that 42 by choosing to; the spider swings every 0.8s and comes in
-fours, and four of them at 14 was 65.8 damage a second after a starting
-player's armour -- which is a 200-health character dead in 3.0s, against 4.9s
-at the 8.75 its row actually authors.
+The two abilities are what make this per-row rather than a rescale: a rule
+expressed against one shared reference cannot land both 24 off a 14-damage slash
+and 9 off an 8-damage star.
 
 ## Invariants tested
 
-- `weaponPowerFor(PLAYER_ATTACK_DAMAGE)` is 1, and it is linear either side of
-  it, so an authored row and a player's sheet mean the same thing by the number.
-- `monsterTraits` returns a `weaponPower` derived from the `attackDamage` it was
-  handed, and still returns neutral values for everything progression owns
-  (weak points, flow, adaptation, shields).
-- Every row in `MONSTERS` -- the dummy included -- has
-  `traits.weaponPower === stats.attackDamage / PLAYER_ATTACK_DAMAGE`, so a row
-  added later cannot be a body whose damage reaches nothing.
-- Through `resolveBlow` against an identical unarmoured target, each monster's
-  own basic attack lands `ability.damage * attackDamage / 8`: the ravager's
-  slash is measurably heavier than the spider's, where before they were equal.
-- The player path is unchanged: `deriveTraits` returns the same `weaponPower` it
-  did before the extraction, for the same context.
-- The dummy authors 0 damage and derives a `weaponPower` of 0, so scenery with a
-  health bar cannot start dealing 14.
+- Through `resolveBlow` against an unarmoured target, **every row lands exactly
+  its own `attackDamage`** -- equality, not proportionality, so a change that
+  rescaled the roster uniformly fails here instead of passing an ordering check.
+- The slinger and the ravager land 9 and 24 off abilities authored at 8 and 14,
+  which is the pair that distinguishes a per-row ratio from a shared one.
+- The roster is ordered the way the table is: spider < grazer < stalker <
+  ravager, where before all four were equal.
+- The training dummy names no ability, authors 0 damage and derives a
+  `weaponPower` of 0.
+- `monsterTraits` carries the weapon power it is handed and never defaults it,
+  and still returns neutral values for everything progression owns (weak points,
+  flow, adaptation, shields).
+- The player path is untouched: `deriveTraits` is byte-identical to spec 147's.
 
 ## Out of scope
 
-- **Retuning the rows.** This spec makes the authored numbers reach a blow; it
-  does not change one of them. If 42 is the wrong number for the ravager, that
-  is now a one-line edit in `monsters.ts` that visibly does something, which is
-  the state this spec exists to reach.
-
-  It is worth writing down that the rows probably **do** want retuning, because
-  the evidence is that they were authored under the other reading of the field.
-  `attackDamage` is a *power* stat -- a multiplier against the player's unarmed
-  reference, which is what it has always meant on the player's side -- and the
-  spider's row comment calls its 5 "5 damage", as though the number were what
-  lands. Under this spec the spider lands 8.75. The same comment says "22 health
-  is two player swings", and a starting player's own slash is 20.5625, so 22 is
-  1.07 swings: that half of the comment went stale when spec 147 gave the
-  *player* a `weaponPower`, and nobody noticed then either, for the same reason
-  nobody noticed this -- a number nothing reads cannot be observed to be wrong.
-  What this spec fixes is that the roster's damage is now ordered and spaced the
-  way the table says it is. Whether the absolute values are the ones a designer
-  wants is a separate pass, and one that can now be made by editing the table.
+- **Retuning the rows.** Every authored number now lands as written, which is
+  the state a tuning pass should start from rather than one it has to reach.
+  What did change is the *fight*: four spiders were 65.8 damage a second after a
+  starting player's armour and are now 23.5, and the ravager went from 13.2 a
+  blow to 22.6. Those are consequences of the table being read, not choices this
+  spec made.
 - **`spellPower` for monsters.** Every row's `basicAttackId` names a
-  `basicAttack: true` ability, so the non-basic multiplier is not on any monster's
-  path today. A row that names a non-basic ability would scale with its
-  `spellPower` of 1 -- correct by the same rule, and untested here because
-  nothing exercises it.
+  `basicAttack: true` ability, so the non-basic multiplier is on no monster's
+  path today. A row naming a non-basic ability would scale by its `spellPower`
+  of 1 and land the ability's authored damage -- correct by the same rule, and
+  untested here because nothing exercises it.
+- **A monster with more than one attack.** The ratio is taken against the single
+  ability a row names. A body with a second attack would need its damage stated
+  per ability, and `attackDamage` would stop being able to mean this.
 - **The other authored numbers.** `armor`, `critChance`, `attackRange` and
   `baseAttackTimeTicks` are read by the resolver already and are not touched.
-- **The balance harness.** `npm run balance` fights the twelve player presets
-  against each other and does not read the monster table.

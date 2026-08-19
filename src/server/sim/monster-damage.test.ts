@@ -2,20 +2,24 @@
  * A monster's authored damage, in a blow (spec 184).
  *
  * `data/monsters.ts` says that "every number it fights with is read from here",
- * and until this spec the damage was the one number that was not: `monsterTraits`
- * returned the neutral `weaponPower` of 1, so every body swinging `melee.slash`
- * dealt the ability's own 14 and the ravager's 24 and the spider's 5 were the
- * same blow.
+ * and until this spec the damage was the one number that was not: every monster
+ * carried the neutral `weaponPower` of 1, so a body swinging `melee.slash` dealt
+ * that ability's own 14 whatever its row said, and the ravager's 24 and the
+ * spider's 5 were the same blow.
  *
- * These tests are deliberately *behavioural* -- they resolve a real blow rather
- * than reading a trait -- because the trait was there and correct all along. It
- * was the multiplication that never happened, and only the resolver can say
- * whether it does now.
+ * The assertion these tests exist to make is the one a designer reads the table
+ * for: **a row's `attackDamage` is the damage it lands.** Not proportional to
+ * it, not ordered like it -- equal to it, before the target's armour. So the
+ * expected value in every case below is the row itself, which is the only form
+ * of this test that could not pass while still being subtly scaled.
+ *
+ * Deliberately *behavioural*: they resolve a real blow rather than reading a
+ * trait, because the trait was present and plausible all along and only the
+ * resolver can say what a body actually hits for.
  */
 
 import { describe, expect, it } from 'vitest';
 import { Rng } from '../../shared/prng.js';
-import { PLAYER_ATTACK_DAMAGE } from '../../sim/constants.js';
 import { abilityById } from '../data/abilities.js';
 import { ALL_MONSTERS, MONSTERS, type MonsterDefinition } from '../data/monsters.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
@@ -107,31 +111,33 @@ function blowFrom(monster: MonsterDefinition): number {
 }
 
 describe('every monster row', () => {
-  it('derives its weapon power from the damage it authors', () => {
-    // The dummy included: a row added later must not be a body whose authored
-    // damage reaches nothing, which is the state this whole spec is about.
-    for (const monster of MONSTERS.values()) {
-      expect(monster.stats.traits.weaponPower).toBeCloseTo(
-        monster.stats.attackDamage / PLAYER_ATTACK_DAMAGE,
-        10,
-      );
+  it('lands exactly the damage it authors', () => {
+    // The whole spec, in one loop. Not "proportional to" and not "ordered like"
+    // -- equal to, so a future change that rescales the roster uniformly fails
+    // here rather than passing an ordering check while landing the wrong number.
+    for (const monster of ALL_MONSTERS) {
+      expect(blowFrom(monster), monster.id).toBeCloseTo(monster.stats.attackDamage, 6);
     }
   });
 
-  it('lands its authored damage rather than its ability\'s', () => {
-    for (const monster of ALL_MONSTERS) {
-      const ability = abilityById(monster.stats.basicAttackId);
-      expect(ability, `${monster.id} names a real ability`).toBeTruthy();
-      const expected = (ability?.damage ?? 0) * (monster.stats.attackDamage / PLAYER_ATTACK_DAMAGE);
-      expect(blowFrom(monster), monster.id).toBeCloseTo(expected, 6);
-    }
+  it('does it across two different abilities, which is what makes it per-row', () => {
+    // The slinger throws `ranged.star` (8 authored) and everything else swings
+    // `melee.slash` (14). A rule expressed as a multiple of one shared reference
+    // could not land both rows' numbers; the ratio against each row's *own*
+    // ability is what does, and this is the pair that tells them apart.
+    const slinger = MONSTERS.get('slinger');
+    const ravager = MONSTERS.get('ravager');
+    expect(slinger?.stats.basicAttackId).toBe('ranged.star');
+    expect(ravager?.stats.basicAttackId).toBe('melee.slash');
+    if (!slinger || !ravager) throw new Error('the roster lost a row');
+    expect(blowFrom(slinger)).toBeCloseTo(9, 6);
+    expect(blowFrom(ravager)).toBeCloseTo(24, 6);
   });
 
   it('hits in the order the table authors, which it did not before', () => {
-    // The headline. Every one of these swings `melee.slash` and every one of
-    // them used to deal exactly 14: the ravager was authored as the heaviest
-    // thing on the map and hit like the grazer, and four spiders hit as hard as
-    // the thing that takes 140 damage to kill.
+    // Every melee row used to deal exactly 14: the ravager was authored as the
+    // heaviest thing on the map and hit like the grazer, and four spiders hit as
+    // hard as the thing that takes 140 damage to kill.
     const of = (id: string): number => {
       const monster = MONSTERS.get(id);
       if (!monster) throw new Error(`no ${id} in the table`);
@@ -140,19 +146,17 @@ describe('every monster row', () => {
     expect(of('small_spider')).toBeLessThan(of('grazer'));
     expect(of('grazer')).toBeLessThan(of('stalker'));
     expect(of('stalker')).toBeLessThan(of('ravager'));
-    // And the size of the gap is the size of the gap in the table: 24 against
-    // 5 is a body that hits nearly five times as hard, not one that ties.
-    expect(of('ravager') / of('small_spider')).toBeCloseTo(24 / 5, 6);
   });
 });
 
 describe('the training dummy', () => {
-  it('authors no damage and derives none, so scenery cannot start hitting', () => {
+  it('names no ability and derives no power, so scenery cannot start hitting', () => {
+    // A row that does not swing is the one case the ratio cannot be taken, and
+    // it answers 0 rather than the neutral 1 -- 1 being exactly the value that
+    // let a body deal its ability's damage regardless of what it authored.
     const dummy = MONSTERS.get('dummy');
     expect(dummy?.stats.attackDamage).toBe(0);
-    expect(dummy?.stats.traits.weaponPower).toBe(0);
-    // It names no ability either, which is the other half of "scenery with a
-    // health bar" -- but the weapon power alone would make a blow worth nothing.
     expect(dummy?.stats.basicAttackId).toBe('');
+    expect(dummy?.stats.traits.weaponPower).toBe(0);
   });
 });

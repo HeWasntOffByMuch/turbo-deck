@@ -14,11 +14,19 @@
  * the wind-up and the backswing.
  *
  * It includes `attackDamage` too, and since spec 184 that is true rather than
- * merely stated: a row's damage is measured against the player's own reference
- * the way a player's is, so a body authored at 8 hits for exactly what its
- * ability says and one authored at 24 hits three times as hard. Before it, every
- * monster's `weaponPower` was the neutral 1 and every row in this file swinging
- * `melee.slash` dealt the same 14.
+ * merely stated. **A row's `attackDamage` is the damage it lands**, per blow,
+ * before the target's armour -- 5 for the small spider is five. That is a
+ * different rule from the player's, where `attackDamage` is a *power* measured
+ * against the unarmed reference, and the difference is deliberate: a player's
+ * damage is derived from attributes and gear and is a different number every
+ * level, so it can only be stated relative to something, while a row here is
+ * authored by hand and read by a person deciding whether a fight is fair.
+ * {@link withTraits} does the conversion, once, against the ability the row
+ * itself names.
+ *
+ * Before spec 184 every monster's `weaponPower` was the neutral 1 and every row
+ * swinging `melee.slash` dealt that ability's own 14, whatever it authored --
+ * the ravager's 24 and the spider's 5 were the same blow.
  *
  * Since spec 079 it also includes `basicAttackId`, which is where the monster's
  * `ability` field went. Two places naming what a body swings with was one too
@@ -34,6 +42,7 @@
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
+import { abilityById } from './abilities.js';
 import { monsterTraits } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import type { EffectiveStats } from '../state/types.js';
@@ -121,9 +130,32 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
     ...monster,
     stats: {
       ...monster.stats,
-      traits: monsterTraits(monster.stats.maxHealth, power, monster.stats.attackDamage),
+      traits: monsterTraits(monster.stats.maxHealth, power, weaponPowerOf(monster.stats)),
     },
   };
+}
+
+/**
+ * The multiplier that makes this row's blow land its authored `attackDamage`
+ * (spec 184).
+ *
+ * `resolveBlow` computes `ability.damage * weaponPower`, so a row that wants to
+ * land what it says needs the ratio between the two -- which is knowable here
+ * and nowhere else, because a row names exactly one `basicAttackId` and this is
+ * the file holding both halves. That is what keeps the resolver ignorant of
+ * whether it is swinging a player or a monster: one code path, two ways of
+ * arriving at the number it multiplies by.
+ *
+ * The two degenerate rows both mean "this body does not swing", and both answer
+ * 0 rather than 1: the training dummy names no ability at all, and a row naming
+ * an ability with no damage in it has nothing for a multiplier to scale. 1 would
+ * be the neutral, and the neutral is precisely the value that made a monster
+ * deal its ability's damage regardless of its row.
+ */
+function weaponPowerOf(stats: AuthoredStats): number {
+  const ability = abilityById(stats.basicAttackId);
+  if (!ability || ability.damage <= 0) return 0;
+  return Math.max(0, stats.attackDamage / ability.damage);
 }
 
 function seconds(value: number): number {
