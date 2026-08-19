@@ -86,7 +86,7 @@ describe('icons', () => {
 });
 
 /**
- * What an item says about itself (spec 176).
+ * What an item says about itself (spec 185).
  *
  * Asserted against the real table rather than a fixture, because the thing being
  * checked is the *mapping*: that a row's modifiers come out as lines somebody
@@ -141,7 +141,7 @@ describe('detailsFor', () => {
 
   it('draws no line for a stat it has no words for', () => {
     // Every describable field is in the table; a `traits` grant is deliberately
-    // not (spec 176), and it must produce no line rather than a raw key.
+    // not (spec 185), and it must produce no line rather than a raw key.
     const described = detailsFor('trinket.bloodstone').map((line) => line.text);
     expect(described.some((text) => text.includes('traits'))).toBe(false);
     expect(described).toContain('+12% Health');

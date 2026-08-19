@@ -33,7 +33,7 @@ import type { Pop } from './world/loot-drop.js';
  * lift in value with the tier, so which one something is survives the retro
  * pass quantizing every channel to a handful of steps.
  *
- * Read out of the interface's palette since spec 176, rather than authored here
+ * Read out of the interface's palette since spec 185, rather than authored here
  * beside it. The values did not move -- what moved is that there is now one
  * place they are written, so an item is the same colour in the bag as it was in
  * the grass and neither end can be retuned without the other. Converted to a

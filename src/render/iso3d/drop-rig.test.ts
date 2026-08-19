@@ -63,7 +63,7 @@ describe('the drop rig', () => {
   });
 
   /**
-   * The grass and the bag say the same thing (spec 176).
+   * The grass and the bag say the same thing (spec 185).
    *
    * The two used to be two tables, and this is the assertion that keeps them one
    * -- retune the interface's `rarityRare` and this fails until the drop follows,

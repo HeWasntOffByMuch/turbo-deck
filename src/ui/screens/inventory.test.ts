@@ -312,7 +312,7 @@ describe('layout', () => {
   });
 
   /**
-   * The tier reaches the interface as a colour (spec 176).
+   * The tier reaches the interface as a colour (spec 185).
    *
    * Asserted as tokens rather than as bytes, because a token is what the widget
    * carries and what a theme retune would keep: the day somebody warms the gold

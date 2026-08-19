@@ -13,7 +13,7 @@
  * near the bottom it opens above. A tooltip clipped by the screen edge is a
  * tooltip you cannot read, and the viewport is small and variable since spec 123.
  *
- * Since spec 176 it draws either a run of prose or a list of {@link TooltipLine}s,
+ * Since spec 185 it draws either a run of prose or a list of {@link TooltipLine}s,
  * and the difference is only what the caller hands it: the character sheet passes
  * a string and gets exactly what it got before, while the bag passes lines and
  * gets an item described in its tier's own colour. Wrapping is **per line** --
@@ -40,7 +40,7 @@ const CURSOR_GAP = 8;
 const MAX_WIDTH = 140;
 
 /**
- * One line of a tooltip (spec 176).
+ * One line of a tooltip (spec 185).
  *
  * The colour is a palette *token*, resolved against the theme at paint: a widget
  * that carried four bytes would be a widget with a colour spelled out in it, and
@@ -101,7 +101,7 @@ export class Tooltip extends StyledWidget {
    *
    * Passing null clears; passing the same content again keeps the timer running,
    * so moving the cursor *within* one widget does not restart the wait. "Same"
-   * is the text and the colour together (spec 176) -- an item whose tier changed
+   * is the text and the colour together (spec 185) -- an item whose tier changed
    * under the cursor is a different thing being described, even at the same name.
    */
   point(content: TooltipContent | null, at: Point, now: number): void {

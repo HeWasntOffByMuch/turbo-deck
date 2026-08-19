@@ -228,7 +228,7 @@ export function demoContainers(): ContainerView {
   put(2, 'star', 'Weighted Stars', 'star', 'mainHand');
   // One of each tier, and the described lines on the one the tooltip golden
   // opens over: what a rarity is *for* is being different from its neighbours,
-  // and a picture of three commons could not show that (spec 176).
+  // and a picture of three commons could not show that (spec 185).
   put(3, 'staff', 'Emberwood Staff', 'staff', 'mainHand', 1, 'rare', [
     { text: 'Rare  Main Hand', tone: 'rarity' },
     { text: '+3 Intelligence', tone: 'good' },

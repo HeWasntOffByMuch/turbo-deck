@@ -1,4 +1,4 @@
-# 176 — What an item says about itself
+# 185 — What an item says about itself
 
 ## Problem
 

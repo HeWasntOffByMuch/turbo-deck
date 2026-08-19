@@ -25,7 +25,7 @@ describe('theme.json against its schema', () => {
     expect(validate(typo)).toBe(false);
   });
 
-  // Sixteen until spec 176, which added the three rarity tiers. The cap is
+  // Sixteen until spec 185, which added the three rarity tiers. The cap is
   // against invented colour: those three are the world's own, already drawn on
   // every drop in the grass, and importing them is what keeps the bag and the
   // ground from drifting.

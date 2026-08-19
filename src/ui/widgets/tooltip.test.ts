@@ -1,5 +1,5 @@
 /**
- * What a tooltip does with more than one line (spec 176).
+ * What a tooltip does with more than one line (spec 185).
  *
  * The waiting and the edge flip are spec 124's and are checked through the
  * screens that use them. What is worth checking here is the half that is new:

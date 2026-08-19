@@ -30,7 +30,7 @@ import { fontById, measureText } from '../text/font.js';
 import { StyledWidget } from './base.js';
 
 /**
- * How a described line reads (spec 176).
+ * How a described line reads (spec 185).
  *
  * A *tone* rather than a palette token, because the view-model that produces
  * these lives in `src/render/` and whether a drawback is red is a fact about the
@@ -42,14 +42,14 @@ import { StyledWidget } from './base.js';
  */
 export type DetailTone = 'rarity' | 'good' | 'bad' | 'dim' | 'normal';
 
-/** One line of what an item says about itself (spec 176). */
+/** One line of what an item says about itself (spec 185). */
 export interface ItemDetail {
   readonly text: string;
   readonly tone: DetailTone;
 }
 
 /**
- * A tier's palette token (spec 176).
+ * A tier's palette token (spec 185).
  *
  * A name table rather than a colour: the values are `theme.json`'s, which are
  * `drop-rig.ts`'s, which is the whole point -- an item is the same colour in the
@@ -88,14 +88,14 @@ export interface ItemView {
   readonly icon: string;
   readonly levelRequirement: number;
   /**
-   * The tier id (spec 176). What the icon is tinted with, and what the tooltip's
+   * The tier id (spec 185). What the icon is tinted with, and what the tooltip's
    * name is drawn in. A string rather than a union because the vocabulary is the
    * server's and this layer may not import it -- {@link rarityToken} is total, so
    * an id from a build this one has never heard of draws as ordinary loot.
    */
   readonly rarity: string;
   /**
-   * What the tooltip says under the name, in display order (spec 176).
+   * What the tooltip says under the name, in display order (spec 185).
    *
    * Assembled outside `src/ui/` like everything else here: the stats, the worth
    * and the level gate are all in the item table, which a widget may not read.
@@ -305,7 +305,7 @@ export function paintItem(out: DrawList, context: PaintContext, item: ItemView, 
 }
 
 /**
- * The tier, as the cell it sits in (spec 176) -- the colour it was lying in the
+ * The tier, as the cell it sits in (spec 185) -- the colour it was lying in the
  * grass, behind the same icon it has always had.
  *
  * **Behind rather than on.** The obvious version tints the sprite, and the
@@ -351,7 +351,7 @@ function paintRarityWash(out: DrawList, context: PaintContext, item: ItemView, b
 function sameItem(a: ItemView | null, b: ItemView | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  // Rarity is compared because it is *drawn* (spec 176). The details are not:
+  // Rarity is compared because it is *drawn* (spec 185). The details are not:
   // they are a function of the id, which is compared, and they are a list.
   return (
     a.defId === b.defId &&

@@ -609,7 +609,7 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  position, since `UiLayer.toUi` is deliberately the one
                  conversion between UI pixels and canvas ones and a stale
                  cursor would throw the item somewhere nobody clicked.
-                 Since spec 176 an item also *says* what it is, and the colour it
+                 Since spec 185 an item also *says* what it is, and the colour it
                  says it in is the one it was lying in the grass: the three tier
                  colours moved out of `drop-rig.ts` into the palette, and the drop
                  reads them back, so the bag and the ground cannot drift and a

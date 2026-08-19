@@ -213,7 +213,7 @@ export const INVENTORY_GOLDEN_CASES: readonly InventoryGoldenCase[] = [
     name: 'bag-tooltip-rare',
     options: { tooltipOver: { container: 'inventory', index: 3 } },
     covers:
-      'an item described (spec 176): its name and tier in the tier\'s own colour, a benefit, a drawback and what it is worth',
+      'an item described (spec 185): its name and tier in the tier\'s own colour, a benefit, a drawback and what it is worth',
   },
   {
     name: 'bag-small',

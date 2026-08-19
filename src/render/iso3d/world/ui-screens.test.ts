@@ -720,7 +720,7 @@ describe('the tooltip, over the world (spec 136)', () => {
   });
 
   /**
-   * The whole chain, end to end (spec 176).
+   * The whole chain, end to end (spec 185).
    *
    * Every part of this is asserted somewhere on its own -- the table has the
    * numbers, `detailsFor` turns them into lines, the screen colours them. What

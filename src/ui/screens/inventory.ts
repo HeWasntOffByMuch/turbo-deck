@@ -38,7 +38,7 @@ import { Label } from '../widgets/label.js';
 export type { ItemDetail, ItemView, SlotRef } from '../widgets/item-slot.js';
 
 /**
- * What a tone is drawn in (spec 176).
+ * What a tone is drawn in (spec 185).
  *
  * The one place the vocabulary the view-model speaks meets the palette. `rarity`
  * is absent because it is not one colour -- it is the item's own, and only the
@@ -234,7 +234,7 @@ export class InventoryScreen extends Row {
    * What the tooltip says over a cell, or nothing when the cell is empty.
    *
    * The name in the item's tier colour, then whatever the view-model described
-   * (spec 176) -- the tier, where it is worn, what it does to your numbers, what
+   * (spec 185) -- the tier, where it is worn, what it does to your numbers, what
    * it is worth. The level gate is still decided *here* rather than in the
    * model, because it is the only line that depends on who is looking: the same
    * sword is gated for one character and not for another, and a model that baked

@@ -111,7 +111,7 @@ describe('paintItem', () => {
   });
 
   /**
-   * The tier, drawn where the sprites cannot fight it (spec 176).
+   * The tier, drawn where the sprites cannot fight it (spec 185).
    *
    * Asserted against `over` rather than against three literal bytes, because
    * `over` is the rasterizer's own operator and the property being checked is

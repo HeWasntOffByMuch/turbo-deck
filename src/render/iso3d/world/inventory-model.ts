@@ -54,7 +54,7 @@ export function iconFor(defId: string): string {
 /**
  * How a slot is named to a player. Title-casing `mainHand` gives "Mainhand".
  *
- * Two names each since spec 176, and the reason is where they are read. The
+ * Two names each since spec 185, and the reason is where they are read. The
  * paperdoll's labels sit in a column beside 20px cells and have to be terse; a
  * tooltip has a line to itself and "Main" alone is a riddle. One table, so the
  * two can never come to name different slots.
@@ -69,7 +69,7 @@ const SLOT_LABELS: Readonly<Record<EquipSlot, { readonly short: string; readonly
 };
 
 /**
- * How a modifier is written out (spec 176).
+ * How a modifier is written out (spec 185).
  *
  * Here rather than in `data/modifiers.ts` for the reason {@link ICONS} gives:
  * this is what a player is told and that file is what the sim computes. Ordered,
@@ -150,7 +150,7 @@ export const EQUIPMENT_SLOT_VIEW: readonly { readonly id: string; readonly label
   EQUIP_SLOTS.map((slot) => ({ id: slot, label: SLOT_LABELS[slot].short }));
 
 /**
- * Everything an item says about itself under its name (spec 176).
+ * Everything an item says about itself under its name (spec 185).
  *
  * The tier and where it is worn on one line, because they are one sentence --
  * "a rare thing you hold in your main hand" -- and two lines of two words each
