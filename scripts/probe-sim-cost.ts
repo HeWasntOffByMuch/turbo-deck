@@ -44,6 +44,9 @@ interface Reading {
   readonly simMs: number;
   readonly simWorstMs: number;
   readonly ticksPerFrame: number;
+  readonly prepareMs: number;
+  readonly drawMs: number;
+  readonly restMs: number;
 }
 
 function stop(child: ChildProcess | null): void {
@@ -81,6 +84,9 @@ async function read(page: Page, url: string, label: string): Promise<Reading> {
   const sim: number[] = [];
   const worst: number[] = [];
   const ticks: number[] = [];
+  const prep: number[] = [];
+  const draw: number[] = [];
+  const rest: number[] = [];
   for (let i = 0; i < 8; i++) {
     await sleep(900);
     const now = await page.evaluate(
@@ -92,14 +98,23 @@ async function read(page: Page, url: string, label: string): Promise<Reading> {
           sim: Number(d.fpsSim ?? 0),
           worst: Number(d.fpsSimWorst ?? 0),
           ticks: Number(d.fpsTicksPerFrame ?? 0),
+          prep: Number(d.fpsPrepare ?? 0),
+          draw: Number(d.fpsDraw ?? 0),
+          rest: Number(d.fpsRest ?? 0),
         };
       })()`,
     );
-    const sample = now as { frame: number; sim: number; worst: number; ticks: number };
+    const sample = now as {
+      frame: number; sim: number; worst: number; ticks: number;
+      prep: number; draw: number; rest: number;
+    };
     frame.push(sample.frame);
     sim.push(sample.sim);
     worst.push(sample.worst);
     ticks.push(sample.ticks);
+    prep.push(sample.prep);
+    draw.push(sample.draw);
+    rest.push(sample.rest);
   }
   return {
     label,
@@ -107,6 +122,9 @@ async function read(page: Page, url: string, label: string): Promise<Reading> {
     simMs: median(sim),
     simWorstMs: median(worst),
     ticksPerFrame: median(ticks),
+    prepareMs: median(prep),
+    drawMs: median(draw),
+    restMs: median(rest),
   };
 }
 
@@ -171,15 +189,19 @@ async function main(): Promise<void> {
     stop(server);
   }
 
-  console.log('\ntransport                        frame     sim   worst    t/f   sim share');
+  console.log('\ntransport                        frame     sim   worst    t/f    prep    draw    rest');
   for (const row of readings) {
-    const share = row.frameMs > 0 ? (row.simMs / row.frameMs) * 100 : 0;
     console.log(
       `${row.label.padEnd(30)} ${row.frameMs.toFixed(1).padStart(6)}` +
         ` ${row.simMs.toFixed(2).padStart(7)} ${row.simWorstMs.toFixed(1).padStart(7)}` +
-        ` ${row.ticksPerFrame.toFixed(1).padStart(6)} ${`${share.toFixed(1)}%`.padStart(11)}`,
+        ` ${row.ticksPerFrame.toFixed(1).padStart(6)} ${row.prepareMs.toFixed(1).padStart(7)}` +
+        ` ${row.drawMs.toFixed(1).padStart(7)} ${row.restMs.toFixed(1).padStart(7)}`,
     );
   }
+  console.log(
+    '\nprep is JavaScript building the frame, draw is handing it to the driver, rest is',
+  );
+  console.log('everything this thread cannot time -- the GPU, the driver, the compositor.');
   console.log(
     '\nmilliseconds are this container\'s (software GL, accumulator pinned at MAX_CATCH_UP_TICKS);',
   );

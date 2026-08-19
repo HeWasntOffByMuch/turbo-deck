@@ -24,6 +24,19 @@ export interface SimCost {
   readonly ticksPerFrame: number;
 }
 
+/**
+ * What {@link FpsOverlay.set} is told about the rendering half (spec 191).
+ *
+ * Split at the first draw call, because "the renderer is slow" has two
+ * unrelated causes. `prepareMs` is JavaScript building the frame -- rigs,
+ * effects, the scene graph -- and is fixed by doing less work. `drawMs` is
+ * handing commands to the driver, and is fixed by submitting fewer of them.
+ */
+export interface RenderCost {
+  readonly prepareMs: number;
+  readonly drawMs: number;
+}
+
 const WIDTH = 180;
 const HEIGHT = 56;
 
@@ -54,6 +67,7 @@ export interface FpsOverlay {
     worstStageMs?: number,
     scene?: { calls: number; triangles: number },
     sim?: SimCost,
+    render?: RenderCost,
   ): void;
   dispose(): void;
 }
@@ -104,8 +118,16 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   const sim = document.createElement('div');
   sim.dataset['fpsSim'] = '';
   sim.style.cssText = 'color:#6edc96;';
+  // The rendering half, and the remainder (spec 191). Its own colour again, and
+  // the remainder is the number the whole line exists to show: the frame minus
+  // everything this thread can account for. Large, and the answer is not on this
+  // thread at all.
+  const render = document.createElement('div');
+  render.dataset['fpsRender'] = '';
+  render.style.cssText = 'color:#8fb6dc;';
   root.append(draws);
   root.append(sim);
+  root.append(render);
   root.append(work);
 
   const canvas = document.createElement('canvas');
@@ -135,6 +157,7 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
       worstStageMs = 0,
       scene?: { calls: number; triangles: number },
       simCost?: SimCost,
+      renderCost?: RenderCost,
     ): void {
       if (!stats) {
         root.style.display = 'none';
@@ -173,6 +196,21 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
         root.dataset['fpsSim'] = simCost.meanMs.toFixed(2);
         root.dataset['fpsSimWorst'] = simCost.worstMs.toFixed(2);
         root.dataset['fpsTicksPerFrame'] = simCost.ticksPerFrame.toFixed(2);
+      }
+      if (renderCost) {
+        // `rest` is the point of the line: a frame is the sim, the preparation,
+        // the submission, and whatever is left. What is left is the GPU, the
+        // driver and the compositor -- none of which this thread can time -- so
+        // it is computed rather than measured, and a big one means the fix is
+        // not in any of the three numbers beside it.
+        const accounted = renderCost.prepareMs + renderCost.drawMs + (simCost?.meanMs ?? 0);
+        const rest = Math.max(0, stats.avgMs - accounted);
+        render.textContent =
+          `prep ${renderCost.prepareMs.toFixed(1)}  draw ${renderCost.drawMs.toFixed(1)}` +
+          `  rest ${rest.toFixed(1)}ms`;
+        root.dataset['fpsPrepare'] = renderCost.prepareMs.toFixed(2);
+        root.dataset['fpsDraw'] = renderCost.drawMs.toFixed(2);
+        root.dataset['fpsRest'] = rest.toFixed(2);
       }
       root.dataset['fpsWorstStage'] = worstStage;
       root.dataset['fpsWorstStageMs'] = worstStageMs.toFixed(1);

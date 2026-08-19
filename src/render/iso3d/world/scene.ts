@@ -801,6 +801,8 @@ export class WorldScene {
    * overwritten by the next frame and the measurement would quietly be of the
    * baseline.
    */
+  private cost: { prepareMs: number; drawMs: number } = { prepareMs: 0, drawMs: 0 };
+
   private perf: PerfFlags = {
     noShadow: false,
     noProps: false,
@@ -1135,6 +1137,7 @@ export class WorldScene {
   }
 
   render(view: ClientView, frame: FrameInfo): void {
+    const startedAt = performance.now();
     this.renderer.info.reset();
     this.resize();
     const dt = Math.min(0.05, Math.max(0, frame.dt));
@@ -1210,6 +1213,14 @@ export class WorldScene {
     const unsnap = this.applyPixelSnap(hike);
     this.collectAnchors();
 
+    // The split this whole readout exists for (spec 191): everything above is
+    // JavaScript preparing the frame -- posing rigs, ageing effects, walking the
+    // scene graph -- and everything below is handing it to the driver. They are
+    // two different problems with two different fixes, and a single "render"
+    // number cannot tell them apart.
+    const drawAt = performance.now();
+    this.cost = { prepareMs: drawAt - startedAt, drawMs: this.cost.drawMs };
+
     // Captured with the snapped camera, so the buffers line up with the frame
     // they will be composited over rather than being half a pixel out from it.
     const debugging = hike.debug === 'depth' || hike.debug === 'normals';
@@ -1263,7 +1274,26 @@ export class WorldScene {
       // the quantizer gets to round.
       if (hike.edges) this.drawEdges(hike, false);
     }
+    this.cost = { prepareMs: this.cost.prepareMs, drawMs: performance.now() - drawAt };
     unsnap?.();
+  }
+
+  /**
+   * What the last frame spent in JavaScript, split at the first draw call.
+   *
+   * `drawMs` is **submission**, not GPU time: WebGL commands are queued and
+   * return, so a fast number here with a slow frame around it means the time
+   * went somewhere this cannot see -- the driver, the GPU, the compositor. That
+   * is the reading the readout is for, and it is why the frame publishes a
+   * remainder rather than pretending these two add up to a frame.
+   *
+   * The one thing that muddies it: when the command queue backs up, the driver
+   * blocks *inside* a later GL call, so genuine GPU time can land in `drawMs`.
+   * A `drawMs` that is large and a remainder that is small still means "the GPU
+   * is the problem", not "submission is expensive".
+   */
+  renderCost(): { readonly prepareMs: number; readonly drawMs: number } {
+    return this.cost;
   }
 
   /**

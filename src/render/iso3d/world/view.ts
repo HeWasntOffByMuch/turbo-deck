@@ -535,6 +535,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   const simCosts = new CostMeter();
   const simTicks = new CostMeter();
+  /** The frame's JavaScript, either side of the first draw call (spec 191). */
+  const prepCosts = new CostMeter();
+  const drawCosts = new CostMeter();
   /**
    * The streaming cost of recent frames, decayed rather than averaged.
    *
@@ -2336,6 +2339,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       targetEntityId: targetId,
       aim: aimIndicator(view, view.self ?? { x: 0, y: 0 }),
     });
+    // Split at the first draw call (spec 191), because "the renderer is slow"
+    // has two unrelated causes: too much JavaScript preparing the frame, and too
+    // many commands handed to the driver. The remainder the overlay computes --
+    // the frame minus the sim, the preparation and the submission -- is
+    // everything this thread cannot see, which is where the answer lives when
+    // all three of these are small and the frame is not.
+    const cost = scene.renderCost();
+    prepCosts.push(cost.prepareMs);
+    drawCosts.push(cost.drawMs);
     // The overlay is laid over the *drawn image*, not over the window (spec 099).
     // Every anchor it positions from is in canvas space, so under a letterbox an
     // overlay spanning the whole view would sit the health bars off their bodies
@@ -2423,6 +2435,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       worstStageMs,
       scene.renderStats(),
       { ...simCosts.read(), ticksPerFrame: simTicks.read().meanMs },
+      { prepareMs: prepCosts.read().meanMs, drawMs: drawCosts.read().meanMs },
     );
 
     // Where the view is looking from and how wide it frames, for the probes.
