@@ -911,10 +911,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const trade =
       `${readout.tradeStage}|${readout.tradeReason}|${readout.tradeInvited}` +
       `|${readout.tradeYou}|${readout.tradeThem}`;
+    // The chat (spec 189). In the key as well, because a line arriving changes
+    // nothing else on this line -- and the whole claim the feature makes is
+    // that a line somebody else said turns up on this screen.
+    const chatRects = boxes(readout.chatRects);
+    const chat = `${readout.chat.join(';')}|${String(readout.chatOpen)}|${readout.chatInput}|${chatRects}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
       `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
-      `|${trade}|${tradeRects}`;
+      `|${trade}|${tradeRects}|${chat}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
@@ -936,6 +941,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiTradeYou'] = readout.tradeYou;
     root.dataset['uiTradeThem'] = readout.tradeThem;
     root.dataset['uiTradeRects'] = tradeRects;
+    root.dataset['uiChat'] = readout.chat.join(';');
+    root.dataset['uiChatOpen'] = String(readout.chatOpen);
+    root.dataset['uiChatInput'] = readout.chatInput;
+    root.dataset['uiChatRects'] = chatRects;
   }
 
   /**
@@ -1249,6 +1258,22 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       const me = client.view().self;
       return me ? nearestVendorTo(me.x, me.y) : null;
     },
+    // A request like every other one here (spec 189). The server truncates,
+    // refuses a muted player and broadcasts to everyone including the sender --
+    // so what the player sees of their own line comes back the same way as
+    // everybody else's, and nothing is echoed locally.
+    onSay: (text) => {
+      client.say(text);
+    },
+  });
+
+  // The other half of that, and the half that had never been connected to
+  // anything: `GameClient.onChat` has existed since the protocol did and its
+  // listener list was empty for the life of every session, so the `System` line
+  // the server sends on every death and every admin broadcast were encoded,
+  // framed, sent, decoded and dropped.
+  client.onChat((message) => {
+    ui.pushChat(message.channel, message.from, message.text);
   });
   let cursor: { x: number; y: number } | null = null;
   /**
@@ -1528,6 +1553,19 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (decision.toggleStats) {
       hud.toggleReadout();
       event.preventDefault();
+    }
+
+    // Enter opens the chat (spec 189). It only gets this far while the chat is
+    // *closed*: once it is open the field holds the keyboard, `ui.handleKey`
+    // above takes the key and this whole function is skipped -- which is what
+    // makes the same key send the line without a second branch saying so.
+    //
+    // `preventDefault` because a page-level Enter is the browser's to interpret,
+    // and because the action is rebindable, so is whatever key gets here.
+    if (decision.chat) {
+      ui.openChat();
+      event.preventDefault();
+      return;
     }
 
     for (const slot of decision.skillbar) {

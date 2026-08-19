@@ -56,6 +56,8 @@ export interface KeyDecision {
   readonly windows: readonly WindowId[];
   /** Whether the diagnostic readout should be shown or hidden (spec 183). */
   readonly toggleStats: boolean;
+  /** Whether the chat's input line should be opened (spec 189). */
+  readonly chat: boolean;
 }
 
 export const NO_DECISION: KeyDecision = {
@@ -64,6 +66,7 @@ export const NO_DECISION: KeyDecision = {
   cancel: false,
   windows: [],
   toggleStats: false,
+  chat: false,
 };
 
 /** The action id that calls off a wind-up. */
@@ -81,6 +84,18 @@ export const CANCEL_ACTION = 'combat.cancel';
 export const TOGGLE_STATS_ACTION = 'debug.toggleStats';
 
 /**
+ * The action that opens the chat's input line (spec 189).
+ *
+ * Not in {@link UI_WINDOWS}, because the chat is not a window: it is docked
+ * furniture in the `hud` layer with no title bar and no place in the layout
+ * store, so "toggle the window with this id" is the wrong verb for it. Its
+ * context is `gameplay` rather than `ui` -- Enter has to reach the game to
+ * *open* the chat, and once it is open the field holds the keyboard and this
+ * map is not consulted at all.
+ */
+export const CHAT_ACTION = 'ui.chat';
+
+/**
  * Resolve a key press into what the Play tab does about it.
  *
  * Every branch is on an *action*, never on a code -- which is what makes each of
@@ -92,6 +107,7 @@ export function decideKeyDown(map: InputMap, code: string, mods: Modifiers): Key
   const windows: WindowId[] = [];
   let cancel = false;
   let toggleStats = false;
+  let chat = false;
 
   for (const action of map.resolve(code, mods, 'gameplay')) {
     if (MOVE_ACTIONS[action]) {
@@ -110,9 +126,10 @@ export function decideKeyDown(map: InputMap, code: string, mods: Modifiers): Key
     }
     if (action === CANCEL_ACTION) cancel = true;
     if (action === TOGGLE_STATS_ACTION) toggleStats = true;
+    if (action === CHAT_ACTION) chat = true;
   }
 
-  return { move, skillbar, cancel, windows, toggleStats };
+  return { move, skillbar, cancel, windows, toggleStats, chat };
 }
 
 /**

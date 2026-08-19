@@ -55,11 +55,23 @@ export class TextField extends StyledWidget {
     return this.textValue;
   }
 
+  /**
+   * Replace the value from outside, with the caret at the end of it.
+   *
+   * At the end rather than where it happened to be, because every caller of this
+   * is replacing the value *wholesale* -- the chat's Up recalling a line you
+   * sent, a filter being pre-filled -- and what somebody does next is carry on
+   * typing at the end of it. Clamping the old caret instead leaves it at zero
+   * after a recall, so the first character typed goes in front of the line.
+   *
+   * A key press never comes through here; it edits {@link textValue} directly
+   * and moves the caret itself, so nothing about typing is affected.
+   */
   setText(value: string): void {
     const clipped = value.slice(0, this.maxLength);
     if (clipped === this.textValue) return;
     this.textValue = clipped;
-    this.caret = Math.min(this.caret, clipped.length);
+    this.caret = clipped.length;
     this.invalidateMeasure();
   }
 
