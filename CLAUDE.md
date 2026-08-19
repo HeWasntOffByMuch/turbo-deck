@@ -1379,6 +1379,20 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  for the same reason -- it writes only into `statuses` and draws
                  nothing from `state.rng`, so it can no more change an outcome
                  than the real thing can.
+                 `npx tsx scripts/probe-status-marks.ts` is the half no headless
+                 test can see, and it earned its place immediately: every Node
+                 assertion passed while the row drew a line of **specks**. The
+                 per-body holder is a fixed 52px -- the health bar's width -- so
+                 eight 13px marks left in flow are flex items in a box too small
+                 for them, and flex's answer is to shrink them to 3px each. What
+                 is drawn, in what order, in what colour: all true, all
+                 unreadable. The row is `width:max-content` and re-centred with
+                 half-shifts so it is never in that negotiation, and the probe
+                 measures the marks' actual boxes rather than their presence.
+                 It also asserts the health bar **does not move** when the row
+                 appears, which is the whole reason a bottom-anchored holder may
+                 grow at the top at all -- the cast bar had to be taken out of
+                 flow for exactly this.
                  `sim/statuses.ts` is one small timer map and everything the
                  progression needs to remember between ticks goes in it, because
                  twelve mechanics as twenty-four entity fields is twenty-four
