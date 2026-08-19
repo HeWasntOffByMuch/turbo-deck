@@ -33,6 +33,7 @@ import {
   type CharacterView,
   type SkillView,
 } from '../screens/character.js';
+import { ChatScreen, chatInsets, type ChatLineView } from '../screens/chat.js';
 import { ShopScreen, type ShopRow, type ShopView } from '../screens/shop.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
@@ -598,6 +599,85 @@ export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
 
   return { surface, root, hud, sheet };
 }
+
+export interface ChatFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly chat: ChatScreen;
+}
+
+export interface ChatRenderOptions {
+  readonly viewport?: Size;
+  /** Leave the input line closed, as it is while somebody is just reading. */
+  readonly closed?: boolean;
+  /** Catch it partway out, so the wipe is in the frame (spec 189). */
+  readonly reveal?: number;
+  /** Something half-typed, so the field has a caret in it and content behind it. */
+  readonly typing?: string;
+}
+
+/**
+ * The chat, open, with one line per channel (spec 189).
+ *
+ * One of each on purpose: the three channels differ only in colour, so a frame
+ * holding one of them says nothing about whether the other two are right -- and
+ * "a channel drawn in the wrong tone" is precisely the failure that no assertion
+ * about a draw list would notice and a person reading a diff would.
+ */
+export function renderChat(options: ChatRenderOptions = {}): ChatFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const layers = new LayerStack();
+
+  const chat = new ChatScreen({ theme });
+  // Docked the way the mount docks it: bottom-left, inside an anchor that fills
+  // the frame. See `renderPlay` above for why the anchor is not optional.
+  const dock = new Anchor('chatDock');
+  dock.pointerTransparent = true;
+  dock.padding = chatInsets(theme, 0);
+  dock.place(chat, 'bottomLeft');
+  layers.place('hud', dock);
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, layers });
+  const focus = {
+    focus: (widget: Widget | null): boolean => root.focus.focus(widget),
+    push: (id: 'textEntry'): void => {
+      root.pushContext(id);
+    },
+    pop: (id: 'textEntry'): void => {
+      root.popContext(id);
+    },
+  };
+  if (options.closed !== true) {
+    chat.open(focus);
+    if (options.typing !== undefined) chat.setInputText(options.typing);
+  }
+  chat.setView({ lines: DEMO_CHAT, reveal: options.reveal ?? 1 });
+  root.update(0);
+  chat.settle();
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, chat };
+}
+
+/**
+ * One line per channel, plus a long one so the wrap is in the picture.
+ *
+ * The wrapped line is a say, because a say is the one whose first row is drawn
+ * in two colours -- so a golden of it is also the check that the speaker's
+ * colour stops where the speaker's name does.
+ */
+const DEMO_CHAT: readonly ChatLineView[] = [
+  { id: 1, channel: 1, from: '', text: 'Grazer was slain by Bru' },
+  { id: 2, channel: 0, from: 'Ada', text: 'watch the ravager on the left, it has not been pulled yet' },
+  { id: 3, channel: 2, from: '', text: 'restarting in five minutes' },
+  { id: 4, channel: 0, from: 'Bru', text: 'on my way' },
+];
 
 export interface ShopFrame {
   readonly surface: RasterSurface;

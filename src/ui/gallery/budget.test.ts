@@ -4,7 +4,7 @@ import { renderGallery, renderPlay } from './render.js';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
-import { renderInventory, renderKeybindings, renderShop, renderWindows, GOLDEN_VIEWPORT } from './render.js';
+import { renderChat, renderInventory, renderKeybindings, renderShop, renderWindows, GOLDEN_VIEWPORT } from './render.js';
 import { LayerStack } from '../core/layers.js';
 import { WindowManager } from '../core/window-manager.js';
 import { UiWindow } from '../widgets/window.js';
@@ -187,6 +187,11 @@ describe('nothing is drawn translucent', () => {
       }),
     play: () => renderPlay({ cast: 0.5, cooldowns: { 0: 0.4, 3: 0.9 } }),
     shop: () => renderShop({ confirmRow: 0, buyback: true }),
+    // Caught partway out (spec 189). The chat is the one surface with a reason
+    // to want a fade -- it sits over the world and gets out of the way when
+    // nothing is happening -- so it is the one most likely to grow one, and a
+    // wipe half-done is the frame where an alpha would show up.
+    chat: () => renderChat({ reveal: 0.5, typing: 'on my way' }),
   };
 
   for (const [name, build] of Object.entries(scenes)) {
