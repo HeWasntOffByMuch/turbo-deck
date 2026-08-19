@@ -157,11 +157,63 @@ export function pushOutOfObstacles(centre: Vec2, radius: number, world: WorldCol
   return at;
 }
 
+/** Nothing in the way, for the callers that collide against the world alone. */
+const NO_BLOCKERS: readonly Circle[] = [];
+
+/**
+ * True when a step from `from` to `to` is refused by another body (spec 184).
+ *
+ * This is how a crowd stays a crowd in a game with no shoving in it. Nothing
+ * displaces a body here, so an overlap cannot be repaired after the fact and
+ * has to be refused on the way in -- a step into a spot somebody is standing in
+ * simply does not happen, exactly as a step into a wall does not.
+ *
+ * **Escape-permissive**, and that clause is the whole difference between a
+ * block and a trap. Two bodies that are already overlapping -- a respawn, an
+ * admin conjuring one on top of another, two bodies that reached the same gap
+ * on the same tick -- find every nearby point occupied, including the one they
+ * are standing on, and a plain overlap test refuses all of them for ever.
+ * Refusing only the steps that get *no better* means a body can always walk out
+ * of an overlap and can never press further into one, which is what lets
+ * unsticking be an ordinary intent rather than a special case.
+ *
+ * Compared squared, so a step that neither closes nor opens the gap -- sliding
+ * around a body at a constant distance -- is refused while it overlaps. Letting
+ * those through would let a body orbit inside another one.
+ */
+export function bodyBlocked(
+  from: Vec2,
+  to: Vec2,
+  radius: number,
+  blockers: readonly Circle[],
+): boolean {
+  for (const body of blockers) {
+    const reach = radius + body.r;
+    const dx = to.x - body.x;
+    const dy = to.y - body.y;
+    const afterSq = dx * dx + dy * dy;
+    if (afterSq >= reach * reach) continue;
+    const wasX = from.x - body.x;
+    const wasY = from.y - body.y;
+    if (afterSq < wasX * wasX + wasY * wasY) continue;
+    return true;
+  }
+  return false;
+}
+
 /**
  * Step a circle by (dx, dy), sliding along whatever it runs into: the full step
  * first, then the x-only step, then the y-only step. Walking into a wall at an
  * angle therefore slides along it rather than stopping dead. Returns `from`
  * unchanged when every candidate is blocked.
+ *
+ * `blockers` are other *bodies* (spec 184), and they are refused through
+ * {@link bodyBlocked} rather than through `circleBlocked` because the two
+ * questions are not the same one: a wall is somewhere a body may not be, and
+ * another body is somewhere it may not *go*. That distinction is what keeps the
+ * nav grid honest -- it is built from `circleBlocked`, and a route planned
+ * around whoever happened to be standing there would be replanned every time
+ * anybody moved.
  */
 export function slideCircle(
   from: Vec2,
@@ -169,16 +221,20 @@ export function slideCircle(
   dy: number,
   radius: number,
   world: WorldColliders = DEFAULT_WORLD,
+  blockers: readonly Circle[] = NO_BLOCKERS,
 ): Vec2 {
+  const free = (to: Vec2): boolean =>
+    !circleBlocked(to, radius, world) && !bodyBlocked(from, to, radius, blockers);
+
   const full = clampCircleToBounds(from.x + dx, from.y + dy, radius, world.bounds);
-  if (!circleBlocked(full, radius, world)) return full;
+  if (free(full)) return full;
   if (dx !== 0) {
     const alongX = clampCircleToBounds(from.x + dx, from.y, radius, world.bounds);
-    if (!circleBlocked(alongX, radius, world)) return alongX;
+    if (free(alongX)) return alongX;
   }
   if (dy !== 0) {
     const alongY = clampCircleToBounds(from.x, from.y + dy, radius, world.bounds);
-    if (!circleBlocked(alongY, radius, world)) return alongY;
+    if (free(alongY)) return alongY;
   }
   return from;
 }

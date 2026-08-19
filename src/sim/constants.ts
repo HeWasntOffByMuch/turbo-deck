@@ -169,6 +169,45 @@ export const ARENA_OBSTACLES: readonly Rect[] = [
 // holds a few dozen units at most.
 export const SEPARATION_ITERATIONS = 4;
 
+// --- Crowds (spec 184) ---
+// Local avoidance, for a game with no shoving in it. Nothing here displaces a
+// body: these numbers shape a body's own desired direction, and the hard
+// guarantee is `bodyBlocked` refusing a step into an occupied spot.
+//
+// Cell pitch of the neighbour grid. A shade over the widest range anything
+// queries (the largest pair of radii plus the lookahead), so a query sweeps a
+// 3x3 block of cells rather than a wide rectangle.
+export const CROWD_CELL_SIZE = 96;
+// How many neighbours one body will consider. Past a handful the extra bodies
+// are behind the ones already counted and contribute a rounding error to a
+// direction, so this is a cap on the worst case rather than an approximation
+// anybody can see: it binds only inside a pile-up, which is exactly where an
+// uncapped pass would cost the most.
+export const CROWD_MAX_NEIGHBOURS = 8;
+// Personal space beyond touching, for a body that is going somewhere. A body
+// with no route uses none of it -- see `steer`, where the margin is the whole
+// difference between a crowd that settles and one that shuffles for ever.
+export const CROWD_MARGIN = 10;
+// How far ahead of itself a body looks for something to walk around, past the
+// point the two of them would touch.
+export const CROWD_LOOKAHEAD = 56;
+// Weights on the two avoidance terms before the cap below. Equal, because the
+// separation term is what stops a body arriving in an occupied spot and the
+// side-step is what stops it heading for one, and neither is worth more than
+// the other.
+export const CROWD_SEPARATION_WEIGHT = 1;
+export const CROWD_SIDESTEP_WEIGHT = 1;
+// Ceiling on the avoidance vector, as a fraction of the desired direction.
+//
+// Strictly below 1, and that is load-bearing twice over. It bounds how far a
+// body may be bent off its route: the widest angle between `d` and `d + a` for
+// a unit `d` and an `a` no longer than c is asin(c), which is 53 degrees here --
+// so a crowd can never turn a body past a right angle to where it was going,
+// and never away from a gap it is walking through. And because the avoidance
+// can never be as long as the direction it is added to, the sum can never be
+// zero: no arrangement of neighbours cancels a body's route and strands it.
+export const CROWD_MAX_AVOID = 0.8;
+
 // --- Walking on ground that has height (spec 056) ---
 // The steepest single-tick climb a body may make. A move that would gain more
 // height than this is a cliff, and refusing it is what stops a client walking up
