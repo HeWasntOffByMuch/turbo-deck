@@ -206,6 +206,14 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
   sundered: '<path d="M12 3l8 3v7c0 4-4 7-8 8-4-1-8-4-8-8V6z"/><path d="M13 7l-3 5h4l-3 5"/>',
   // Adapted -- a wave meeting a wall and turning back.
   adapted: '<path d="M4 9c3-3 5 3 8 0s5-3 8 0"/><path d="M4 15c3-3 5 3 8 0s5-3 8 0"/>',
+  // Slowed -- a footprint with a drag behind it. The one mark here that is
+  // about the legs, so it says so with a leg: everything else in this table is
+  // an abstract shape because everything else is an abstract condition.
+  slowed:
+    '<path d="M14 4.5a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z" fill="currentColor" stroke="none"/>' +
+    '<path d="M14.5 9v4l-3.5 3.5V21"/>' +
+    '<path d="M11 16.5L7 18"/>' +
+    '<path d="M3 15h4M4 18.5h3"/>',
 };
 
 /** One status mark, as markup ready to drop into the HUD. */

@@ -1176,7 +1176,11 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stagger's onset *because* `Activity` is replicated and the
                  client stops the moment it sees it; a slow has no such tell, so
                  `EntityField.MoveScale` is a byte fraction on the delta beside
-                 `Poise`. It rides the **input** into the predictor rather than
+                 `Poise`. That is the *number*; the **mark** is spec 186's, and
+                 `Slowed` is a row in `STATUS_VISUALS` like any other condition
+                 -- the two halves ride different fields because a watcher needs
+                 to know a body is slowed and only the mover's own predictor
+                 needs to know by how much. It rides the **input** into the predictor rather than
                  being baked into it when the predictor is built, so a replay
                  after a correction walks each buffered input at the speed that
                  applied when it was made.

@@ -29,6 +29,7 @@ import { ZoneManager } from '../world/zone-manager.js';
 import { extraCostsFor } from './abilities.js';
 import { MIN_MOVE_SCALE } from './movement.js';
 import { moveScaleOf, statusOf, StatusId } from './statuses.js';
+import { visualFor } from '../data/status-visuals.js';
 import {
   ActivityValue,
   CastPhase,
@@ -767,5 +768,30 @@ describe('Stunning Blow stuns every time it lands', () => {
     });
     const struck = strike(resolute, casterId, targetId);
     expect(struck.target?.activity).not.toBe(ActivityValue.Stunned);
+  });
+});
+
+/**
+ * Crippling Strike's slow, seen from outside (specs 186, 188).
+ *
+ * The two halves of a slow ride different fields and mean different things,
+ * which is worth an assertion because they are easy to confuse: the *mark* says
+ * a body is slowed and rides spec 186's status list, and the *number* a step is
+ * multiplied by rides `EntityField.MoveScale`. A watcher needs the first; only
+ * the mover's own predictor needs the second.
+ */
+describe('a slowed body says so', () => {
+  it('carries a status the mark layer knows how to draw', () => {
+    const { state, casterId, targetId } = duel();
+    const target = state.entities.get(targetId);
+    const windup = abilityById('skill.cripplingStrike')?.windupTicks ?? 0;
+    const landed = run(state, windup + 2, {
+      0: [cast(casterId, 'skill.cripplingStrike', target ?? null)],
+    });
+    const after = landed.state.entities.get(targetId);
+    expect(statusOf(after?.statuses ?? {}, StatusId.Slowed, landed.state.tick)).toBeTruthy();
+    // ...and the visual table has a row for it, so it is a mark rather than a
+    // status the wire silently drops.
+    expect(visualFor(StatusId.Slowed)).not.toBeNull();
   });
 });

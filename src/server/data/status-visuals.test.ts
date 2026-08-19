@@ -63,7 +63,7 @@ describe('the visible status table (spec 186)', () => {
     }
   });
 
-  it('shows the eight conditions a player can act on', () => {
+  it('shows the nine conditions a player can act on', () => {
     for (const id of [
       StatusId.Flow,
       StatusId.Momentum,
@@ -72,11 +72,14 @@ describe('the visible status table (spec 186)', () => {
       StatusId.Exposed,
       StatusId.Vulnerable,
       StatusId.Sundered,
+      // The one a skill applies rather than a build earning (spec 188), and by
+      // this table's own rule the most pointable-at of the lot.
+      StatusId.Slowed,
     ]) {
       expect(visualFor(id), id).not.toBeNull();
     }
     expect(visualFor(ADAPTED_ID)).not.toBeNull();
-    expect(STATUS_VISUALS).toHaveLength(8);
+    expect(STATUS_VISUALS).toHaveLength(9);
   });
 
   it('answers null for an index it has no row for', () => {
