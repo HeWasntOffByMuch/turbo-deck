@@ -1638,7 +1638,53 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  `experienceForLevel` rather than a copy of the curve, because
                  the strip and the character sheet disagreeing about how far
                  along somebody is is the kind of bug nobody reports -- they
-                 just stop trusting the bar. pool-bars.ts holds one judgement:
+                 just stop trusting the bar. Since spec 183 it is purple rather
+                 than gold, and the recolour is the smaller half of that spec:
+                 experience now has *two* places it is shown -- the strip and a
+                 number that floats off a kill -- and one colour to learn is
+                 what makes them read as the same fact. Gold had to go because
+                 the number is over a body, where gold is already a cast that
+                 can still be called off and a floating gold number is a
+                 critical hit; a strip at the frame's own edge could get away
+                 with sharing a hue and a number cannot.
+                 xp-gain.ts is the other half (spec 183), and it exists because
+                 **the server never says "you earned 12"**: experience arrives
+                 as a whole `Stats` message with a level and a count in it,
+                 replacing whatever was there, so a gain is a difference -- and
+                 the difference is not the subtraction it looks like, since a
+                 level-up moves the count backwards. A kill taking somebody from
+                 5 short of level 2 to 3 into it earned 8, and the raw counts
+                 differ by minus the whole level; `cumulativeExperience` is the
+                 monotonic number two readings can honestly subtract. Two rules
+                 beside it, each the fix for the version without it. The
+                 **first reading only establishes the baseline**, because the
+                 first `Stats` carries a whole character and a client that
+                 reported a gain on connect would throw a session's worth of
+                 experience across the screen of somebody who has just logged
+                 in. And a **backwards move reports nothing and re-baselines**
+                 -- an admin reset is not a negative reward, and leaving the old
+                 baseline would swallow every real gain until it had all been
+                 earned back. Where the number *goes* is a join view.ts makes
+                 rather than a fact on the wire: nothing links a `Stats` to the
+                 kill that caused it, so a kill by the local player remembers
+                 the anchor its damage number was already given and the frame
+                 that sees the total move spends it there; a grant with no kill
+                 behind it falls back to the player's own body, which is the
+                 only other place a number about the player could honestly go.
+                 The *path* is the third piece and lives in damage-popup.ts as a
+                 second trail, sharing spec 096's one field, one capacity, one
+                 projection and one expiry. It has to be a different path
+                 because the pair is spawned on the same tick, on the same body,
+                 from the same anchor: taking the next lane would make the
+                 reward a fourth damage number in the same fan, rising at the
+                 same rate in the same direction. So an `xp` number sweeps
+                 sideways on an ease-out **away from the side that body's last
+                 damage lane took** -- away-from rather than a fixed side, since
+                 a constant rightward drift runs straight through lane 2 of
+                 every burst -- and it reads the lane counter without consuming
+                 one, so a kill's reward cannot shift where the next blow on
+                 that body draws its number.
+                 pool-bars.ts holds one judgement:
                  **an unknown maximum is not a maximum of zero**, or the opening
                  frames of every session paint an empty health bar over a player
                  at full health -- and its health bar is the *same bar

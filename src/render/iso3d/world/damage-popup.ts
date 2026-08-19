@@ -19,6 +19,11 @@
  *
  * `hud.ts` owns the elements and nothing else; every judgement about lifetime,
  * lanes, fade and placement lives here, where a test can reach it.
+ *
+ * Since spec 183 the field carries a second kind of number -- what a kill was
+ * worth -- and the two differ only in the path they take. Everything else about
+ * a floating number was already right for both: one capacity over the pair, one
+ * projection, one expiry, one place a test can reach any of it.
  */
 
 /** A point in the world a number is nailed to: ground x/z, plus a height. */
@@ -77,22 +82,89 @@ export const NUMBER_LANES: readonly { readonly x: number; readonly y: number }[]
   { x: 24, y: -26 },
 ];
 
+/**
+ * Which path a number takes (spec 183).
+ *
+ * A property of one popup rather than of the field, so both kinds share the
+ * capacity, the projection and the expiry spec 096 already got right.
+ */
+export type PopupTrail = 'damage' | 'xp';
+
+/**
+ * How far to the side an experience number *starts*, in CSS pixels.
+ *
+ * Sideways at all because the killing blow's number is spawned on the same
+ * tick, from the same anchor, on the same body: taking the next lane would make
+ * the reward a fourth damage number in the same fan, rising at the same rate in
+ * the same direction. It has to read as a different kind of thing before it is
+ * read as a quantity.
+ *
+ * A *lead* rather than a sweep from zero, because the sweep alone measured
+ * clear and read as overlapping: the gap the paths open is between two centres,
+ * and `+24 XP` is three times the width of `38`. Photographed on the shipped
+ * page, the two boxes were still on top of each other for the first third of
+ * the flight while the numbers were at their most legible. This is half the
+ * reward's own width plus half a blow's, so they are clear on the first frame
+ * and only get clearer.
+ */
+export const XP_LEAD = 56;
+
+/**
+ * How much further it sweeps over its life, in CSS pixels.
+ *
+ * On top of {@link XP_LEAD}, so the horizontal gap grows every frame -- two
+ * numbers that separate and then converge are two numbers that cross.
+ */
+export const XP_DRIFT = 40;
+
+/**
+ * How far an experience number rises, in CSS pixels.
+ *
+ * Further than a blow's, because it is travelling diagonally to cover it -- the
+ * two paths share an origin and the gap between them is what does the work.
+ */
+export const XP_RISE = 64;
+
 /** A long fight should not grow the DOM without bound. */
 const CAPACITY = 40;
 
 interface Popup {
   readonly id: number;
   readonly group: number;
+  readonly trail: PopupTrail;
   readonly at: WorldAnchor;
   readonly offsetX: number;
   readonly offsetY: number;
+  /** Which way an `xp` trail sweeps: -1 left, +1 right. Unread by `damage`. */
+  readonly drift: number;
   age: number;
+}
+
+/** What one group has been given so far, for lane and side assignment. */
+interface GroupTally {
+  /** Damage numbers, which cycle {@link NUMBER_LANES}. */
+  damage: number;
+  /** Experience numbers, which alternate sides. */
+  xp: number;
+}
+
+/**
+ * The rise of an `xp` trail, eased out (spec 183).
+ *
+ * A blow's number rises linearly, so easing is by itself most of what separates
+ * the two paths: the experience number is already most of the way up while the
+ * damage that earned it is still halfway. Quadratic, because the shape wanted
+ * here is "leaves fast, settles" and there is no reason to spend a cubic on it.
+ */
+function easeOut(t: number): number {
+  const clamped = Math.min(1, Math.max(0, t));
+  return 1 - (1 - clamped) * (1 - clamped);
 }
 
 export class DamagePopups {
   private readonly popups: Popup[] = [];
-  /** How many numbers each group has been given, for lane assignment. */
-  private readonly lanes = new Map<number, number>();
+  /** What each group has been given, for lane and side assignment. */
+  private readonly lanes = new Map<number, GroupTally>();
   private nextId = 1;
 
   /**
@@ -102,21 +174,50 @@ export class DamagePopups {
    * It is never resolved to anything: the anchor is the whole of what the
    * popup knows about the world.
    *
+   * `trail` says which path it takes; see {@link PopupTrail}. An `xp` number
+   * does not consume a damage lane, it *reads* the last one -- so a kill's
+   * reward cannot shift where the next blow on that body draws its number.
+   *
    * Returns the id to hang an element on, plus any ids evicted to stay under
    * capacity, so the caller never orphans one.
    */
-  add(group: number, at: WorldAnchor): { readonly id: number; readonly expired: readonly number[] } {
-    const index = this.lanes.get(group) ?? 0;
-    this.lanes.set(group, index + 1);
-    const lane = NUMBER_LANES[index % NUMBER_LANES.length] ?? { x: 0, y: 0 };
+  add(
+    group: number,
+    at: WorldAnchor,
+    trail: PopupTrail = 'damage',
+  ): { readonly id: number; readonly expired: readonly number[] } {
+    const tally = this.lanes.get(group) ?? { damage: 0, xp: 0 };
+    this.lanes.set(group, tally);
+
+    let lane = { x: 0, y: 0 };
+    let drift = 0;
+    if (trail === 'damage') {
+      lane = NUMBER_LANES[tally.damage % NUMBER_LANES.length] ?? lane;
+      tally.damage += 1;
+    } else {
+      // Away from wherever the group's last damage number went. A constant
+      // right-hand sweep would run straight through lane 2 of every burst,
+      // which is the one case this exists to keep clear; the centre lane counts
+      // as no side taken, so it falls through to the right.
+      const last = tally.damage > 0
+        ? (NUMBER_LANES[(tally.damage - 1) % NUMBER_LANES.length] ?? lane)
+        : lane;
+      // ...and alternating per experience number keeps two rewards on one group
+      // -- two kills a client is told about as one total, or a grant landing on
+      // the player's own body twice -- off each other's path.
+      drift = (last.x > 0 ? -1 : 1) * (tally.xp % 2 === 0 ? 1 : -1);
+      tally.xp += 1;
+    }
 
     const id = this.nextId++;
     this.popups.push({
       id,
       group,
+      trail,
       at: { x: at.x, y: at.y, lift: at.lift },
       offsetX: lane.x,
       offsetY: lane.y,
+      drift,
       age: 0,
     });
 
@@ -150,10 +251,22 @@ export class DamagePopups {
         continue;
       }
       const point = project(popup.at.x, popup.at.y, popup.at.lift);
+      // The two trails share everything but the path: same field, same
+      // capacity, same projection, same fade.
+      const spent = 1 - life;
+      const eased = popup.trail === 'xp' ? easeOut(spent) : 0;
+      const left =
+        popup.trail === 'xp'
+          ? point.x + popup.drift * (XP_LEAD + XP_DRIFT * eased)
+          : point.x + popup.offsetX;
+      const top =
+        popup.trail === 'xp'
+          ? point.y - eased * XP_RISE
+          : point.y + popup.offsetY - spent * NUMBER_RISE;
       live.push({
         id: popup.id,
-        left: point.x + popup.offsetX,
-        top: point.y + popup.offsetY - (1 - life) * NUMBER_RISE,
+        left,
+        top,
         opacity: life,
         onScreen: point.onScreen,
       });
