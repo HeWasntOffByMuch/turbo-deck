@@ -28,6 +28,7 @@ import {
   type CombatResultMessage,
   type EffectMessage,
   type MapInfoMessage,
+  type PendingSkillSwap,
   type ServerChatMessage,
   type SpawnerStatus,
   type TradeSideView,
@@ -325,6 +326,21 @@ export interface ClientView {
   readonly equipment: Equipment;
   /** What the player can spend (spec 129). */
   readonly coins: number;
+  /**
+   * A skill-slot change in flight, or null (spec 184).
+   *
+   * The one container edit this client does **not** predict, and this is what
+   * it draws instead: the server holds the change for `SKILL_SWAP.durationTicks`
+   * on purpose, so what the interface has to show is not the new arrangement
+   * but the commitment to it -- which slot, which direction, and how far
+   * through.
+   *
+   * Both ticks are the server's, so progress is a comparison against
+   * {@link estimatedTick} rather than a clock this client keeps. Cleared by any
+   * `Inventory` that arrives without one, which is what the message ending a
+   * swap looks like whether it landed or was given up.
+   */
+  readonly pendingSwap: PendingSkillSwap | null;
   /**
    * The shop that is open, or null.
    *
@@ -632,6 +648,7 @@ export class GameClient {
   private serverEquipment: Equipment = EMPTY_EQUIPMENT;
   private inventory: Inventory = [];
   private coins = 0;
+  private pendingSwap: PendingSkillSwap | null = null;
   private vendorView: VendorView | null = null;
   /**
    * Drops by entity id, exactly as the server described them (spec 158).
@@ -1800,6 +1817,7 @@ export class GameClient {
       inventory: this.inventory,
       equipment: this.equipment,
       coins: this.coins,
+      pendingSwap: this.pendingSwap,
       vendor: this.vendorView,
       vendorRevision: this.vendorReplies,
       trade: this.tradeView,
@@ -2073,6 +2091,11 @@ export class GameClient {
         this.serverInventory = message.inventory;
         this.serverEquipment = message.equipment;
         this.coins = message.coins;
+        // The change in flight, or none (spec 184). Replaced rather than
+        // merged, because every `Inventory` carries the truth at the moment it
+        // left: a message with no block is the server saying there is nothing
+        // in flight, which is exactly what the one that ends a swap says.
+        this.pendingSwap = message.pendingSwap ?? null;
         // Everything up to and including the answered request has been settled,
         // whether it was taken or refused -- the containers that arrived are the
         // truth about both. What is left is what is still in flight.

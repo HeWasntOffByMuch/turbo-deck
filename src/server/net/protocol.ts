@@ -456,6 +456,8 @@ export const EntityActivity = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
+  /** Changing an active skill (spec 184). Mirrors `ActivityValue.Swapping`. */
+  Swapping: 5,
 } as const;
 
 /** Mirrors `sim/types.ts`; the client animates from this. */

@@ -1109,6 +1109,44 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  frame it was released, and a swap drawn early would put a
                  button on the bar that the server refuses for a second and a
                  half.
+                 What it draws instead is the **commitment**, and that is the
+                 whole of `ActivityValue.Swapping`: the first cut made a swap
+                 take a second and a half and showed none of it, which is a
+                 delay rather than a cost. The state rides the field `activity`
+                 already rides, so every client sees it and nothing new is
+                 replicated, and it is a *claim on the body* -- walking away
+                 drops it in the movement pass exactly as asking to move
+                 withdraws from a wind-up, a break writes `Stunned` over it, a
+                 cast writes `Casting`. `serveSwaps` watches for the claim going
+                 away rather than listing the causes, so a fifth cause arriving
+                 later cannot silently fail to cancel anything. One ordering in
+                 it is load-bearing: `expireActivity` drops the claim on the tick
+                 `activityUntilTick` is reached and that pass runs *after* the
+                 sim in the same tick, so the claim is checked only while the
+                 clock is still running -- checked first, every swap is given up
+                 on the tick it was due to land.
+                 `world/skill-swap-view.ts` is the presentation, pure and shared
+                 by all three surfaces so one commitment cannot be drawn at three
+                 depths. The split between them is the information rule rather
+                 than an omission: the bag marks its two cells (red leaving,
+                 green arriving -- two *hues*, because at twenty pixels a cell
+                 the only difference a player can see is hue and two warm tones
+                 read as one mark applied twice) and the bar says the word
+                 (`EQUIPPING`/`SWAPPING`/`REMOVING`), both off the owner-only
+                 `PendingSkillSwap` that rides on `Inventory`; the body says
+                 only *that* a change is happening, off the replicated activity.
+                 Which slot and which direction are facts about a bag and a bag
+                 is its owner's business; that somebody is busy is a fact about
+                 the world.
+                 The other thing 184 shipped broken and this fixed: a cell
+                 accepts a **family**, not a slot name. `ItemSlot.acceptsSlot`
+                 compared a sigil's `skill` against the cell's `skill1` and
+                 refused every drop the server would have taken -- so nothing
+                 could be equipped and nothing said why, because an unlit cell
+                 *is* the refusal. `SlotDescriptor.accepts` is handed in from
+                 `inventory-model.ts` through `slotFamily`, because `src/ui/` may
+                 not import the server's rule and a screen with its own copy of
+                 it is a second answer to "will this cell take this".
                  `sim/aggro.ts` is whether one body has business with another
                  (spec 163), and it exists because until it did, the entire
                  aggro system was one line in `blow.ts` -- `targetId ??

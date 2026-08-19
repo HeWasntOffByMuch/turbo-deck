@@ -210,6 +210,20 @@ export const INVENTORY_GOLDEN_CASES: readonly InventoryGoldenCase[] = [
     covers: 'a stack named and counted, over the cell it belongs to',
   },
   {
+    name: 'bag-swapping',
+    options: {
+      // A sigil going from the bag into the second skill slot, halfway through.
+      // The two ends are what is being looked at: the cell it is leaving marked
+      // one way, the cell it is arriving in marked the other.
+      pendingSwap: {
+        from: { container: 'inventory', index: 4 },
+        to: { container: 'equipment', index: 7 },
+        progress: 0.5,
+      },
+    },
+    covers: 'a skill-slot change in flight: one cell emptying, one filling, both with the clock on them',
+  },
+  {
     name: 'bag-small',
     options: { viewport: { width: 300, height: 140 } },
     covers: 'the smallest supported viewport, where the window scrolls rather than the cells squashing',

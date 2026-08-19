@@ -865,6 +865,37 @@ export interface InventoryMessage {
    * instant, and two messages for one event is two things to keep in step.
    */
   readonly coins: number;
+  /**
+   * A skill-slot change in flight, or absent (spec 184).
+   *
+   * On this message rather than on one of its own, for the reason the coins are
+   * on it: a swap being asked for, landing, or being given up are all container
+   * events, and two messages for one event is two things to keep in step.
+   *
+   * It rides only on the messages that bracket the change -- one when it is
+   * asked for, one when it ends -- because the client needs no ticking: the two
+   * ticks are enough to draw a bar from, which is the same trick the loot
+   * reveal uses. A resend for any other reason simply carries whatever is true
+   * at the time.
+   */
+  readonly pendingSwap?: PendingSkillSwap;
+}
+
+/**
+ * A skill-slot change the server has committed the player to (spec 184).
+ *
+ * Both addresses, both ticks, and which of the three kinds it is -- everything
+ * the interface needs to say *what* is happening to *which* slot and how far
+ * through it is. Nothing here is a client's claim: the server derived the kind
+ * from its own containers and stamped both ticks off its own clock.
+ */
+export interface PendingSkillSwap {
+  /** A {@link SkillSwapKind}. */
+  readonly kind: number;
+  readonly from: SlotAddress;
+  readonly to: SlotAddress;
+  readonly startedTick: number;
+  readonly readyAtTick: number;
 }
 
 /** What a vendor is offering, and what can be undone (spec 129). */
@@ -1497,12 +1528,23 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writer.varuint(message.unspentAttributePoints);
       writeStats(writer, message.stats);
       break;
-    case ServerMessageType.Inventory:
+    case ServerMessageType.Inventory: {
       writer.varuint(message.requestId);
       writeInventory(writer, message.inventory);
       writeEquipment(writer, message.equipment);
       writer.varuint(message.coins);
+      // A presence byte then the block, which is how every optional payload on
+      // this wire is written: absent is one byte and the common case.
+      const swap = message.pendingSwap;
+      writer.u8(swap ? 1 : 0);
+      if (swap) {
+        writer.u8(swap.kind);
+        writeAddress(writer, swap.from);
+        writeAddress(writer, swap.to);
+        writer.u32(swap.startedTick).u32(swap.readyAtTick);
+      }
       break;
+    }
     case ServerMessageType.LootDrop:
       writer
         .varuint(message.entityId)
@@ -1669,14 +1711,30 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         unspentAttributePoints: reader.varuint(),
         stats: readStats(reader),
       };
-    case ServerMessageType.Inventory:
+    case ServerMessageType.Inventory: {
+      const requestId = reader.varuint();
+      const inventory = readInventory(reader);
+      const equipment = readEquipment(reader);
+      const coins = reader.varuint();
+      const hasSwap = reader.u8() === 1;
+      const pendingSwap = hasSwap
+        ? {
+            kind: reader.u8(),
+            from: readAddress(reader),
+            to: readAddress(reader),
+            startedTick: reader.u32(),
+            readyAtTick: reader.u32(),
+          }
+        : undefined;
       return {
         type: ServerMessageType.Inventory,
-        requestId: reader.varuint(),
-        inventory: readInventory(reader),
-        equipment: readEquipment(reader),
-        coins: reader.varuint(),
+        requestId,
+        inventory,
+        equipment,
+        coins,
+        ...(pendingSwap === undefined ? {} : { pendingSwap }),
       };
+    }
     case ServerMessageType.LootDrop:
       return {
         type: ServerMessageType.LootDrop,

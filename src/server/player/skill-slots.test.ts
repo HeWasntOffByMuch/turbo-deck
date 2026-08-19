@@ -16,9 +16,11 @@ import {
   skillSlotAbilities,
   skillSlotOnCooldown,
   skillSwapRefusal,
+  swapKindOf,
   SKILL_EQUIP_SLOTS,
   SKILL_SLOT_COUNT,
 } from './skill-slots.js';
+import { SkillSwapKind } from '../data/skill-effects.js';
 import {
   EMPTY_EQUIPMENT,
   emptyInventory,
@@ -169,5 +171,39 @@ describe('what fits in a skill slot', () => {
       to: slot('skill1'),
     }, 1);
     expect(outcome.ok).toBe(false);
+  });
+});
+
+describe('which of the three a change is', () => {
+  const bag = (...defs: (string | null)[]): Inventory => {
+    const slots = [...emptyInventory()];
+    defs.forEach((defId, index) => {
+      slots[index] = defId === null ? null : { defId, count: 1 };
+    });
+    return slots;
+  };
+
+  it('is an equip when something goes into an empty slot', () => {
+    const kind = swapKindOf(bag('sigil.whirlwind'), EMPTY_EQUIPMENT, {
+      from: inv(0),
+      to: slot('skill1'),
+    });
+    expect(kind).toBe(SkillSwapKind.Equip);
+  });
+
+  it('is a swap when the slot it lands in already holds something', () => {
+    const kind = swapKindOf(bag('sigil.whirlwind'), WORN, { from: inv(0), to: slot('skill1') });
+    expect(kind).toBe(SkillSwapKind.Swap);
+  });
+
+  it('is a removal when it only leaves a slot', () => {
+    const kind = swapKindOf(bag(), WORN, { from: slot('skill1'), to: inv(5) });
+    expect(kind).toBe(SkillSwapKind.Unequip);
+  });
+
+  /** One going on and one coming off is an exchange however it was dragged. */
+  it('is a swap when both ends are skill slots', () => {
+    const kind = swapKindOf(bag(), WORN, { from: slot('skill1'), to: slot('skill2') });
+    expect(kind).toBe(SkillSwapKind.Swap);
   });
 });

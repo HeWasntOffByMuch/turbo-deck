@@ -200,6 +200,16 @@ export interface InventoryRenderOptions {
   readonly carryToCell?: SlotRef;
   /** Show the tooltip over this cell, with the delay already elapsed. */
   readonly tooltipOver?: SlotRef;
+  /**
+   * A skill-slot change in flight, so the commitment is in the frame
+   * (spec 184).
+   *
+   * Worth a golden for the reason the drag cases are: whether the two ends of a
+   * change read as a *direction* -- one cell losing something, one gaining it --
+   * is a fact about pixels, and the whole feature is that a swap is visible
+   * while it happens rather than only once it has.
+   */
+  readonly pendingSwap?: ContainerView['pendingSwap'];
 }
 
 /**
@@ -223,6 +233,9 @@ export function demoContainers(): ContainerView {
   put(8, 'potion', 'Minor Salve', 'potion', null, 9);
   put(13, 'legs', "Traveller's Greaves", 'legs', 'legs');
   put(19, 'mystery', 'Something Else', 'nope', null);
+  // A sigil, so the skill row and the change-in-flight golden have something
+  // real to move (spec 184).
+  put(4, 'sigil', 'Sigil of Guard Break', 'sigil', 'skill');
 
   return {
     bag,
@@ -242,11 +255,12 @@ export function demoContainers(): ContainerView {
       { id: 'legs', label: 'Legs' },
       { id: 'trinket', label: 'Charm' },
     ],
+    // `accepts` is the family, so one sigil fits any of the four (spec 184).
     skillSlots: [
-      { id: 'skill1', label: 'Skill 1' },
-      { id: 'skill2', label: 'Skill 2' },
-      { id: 'skill3', label: 'Skill 3' },
-      { id: 'skill4', label: 'Skill 4' },
+      { id: 'skill1', label: 'Skill 1', accepts: 'skill' },
+      { id: 'skill2', label: 'Skill 2', accepts: 'skill' },
+      { id: 'skill3', label: 'Skill 3', accepts: 'skill' },
+      { id: 'skill4', label: 'Skill 4', accepts: 'skill' },
     ],
     level: 4,
   };
@@ -278,7 +292,10 @@ export function renderInventory(options: InventoryRenderOptions = {}): Inventory
   layers.place('windows', manager);
 
   const screen = new InventoryScreen({ theme, hitTest: (at) => layers.hitTest(at) });
-  screen.setContainers(demoContainers());
+  screen.setContainers({
+    ...demoContainers(),
+    ...(options.pendingSwap === undefined ? {} : { pendingSwap: options.pendingSwap }),
+  });
   layers.place('dragGhost', screen.ghost);
 
   const tooltip = new Tooltip();

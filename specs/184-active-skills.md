@@ -116,6 +116,48 @@ Four slots, and a swap is not free:
   existing status with an existing reader — so being caught with your pack open
   costs something.
 
+### A swap is a commitment, not a timer
+
+The first cut made a swap *take* a second and a half and showed none of it: the
+player clicked, nothing happened, and the bag changed later. A delay nobody can
+see is not a cost, it is a bug report waiting to be filed — so the wait is a
+**state the body is in** and it is visible in all three places the change is
+about.
+
+`ActivityValue.Swapping` is that state. It rides the field `activity` already
+rides, so every client sees it and nothing new is replicated for it, and it is
+a **claim on the body**: anything that takes the body takes the swap with it.
+Walking away drops it (the movement pass, exactly as asking to move withdraws
+from a wind-up), a poise break writes `Stunned` over it, a cast writes
+`Casting`, and death writes `Dead`. `serveSwaps` watches for the claim going
+away rather than enumerating those causes, so a fifth cause arriving later
+cannot silently fail to cancel anything.
+
+What each surface shows, and why they differ:
+
+| Surface | Shows | Driven by |
+|---|---|---|
+| the bag's cells | which two slots, and the **direction** — red leaving, green arriving | `pendingSwap`, owner-only |
+| the action bar | which slot, and the **word**: `EQUIPPING` / `SWAPPING` / `REMOVING` | `pendingSwap`, owner-only |
+| the body | *that* a change is happening, and how far through | `activity`, everyone |
+
+The split is deliberate. Which slot and which direction are facts about a bag,
+and a bag is its owner's business; that a player is busy is a fact about the
+world. `SkillSwapKind` — `Equip` / `Swap` / `Unequip` — is derived on the
+server from its own containers and never chosen by a client.
+
+`PendingSkillSwap` rides on `Inventory`, which is the message that already
+carries containers whole: a swap being asked for, landing, or being given up
+are all container events, and two messages for one event is two things to keep
+in step. It carries both ticks rather than a fraction, so the client fills a
+bar by comparison the way the loot reveal does, with no ticking message and no
+clock of its own.
+
+**One ordering is load-bearing.** `expireActivity` drops the claim on the tick
+`activityUntilTick` is reached, and `serveSwaps` runs after the sim in that same
+tick — so the claim must be checked only *while the clock is still running*, or
+every swap is given up on the tick it was due to land.
+
 ## Invariants tested
 
 * A skill on cooldown cannot be cast, and the refusal names the cooldown.
@@ -140,6 +182,18 @@ Four slots, and a swap is not free:
   it — into the bag, into another slot, or by swapping something else in.
 * A swap does not take effect on the tick it is asked for, and the player
   carries the swap status while it is in flight.
+* The body is in a replicated `Swapping` state for the whole change and free
+  again once it lands.
+* Walking away gives the swap up, and the skill stays where it was however long
+  the clock is left to run.
+* The client is told what is in flight — which slots, which kind, both ticks —
+  and told nothing once it ends.
+* The kind is `Equip` into an empty slot, `Unequip` out of one, and `Swap` when
+  the destination is occupied or both ends are skill slots.
+* Progress is clamped at both ends, so a drawn tick either side of the server's
+  cannot draw a bar past full or below empty.
+* A cell accepts a **family**: one `slot: 'skill'` sigil fits any of the four
+  skill slots, a sword fits none of them, and a sigil fits no weapon slot.
 * An item that is not a skill cannot go in a skill slot, and a skill cannot go
   in a weapon slot.
 * Determinism: the same seed and inputs produce the same state with skills in

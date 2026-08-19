@@ -102,6 +102,20 @@ export class ItemSlot extends StyledWidget implements DropTarget {
    * every cell the cursor crosses is noise rather than information.
    */
   dropCandidate = false;
+  /**
+   * A change to this cell the server has committed to but not yet applied
+   * (spec 184).
+   *
+   * Set by the screen from what it was handed, like everything else here. It is
+   * the one thing a cell draws that is *not* about what is in it: a swap takes
+   * time on purpose, so during that time the truthful picture is not the new
+   * arrangement but the commitment to it -- which end this cell is, and how far
+   * through.
+   *
+   * Null on every cell that is not one of the two ends, which is all of them
+   * almost all of the time.
+   */
+  pending: SlotPending | null = null;
   /** Emitted when a drop is accepted here. The screen turns it into an intent. */
   onDropItem: ((drag: ItemDrag, to: SlotRef) => void) | null = null;
   /**
@@ -206,7 +220,57 @@ export class ItemSlot extends StyledWidget implements DropTarget {
       drawNineSlice(out, context.atlas.patch('frame'), this.rect, context.theme.color('accent'));
     }
     if (this.item) paintItem(out, context, this.item, this.rect);
+    if (this.pending) paintPending(out, context, this.pending, this.rect);
   }
+}
+
+/**
+ * One end of a change in flight, as this cell sees it (spec 184).
+ *
+ * `role` is which end, and it is what the two colours are for: something
+ * *leaving* is drawn in the danger tone and something *arriving* in the success
+ * one, so a pair of marked cells reads as a direction without a caption. Red
+ * and green rather than two shades of the accent, because at twenty pixels a
+ * cell the only difference a player can actually see is hue -- two warm tones
+ * read as one mark applied twice, which says a change is happening and not
+ * which way it goes. `progress` is the same 0..1 the action bar and the bar
+ * over the body fill by, from the same two server ticks.
+ */
+export interface SlotPending {
+  readonly role: 'out' | 'in';
+  readonly progress: number;
+}
+
+/**
+ * The commitment, drawn over the cell: a tinted frame and a bar filling along
+ * the bottom.
+ *
+ * A *bar* rather than a spinner or a fade, because this game already says
+ * "committed, with a clock on it" with a bar -- over a casting body, and under
+ * an action bar slot on cooldown. A fourth vocabulary for the fourth timed
+ * thing would be three too many.
+ *
+ * Drawn last so it sits over the icon: what the cell holds is still true and
+ * still worth seeing, and the mark is what is about to change about it.
+ */
+function paintPending(out: DrawList, context: PaintContext, pending: SlotPending, rect: Rect): void {
+  const tint = context.theme.color(pending.role === 'out' ? 'danger' : 'success');
+  drawNineSlice(out, context.atlas.patch('frame'), rect, tint);
+
+  const height = 3;
+  const inset = 2;
+  const track = {
+    x: rect.x + inset,
+    y: rect.y + rect.height - height - inset,
+    width: rect.width - inset * 2,
+    height,
+  };
+  out.solid(track, context.theme.color('shadow'));
+  // Floored, so a bar one pixel wide is a bar and a bar zero pixels wide is
+  // nothing at all -- the first frame of a change should show no progress
+  // rather than a sliver that reads as "nearly done at the start".
+  const filled = Math.floor(track.width * Math.max(0, Math.min(1, pending.progress)));
+  if (filled > 0) out.solid({ ...track, width: filled }, tint);
 }
 
 /**

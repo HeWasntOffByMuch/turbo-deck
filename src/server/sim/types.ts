@@ -57,6 +57,22 @@ export const ActivityValue = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
+  /**
+   * Changing an active skill (spec 184).
+   *
+   * A body state rather than a hidden timer on the connection, and that is the
+   * whole of what "commitment, not just time" means here. It is replicated by
+   * the field `activity` already rides, so every client draws the same body
+   * doing the same thing -- and it is a *claim on the body*, so anything that
+   * takes the body takes the swap with it: walking off, being staggered,
+   * committing to a cast, dying. The server watches for the claim going away
+   * and gives the swap up when it does, which is one comparison rather than
+   * four cancellation paths.
+   *
+   * `activityUntilTick` is when the change lands, so the bar over the head and
+   * the sweep in the interface are the same clock with no second field.
+   */
+  Swapping: 5,
 } as const;
 
 /**

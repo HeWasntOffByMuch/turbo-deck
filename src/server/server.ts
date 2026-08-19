@@ -55,7 +55,12 @@ import { regenerated } from './sim/resource.js';
 import { facesAim } from './sim/abilities.js';
 import { applyStatus } from './sim/statuses.js';
 import { SKILL_SWAP } from './data/skill-effects.js';
-import { movesASkill, skillSlotOnCooldown, skillSwapRefusal } from './player/skill-slots.js';
+import {
+  movesASkill,
+  skillSlotOnCooldown,
+  skillSwapRefusal,
+  swapKindOf,
+} from './player/skill-slots.js';
 import { headingToward } from './sim/movement.js';
 import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
@@ -82,6 +87,7 @@ import {
   type DropItemMessage,
   type LootDropMessage,
   type MoveItemMessage,
+  type PendingSkillSwap,
   type RequestChunkMessage,
   type ServerMessage,
   type SpawnerStatus,
@@ -358,6 +364,8 @@ interface PendingSwap {
   readonly count: number;
   /** Answered at this id, taken or refused, exactly as a `MoveItem` is. */
   readonly requestId: number;
+  /** The tick it was asked on, so a bar has an origin to fill from. */
+  readonly startedTick: number;
   /** The tick it lands on. Nothing happens before it. */
   readonly readyAtTick: number;
   /** Set while its `moveItem` is in flight, so a tick cannot serve it twice. */
@@ -1641,20 +1649,30 @@ export class GameServer implements AdminHost {
       return 'you are already changing skills';
     }
 
+    const readyAtTick = this.state.tick + SKILL_SWAP.durationTicks;
     connection.pendingSwaps.push({
       from: message.from,
       to: message.to,
       count: message.count,
       requestId: message.requestId,
-      readyAtTick: this.state.tick + SKILL_SWAP.durationTicks,
+      startedTick: this.state.tick,
+      readyAtTick,
       serving: false,
     });
     // The status goes on **now**, not when the swap lands: what it represents is
     // being caught with your pack open, and the open pack is the wait. Applied
     // through `applyStatus` like everything else, so it expires by the same
     // comparison and shows up in the same map.
+    //
+    // And the body takes the *claim* (spec 184): `Swapping` until the change
+    // lands, which is what makes this a commitment rather than a hidden timer.
+    // It rides the field `activity` already rides, so every client draws the
+    // same body busy with the same thing -- and anything that takes the body
+    // takes the swap with it, which {@link serveSwaps} reads as one comparison.
     this.state = replaceEntity(this.state, {
       ...body,
+      activity: ActivityValue.Swapping,
+      activityUntilTick: readyAtTick,
       statuses: applyStatus(
         body.statuses,
         SKILL_SWAP.statusId,
@@ -1662,7 +1680,36 @@ export class GameServer implements AdminHost {
         SKILL_SWAP.statusTicks,
       ),
     });
+    // Told at once rather than when it lands: the interface has to show the
+    // commitment *while* it is being made, and this message is what carries it.
+    this.sendInventory(connection, 0);
     return null;
+  }
+
+  /**
+   * The swap this connection is committed to, or null (spec 184).
+   *
+   * Read off the queue rather than stored twice, so "is there a change in
+   * flight" has one answer. The *kind* is derived here rather than remembered
+   * from the request, because what the containers held when it was asked for is
+   * not what they hold now -- and it is the current state the player is looking
+   * at.
+   */
+  private pendingSwapView(connection: Connection): PendingSkillSwap | null {
+    const pending = connection.pendingSwaps[0];
+    if (!pending || connection.playerId === null) return null;
+    const session = this.players.get(connection.playerId);
+    if (!session) return null;
+    return {
+      kind: swapKindOf(session.record.inventory, session.record.equipment, {
+        from: pending.from,
+        to: pending.to,
+      }),
+      from: pending.from,
+      to: pending.to,
+      startedTick: pending.startedTick,
+      readyAtTick: pending.readyAtTick,
+    };
   }
 
   /**
@@ -1684,19 +1731,65 @@ export class GameServer implements AdminHost {
 
       const body = this.state.entities.get(connection.entityId);
       if (!body || body.health <= 0) {
-        const waiting = connection.pendingSwaps.splice(0, connection.pendingSwaps.length);
-        for (const swap of waiting) {
-          if (swap.serving) continue;
-          this.reportAction(connection, 'you cannot change skills right now');
-          this.sendInventory(connection, swap.requestId);
+        this.giveUpSwaps(connection, 'you cannot change skills right now');
+        continue;
+      }
+
+      // **The claim is the commitment, and it is checked while it is being
+      // made** (spec 184).
+      //
+      // One comparison, and it covers every way a swap can be given up: the
+      // body walked off (the movement pass drops the claim), it was staggered
+      // or killed (the break writes `Stunned` over it), or it committed to a
+      // cast (`startCast` writes `Casting`). Watching the *state* rather than
+      // enumerating the causes is what stops a fifth cause arriving later and
+      // silently not cancelling anything.
+      //
+      // Asked only while the clock is still running, and that ordering is
+      // load-bearing rather than tidy: `expireActivity` drops the claim on the
+      // tick `activityUntilTick` is reached, and this pass runs *after* the sim
+      // in that same tick -- so a check before the readiness test would see the
+      // claim it was waiting for expire and give up every swap on the tick it
+      // was due to land. What it costs is a one-tick window in which a body
+      // that walks on the final tick still completes the change, which is the
+      // right way round: the commitment had already been held for its whole
+      // stated duration.
+      if (this.state.tick < pending.readyAtTick) {
+        if (body.activity !== ActivityValue.Swapping) {
+          this.giveUpSwaps(connection, 'you stopped changing skills');
         }
         continue;
       }
-      if (this.state.tick < pending.readyAtTick) continue;
 
       pending.serving = true;
       void this.completeSwap(connection, pending).catch((error: unknown) => {
         console.warn('[server] skill swap failed', error);
+      });
+    }
+  }
+
+  /**
+   * Every waiting swap refused with one reason, and the claim let go (spec 184).
+   *
+   * Shaped like {@link refuseDrops} and for the same reason: nothing has left
+   * the bag, so a refusal costs the request and nothing else. The claim is
+   * cleared only if it is still ours -- a body that was staggered out of a swap
+   * is carrying `Stunned` now, and writing `Idle` over that would end somebody
+   * else's window early.
+   */
+  private giveUpSwaps(connection: Connection, reason: string): void {
+    const waiting = connection.pendingSwaps.splice(0, connection.pendingSwaps.length);
+    for (const swap of waiting) {
+      if (swap.serving) continue;
+      this.reportAction(connection, reason);
+      this.sendInventory(connection, swap.requestId);
+    }
+    const body = this.state.entities.get(connection.entityId);
+    if (body && body.activity === ActivityValue.Swapping) {
+      this.state = replaceEntity(this.state, {
+        ...body,
+        activity: ActivityValue.Idle,
+        activityUntilTick: 0,
       });
     }
   }
@@ -1748,6 +1841,18 @@ export class GameServer implements AdminHost {
       to: pending.to,
       ...(pending.count === 0 ? {} : { count: pending.count }),
     });
+    // The claim is done with either way. `activityUntilTick` has passed by now,
+    // so the movement pass would drop it on the next tick regardless -- this
+    // just means the body is free on the tick the change actually lands rather
+    // than one after it.
+    const done = this.state.entities.get(connection.entityId);
+    if (done && done.activity === ActivityValue.Swapping) {
+      this.state = replaceEntity(this.state, {
+        ...done,
+        activity: ActivityValue.Idle,
+        activityUntilTick: 0,
+      });
+    }
     finish(result.ok ? null : result.reason);
   }
 
@@ -1968,12 +2073,18 @@ export class GameServer implements AdminHost {
     if (connection.playerId === null) return;
     const session = this.players.get(connection.playerId);
     if (!session) return;
+    // Whatever change is in flight rides along (spec 184). Derived here rather
+    // than remembered, so every `Inventory` -- asked for, landed, refused, or
+    // sent for some unrelated reason -- carries the truth at the moment it left
+    // rather than a stale copy of it.
+    const pendingSwap = this.pendingSwapView(connection);
     this.send(connection, {
       type: ServerMessageType.Inventory,
       requestId,
       inventory: session.record.inventory,
       equipment: session.record.equipment,
       coins: session.record.coins,
+      ...(pendingSwap === null ? {} : { pendingSwap }),
     });
   }
 

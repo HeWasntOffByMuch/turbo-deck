@@ -222,6 +222,29 @@ export const SKILL_SWAP = {
   maxPending: 4,
 } as const;
 
+/**
+ * Which of the three things a skill-slot change is (spec 184).
+ *
+ * One operation -- `from` to `to` -- seen from three ends, and they are told
+ * apart by what the two addresses are rather than by anything a client says:
+ *
+ *  - `Equip` -- something is going into an empty skill slot.
+ *  - `Unequip` -- something is coming out of one, and nothing is going back.
+ *  - `Swap` -- a slot's contents are being exchanged, either because the target
+ *    slot was occupied or because both ends are skill slots.
+ *
+ * A byte, because it rides the wire: the interface has to say *which* of the
+ * three is happening, and "there is a change in flight" is not the same
+ * sentence as "you are putting this on".
+ */
+export const SkillSwapKind = {
+  Equip: 0,
+  Swap: 1,
+  Unequip: 2,
+} as const;
+
+export type SkillSwapKindValue = (typeof SkillSwapKind)[keyof typeof SkillSwapKind];
+
 /** How long Slow lasts if a row forgets to say, and how much it takes. */
 export const SLOW_DEFAULTS = {
   /** Fraction of move speed removed. 0.4 is "40% slower". */

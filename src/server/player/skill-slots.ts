@@ -19,7 +19,14 @@
  */
 
 import { itemById } from '../data/items.js';
-import { SKILL_EQUIP_SLOTS, isSkillSlot, type Equipment, type SlotAddress } from '../state/types.js';
+import { SkillSwapKind, type SkillSwapKindValue } from '../data/skill-effects.js';
+import {
+  SKILL_EQUIP_SLOTS,
+  isSkillSlot,
+  type Equipment,
+  type Inventory,
+  type SlotAddress,
+} from '../state/types.js';
 import { equipSlotAt } from './inventory.js';
 
 export { SKILL_EQUIP_SLOTS, isSkillSlot } from '../state/types.js';
@@ -123,6 +130,37 @@ export function skillSwapRefusal(
     }
   }
   return null;
+}
+
+/**
+ * Which of the three a change to a skill slot is (spec 184).
+ *
+ * Derived from the two addresses and what is in them, never from anything a
+ * client said -- the client draws what this answers, it does not choose it.
+ *
+ * The rule reads off `to` first because that is what the player is doing: a
+ * move *into* a skill slot is putting something on, and it is only a swap when
+ * the slot it lands in already holds something (or when the other end is a
+ * skill slot too, which is one going on and one coming off). A move that only
+ * *leaves* a skill slot is taking something off.
+ */
+export function swapKindOf(
+  inventory: Inventory,
+  equipment: Equipment,
+  request: { readonly from: SlotAddress; readonly to: SlotAddress },
+): SkillSwapKindValue {
+  const intoSlot = addressIsSkillSlot(request.to);
+  const outOfSlot = addressIsSkillSlot(request.from);
+  if (intoSlot && outOfSlot) return SkillSwapKind.Swap;
+  if (intoSlot) return occupied(inventory, equipment, request.to) ? SkillSwapKind.Swap : SkillSwapKind.Equip;
+  return SkillSwapKind.Unequip;
+}
+
+/** Whether an address currently holds anything. */
+function occupied(inventory: Inventory, equipment: Equipment, at: SlotAddress): boolean {
+  if (at.container === 'inventory') return inventory[at.index] != null;
+  const slot = equipSlotAt(at.index);
+  return slot !== null && equipment[slot] !== null;
 }
 
 /** Whether a move touches a skill slot at either end, and so has to be timed. */
