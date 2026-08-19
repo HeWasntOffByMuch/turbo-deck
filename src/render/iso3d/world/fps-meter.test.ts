@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { FrameMeter, STALL_MS } from './fps-meter.js';
+import { CostMeter, FrameMeter, STALL_MS } from './fps-meter.js';
 
 /** Feed `count` frames of `ms` each, starting from `at`. Returns the new clock. */
 function run(meter: FrameMeter, count: number, ms: number, at = 0): number {
@@ -107,5 +107,43 @@ describe('FrameMeter', () => {
     const meter = new FrameMeter();
     run(meter, 3, 20);
     expect(meter.stats().p99Ms).toBeCloseTo(20, 1);
+  });
+});
+
+describe('CostMeter', () => {
+  it('answers zero before it has been told anything', () => {
+    expect(new CostMeter().read()).toEqual({ meanMs: 0, worstMs: 0 });
+  });
+
+  it('reports the mean and the worst, because a mean hides the spike', () => {
+    const meter = new CostMeter();
+    // What a tick accumulator produces: mostly one tick, occasionally two, and
+    // once in a while a correction replaying its whole input buffer.
+    for (const ms of [2, 2, 2, 2, 4, 2, 2, 2, 2, 20]) meter.push(ms);
+    const read = meter.read();
+    expect(read.meanMs).toBeCloseTo(4, 5);
+    expect(read.worstMs).toBe(20);
+  });
+
+  it('keeps only the window, so a spike walks off the end', () => {
+    const meter = new CostMeter(4);
+    meter.push(100);
+    for (const ms of [1, 1, 1, 1]) meter.push(ms);
+    expect(meter.read()).toEqual({ meanMs: 1, worstMs: 1 });
+  });
+
+  it('drops a cost that is not a duration', () => {
+    const meter = new CostMeter();
+    meter.push(Number.NaN);
+    meter.push(-5);
+    meter.push(3);
+    expect(meter.read()).toEqual({ meanMs: 3, worstMs: 3 });
+  });
+
+  it('forgets the window on reset, for a tab that was hidden', () => {
+    const meter = new CostMeter();
+    meter.push(50);
+    meter.reset();
+    expect(meter.read()).toEqual({ meanMs: 0, worstMs: 0 });
   });
 });

@@ -14,6 +14,16 @@
 
 import { STALL_MS, type FrameStats } from './fps-meter.js';
 
+/** What {@link FpsOverlay.set} is told about the simulation half of the frame. */
+export interface SimCost {
+  /** Mean milliseconds a frame spends advancing the sim, over the meter's window. */
+  readonly meanMs: number;
+  /** The worst single frame's share -- a correction replaying its input buffer. */
+  readonly worstMs: number;
+  /** Mean fixed ticks drained per frame. Below 60fps this is why the cost alternates. */
+  readonly ticksPerFrame: number;
+}
+
 const WIDTH = 180;
 const HEIGHT = 56;
 
@@ -43,6 +53,7 @@ export interface FpsOverlay {
     worstStage?: string,
     worstStageMs?: number,
     scene?: { calls: number; triangles: number },
+    sim?: SimCost,
   ): void;
   dispose(): void;
 }
@@ -84,7 +95,17 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   const work = document.createElement('div');
   work.dataset['fpsWork'] = '';
   work.style.cssText = 'color:#e0b45a;';
+
+  // The simulation's share of the frame (spec 189), on its own line and in its
+  // own colour, because it answers a different question from the two above it:
+  // `draws` is what the GPU was asked for and `work` is the loader, and neither
+  // can say that a frame went on `server.tick()`. Green, since the number it is
+  // compared against is the frame time in the line at the top.
+  const sim = document.createElement('div');
+  sim.dataset['fpsSim'] = '';
+  sim.style.cssText = 'color:#6edc96;';
   root.append(draws);
+  root.append(sim);
   root.append(work);
 
   const canvas = document.createElement('canvas');
@@ -113,6 +134,7 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
       worstStage = '',
       worstStageMs = 0,
       scene?: { calls: number; triangles: number },
+      simCost?: SimCost,
     ): void {
       if (!stats) {
         root.style.display = 'none';
@@ -138,6 +160,19 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
         draws.textContent = `${scene.calls} draws  ${(scene.triangles / 1000).toFixed(0)}k tris`;
         root.dataset['fpsDrawCalls'] = String(scene.calls);
         root.dataset['fpsTriangles'] = String(scene.triangles);
+      }
+      if (simCost) {
+        // Mean and worst together, always. The mean is the share of the frame
+        // and the worst is the spike, and a tick accumulator produces both --
+        // below 60fps some frames drain one tick and some two, so the mean says
+        // what the simulation costs and only the worst says what it costs on the
+        // frame that felt bad. `t/f` is the reason they differ.
+        sim.textContent =
+          `sim ${simCost.meanMs.toFixed(1)}ms  worst ${simCost.worstMs.toFixed(1)}` +
+          `  ${simCost.ticksPerFrame.toFixed(1)}t/f`;
+        root.dataset['fpsSim'] = simCost.meanMs.toFixed(2);
+        root.dataset['fpsSimWorst'] = simCost.worstMs.toFixed(2);
+        root.dataset['fpsTicksPerFrame'] = simCost.ticksPerFrame.toFixed(2);
       }
       root.dataset['fpsWorstStage'] = worstStage;
       root.dataset['fpsWorstStageMs'] = worstStageMs.toFixed(1);

@@ -127,3 +127,52 @@ export class FrameMeter {
     };
   }
 }
+
+/**
+ * What one *part* of the frame costs, over the same window (spec 189).
+ *
+ * {@link FrameMeter} answers "how long was the frame"; this answers "how much of
+ * it was X". Separate because the two are measured differently and one of them
+ * is optional: a frame time is the gap between two paints and always exists,
+ * where a cost is something a caller chose to time and may be zero.
+ *
+ * Two numbers come back and both are needed. The **mean** is the share of the
+ * frame -- what you compare against the frame time to decide whether a cost is
+ * worth chasing. The **worst** is the spike, and a mean hides it completely:
+ * work that is paced by something other than the frame (a tick accumulator, a
+ * correction replaying its input buffer) lands unevenly by construction, and the
+ * uneven frame is the one a player feels.
+ *
+ * Time is an argument here too -- `push` is handed a duration somebody else
+ * measured, so nothing in this file reads a clock.
+ */
+export class CostMeter {
+  private readonly window: number;
+  private readonly costs: number[] = [];
+
+  constructor(window = FRAME_WINDOW) {
+    this.window = Math.max(1, window);
+  }
+
+  /** Record one frame's cost. Negative and non-finite values are dropped. */
+  push(ms: number): void {
+    if (!Number.isFinite(ms) || ms < 0) return;
+    this.costs.push(ms);
+    if (this.costs.length > this.window) this.costs.splice(0, this.costs.length - this.window);
+  }
+
+  reset(): void {
+    this.costs.length = 0;
+  }
+
+  read(): { readonly meanMs: number; readonly worstMs: number } {
+    if (this.costs.length === 0) return { meanMs: 0, worstMs: 0 };
+    let total = 0;
+    let worst = 0;
+    for (const ms of this.costs) {
+      total += ms;
+      if (ms > worst) worst = ms;
+    }
+    return { meanMs: total / this.costs.length, worstMs: worst };
+  }
+}

@@ -71,7 +71,7 @@ import { createMapWorker } from './map-worker-client.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
-import { FrameMeter } from './fps-meter.js';
+import { CostMeter, FrameMeter } from './fps-meter.js';
 import { createFpsOverlay } from './fps-overlay.js';
 import { PROP_REGION_SIZE } from '../props.js';
 import {
@@ -518,6 +518,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * are the two seconds with no history in them.
    */
   const frames = new FrameMeter();
+  /**
+   * What advancing the simulation costs the frame (spec 189).
+   *
+   * The one number the meter could not produce and the one the frame graph most
+   * needed: single-player is a whole server on this thread, so `server.tick()`
+   * is frame time, and a tick that got more expensive arrives as a picket fence
+   * rather than as a stall -- below 60fps the accumulator drains one tick on
+   * some frames and two on others. Reading the graph alone, that is
+   * indistinguishable from a renderer that got slower.
+   *
+   * Measured on a socket too, where there is no server here to time: what is
+   * left is the predictor, which walks the same colliders per predicted tick and
+   * replays its whole input buffer on a correction. That half never leaves this
+   * thread, so a reading of zero would be a lie about the remote path.
+   */
+  const simCosts = new CostMeter();
+  const simTicks = new CostMeter();
   /**
    * The streaming cost of recent frames, decayed rather than averaged.
    *
@@ -2235,6 +2252,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     sinceDelta += elapsed;
 
     let ticks = 0;
+    // The whole loop, not `server.tick()` alone (spec 189): what the frame pays
+    // to advance the simulation includes releasing the wire, the client's own
+    // clock and the input it sends, and a number that timed only the server
+    // would read as zero on a socket -- where the predictor is the entire cost.
+    const simStart = performance.now();
     while (accumulator >= tickMs) {
       accumulator -= tickMs;
       ticks += 1;
@@ -2256,6 +2278,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       client.advanceTick();
       sendInput();
     }
+    simCosts.push(performance.now() - simStart);
+    simTicks.push(ticks);
 
     // Turning the view is the player's job now (spec 129), which is why nothing
     // carves a hole in the rock any more. Driven off the held set rather than
@@ -2398,6 +2422,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       worstStage,
       worstStageMs,
       scene.renderStats(),
+      { ...simCosts.read(), ticksPerFrame: simTicks.read().meanMs },
     );
 
     // Where the view is looking from and how wide it frames, for the probes.
