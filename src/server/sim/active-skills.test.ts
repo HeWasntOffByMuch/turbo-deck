@@ -416,21 +416,21 @@ describe('Stunning Blow', () => {
     expect(landed.events.some((event) => event.kind === 'poiseBroken')).toBe(true);
   });
 
-  it('cannot chain-stun: a body inside its immunity window is not re-stunned', () => {
+  /**
+   * The break's anti-chain window is about *guard breaks*, and a skill's stun
+   * is not one -- see the note on the `stun` case in `sim/skill-effects.ts`.
+   * What still stamps the window is that the stun *lands*: a guard break cannot
+   * follow it for free.
+   */
+  it('leaves the target unbreakable for a while afterwards', () => {
     const { state, casterId, targetId } = duel();
     const target = state.entities.get(targetId);
-    if (!target) throw new Error('no target');
-    // Already immune, which is what a body that was broken a moment ago is.
-    const immune = replaceEntity(state, {
-      ...target,
-      staggerImmuneUntilTick: state.tick + SERVER_TICK_RATE * 5,
-    });
     const windup = abilityById('skill.stunningBlow')?.windupTicks ?? 0;
-    const landed = run(immune, windup + 2, {
-      0: [cast(casterId, 'skill.stunningBlow', immune.entities.get(targetId) ?? null)],
+    const landed = run(state, windup + 2, {
+      0: [cast(casterId, 'skill.stunningBlow', target ?? null)],
     });
-    expect(landed.state.entities.get(targetId)?.activity).not.toBe(ActivityValue.Stunned);
-    // The damage still lands, so a skill thrown into the window is not wasted.
+    const struck = landed.state.entities.get(targetId);
+    expect(struck?.staggerImmuneUntilTick ?? 0).toBeGreaterThan(landed.state.tick);
     expect(hits(landed.events).filter((hit) => hit.targetId === targetId)).toHaveLength(1);
   });
 });
@@ -600,5 +600,172 @@ describe('an instant skill', () => {
     for (const id of ['skill.guardBreak', 'skill.cripplingStrike']) {
       expect(abilityById(id)?.windupTicks ?? 0).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+/**
+ * Stunning Blow's stun, which shipped landing only sometimes.
+ *
+ * The cause was an ordering trap inside the skill's own effect list: its
+ * `poiseDamage` runs first, and on a body whose guard it *breaks* that stamps
+ * the anti-chain immunity window -- which the `stun` a line later then read and
+ * refused. So the skill stunned for the target's own `staggerTicks` when it
+ * broke the guard and for its authored duration when it did not, and for
+ * nothing at all against a body already inside somebody else's window.
+ *
+ * Which of those happened depended on the monster: a grazer's guard is 20 and
+ * the skill takes 30, so it always broke; a ravager's is 49, so it usually did
+ * not. From the player's seat that reads as a skill that sometimes works.
+ */
+describe('Stunning Blow stuns every time it lands', () => {
+  const STUN_TICKS = 84;
+
+  /**
+   * Fires the skill and reports how long the stun it produced actually lasts.
+   *
+   * Stepped one tick at a time so the *first* tick the body is stunned on is
+   * observed rather than inferred: the length is `activityUntilTick` minus that
+   * tick, and measuring from the end of the run instead would be short by
+   * however many ticks the run happened to overshoot by.
+   */
+  function strike(state: ServerWorldState, casterId: number, targetId: number): {
+    readonly target: ServerEntity | undefined;
+    readonly stunTicks: number | null;
+    /** The world as it stands, so a caller can keep stepping the same clock. */
+    readonly state: ServerWorldState;
+  } {
+    const windup = abilityById('skill.stunningBlow')?.windupTicks ?? 0;
+    const ctx = context();
+    let current = state;
+    let stunTicks: number | null = null;
+    for (let i = 0; i < windup + 3; i++) {
+      const frame = i === 0
+        ? [cast(casterId, 'skill.stunningBlow', current.entities.get(targetId) ?? null)]
+        : [];
+      current = step(current, frame, ctx).state;
+      const target = current.entities.get(targetId);
+      if (stunTicks === null && target?.activity === ActivityValue.Stunned) {
+        stunTicks = target.activityUntilTick - current.tick;
+      }
+    }
+    return { target: current.entities.get(targetId), stunTicks, state: current };
+  }
+
+  /** A caster and a monster of `typeId` in reach. */
+  function against(typeId: string): { state: ServerWorldState; casterId: number; targetId: number } {
+    const definition = monsterById(typeId);
+    if (!definition) throw new Error(`no ${typeId}`);
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450, statsFor());
+    const spawned = spawnEntity(caster.state, {
+      kind: EntityKindValue.Monster,
+      typeId,
+      position: { x: 655, y: 450, z: 0 },
+      stats: definition.stats,
+      radius: definition.radius,
+      zoneId: 'greenmarch',
+    });
+    return { state: spawned.state, casterId: caster.id, targetId: spawned.entity.id };
+  }
+
+  /**
+   * The authored duration, whatever the target's own guard did. A body whose
+   * guard the same blow broke used to get its own `staggerTicks` instead --
+   * half a second where the row says one and a half.
+   */
+  it('stuns for the duration the row states, on a body whose guard it breaks', () => {
+    // A stalker's guard is 20 and the skill takes 30, so this always breaks --
+    // and its 40 health survives the blow, which a grazer's 24 does not.
+    const { state, casterId, targetId } = against('stalker');
+    const { target, stunTicks } = strike(state, casterId, targetId);
+    expect(target?.activity).toBe(ActivityValue.Stunned);
+    expect(stunTicks).toBe(STUN_TICKS);
+  });
+
+  it('stuns for the same duration on a body whose guard it does not break', () => {
+    // A ravager's guard is 49, so 30 leaves it standing.
+    const { state, casterId, targetId } = against('ravager');
+    const { target, stunTicks } = strike(state, casterId, targetId);
+    expect(target?.activity).toBe(ActivityValue.Stunned);
+    expect(stunTicks).toBe(STUN_TICKS);
+  });
+
+  /**
+   * The window stops a *guard break* being repeatable, which is what would
+   * otherwise let two attackers hold a third permanently. A skill's stun is
+   * rate-limited by its own cooldown and wind-up instead, so being inside
+   * somebody else's window is not a reason for it to do nothing.
+   */
+  it('stuns a body that is already inside a break’s immunity window', () => {
+    const { state, casterId, targetId } = against('ravager');
+    const target = state.entities.get(targetId);
+    if (!target) throw new Error('no target');
+    const immune = replaceEntity(state, {
+      ...target,
+      staggerImmuneUntilTick: state.tick + SERVER_TICK_RATE * 10,
+    });
+    const struck = strike(immune, casterId, targetId);
+    expect(struck.target?.activity).toBe(ActivityValue.Stunned);
+    expect(struck.stunTicks).toBe(STUN_TICKS);
+  });
+
+  /**
+   * The question the reported bug was really asking: is the mob *stunned*, or
+   * does it merely carry a flag saying so.
+   *
+   * Spec 173 made `staggered` root the legs and refuse the hands, and this
+   * asserts it end to end for a skill's stun: an engaged ravager, which chases
+   * and swings at everything, neither moves nor commits to anything for the
+   * whole window -- and does both again once it is over.
+   */
+  it('really roots the body: it neither walks nor swings for the window', () => {
+    const { state, casterId, targetId } = against('ravager');
+    const struck = strike(state, casterId, targetId);
+    expect(struck.target?.activity).toBe(ActivityValue.Stunned);
+    if (!struck.target) throw new Error('no target');
+
+    // Where it was when the blow landed, and where the caster is: a body free
+    // to act would close on the player and swing.
+    const held = struck.target.position;
+    // The same world and the same clock the blow landed on. Rebuilding one
+    // around the stunned body would put its `activityUntilTick` against a fresh
+    // tick counter, which makes the window look however long the new clock is
+    // behind -- a test measuring its own scaffolding rather than the rule.
+    const ctx = context();
+    let current = struck.state;
+    for (let i = 0; i < 20; i++) current = step(current, [], ctx).state;
+
+    const during = current.entities.get(targetId);
+    expect(during?.activity).toBe(ActivityValue.Stunned);
+    expect(Math.hypot(
+      (during?.position.x ?? 0) - held.x,
+      (during?.position.y ?? 0) - held.y,
+    )).toBeLessThan(1e-6);
+    expect(during?.cast).toBeNull();
+
+    // And free again afterwards, which is what makes it a window rather than a
+    // removal.
+    for (let i = 0; i < STUN_TICKS + 5; i++) current = step(current, [], ctx).state;
+    expect(current.entities.get(targetId)?.activity).not.toBe(ActivityValue.Stunned);
+  });
+
+  /**
+   * Constitution's Resolute is the one thing that still refuses it, and that is
+   * the difference between a global anti-chain guard and an *earned* defence: a
+   * player who built for it and is hurt enough to have it is meant to be
+   * unstaggerable, and a skill that walked through it would make the trait
+   * worth nothing.
+   */
+  it('is still refused by a body that has earned its footing', () => {
+    const { state, casterId, targetId } = against('ravager');
+    const target = state.entities.get(targetId);
+    if (!target) throw new Error('no target');
+    const resolute = replaceEntity(state, {
+      ...target,
+      health: 1,
+      stats: { ...target.stats, traits: { ...target.stats.traits, resoluteBelow: 0.9 } },
+    });
+    const struck = strike(resolute, casterId, targetId);
+    expect(struck.target?.activity).not.toBe(ActivityValue.Stunned);
   });
 });

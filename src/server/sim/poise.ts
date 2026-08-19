@@ -194,13 +194,23 @@ export function applyPoiseDamage(
  * flinches and draws its swirl from all come from here, so a skill's stun is
  * the same state the game already has rather than one that looks like it.
  *
+ * **Stuns do not stack: a second one replaces the first.** `activityUntilTick`
+ * is `tick + ticks` and never a sum or a maximum, so a stun landing on a body
+ * already stunned runs for its own length from now and whatever was left of the
+ * previous one is dropped -- in both directions, so a short stun on top of a
+ * long one *shortens* it. Replace rather than "whichever ends later" because
+ * the alternative makes a weak stun do nothing at all to a body already held,
+ * which is a special case nobody could predict from the rule.
+ *
  * Two things it deliberately does **not** do, and both are the caller's:
  *
  *  - It does not check {@link staggerImmune} or {@link isResolute}. On the
  *    break path {@link applyPoiseDamage} has already checked them *and* stamped
  *    the immunity, so a check here would see the guard it just set and refuse
- *    the very stagger it was called to apply. A caller that has not checked --
- *    the `stun` effect -- must.
+ *    the very stagger it was called to apply. The `stun` effect checks
+ *    `isResolute` and deliberately does *not* check `staggerImmune` -- see the
+ *    note there: the window rate-limits guard *breaks*, and a skill's stun is
+ *    rate-limited by its own cooldown.
  *  - It does not touch the poise pool. A break refills it as part of emptying
  *    it; a stun applied directly never spent it, and refilling would *hand* the
  *    victim guard for being stunned.

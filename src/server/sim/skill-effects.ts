@@ -33,7 +33,7 @@ import type { AbilityDefinition } from '../data/abilities.js';
 import { subjectOf, type SkillEffect } from '../data/skill-effects.js';
 import { applyHealing } from './healing.js';
 import { resolveBlow } from './blow.js';
-import { applyPoiseDamage, isResolute, staggerImmune, stagger } from './poise.js';
+import { applyPoiseDamage, isResolute, stagger } from './poise.js';
 import { applyStatus, clearStatus } from './statuses.js';
 import type { ServerEntity, ServerSimEvent } from './types.js';
 
@@ -159,14 +159,34 @@ function applyOne(
     }
 
     case 'stun': {
-      // The same two guards a break is subject to, checked here because
-      // `stagger` deliberately does not check them -- see its note. Without
-      // these a stun skill would ignore the window that stops two casters
-      // holding a third permanently, which is the whole reason the window
+      // **A stun is not a guard break, and is not rate-limited like one.**
+      //
+      // `staggerImmune` is the anti-chain window, and what it exists to stop is
+      // a *break* being repeatable: every basic attack carries poise, so two
+      // Strength characters swinging freely would otherwise hold a third on the
+      // floor forever. A skill's stun has nothing in common with that. It is
+      // gated by a cast time long enough to read and step out of, by a cost,
+      // and by a cooldown measured in seconds -- those are its rate limit, and
+      // they are stricter than the window.
+      //
+      // Consulting the window here made the skill fail in the way it was
+      // reported: Stunning Blow's own `poiseDamage` runs first, and on a body
+      // whose guard it *breaks* that stamps the window a line before this read
+      // it. So the same skill stunned for its authored duration against a
+      // ravager (guard 49, unbroken by 30) and for the target's own much
+      // shorter `staggerTicks` against a grazer (guard 20, always broken) --
+      // and did nothing at all to a body already inside somebody else's window.
+      // One skill, three behaviours, none of them stated anywhere.
+      //
+      // What is still refused: a corpse, and {@link isResolute}. That second
+      // one is the difference between a global guard and an *earned* defence --
+      // a Constitution character who is hurt enough to have it is meant to be
+      // unstaggerable, and a skill that walked through it would make the trait
+      // worth nothing.
+      if (isResolute(target) || target.health <= 0) return still(target);
+      // It still *stamps* the window, so a guard break cannot follow it for
+      // free: what this changes is who the window applies to, not that it
       // exists.
-      if (staggerImmune(target, tick) || isResolute(target) || target.health <= 0) {
-        return still(target);
-      }
       const struck = stagger(target, caster.id, Math.max(1, Math.round(effect.ticks)), tick);
       return still(struck.entity, struck.events);
     }

@@ -78,6 +78,28 @@ exactly as they apply to a swing. `stun` and `poiseDamage` both end at
 so that the two callers cannot come to different answers about what a stagger
 does.
 
+**A stun is not a guard break, and is not rate-limited like one.**
+`staggerImmune` exists to stop a *break* being repeatable — every basic attack
+carries poise, so two Strength characters swinging freely would otherwise hold
+a third on the floor forever. A skill's stun is gated by a readable cast time,
+a cost and a cooldown measured in seconds, which is stricter. So the `stun`
+effect ignores the window and still stamps it; `isResolute` still refuses it,
+because that is an *earned* defence rather than a global guard.
+
+Reading the window made Stunning Blow land three different ways from one row:
+its own `poiseDamage` runs first, and on a body whose guard it broke that
+stamped the window a line before the `stun` read it. Against a ravager (guard
+49, unbroken by 30) it stunned for its authored 1.4s; against a grazer (guard
+20, always broken) it stunned for the target's own 0.5s; against a body already
+inside somebody else's window it did nothing at all.
+
+**Stuns do not stack.** `stagger` sets `activityUntilTick = tick + ticks`, so a
+second stun runs for its own length from now and whatever was left of the first
+is dropped — in both directions, so a short stun landing on a long one shortens
+it. Replace rather than "whichever ends later", because the alternative makes a
+weak stun unable to do anything to a body already held, which is a special case
+nobody could predict from the rule.
+
 ### The item
 
 A skill item is an `ItemDefinition` with `slot: 'skill'` and an
@@ -160,6 +182,12 @@ every swap is given up on the tick it was due to land.
 
 ## Invariants tested
 
+* A skill's stun lasts the duration its row states — the same duration whether
+  or not the same blow broke the target's guard, and whether or not the target
+  was already inside a break's immunity window.
+* A stun still stamps the immunity window, and is still refused by `isResolute`
+  and by a corpse.
+* Two stuns never stack: the second replaces the first, in both directions.
 * A skill on cooldown cannot be cast, and the refusal names the cooldown.
 * A skill cannot be cast without the pool, the health or the poise it costs,
   and each refusal names which.

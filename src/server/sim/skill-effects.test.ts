@@ -178,10 +178,41 @@ describe('stuns', () => {
     expect(result.target.activityUntilTick).toBe(TICK + 45);
   });
 
-  it('respects the immunity window that stops a chain', () => {
+  /**
+   * The window is the *guard break's* rate limit, not a stun's: a skill pays a
+   * cast time, a cost and a cooldown for its stun, and those are stricter than
+   * two seconds. Reading the window here is what made Stunning Blow land
+   * three different ways depending on the target's guard.
+   */
+  it('lands on a body inside a break’s immunity window', () => {
     const caster = { ...place(0), id: 1 };
     const immune = { ...place(50), id: 2, staggerImmuneUntilTick: TICK + 60 };
     const result = apply([{ kind: 'stun', ticks: 45 }], caster, immune);
+    expect(result.target.activity).toBe(ActivityValue.Stunned);
+    expect(result.target.activityUntilTick).toBe(TICK + 45);
+  });
+
+  /**
+   * ...and stamps it, so a guard break cannot follow the stun for free. What
+   * changed is who the window applies to, not that it exists.
+   */
+  it('stamps the window it no longer reads', () => {
+    const caster = { ...place(0), id: 1 };
+    const target = { ...place(50), id: 2 };
+    const result = apply([{ kind: 'stun', ticks: 45 }], caster, target);
+    expect(result.target.staggerImmuneUntilTick).toBeGreaterThan(TICK);
+  });
+
+  /** An earned defence still refuses it, unlike the global window. */
+  it('is refused by a body that is resolute', () => {
+    const caster = { ...place(0), id: 1 };
+    const resolute = {
+      ...place(50),
+      id: 2,
+      health: 1,
+      stats: { ...dummy.stats, traits: { ...dummy.stats.traits, resoluteBelow: 0.9 } },
+    };
+    const result = apply([{ kind: 'stun', ticks: 45 }], caster, resolute);
     expect(result.target.activity).not.toBe(ActivityValue.Stunned);
   });
 
@@ -265,5 +296,69 @@ describe('a list', () => {
     const result = apply([], caster, target);
     expect(result.target).toEqual(target);
     expect(result.events).toHaveLength(0);
+  });
+});
+
+/**
+ * Stun durations do not stack (spec 184).
+ *
+ * The rule is **replace, not extend**: a stun that lands on a body already
+ * stunned sets the window to its own length measured from now, and whatever was
+ * left of the previous one is dropped. Two stuns are two stuns, never one long
+ * one -- which is what stops a pair of attackers turning two short windows into
+ * a lock, and is the reason the arithmetic is worth a test of its own rather
+ * than being left as a property of one assignment in `stagger`.
+ */
+describe('two stuns', () => {
+  const LONG = 132; // 2.2s at 60Hz
+  const SHORT = 36; // 0.6s
+
+  it('replaces rather than adding, so a long one does not extend a short one', () => {
+    const first = applyEffects(skill([{ kind: 'stun', ticks: SHORT }]), { ...place(0), id: 1 }, { ...place(50), id: 2 }, 0, Rng.fromSeed(1)).target;
+    expect(first.activityUntilTick).toBe(SHORT);
+
+    // Half a second later, with a third of the first stun still to run.
+    const at = 20;
+    const second = applyEffects(skill([{ kind: 'stun', ticks: LONG }]), { ...place(0), id: 1 }, first, at, Rng.fromSeed(1)).target;
+    // The long stun's own length from *now*, not added to what was left.
+    expect(second.activityUntilTick).toBe(at + LONG);
+    expect(second.activityUntilTick - at).toBe(LONG);
+  });
+
+  /**
+   * The same rule in the other direction, and it is worth stating out loud
+   * because it is the surprising half: a *shorter* stun landing on a longer one
+   * cuts it short. "Replace" means replace. The alternative -- keeping whichever
+   * ends later -- would make a weak stun unable to do anything at all to a body
+   * already held, which is a special case nobody could predict from the rule.
+   */
+  it('drops the remainder of a longer stun when a shorter one lands', () => {
+    const held = applyEffects(skill([{ kind: 'stun', ticks: LONG }]), { ...place(0), id: 1 }, { ...place(50), id: 2 }, 0, Rng.fromSeed(1)).target;
+    const at = 30;
+    const cut = applyEffects(skill([{ kind: 'stun', ticks: SHORT }]), { ...place(0), id: 1 }, held, at, Rng.fromSeed(1)).target;
+    expect(cut.activityUntilTick).toBe(at + SHORT);
+    // Which is sooner than the first stun would have ended on its own.
+    expect(cut.activityUntilTick).toBeLessThan(held.activityUntilTick);
+  });
+
+  it('lands on a body that is already stunned rather than being refused', () => {
+    const held = applyEffects(skill([{ kind: 'stun', ticks: SHORT }]), { ...place(0), id: 1 }, { ...place(50), id: 2 }, 0, Rng.fromSeed(1)).target;
+    expect(held.activity).toBe(ActivityValue.Stunned);
+    const again = applyEffects(skill([{ kind: 'stun', ticks: LONG }]), { ...place(0), id: 1 }, held, 10, Rng.fromSeed(1));
+    expect(again.target.activity).toBe(ActivityValue.Stunned);
+    // Announced again, so a client that missed the first contact still draws
+    // the second.
+    expect(again.events.some((event) => event.kind === 'poiseBroken')).toBe(true);
+  });
+
+  it('is not stacked by a skill listing two stuns either', () => {
+    const struck = applyEffects(
+      skill([{ kind: 'stun', ticks: SHORT }, { kind: 'stun', ticks: SHORT }]),
+      { ...place(0), id: 1 },
+      { ...place(50), id: 2 },
+      0,
+      Rng.fromSeed(1),
+    ).target;
+    expect(struck.activityUntilTick).toBe(SHORT);
   });
 });

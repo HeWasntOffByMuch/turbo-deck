@@ -1068,6 +1068,23 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  avoid. `sim/skill-area.ts` is the geometry beside it -- circle
                  at the caster or at the aim, cone, line -- and a fourth shape
                  is a member of one union and a case in one switch.
+                 The one rule in the resolver that is not simply a hand-off:
+                 **a stun is not a guard break and is not rate-limited like
+                 one.** `staggerImmune` stops a *break* being repeatable, which
+                 it has to, because every basic attack carries poise; a skill's
+                 stun is gated by a readable cast time, a cost and a cooldown in
+                 seconds, which is stricter. Reading the window made Stunning
+                 Blow land three different ways from one row -- its own
+                 `poiseDamage` runs first, so on a body whose guard it broke it
+                 stamped the window a line before the `stun` read it: 1.4s
+                 against a ravager (guard 49, unbroken by 30), the target's own
+                 0.5s against a grazer (guard 20, always broken), and nothing at
+                 all against a body already inside somebody else's window. So
+                 the stun ignores the window and still stamps it, and
+                 `isResolute` still refuses it -- that one is an *earned*
+                 defence rather than a global guard. Stuns also do not stack:
+                 `stagger` writes `tick + ticks`, so a second replaces the first
+                 in both directions and a short stun on a long one shortens it.
                  Three rules the design turns on. **A skill is an item**: four
                  `skill1..skill4` entries on `EquipSlot`, an
                  `ItemDefinition.activeSkillId` in the same shape a bow already
