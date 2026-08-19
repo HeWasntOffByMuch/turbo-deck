@@ -8,8 +8,7 @@ unconditionally, so a monster standing perfectly still pays the whole walk. The
 cost is therefore `bodies × colliders`, and nothing about it is a fact about the
 simulation: growing the arena from 6 parts to 16 took the tree footprints from
 6,942 to 28,919 and the tick from **0.55ms to 2.40ms** with no line of sim code
-changed. The same walk is `standable`'s, so `warmRouting` went from **1.0s to
-4.5s** and the loopback tab's cold start from 1.8s to 7.4s.
+changed.
 
 The measurement that says how absurd this is: sampled across the map, a 16-unit
 body can be touched by **0.47 colliders on average and never more than 2**. Every
@@ -20,6 +19,15 @@ time — and it arrives as a picket fence rather than a stall, because below 60f
 the accumulator drains one tick on some frames and two on others. A socket does
 not escape it either: `createWorldPredictor` walks the same colliders per
 predicted tick and replays its whole input buffer on a correction.
+
+What this is **not**: the cold start. `warmRouting` went from 1.0s to 4.5s over
+the same growth and `standable` calls the same `circleBlocked`, so it looked like
+the same bug -- but profiling it says otherwise. The collider walk was ~7% of it;
+the rest is `heightAt` per nav cell and the grid's own component labelling, both
+of which scale with the map's *area* rather than with its trees. Indexing the
+colliders takes 4.5s to 4.1s and nothing more. That regression is real and it
+belongs with chunk residency, since both are "the whole map is paid for up
+front".
 
 ## Shape
 
@@ -102,8 +110,6 @@ methods, which typechecks and fails at the first call.
 - An empty collider set builds an index and every query answers nothing.
 - The index survives a structured clone: a cloned `WorldColliders` answers the
   same queries as the original.
-- `resolveMovement` skips the push entirely for a body that neither moved nor
-  could be pushed, and a body that did move still lands where it did before.
 - A replay assertion: the same seed and the same inputs produce the same
   authoritative state as before the change.
 
@@ -121,5 +127,17 @@ methods, which typechecks and fails at the first call.
 - **Rebuilding on edit.** The index is built with the colliders and replaced with
   them; nothing mutates a `WorldColliders` in place today and this does not make
   that possible.
+- **Skipping the push for a body that did not move.** Written, measured, and
+  taken back out. `resolveMovement` calls `pushOutOfObstacles` unconditionally,
+  and while that was a walk of every collider in the world it looked like free
+  money -- but it is not an optimization, it is a rule change: a body standing
+  inside something it did not walk into (spawned there, or the editor grew a part
+  over it) is currently pushed clear, and skipping the call leaves it stuck. With
+  the index the call is a lookup that finds nothing, so the trade is a real if
+  rare behaviour change for a saving too small to measure. Exactness does not get
+  to depend on circumstance here either.
+- **The cold start.** See above: measured, and mostly not this. `warmRouting`
+  and `buildWorldFromMap` together are ~7s on the grown map and the index buys
+  0.3s of that.
 - **Chunk residency and the dead `ChunkManager` activation.** Separate work,
   separate specs.

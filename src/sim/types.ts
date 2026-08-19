@@ -8,6 +8,8 @@
  * implementation.
  */
 
+import type { ColliderIndex } from './collider-index.js';
+
 export interface Vec2 {
   readonly x: number;
   readonly y: number;
@@ -43,4 +45,14 @@ export interface WorldColliders {
   readonly rects: readonly Rect[];
   /** Vegetation footprints (spec 044): trees and bushes block like walls do. */
   readonly circles: readonly Circle[];
+  /**
+   * Where those circles are (spec 189), so nothing has to walk all of them.
+   *
+   * Required rather than optional, and filled by `createWorldColliders` rather
+   * than by callers: an absent index would mean a silent fall back to the linear
+   * walk this exists to delete, which is the regression coming back with nothing
+   * to notice it. Plain data, so it survives the `postMessage` that carries a
+   * `WorldColliders` off the map worker.
+   */
+  readonly index: ColliderIndex;
 }
