@@ -20,6 +20,7 @@ import { abilityById } from '../data/abilities.js';
 import { ALL_MONSTERS, MONSTERS, type MonsterDefinition } from '../data/monsters.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import type { EffectiveStats } from '../state/types.js';
+import { NO_ATTACK_SPEED } from './attack-timing.js';
 import { resolveBlow } from './blow.js';
 import { ActivityValue, AggroValue, EntityKindValue, type ServerEntity } from './types.js';
 import { blankProgression } from './world.js';
@@ -38,9 +39,7 @@ const TARGET_STATS: EffectiveStats = {
   attackDamage: 0,
   attackRange: 0,
   baseAttackTimeTicks: 60,
-  attackSpeedPct: 0,
-  attackSpeedMult: 1,
-  attackSlowMult: 1,
+  ...NO_ATTACK_SPEED,
   armor: 0,
   spellPower: 1,
   critChance: 0,
@@ -133,7 +132,11 @@ describe('every monster row', () => {
     // them used to deal exactly 14: the ravager was authored as the heaviest
     // thing on the map and hit like the grazer, and four spiders hit as hard as
     // the thing that takes 140 damage to kill.
-    const of = (id: string): number => blowFrom(MONSTERS.get(id)!);
+    const of = (id: string): number => {
+      const monster = MONSTERS.get(id);
+      if (!monster) throw new Error(`no ${id} in the table`);
+      return blowFrom(monster);
+    };
     expect(of('small_spider')).toBeLessThan(of('grazer'));
     expect(of('grazer')).toBeLessThan(of('stalker'));
     expect(of('stalker')).toBeLessThan(of('ravager'));
