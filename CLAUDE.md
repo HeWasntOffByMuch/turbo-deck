@@ -1673,17 +1673,34 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  only other place a number about the player could honestly go.
                  The *path* is the third piece and lives in damage-popup.ts as a
                  second trail, sharing spec 096's one field, one capacity, one
-                 projection and one expiry. It has to be a different path
+                 projection and one expiry. It needs to be distinguishable
                  because the pair is spawned on the same tick, on the same body,
-                 from the same anchor: taking the next lane would make the
-                 reward a fourth damage number in the same fan, rising at the
-                 same rate in the same direction. So an `xp` number sweeps
-                 sideways on an ease-out **away from the side that body's last
-                 damage lane took** -- away-from rather than a fixed side, since
-                 a constant rightward drift runs straight through lane 2 of
-                 every burst -- and it reads the lane counter without consuming
+                 from the same anchor. The first cut swept the reward out to the
+                 side on an ease-out, which separated it perfectly and looked
+                 wrong: **nothing in this game leaves a body at 45 degrees**,
+                 and reading the pair meant following two marks going different
+                 ways. So a reward is stacked **under** the blow, in the blow's
+                 own lane, rising at the blow's own rate -- one column, nothing
+                 to follow -- and earns its own moment by *outliving* the number
+                 above it, by `XP_EXTRA_LIFE` (half a second at 60fps). What
+                 makes that a column rather than two things that happen to line
+                 up is that `XP_RISE` is **derived and not authored**:
+                 `NUMBER_RISE * XP_LIFE / NUMBER_LIFE`, so the two share a rate
+                 and only the time differs -- a rate of its own has them
+                 converge or separate, which is the diagonal's problem in
+                 another direction. It reads the lane counter without consuming
                  one, so a kill's reward cannot shift where the next blow on
-                 that body draws its number.
+                 that body draws its number, and successive rewards on one group
+                 step down through `XP_STACK` gaps rather than piling up. The
+                 text is the **bare count** -- the colour and the place already
+                 say what it is, and `+24 XP` was three times the width of the
+                 number it hangs under, which made a column read as a caption.
+                 `npx tsx scripts/probe-xp-popup.ts` is the half no headless
+                 test can see, over spec 164's `hud-probe.html` rig: it lands a
+                 real blow and earns a real reward at one point and measures the
+                 pair off the DOM, reading the purple out of the SVG rather than
+                 out of the constant -- a number that reached the page in the
+                 damage palette fails there.
                  pool-bars.ts holds one judgement:
                  **an unknown maximum is not a maximum of zero**, or the opening
                  frames of every session paint an empty health bar over a player

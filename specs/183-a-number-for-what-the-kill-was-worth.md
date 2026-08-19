@@ -17,8 +17,14 @@ Two smaller things fall out of drawing it:
 is spawned on the same tick, on the same body, from the same anchor. Spec 096's
 lanes fan a *burst* of damage out so three hits read as three numbers, but they
 are one cycle over one field — an experience number taking the next lane would
-be a fourth damage number in the same fan, rising at the same rate, in the same
-direction. It has to be legible as a different kind of thing before it is read.
+land on top of the blow that earned it.
+
+The first cut answered that by sweeping the reward out to the side on an
+ease-out. It separated the pair perfectly and looked wrong: nothing else in this
+game leaves a body at 45 degrees, and reading the pair meant tracking two marks
+going different ways. So the reward is **stacked under the blow, in the blow's
+own lane, rising at the blow's own rate** — one column, nothing to follow — and
+earns its moment by *outliving* the number above it instead.
 
 **The gold is taken.** The strip is gold on black, and so is a cast that can
 still be called off. Experience is the one thing on screen a player is
@@ -59,28 +65,32 @@ export type PopupTrail = 'damage' | 'xp';
 add(group: number, at: WorldAnchor, trail?: PopupTrail): { id, expired }
 ```
 
-`damage` is a fixed lane offset and a linear rise. `xp` is a curve: it starts a
-number's width to one side, keeps sweeping that way, and rises on an ease-out,
-so the two are clear on the first frame and keep separating. Three choices in
-that, each of which is the fix for the version without it:
+`damage` is a lane off the cycle and a linear rise over `NUMBER_LIFE`. `xp` is
+the same line, `XP_GAP` lower and `XP_EXTRA_LIFE` longer. Four choices in that,
+each of which is the fix for the version without it:
 
-- **Away from the side the group's last damage number took**, rather than a
-  fixed side, because the whole point is the pair and a constant right-hand
-  drift runs through lane 2 of every burst.
-- **A lead (`XP_LEAD`) and not only a sweep**, because the gap the paths open is
-  between two *centres* and `+24 XP` is three times the width of `38`. Measured
-  on the page, a sweep from zero left the two boxes on top of each other for the
-  first third of the flight — clear by the arithmetic and overlapping to look at.
+- **The blow's lane, not a lane of its own.** The two are one reading — what the
+  hit took off and what the body was worth — so they belong in one column. A
+  reward with no damage before it takes the centre lane, where a lone number
+  belongs anyway.
+- **The blow's rate, not its own.** `XP_RISE` is derived, not authored:
+  `NUMBER_RISE * XP_LIFE / NUMBER_LIFE`. A rate of its own would have the two
+  converge or separate, which is the diagonal's problem in another direction.
+- **Half a second longer** (`XP_EXTRA_LIFE`, 30 frames at 60fps). A blow's
+  number is one of a burst and gets out of the way; the reward is the last thing
+  to happen to that body, and outliving the blow is what gives it a moment on
+  its own.
 - **It reads the lane counter without consuming one**, so a kill's reward cannot
-  shift where the next blow on that body draws its number.
+  shift where the next blow on that body draws its number. Successive rewards on
+  one group step down through `XP_STACK` gaps rather than piling up.
 
 `hud.ts` — one palette for the two places experience is shown, replacing
 `XP_GOLD`/`XP_GOLD_LIT`/`XP_EMPTY`:
 
 ```ts
-const XP_PURPLE = '#c9a6ff';       // the number's fill and the strip's fill
-const XP_PURPLE_LIT = '#efe4ff';   // the strip's inset highlight
-const XP_PURPLE_DARK = '#2a1147';  // the number's outline and the strip's ground
+const XP_PURPLE = '#a878e8';       // the number's fill and the strip's fill
+const XP_PURPLE_LIT = '#d3b6ff';   // the strip's inset highlight
+const XP_PURPLE_DARK = '#200d36';  // the number's outline and the strip's ground
 ```
 
 and a second entry beside `addDamage`:
@@ -112,33 +122,38 @@ place it could honestly go.
 
 `damage-popup.test.ts` (added to)
 
-- An `xp` popup and a `damage` popup on the same group, spawned on the same
-  frame from the same anchor, are never at the same place on any frame of their
-  lives, and the horizontal gap between them only grows.
-- The xp trail drifts to the side the group's last damage lane did not take,
-  for a lane on the left and for one on the right.
-- Two rewards on one group alternate sides, so a grant landing twice on the
-  player's own body is two numbers rather than one.
+- For every frame the blow is alive, the reward is in its column (same `left`)
+  and exactly `XP_GAP` below it. Not "separated" — *stationary* relative to it.
+- The reward takes whichever lane the body's last blow took, for lanes 1, 2 and
+  3, and the centre lane when nothing hit the body first.
+- It outlives the blow, is still climbing every frame after the blow has gone,
+  and expires `XP_EXTRA_LIFE` frames later.
+- A whole `NUMBER_LIFE` of its own life climbs exactly `NUMBER_RISE`: the rate is
+  shared, and the extra distance is only the extra time.
+- Two rewards on one group step down by `XP_GAP`, and the stack starts over at
+  `XP_STACK` rather than walking off the bottom of the world.
 - An xp number does not consume a damage lane: a blow, a reward and a second
   blow puts the second blow in lane 1.
-- The xp rise is an ease-out: more than half of it is spent in the first half of
-  its life. The damage rise stays linear — spec 096's numbers are unchanged, and
-  the existing tests are the assertion.
-- An xp popup with no damage before it still picks a side, and is `XP_LEAD`
-  clear of the centre lane on its very first frame.
 - Both kinds count against the one capacity and expire through the one path.
+- Spec 096's own numbers are unchanged — a blow still rises `NUMBER_RISE / 2` at
+  half its life with a reward beside it.
 
 `scripts/probe-xp-popup.ts` — the half that only exists in a browser, over the
 `hud-probe.html` rig spec 164 built, because the way this feature fails is "the
 field changed and nothing was drawn":
 
-- The reward has an element, with `+N XP` in it.
+- The reward has an element, and it is the count alone: measured as a width,
+  because the page draws paths and not text, and `24` is 26px where the `+24 XP`
+  this replaced was 70.
 - Its fill and its outline are the purple palette, read out of the SVG rather
   than out of the constant — a number that reached the DOM in the damage colours
   fails here.
 - The strip's computed background is the same purple, so the two ends agree.
-- Sampled across the flight, the two boxes' centres separate and the gap only
-  grows.
+- Sampled across the climb, the reward holds the blow's column to within 2px
+  and stays a fixed distance under it — the drift over the whole sample is the
+  measurement, not the separation.
+- Past `NUMBER_LIFE` the blow's element is gone, the reward's is not, and it is
+  still higher on the next sample. Then it goes too.
 
 ## Out of scope
 

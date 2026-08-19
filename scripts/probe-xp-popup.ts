@@ -15,8 +15,9 @@
  * real blow and earns a real reward at the same world point, and measures the
  * pair off the real DOM. Three things, and each is one the tests cannot reach:
  *
- * - the reward has an element at all, with a `+N XP` in it;
- * - the two are separated on screen, and the gap only grows as they fly;
+ * - the reward has an element at all, and it holds a bare count;
+ * - it sits under the blow's number, in its column, and stays there while the
+ *   two rise -- then outlives it by half a second, still climbing;
  * - the number is drawn in the strip's own purple, read out of the SVG fill
  *   rather than out of the constant, so a number that reached the DOM in the
  *   damage palette would fail here.
@@ -46,8 +47,8 @@ const CHROMIUM_ARGS = [
 
 /** The palette `hud.ts` authors. Duplicated on purpose: a probe that imported
  * the constant would agree with itself whatever the page drew. */
-const XP_PURPLE = '#c9a6ff';
-const XP_PURPLE_DARK = '#2a1147';
+const XP_PURPLE = '#a878e8';
+const XP_PURPLE_DARK = '#200d36';
 
 const problems: string[] = [];
 function check(ok: boolean, what: string): void {
@@ -123,6 +124,14 @@ async function main(): Promise<void> {
       (drawn?.html ?? '').includes(XP_PURPLE_DARK),
       `it is outlined in the dark purple (${XP_PURPLE_DARK})`,
     );
+    // A bare count and nothing else. Measured as a width rather than as a
+    // string, because the page draws paths and not text: at scale 2 the 5x7
+    // face puts `24` at about 22px, where the `+24 XP` this replaced was 70.
+    const drawnBox = await page.$('[data-xp-popup]').then((node) => node?.boundingBox() ?? null);
+    check(
+      (drawnBox?.width ?? 0) > 0 && (drawnBox?.width ?? 999) < 40,
+      `it is the count alone (${(drawnBox?.width ?? 0).toFixed(0)}px wide)`,
+    );
 
     // The strip along the bottom, read off the computed style rather than off
     // the stylesheet text: the two ends of the palette have to agree.
@@ -132,10 +141,10 @@ async function main(): Promise<void> {
       return bar ? getComputedStyle(bar).backgroundColor : '';
     });
     // `#c9a6ff` as the browser reports it.
-    check(fill === 'rgb(201, 166, 255)', `the strip is the same purple (${fill})`);
+    check(fill === 'rgb(168, 120, 232)', `the strip is the same purple (${fill})`);
 
-    console.log('the two paths');
-    const gaps: number[] = [];
+    console.log('the column');
+    const offsets: { dx: number; dy: number }[] = [];
     for (let sample = 0; sample < 6; sample++) {
       const damage = await centre(page, '[data-damage-id]');
       const xp = await centre(page, '[data-xp-popup]');
@@ -143,19 +152,44 @@ async function main(): Promise<void> {
         problems.push('a number went missing mid-flight');
         break;
       }
-      gaps.push(Math.hypot(xp.x - damage.x, xp.y - damage.y));
+      offsets.push({ dx: xp.x - damage.x, dy: xp.y - damage.y });
       if (sample === 1) {
         await page.screenshot({ path: join(outDir, 'xp-popup.png') });
         console.log('  wrote xp-popup.png');
       }
       await page.evaluate(() => window.hudProbe?.advance(6));
     }
-    check(gaps.length === 6, `both numbers survived the flight (${gaps.length} samples)`);
+    check(offsets.length === 6, `both numbers survived the climb (${offsets.length} samples)`);
     check(
-      gaps.every((gap, index) => index === 0 || gap > (gaps[index - 1] ?? 0)),
-      `the gap only grows: ${gaps.map((gap) => gap.toFixed(0)).join(' -> ')}`,
+      offsets.every((offset) => Math.abs(offset.dx) < 2),
+      `it stays in the blow's column: dx ${offsets.map((o) => o.dx.toFixed(0)).join(' ')}`,
     );
-    check((gaps.at(-1) ?? 0) > 40, `and ends well clear (${(gaps.at(-1) ?? 0).toFixed(0)}px)`);
+    check(
+      offsets.every((offset) => offset.dy > 6),
+      `and stays under it: dy ${offsets.map((o) => o.dy.toFixed(0)).join(' ')}`,
+    );
+    const drift = Math.max(...offsets.map((o) => o.dy)) - Math.min(...offsets.map((o) => o.dy));
+    check(drift < 4, `holding station rather than converging (${drift.toFixed(1)}px of drift)`);
+
+    console.log('the extra half-second');
+    // Past the blow's own life. `NUMBER_LIFE` is 48 frames; 60 is comfortably
+    // past it and comfortably short of the reward's 78.
+    await page.evaluate(() => window.hudProbe?.advance(30));
+    check(
+      (await centre(page, '[data-damage-id]')) === null,
+      'the blow’s number has gone',
+    );
+    const alone = await centre(page, '[data-xp-popup]');
+    check(alone !== null, 'the reward is still up');
+    await page.evaluate(() => window.hudProbe?.advance(6));
+    const higher = await centre(page, '[data-xp-popup]');
+    check(
+      higher !== null && alone !== null && higher.y < alone.y,
+      'and still climbing on its own',
+    );
+    await page.evaluate(() => window.hudProbe?.advance(12));
+    check((await centre(page, '[data-xp-popup]')) === null, 'then it goes too');
+
   } finally {
     await browser.close();
     server.kill('SIGTERM');

@@ -91,39 +91,53 @@ export const NUMBER_LANES: readonly { readonly x: number; readonly y: number }[]
 export type PopupTrail = 'damage' | 'xp';
 
 /**
- * How far to the side an experience number *starts*, in CSS pixels.
+ * How far *below* the blow's number an experience number sits, in CSS pixels.
  *
- * Sideways at all because the killing blow's number is spawned on the same
- * tick, from the same anchor, on the same body: taking the next lane would make
- * the reward a fourth damage number in the same fan, rising at the same rate in
- * the same direction. It has to read as a different kind of thing before it is
- * read as a quantity.
+ * Below, and in the blow's own lane, because the two are one reading: what that
+ * hit took off and what the body was worth. The first cut swept the reward out
+ * to the side on an ease-out, which separated the pair perfectly and looked
+ * wrong -- a number leaving a body at 45 degrees is not a thing that happens in
+ * this game, and reading it meant tracking two marks going different ways.
  *
- * A *lead* rather than a sweep from zero, because the sweep alone measured
- * clear and read as overlapping: the gap the paths open is between two centres,
- * and `+24 XP` is three times the width of `38`. Photographed on the shipped
- * page, the two boxes were still on top of each other for the first third of
- * the flight while the numbers were at their most legible. This is half the
- * reward's own width plus half a blow's, so they are clear on the first frame
- * and only get clearer.
+ * So the reward is stacked under the blow and rises with it, at the same rate,
+ * in the same direction: one column, and nothing to follow. The gap is a little
+ * more than the reward's own height, so the two boxes are clear of each other
+ * without a hole between them.
  */
-export const XP_LEAD = 56;
+export const XP_GAP = 24;
 
 /**
- * How much further it sweeps over its life, in CSS pixels.
+ * How many rewards stack under one body before the gap starts over.
  *
- * On top of {@link XP_LEAD}, so the horizontal gap grows every frame -- two
- * numbers that separate and then converge are two numbers that cross.
+ * The counterpart to {@link NUMBER_LANES} and for the same reason: two kills a
+ * client is told about as one total, or a grant landing twice, would otherwise
+ * be two numbers in exactly one place. Three, because a fourth would be further
+ * under the body than a number over it can be read from.
  */
-export const XP_DRIFT = 40;
+export const XP_STACK = 3;
+
+/**
+ * How much longer an experience number floats than a blow's, in frames.
+ *
+ * Half a second at 60fps. A blow's number is one of a burst and gets out of the
+ * way; the reward is the last thing to happen to that body and is worth reading
+ * after the fight has moved on -- and outliving the blow above it is what gives
+ * it a moment on its own, which is the whole of what the sweep was reaching for.
+ */
+export const XP_EXTRA_LIFE = 30;
+
+/** How long an experience number floats, in frames. */
+export const XP_LIFE = NUMBER_LIFE + XP_EXTRA_LIFE;
 
 /**
  * How far an experience number rises, in CSS pixels.
  *
- * Further than a blow's, because it is travelling diagonally to cover it -- the
- * two paths share an origin and the gap between them is what does the work.
+ * Not a free number: it is `NUMBER_RISE` at the same rate for a longer life, so
+ * the reward holds station under the blow for as long as the blow is there and
+ * carries on alone afterwards. Rising at its own speed would have the two
+ * converge or separate, which is the diagonal's problem in another direction.
  */
-export const XP_RISE = 64;
+export const XP_RISE = (NUMBER_RISE * XP_LIFE) / NUMBER_LIFE;
 
 /** A long fight should not grow the DOM without bound. */
 const CAPACITY = 40;
@@ -135,8 +149,10 @@ interface Popup {
   readonly at: WorldAnchor;
   readonly offsetX: number;
   readonly offsetY: number;
-  /** Which way an `xp` trail sweeps: -1 left, +1 right. Unread by `damage`. */
-  readonly drift: number;
+  /** How many frames it floats for. Per popup, because the two trails differ. */
+  readonly life: number;
+  /** How far it rises over that life, in CSS pixels. */
+  readonly rise: number;
   age: number;
 }
 
@@ -146,19 +162,6 @@ interface GroupTally {
   damage: number;
   /** Experience numbers, which alternate sides. */
   xp: number;
-}
-
-/**
- * The rise of an `xp` trail, eased out (spec 183).
- *
- * A blow's number rises linearly, so easing is by itself most of what separates
- * the two paths: the experience number is already most of the way up while the
- * damage that earned it is still halfway. Quadratic, because the shape wanted
- * here is "leaves fast, settles" and there is no reason to spend a cubic on it.
- */
-function easeOut(t: number): number {
-  const clamped = Math.min(1, Math.max(0, t));
-  return 1 - (1 - clamped) * (1 - clamped);
 }
 
 export class DamagePopups {
@@ -189,23 +192,24 @@ export class DamagePopups {
     const tally = this.lanes.get(group) ?? { damage: 0, xp: 0 };
     this.lanes.set(group, tally);
 
-    let lane = { x: 0, y: 0 };
-    let drift = 0;
+    let offsetX = 0;
+    let offsetY = 0;
     if (trail === 'damage') {
-      lane = NUMBER_LANES[tally.damage % NUMBER_LANES.length] ?? lane;
+      const lane = NUMBER_LANES[tally.damage % NUMBER_LANES.length] ?? { x: 0, y: 0 };
+      offsetX = lane.x;
+      offsetY = lane.y;
       tally.damage += 1;
     } else {
-      // Away from wherever the group's last damage number went. A constant
-      // right-hand sweep would run straight through lane 2 of every burst,
-      // which is the one case this exists to keep clear; the centre lane counts
-      // as no side taken, so it falls through to the right.
-      const last = tally.damage > 0
-        ? (NUMBER_LANES[(tally.damage - 1) % NUMBER_LANES.length] ?? lane)
-        : lane;
-      // ...and alternating per experience number keeps two rewards on one group
-      // -- two kills a client is told about as one total, or a grant landing on
-      // the player's own body twice -- off each other's path.
-      drift = (last.x > 0 ? -1 : 1) * (tally.xp % 2 === 0 ? 1 : -1);
+      // Directly under whichever lane the group's last blow took, so the pair
+      // reads as one column rather than as two marks going different ways. No
+      // damage before it -- a grant, a quest -- and that is the centre lane,
+      // which is where a lone number belongs anyway.
+      const above =
+        tally.damage > 0
+          ? (NUMBER_LANES[(tally.damage - 1) % NUMBER_LANES.length] ?? { x: 0, y: 0 })
+          : { x: 0, y: 0 };
+      offsetX = above.x;
+      offsetY = above.y + XP_GAP * (1 + (tally.xp % XP_STACK));
       tally.xp += 1;
     }
 
@@ -215,9 +219,10 @@ export class DamagePopups {
       group,
       trail,
       at: { x: at.x, y: at.y, lift: at.lift },
-      offsetX: lane.x,
-      offsetY: lane.y,
-      drift,
+      offsetX,
+      offsetY,
+      life: trail === 'xp' ? XP_LIFE : NUMBER_LIFE,
+      rise: trail === 'xp' ? XP_RISE : NUMBER_RISE,
       age: 0,
     });
 
@@ -244,29 +249,21 @@ export class DamagePopups {
       const popup = this.popups[i];
       if (!popup) continue;
       popup.age += 1;
-      const life = 1 - popup.age / NUMBER_LIFE;
+      const life = 1 - popup.age / popup.life;
       if (life <= 0) {
         this.popups.splice(i, 1);
         expired.push(popup.id);
         continue;
       }
       const point = project(popup.at.x, popup.at.y, popup.at.lift);
-      // The two trails share everything but the path: same field, same
-      // capacity, same projection, same fade.
+      // The two trails differ only in where they start, how long they last and
+      // how far they get -- and the last two are one rate, so a reward holds
+      // station under the blow above it and carries on once that has gone.
       const spent = 1 - life;
-      const eased = popup.trail === 'xp' ? easeOut(spent) : 0;
-      const left =
-        popup.trail === 'xp'
-          ? point.x + popup.drift * (XP_LEAD + XP_DRIFT * eased)
-          : point.x + popup.offsetX;
-      const top =
-        popup.trail === 'xp'
-          ? point.y - eased * XP_RISE
-          : point.y + popup.offsetY - spent * NUMBER_RISE;
       live.push({
         id: popup.id,
-        left,
-        top,
+        left: point.x + popup.offsetX,
+        top: point.y + popup.offsetY - spent * popup.rise,
         opacity: life,
         onScreen: point.onScreen,
       });

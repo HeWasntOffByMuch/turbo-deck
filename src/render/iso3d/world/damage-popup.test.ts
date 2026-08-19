@@ -4,10 +4,10 @@ import {
   NUMBER_LANES,
   NUMBER_LIFE,
   NUMBER_RISE,
-  XP_DRIFT,
-  XP_LEAD,
+  XP_GAP,
+  XP_LIFE,
   XP_RISE,
-  type PopupPlacement,
+  XP_STACK,
   type Projector,
 } from './damage-popup.js';
 
@@ -194,126 +194,119 @@ describe('DamagePopups', () => {
  * Every one of these is about the *pair*: the reward is spawned on the same
  * tick, on the same body, from the same anchor as the killing blow's number, so
  * what is being asserted is never where the reward is on its own -- it is how
- * far it is from the thing it must not be mistaken for.
+ * it sits against the thing it was earned by.
  */
 describe('the experience trail', () => {
-  /** Every frame of one popup's life, keyed so a pair can be walked together. */
-  function fly(popups: DamagePopups, project: Projector): PopupPlacement[][] {
-    const frames: PopupPlacement[][] = [];
-    for (let frame = 0; frame < NUMBER_LIFE - 1; frame++) {
-      frames.push([...popups.step(project).live]);
-    }
-    return frames;
-  }
+  const at = { x: 0, y: 0, lift: 0 };
 
-  it('never shares a place with the damage number it was earned by', () => {
+  it('sits directly under the blow’s number and holds station there', () => {
     const popups = new DamagePopups();
     const view = camera();
-    const at = { x: 0, y: 0, lift: 0 };
     const blow = popups.add(7, at).id;
     const reward = popups.add(7, at, 'xp').id;
 
-    let previousGap = -1;
-    for (const frame of fly(popups, view.project)) {
-      const damage = frame.find((placement) => placement.id === blow);
-      const xp = frame.find((placement) => placement.id === reward);
+    // For every frame the blow is alive, the reward is in its column, a fixed
+    // gap below. A rate that differed would have the two converge or separate,
+    // which is the diagonal's problem in another direction.
+    for (let frame = 0; frame < NUMBER_LIFE - 1; frame++) {
+      const live = popups.step(view.project).live;
+      const damage = live.find((placement) => placement.id === blow);
+      const xp = live.find((placement) => placement.id === reward);
       if (!damage || !xp) throw new Error('a number went missing mid-life');
-      expect(Math.hypot(xp.left - damage.left, xp.top - damage.top)).toBeGreaterThan(1);
-      // And the horizontal gap only ever grows: two numbers that separate and
-      // then converge are two numbers that cross.
-      const gap = Math.abs(xp.left - damage.left);
-      expect(gap).toBeGreaterThan(previousGap);
-      previousGap = gap;
+      expect(xp.left).toBeCloseTo(damage.left);
+      expect(xp.top - damage.top).toBeCloseTo(XP_GAP);
     }
-    expect(previousGap).toBeGreaterThan(XP_LEAD + XP_DRIFT / 2);
   });
 
-  it('sweeps away from the side the body’s last damage lane took', () => {
+  it('takes the lane the body’s last blow took, not a lane of its own', () => {
     const view = camera();
-    const at = { x: 0, y: 0, lift: 0 };
-
-    /** Where the popup `id` is a few frames into its sweep. */
-    const swept = (popups: DamagePopups, id: number): number => {
-      let where = 0;
-      for (let frame = 0; frame < 8; frame++) {
-        where = popups.step(view.project).live.find((p) => p.id === id)?.left ?? 0;
-      }
-      return where;
-    };
-
-    // Lane 1 is the left one, so the reward goes right.
-    const left = new DamagePopups();
-    left.add(7, at);
-    left.add(7, at); // lane 1: x < 0
-    const rightward = left.add(7, at, 'xp').id;
-    expect(NUMBER_LANES[1]?.x).toBeLessThan(0);
-    expect(swept(left, rightward)).toBeGreaterThan(0);
-
-    // Lane 2 is the right one, so the reward goes left.
-    const right = new DamagePopups();
-    right.add(9, at);
-    right.add(9, at);
-    right.add(9, at); // lane 2: x > 0
-    const leftward = right.add(9, at, 'xp').id;
-    expect(NUMBER_LANES[2]?.x).toBeGreaterThan(0);
-    expect(swept(right, leftward)).toBeLessThan(0);
+    for (const lane of [1, 2, 3]) {
+      const popups = new DamagePopups();
+      for (let hit = 0; hit <= lane; hit++) popups.add(7, at);
+      const reward = popups.add(7, at, 'xp').id;
+      const placement = popups.step(view.project).live.find((p) => p.id === reward);
+      expect(placement?.left).toBeCloseTo(NUMBER_LANES[lane]?.x ?? 0);
+    }
   });
 
-  it('picks a side with no damage before it, and leaves the centre lane free', () => {
+  it('takes the centre lane when nothing hit the body first', () => {
     const popups = new DamagePopups();
     const view = camera();
-    popups.add(7, { x: 0, y: 0, lift: 0 }, 'xp');
-    // Clear of the centre lane on the very first frame, which is the frame the
-    // blow that earned it is at its most legible.
-    expect(Math.abs(only(popups.step(view.project)).left)).toBeGreaterThanOrEqual(XP_LEAD);
+    popups.add(7, at, 'xp');
+    expect(only(popups.step(view.project)).left).toBeCloseTo(NUMBER_LANES[0]?.x ?? 0);
+  });
+
+  it('outlives the blow above it by half a second, still climbing', () => {
+    const popups = new DamagePopups();
+    const view = camera();
+    const blow = popups.add(7, at).id;
+    const reward = popups.add(7, at, 'xp').id;
+
+    // A blow's number is gone on its own schedule; nothing about the reward
+    // moved with it.
+    for (let frame = 0; frame < NUMBER_LIFE; frame++) popups.step(view.project);
+    expect(popups.count).toBe(1);
+
+    let last = Number.POSITIVE_INFINITY;
+    let alive = 0;
+    for (let frame = 0; frame < XP_LIFE; frame++) {
+      const placement = popups.step(view.project).live[0];
+      if (!placement) break;
+      expect(placement.id).toBe(reward);
+      expect(placement.top).toBeLessThan(last);
+      last = placement.top;
+      alive += 1;
+    }
+    // Half a second at 60fps, and it spends all of it rising.
+    expect(alive).toBe(XP_LIFE - NUMBER_LIFE - 1);
+    expect(blow).toBeLessThan(reward);
+    expect(popups.count).toBe(0);
+  });
+
+  it('rises at the blow’s own rate, for longer', () => {
+    const popups = new DamagePopups();
+    const view = camera();
+    popups.add(7, at, 'xp');
+    let top = 0;
+    for (let frame = 0; frame < NUMBER_LIFE; frame++) {
+      top = only(popups.step(view.project)).top;
+    }
+    // A whole damage-number's life spent, so a whole damage-number's rise --
+    // measured from the gap it started at.
+    expect(XP_GAP - top).toBeCloseTo(NUMBER_RISE);
+  });
+
+  it('stacks two rewards on one body rather than piling them up', () => {
+    const popups = new DamagePopups();
+    const view = camera();
+    popups.add(7, at, 'xp');
+    popups.add(7, at, 'xp');
+    const tops = popups
+      .step(view.project)
+      .live.map((placement) => placement.top)
+      .sort((a, b) => a - b);
+    expect((tops[1] ?? 0) - (tops[0] ?? 0)).toBeCloseTo(XP_GAP);
+    // And the stack starts over rather than walking off the bottom of the world.
+    const deep = new DamagePopups();
+    for (let reward = 0; reward < XP_STACK + 1; reward++) deep.add(9, at, 'xp');
+    const lows = deep.step(view.project).live.map((placement) => placement.top);
+    expect(Math.max(...lows) - Math.min(...lows)).toBeCloseTo(XP_GAP * (XP_STACK - 1));
   });
 
   it('does not consume a damage lane, so the next blow lands where it would have', () => {
     const popups = new DamagePopups();
     const view = camera();
-    const at = { x: 0, y: 0, lift: 0 };
     popups.add(7, at); // lane 0
     popups.add(7, at, 'xp');
-    popups.add(7, at); // must still be lane 1
+    const second = popups.add(7, at).id; // must still be lane 1
 
-    const step = popups.step(view.project);
-    const second = step.live.find((placement) => placement.id === 3);
-    expect(second?.left).toBeCloseTo(NUMBER_LANES[1]?.x ?? 0);
-  });
-
-  it('alternates the side for two rewards on one body', () => {
-    const popups = new DamagePopups();
-    const view = camera();
-    const at = { x: 0, y: 0, lift: 0 };
-    popups.add(7, at, 'xp');
-    popups.add(7, at, 'xp');
-    for (let frame = 0; frame < 8; frame++) popups.step(view.project);
-    const step = popups.step(view.project);
-    const [first, second] = step.live.map((placement) => placement.left).sort((a, b) => a - b);
-    expect(first ?? 0).toBeLessThan(0);
-    expect(second ?? 0).toBeGreaterThan(0);
-  });
-
-  it('rises on an ease-out where a blow’s number rises linearly', () => {
-    const popups = new DamagePopups();
-    const view = camera();
-    popups.add(7, { x: 0, y: 0, lift: 0 }, 'xp');
-
-    let top = 0;
-    for (let frame = 0; frame < NUMBER_LIFE / 2; frame++) {
-      top = only(popups.step(view.project)).top;
-    }
-    // Half the life spent, and well past half the climb -- which is the whole
-    // difference from `NUMBER_RISE`'s straight line, asserted at exactly the
-    // frame the damage test asserts its own midpoint.
-    expect(-top).toBeGreaterThan(XP_RISE * 0.6);
-    expect(-top).toBeLessThan(XP_RISE);
+    const placement = popups.step(view.project).live.find((p) => p.id === second);
+    expect(placement?.left).toBeCloseTo(NUMBER_LANES[1]?.x ?? 0);
   });
 
   it('counts against the one capacity and expires through the one path', () => {
     const popups = new DamagePopups();
     const view = camera();
-    const at = { x: 0, y: 0, lift: 0 };
     for (let hit = 0; hit < 20; hit++) {
       popups.add(hit, at);
       popups.add(hit, at, 'xp');
@@ -323,7 +316,20 @@ describe('the experience trail', () => {
     expect(popups.add(99, at, 'xp').expired).toHaveLength(1);
     expect(popups.count).toBe(40);
 
-    for (let frame = 0; frame <= NUMBER_LIFE; frame++) popups.step(view.project);
+    for (let frame = 0; frame <= XP_LIFE; frame++) popups.step(view.project);
     expect(popups.count).toBe(0);
+  });
+
+  it('leaves a blow’s own numbers exactly as spec 096 had them', () => {
+    const popups = new DamagePopups();
+    const view = camera();
+    popups.add(7, at, 'xp');
+    popups.add(7, at);
+    let top = 0;
+    for (let frame = 0; frame < NUMBER_LIFE / 2; frame++) {
+      top = popups.step(view.project).live.find((p) => p.id === 2)?.top ?? 0;
+    }
+    expect(top).toBeCloseTo(-NUMBER_RISE / 2);
+    expect(XP_RISE).toBeGreaterThan(NUMBER_RISE);
   });
 });

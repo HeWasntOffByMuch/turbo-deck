@@ -207,9 +207,9 @@ const POOL_RESOURCE = '#4f9fe0';
  * of the strip, so what the fill is drawn against and what the digits are cut
  * out of are the same colour.
  */
-const XP_PURPLE = '#c9a6ff';
-const XP_PURPLE_LIT = '#efe4ff';
-const XP_PURPLE_DARK = '#2a1147';
+const XP_PURPLE = '#a878e8';
+const XP_PURPLE_LIT = '#d3b6ff';
+const XP_PURPLE_DARK = '#200d36';
 
 /**
  * The death banner (spec 164). Brighter than `BAR_ENEMY` and than the blood: it
@@ -1481,10 +1481,15 @@ export function createHud(
       if (whole <= 0) return;
       const element = document.createElement('div');
       element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);display:none;';
+      // The bare count, with nothing spelling out what it is. The colour and
+      // the place already say that -- it is under the blow's number, in the
+      // strip's own purple -- and `+24 XP` was three times the width of the
+      // number it is stacked beneath, which made a column read as a caption.
+      //
       // Smaller than a blow's and smaller still than a critical's: this is the
       // second number in a pair spawned on one tick, and the one whose job is
       // to be distinguishable rather than to be the headline.
-      element.innerHTML = pixelTextSvg(`+${whole} XP`, {
+      element.innerHTML = pixelTextSvg(String(whole), {
         scale: 2,
         fill: XP_PURPLE,
         outline: XP_PURPLE_DARK,
