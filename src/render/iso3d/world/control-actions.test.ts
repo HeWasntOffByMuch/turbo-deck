@@ -19,6 +19,7 @@ describe('what a control press means to the Play tab', () => {
       order: false,
       trade: false,
       zoom: 0,
+      chat: false,
     });
     expect(decideControlDown(map, 'KeyD', NONE).move).toEqual(['move.east']);
   });
@@ -58,6 +59,7 @@ describe('what a control press means to the Play tab', () => {
       order: false,
       trade: false,
       zoom: 0,
+      chat: false,
     });
   });
 

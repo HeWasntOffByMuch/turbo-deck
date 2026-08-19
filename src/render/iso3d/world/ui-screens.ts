@@ -32,6 +32,7 @@
 import type { DrawCommand } from '../../../ui/core/draw-list.js';
 import type { Modifiers, UiEvent } from '../../../ui/core/events.js';
 import { UNBOUNDED, type Point, type Rect, type Size } from '../../../ui/core/geom.js';
+import { Anchor } from '../../../ui/core/containers.js';
 import { LayerStack } from '../../../ui/core/layers.js';
 import { UiRoot } from '../../../ui/core/root.js';
 import type { MotionPreference } from '../../../ui/core/motion.js';
@@ -46,6 +47,7 @@ import { bakeAtlas, type Atlas } from '../../../ui/render/atlas.js';
 import { BODY_FONT } from '../../../ui/text/font.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import { CharacterScreen } from '../../../ui/screens/character.js';
+import { ChatScreen, chatInsets, type ChatLineView } from '../../../ui/screens/chat.js';
 import { InventoryScreen, type SlotRef } from '../../../ui/screens/inventory.js';
 import { KeybindingsScreen } from '../../../ui/screens/keybindings.js';
 import { ShopScreen } from '../../../ui/screens/shop.js';
@@ -64,6 +66,7 @@ import { swapProgress, type SwapProgress } from './skill-swap-view.js';
 import { shopViewOf } from './shop-model.js';
 import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './control-actions.js';
+import { ChatLog, revealAt } from './chat-log.js';
 import { escapeTaken, reachesGameplay, type Routing } from './ui-routing.js';
 
 export interface UiScreensOptions {
@@ -109,6 +112,15 @@ export interface UiScreensOptions {
    * time is an argument: `src/ui/` may not touch the platform, and a save no
    * test can observe is a save nothing checks.
    */
+  /**
+   * A line the player wants to say (spec 189).
+   *
+   * A request like every other callback here: the server broadcasts it back to
+   * everyone including the sender, so what the player sees of their own line
+   * arrives through the same path as everybody else's. Nothing is echoed
+   * locally, which is what stops a sent line being drawn twice.
+   */
+  readonly onSay: (text: string) => void;
   readonly onBindingsChanged: () => void;
   /**
    * The player picked an interface scale (spec 136).
@@ -205,6 +217,12 @@ export class UiScreens {
   private readonly trade: TradeScreen;
   private readonly optionsScreen: OptionsScreen;
   private readonly display: DisplayScreen;
+  private readonly chat: ChatScreen;
+  /** What has been said. Client state: nothing here is replicated (spec 189). */
+  private readonly chatLog = new ChatLog();
+  private readonly chatDock = new Anchor('chat:dock');
+  private chatRevision = -1;
+  private chatLines: readonly ChatLineView[] = [];
 
   /** Windows whose size and position have been chosen. See the header. */
   private readonly placed = new Set<WindowId>();
@@ -228,6 +246,12 @@ export class UiScreens {
    * touch the DOM.
    */
   private safeTop = 0;
+  /**
+   * How far up from the bottom edge the DOM HUD's own furniture reaches, in UI
+   * pixels. The counterpart to {@link safeTop}, and what keeps the chat clear of
+   * the pool bars it is docked above.
+   */
+  private safeBottom = 0;
   /** The widget actually inside each window, which is what gets measured. */
   private readonly contents = new Map<WindowId, Widget>();
   /** Whether the `ui` context is on the stack -- pushed, popped, never toggled. */
@@ -404,6 +428,38 @@ export class UiScreens {
       keys: this.keybindings,
       display: this.display,
     });
+
+    // The chat (spec 189), and the `hud` layer's first occupant in the Play tab.
+    // Not a window: no title bar, never dragged, nothing in the layout store,
+    // because it is furniture that is always there rather than something the
+    // player opened.
+    //
+    // The dock is an `Anchor` filling the viewport with the log pinned to its
+    // bottom-left corner, and it is `pointerTransparent` -- an anchor that
+    // covers the frame and is not would swallow every click in the game.
+    this.chat = new ChatScreen({ theme: THEME });
+    this.chatDock.pointerTransparent = true;
+    this.chatDock.padding = chatInsets(THEME, 0);
+    this.chatDock.place(this.chat, 'bottomLeft');
+    this.layers.place('hud', this.chatDock);
+    // Everything a submitted line needs is here and none of it is the screen's:
+    // the client to say it to, the root's focus to give back, and the log to
+    // remember it in. Doing all three in one place is what stops "send it" and
+    // "remember it for Up" drifting apart.
+    this.chat.onSubmit = (text) => {
+      if (text.length > 0) {
+        options.onSay(text);
+        this.chatLog.remember(text);
+      }
+      this.closeChat();
+    };
+    // Closing restarts the quiet clock, or putting the field away after a long
+    // silence makes the log vanish on the same frame -- the player is looking
+    // straight at it, and the last thing they did was put it away, which is not
+    // the same as having ignored it for ten seconds.
+    this.chat.onClosed = () => {
+      this.chatLog.touch(this.now);
+    };
 
     this.registerWindow('inventory', this.inventory);
     this.registerWindow('character', this.character);
@@ -665,8 +721,26 @@ export class UiScreens {
     // interface that swallows every key from then on.
     if (!this.isOpen('options')) this.keybindings.cancelCapture();
 
+    // What the chat draws (spec 189). The line list is rebuilt only when
+    // something was actually said: the log mutates its array in place -- pushed,
+    // and shifted at the cap -- so its identity says nothing about whether
+    // anything arrived, which is what `revision` is for.
+    if (this.chatRevision !== this.chatLog.revision) {
+      this.chatRevision = this.chatLog.revision;
+      this.chatLines = this.chatLog.entries;
+    }
+    this.chat.setView({
+      lines: this.chatLines,
+      reveal: revealAt(this.chatLog.lastAtMs, nowMs, this.chat.isOpen),
+    });
+
     this.syncContext();
     this.root.update(nowMs);
+    // After the layout pass, and it has to be: `maxScroll` is derived from the
+    // content height the layout just measured, so a scroll requested before it
+    // lands one line short of the bottom -- which is the newest line, every
+    // time.
+    this.chat.settle();
     // After the layout pass, so a drag that landed this frame is measured at the
     // position it landed at rather than the one it left.
     this.trackLayout(nowMs);
@@ -762,12 +836,32 @@ export class UiScreens {
     readonly tradeYou: string;
     readonly tradeThem: string;
     readonly tradeRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly chat: readonly string[];
+    readonly chatOpen: boolean;
+    readonly chatInput: string;
+    readonly chatRects: readonly { readonly id: string; readonly rect: Rect }[];
   } {
     const tabs = this.optionsScreen.tabs;
     const shownTrade = this.isOpen('trade') ? this.trade.view : null;
     return {
       windows: this.opened(),
       bag: this.inventory.bagSlots.map((cell) => cell.item?.name ?? ''),
+      // What the chat is showing, said the way a player reads it (spec 189).
+      // The log is drawn to a canvas like everything else here, so "the line
+      // the server broadcast is on screen" has no element to ask -- and a
+      // harness that could only say some pixels changed would pass just as
+      // happily over a log that drew the wrong channel in the wrong colour.
+      chat: this.chatLines.map((line) => (line.from.length > 0 ? `${line.from}: ${line.text}` : line.text)),
+      chatOpen: this.chat.isOpen,
+      chatInput: this.chat.inputText,
+      // Where the log and the field are, in UI pixels. The one claim about the
+      // chat that is purely geometric -- that it clears the HUD it is docked
+      // above -- can only be checked against something that knows where the
+      // pool bars are, and that is the DOM, on the other side of the canvas.
+      chatRects: [
+        { id: 'log', rect: this.chat.log.rect },
+        ...(this.chat.isOpen ? [{ id: 'input', rect: this.chat.field.rect }] : []),
+      ],
       // The options window's tab strip, in UI pixels (spec 136). A harness
       // cannot click a tab it cannot find, and every other way of finding one --
       // a guessed offset, a scan for lit pixels -- is a measurement of the
@@ -904,6 +998,82 @@ export class UiScreens {
   setSafeTop(uiPixels: number): void {
     this.safeTop = Math.max(0, Math.floor(uiPixels));
   }
+
+  /**
+   * Told how far up the DOM HUD's own furniture reaches (spec 189).
+   *
+   * The counterpart to {@link setSafeTop} and fed the same way -- measured
+   * outside and converted through the one place UI pixels and CSS pixels meet.
+   * The chat is docked bottom-left, which is where the pool bars are, so
+   * without it the log sits on top of the player's own health.
+   *
+   * Applied as the dock's padding rather than per frame: an inset is a fact
+   * about the layout, and rewriting it every frame would allocate one object a
+   * frame to say the same thing.
+   */
+  setSafeBottom(uiPixels: number): void {
+    const next = Math.max(0, Math.floor(uiPixels));
+    if (next === this.safeBottom) return;
+    this.safeBottom = next;
+    this.chatDock.padding = chatInsets(THEME, next);
+    this.chatDock.invalidateArrange();
+  }
+
+  // --- chat (spec 189) ------------------------------------------------------
+
+  /**
+   * Something was said.
+   *
+   * Stamped with the frame's time rather than a clock of this module's own, for
+   * the reason `ErrorLog.add` gives: a chat line arrives on a network callback,
+   * outside the frame loop, and a frame is a few milliseconds of error against a
+   * ten-second quiet window. A second clock in here is the one thing that would
+   * make the mount impure.
+   */
+  pushChat(channel: number, from: string, text: string): void {
+    this.chatLog.append(channel, from, text, this.now);
+  }
+
+  get chatOpen(): boolean {
+    return this.chat.isOpen;
+  }
+
+  /** Open the input line and give it the keyboard. */
+  openChat(): void {
+    if (this.chat.isOpen) return;
+    // Up starts from the newest end -- the empty field the player is looking at
+    // -- rather than wherever the last session of typing left the cursor.
+    this.chatLog.resetRecall();
+    this.chat.open(this.chatFocus);
+  }
+
+  closeChat(): void {
+    this.chat.close(this.chatFocus);
+  }
+
+  private escapeChat(): boolean {
+    if (!this.chat.isOpen) return false;
+    this.closeChat();
+    return true;
+  }
+
+  /**
+   * The root's focus and context stack, narrowed to what the chat needs.
+   *
+   * The root's, never one of the screen's own: keys route to whatever
+   * `UiRoot.focus` holds, and a screen focused anywhere else is a screen no
+   * keystroke reaches -- which looks completely fine on screen, and is why this
+   * is now written down in five places.
+   */
+  private readonly chatFocus = {
+    focus: (widget: Widget | null): boolean => this.root.focus.focus(widget),
+    push: (id: 'textEntry'): void => {
+      this.root.pushContext(id);
+    },
+    pop: (id: 'textEntry'): void => {
+      this.root.popContext(id);
+    },
+  };
 
   get viewport(): Size {
     return this.root.viewport;
@@ -1073,6 +1243,11 @@ export class UiScreens {
     // directly for the same reason: a press does not take focus (spec 137), so
     // the screen the button has to reach is not holding anything.
     //
+    // Ahead of the focus and the chat below it, for the reason it is ahead of
+    // Escape's list in `handleKey`: a capture is the thing in front of you, and
+    // a press it has claimed must not also move focus or close a line somebody
+    // is typing.
+    //
     // The *release* is consumed too, and that is not symmetry for its own sake:
     // the router only emits a click from the widget that took the press, so a
     // press it never saw cannot become one -- but a release it *does* see while
@@ -1085,7 +1260,15 @@ export class UiScreens {
       if (phase === 'down') this.keybindings.capturePointer(button, mods);
       return true;
     }
-    if (phase === 'down') this.focusOnPress(pos);
+    if (phase === 'down') {
+      this.focusOnPress(pos);
+      // A press that landed anywhere but the field has just taken the keyboard
+      // off it -- and `TextField` pops `textEntry` only when it is *told* it
+      // lost focus. Without this the interface swallows every key from then on,
+      // which is the exact failure a stranded keybinding capture used to cause.
+      // Clicking the world while typing means going back to the game anyway.
+      if (this.chat.isOpen && this.root.focus.focused !== this.chat.field) this.closeChat();
+    }
     // A press on the world with something in hand puts it down (spec 172), and
     // is not passed on: the button that drops an item must not also order the
     // player to walk over to where it landed.
@@ -1138,6 +1321,9 @@ export class UiScreens {
     // swapped has to be able to turn the wheel at an armed row.
     if (this.keybindings.capturing && this.keybindings.captureWheel(delta, mods)) return true;
     const consumed = this.root.handle({ kind: 'wheel', pos, delta, mods, time: this.now });
+    // Asked after the event, because whether the log is still following its own
+    // tail is a fact about where it ended up rather than about the wheel.
+    if (this.chat.isOpen) this.chat.noteScrolled();
     return !reachesGameplay(this.routingOf(consumed, 'wheel'));
   }
 
@@ -1174,8 +1360,22 @@ export class UiScreens {
       return escapeTaken([
         () => this.inventory.cancelDrag(),
         () => this.shop.dismiss(),
+        // Ahead of closing a window and behind cancelling a drag: an open chat
+        // is the thing in front of you, and it is what Escape should get rid of
+        // before it reaches the bag behind it.
+        () => this.escapeChat(),
         () => this.closeTopmost(),
       ]);
+    }
+
+    // Up and Down walk what this player has said, and they are asked here rather
+    // than routed for the reason a keybinding capture is: `TextField` swallows
+    // every key it is given and answers the arrows it cares about itself, so a
+    // routed `ArrowUp` reaches the field and stops. This is the one place that
+    // sees every key.
+    if (phase === 'down' && this.chat.isOpen && (code === 'ArrowUp' || code === 'ArrowDown')) {
+      this.chat.setInputText(this.chatLog.recall(code === 'ArrowUp' ? -1 : 1));
+      return true;
     }
 
     let consumed = this.root.handle({ kind: 'key', phase, code, mods, time: this.now });

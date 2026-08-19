@@ -20,6 +20,7 @@ import type {
   RenderOptions,
   WindowsRenderOptions,
   TradeRenderOptions,
+  ChatRenderOptions,
 } from './render.js';
 
 export interface GoldenCase {
@@ -82,6 +83,37 @@ export const TRADE_GOLDEN_CASES: readonly TradeGoldenCase[] = [
     name: 'trade-over',
     options: { over: true },
     covers: 'the ending, with the reason and nothing left to press but Close',
+  },
+];
+
+/**
+ * The chat (spec 189).
+ *
+ * Three frames, because the three questions it can be wrong about are separate:
+ * whether each channel gets its own tone, whether a closed log is a log and not
+ * a window, and whether the wipe is a clip rather than something that blends.
+ */
+export interface ChatGoldenCase {
+  readonly name: string;
+  readonly options: ChatRenderOptions;
+  readonly covers: string;
+}
+
+export const CHAT_GOLDEN_CASES: readonly ChatGoldenCase[] = [
+  {
+    name: 'chat',
+    options: { typing: 'on my way' },
+    covers: 'one line per channel, a speaker in a colour of their own, and the field with a caret',
+  },
+  {
+    name: 'chat-closed',
+    options: { closed: true },
+    covers: 'the log with no field under it, which is what is on screen while somebody is just reading',
+  },
+  {
+    name: 'chat-leaving',
+    options: { closed: true, reveal: 0.45 },
+    covers: 'the wipe half done, clipped from the top so the newest line is the last to go',
   },
 ];
 

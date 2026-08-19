@@ -64,6 +64,8 @@ export interface ControlDecision {
   readonly windows: readonly WindowId[];
   /** Whether the diagnostic readout should be shown or hidden (spec 183). */
   readonly toggleStats: boolean;
+  /** Whether the chat's input line should be opened (spec 189, the chat one). */
+  readonly chat: boolean;
   /** Whether a pending aim should be committed to (spec 189). */
   readonly confirmAim: boolean;
   /**
@@ -96,6 +98,7 @@ export const NO_DECISION: ControlDecision = {
   cancel: false,
   windows: [],
   toggleStats: false,
+  chat: false,
   confirmAim: false,
   order: false,
   trade: false,
@@ -104,6 +107,18 @@ export const NO_DECISION: ControlDecision = {
 
 /** The action id that calls off a wind-up. */
 export const CANCEL_ACTION = 'combat.cancel';
+
+/**
+ * The action that opens the chat's input line (spec 189, the chat one).
+ *
+ * Not in {@link UI_WINDOWS}, because the chat is not a window: it is docked
+ * furniture in the `hud` layer with no title bar and no place in the layout
+ * store, so "toggle the window with this id" is the wrong verb for it. Its
+ * context is `gameplay` rather than `ui` -- Enter has to reach the game to
+ * *open* the chat, and once it is open the field holds the keyboard and this
+ * map is not consulted at all.
+ */
+export const CHAT_ACTION = 'ui.chat';
 
 /**
  * The pointer verbs, as ids (spec 189).
@@ -144,6 +159,7 @@ export function decideControlDown(map: InputMap, code: string, mods: Modifiers):
   const windows: WindowId[] = [];
   let cancel = false;
   let toggleStats = false;
+  let chat = false;
   let confirmAim = false;
   let order = false;
   let trade = false;
@@ -166,6 +182,7 @@ export function decideControlDown(map: InputMap, code: string, mods: Modifiers):
     }
     if (action === CANCEL_ACTION) cancel = true;
     if (action === TOGGLE_STATS_ACTION) toggleStats = true;
+    if (action === CHAT_ACTION) chat = true;
     if (action === CONFIRM_AIM_ACTION) confirmAim = true;
     if (action === ORDER_ACTION) order = true;
     if (action === TRADE_ACTION) trade = true;
@@ -176,7 +193,7 @@ export function decideControlDown(map: InputMap, code: string, mods: Modifiers):
     if (action === ZOOM_OUT_ACTION) zoom = -1;
   }
 
-  return { move, skillbar, cancel, windows, toggleStats, confirmAim, order, trade, zoom };
+  return { move, skillbar, cancel, windows, toggleStats, chat, confirmAim, order, trade, zoom };
 }
 
 /**

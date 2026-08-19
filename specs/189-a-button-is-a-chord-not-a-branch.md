@@ -1,5 +1,12 @@
 # 189 — a button is a chord, not a branch
 
+> **The number is shared.** `specs/189-a-line-you-can-say.md` carries it too: the
+> chat arc and this one were written on parallel branches and both had taken it by
+> the time they met, exactly as the two 125s did. Renumbering either would rewrite
+> references in files that are otherwise finished, so the number stays ambiguous
+> and the filename is what identifies this one.
+
+
 ## Problem
 
 Spec 125 made every key a binding and left one line in its own out-of-scope list:
