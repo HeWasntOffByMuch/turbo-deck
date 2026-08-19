@@ -29,11 +29,13 @@ const SLOTS = [
   { id: 'trinket', label: 'Charm' },
 ];
 
+// `accepts` is the family (spec 184), which is what `inventory-model.ts` hands
+// in: all four take `skill`, so one sigil row fits any of them.
 const SKILL_SLOTS = [
-  { id: 'skill1', label: 'Skill 1' },
-  { id: 'skill2', label: 'Skill 2' },
-  { id: 'skill3', label: 'Skill 3' },
-  { id: 'skill4', label: 'Skill 4' },
+  { id: 'skill1', label: 'Skill 1', accepts: 'skill' },
+  { id: 'skill2', label: 'Skill 2', accepts: 'skill' },
+  { id: 'skill3', label: 'Skill 3', accepts: 'skill' },
+  { id: 'skill4', label: 'Skill 4', accepts: 'skill' },
 ];
 
 function item(defId: string, slot: string | null, count = 1, level = 1): ItemView {
@@ -605,5 +607,56 @@ describe('dropping a carry into the world', () => {
     expect(test.screen.cellAt({ container: 'inventory', index: 0 })?.item).toBeNull();
     test.screen.dropCarried();
     expect(test.screen.cellAt({ container: 'inventory', index: 0 })?.item?.defId).toBe('sword');
+  });
+});
+
+/**
+ * A cell takes a *family*, not a slot name (spec 184).
+ *
+ * The bug this covers made the whole skill feature unreachable: a sigil says
+ * `slot: 'skill'` and a cell said `acceptsSlot: 'skill1'`, so the drop was
+ * refused by the screen while `applyMove` on the server would have taken it.
+ * Nothing lit up and nothing said why, because an unlit cell *is* the refusal.
+ */
+describe('what a skill cell will take', () => {
+  it('accepts a sigil in any of the four slots', () => {
+    const screen = new InventoryScreen({ theme: THEME });
+    screen.setContainers(viewOf());
+    const sigil = item('sigil.guardBreak', 'skill');
+    for (let i = 0; i < SKILL_SLOTS.length; i++) {
+      const cell = screen.cellAt({ container: 'equipment', index: SLOTS.length + i });
+      expect(cell, `slot ${i}`).toBeTruthy();
+      expect(
+        cell?.canAcceptDrop({
+          source: cell,
+          data: { from: { container: 'inventory', index: 0 }, item: sigil, count: 1 },
+        }),
+        `slot ${i}`,
+      ).toBe(true);
+    }
+  });
+
+  it('still refuses a sword in a skill slot', () => {
+    const screen = new InventoryScreen({ theme: THEME });
+    screen.setContainers(viewOf());
+    const cell = screen.cellAt({ container: 'equipment', index: SLOTS.length });
+    expect(
+      cell?.canAcceptDrop({
+        source: cell,
+        data: { from: { container: 'inventory', index: 0 }, item: item('sword.worn', 'mainHand'), count: 1 },
+      }),
+    ).toBe(false);
+  });
+
+  it('still refuses a sigil in the main hand', () => {
+    const screen = new InventoryScreen({ theme: THEME });
+    screen.setContainers(viewOf());
+    const cell = screen.cellAt({ container: 'equipment', index: 0 });
+    expect(
+      cell?.canAcceptDrop({
+        source: cell,
+        data: { from: { container: 'inventory', index: 0 }, item: item('sigil.guardBreak', 'skill'), count: 1 },
+      }),
+    ).toBe(false);
   });
 });

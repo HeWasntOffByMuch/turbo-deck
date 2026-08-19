@@ -24,10 +24,40 @@ import type { Widget } from '../core/widget.js';
 import type { Theme } from '../theme/theme.js';
 import { DragGhost } from '../widgets/drag-ghost.js';
 import { Tooltip } from '../widgets/tooltip.js';
-import { ItemSlot, SLOT_SIDE, type ItemDrag, type ItemView, type SlotRef } from '../widgets/item-slot.js';
+import {
+  ItemSlot,
+  SLOT_SIDE,
+  type ItemDrag,
+  type ItemView,
+  type SlotPending,
+  type SlotRef,
+} from '../widgets/item-slot.js';
 import { Label } from '../widgets/label.js';
 
 export type { ItemView, SlotRef } from '../widgets/item-slot.js';
+
+/**
+ * One equipment slot, as the screen is told about it.
+ *
+ * `accepts` is what the cell will take, and it is a **family** rather than the
+ * slot's own id (spec 184). The two are the same string for every slot that
+ * takes exactly one kind of thing -- a helmet slot accepts `head` -- and they
+ * differ for the four skill slots, which all accept `skill` so that one sigil
+ * row fits any of them.
+ *
+ * It is handed in rather than derived here for the reason the whole list is:
+ * `slotFamily` lives in `server/state`, which this file may not import, and a
+ * screen that re-derived the rule would be a second answer to "will this cell
+ * take this" -- free to disagree with the server's, which is exactly what it
+ * did before this field existed. The cell refused every sigil while the server
+ * would have accepted it, so nothing could be equipped and nothing said why.
+ */
+export interface SlotDescriptor {
+  readonly id: string;
+  readonly label: string;
+  /** What this cell takes. Defaults to {@link id} when a caller omits it. */
+  readonly accepts?: string;
+}
 
 /** Everything the screen shows, assembled outside `src/ui/`. */
 export interface ContainerView {
@@ -40,7 +70,7 @@ export interface ContainerView {
    * `server/state`, which this file may not import -- and a screen that
    * hard-coded six names would silently stop drawing the seventh.
    */
-  readonly slots: readonly { readonly id: string; readonly label: string }[];
+  readonly slots: readonly SlotDescriptor[];
   /**
    * The four active-skill slots, in bar order (spec 184).
    *
@@ -54,9 +84,27 @@ export interface ContainerView {
    * `MoveIntent` a move to the chest is and nothing downstream learns a new
    * word.
    */
-  readonly skillSlots: readonly { readonly id: string; readonly label: string }[];
+  readonly skillSlots: readonly SlotDescriptor[];
   /** The character's level, for the tooltip's "requires level N". */
   readonly level: number;
+  /**
+   * A change to a skill slot the server has committed to (spec 184), or absent.
+   *
+   * The screen still renders exactly what it is handed and still predicts
+   * nothing -- this is a *fact about the containers*, not a guess at their next
+   * state, and the item stays in the cell it is in until the change lands.
+   *
+   * Two addresses and a fraction, because the two cells are the picture: one
+   * emptying and one filling reads as a direction with no caption, which is
+   * the reading a grid gives for free and the reason the *word* for it lives in
+   * the action bar instead.
+   */
+  readonly pendingSwap?: {
+    readonly from: SlotRef;
+    readonly to: SlotRef;
+    /** 0 when it was asked for, 1 when it lands. */
+    readonly progress: number;
+  };
 }
 
 export interface MoveIntent {
@@ -237,13 +285,34 @@ export class InventoryScreen extends Row {
     const view = this.view;
     if (!view) return;
     for (let i = 0; i < this.bagCells.length; i++) {
-      this.bagCells[i]?.setItem(this.showing({ container: 'inventory', index: i }, view.bag[i] ?? null));
+      const ref = { container: 'inventory', index: i } as const;
+      const cell = this.bagCells[i];
+      cell?.setItem(this.showing(ref, view.bag[i] ?? null));
+      if (cell) cell.pending = this.pendingFor(ref);
     }
     for (let i = 0; i < this.wornCells.length; i++) {
       const id = this.slotIds[i];
       const worn = id === undefined ? null : view.worn[id] ?? null;
-      this.wornCells[i]?.setItem(this.showing({ container: 'equipment', index: i }, worn));
+      const ref = { container: 'equipment', index: i } as const;
+      const cell = this.wornCells[i];
+      cell?.setItem(this.showing(ref, worn));
+      if (cell) cell.pending = this.pendingFor(ref);
     }
+  }
+
+  /**
+   * What `ref` is doing in the change in flight, or null.
+   *
+   * Both ends and nothing else, so the twenty-eight cells that have nothing to
+   * do with it are cleared on the same pass that marks the two that do -- which
+   * is what stops a mark surviving the change that put it there.
+   */
+  private pendingFor(ref: SlotRef): SlotPending | null {
+    const swap = this.view?.pendingSwap;
+    if (!swap) return null;
+    if (sameRef(swap.from, ref)) return { role: 'out', progress: swap.progress };
+    if (sameRef(swap.to, ref)) return { role: 'in', progress: swap.progress };
+    return null;
   }
 
   /** What a cell draws: what the server says, less what was taken out of it. */
@@ -266,8 +335,8 @@ export class InventoryScreen extends Row {
   }
 
   private rebuildPaperdoll(
-    slots: readonly { readonly id: string; readonly label: string }[],
-    skillSlots: readonly { readonly id: string; readonly label: string }[],
+    slots: readonly SlotDescriptor[],
+    skillSlots: readonly SlotDescriptor[],
   ): void {
     for (const cell of this.wornCells) {
       // A worn cell sits inside a labelled row; a skill cell sits straight in
@@ -285,7 +354,7 @@ export class InventoryScreen extends Row {
     const theme = this.options.theme;
     for (const [index, slot] of slots.entries()) {
       const cell = this.makeCell({ container: 'equipment', index }, `worn:${slot.id}`);
-      cell.acceptsSlot = slot.id;
+      cell.acceptsSlot = slot.accepts ?? slot.id;
       this.wornCells.push(cell);
       this.slotIds.push(slot.id);
 
@@ -309,7 +378,7 @@ export class InventoryScreen extends Row {
     for (const [offset, slot] of skillSlots.entries()) {
       const index = slots.length + offset;
       const cell = this.makeCell({ container: 'equipment', index }, `skill:${slot.id}`);
-      cell.acceptsSlot = slot.id;
+      cell.acceptsSlot = slot.accepts ?? slot.id;
       this.wornCells.push(cell);
       this.slotIds.push(slot.id);
       this.skills.add(cell);
@@ -570,6 +639,10 @@ export class InventoryScreen extends Row {
     this.drag.cancel();
     return true;
   }
+}
+
+function sameRef(a: SlotRef, b: SlotRef): boolean {
+  return a.container === b.container && a.index === b.index;
 }
 
 function heading(text: string): Label {
