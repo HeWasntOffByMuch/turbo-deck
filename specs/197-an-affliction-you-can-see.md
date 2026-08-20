@@ -291,11 +291,19 @@ displayed roughly as its own **linear** value and a dark one lands near black.
   after the window.
 - Severity: below half `maxStacks` is the light id and at or above it the heavy
   one; Frostbite crosses on elapsed rather than on stacks.
-- `AuraTracker` over the driver's output starts each cling once and stops it
-  once across an apply / refresh / expire cycle, and `forget` returns everything
+- `AfflictionVfx` starts each cling once and stops it once across an apply /
+  refresh / expire cycle; a severity change is exactly one stop and one play; a
+  **refused** play is retried rather than believed; and `forget` stops everything
   a despawning body still owns.
-- The `surface` sampler stays inside the body's own capsule for every draw, and
-  answers false for an entity that is not drawn.
+- `sampleCapsuleSurface` lands **on** the capsule for every draw at every
+  height, area-weights the caps against the side so a tall body is stained
+  evenly rather than given a hat and boots, degenerates to a sphere for a body
+  shorter than it is wide, and writes only the three floats it was given room
+  for -- the second half of that scratch buffer is the spawn direction.
+- The measured crispness holds: isolated ink well under a tenth (a dithered fill
+  is about half), the mass in a handful of pieces, and every heavy tier
+  measurably more ink than its light one -- "more paint, never brighter paint"
+  as a number rather than as a claim.
 - `presentation-only.test.ts` gains the affliction driver: the same seed and
   inputs twice, once with it driven and once without, identical authoritative
   state.

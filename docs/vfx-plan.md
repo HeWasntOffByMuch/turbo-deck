@@ -1810,3 +1810,74 @@ is a *chemical* green pushed hard toward chartreuse against Poison's leaf, and
 Decay is the only **desaturated** ramp in the table — it suppresses healing, so it
 should look like colour draining rather than colour landing.
 
+### What the sheets said, and what changed because of them
+
+`npx tsx scripts/preview-afflictions-vfx.ts` writes three: one row per
+affliction across its life with the beats fired on their real cadence, the four
+heavy clings interleaved with their light ones, and three seeds each. It reports
+the same four numbers `preview-brush-vfx.ts` already computes, because two
+harnesses answering "is this crisp" two ways would be two definitions of crisp.
+
+Three things came out of looking at the first one, and only the first was a
+number anybody had predicted.
+
+**The cling was spending its life in the dark end of its own ramp.** With the
+gradient running `bright → mid → deep`, the back half of every mark was the
+darkest tone the affliction has, which against grass and dirt is mud. It showed
+up as Frostbite being far and away the most legible of the seven for a reason
+nobody had chosen: its ramp is the only one whose dark end is still light. So
+the two layers divide the ramp. The cling is what is *on* the body and lives in
+the top two tones; the shed is what is coming *off* it and goes dark on the way
+out — which also buys the thing one ramp could not, that the paint on a body and
+the paint falling from it are different colours without either needing a new
+palette entry.
+
+**There was nowhere near enough of it.** Five to seven live marks reads as flecks
+caught on a body rather than as a body that is burning, and it left the light
+tiers very close to invisible beside the heavy ones. Roughly doubled: ten to
+thirteen live for light, nineteen to thirty-three for heavy.
+
+**Corrosion stopped being pitting.** It was authored as small marks renewed twice
+as fast as anything else, on the argument that what it eats through is the guard
+and the armour. It came out at a third of Frostbite's ink and was the one row of
+the seven you had to look for. Small and fast is *detail*, and this vocabulary's
+rule is silhouette over detail at three hundred pixels tall. It keeps the fast
+renewal, which is where the sense of something being eaten away comes from, and
+the marks are the size of everybody else's.
+
+Where it landed, means over the sampled ticks:
+
+| | marks | ink % | isolated % | biggest piece % | pieces | body % |
+|---|---|---|---|---|---|---|
+| burn | 12 | 0.71 | 2.3 | 31 | 7.4 | 98 |
+| bleed | 10 | 0.42 | 2.9 | 42 | 4.7 | 93 |
+| poison | 11 | 0.70 | 2.0 | 31 | 8.5 | 92 |
+| corrosion | 12 | 0.72 | 1.7 | 36 | 7.2 | 88 |
+| shock | 10 | 0.58 | 2.8 | 45 | 5.8 | 102 |
+| frostbite | 13 | 0.80 | 1.9 | 45 | 6.5 | 113 |
+| decay | 13 | 0.89 | 1.4 | 40 | 7.0 | 93 |
+
+**Isolated %** is the crispness number and the one worth reading: a dithered or
+stippled fill is roughly half isolated pixels and these are between one and
+three, all of it boundary. **Biggest piece** and **pieces** say the mass is in a
+handful of strokes rather than in confetti. **Body %** is how much of the body's
+own height the paint spans, so a sampler that piled everything into the caps
+would show up as a number well under a hundred. Severity carries two to five
+times the ink of its light tier in every pair.
+
+### And the half no rig can answer
+
+`npx tsx scripts/probe-afflictions.ts` drives the shipped Play tab: a real
+server in the tab, the real `?afflict=` path, the real driver, the real particle
+system. It exists because everything above is true of a rig, and spec 121's
+aura system has a decision function, a tracker, eight authored effects and no
+caller *to this day* — a green suite sits beside an unplugged feature perfectly
+happily.
+
+It compares each affliction's frame against a control with nothing applied, and
+the measurement has to survive a world that moves on its own: the trees sway,
+and the control and each affliction are separate page loads whose wind phases
+are uncorrelated. So each state is captured twice a beat apart and only pixels
+that agreed both times are trusted — `preview-paint.ts`'s trick, and the same
+reason it needed it.
+
