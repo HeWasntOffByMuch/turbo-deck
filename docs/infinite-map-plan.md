@@ -1,7 +1,11 @@
 # A map that keeps growing — plan
 
-Status: **plan only. Nothing here is implemented.** No spec below has been
-written and no code has changed.
+Status: **final. Nothing here is implemented.** The shape, the phase order and
+the numbers are settled; no spec below has been written and no code has changed.
+The next action is spec 197.
+
+Everything is measured against `maps/arena.json` at `43fd6b40` on this branch's
+container, and every projection says which measurement it scales.
 
 ## What is being asked for
 
@@ -126,10 +130,10 @@ Walling the world with water is good news structurally, not just aesthetically.
 `WALKABLE_MIN_HEIGHT` mean the sim refuses to put a body under the flood line
 and `findPath` will not route through it. No new sim work, no new wall.
 
-**It removes the ragged-edge problem.** I flagged last round that
-`worldBoundsOf` is the bounding *rectangle* of declared bounds, so a long arm of
-authored ground drags a lot of unauthored void inside the wall — and spec 083
-listed a per-layer coverage mask as the eventual fix. With a water perimeter the
+**It removes the ragged-edge problem.** `worldBoundsOf` is the bounding
+*rectangle* of declared bounds, so a long arm of authored ground drags a lot of
+unauthored void inside the wall — and spec 083 listed a per-layer coverage mask
+as the eventual fix. With a water perimeter the
 player is stopped by the sea long before the rectangle's edge, so the rectangle
 becomes a backstop nobody touches. That whole line of work drops to a sanity
 check.
@@ -138,7 +142,7 @@ check.
 
 - **The shore needs a margin.** Water must be baked far enough past the last
   walkable shore that the camera never frames undeclared void. How far is set
-  by the zoom cap below: **2 map chunks (1232 units)** at a 420 cap, against 6
+  by the supported zoom below: **2 map chunks (1232 units)** at 420, against 6
   (3696 units) at today's 1400. Past the margin, no chunk at all is correct —
   spec 078's three-valued solidity already reads "outside the declaration" as a
   real wall.
@@ -190,8 +194,8 @@ What that buys, in the terms the rest of this plan is written in:
 
 Two things it does **not** fix, and they are the expensive ones: the map file
 and the boot are O(map), not O(camera). Phases 2, 3 and 5 are unchanged in
-necessity. What the cap changes is that phase 4's payoff gets much larger and
-phase 6 gets much cheaper.
+necessity. What it changes is that phase 4's payoff gets much larger and phase
+6 gets much cheaper.
 
 ### One rule this must be built to
 
@@ -257,10 +261,9 @@ to move with it — which is exactly what they were written for.
 
 Stated explicitly so it does not get built:
 
-- **`MapInfo`'s chunk list.** 1727 bytes for 810 chunks; ~27 KB at 4×. I
-  proposed paging this last round. At this target it is not worth the protocol
-  bump — and an authored world genuinely has holes, so the list is doing real
-  work. Revisit past ~50k chunks.
+- **`MapInfo`'s chunk list.** 1727 bytes for 810 chunks; ~27 KB at 4×. Paging
+  it is not worth a protocol bump at this target — and an authored world
+  genuinely has holes, so the list is doing real work. Revisit past ~50k chunks.
 - **`ZoneManager`'s linear scan.** A handful of rectangles.
 - **The per-chunk wire format.** Fine as is.
 - **Interest management, crowd, the tick.** Already gated on residency by specs
@@ -350,7 +353,7 @@ same reason.
 What this fixes: a grow touches one or two region files instead of rewriting
 184 MB; git diffs become reviewable again and history stops doubling; the V8
 string ceiling stops applying; and there is finally something to load lazily,
-which phase 3 needs.
+which phase 4 needs.
 
 `mapId` stays one hash over the whole world so the "is this the same map"
 guarantee is unchanged; region files get their own hashes in the manifest so a
@@ -466,6 +469,28 @@ the `parseMap` validation it already does.
   much smaller than its bounding rectangle — decide with the real shape in hand,
   not now.
 
+## Done looks like
+
+One line per phase, so "finished" is not a matter of opinion. Every one of these
+is a number a script or a test can produce.
+
+| Phase | Done when |
+|---|---|
+| 0 | `bench-map.ts` reports boot, resident bytes and per-tick µs across three world sizes, and a test asserts the slope rather than the value |
+| 1 | `INTEREST_CHUNK_RADIUS` 3 and `MAP_CHUNK_REQUEST_RADIUS` 2, both relationship tests green against `SUPPORTED_MAX_VIEW_HALF_WIDTH`, and a test that the request window does not read the zoom |
+| 2 | shipped bundle under 2 MB, `npm run build` in CI behind a size gate |
+| 3 | `maps/arena/` round-trips byte-identical to today's `maps/arena.json`; a one-chunk edit touches one region file |
+| 4 | boot is flat in world size — the phase 0 bench shows the same boot ms at 1× and 4×; resident memory bounded by the interest window after a 100-chunk walk and back |
+| 5 | no `warmRouting` at boot; `pathfinding-ground.test.ts` green against tiled grids; `chunk.nav` either feeds them or is gone from the file and the wire |
+| 6 | client residency bounded over a 30-minute walk; an evicted chunk re-requests and re-meshes cleanly |
+| 7 | a `grow-map` run reads and writes only the regions it touches; the editor opens without loading the whole world |
+| 8 | a perimeter test fails when walkable ground sits within `MAP_CHUNK_REQUEST_RADIUS` chunks of undeclared space |
+
+The headline: **phase 0 measures it, phase 4 flattens it, and phases 1–3 and 5
+are what make phase 4 affordable.** If only one number is quoted at the end, it
+should be boot time at 4× against boot time at 1×, and they should be the same
+number.
+
 ## Risks
 
 - **Determinism under residency (phase 4).** An entity's history must not depend
@@ -496,8 +521,36 @@ the `parseMap` validation it already does.
 - What the island should *contain*. This is capability; content is decided
   against `docs/reward-philosophy.md`.
 
-## Open question
+## The one question that was open, and why it is not a blocker
 
-Still outstanding from last round, and it only affects content ordering rather
-than any phase above: **does the existing arena stay the island's centre**, with
-new ground grown around it, or does it become one region among several?
+**Whether the existing arena ends up the island's centre is a content decision,
+and no phase above changes either way.** It can be made late, and it can be
+revised — grow west this month and east the next.
+
+Three things already in the tree make that true, none of them added by this
+plan:
+
+- **`layer.origin` is fixed for the life of the map**, and chunk indices are
+  measured from it rather than from `bounds.min` (spec 083). The arena keeps the
+  coordinates it has, wherever the world ends up extending.
+- **Growth renumbers nothing.** Spec 083 tests exactly this: after growing west
+  and north, every pre-existing chunk's `cx`/`cz` and every array in it are
+  byte-identical, and only `bounds`, `parts` and the new chunks appear in the
+  diff. Negative coordinates are ordinary and cost one byte on the wire.
+- **Region files inherit that for free.** A region is `floor(cx / R)`, `Math.floor`
+  for the reason `chunks.ts` gives — the grid stays uniform across the origin, so
+  a negative region is not a special case.
+
+`worldBoundsOf` is a bounding rectangle either way, so a lopsided island and a
+centred one of the same span cost the same. The only thing that would have cared
+is the per-layer coverage mask, and the water perimeter retired that.
+
+The question worth answering instead is **where the hub is**, and it is a
+different question with a different answer. `DEFAULT_SPAWN` is `(600, 450)` and
+the `hearth` rest zone is the 300×300 around it; whatever the geometry, the
+arena is the centre *of play* for as long as those stay where they are. Moving
+the hub is a `zone-manager.ts` and a `DEFAULT_SPAWN` edit, and it is independent
+of which chunks exist.
+
+So: leave it undecided. It is settled at `grow-map --rect` time, by whoever is
+drawing the island.
