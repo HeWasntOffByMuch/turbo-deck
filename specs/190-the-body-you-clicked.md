@@ -206,6 +206,39 @@ being no slot that draws one, and `barNameOf` keeps a live consumer as
 
 The DOM bar is **deleted**, not left hidden. Two bars would be two answers.
 
+### Three things the first cut got wrong
+
+All three were found by playing it, and all three are the same kind of mistake:
+a rule that held while the bar was made of wide buttons and stopped holding when
+it became five squares.
+
+**Every slot drew a question mark.** `abilityIconFor` answers `item:unknown` for
+an id it has no row for, and it had no row for any of spec 188's four skills or
+for the flask — so a bar of five identical boxes was the first thing a player
+with sigils equipped actually saw. Four 12×12 sprites are authored for the
+skills and the flask takes `item:potion`, since it is a *thing* rather than a
+skill and the DOM bar drew it as one too. The goldens could not have caught it,
+because a golden names its sprites by hand; `action-bar-model.test.ts` asserts
+the mapping instead — every ability a slot can hold resolves to a sprite the
+atlas actually bakes.
+
+**The charge count and the key label collided.** `3/3` is 17 font pixels and a
+key is 5, which fits a 46-pixel square and does not fit the 23 that a chunky
+interface scale converts one into. The badge moves to the **top**-right, which
+is empty in every state this widget has, so the two are on different rows and
+the collision is impossible rather than unlikely. And the slot side is floored
+at `SLOT_SIDE`: the conversion is a physical size, legibility is a second
+constraint, and the answer is the larger of the two.
+
+**The group was not centred.** The pools and the slots are one group (spec 164)
+and only the bar was being centred, which left the pair sitting half a pool
+block to the left. That was 12% of the group's width when the bar was 484px of
+name-wide slots and 19% once it was 246px of squares — the same error, newly
+impossible to miss. `poolReserve` is the one number both surfaces need: the DOM
+offsets the pool block by half the *group*, and the bar's dock reserves the
+whole of it on the left, which an `Anchor` turns into the same shift because it
+centres in whatever box padding leaves.
+
 ## Invariants tested
 
 - **A left click with an aim pending confirms it and selects nothing**, and with

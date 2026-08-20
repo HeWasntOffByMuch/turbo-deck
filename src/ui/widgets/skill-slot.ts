@@ -257,7 +257,17 @@ export class SkillSlot extends StyledWidget {
     );
   }
 
-  /** The count in the bottom-right corner. See {@link badge}. */
+  /**
+   * The count, in the **top**-right corner. See {@link badge}.
+   *
+   * Top rather than bottom, and it is not a style choice: the key label is
+   * bottom-left, and the two are the only text a resting slot draws. `3/3` is
+   * 17 font pixels and a key is 5, so on a chunky interface scale -- where a
+   * physical 46-pixel square converts to barely 23 UI pixels -- the pair meet in
+   * the middle and print over each other. The top-right corner is empty in every
+   * state this widget has, so putting them on different rows makes the collision
+   * impossible rather than unlikely.
+   */
   private paintBadge(out: DrawList, context: PaintContext): void {
     if (this.badge.length === 0) return;
     const font = fontById('numeric');
@@ -267,7 +277,7 @@ export class SkillSlot extends StyledWidget {
       font,
       this.badge,
       this.rect.x + this.rect.width - measureText(font, this.badge) - 1,
-      this.rect.y + this.rect.height - font.height - 1,
+      this.rect.y + 1,
       context.theme.color('accent'),
       this.rect,
     );

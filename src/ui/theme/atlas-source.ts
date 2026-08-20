@@ -526,4 +526,76 @@ export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
     '....AAAA....',
     '.....AA.....',
   ],
+  /**
+   * The four active skills (specs 188, 190).
+   *
+   * Drawn rather than borrowed, and the reason is what the bar looked like
+   * without them: `abilityIconFor` answers `item:unknown` for an id with no row,
+   * so every skill a player equipped and the flask beside them came out as the
+   * same question mark. A bar of four identical boxes is worse than a bar with
+   * no art at all, because it looks like art.
+   *
+   * Each leans on silhouette rather than detail, for the reason the eight above
+   * do: these are read at a glance while something is trying to kill you.
+   */
+  /** Guard break: a shield with a split down it. */
+  guardBreak: [
+    '.TTTTTTTTTT.',
+    '.T...AA...T.',
+    '.T...AA...T.',
+    '.T..AA....T.',
+    '.T...AA...T.',
+    '.T....AA..T.',
+    '.T...AA...T.',
+    '..T..AA..T..',
+    '..T...AA.T..',
+    '...T.AA.T...',
+    '....T..T....',
+    '.....TT.....',
+  ],
+  /** Stunning blow: an impact, struck out in every direction. */
+  stunningBlow: [
+    '..T.......T.',
+    '...T.AA..T..',
+    '.T..AAAA.T..',
+    '..T.AAAA..T.',
+    '...AAAAAA...',
+    'TTAAAAAAAATT',
+    'TTAAAAAAAATT',
+    '...AAAAAA...',
+    '..T.AAAA..T.',
+    '.T..AAAA.T..',
+    '...T.AA..T..',
+    '..T.......T.',
+  ],
+  /** Whirlwind: a sweep all the way round, open where it began. */
+  whirlwind: [
+    '...TTTTTT...',
+    '..TTTTTTTT..',
+    '.TTT....TTT.',
+    'TTT......TTT',
+    'TT........TT',
+    'TT..........',
+    'TT..........',
+    'TTT......AA.',
+    '.TTT....AAAA',
+    '..TTTTTAAAAA',
+    '...TTTT.AAA.',
+    '.........A..',
+  ],
+  /** Crippling strike: a limb, snapped. */
+  cripplingStrike: [
+    '.TT.........',
+    'TTTT........',
+    '.TTTT.......',
+    '..TTTT......',
+    '...TTT......',
+    '....AA......',
+    '......AA....',
+    '......TTT...',
+    '.......TTTT.',
+    '........TTTT',
+    '........TTTT',
+    '.........TT.',
+  ],
 };

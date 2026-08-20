@@ -280,27 +280,48 @@ export interface ActionBarBox {
 export const NO_ACTION_BAR: ActionBarBox = { width: 0, height: 0 };
 
 /**
- * The gap between the left edge of a centred hotbar and the frame's edge.
+ * What sits immediately left of the bar and belongs to the same group, in CSS
+ * pixels: the pool block and the gap between it and the slots.
  *
- * Negative would mean the hotbar is wider than the frame; anything less than the
- * weapon row's width means the two overlap, which is a button that cannot be
- * pressed because another button is on top of it.
+ * Named because **both surfaces need it and it is one number** (spec 190). The
+ * pools are DOM and the bar is drawn on the interface canvas, and what centres
+ * them together is that each is offset by its own half of this.
  */
-export function centredClearance(bar: ActionBarBox, frameWidth: number): number {
-  return (frameWidth - bar.width) / 2;
+export function poolReserve(layout: HudLayout): number {
+  return layout.pool.width + layout.poolGap;
+}
+
+/** The whole bottom group: the pool block, the gap, and the bar. */
+export function bottomGroupWidth(layout: HudLayout, bar: ActionBarBox): number {
+  return poolReserve(layout) + bar.width;
 }
 
 /**
- * How far the pool block's left edge is from the frame's, given a centred bar.
+ * The gap between the left edge of the centred bottom group and the frame's.
  *
- * The pool sits immediately left of the slots (spec 164), so where it starts is
- * a sum of three things that live in three different places -- the frame, the
- * bar's width and the block's. Negative means it has run off the left edge;
- * anything less than the weapon switch's width means the two overlap, which is
- * the same failure {@link centredClearance} exists to catch one group over.
+ * The **group** rather than the bar, since spec 190, and the change is what the
+ * bar shrinking made impossible to ignore: the pool block sits to one side of
+ * the slots and is part of the same thing, so centring the bar alone leaves the
+ * pair visibly off to the left -- which was 12% of the group's width when the
+ * bar was 484px of name-wide slots and is 19% now that it is 246px of squares.
+ *
+ * Negative would mean the group is wider than the frame; anything less than the
+ * weapon row's width means the two overlap, which is a button that cannot be
+ * pressed because another button is on top of it.
+ */
+export function centredClearance(layout: HudLayout, bar: ActionBarBox, frameWidth: number): number {
+  return (frameWidth - bottomGroupWidth(layout, bar)) / 2;
+}
+
+/**
+ * How far the pool block's left edge is from the frame's.
+ *
+ * Which is the group's own left edge, the block being the first thing in it --
+ * its own function because that is a fact about the *pools*, and the day
+ * something else joins the group on the left it stops being the same number.
  */
 export function poolClearance(layout: HudLayout, bar: ActionBarBox, frameWidth: number): number {
-  return centredClearance(bar, frameWidth) - layout.poolGap - layout.pool.width;
+  return centredClearance(layout, bar, frameWidth);
 }
 
 /**

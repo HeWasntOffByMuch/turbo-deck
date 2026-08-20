@@ -309,6 +309,8 @@ export class UiScreens {
   private safeTopRight = 0;
   /** How much of the frame's floor the experience strip has. See below. */
   private actionBarFloor = 0;
+  /** ...and how much of its left the pool block has. */
+  private actionBarReserve = 0;
   /**
    * How far up from the bottom edge the DOM HUD's own furniture reaches, in UI
    * pixels. The counterpart to {@link safeTop}, and what keeps the chat clear of
@@ -544,7 +546,7 @@ export class UiScreens {
     // placed beside this bar, so a bar that sat above it would be a loop.
     this.actionBar = new ActionBarScreen({ theme: THEME, slotCount: this.barPlan.length });
     this.actionBarDock.pointerTransparent = true;
-    this.actionBarDock.padding = actionBarInsets(THEME, 0);
+    this.actionBarDock.padding = actionBarInsets(THEME, 0, 0);
     this.actionBarDock.place(this.actionBar, 'bottom');
     this.layers.place('hud', this.actionBarDock);
     this.actionBar.onUse = (index) => {
@@ -1200,6 +1202,21 @@ export class UiScreens {
     this.barPlan = plan;
   }
 
+  /**
+   * What the bar leaves clear on its left, in UI pixels (spec 190).
+   *
+   * Applied as the dock's *padding*, which is what makes the centring one rule
+   * rather than an offset: an `Anchor` centres its child in whatever box is left
+   * after padding, so reserving the pool block's width on the left centres the
+   * pair rather than the bar.
+   */
+  setActionBarLeftReserve(uiPixels: number): void {
+    const next = Math.max(0, Math.floor(uiPixels));
+    if (next === this.actionBarReserve) return;
+    this.actionBarReserve = next;
+    this.applyActionBarInsets();
+  }
+
   /** Whether a slot names its key. False on a finger, which has no keyboard. */
   setShowsSlotKeys(shows: boolean): void {
     this.showsSlotKeys = shows;
@@ -1293,7 +1310,11 @@ export class UiScreens {
     const next = Math.max(0, Math.floor(uiPixels));
     if (next === this.actionBarFloor) return;
     this.actionBarFloor = next;
-    this.actionBarDock.padding = actionBarInsets(THEME, next);
+    this.applyActionBarInsets();
+  }
+
+  private applyActionBarInsets(): void {
+    this.actionBarDock.padding = actionBarInsets(THEME, this.actionBarFloor, this.actionBarReserve);
     this.actionBarDock.invalidateArrange();
   }
 

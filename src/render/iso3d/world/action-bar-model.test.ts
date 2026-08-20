@@ -5,6 +5,10 @@ import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
 import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
 import { equipmentAddress } from '../../../server/player/inventory.js';
 import type { EffectiveStats } from '../../../server/state/types.js';
+import { ALL_ITEMS } from '../../../server/data/items.js';
+import { bakeAtlas } from '../../../ui/render/atlas.js';
+import { THEME } from '../../../ui/theme/theme.js';
+import { abilityIconFor, UNKNOWN_ABILITY_ICON } from './character-model.js';
 import { VIAL_ABILITY_ID, buildActionBar } from './action-bar.js';
 import { actionBarViewOf, type ActionBarSource } from './action-bar-model.js';
 
@@ -55,6 +59,28 @@ describe('actionBarViewOf (spec 190)', () => {
     expect(view.slots[1]?.ability).toBeNull();
     expect(view.slots[2]?.ability?.id).toBe('ground.quake');
     expect(view.slots[4]?.ability?.id).toBe(VIAL_ABILITY_ID);
+  });
+
+  /**
+   * The check the shipped bar needed and did not have.
+   *
+   * `abilityIconFor` answers `item:unknown` for an id with no row, so every
+   * skill a player equipped and the flask beside them came out as the same
+   * question mark -- five boxes, all identical, all wrong, with the goldens
+   * beside them perfect because they name their sprites by hand.
+   */
+  it('has real art for every ability a slot can hold', () => {
+    const atlas = bakeAtlas(THEME);
+    const holders = [
+      ...ALL_ITEMS.flatMap((item) => (item.activeSkillId ? [item.activeSkillId] : [])),
+      VIAL_ABILITY_ID,
+    ];
+    expect(holders.length).toBeGreaterThan(0);
+    for (const id of holders) {
+      const icon = abilityIconFor(id);
+      expect(icon, id).not.toBe(UNKNOWN_ABILITY_ICON);
+      expect(atlas.hasSprite(icon), `${id} -> ${icon}`).toBe(true);
+    }
   });
 
   it('says what actually fires each slot, off the key map', () => {

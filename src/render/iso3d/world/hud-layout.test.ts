@@ -13,6 +13,7 @@ import {
   errorLineWidth,
   errorStackBottom,
   ACTION_SLOT_CSS,
+  bottomGroupWidth,
   hudLayout,
   NO_ACTION_BAR,
   MIN_TAP_PX,
@@ -20,6 +21,7 @@ import {
   poolBlockHeight,
   poolBottom,
   poolClearance,
+  poolReserve,
   poolLabelFits,
   readoutShown,
   stripHeight,
@@ -185,19 +187,42 @@ describe('the HUD layout', () => {
   /**
    * The assertion that is supposed to fail on the ninth ability.
    *
-   * The hotbar is centred and the window buttons sit bottom right (spec 140), so
-   * what has to hold is that half the leftover width clears that row. The weapon
-   * switch is no longer drawn on a phone (spec 141), but it is still checked
-   * against the *same* clearance: the day somebody puts it back, the sum should
-   * already say whether it fits rather than being discovered on a device.
+   * The bottom *group* is centred and the window buttons sit bottom right
+   * (spec 140), so what has to hold is that half the leftover width clears that
+   * row. The weapon switch is no longer drawn on a phone (spec 141), but it is
+   * still checked against the *same* clearance: the day somebody puts it back,
+   * the sum should already say whether it fits rather than being discovered on
+   * a device.
    */
-  it('fits the bar across a phone in landscape, clear of both corners', () => {
-    const clearance = centredClearance(PHONE_BAR, PHONE_LANDSCAPE.width);
+  it('fits the bottom group across a phone in landscape, clear of both corners', () => {
+    const clearance = centredClearance(compact, PHONE_BAR, PHONE_LANDSCAPE.width);
     const weapons = stripWidth(compact.weapon, compact.weaponGap, WEAPON_SWITCH.length);
     const windows = stripWidth(compact.systemButton, compact.systemGap, SYSTEM_BUTTONS.length);
-    expect(PHONE_BAR.width).toBeLessThan(PHONE_LANDSCAPE.width);
+    expect(bottomGroupWidth(compact, PHONE_BAR)).toBeLessThan(PHONE_LANDSCAPE.width);
     expect(clearance).toBeGreaterThanOrEqual(compact.edge + windows);
     expect(clearance).toBeGreaterThanOrEqual(compact.edge + weapons);
+  });
+
+  /**
+   * The complaint spec 190 shipped and had to fix: the pools and the slots are
+   * one group (spec 164), so the *group* is what gets centred.
+   *
+   * Centring the bar alone leaves the pair off to the left by half the pool
+   * block -- 12% of the group when the bar was 484px of name-wide slots, and 19%
+   * once it became 246px of squares, which is where somebody noticed.
+   */
+  it('centres the group rather than the bar', () => {
+    const frame = 1280;
+    const left = centredClearance(desktop, DESKTOP_BAR, frame);
+    const right = frame - left - bottomGroupWidth(desktop, DESKTOP_BAR);
+    expect(left).toBeCloseTo(right, 6);
+    // ...which puts the bar itself right of the frame's middle, by exactly half
+    // of what it left clear for the pools.
+    const barLeft = left + poolReserve(desktop);
+    expect(barLeft + DESKTOP_BAR.width / 2 - frame / 2).toBeCloseTo(
+      poolReserve(desktop) / 2,
+      6,
+    );
   });
 
   /**

@@ -706,12 +706,21 @@ export interface WorldHudRenderOptions {
   readonly change?: { readonly slot: number; readonly progress: number };
 }
 
-/** The four skills and the vial, as a fresh character with two sigils has them. */
+/**
+ * The four skills and the vial, as a character with two sigils has them.
+ *
+ * The sprite names are written out rather than resolved, because `src/ui/` may
+ * not read the game's renderer and `abilityIconFor` lives there. What that
+ * costs is exactly the failure this frame was blind to on its first outing --
+ * every one of these drew `item:unknown` in the shipped bar, the icon table
+ * having no row for a skill or for the flask -- so the *mapping* is asserted in
+ * `action-bar-model.test.ts` instead, where the table can be read.
+ */
 const DEMO_BAR: readonly (AbilityView | null)[] = [
-  { id: 'melee.heavy', name: 'Heavy', icon: 'ability:heavy', cost: 12, sweep: 0, affordable: true, secondsLeft: 0 },
+  { id: 'skill.guardBreak', name: 'Guard Break', icon: 'ability:guardBreak', cost: 12, sweep: 0, affordable: true, secondsLeft: 0 },
   null,
-  { id: 'ground.quake', name: 'Quake', icon: 'ability:quake', cost: 22, sweep: 0, affordable: true, secondsLeft: 0 },
-  null,
+  { id: 'skill.whirlwind', name: 'Whirlwind', icon: 'ability:whirlwind', cost: 22, sweep: 0, affordable: true, secondsLeft: 0 },
+  { id: 'skill.stunningBlow', name: 'Stunning Blow', icon: 'ability:stunningBlow', cost: 18, sweep: 0, affordable: true, secondsLeft: 0 },
   { id: 'self.hearthdraught', name: 'Draught', icon: 'item:potion', cost: 0, sweep: 0, affordable: true, secondsLeft: 0 },
 ];
 

@@ -1294,6 +1294,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   ui.setActionBarFloorCss(hud.floorCss);
   ui.setActionBarSlotCss(hud.slotSideCss);
   ui.setShowsSlotKeys(hud.showsSlotKeys);
+  ui.setActionBarLeftReserveCss(hud.leftReserveCss);
   if (forcedBar) ui.setActionBarPlan(forcedBar);
 
   // The other half of that, and the half that had never been connected to

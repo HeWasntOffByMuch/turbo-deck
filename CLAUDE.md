@@ -775,6 +775,31 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  clamps at the floor for the state that box has before the
                  interface has laid itself out once: centring on nothing would
                  put the pool block over the experience strip.
+                 What centring means there is the **group** and not the bar, and
+                 that was got wrong first: the pools and the slots are one thing
+                 (spec 164), so centring the bar alone leaves the pair half a
+                 pool block to the left -- 12% of the group while the bar was
+                 484px of name-wide slots, 19% once it became 246px of squares,
+                 which is where somebody noticed. `poolReserve` is the single
+                 number both surfaces need; the DOM offsets its block by half the
+                 group and the dock reserves the whole of it on the left, which
+                 an `Anchor` turns into exactly that shift because it centres in
+                 whatever box the padding leaves.
+                 Two more the first cut had, both of the same kind -- a rule that
+                 held for wide buttons and not for squares. Every slot drew
+                 `item:unknown`, because `abilityIconFor` had no row for spec
+                 188's four skills or for the flask, so the first thing a player
+                 with sigils equipped saw was five identical question marks; the
+                 four skills are authored sprites now and the flask takes
+                 `item:potion`, being a *thing* rather than a skill. No golden
+                 could have caught that -- a golden names its sprites by hand --
+                 so `action-bar-model.test.ts` asserts the mapping, which is
+                 where a table lookup belongs. And the vial's charge count sat
+                 bottom-right against a bottom-left key label: `3/3` is 17 font
+                 pixels and a key is 5, which fits 46 and does not fit the 23 a
+                 chunky interface scale converts one into, so the badge moved to
+                 the top-right -- empty in every state -- and the side is floored
+                 at `SLOT_SIDE`.
                  selected-unit.ts is the readout in the opposite corner, and its
                  four rules are the chat's and the stun swirl's over again.
                  **Nothing is drawn when nothing is selected** -- settled before

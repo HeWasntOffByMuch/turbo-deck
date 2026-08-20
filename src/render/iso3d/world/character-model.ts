@@ -55,6 +55,18 @@ const ABILITY_ICONS: Readonly<Record<string, string>> = {
   'channel.drain': 'ability:drain',
   'ranged.shot': 'ability:seek',
   'ranged.star': 'ability:slash',
+  // The four active skills (spec 188) and the flask, which had no rows at all
+  // until spec 190 put them on a bar somebody looks at: an id with no entry
+  // draws the box, so every skill a player equipped and the vial beside them
+  // came out as the same question mark.
+  'skill.guardBreak': 'ability:guardBreak',
+  'skill.stunningBlow': 'ability:stunningBlow',
+  'skill.whirlwind': 'ability:whirlwind',
+  'skill.cripplingStrike': 'ability:cripplingStrike',
+  // The flask is a *thing* rather than a skill, which is the whole reason the
+  // DOM bar drew it as an object too -- so it takes the item's art rather than
+  // an ability glyph invented for it.
+  'self.hearthdraught': 'item:potion',
 };
 
 export const UNKNOWN_ABILITY_ICON = 'item:unknown';

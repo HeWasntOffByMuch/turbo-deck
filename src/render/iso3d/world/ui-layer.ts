@@ -261,6 +261,8 @@ export class UiLayer {
   private measuredRight = 0;
   /** How big an action-bar slot should be, in CSS pixels. See below. */
   private slotSideCss = 0;
+  /** ...and what it leaves clear on its left for the pool block. */
+  private leftReserveCss = 0;
 
   private applyCssSize(): void {
     this.element.style.width = `${this.frame.cssWidth}px`;
@@ -368,6 +370,7 @@ export class UiLayer {
     this.applySafeBottom();
     this.applySafeTopRight();
     this.applySlotSide();
+    this.applyLeftReserve();
     // The canvas's backing store was just reallocated, so whatever was on it is
     // gone -- and the same draw list would otherwise be skipped as unchanged and
     // leave the interface blank until something moved.
@@ -477,6 +480,22 @@ export class UiLayer {
     if (this.slotSideCss <= 0) return;
     const dpr = globalThis.devicePixelRatio || 1;
     this.screens.setActionBarSlotSide((this.slotSideCss * dpr) / this.frame.scale);
+  }
+
+  /**
+   * What the bar leaves clear on its left, converted from CSS pixels (spec 190).
+   *
+   * Re-applied on resize with the slot size, and for the same reason: what a UI
+   * pixel is worth is the thing that changes.
+   */
+  setActionBarLeftReserveCss(cssPixels: number): void {
+    this.leftReserveCss = cssPixels;
+    this.applyLeftReserve();
+  }
+
+  private applyLeftReserve(): void {
+    const dpr = globalThis.devicePixelRatio || 1;
+    this.screens.setActionBarLeftReserve((this.leftReserveCss * dpr) / this.frame.scale);
   }
 
   /** Whether a slot names the key that fires it. See `HudHandle.showsSlotKeys`. */

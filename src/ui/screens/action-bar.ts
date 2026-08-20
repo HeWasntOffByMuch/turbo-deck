@@ -153,7 +153,14 @@ export class ActionBarScreen extends Row {
    * the player picks a different interface scale, not per frame.
    */
   setSlotSide(uiPixels: number): void {
-    const side = Math.max(1, Math.round(uiPixels));
+    // Floored at the framework's own slot, which is the smallest square anything
+    // here is drawn at and the size the art and the two labels were fitted to.
+    // The conversion above is a *physical* size, and a chunky interface scale
+    // buys fewer UI pixels for the same square -- at scale 8 on a phone, 46 CSS
+    // pixels is 17, which is smaller than the 12-pixel icon plus its frame. Two
+    // constraints, and the answer is the larger: legible first, then as close to
+    // the physical size as that allows.
+    const side = Math.max(SLOT_SIDE, Math.round(uiPixels));
     if (side === this.slotSide) return;
     this.slotSide = side;
     const iconScale = iconScaleFor(side);
@@ -199,6 +206,15 @@ export class ActionBarScreen extends Row {
  * it. Plus a margin, for the reason `chatInsets` gives: clearing something by
  * nothing is still sitting on it.
  */
-export function actionBarInsets(theme: Theme, floor: number): Insets {
-  return { ...uniformInsets(theme.spacing.sm), bottom: floor + theme.spacing.sm };
+export function actionBarInsets(theme: Theme, floor: number, leftReserve = 0): Insets {
+  return {
+    ...uniformInsets(theme.spacing.sm),
+    bottom: floor + theme.spacing.sm,
+    // Reserved rather than subtracted, and that is the whole of the centring:
+    // an `Anchor` centres its child in the box left after padding, so room made
+    // on the left for the pool block centres the *pair* -- which is what those
+    // two are, and what centring the bar alone visibly failed to do once the
+    // slots stopped being wide enough to hide it.
+    left: theme.spacing.sm + Math.max(0, leftReserve),
+  };
 }

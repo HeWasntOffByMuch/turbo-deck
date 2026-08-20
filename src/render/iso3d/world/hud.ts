@@ -57,7 +57,9 @@ import { HealthFlashes } from './health-bar.js';
 import {
   ACTION_SLOT_CSS,
   bottomEdge,
+  bottomGroupWidth,
   NO_ACTION_BAR,
+  poolReserve,
   type ActionBarBox,
   errorStackBottom,
   hudLayout,
@@ -412,6 +414,14 @@ export interface HudHandle {
    */
   readonly showsSlotKeys: boolean;
   /**
+   * What the bar has to leave clear on its left, in CSS pixels (spec 190).
+   *
+   * The pool block and its gap: they are part of the same group, so the bar is
+   * centred with room for them rather than centred on its own. One number, both
+   * surfaces, each offset by its own half of it.
+   */
+  readonly leftReserveCss: number;
+  /**
    * What to call when a window button is pressed (spec 140). It hands back a
    * window id and nothing else -- the mount calls the same `ui.toggle` a key
    * binding calls, so nothing in this file decides what a button means.
@@ -610,8 +620,12 @@ export function createHud(project: Projector): HudHandle {
    */
   const placeAgainstBar = (): void => {
     poolBlock.style.bottom = `calc(${poolBottom(layout, actionBar)}px + env(safe-area-inset-bottom))`;
-    poolBlock.style.marginLeft =
-      `${-(actionBar.width / 2 + layout.poolGap + layout.pool.width)}px`;
+    // Half the *group's* width, which is what centring the group amounts to:
+    // the pools are the first thing in it and the bar reserves the same number
+    // on its own side (spec 190). Pinning the pools a whole bar-half plus their
+    // own width to the left of centre -- which is what this was -- centres the
+    // bar and leaves the pair sitting off to one side of the screen.
+    poolBlock.style.marginLeft = `${-bottomGroupWidth(layout, actionBar) / 2}px`;
     if (layout.compact) {
       aimHint.style.bottom =
         `calc(${bottomEdge(layout) + actionBar.height + 6}px + env(safe-area-inset-bottom))`;
@@ -1644,6 +1658,7 @@ export function createHud(project: Projector): HudHandle {
     floorCss: bottomEdge(layout),
     slotSideCss: ACTION_SLOT_CSS,
     showsSlotKeys: layout.showsKeyNumber,
+    leftReserveCss: poolReserve(layout),
     setActionBar(box) {
       if (box.width === actionBar.width && box.height === actionBar.height) return;
       actionBar = box;
