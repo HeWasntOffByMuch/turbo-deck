@@ -358,4 +358,22 @@ describe('the roll', () => {
     expect(tally.common).toBeGreaterThan(tally.rare * 1.5);
     expect(tally.rare).toBeGreaterThan(tally.exceptional * 3);
   });
+
+  it('keeps that ratio in the weights themselves, on every table', () => {
+    // The same rule as the roll above, asserted where it is actually *decided*.
+    //
+    // Written because the sampled version could pass on the roll of one seed:
+    // the ravager table sat at exactly 1.5 commons per rare for a hundred
+    // specs, so 4000 draws landing a few either side of the line was the whole
+    // margin, and one more rare row (spec 190) tipped it. Weights have no seed
+    // to be lucky with, and this fails the moment somebody adds a rare entry
+    // without the common weight to carry it -- on the table they changed,
+    // named, rather than on whichever one the sampler noticed first.
+    for (const [monsterId, table] of DROP_TABLES) {
+      const weight = { common: 0, rare: 0, exceptional: 0 };
+      for (const entry of table.entries) weight[rarityOf(entry.defId)] += entry.weight;
+      expect(weight.common, monsterId).toBeGreaterThanOrEqual(weight.rare * 1.5);
+      expect(weight.rare, monsterId).toBeGreaterThanOrEqual(weight.exceptional * 3);
+    }
+  });
 });

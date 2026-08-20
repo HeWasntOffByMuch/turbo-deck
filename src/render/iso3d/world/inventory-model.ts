@@ -58,13 +58,20 @@ const ICONS: Readonly<Record<string, string>> = {
   'trinket.swiftband': 'item:trinket',
   'trinket.bloodstone': 'item:trinket',
   'potion.minor': 'item:potion',
-  // The four sigils (spec 188). One picture between them on purpose: a sigil is
+  // The sigils (specs 188, 190). One picture between them on purpose: a sigil is
   // a skill in a bag, and what tells them apart is the name in the tooltip and
-  // the ability behind it rather than four variants of the same lozenge.
+  // the ability behind it rather than eleven variants of the same lozenge.
   'sigil.guardBreak': 'item:sigil',
   'sigil.stunningBlow': 'item:sigil',
   'sigil.whirlwind': 'item:sigil',
   'sigil.cripplingStrike': 'item:sigil',
+  'sigil.poisonDart': 'item:sigil',
+  'sigil.rendingCut': 'item:sigil',
+  'sigil.emberToss': 'item:sigil',
+  'sigil.acidSpray': 'item:sigil',
+  'sigil.arcLash': 'item:sigil',
+  'sigil.rimeTouch': 'item:sigil',
+  'sigil.blight': 'item:sigil',
   // The test row's sigil (spec 190). The same picture again: it is a skill in
   // a bag like the four above, and what says it is a test one is its name.
   'sigil.testStatuses': 'item:sigil',

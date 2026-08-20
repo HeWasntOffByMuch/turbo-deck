@@ -39,7 +39,14 @@ export type StatusIconId =
   | 'vulnerable'
   | 'sundered'
   | 'adapted'
-  | 'slowed';
+  | 'slowed'
+  | 'burn'
+  | 'bleed'
+  | 'poison'
+  | 'corrosion'
+  | 'shock'
+  | 'frostbite'
+  | 'decay';
 
 /**
  * Which way a status cuts.
@@ -72,7 +79,7 @@ export interface StatusVisual {
  *
  * Adaptation is per ability -- `adapt:bolt.arcane` -- so it is the one entry
  * here that is not a status id the sim ever writes. A mark over a head cannot
- * say *which* ability it has learned to shrug off, so the eight rows below carry
+ * say *which* ability it has learned to shrug off, so the rows below carry
  * one `adapted` and the packer folds every `adapt:` entry into it, keeping the
  * largest stack count. What is left is still true: this body is getting harder
  * to hurt the same way.
@@ -107,6 +114,43 @@ const DEFINITIONS: readonly StatusVisual[] = [
   // `EntityField.MoveScale`, which is the number a step is multiplied by rather
   // than a picture.
   { id: StatusId.Slowed, wire: 8, name: 'Slowed', kind: 'affliction', icon: 'slowed', maxStacks: 1 },
+
+  // --- the afflictions (spec 190) ----------------------------------------
+  //
+  // Seven rows and the easiest decision in this table: an affliction is
+  // *losing health to something that is still on you*, which is the most
+  // pointable-at condition this game has. A player who cannot see one has no
+  // way to tell being poisoned from being wrong about their own health bar.
+  //
+  // `maxStacks` mirrors the row in `data/damage-over-time.ts`, because it is the
+  // same ceiling: the mark's count and the concentration doing the damage are
+  // one number, and a table that guessed its own would eventually disagree with
+  // the sim about what a player is carrying.
+  //
+  // They all read as one colour, like every other affliction here, and that is
+  // the rule working rather than a shortcoming -- seven warm tones over a head
+  // is a legend. Which one it is, is the glyph's job.
+  { id: StatusId.Burn, wire: 9, name: 'Burn', kind: 'affliction', icon: 'burn', maxStacks: 1 },
+  { id: StatusId.Bleed, wire: 10, name: 'Bleed', kind: 'affliction', icon: 'bleed', maxStacks: 3 },
+  { id: StatusId.Poison, wire: 11, name: 'Poison', kind: 'affliction', icon: 'poison', maxStacks: 5 },
+  {
+    id: StatusId.Corrosion,
+    wire: 12,
+    name: 'Corrosion',
+    kind: 'affliction',
+    icon: 'corrosion',
+    maxStacks: 3,
+  },
+  { id: StatusId.Shock, wire: 13, name: 'Shock', kind: 'affliction', icon: 'shock', maxStacks: 1 },
+  {
+    id: StatusId.Frostbite,
+    wire: 14,
+    name: 'Frostbite',
+    kind: 'affliction',
+    icon: 'frostbite',
+    maxStacks: 1,
+  },
+  { id: StatusId.Decay, wire: 15, name: 'Decay', kind: 'affliction', icon: 'decay', maxStacks: 1 },
 ];
 
 export const STATUS_VISUALS: readonly StatusVisual[] = DEFINITIONS;

@@ -106,6 +106,33 @@ export function aimShape(ability: AbilityDefinition): AimShape {
   // A named body is its own indicator -- the ring goes under it, and a wedge
   // drawn beside it would say something about the blow that is not true.
   if (ability.targeting === 'self' || ability.targeting === 'unit') return { kind: 'none' };
+  // A *declared* shape wins over every inference below it (spec 190). The three
+  // tests that follow read a number that means something else -- a melee wedge,
+  // a blast radius, a shot's girth -- and `area` is the one field that says
+  // outright what the landing tests. `kind: 'area'` never reached any of them,
+  // so an area skill aimed at a point or a direction drew nothing at all: the
+  // one ability kind that *is* a shape was the one kind you could not see.
+  if (ability.area) {
+    const area = ability.area;
+    // A circle the sim centres on the *caster* is deliberately not drawn.
+    // `AimShape` has no way to say "a disc at my own feet": the scene decides
+    // where to lay a shape from its kind alone -- `placed = kind === 'circle'`
+    // puts every circle under the cursor -- so returning one here would draw the
+    // blast somewhere it will not land, which is worse than drawing nothing.
+    // No shipped row reaches this (a caster-origin circle is `targeting: 'self'`
+    // and has already returned above); it is a guard against the next one.
+    if (area.shape === 'circle') {
+      return area.origin === 'aim' ? { kind: 'circle', radius: area.radius } : { kind: 'none' };
+    }
+    // The row's angle is the full opening, and `AimShape` wants the half -- the
+    // same halving `castAngleEps` does, in the same direction, for the same
+    // reason: an author says how wide the mouth is and the geometry wants the
+    // deviation either side.
+    if (area.shape === 'cone') {
+      return { kind: 'cone', halfAngle: (area.angleDeg * Math.PI) / 360, length: area.range };
+    }
+    return { kind: 'line', length: area.range, width: area.width };
+  }
   if (ability.arcCosSq !== undefined) {
     // `arcCosSq` is the squared cosine of the half-angle, which is how
     // `isInCone` avoids a square root per candidate. Undoing it here costs one

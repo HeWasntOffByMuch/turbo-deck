@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { WireStatus } from '../../../server/net/messages.js';
-import { STATUS_VISUALS, visualFor } from '../../../server/data/status-visuals.js';
+import {
+  STATUS_VISUALS,
+  visualFor,
+  type StatusIconId,
+} from '../../../server/data/status-visuals.js';
+import { ALL_DOTS, dotById } from '../../../server/data/damage-over-time.js';
 import { StatusId } from '../../../server/sim/statuses.js';
 import { FADE_TICKS, statusMarks } from './status-marks.js';
 
@@ -133,5 +138,103 @@ describe('statusMarks (spec 186)', () => {
       expect(['boon', 'affliction'], mark.id).toContain(mark.kind);
       expect(mark.name, mark.id).toBeTruthy();
     }
+  });
+});
+
+/**
+ * The afflictions over a body (spec 190).
+ *
+ * Every row spec 186 shipped was something a build *earned*, and losing one
+ * cost nothing but a boon. These seven take health while they are on, so the
+ * mark is the only thing that tells being poisoned apart from being wrong about
+ * your own health bar -- which makes three things worth pinning down.
+ *
+ * **The two tables have to agree.** The affliction is authored in
+ * `data/damage-over-time.ts` and the picture in `data/status-visuals.ts`, and
+ * nothing forces them to name the same thing: a row added to one and not the
+ * other is a mark with no glyph or a mechanic with no mark, and both look fine
+ * from inside their own file.
+ *
+ * **The count is only worth drawing where it can move.** Poison at five is the
+ * whole of that affliction and Burn is the same fire refreshed, so one shows a
+ * number and the other must not -- and the ceiling the clamp uses is the sim's
+ * own, not a second opinion about how deep a poison can get.
+ *
+ * **A window that has passed draws nothing.** Nothing prunes the replicated
+ * list, and a pulse pass that has stopped is invisible from out here, so the
+ * comparison is the only thing that takes the mark off.
+ */
+describe('the afflictions (spec 190)', () => {
+  /**
+   * The glyph each affliction is drawn with.
+   *
+   * Written out rather than read back off the table, because reading the table
+   * would only prove that it agrees with itself -- and a glyph swapped between
+   * two rows is exactly the mistake that survives that.
+   */
+  const GLYPHS: Readonly<Record<string, StatusIconId>> = {
+    [StatusId.Burn]: 'burn',
+    [StatusId.Bleed]: 'bleed',
+    [StatusId.Poison]: 'poison',
+    [StatusId.Corrosion]: 'corrosion',
+    [StatusId.Shock]: 'shock',
+    [StatusId.Frostbite]: 'frostbite',
+    [StatusId.Decay]: 'decay',
+  };
+
+  it('draws every affliction the sim can apply, named and pictured as its own row', () => {
+    for (const row of ALL_DOTS) {
+      // `status` looks the wire index up by id, so a row with no picture at all
+      // fails here rather than going quietly missing from the loop.
+      const marks = statusMarks([status(row.id, 500)], 0);
+      expect(marks, row.id).toHaveLength(1);
+      const mark = marks[0];
+      expect(mark?.id, row.id).toBe(row.id);
+      // One string, in two tables. The name over the head is the one nobody can
+      // check against the mechanic, so it is checked here instead.
+      expect(mark?.name, row.id).toBe(row.name);
+      expect(mark?.icon, row.id).toBe(GLYPHS[row.id]);
+      // Colour comes from the kind and from nothing else, and there is no
+      // reading of any of these seven under which one is good for you.
+      expect(mark?.kind, row.id).toBe('affliction');
+    }
+    expect(ALL_DOTS).toHaveLength(7);
+  });
+
+  it('shows a stacking affliction’s count and clamps it to the sim’s own ceiling', () => {
+    const poison = dotById(StatusId.Poison);
+    const visual = visualFor(StatusId.Poison);
+    // The ceiling the mark clamps to and the concentration doing the damage are
+    // one number, so the two tables are asked to say it together.
+    expect(visual?.maxStacks).toBe(poison?.maxStacks);
+
+    const deep = statusMarks([status(StatusId.Poison, 500, 99)], 0)[0];
+    expect(deep?.showsCount).toBe(true);
+    expect(deep?.stacks).toBe(poison?.maxStacks);
+    // One dart still draws its "1": there the number is live, and hiding it
+    // would read as "this one does not stack".
+    expect(statusMarks([status(StatusId.Poison, 500, 1)], 0)[0]?.showsCount).toBe(true);
+  });
+
+  it('shows no count for an affliction that is refreshed rather than stacked', () => {
+    // A second Ember Toss is the same fire on a new clock, so a count over it
+    // could only ever be a 1.
+    const burn = statusMarks([status(StatusId.Burn, 500)], 0)[0];
+    expect(burn?.showsCount).toBe(false);
+    expect(burn?.stacks).toBe(1);
+    expect(dotById(StatusId.Burn)?.maxStacks).toBe(1);
+  });
+
+  it('draws nothing for an affliction whose window has passed, however stale the delta said', () => {
+    // The delta carries whatever was in the map when it was built, and the pulse
+    // pass stopping is invisible from out here -- so a body that shook a poison
+    // off two seconds ago must not still be wearing five stacks of it.
+    expect(statusMarks([status(StatusId.Poison, 400, 5)], 400)).toHaveLength(0);
+    expect(statusMarks([status(StatusId.Poison, 400, 5)], 520)).toHaveLength(0);
+
+    // And the one still running beside it is untouched: the refusal is per
+    // entry, not a decision about the body.
+    const marks = statusMarks([status(StatusId.Poison, 400, 5), status(StatusId.Burn, 900)], 520);
+    expect(marks.map((mark) => mark.id)).toEqual([StatusId.Burn]);
   });
 });

@@ -48,6 +48,7 @@ import {
   type CrowdPush,
 } from './crowd.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
+import { healingScaleOf, pulseDots } from './damage-over-time.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
 import { regenPoise, staggered } from './poise.js';
 import {
@@ -67,7 +68,7 @@ import type { RewindLookup } from '../world/position-history.js';
 import { abilityById } from '../data/abilities.js';
 import {
   advanceCast,
-  applyDamage,
+  applyToTarget,
   cancelCast,
   projectileHits,
   startCast,
@@ -1211,7 +1212,12 @@ export function step(
         const dy = target.position.y - moved.position.y;
         const length = Math.hypot(dx, dy);
         if (length > blastRadius + target.radius) continue;
-        const hit = applyDamage(ability, shooter, target, rng, tick);
+        // Through the effects seam rather than straight at `applyDamage`
+        // (spec 190): a row with no `effects` is the blow it always was, and one
+        // with them gets its list run. Without this a projectile skill's effects
+        // were encoded, authored, typechecked and silently dropped -- the burst
+        // half of the same hole the direct hit below had.
+        const hit = applyToTarget(ability, shooter, target, rng, tick);
         rng = hit.rng;
         shooter = hit.attacker;
         working.set(target.id, hit.target);
@@ -1221,7 +1227,7 @@ export function step(
       // it, and this is the one path where nothing else would write them back.
       working.set(shooter.id, shooter);
     } else if (struck) {
-      const hit = applyDamage(ability, owner, struck, rng, tick);
+      const hit = applyToTarget(ability, owner, struck, rng, tick);
       rng = hit.rng;
       working.set(struck.id, hit.target);
       working.set(owner.id, hit.attacker);
@@ -1241,7 +1247,25 @@ export function step(
     events.push({ kind: 'despawned', entityId: entity.id });
   }
 
-  // --- 3c: what the dead are worth (spec 156) ----------------------------
+  // --- 3c: what is already in the blood (spec 190) -----------------------
+  //
+  // Every affliction in the world, one tick on. Here rather than anywhere else
+  // because this is the one slot bracketed correctly at both ends: everything
+  // that can *apply* one has run (the casts above, the projectiles above that),
+  // and `creditDeaths` below is driven off this tick's `died` events, so a
+  // pulse that kills has to have said so first.
+  //
+  // It draws nothing from the Rng, which is why it needs none passed to it --
+  // adding a burning body to a fight cannot move a single draw in the world
+  // after it.
+  events.push(
+    ...pulseDots(working, tick, {
+      isHostile: (a, b) => isHostile(a, b, context.zones),
+      isSimulated,
+    }),
+  );
+
+  // --- 3d: what the dead are worth (spec 156) ----------------------------
   // Between the fighting and the sweep, because it reads bodies that are about
   // to be removed: a `died` event names a victim whose position, spawner and
   // assist marks all disappear on the next pass. Driven off events rather than
@@ -1251,10 +1275,10 @@ export function step(
   nextEntityId = credited.nextEntityId;
   events.push(...credited.events);
 
-  // --- 3d: motes drift, are collected, and fade -------------------------
+  // --- 3e: motes drift, are collected, and fade -------------------------
   events.push(...advanceMotes(working, tick, context));
 
-  // --- 3e: the herd answers (spec 163) ----------------------------------
+  // --- 3f: the herd answers (spec 163) ----------------------------------
   // Driven off this tick's `hit` events, which is what bounds it: a body rallied
   // here was not itself hit, so it raises no call of its own and the shout
   // carries exactly one hop per blow. Before the sweep below, deliberately --
@@ -1430,7 +1454,13 @@ export function advanceProgression(
   if (armed && !hurt) {
     statuses = clearStatus(statuses, StatusId.SecondWindSpent);
   } else if (hurt && !hasStatus(statuses, StatusId.SecondWindSpent, tick)) {
-    health = Math.min(entity.stats.maxHealth, health + entity.stats.maxHealth * traits.secondWindHeal);
+    // Suppressed like every other restoration (spec 190). Second Wind bypasses
+    // `applyHealing` entirely, so a Decay that only reached that function would
+    // stop working at exactly the moment a Constitution build needs it -- which
+    // is the one moment somebody would notice and file it as a bug.
+    const comeback =
+      entity.stats.maxHealth * traits.secondWindHeal * healingScaleOf(statuses, tick);
+    health = Math.min(entity.stats.maxHealth, health + comeback);
     statuses = applyStatus(statuses, StatusId.SecondWindSpent, tick, SECOND_WIND_COOLDOWN_TICKS);
   }
 

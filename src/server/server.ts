@@ -65,6 +65,8 @@ import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
 import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
 import { applyStatus, adaptedKey } from './sim/statuses.js';
+import { clearAfflictions } from './sim/damage-over-time.js';
+import { dotById, dotDurationTicks } from './data/damage-over-time.js';
 import { ADAPTED_ID, STATUS_VISUALS } from './data/status-visuals.js';
 import {
   isRevealed,
@@ -2639,6 +2641,14 @@ export class GameServer implements AdminHost {
       // momentum you had built, and never leaves you unable to start again.
       fallbackCharges: entity.stats.traits.fallbackCharges,
       restoration: 0,
+      // Afflictions, and afflictions only (spec 190). `respawn` has never
+      // cleared `statuses` and nothing had ever noticed, because until now no
+      // status could hurt you -- a player who died burning would have come back
+      // burning and taken the next pulse standing on the spawn pad. The boons
+      // stay: death already costs the meter and the run, and taking the Flow or
+      // the Attunement somebody built as well is not what it is meant to charge
+      // for.
+      statuses: clearAfflictions(entity.statuses),
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
       targetId: null,
@@ -3164,6 +3174,17 @@ export class GameServer implements AdminHost {
         // than the real thing can: every one of these is read by the sim through
         // the same `statusOf`, and what a demo Exposed does to a blow is exactly
         // what a real one does. Nothing here draws from `state.rng`.
+        //
+        // Spec 190 made one half of that sentence load-bearing rather than
+        // reassuring. An affliction written into `statuses` **does** damage, so
+        // the seven of them get their own authored length and a real magnitude
+        // rather than the demo window and a zero: at zero the mark would be a
+        // lie -- a body drawn burning that is not burning -- and over ten
+        // seconds all seven at once would kill whoever the developer pointed
+        // this at. Their marks therefore fade before the rest of the row does,
+        // which is the honest trade: what is being demonstrated is the mark, and
+        // a mark that outlives the thing it marks is the failure this table
+        // exists to prevent.
         const reach = Math.max(1, magnitude);
         const until = this.state.tick + GameServer.STATUS_DEMO_TICKS;
         let marked = 0;
@@ -3178,9 +3199,18 @@ export class GameServer implements AdminHost {
             // demonstrated through a real member of the family rather than by
             // inventing a key nothing else would ever read.
             const id = visual.id === ADAPTED_ID ? adaptedKey('melee.slash') : visual.id;
-            statuses = applyStatus(statuses, id, this.state.tick, GameServer.STATUS_DEMO_TICKS, {
-              maxStacks: visual.maxStacks,
-            });
+            const affliction = dotById(id);
+            statuses = applyStatus(
+              statuses,
+              id,
+              this.state.tick,
+              affliction ? dotDurationTicks(affliction) : GameServer.STATUS_DEMO_TICKS,
+              {
+                maxStacks: visual.maxStacks,
+                // A neutral caster's spell power. Every other row ignores it.
+                ...(affliction ? { magnitude: 1 } : {}),
+              },
+            );
           }
           this.state = {
             ...this.state,
