@@ -46,7 +46,7 @@
  * throws out everything that moves on its own -- which is most of what a
  * sweeping tree canopy is -- and keeps everything that does not, which is a
  * body standing still wearing paint. This probe does that once per page load
- * (control and each of the three afflictions independently), and then compares
+ * (control and each affliction independently), and then compares
  * each affliction's stable frame against the control's stable frame, counting
  * only pixels both sides agree are reliable.
  *
@@ -119,25 +119,31 @@ const VIEWPORT = { width: 1280, height: 800 } as const;
 const SEED = 20260806;
 
 /**
- * Three of the seven, not all seven, per the brief: enough to prove the
- * wiring end to end and to show the range (Burn's warm cling against
- * Frostbite's pale one), and every page load here is genuinely expensive --
- * this environment paints at about 3fps under software GL, a load streams
- * roughly 169 chunks before `[data-world-ready="true"]` fires, and the sim
- * then has to run long enough for a cling to establish and a pulse or two to
- * land, twice over a beat apart for the stability filter. Shock is the one
- * left out rather than any other: its own tell -- an arc jumping to the
- * nearest hostile neighbour -- is Burn's `spreadRadius` mechanism restated on
- * a different row (see `sim/damage-over-time.ts`), so of the three not
- * covered here it is the one whose *wiring* claim is least distinct from one
- * already being exercised. The per-affliction art itself (is Poison green
- * against Corrosion's acid, is Shock's cling actually absent since it does
- * not stack) is `preview-afflictions-vfx.ts`'s job, which already covers all
- * seven against a controlled rig; this script exists to answer a narrower
- * question -- is any of it connected to the real game -- and three answers
- * that as completely as seven would.
+ * Four of the seven, not all seven. Every page load here is genuinely
+ * expensive -- this environment paints at about 3fps under software GL, a load
+ * streams roughly 169 chunks before `[data-world-ready="true"]` fires, and the
+ * sim then has to run long enough for a cling to establish and a pulse or two
+ * to land, several times over for the sampling filter.
+ *
+ * Which four is not arbitrary. Three of them answer the question this script
+ * exists for -- is any of this connected to the real game -- and Burn against
+ * Frostbite shows the range, a warm cling against a pale one.
+ *
+ * **Shock is here for a different reason, and it is the only one that could
+ * not be answered anywhere else.** It is near-white with an off-blue cast and
+ * Frostbite is a saturated cyan, and whether those two are still two colours
+ * is a question about the *quantizer* -- which `preview-afflictions-vfx.ts`
+ * deliberately does not have, because that rig runs at full resolution with no
+ * retro pass and no palette so that the shapes can be judged. Two blues that
+ * separate cleanly there can land on the same handful of steps here. So the
+ * one thing the rig cannot say is exactly the thing these two rows need said,
+ * and they are photographed side by side in the sheet for it.
+ *
+ * The three left out are Bleed, Corrosion and Decay, whose wiring claims are
+ * each restatements of one already exercised here and whose colours are
+ * nowhere near anything else's.
  */
-const AFFLICTIONS = ['burn', 'poison', 'frostbite'] as const;
+const AFFLICTIONS = ['burn', 'poison', 'shock', 'frostbite'] as const;
 
 const CHROMIUM_PATH = process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium';
 /** Software WebGL: there is no GPU in CI or in an agent's container. */
@@ -613,7 +619,7 @@ function stampLabel(sheet: PNG, text: string, atX: number, atY: number): void {
   }
 }
 
-/** Control plus the three afflictions, one labelled row, at a glance. */
+/** Control plus every affliction probed, one labelled row, at a glance. */
 async function assembleContactSheet(frames: ReadonlyMap<string, Frame>): Promise<void> {
   const names = ['control', ...AFFLICTIONS];
   const width = names.length * CELL_W + (names.length + 1) * GAP;
@@ -711,7 +717,7 @@ async function main(): Promise<void> {
       // every time the page boots (`preview-paint.ts` carries the same
       // filter for the same reason): it predates this probe, has nothing to
       // do with afflictions, and fires on every one of the four loads here
-      // (control plus three afflictions), which would otherwise turn a
+      // (control plus the afflictions), which would otherwise turn a
       // script that measured three honest PASSes into a false FAIL over
       // noise this probe did not create and cannot fix.
       if (message.type() === 'error' && !message.text().startsWith('[units]')) problems.push(message.text());
@@ -781,7 +787,9 @@ async function main(): Promise<void> {
       for (const problem of problems) console.error(`  - ${problem}`);
       process.exitCode = 1;
     } else {
-      console.log('\nall three afflictions painted something a browser can actually see');
+      console.log(
+        `\nall ${AFFLICTIONS.length} afflictions painted something a browser can actually see`,
+      );
     }
   } finally {
     await browser.close();
