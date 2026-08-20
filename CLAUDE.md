@@ -122,6 +122,24 @@ docs/            durable direction that outlives one spec. vfx-plan.md, ui/, and
                  implemented**, because the risk with a document like that is a
                  direction reading as a backlog item and getting built as a side
                  effect of something else.
+                 mechanics-vocabulary.md (spec 191) is the other half of that
+                 idea, for words rather than for rewards: one controlled term per
+                 concept with the code that owns it, a grammar for every number a
+                 player is shown, and the Technical Description standard every
+                 skill, sigil, item and status description is written to. The
+                 rule it exists to enforce is that **a description is derived
+                 from the row the sim reads**, never authored beside it --
+                 `data/description.ts` is the one writer, so "two designers
+                 describing the same mechanic write the same lines" is a fact
+                 about the module graph rather than a habit. Its last section is
+                 an open-questions register, and that is not a to-do list: it is
+                 where a mechanic whose behaviour is *unclear* goes, because the
+                 standard's first rule is that an unclear line is omitted rather
+                 than guessed. Applying it found three things wrong in the
+                 tables, including an ability comment and two flavour lines
+                 claiming a lobbed shot flies over what is in its way when
+                 `sim/world.ts` says an arc "buys nothing mechanical" and
+                 `projectileHits` has no height term in it at all.
 schemas/         JSON Schema (draft-07) for the three unit documents and the weapon
                  document (spec 140), committed
                  and validated against in CI. additionalProperties is false
@@ -1254,6 +1272,29 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 `data/description.ts` is what those tables *say* (spec 191) --
+                 the one writer for every player-facing Technical Description,
+                 composing a row into a target, its effects in the row's own
+                 order, its costs, its timings and its notes. Derived rather
+                 than authored, so a retune is described correctly with nothing
+                 to remember, and `GRANT_LABELS` names each field of a
+                 `StatModifier` once so an item and a passive skill cannot
+                 disagree about what `attackSpeedPct` is called. Two rules keep
+                 it honest and both are tested. **Nothing derivable may be
+                 authored**: a `StatusVisual` carries one authored sentence
+                 because what a condition *does* lives in `sim/blow.ts` and
+                 `SCALING` and there is no field here to read it from, and
+                 everything around it -- the stacking rule, the refresh rule,
+                 whether a count is drawn -- is composed. And **a field with no
+                 label draws no line at all**, which is what lets three trait
+                 keys that cannot become a signed quantity reading correctly in
+                 English fall back to their row's own sentence rather than get
+                 an invented number; the test asserts that list exactly, so a
+                 fourth gap fails rather than passing quietly. `description`
+                 on a row is flavour and only flavour -- a mechanical claim
+                 there is a second copy of a rule with nothing keeping it true,
+                 and two of them were already false when the standard was
+                 written.
                  **Active skills** are the fourth thing an `AbilityDefinition`
                  can be (spec 188), and the point of them is how little is new:
                  a skill is `targeting + casting + costs + cooldown + effects`

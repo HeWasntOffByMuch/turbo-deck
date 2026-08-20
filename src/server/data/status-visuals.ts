@@ -72,6 +72,45 @@ export interface StatusVisual {
    * told the ceiling per body. A 1 here means the mark never shows a count.
    */
   readonly maxStacks: number;
+  /**
+   * What the condition does, in one or two sentences (spec 191).
+   *
+   * Authored, and the reason is that this row genuinely does not know: what a
+   * boon does lives in `sim/blow.ts`, `sim/abilities.ts` and `SCALING`, and
+   * there is no field here to derive it from. Everything *around* it -- the
+   * stacking rule, the refresh rule, whether a count is drawn, which colour it
+   * takes -- is derived by `data/description.ts` from the fields above.
+   *
+   * **Absent for an affliction** (spec 190's seven), and that is the same rule
+   * rather than an exception to it: an affliction *is* a rate, a cadence and a
+   * length in `data/damage-over-time.ts`, so `describeStatus` derives its lines
+   * from that row and seven sentences here would be a second copy of
+   * `damagePerSecond` with nothing keeping it true. The rule is one sentence --
+   * **nothing derivable may be authored** -- and a row supplies exactly one of
+   * the two sources. `description.test.ts` fails a row that supplies neither or
+   * both.
+   *
+   * Written to `docs/mechanics-vocabulary.md`: no ticks, no internal pool names,
+   * no magnitude that depends on who applied it. Where a number is a build's
+   * rather than the status's, the line names the source instead of guessing one.
+   */
+  readonly effect?: string;
+  /**
+   * This status has no duration of its own (spec 191).
+   *
+   * True for exactly one row today. `world.ts` applies Prepared with
+   * `Number.MAX_SAFE_INTEGER - tick`, so it never expires on its own and ends
+   * only by being *spent* on the next cast -- and a mark that counted down
+   * toward that would be showing a clock nothing is running.
+   *
+   * Declared here rather than inferred from the wire because the two questions
+   * are different: the client also refuses an absurd remaining time
+   * ({@link INDEFINITE_AFTER_TICKS} in `world/status-marks.ts`), which is the
+   * defence against a *value* it cannot trust -- `expiresAtTick` crosses as a
+   * u32 and that sentinel does not fit in one. This is the design saying the
+   * status has no clock, which is what a description needs to know.
+   */
+  readonly indefinite?: boolean;
 }
 
 /**
@@ -88,22 +127,94 @@ export const ADAPTED_ID = 'adapted';
 
 const DEFINITIONS: readonly StatusVisual[] = [
   // --- boons -------------------------------------------------------------
-  { id: StatusId.Flow, wire: 0, name: 'Flow', kind: 'boon', icon: 'flow', maxStacks: 3 },
-  { id: StatusId.Momentum, wire: 1, name: 'Momentum', kind: 'boon', icon: 'momentum', maxStacks: 1 },
-  { id: StatusId.Prepared, wire: 2, name: 'Prepared', kind: 'boon', icon: 'prepared', maxStacks: 1 },
-  { id: StatusId.Attuned, wire: 3, name: 'Attuned', kind: 'boon', icon: 'attuned', maxStacks: 3 },
+  {
+    id: StatusId.Flow,
+    wire: 0,
+    name: 'Flow',
+    kind: 'boon',
+    icon: 'flow',
+    maxStacks: 3,
+    effect: 'Shortens your backswing. Lost when you are Staggered.',
+  },
+  {
+    id: StatusId.Momentum,
+    wire: 1,
+    name: 'Momentum',
+    kind: 'boon',
+    icon: 'momentum',
+    maxStacks: 1,
+    effect: 'Shortens the wind-up of your next cast. Spent when you cast.',
+  },
+  {
+    id: StatusId.Prepared,
+    wire: 2,
+    name: 'Prepared',
+    kind: 'boon',
+    icon: 'prepared',
+    maxStacks: 1,
+    indefinite: true,
+    effect:
+      'Shortens the wind-up of your next ability. Does not apply to basic attacks.',
+  },
+  {
+    id: StatusId.Attuned,
+    wire: 3,
+    name: 'Attuned',
+    kind: 'boon',
+    icon: 'attuned',
+    maxStacks: 3,
+    effect: 'Each stack reduces what your abilities cost.',
+  },
 
   // --- afflictions -------------------------------------------------------
   // Exposed is the one that most needed a picture: it is worth +15% to
   // *everybody* attacking that body, and until now no member of that everybody
   // could see it.
-  { id: StatusId.Exposed, wire: 4, name: 'Exposed', kind: 'affliction', icon: 'exposed', maxStacks: 1 },
-  { id: StatusId.Vulnerable, wire: 5, name: 'Vulnerable', kind: 'affliction', icon: 'vulnerable', maxStacks: 1 },
-  { id: StatusId.Sundered, wire: 6, name: 'Sundered', kind: 'affliction', icon: 'sundered', maxStacks: 1 },
+  {
+    id: StatusId.Exposed,
+    wire: 4,
+    name: 'Exposed',
+    kind: 'affliction',
+    icon: 'exposed',
+    maxStacks: 1,
+    effect:
+      'Every attacker deals more damage to this target. '
+      + 'How much is set by whoever exposed it.',
+  },
+  {
+    id: StatusId.Vulnerable,
+    wire: 5,
+    name: 'Vulnerable',
+    kind: 'affliction',
+    icon: 'vulnerable',
+    maxStacks: 1,
+    effect:
+      'This body has committed to an action. '
+      + 'Attackers who can read an opening find weak points against it more often.',
+  },
+  {
+    id: StatusId.Sundered,
+    wire: 6,
+    name: 'Sundered',
+    kind: 'affliction',
+    icon: 'sundered',
+    maxStacks: 1,
+    effect: 'Armour is reduced by 10 percentage points, to a minimum of 0%.',
+  },
   // An affliction from the point of view of whoever is trying to land the blow,
   // which is the side the mark is read from: a body that has adapted is a body
   // your bolt is getting worse against.
-  { id: ADAPTED_ID, wire: 7, name: 'Adapted', kind: 'affliction', icon: 'adapted', maxStacks: 8 },
+  {
+    id: ADAPTED_ID,
+    wire: 7,
+    name: 'Adapted',
+    kind: 'affliction',
+    icon: 'adapted',
+    maxStacks: 8,
+    effect:
+      'This body takes less damage from an ability it has been hit by repeatedly. '
+      + 'Each stack reduces it further, up to a cap. The mark does not say which ability.',
+  },
   // The first row here a *skill* writes rather than a build earning (spec 188),
   // and by this table's own rule the most obvious one there is: a body moving
   // at 60% of its own speed is a condition anybody can point at, and the player
@@ -113,7 +224,15 @@ const DEFINITIONS: readonly StatusVisual[] = [
   // the mover's own client needs and the watcher does not -- that one rides
   // `EntityField.MoveScale`, which is the number a step is multiplied by rather
   // than a picture.
-  { id: StatusId.Slowed, wire: 8, name: 'Slowed', kind: 'affliction', icon: 'slowed', maxStacks: 1 },
+  {
+    id: StatusId.Slowed,
+    wire: 8,
+    name: 'Slowed',
+    kind: 'affliction',
+    icon: 'slowed',
+    maxStacks: 1,
+    effect: 'Move speed is reduced. Never below 25% of normal speed.',
+  },
 
   // --- the afflictions (spec 190) ----------------------------------------
   //

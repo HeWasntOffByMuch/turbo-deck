@@ -15,6 +15,8 @@
 import { itemById, rarityOf } from '../../../server/data/items.js';
 import { rarityRow } from '../../../server/data/loot.js';
 import type { StatModifier } from '../../../server/data/modifiers.js';
+import { abilityById } from '../../../server/data/abilities.js';
+import { describeAbility } from '../../../server/data/description.js';
 import {
   EQUIP_SLOTS,
   isSkillSlot,
@@ -250,6 +252,24 @@ export function detailsFor(defId: string): readonly ItemDetail[] {
   ];
   if (definition) {
     lines.push(...statDetails(definition.modifiers));
+    // A sigil's Technical Description is its *skill's* (spec 191). Before this,
+    // a sigil said its tier, that it went in a skill slot, and what it was
+    // worth -- and nothing at all about what it did, because `modifiers` is
+    // deliberately empty on those rows and the stat lines above are all a
+    // tooltip had. The one thing a player wants to know about a sigil was the
+    // one thing it would not say.
+    //
+    // Read through the writer rather than copied here, so a retune of
+    // `data/abilities.ts` reaches the bag with nothing to remember.
+    const skill = definition.activeSkillId === undefined ? null : abilityById(definition.activeSkillId);
+    if (skill) {
+      for (const line of describeAbility(skill).lines) {
+        // `normal` for what it does, `dim` for the small print. The tones are
+        // the view-model's vocabulary and `src/ui/` decides what they look
+        // like, which is why the mapping is here and the colours are not.
+        lines.push({ text: line.text, tone: line.tone === 'note' ? 'dim' : 'normal' });
+      }
+    }
     // `0` is "cannot be sold" rather than "free" (spec 129), so it is said in
     // as many words -- an omitted line would read as an item nobody had priced.
     lines.push(

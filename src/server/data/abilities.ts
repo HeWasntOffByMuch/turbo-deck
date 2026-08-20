@@ -220,6 +220,22 @@ export interface AbilityDefinition {
    * already down, and reordering the two rows is a balance change.
    */
   readonly effects?: readonly SkillEffect[];
+  /**
+   * Flavour, and **only** flavour (spec 191).
+   *
+   * What this ability does is said by `data/description.ts`, derived from the
+   * fields above, so nothing mechanical may be stated here: a claim in this
+   * string is a second copy of a rule with nothing keeping it true, and two of
+   * them were already false when the standard was written. Hunting Shot said it
+   * was "lobbed over whatever is in the way" and that it "lands where the target
+   * is, not where it was" -- but `sim/world.ts` states outright that an arc
+   * "buys nothing mechanical", `projectileHits` is a flat 2D overlap with no
+   * height term, and a point-aimed shot does not track anything.
+   *
+   * Kept as its own field rather than deleted because a game needs a voice. It
+   * is rendered separated from the technical block and is never concatenated
+   * into it.
+   */
   readonly description: string;
 }
 
@@ -252,7 +268,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     damage: 14,
     arcCosSq: 0.5,
     basicAttack: true,
-    description: 'A quick forward cut. Free, and the fallback when nothing else is up.',
+    description: 'A quick forward cut, more habit than decision.',
   },
   {
     id: 'melee.heavy',
@@ -265,7 +281,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 90,
     damage: 42,
     arcCosSq: 0.65,
-    description: 'A long wind-up worth interrupting, and worth landing.',
+    description: 'Both hands, and everything you weigh, put behind one swing.',
   },
   {
     id: 'ranged.shot',
@@ -286,7 +302,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // body's length leaves almost flat (spec 089).
     projectile: { speed: 900, arc: 1, radius: 7, lifetimeTicks: seconds(2), look: 'arrow' },
     basicAttack: true,
-    description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',
+    description: "A hunter's arrow, loosed high over the grass.",
   },
   {
     id: 'ranged.star',
@@ -302,7 +318,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Flat, and therefore stoppable by anything that steps into the line.
     projectile: { speed: 1150, arc: 0, radius: 6, lifetimeTicks: seconds(1.5), look: 'shuriken' },
     basicAttack: true,
-    description: 'A fast flat star. Whatever wanders into the line takes it instead.',
+    description: 'Sharpened on four edges and thrown flat.',
   },
   {
     id: 'bolt.arcane',
@@ -315,7 +331,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 700,
     damage: 18,
     projectile: { speed: 620, arc: 0, radius: 8, lifetimeTicks: seconds(2) },
-    description: 'A flat, fast bolt that travels until it hits something.',
+    description: 'Raw force, shaped just enough to travel.',
   },
   {
     id: 'bolt.lob',
@@ -332,7 +348,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // constant it replaces -- the tell that the constant was always a 45-degree
     // shot with the distance filed off (spec 089).
     projectile: { speed: 300, arc: 1, radius: 12, lifetimeTicks: seconds(4) },
-    description: 'A slow lobbed pot that bursts where it lands.',
+    description: 'A clay pot of banked embers, thrown in a lazy arc.',
   },
   {
     id: 'bolt.seek',
@@ -350,7 +366,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // A third of the optimal arc: it skims rather than lobs, peaking at 42 over
     // its full 480 rather than the 120 a full arc would give it.
     projectile: { speed: 700, arc: 0.35, radius: 9, lifetimeTicks: seconds(3) },
-    description: 'A bolt that follows the body it was aimed at, until it arrives or burns out.',
+    description: 'It leaves knowing the shape of what you pointed it at.',
   },
   {
     id: 'ground.quake',
@@ -363,7 +379,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 420,
     damage: 46,
     radius: 140,
-    description: 'A telegraphed blast at a chosen point. Slow enough to walk out of.',
+    description: 'The ground remembers being struck, and answers.',
   },
   {
     id: 'self.mend',
@@ -376,7 +392,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 0,
     damage: 0,
     healing: 60,
-    description: 'Heals the caster. Long enough to be punished for using it badly.',
+    description: 'Knitting yourself back together is not a quick thing.',
   },
   {
     id: 'self.hearthdraught',
@@ -395,8 +411,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 0,
     damage: 0,
     healingFraction: 0.35,
-    description:
-      'A draught from the hearth flask. Limited charges, refilled by resting in a safe zone.',
+    description: 'A draught from the hearth flask, tasting of ash and home.',
   },
   // --- active skills (spec 188) ------------------------------------------
   //
@@ -440,7 +455,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       { kind: 'poiseDamage', amount: 25 },
       { kind: 'damage' },
     ],
-    description: 'Strips an enemy’s guard and leaves what is left of it hanging.',
+    description: 'You do not get inside a guard politely.',
   },
   {
     id: 'skill.stunningBlow',
@@ -464,7 +479,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       { kind: 'poiseDamage', amount: 30 },
       { kind: 'stun', ticks: seconds(1.4) },
     ],
-    description: 'A heavy, telegraphed blow that puts an enemy on the floor for a moment.',
+    description: 'Wound up from the shoulder, and telegraphed the whole way.',
   },
   {
     id: 'skill.whirlwind',
@@ -487,7 +502,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Damage and nothing else. A status here would be complexity bought with
     // nothing -- the skill's whole statement is "everything near you, at once".
     effects: [{ kind: 'damage' }],
-    description: 'A sweep at everything within reach. Costly, and worth it in a crowd.',
+    description: 'One turn, all the way round, blade out.',
   },
   {
     id: 'skill.cripplingStrike',
@@ -517,7 +532,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
         magnitude: 0.4,
       },
     ],
-    description: 'A cut behind the knee. Little damage, and they are not going anywhere fast.',
+    description: 'A cut behind the knee.',
   },
   // --- the afflictions (spec 190) ----------------------------------------
   //
@@ -800,7 +815,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     arcCosSq: 0.75,
     channelTicks: seconds(2),
     pulseIntervalTicks: seconds(0.25),
-    description: 'Pulses damage in a narrow cone while held. Cancel to stop early.',
+    description: 'It takes something out of them, and you can feel it arrive.',
   },
 ];
 
