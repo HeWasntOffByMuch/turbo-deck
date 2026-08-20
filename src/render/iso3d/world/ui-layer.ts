@@ -32,11 +32,11 @@ import type { Color } from '../../../ui/core/color.js';
 import { Canvas2dSurface } from '../../../ui/render/canvas2d.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
-import type { WindowId } from './key-actions.js';
+import type { WindowId } from './control-actions.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
 import { DEFAULT_SHOW_FPS, type ScaleChoice } from '../../../ui/input/display-store.js';
 
-export type { WindowId } from './key-actions.js';
+export type { WindowId } from './control-actions.js';
 export interface UiLayerOptions extends UiScreensOptions {
   /** The saved scale preference, read at the DOM edge. `'auto'` by default. */
   readonly scale?: ScaleChoice;
@@ -85,6 +85,18 @@ export interface UiReadout {
   readonly tradeYou: string;
   readonly tradeThem: string;
   readonly tradeRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /**
+   * The chat's lines, its field and whether the field is open (spec 189).
+   *
+   * The log is drawn to a canvas like everything else here, so "the line the
+   * other player said is on screen" has no element to ask -- and a browser
+   * assertion that could only say some pixels changed would pass just as
+   * happily over a log showing the wrong thing.
+   */
+  readonly chat: readonly string[];
+  readonly chatOpen: boolean;
+  readonly chatInput: string;
+  readonly chatRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };
@@ -230,6 +242,9 @@ export class UiLayer {
    * right answer only at dpr 1. In the game it would draw the interface at twice
    * its size on a retina screen, off the bottom of the tab.
    */
+  /** The last measured bottom band, in CSS pixels. See {@link applySafeBottom}. */
+  private measuredBand = 0;
+
   private applyCssSize(): void {
     this.element.style.width = `${this.frame.cssWidth}px`;
     this.element.style.height = `${this.frame.cssHeight}px`;
@@ -239,6 +254,12 @@ export class UiLayer {
   update(view: ClientView, nowMs: number): void {
     const began = performance.now();
     this.resize();
+    // The HUD is built after this layer is mounted, so the measurement taken at
+    // the first resize finds nothing to measure. Retried until it does, and then
+    // left alone -- the switch's height does not change while the frame does
+    // not, and a `getBoundingClientRect` in the render loop is a forced layout
+    // every frame for an answer that is settled after the first one.
+    if (this.measuredBand === 0) this.applySafeBottom();
     this.screens.update(view, nowMs);
     const list = this.screens.paint();
     // A still interface is not redrawn.
@@ -319,6 +340,7 @@ export class UiLayer {
     this.applyCssSize();
     this.screens.resize({ width: next.width, height: next.height });
     this.screens.setSafeTop(this.toUi({ x: 0, y: chromeBottomCss() }).y);
+    this.applySafeBottom();
     // The canvas's backing store was just reallocated, so whatever was on it is
     // gone -- and the same draw list would otherwise be skipped as unchanged and
     // leave the interface blank until something moved.
@@ -371,6 +393,25 @@ export class UiLayer {
     this.screens.moveFocus(step);
   }
 
+  // --- chat (spec 189) ------------------------------------------------------
+
+  /** A line arrived from the server. */
+  pushChat(channel: number, from: string, text: string): void {
+    this.screens.pushChat(channel, from, text);
+  }
+
+  get chatOpen(): boolean {
+    return this.screens.chatOpen;
+  }
+
+  openChat(): void {
+    this.screens.openChat();
+  }
+
+  closeChat(): void {
+    this.screens.closeChat();
+  }
+
   /** CSS pixels relative to the host, to UI pixels. The one conversion. */
   private toUi(at: Point): Point {
     const dpr = globalThis.devicePixelRatio || 1;
@@ -378,6 +419,25 @@ export class UiLayer {
       x: Math.floor((at.x * dpr) / this.frame.scale),
       y: Math.floor((at.y * dpr) / this.frame.scale),
     };
+  }
+
+  /**
+   * How far up the DOM HUD's own furniture reaches, told to the screens (spec 189).
+   *
+   * **Measured rather than derived.** The chat is docked bottom-left and what is
+   * already there is the weapon switch -- a column whose height depends on how
+   * many weapons there are and on which layout is in force -- so the arithmetic
+   * version was a second description of somebody else's layout, and it was
+   * wrong: it measured the pool bars, which sit lower and further right, and the
+   * log was drawn straight over the switch.
+   *
+   * Converted as a *distance* rather than as a point: `toUi` maps a position,
+   * and a height is the gap between two of them.
+   */
+  private applySafeBottom(): void {
+    const band = bottomBandCss();
+    this.measuredBand = band;
+    this.screens.setSafeBottom(this.toUi({ x: 0, y: band }).y - this.toUi({ x: 0, y: 0 }).y);
   }
 
   /** Forget what was drawn, so the next frame redraws. For a surface swap. */
@@ -422,6 +482,22 @@ function prefersReducedMotion(): boolean {
  * layout flush, which is the cost this file already learned about the hard way.
  * Zero when there is no bar, which is every headless and embedded case.
  */
+/**
+ * How far up the frame the HUD's own furniture reaches, in CSS pixels (spec 189).
+ *
+ * The topmost edge of anything marked `data-hud-bottom`, which today is the
+ * weapon switch and the pool block. Zero when the HUD has not been built yet,
+ * which is a real state -- see {@link UiLayer.applySafeBottom}.
+ */
+function bottomBandCss(): number {
+  const boxes = Array.from(document.querySelectorAll<HTMLElement>('[data-hud-bottom]'))
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0);
+  if (boxes.length === 0) return 0;
+  const top = Math.min(...boxes.map((rect) => rect.top));
+  return Math.max(0, globalThis.innerHeight - top);
+}
+
 function chromeBottomCss(): number {
   const bar = document.querySelector<HTMLElement>('[data-tab-bar]');
   return bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;

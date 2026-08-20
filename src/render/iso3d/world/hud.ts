@@ -87,7 +87,7 @@ import { ACTION_BAR, sameBar, type ActionSlot } from './action-bar.js';
 import { deathOverlay } from './death.js';
 import { poolBars } from './pool-bars.js';
 import { xpBar, XP_SUBDIVISIONS } from './xp-bar.js';
-import type { WindowId } from './key-actions.js';
+import type { WindowId } from './control-actions.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
 const AIM_HIGHLIGHT = '#7fd4ff';
@@ -792,6 +792,8 @@ export function createHud(
    * lines up.
    */
   const poolBlock = document.createElement('div');
+  // Bottom furniture too. See the weapon switch below.
+  poolBlock.dataset['hudBottom'] = 'pools';
   poolBlock.style.cssText =
     `position:absolute;left:50%;` +
     `bottom:calc(${poolBottom(layout)}px + env(safe-area-inset-bottom));` +
@@ -1079,6 +1081,13 @@ export function createHud(
   // appended when the layout says no -- the update loop below styles these
   // buttons every frame and a conditional `weaponSlots` would put a branch in it.
   const weapons = document.createElement('div');
+  // Furniture along the bottom that the canvas interface must not cover
+  // (spec 189). The chat is docked bottom-left, which is exactly here, and it
+  // is drawn on a canvas stacked over this element -- so how far up the frame
+  // this reaches has to be *measured* rather than derived: the switch is a
+  // column whose height depends on how many weapons there are and on whether
+  // the layout is the compact one.
+  weapons.dataset['hudBottom'] = 'weapons';
   weapons.style.cssText =
     `position:absolute;left:calc(${layout.edge}px + env(safe-area-inset-left));bottom:${bottom};` +
     `display:flex;flex-direction:${layout.weaponDirection};gap:${layout.weaponGap}px;` +

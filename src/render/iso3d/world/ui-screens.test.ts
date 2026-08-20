@@ -15,7 +15,7 @@ import type { Rect } from '../../../ui/core/geom.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
 import { captureLayout, LAYOUT_VERSION, type StoredLayout } from '../../../ui/core/layout-store.js';
-import type { WindowId } from './key-actions.js';
+import type { WindowId } from './control-actions.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 
 const VIEWPORT = { width: 400, height: 300 };
@@ -80,6 +80,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
       onTradeDismiss: () => requests.push('tradeDismiss'),
+      onSay: (text: string) => requests.push(`say:${text}`),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
       onShowFpsChosen: (show) => requests.push(`showFps:${String(show)}`),
@@ -309,7 +310,12 @@ describe('who hears an input', () => {
     const { screens } = harness();
     screens.show('options');
     screens.update(viewFixture(), 0);
-    const field = [...screens.root.content.walk()].find((widget) => widget.focusOnPress);
+    // Visible, because since spec 189 the chat's own field is in the tree too --
+    // in the `hud` layer, which the walk reaches first -- and a closed chat's
+    // field is hidden. An invisible widget is one no press can land on and one
+    // `FocusManager.focus` refuses outright, so the unfiltered walk finds a
+    // field the rest of this test cannot possibly be about.
+    const field = [...screens.root.content.walk()].find((widget) => widget.focusOnPress && widget.visible);
     if (!field) throw new Error('the options window has no text field on it');
     screens.handlePointer('down', { x: field.rect.x + 2, y: field.rect.y + 2 }, 0, NONE);
     expect(screens.root.focus.focused).toBe(field);
@@ -674,6 +680,106 @@ describe('the options window (spec 135)', () => {
     expect(screens.root.contexts.ids()).not.toContain('textEntry');
     expect(screens.handleKey('KeyW', 'down', NONE)).toBe(false);
   });
+
+  /**
+   * The same path for a mouse button (spec 189).
+   *
+   * Every step through the mount's own doors again, because the interesting half
+   * is the routing rather than the screen: an armed capture has to be offered a
+   * press *before* the router gets it, or the press goes to whatever widget is
+   * under the cursor and the binding never happens.
+   */
+  /**
+   * A point the interface does not want, found rather than assumed.
+   *
+   * The window is placed by the mount and moves whenever its content does, so a
+   * hard-coded corner is a test that passes until somebody widens a row. The
+   * whole claim being made here is about a press the interface would otherwise
+   * have let through, so the point has to be one it lets through.
+   */
+  function overTheWorld(screens: UiScreens): { x: number; y: number } {
+    // The options window fills all but an eight-pixel margin of this viewport, so
+    // the candidates start in the margin and the middle is only the fallback.
+    for (const y of [2, 297, 150]) {
+      for (const x of [2, 397, 200]) {
+        if (!screens.handlePointer('move', { x, y }, -1, NONE)) return { x, y };
+      }
+    }
+    throw new Error('the interface wanted every candidate point');
+  }
+
+  it('binds the next mouse button pressed after the button', () => {
+    // `move.north` rather than one of the new rows, and not for convenience: a
+    // movement action landing on a mouse button is the claim spec 189 is really
+    // making -- an action does not know what pressed it, so the vocabulary is
+    // shared in both directions.
+    const map = new InputMap();
+    const { screens, requests } = harness({ map });
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+    const world = overTheWorld(screens);
+
+    pressBindButton(screens, 'move.north');
+    // Over the world, which is where a player's next click most likely lands --
+    // and the one place a press would otherwise have reached gameplay.
+    expect(screens.handlePointer('down', world, 1, NONE)).toBe(true);
+
+    expect(map.bindingsFor('move.north').primary?.code).toBe('MouseMiddle');
+    expect(requests).toContain('bindings');
+  });
+
+  it('eats the release of the press it bound', () => {
+    // The router only emits a click from the widget that took the press, so a
+    // press it never saw cannot become one -- but a release it *does* see while
+    // the capture is open would still reach whatever is under the cursor.
+    const { screens } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+    const world = overTheWorld(screens);
+
+    pressBindButton(screens, 'move.north');
+    expect(screens.handlePointer('down', world, 2, NONE)).toBe(true);
+    expect(screens.handlePointer('up', world, 2, NONE)).toBe(false);
+    // And the capture is over, so the next press is the world's again.
+    expect(screens.root.contexts.ids()).not.toContain('textEntry');
+    expect(screens.handlePointer('down', world, 2, NONE)).toBe(false);
+  });
+
+  it('lets a move through to the router while it waits', () => {
+    // A capture consumes presses and releases and deliberately not moves. Not
+    // symmetry: consuming a move means the router never sees it, so hover stops
+    // updating -- the tooltip, the carry and every button's pressed look freeze
+    // for the length of the capture, which is exactly when a player is moving
+    // the cursor around looking at rows.
+    //
+    // The *return* is true either way and says nothing about this: a capture
+    // pushes `textEntry`, which blocks pointer routing to gameplay whatever
+    // happens here. What is being asserted is that the event still arrived.
+    const { screens } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+
+    const secondary = [...screens.root.content.walk()].find(
+      (widget) => widget.name === 'bind:move.north:secondary',
+    );
+    if (!secondary) throw new Error('no secondary bind button');
+
+    pressBindButton(screens, 'move.north');
+    screens.handlePointer('move', { x: secondary.rect.x + 2, y: secondary.rect.y + 2 }, -1, NONE);
+    expect(screens.root.paintContext().hovered).toBe(secondary);
+  });
+
+  it('binds a wheel notch turned at an armed row', () => {
+    const map = new InputMap();
+    const { screens } = harness({ map });
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+    const world = overTheWorld(screens);
+
+    pressBindButton(screens, 'move.north');
+    expect(screens.handleWheel(world, -1, NONE)).toBe(true);
+    expect(map.bindingsFor('move.north').primary?.code).toBe('WheelDown');
+  });
 });
 
 describe('the tooltip, over the world (spec 136)', () => {
@@ -1015,5 +1121,149 @@ describe('resizing a game window', () => {
     screens.toggle('inventory');
     screens.update(viewFixture(), 48);
     expect(windowSize(screens, 'inventory')).toEqual(resized);
+  });
+});
+
+/**
+ * The chat's wiring (spec 189).
+ *
+ * Everything about *what the chat is* is asserted in `src/ui/screens/chat.test.ts`;
+ * what this file is for is the half that only exists once a screen is mounted --
+ * that a submitted line reaches the client, that Escape and a click away give the
+ * keyboard back, and that a closed log does not take the wheel.
+ */
+describe('the chat', () => {
+  it('shows what the server said, in the order it was said', () => {
+    const { screens } = harness();
+    screens.pushChat(0, 'Ada', 'watch the ravager');
+    screens.pushChat(1, '', 'Grazer was slain by Bru');
+    screens.update(viewFixture(), 0);
+
+    expect(screens.readout().chat).toEqual([
+      'Ada: watch the ravager',
+      'Grazer was slain by Bru',
+    ]);
+  });
+
+  it('sends a line and takes the keyboard back', () => {
+    const { screens, requests } = harness();
+    screens.update(viewFixture(), 0);
+    screens.openChat();
+    expect(screens.chatOpen).toBe(true);
+    // While it is open, the game hears nothing: this is the context the whole
+    // stack exists for, and until now nothing had ever pushed it. Probed without
+    // the character the key would produce, or the probe types into the field it
+    // is measuring -- which is the right behaviour and the wrong assertion.
+    expect(screens.handleKey('Digit1', 'down', NONE)).toBe(true);
+    expect(screens.handleKey('KeyW', 'down', NONE)).toBe(true);
+
+    screens.handleKey('KeyH', 'down', NONE, 'h');
+    screens.handleKey('KeyI', 'down', NONE, 'i');
+    screens.handleKey('Enter', 'down', NONE);
+
+    expect(requests).toContain('say:hi');
+    expect(screens.chatOpen).toBe(false);
+    // ...and the game has the keys again.
+    expect(screens.handleKey('Digit1', 'down', NONE)).toBe(false);
+  });
+
+  it('does not send an empty line, and closes on one', () => {
+    // A blank line broadcast to everyone in the game is never what was meant,
+    // and the key that opened the chat is the one somebody presses to get out.
+    const { screens, requests } = harness();
+    screens.update(viewFixture(), 0);
+    screens.openChat();
+    screens.handleKey('Enter', 'down', NONE);
+
+    expect(requests.filter((entry) => entry.startsWith('say:'))).toEqual([]);
+    expect(screens.chatOpen).toBe(false);
+  });
+
+  it('closes on Escape before it closes a window', () => {
+    const { screens } = harness();
+    screens.show('inventory');
+    screens.update(viewFixture(), 0);
+    screens.openChat();
+
+    expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
+    expect(screens.chatOpen).toBe(false);
+    // The bag is still open: Escape got rid of the thing in front of it.
+    expect(screens.isOpen('inventory')).toBe(true);
+
+    expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
+    expect(screens.isOpen('inventory')).toBe(false);
+  });
+
+  it('gives the keyboard back when a press lands away from the field', () => {
+    // `TextField` pops `textEntry` only when it is *told* it lost focus, and a
+    // press moves focus on its own -- so without this the interface swallows
+    // every key in the game from then on.
+    const { screens } = harness();
+    screens.update(viewFixture(), 0);
+    screens.openChat();
+    expect(screens.root.contexts.ids()).toContain('textEntry');
+
+    screens.handlePointer('down', { x: 399, y: 40 }, 0, NONE);
+    expect(screens.chatOpen).toBe(false);
+    expect(screens.root.contexts.ids()).toEqual(['gameplay']);
+    expect(screens.handleKey('KeyW', 'down', NONE, 'w')).toBe(false);
+  });
+
+  it('walks what was said on Up and Down, and only while it is open', () => {
+    const { screens } = harness();
+    screens.update(viewFixture(), 0);
+
+    screens.openChat();
+    screens.handleKey('KeyA', 'down', NONE, 'a');
+    screens.handleKey('Enter', 'down', NONE);
+    screens.openChat();
+    screens.handleKey('KeyB', 'down', NONE, 'b');
+    screens.handleKey('Enter', 'down', NONE);
+
+    screens.openChat();
+    expect(screens.handleKey('ArrowUp', 'down', NONE)).toBe(true);
+    expect(screens.readout().chatInput).toBe('b');
+    screens.handleKey('ArrowUp', 'down', NONE);
+    expect(screens.readout().chatInput).toBe('a');
+    screens.handleKey('ArrowDown', 'down', NONE);
+    expect(screens.readout().chatInput).toBe('b');
+    // Down past the newest end empties the field rather than sticking.
+    screens.handleKey('ArrowDown', 'down', NONE);
+    expect(screens.readout().chatInput).toBe('');
+
+    screens.closeChat();
+    // Closed, the arrows are the game's again -- they are bound to walking.
+    expect(screens.handleKey('ArrowUp', 'down', NONE)).toBe(false);
+  });
+
+  it('lets the wheel through to the camera while it is closed', () => {
+    // The wheel is camera zoom in the Play tab. A log that took it whenever the
+    // cursor happened to be bottom-left would break zoom in one corner of the
+    // screen, with nothing drawn there to explain why.
+    const { screens } = harness();
+    screens.pushChat(0, 'Ada', 'watch the ravager');
+    screens.update(viewFixture(), 0);
+    const overTheLog = { x: 20, y: VIEWPORT.height - 40 };
+
+    expect(screens.handleWheel(overTheLog, 1, NONE)).toBe(false);
+
+    screens.openChat();
+    screens.update(viewFixture(), 16);
+    expect(screens.handleWheel(overTheLog, 1, NONE)).toBe(true);
+  });
+
+  it('is not a window, so it does not open the ui context or count as open', () => {
+    // It is furniture in the `hud` layer: no title bar, never dragged, nothing
+    // in the layout store. `anyOpen` is what decides whether a click on empty
+    // space still walks the player, and a chat must not change that answer.
+    const { screens, saved } = harness();
+    screens.update(viewFixture(), 0);
+    screens.openChat();
+    screens.update(viewFixture(), 16);
+
+    expect(screens.anyOpen).toBe(false);
+    expect(screens.opened()).toEqual([]);
+    expect(screens.root.contexts.ids()).toEqual(['gameplay', 'textEntry']);
+    expect(saved.flatMap((layout) => layout.windows.map((entry) => entry.id))).not.toContain('chat');
   });
 });

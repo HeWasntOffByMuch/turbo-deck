@@ -12,7 +12,7 @@
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
-import { StatusId } from '../sim/statuses.js';
+import { adaptedKey, StatusId } from '../sim/statuses.js';
 import type { SkillArea, SkillCosts, SkillEffect } from './skill-effects.js';
 
 export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel' | 'area';
@@ -242,6 +242,17 @@ export interface AbilityDefinition {
 function seconds(value: number): number {
   return Math.max(1, Math.round(value * SERVER_TICK_RATE));
 }
+
+/**
+ * How long every status `skill.testStatuses` applies lasts (spec 190).
+ *
+ * One number for all nine rather than nine authored durations, because the row
+ * is a test instrument and not balance: what it is for is having them all live
+ * at the same instant, which is exactly what one shared window guarantees and
+ * what nine tuned ones would keep breaking. Long enough to walk round the body
+ * and look at the mark row, short enough that a tester is not waiting on it.
+ */
+export const TEST_STATUS_TICKS = seconds(8);
 
 const DEFINITIONS: readonly AbilityDefinition[] = [
   {
@@ -522,6 +533,111 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       },
     ],
     description: 'A cut behind the knee.',
+  },
+  // --- the test row (spec 190) -------------------------------------------
+  //
+  // Not content. It exists to put **every mark the client can draw** on one
+  // body in one press, which is otherwise only reachable by building a
+  // character that earns each status and arranging a fight in which they all
+  // overlap -- so the full row, the case `MAX_VISIBLE_STATUSES` bounds and the
+  // one spec 186's own probe found drawn as 3px specks, has never been looked
+  // at in the game.
+  //
+  // It is in no loot table and no vendor stock and its sigil is worth nothing;
+  // `admin:giveItem` is how a tester gets one. Cheap and repeatable on purpose:
+  // free, a short wind-up, and a cooldown short enough to cast again and watch
+  // the three stacking marks climb.
+  {
+    id: 'skill.testStatuses',
+    // Thirteen characters, which is what "Throwing Star" already costs the
+    // refusal log, so it needs no `shortName`. Named plainly rather than
+    // flavoured: somebody who finds this on a bar should be able to tell at a
+    // glance that it is not a skill the game ships.
+    name: 'Test Statuses',
+    kind: 'melee',
+    targeting: 'unit',
+    skill: true,
+    windupTicks: seconds(0.3),
+    castAngleDeg: 35,
+    cooldownTicks: seconds(2),
+    cost: 0,
+    range: 85,
+    // Little to no damage, and `1` rather than `0` deliberately: the damage
+    // effect is what makes this a *blow*, so it raises a `hit`, draws a number,
+    // takes aggro -- and writes `recentlyHit` and `inCombat` on the target
+    // through `markTarget`, which is two of the four statuses with no mark
+    // arriving without this row having to author them.
+    //
+    // It cannot stagger what it marks: an ability blow carries
+    // `staggerPower * abilityPoiseFactor` of guard damage, and that factor is
+    // zero for everybody except the Strength+Intelligence pair.
+    damage: 1,
+    effects: [
+      { kind: 'damage' },
+      // Everything below is one `applyStatus` per row of `STATUS_VISUALS`, in
+      // that table's own wire order so the two lists read against each other.
+      // A tenth row there is a tenth line here.
+      //
+      // Magnitudes are small and **real** rather than zero. A zero magnitude
+      // draws the mark and does nothing, and a `Slowed` mark over a body moving
+      // at full speed is the interface asserting something untrue.
+      { kind: 'applyStatus', statusId: StatusId.Flow, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Momentum,
+        durationTicks: TEST_STATUS_TICKS,
+        // A tenth off the next wind-up: `windupScaleFor` reads this as
+        // `1 - magnitude`.
+        magnitude: 0.1,
+      },
+      { kind: 'applyStatus', statusId: StatusId.Prepared, durationTicks: TEST_STATUS_TICKS },
+      { kind: 'applyStatus', statusId: StatusId.Attuned, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Exposed,
+        durationTicks: TEST_STATUS_TICKS,
+        // A third of what a weak point leaves, so the mark is honest and the
+        // row is still not worth throwing for the damage.
+        magnitude: 0.05,
+      },
+      { kind: 'applyStatus', statusId: StatusId.Vulnerable, durationTicks: TEST_STATUS_TICKS },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Sundered,
+        durationTicks: TEST_STATUS_TICKS,
+        // The same armour a sundering blow takes off, since there is no smaller
+        // number that still means anything.
+        magnitude: 0.1,
+      },
+      {
+        kind: 'applyStatus',
+        // Adaptation is per ability, so the mark needs a key rather than an id
+        // -- and the key is **this row's own**, which is what keeps its blast
+        // radius to nothing: adapting to a skill that deals 1 is invisible,
+        // where adapting to `melee.slash` would quietly change every sword
+        // fight the tester is watching. The packer folds it to one `Adapted`
+        // either way.
+        statusId: adaptedKey('skill.testStatuses'),
+        durationTicks: TEST_STATUS_TICKS,
+        maxStacks: 8,
+      },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Slowed,
+        durationTicks: TEST_STATUS_TICKS,
+        // Visibly slower and nowhere near `SLOW_DEFAULTS.maxMagnitude`: this
+        // has to move `EntityField.MoveScale` to be worth testing, and must not
+        // pin the thing being measured in place.
+        magnitude: 0.2,
+      },
+      // **`secondWind.spent` and `perfectExit.spent` are absent on purpose.**
+      // They are inverted -- carrying one means the mechanic has fired and has
+      // not re-armed -- so applying them would silently switch two mechanics off
+      // on whatever is being measured. Neither has a mark, so nothing is missing
+      // from the picture this row exists to produce.
+    ],
+    description:
+      'A test blow: no damage worth the name, and every status the game can show, at once.',
   },
   {
     id: 'channel.drain',

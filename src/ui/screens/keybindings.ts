@@ -2,7 +2,9 @@
  * The screen that edits the map (spec 125).
  *
  * A row per action: its name, its two chords as buttons, and a reset. Clicking a
- * chord button enters *capture* -- the row swallows the next key and binds it.
+ * chord button enters *capture* -- the row swallows the next key, mouse button or
+ * wheel notch and binds it (spec 189). The three go through one function, because
+ * a chord does not remember which device pressed it.
  *
  * Three details that are the difference between this and a list of labels.
  *
@@ -30,6 +32,8 @@ import {
   actionById,
   chordLabel,
   isBindable,
+  pointerCode,
+  wheelCode,
   type ActionCategory,
   type ActionDefinition,
   type Chord,
@@ -59,7 +63,8 @@ export class BindingRow extends Row {
   readonly primaryButton: Button;
   readonly secondaryButton: Button;
   readonly resetButton: Button;
-  private readonly nameLabel: Label;
+  /** Public so a test can measure it: a name too wide for it clips in silence. */
+  readonly nameLabel: Label;
 
   constructor(
     readonly action: ActionDefinition,
@@ -98,8 +103,10 @@ export class BindingRow extends Row {
     const capturing = (slot: BindingSlot): boolean =>
       capture?.actionId === this.action.id && capture.slot === slot;
 
-    this.primaryButton.setLabel(capturing('primary') ? 'Press a key' : chordLabel(binding.primary));
-    this.secondaryButton.setLabel(capturing('secondary') ? 'Press a key' : chordLabel(binding.secondary));
+    // `Press a key` until spec 189, which is now false for three of the rows it
+    // can be sitting on: a mouse button and a wheel notch bind here too.
+    this.primaryButton.setLabel(capturing('primary') ? 'Press...' : chordLabel(binding.primary));
+    this.secondaryButton.setLabel(capturing('secondary') ? 'Press...' : chordLabel(binding.secondary));
     this.resetButton.enabled = map.isModified(this.action.id);
   }
 
@@ -227,6 +234,40 @@ export class KeybindingsScreen extends Column {
       this.cancelCapture();
       return true;
     }
+    return this.captureCode(code, mods);
+  }
+
+  /**
+   * Take a mouse button while capturing (spec 189).
+   *
+   * The same function underneath, because a button is a chord: only the code
+   * differs, and where it came from is not something a binding remembers. A
+   * button past the fifth has no code and is swallowed with the capture left
+   * open, which is what a bare modifier already does -- the alternative is
+   * binding a control the window has no way to name back.
+   *
+   * Returns whether the press was consumed, which is true whenever a capture is
+   * armed: a press the router never sees cannot become a click on whatever the
+   * cursor happened to be over.
+   */
+  capturePointer(button: number, mods: Modifiers): boolean {
+    if (!this.capture) return false;
+    const code = pointerCode(button);
+    if (code === null) return true;
+    return this.captureCode(code, mods);
+  }
+
+  /** Take a wheel notch while capturing (spec 189). `notches` is the UI's sign. */
+  captureWheel(notches: number, mods: Modifiers): boolean {
+    if (!this.capture) return false;
+    const code = wheelCode(notches);
+    if (code === null) return true;
+    return this.captureCode(code, mods);
+  }
+
+  private captureCode(code: string, mods: Modifiers): boolean {
+    const active = this.capture;
+    if (!active) return false;
     if (!isBindable(code)) return true;
 
     const chord = chordOf(code, mods);
@@ -328,7 +369,9 @@ export class KeybindingsScreen extends Column {
 const CATEGORY_LABELS: Readonly<Record<ActionCategory, string>> = {
   movement: 'Movement',
   combat: 'Combat',
+  world: 'World',
   skillbar: 'Skillbar',
+  camera: 'Camera',
   ui: 'UI',
   debug: 'Debug',
 };
