@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { PROP_REGION_SIZE } from '../props.js';
 import { MapWorkerCore, transfersOf } from './map-worker-core.js';
 import { createMapWorker } from './map-worker-client.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
@@ -301,7 +302,7 @@ describe('the handle', () => {
     expect(handle.threaded).toBe(false);
 
     const doc = document();
-    handle.send({ kind: 'map', info: infoOf(doc) });
+    handle.send({ kind: 'map', info: infoOf(doc), propRegionSize: PROP_REGION_SIZE });
     for (const held of heldChunks(doc)) handle.send({ kind: 'chunk', held });
     handle.send({ kind: 'nav', radius: 16 });
 

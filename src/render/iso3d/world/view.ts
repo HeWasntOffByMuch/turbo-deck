@@ -65,15 +65,15 @@ import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud } from './hud.js';
 import { ChunkIngest } from './chunk-ingest.js';
-import { parsePerfFlags } from './perf-flags.js';
+import { parsePerfFlags, parsePropRegionSize } from './perf-flags.js';
 import { FrameBudget } from './frame-budget.js';
 import { createMapWorker } from './map-worker-client.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
-import { FrameMeter } from './fps-meter.js';
+import { CostMeter, FrameMeter } from './fps-meter.js';
 import { createFpsOverlay } from './fps-overlay.js';
-import { PROP_REGION_SIZE } from '../props.js';
+import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize } from '../props.js';
 import {
   abilityForSlot,
   actionBarFor,
@@ -424,6 +424,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // setting. See perf-flags.ts for why the frame is being taken apart this way.
   const perfFlags = parsePerfFlags(location.search);
   scene.setPerfFlags(perfFlags);
+  // Before a single prop is bucketed (spec 195), and before the worker is told
+  // about the map -- the size rides that message, so both threads agree by
+  // construction rather than by both happening to read the same URL.
+  setPropRegionSize(parsePropRegionSize(location.search) ?? PROP_REGION_SIZE);
   let streamed: StreamedMap | null = null;
   /**
    * The meshing queue and the prop-region bookkeeping (spec 165).
@@ -434,7 +438,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   const ingest = new ChunkIngest({
     settleMs: PROP_SETTLE_MS,
-    regionSize: PROP_REGION_SIZE,
+    regionSize: propRegionSize(),
     regionsPerFlush: PROP_REGIONS_PER_FRAME,
     incompleteHoldMs: PROP_INCOMPLETE_HOLD_MS,
   });
@@ -520,6 +524,26 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   const frames = new FrameMeter();
   /**
+   * What advancing the simulation costs the frame (spec 192).
+   *
+   * The one number the meter could not produce and the one the frame graph most
+   * needed: single-player is a whole server on this thread, so `server.tick()`
+   * is frame time, and a tick that got more expensive arrives as a picket fence
+   * rather than as a stall -- below 60fps the accumulator drains one tick on
+   * some frames and two on others. Reading the graph alone, that is
+   * indistinguishable from a renderer that got slower.
+   *
+   * Measured on a socket too, where there is no server here to time: what is
+   * left is the predictor, which walks the same colliders per predicted tick and
+   * replays its whole input buffer on a correction. That half never leaves this
+   * thread, so a reading of zero would be a lie about the remote path.
+   */
+  const simCosts = new CostMeter();
+  const simTicks = new CostMeter();
+  /** The frame's JavaScript, either side of the first draw call (spec 194). */
+  const prepCosts = new CostMeter();
+  const drawCosts = new CostMeter();
+  /**
    * The streaming cost of recent frames, decayed rather than averaged.
    *
    * A spike has to stay legible long enough to read -- at the frame rates this
@@ -566,7 +590,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // Both sides are then fed the same chunks in the same order, and neither
       // is authoritative over the other -- this side answers `heightAt` now,
       // that side answers what the ground looks like later.
-      mapWorker.send({ kind: 'map', info: map.info });
+      mapWorker.send({ kind: 'map', info: map.info, propRegionSize: propRegionSize() });
       // Reported, not acted on (spec 146). Under 144 a mismatch turned
       // prediction off, because the alternative was colliding against a forest
       // the server did not have; now the colliders come from the stream either
@@ -2333,6 +2357,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     sinceDelta += elapsed;
 
     let ticks = 0;
+    // The whole loop, not `server.tick()` alone (spec 192): what the frame pays
+    // to advance the simulation includes releasing the wire, the client's own
+    // clock and the input it sends, and a number that timed only the server
+    // would read as zero on a socket -- where the predictor is the entire cost.
+    const simStart = performance.now();
     while (accumulator >= tickMs) {
       accumulator -= tickMs;
       ticks += 1;
@@ -2354,6 +2383,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       client.advanceTick();
       sendInput();
     }
+    simCosts.push(performance.now() - simStart);
+    simTicks.push(ticks);
 
     // Turning the view is the player's job now (spec 129), which is why nothing
     // carves a hole in the rock any more. Driven off the held set rather than
@@ -2410,6 +2441,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       targetEntityId: targetId,
       aim: aimIndicator(view, view.self ?? { x: 0, y: 0 }),
     });
+    // Split at the first draw call (spec 194), because "the renderer is slow"
+    // has two unrelated causes: too much JavaScript preparing the frame, and too
+    // many commands handed to the driver. The remainder the overlay computes --
+    // the frame minus the sim, the preparation and the submission -- is
+    // everything this thread cannot see, which is where the answer lives when
+    // all three of these are small and the frame is not.
+    const cost = scene.renderCost();
+    prepCosts.push(cost.prepareMs);
+    drawCosts.push(cost.drawMs);
     // The overlay is laid over the *drawn image*, not over the window (spec 099).
     // Every anchor it positions from is in canvas space, so under a letterbox an
     // overlay spanning the whole view would sit the health bars off their bodies
@@ -2496,6 +2536,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       worstStage,
       worstStageMs,
       scene.renderStats(),
+      { ...simCosts.read(), ticksPerFrame: simTicks.read().meanMs },
+      { prepareMs: prepCosts.read().meanMs, drawMs: drawCosts.read().meanMs },
     );
 
     // Where the view is looking from and how wide it frames, for the probes.

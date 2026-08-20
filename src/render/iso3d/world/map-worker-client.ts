@@ -76,7 +76,10 @@ function inProcess(onReply: (reply: MapWorkerReply) => void): MapWorkerHandle {
     send(request) {
       switch (request.kind) {
         case 'map':
-          core.setMap(request.info);
+          // The twin shares this thread's module graph, so the size is already
+          // set -- passed anyway, because a twin that took a different path
+          // from the worker is a twin that stops proving anything.
+          core.setMap(request.info, request.propRegionSize);
           return;
         case 'chunk':
           for (const out of core.addChunk(request.held)) onReply(out);

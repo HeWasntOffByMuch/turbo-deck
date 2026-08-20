@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { parsePerfFlags } from './perf-flags.js';
+import { parsePropRegionSize, parsePerfFlags } from './perf-flags.js';
 
 describe('parsePerfFlags', () => {
   it('is all off with nothing asked for', () => {
@@ -40,5 +40,26 @@ describe('parsePerfFlags', () => {
     const flags = parsePerfFlags('?perf= NoShadow , nonsense ');
     expect(flags.noShadow).toBe(true);
     expect(flags.any).toBe(true);
+  });
+});
+
+describe('parsePropRegionSize', () => {
+  it('is null when nobody asked, so the caller keeps the shipped size', () => {
+    expect(parsePropRegionSize('')).toBeNull();
+    expect(parsePropRegionSize('?seed=7')).toBeNull();
+    expect(parsePropRegionSize('?props=')).toBeNull();
+  });
+
+  it('reads a size', () => {
+    expect(parsePropRegionSize('?props=550')).toBe(550);
+    expect(parsePropRegionSize('?perf=noshadow&props=400')).toBe(400);
+  });
+
+  it('refuses what would draw a blank field rather than passing it on', () => {
+    // `Math.floor(x / 0)` is Infinity, so every prop in the world buckets into
+    // one region and nothing reports an error. Same for a negative or a typo.
+    expect(parsePropRegionSize('?props=0')).toBeNull();
+    expect(parsePropRegionSize('?props=-550')).toBeNull();
+    expect(parsePropRegionSize('?props=wide')).toBeNull();
   });
 });

@@ -39,23 +39,85 @@ import {
  */
 
 /**
- * Edge of one batching region, in world units. Big enough that the view holds
- * only a few (so the draw-call count stays low), small enough that a region is
- * a meaningful fraction of what is on screen (so culling actually bites).
+ * Edge of one batching region, in world units.
+ *
+ * 2200 since spec 195, measured rather than reasoned. It was 1100, on the
+ * argument that a region should be "small enough to be a meaningful fraction of
+ * what is on screen, so culling actually bites" -- and culling does bite, and it
+ * turns out not to matter. The frame is bound by **draw calls**, not by
+ * triangles, so cutting geometry by submitting more batches trades the cheap
+ * resource for the expensive one.
+ *
+ * Read off a real GPU at one spot, one session, one variable (`?props=`):
+ *
+ * ```
+ *  region   draws     tris    prep    draw    work     fps
+ *     400     701     321k     5.7    17.5    23.5      35
+ *     550     604     406k     5.2    14.2    19.6      43
+ *    1100     358     639k     3.9     7.0    11.1      60
+ *    2200     287    1594k     3.1     5.3     8.6      60
+ *    3000     291    2863k     3.2     4.4     7.8      60
+ * ```
+ *
+ * Every step *down* from 1100 cost about 30us per added draw call and bought
+ * nothing for the triangles it saved. Every step up paid. 2200 is where it
+ * stops: draws bottom out there (287 against 3000's 291), so the mechanism
+ * producing the win is spent, and 3000 buys 0.8ms that the draw count does not
+ * explain while costing 1.8x the triangles and 1.9x the worker latency below.
+ *
+ * Walking agrees, which was the half standing still could not show. A region
+ * costs the frame ~1ms to adopt *whatever its size* -- the per-instance work is
+ * on the worker since spec 181 -- so what size changes is how often one is
+ * rebuilt: over a 40-second walk, 95 rebuilds at 1100, 32 at 2200, 18 at 3000.
+ *
+ * What it costs is worker *latency*: composing one region is 33ms at 1100 and
+ * 81ms at 2200, and while that runs the chunk meshes behind it wait. Throughput
+ * is no worse -- there are a quarter as many regions -- but a single arrival
+ * hogs the thread for longer.
+ *
+ * The caveat worth keeping: this is one machine's answer. A GPU short of
+ * triangle throughput rather than draw calls would want the opposite, and
+ * `?props=` is how to ask it again rather than re-deriving this from scratch.
  */
-const REGION_SIZE = 1100;
+export const PROP_REGION_SIZE = 2200;
 
 /**
- * The square the prop field batches by, in world units.
+ * The size in force, which is {@link PROP_REGION_SIZE} unless a measurement
+ * asked for another (spec 195).
  *
- * Exported since spec 086: the editor rebuilds the regions an edit touched
- * rather than the whole field, so it has to be able to name them.
+ * Module state, deliberately, and set exactly once before any prop is bucketed:
+ * `propRegionKey` is a free function called from both threads and from the
+ * editor, and threading a size through every one of them would be a refactor in
+ * service of a switch that exists to be thrown twice and read off a meter.
+ *
+ * The rule that keeps it safe is that **both threads must agree**, so the size
+ * rides the worker's `map` message rather than being read from the URL twice --
+ * a worker bucketing props at 1100 while the main thread asks for regions at 550
+ * is a field with holes in it.
  */
-export const PROP_REGION_SIZE = REGION_SIZE;
+let regionSize = PROP_REGION_SIZE;
+
+/** What the field is batching by right now. */
+export function propRegionSize(): number {
+  return regionSize;
+}
+
+/**
+ * Change it, before anything has been bucketed.
+ *
+ * Refuses anything that is not a positive finite number, because the failure it
+ * would otherwise produce -- `Math.floor(x / 0)` is `Infinity`, and every prop
+ * lands in one region called "Infinity,Infinity" -- is a blank world with no
+ * error anywhere.
+ */
+export function setPropRegionSize(size: number): void {
+  if (!Number.isFinite(size) || size <= 0) return;
+  regionSize = size;
+}
 
 /** Which batching region a world point falls in. */
 export function propRegionKey(x: number, z: number): string {
-  return `${Math.floor(x / REGION_SIZE)},${Math.floor(z / REGION_SIZE)}`;
+  return `${Math.floor(x / regionSize)},${Math.floor(z / regionSize)}`;
 }
 
 /** Seeds for the per-instance variation hashes, so the draws stay independent. */

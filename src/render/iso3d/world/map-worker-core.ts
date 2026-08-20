@@ -32,7 +32,7 @@ import {
   navGridFor,
 } from '../../../sim/pathfinding.js';
 import { buildChunkArrays, footprintOf } from '../terrain-arrays.js';
-import { buildRegionInstances, propRegionKey } from '../props.js';
+import { buildRegionInstances, propRegionKey, setPropRegionSize } from '../props.js';
 import type { WorldRect } from './chunk-ingest.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 
@@ -49,7 +49,11 @@ export class MapWorkerCore {
   private shape: ReturnType<StreamedMap['snapshotColliders']> | null = null;
 
   /** Start over on a fresh map. A different `mapId` is different ground. */
-  setMap(info: MapInfoMessage): void {
+  setMap(info: MapInfoMessage, propRegionSize?: number): void {
+    // Before anything is bucketed (spec 195), and on this thread's own copy of
+    // the module: a worker has its own module graph, so the main thread setting
+    // it does not reach here.
+    if (propRegionSize !== undefined) setPropRegionSize(propRegionSize);
     this.streamed = new StreamedMap(info);
     this.shape = this.streamed.snapshotColliders();
   }
