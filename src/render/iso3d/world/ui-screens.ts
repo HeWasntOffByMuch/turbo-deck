@@ -48,6 +48,11 @@ import { BODY_FONT } from '../../../ui/text/font.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import { CharacterScreen } from '../../../ui/screens/character.js';
 import { ChatScreen, chatInsets, type ChatLineView } from '../../../ui/screens/chat.js';
+import {
+  SelectedUnitScreen,
+  selectedUnitInsets,
+} from '../../../ui/screens/selected-unit.js';
+import { ActionBarScreen, actionBarInsets } from '../../../ui/screens/action-bar.js';
 import { InventoryScreen, type SlotRef } from '../../../ui/screens/inventory.js';
 import { KeybindingsScreen } from '../../../ui/screens/keybindings.js';
 import { ShopScreen } from '../../../ui/screens/shop.js';
@@ -67,6 +72,9 @@ import { shopViewOf } from './shop-model.js';
 import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './control-actions.js';
 import { ChatLog, revealAt } from './chat-log.js';
+import { selectionOf } from './selection.js';
+import { ACTION_BAR, abilityForSlot, type ActionSlot } from './action-bar.js';
+import { actionBarViewOf } from './action-bar-model.js';
 import { escapeTaken, reachesGameplay, type Routing } from './ui-routing.js';
 
 export interface UiScreensOptions {
@@ -112,6 +120,15 @@ export interface UiScreensOptions {
    * time is an argument: `src/ui/` may not touch the platform, and a save no
    * test can observe is a save nothing checks.
    */
+  /**
+   * A slot on the action bar was pressed (spec 196).
+   *
+   * It hands back an *ability id* rather than an index, because which ability a
+   * slot holds is decided in one place and this is not it -- the mount asks
+   * `abilityForSlot` exactly as the key path does, so a button and a key cannot
+   * come to different answers about what slot 3 casts.
+   */
+  readonly onCastSlot: (abilityId: string) => void;
   /**
    * A line the player wants to say (spec 189).
    *
@@ -223,6 +240,39 @@ export class UiScreens {
   private readonly chatDock = new Anchor('chat:dock');
   private chatRevision = -1;
   private chatLines: readonly ChatLineView[] = [];
+  /** The mini HUD for whatever was left-clicked (spec 196). */
+  private readonly selectedUnit: SelectedUnitScreen;
+  private readonly selectionDock = new Anchor('selected:dock');
+  /**
+   * Which body is selected. Client state, exactly like {@link chatLog}: nothing
+   * about a selection is replicated and the server is never told.
+   *
+   * Held here rather than in `view.ts` for the reason the chat log is: the
+   * screen that draws it and the state behind it belong on the same side of the
+   * canvas, and this half is the one `mount-presentation.test.ts` can run.
+   */
+  private selectedId: number | null = null;
+  /** The bar along the bottom (spec 196), and what it holds. */
+  private readonly actionBar: ActionBarScreen;
+  private readonly actionBarDock = new Anchor('bar:dock');
+  /**
+   * The five slots, as `view.ts` built them.
+   *
+   * Handed in rather than derived here, so the bar the player *presses keys
+   * against* and the bar they see are one array -- which is the rule spec 164
+   * wrote `action-bar.ts` for, and the reason `?slots=` still works without this
+   * half knowing the query string exists.
+   */
+  private barPlan: readonly ActionSlot[] = ACTION_BAR;
+  /** What is being aimed, so the slot it came from is lit (spec 080). */
+  private aimingAbilityId: string | null = null;
+  /**
+   * Whether a slot names the key that fires it (specs 094, 196).
+   *
+   * True until told otherwise, because that is what a keyboard gets and a
+   * keyboard is what this half has no way to ask about.
+   */
+  private showsSlotKeys = true;
 
   /** Windows whose size and position have been chosen. See the header. */
   private readonly placed = new Set<WindowId>();
@@ -246,6 +296,19 @@ export class UiScreens {
    * touch the DOM.
    */
   private safeTop = 0;
+  /**
+   * How far down the *top-right corner's* own furniture reaches, in UI pixels.
+   *
+   * A third safe edge beside {@link safeTop} and {@link safeBottom}, and it has
+   * to be its own number rather than a larger `safeTop`: the seven tuning
+   * popovers occupy that corner and nothing else, so folding their depth into
+   * the top margin would push every window down the screen to clear something
+   * none of them is under. Zero where they are not built at all, which is every
+   * handheld and every headless case.
+   */
+  private safeTopRight = 0;
+  /** How much of the frame's floor the experience strip has. See below. */
+  private actionBarFloor = 0;
   /**
    * How far up from the bottom edge the DOM HUD's own furniture reaches, in UI
    * pixels. The counterpart to {@link safeTop}, and what keeps the chat clear of
@@ -461,6 +524,41 @@ export class UiScreens {
       this.chatLog.touch(this.now);
     };
 
+    // The selected body's readout (spec 196), and the `hud` layer's second
+    // occupant. Furniture on the chat's terms: no title bar, never dragged,
+    // nothing in the layout store, and `pointerTransparent` throughout -- the
+    // world is underneath and a readout that took a click would be a hole in
+    // the game in one corner of the screen.
+    this.selectedUnit = new SelectedUnitScreen({ theme: THEME });
+    this.selectionDock.pointerTransparent = true;
+    this.selectionDock.padding = selectedUnitInsets(THEME, 0);
+    this.selectionDock.place(this.selectedUnit, 'topRight');
+    this.layers.place('hud', this.selectionDock);
+
+    // The action bar (spec 196), the `hud` layer's third occupant, and the only
+    // one of the three that is *pressable*: the dock and the row pass the
+    // pointer through and the slots do not.
+    //
+    // Docked at the frame's own bottom rather than above the measured band the
+    // chat clears, and it has to be: the pool block *is* that band and it is
+    // placed beside this bar, so a bar that sat above it would be a loop.
+    this.actionBar = new ActionBarScreen({ theme: THEME, slotCount: this.barPlan.length });
+    this.actionBarDock.pointerTransparent = true;
+    this.actionBarDock.padding = actionBarInsets(THEME, 0);
+    this.actionBarDock.place(this.actionBar, 'bottom');
+    this.layers.place('hud', this.actionBarDock);
+    // In the same layer as the bag's and the sheet's, above every window: a
+    // tooltip is about whatever is under the cursor, and the bar is under it
+    // whether or not something else is open.
+    this.layers.place('tooltip', this.actionBar.tooltip);
+    this.actionBar.onUse = (index) => {
+      // The one gate (spec 164). An empty slot and an index past the last one
+      // are the same nothing here as they are on the key, because both ends ask
+      // the same function.
+      const ability = abilityForSlot(this.barPlan, index);
+      if (ability) options.onCastSlot(ability);
+    };
+
     this.registerWindow('inventory', this.inventory);
     this.registerWindow('character', this.character);
     this.registerWindow('shop', this.shop);
@@ -584,7 +682,7 @@ export class UiScreens {
    * built to ignore a resend anyway, so the whole rebuild was landing on
    * `sameItem` guards sixty times a second. It was 2.7ms of a 1.5ms budget.
    */
-  update(view: ClientView, nowMs: number): void {
+  update(view: ClientView, nowMs: number, drawnTick: number = view.estimatedTick): void {
     this.now = nowMs;
     // Before anything is placed, and before anything is saved. The saved layout
     // is the answer to "where does this window go"; the defaults are only what
@@ -712,6 +810,10 @@ export class UiScreens {
     }
     this.inventory.updateTooltip(nowMs);
     // The sheet's, on the same terms (spec 147).
+    // The bar's, on the same terms -- except that it is never closed, so there
+    // is no shut-window case to clear it for.
+    this.actionBar.tooltip.viewport = this.root.viewport;
+    this.actionBar.updateTooltip(nowMs, THEME.input.tooltipDelayMs);
     this.character.tooltip.viewport = this.root.viewport;
     if (!this.isOpen('character')) this.character.clearTooltip();
     this.character.updateTooltip(nowMs, THEME.input.tooltipDelayMs);
@@ -733,6 +835,43 @@ export class UiScreens {
       lines: this.chatLines,
       reveal: revealAt(this.chatLog.lastAtMs, nowMs, this.chat.isOpen),
     });
+
+    // What the mini HUD draws (spec 196). Derived every frame rather than
+    // remembered, because every fact in it -- health, the statuses, whether the
+    // body is still there at all -- is replicated and moves without anything
+    // here being told.
+    const selected = selectionOf({
+      selectedId: this.selectedId,
+      entities: view.entities,
+      drawnTick,
+    });
+    // A body that has left the replicated set drops the selection rather than
+    // leaving an id pointing at nothing. Entity ids are reused, so a selection
+    // that outlived its body would eventually come back pointing at a stranger.
+    if (selected === null) this.selectedId = null;
+    this.selectedUnit.setView(selected);
+
+    // What the bar draws (spec 196). Every field in it moves during a fight --
+    // the wedge, the seconds, whether a slot can be paid for -- so it is derived
+    // every frame and written into plain fields the widgets read at paint time.
+    // Only an ability's *identity* changing costs a layout pass.
+    this.actionBar.setView(
+      actionBarViewOf({
+        bar: this.barPlan,
+        cooldowns: view.cooldowns,
+        resource: view.resource,
+        restoration: view.restoration,
+        casts: view.casts,
+        selfEntityId: view.selfEntityId,
+        requestedAbilityId: view.requestedAbilityId,
+        aimingAbilityId: this.aimingAbilityId,
+        stats: view.stats,
+        swap,
+        tick: drawnTick,
+        map: this.options.map,
+        showsKeys: this.showsSlotKeys,
+      }),
+    );
 
     this.syncContext();
     this.root.update(nowMs);
@@ -840,9 +979,14 @@ export class UiScreens {
     readonly chatOpen: boolean;
     readonly chatInput: string;
     readonly chatRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly selected: string;
+    readonly selectedRows: readonly string[];
+    readonly selectedRect: Rect | null;
+    readonly barSlots: readonly { readonly id: string; readonly rect: Rect }[];
   } {
     const tabs = this.optionsScreen.tabs;
     const shownTrade = this.isOpen('trade') ? this.trade.view : null;
+    const selectedUnit = this.selectedUnit.view;
     return {
       windows: this.opened(),
       bag: this.inventory.bagSlots.map((cell) => cell.item?.name ?? ''),
@@ -862,6 +1006,25 @@ export class UiScreens {
         { id: 'log', rect: this.chat.log.rect },
         ...(this.chat.isOpen ? [{ id: 'input', rect: this.chat.field.rect }] : []),
       ],
+      // The mini HUD (spec 196), for the reason the chat's lines are here: it
+      // is drawn to a canvas, so "the panel names the body I clicked and lists
+      // what is on it" has no element to ask -- and a harness that could only
+      // say some pixels changed would pass just as happily over a panel showing
+      // the wrong body's statuses. The rows are the *composed* strings, which is
+      // what a player reads.
+      selected: selectedUnit ? `${selectedUnit.name}|${selectedUnit.detail}` : '',
+      selectedRows: selectedUnit
+        ? selectedUnit.statuses.map((row) => `${row.label}|${row.remaining}|${row.tone}`)
+        : [],
+      // Where it is, so the one geometric claim about it -- that it clears the
+      // tuning popovers it is docked under -- can be checked against the DOM on
+      // the other side of the canvas.
+      selectedRect: this.selectedUnit.visible ? this.selectedUnit.rect : null,
+      // The bar's five slots, keyed by what each holds (spec 196). A canvas has
+      // no elements, so "the bar shows the skill I equipped" is otherwise only
+      // answerable by looking at pixels -- and an empty id is exactly what an
+      // empty slot is, which is the state four of the five are in by design.
+      barSlots: this.actionBarSlots().map((slot) => ({ id: slot.ability, rect: slot.rect })),
       // The options window's tab strip, in UI pixels (spec 136). A harness
       // cannot click a tab it cannot find, and every other way of finding one --
       // a guessed offset, a scan for lit pixels -- is a measurement of the
@@ -996,7 +1159,113 @@ export class UiScreens {
 
   /** Told where the app's chrome ends. See {@link safeTop}. */
   setSafeTop(uiPixels: number): void {
-    this.safeTop = Math.max(0, Math.floor(uiPixels));
+    const next = Math.max(0, Math.floor(uiPixels));
+    if (next === this.safeTop) return;
+    this.safeTop = next;
+    this.applySelectionInsets();
+  }
+
+  /**
+   * Told how far down the tuning popovers in the top-right corner reach
+   * (spec 196).
+   *
+   * Measured off the DOM and converted outside, exactly as {@link setSafeBottom}
+   * is, and for the same lesson: the chat's first cut *derived* its clearance
+   * from the wrong furniture and passed every check while sitting on the weapon
+   * switch. There is no arithmetic here that could get it wrong, because there
+   * is no arithmetic -- the number is where those buttons actually end.
+   */
+  setSafeTopRight(uiPixels: number): void {
+    const next = Math.max(0, Math.floor(uiPixels));
+    if (next === this.safeTopRight) return;
+    this.safeTopRight = next;
+    this.applySelectionInsets();
+  }
+
+  /**
+   * The dock's padding, from whichever of the two reaches further down.
+   *
+   * The larger rather than the sum: they are two things occupying one corner,
+   * and the popovers already start below the tab bar.
+   */
+  private applySelectionInsets(): void {
+    this.selectionDock.padding = selectedUnitInsets(
+      THEME,
+      Math.max(this.safeTop, this.safeTopRight),
+    );
+    this.selectionDock.invalidateArrange();
+  }
+
+  /**
+   * Replace what the five slots hold (spec 196).
+   *
+   * Pushed in from `view.ts` every time the equipment changes, for the same
+   * reason the window buttons are pushed rather than read: the equipment is the
+   * state, and a bar that remembered what was last equipped would be a second
+   * opinion about what the player is carrying.
+   */
+  setActionBarPlan(plan: readonly ActionSlot[]): void {
+    this.barPlan = plan;
+  }
+
+  /** Whether a slot names its key. False on a finger, which has no keyboard. */
+  setShowsSlotKeys(shows: boolean): void {
+    this.showsSlotKeys = shows;
+  }
+
+  /** How big one slot is, in UI pixels. See `ActionBarScreen.setSlotSide`. */
+  setActionBarSlotSide(uiPixels: number): void {
+    this.actionBar.setSlotSide(uiPixels);
+  }
+
+  /** Which ability is being aimed, so the slot it came from is lit (spec 080). */
+  setAiming(abilityId: string | null): void {
+    this.aimingAbilityId = abilityId;
+  }
+
+  /**
+   * The box the bar occupies, in UI pixels, or null before it has been laid out.
+   *
+   * Read back rather than declared, because it is the *measured* row: the DOM
+   * HUD places the pool block immediately left of the bar and centred on it, and
+   * a second calculation of the bar's width over there would be a second
+   * description of this one -- the mistake that put the chat log on the weapon
+   * switch.
+   */
+  actionBarBox(): Rect | null {
+    const rect = this.actionBar.rect;
+    return rect.width > 0 && rect.height > 0 ? rect : null;
+  }
+
+  /**
+   * Every slot's box and what it holds, in UI pixels (spec 196).
+   *
+   * For a harness, and for the same reason the bag's cells are published: a
+   * canvas has no elements, so "there are five slots, four of them empty, and
+   * the vial is the last" is otherwise only checkable by looking at pixels.
+   */
+  actionBarSlots(): readonly { readonly ability: string; readonly rect: Rect }[] {
+    return this.actionBar.slots.map((slot, index) => ({
+      ability: this.barPlan[index]?.abilityId ?? '',
+      rect: slot.rect,
+    }));
+  }
+
+  /**
+   * Point the mini HUD at a body, or at nothing (spec 196).
+   *
+   * A *request* like every other callback in this file, and the one piece of
+   * state in the mount the server has no opinion about at all: selecting is a
+   * camera decision, not a game one, so nothing is sent and nothing is
+   * predicted. `null` clears it, which is what a click on empty ground means.
+   */
+  select(entityId: number | null): void {
+    this.selectedId = entityId;
+  }
+
+  /** What is selected, or null. For the readout and for a test. */
+  get selection(): number | null {
+    return this.selectedId;
   }
 
   /**
@@ -1017,6 +1286,27 @@ export class UiScreens {
     this.safeBottom = next;
     this.chatDock.padding = chatInsets(THEME, next);
     this.chatDock.invalidateArrange();
+  }
+
+  /**
+   * How far up the frame's own floor is reserved, for the action bar (spec 196).
+   *
+   * Deliberately *not* {@link setSafeBottom}: that is the DOM HUD's furniture,
+   * and the bar is what half of it is placed against -- a bar docked above the
+   * pool block, which is itself placed beside the bar, is a loop. What the bar
+   * has to clear is the experience strip alone, which spans the whole width and
+   * is the one thing along that edge nothing may sit on.
+   */
+  setActionBarFloor(uiPixels: number): void {
+    const next = Math.max(0, Math.floor(uiPixels));
+    if (next === this.actionBarFloor) return;
+    this.actionBarFloor = next;
+    this.applyActionBarInsets();
+  }
+
+  private applyActionBarInsets(): void {
+    this.actionBarDock.padding = actionBarInsets(THEME, this.actionBarFloor);
+    this.actionBarDock.invalidateArrange();
   }
 
   // --- chat (spec 189) ------------------------------------------------------
@@ -1281,6 +1571,10 @@ export class UiScreens {
     // A move with no button down reaches no gesture, and two things need it: a
     // carry follows the cursor with nothing held, and a tooltip is by definition
     // about hovering (spec 136). This is the one place that sees every move.
+    // The bar first: it is furniture rather than a window, so it is under the
+    // cursor whenever nothing else is, and asking it last would mean a hover
+    // over a slot with the bag open pointed two tooltips at once.
+    if (phase === 'move') this.actionBar.pointerMoved(pos, this.now);
     if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
     if (phase === 'move' && this.isOpen('character')) this.character.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));

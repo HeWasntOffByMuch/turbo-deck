@@ -104,6 +104,16 @@ export interface StatusMark {
   readonly kind: StatusKind;
   /** Live stacks. 1 for the ones that do not stack. */
   readonly stacks: number;
+  /**
+   * Ticks until the window ends, from the tick being drawn (spec 196).
+   *
+   * A count of ticks rather than seconds, for the reason {@link FADE_TICKS} is
+   * one: this layer is handed an *end* and a tick and nothing else, so the
+   * subtraction is exact here and the division by a tick rate is a presentation
+   * question whoever draws a clock answers. Always positive -- an entry that has
+   * run out is not returned at all.
+   */
+  readonly ticksLeft: number;
   /** Whether the count is worth drawing: false for a row that cannot stack. */
   readonly showsCount: boolean;
   /** 0..1. Full until the window's last few ticks, then thinning into the end. */
@@ -173,6 +183,7 @@ export function statusMarks(
       icon: visual.icon,
       kind: visual.kind,
       stacks,
+      ticksLeft: left,
       // A "1" over a status that can only ever be 1 is a number that never
       // means anything, so it is not drawn. A stacking row shows its count even
       // at one, because there the number is live and its absence would read as

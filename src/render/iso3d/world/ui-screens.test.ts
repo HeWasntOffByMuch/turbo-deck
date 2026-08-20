@@ -17,6 +17,16 @@ import { UiScreens, type UiScreensOptions } from './ui-screens.js';
 import { captureLayout, LAYOUT_VERSION, type StoredLayout } from '../../../ui/core/layout-store.js';
 import type { WindowId } from './control-actions.js';
 import type { ClientView } from '../../../server/client/game-client.js';
+import { EntityKind } from '../../../server/net/protocol.js';
+import { visualFor } from '../../../server/data/status-visuals.js';
+import { StatusId } from '../../../server/sim/statuses.js';
+
+/** The wire index for a status id, so a test reads by name rather than by number. */
+function wireOf(id: string): number {
+  const visual = visualFor(id);
+  if (!visual) throw new Error(`no visible row for ${id}`);
+  return visual.wire;
+}
 
 const VIEWPORT = { width: 400, height: 300 };
 const NONE = { shift: false, ctrl: false, alt: false, meta: false };
@@ -80,6 +90,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
       onTradeDismiss: () => requests.push('tradeDismiss'),
+      onCastSlot: (abilityId: string) => requests.push(`cast:${abilityId}`),
       onSay: (text: string) => requests.push(`say:${text}`),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
@@ -102,6 +113,76 @@ function windowSize(screens: UiScreens, id: WindowId): Rect {
   if (!placement) throw new Error(`no window called ${id}`);
   return placement;
 }
+
+describe('the mini HUD (spec 196)', () => {
+  function body(overrides: Record<string, unknown> = {}): unknown {
+    return {
+      id: 4,
+      kind: EntityKind.Monster,
+      typeId: 'grazer',
+      x: 0,
+      y: 0,
+      z: 0,
+      facing: 0,
+      health: 30,
+      maxHealth: 60,
+      activity: 0,
+      activityUntilTick: 0,
+      level: 2,
+      name: '',
+      turnRate: 4,
+      poise: 1,
+      shield: 0,
+      shieldUntilTick: 0,
+      statuses: [],
+      moveScale: 1,
+      ...overrides,
+    };
+  }
+
+  it('shows nothing until something is selected', () => {
+    const { screens } = harness();
+    screens.update(viewFixture({ entities: [body()] } as Partial<ClientView>), 0);
+    expect(screens.readout().selected).toBe('');
+    expect(screens.readout().selectedRect).toBeNull();
+  });
+
+  it('names the body that was selected', () => {
+    const { screens } = harness();
+    screens.select(4);
+    screens.update(viewFixture({ entities: [body()] } as Partial<ClientView>), 0);
+    expect(screens.readout().selected).toBe('Grazer|Lv 2');
+    expect(screens.readout().selectedRect).not.toBeNull();
+  });
+
+  it('forgets a body that has left the replicated set', () => {
+    // Not merely blank: the *id* goes, because entity ids are reused and a
+    // selection that outlived its body would come back pointing at a stranger.
+    const { screens } = harness();
+    screens.select(4);
+    screens.update(viewFixture({ entities: [body()] } as Partial<ClientView>), 0);
+    screens.update(viewFixture({ entities: [] } as Partial<ClientView>), 16);
+    expect(screens.selection).toBeNull();
+    expect(screens.readout().selected).toBe('');
+  });
+
+  it('lists what is on the body, said the way a player reads it', () => {
+    const { screens } = harness();
+    screens.select(4);
+    const statuses = [{ wire: wireOf(StatusId.Exposed), stacks: 1, expiresAtTick: 200 }];
+    screens.update(viewFixture({ entities: [body({ statuses })] } as Partial<ClientView>), 0, 80);
+    expect(screens.readout().selectedRows).toEqual(['Exposed|2.0s|affliction']);
+  });
+
+  it('clears on a click that named nothing', () => {
+    const { screens } = harness();
+    screens.select(4);
+    screens.update(viewFixture({ entities: [body()] } as Partial<ClientView>), 0);
+    screens.select(null);
+    screens.update(viewFixture({ entities: [body()] } as Partial<ClientView>), 16);
+    expect(screens.readout().selected).toBe('');
+  });
+});
 
 describe('what is mounted', () => {
   it('opens nothing until something asks', () => {
@@ -879,10 +960,24 @@ describe('the tooltip, over the world (spec 136)', () => {
 });
 
 describe('drawing', () => {
-  it('draws nothing at all when nothing is open', () => {
+  /**
+   * With no window open, the only thing on the canvas is the furniture: the
+   * action bar, which is always there (spec 196), and the chat, which draws
+   * nothing until somebody says something.
+   *
+   * Asserted as "opening the bag adds to it" rather than as an absolute count,
+   * because the count is a fact about how many quads five slots take and would
+   * fail on a change to the frame art rather than on a change to what is shown.
+   */
+  it('draws only the bar when nothing is open', () => {
     const { screens } = harness();
     screens.update(viewFixture(), 0);
-    expect(screens.paint()).toEqual([]);
+    const furniture = screens.paint().length;
+    expect(furniture).toBeGreaterThan(0);
+
+    screens.show('inventory');
+    screens.update(viewFixture(), 0);
+    expect(screens.paint().length).toBeGreaterThan(furniture);
   });
 
   it('draws the bag once it is open', () => {

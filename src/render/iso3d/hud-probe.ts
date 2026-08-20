@@ -1,4 +1,6 @@
 import { createHud } from './world/hud.js';
+import { UiLayer } from './world/ui-layer.js';
+import { InputMap } from '../../ui/input/input-map.js';
 import type { ClientView } from '../../server/client/game-client.js';
 
 /**
@@ -133,9 +135,84 @@ const hud = createHud(() => ({ x: PROBE_POINT.x, y: PROBE_POINT.y, onScreen: tru
 hud.onRespawn(() => {
   respawnCount += 1;
 });
-hud.onUse((abilityId) => used.push(abilityId));
 app.append(hud.element);
 hud.element.style.inset = '0';
+
+/**
+ * The interface canvas, because the action bar is on it now (spec 196).
+ *
+ * The rig has to mount the real one rather than fake a row of boxes: what is
+ * being asked is whether the five slots are *there*, whether an empty one is
+ * inert, and whether the pool block still sits clear of them -- and the last of
+ * those is a claim about two surfaces, which is exactly the kind that passes in
+ * Node while being wrong on screen.
+ *
+ * Every callback is a no-op except the one this rig measures. None of them can
+ * reach a server: there isn't one.
+ */
+const nothing = (): void => undefined;
+const ui = new UiLayer(app, {
+  map: new InputMap(),
+  onMove: nothing,
+  onDropItem: nothing,
+  onSpend: nothing,
+  onAllocate: nothing,
+  onRespec: nothing,
+  onBuy: nothing,
+  onSell: nothing,
+  onBuyBack: nothing,
+  onVendor: nothing,
+  nearestVendor: () => null,
+  onTradeOffer: nothing,
+  onTradeAccept: nothing,
+  onTradeRespond: nothing,
+  onTradeCancel: nothing,
+  onTradeDismiss: nothing,
+  onSay: nothing,
+  onBindingsChanged: nothing,
+  onScaleChosen: nothing,
+  onShowFpsChosen: nothing,
+  onLayoutChanged: nothing,
+  onCastSlot: (abilityId) => {
+    used.push(abilityId);
+    draw();
+  },
+});
+// The two facts the bar needs that only the HUD's table knows: how much of the
+// frame's floor the experience strip has, and how big a slot must be for a
+// finger. Pushed once here exactly as `view.ts` pushes them, or the bar draws at
+// the widget's bare default and the rig measures a size the game never shows.
+ui.setActionBarFloorCss(hud.floorCss);
+ui.setActionBarSlotCss(hud.slotSideCss);
+ui.setShowsSlotKeys(hud.showsSlotKeys);
+
+/**
+ * Hand the interface the mouse, the way `view.ts` does.
+ *
+ * The UI canvas is `pointer-events: none` -- it sits over the world and the
+ * world's own listeners offer it every press first -- so a rig that mounts the
+ * layer and forwards nothing has an action bar that draws perfectly and cannot
+ * be clicked. Which is exactly what a harness asking "is an empty slot inert"
+ * would then be measuring: nothing at all, correctly, for the wrong reason.
+ *
+ * Coordinates are relative to the UI canvas's own box, which is what `toUi`
+ * expects and what the world canvas gives it in the game.
+ */
+const NO_MODS = { shift: false, ctrl: false, alt: false, meta: false };
+for (const phase of ['down', 'up', 'move'] as const) {
+  const name = phase === 'move' ? 'mousemove' : phase === 'down' ? 'mousedown' : 'mouseup';
+  globalThis.addEventListener(name, (raw) => {
+    const event = raw as MouseEvent;
+    const rect = ui.element.getBoundingClientRect();
+    ui.handlePointer(
+      phase,
+      { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      phase === 'move' ? -1 : event.button,
+      NO_MODS,
+    );
+    draw();
+  });
+}
 
 /**
  * The floating bars this rig draws, if any (spec 186).
@@ -149,7 +226,34 @@ let anchors: { id: number; x: number; y: number; onScreen: boolean }[] = [];
 
 function draw(): void {
   const view = { ...baseView(), ...overrides } as unknown as ClientView;
+  // The interface first, so the bar has been laid out by the time the HUD is
+  // asked to place the pool block against it.
+  ui.update(view, 1000, 400);
+  hud.setActionBar(ui.actionBarBoxCss());
   hud.update(view, anchors, 400, 0, null, { abilityId: null, pending: false }, null, 1000);
+  publish();
+}
+
+/**
+ * Where the interface drew its slots, in CSS pixels, on the page (spec 196).
+ *
+ * The bar is a canvas, so "there are five slots and the third is empty" has no
+ * element to ask. Published in *CSS* pixels rather than UI ones, unlike the Play
+ * tab's own readout, because everything else this rig is measured against is a
+ * DOM box and a harness comparing the two should not have to do the conversion
+ * twice.
+ */
+function publish(): void {
+  const slots = ui.actionBarSlotsCss();
+  app?.setAttribute(
+    'data-bar-slots',
+    slots
+      .map(
+        ({ ability, rect }) =>
+          `${ability}@${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)},${Math.round(rect.height)}`,
+      )
+      .join(';'),
+  );
 }
 
 draw();

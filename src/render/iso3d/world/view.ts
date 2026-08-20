@@ -941,10 +941,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // that a line somebody else said turns up on this screen.
     const chatRects = boxes(readout.chatRects);
     const chat = `${readout.chat.join(';')}|${String(readout.chatOpen)}|${readout.chatInput}|${chatRects}`;
+    // The bar (spec 196) and the mini HUD beside it. Both are drawn to the
+    // interface canvas, so neither has an element a harness could ask -- and
+    // both are claims about *what is on screen* rather than about a number in a
+    // model, which is the half a Node test cannot reach.
+    const barSlots = boxes(readout.barSlots);
+    const selectedRows = readout.selectedRows.join(';');
+    const selected = `${readout.selected}|${selectedRows}|${readout.selectedRect ? 'shown' : 'hidden'}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
       `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
-      `|${trade}|${tradeRects}|${chat}`;
+      `|${trade}|${tradeRects}|${chat}|${barSlots}|${selected}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
@@ -966,6 +973,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiTradeYou'] = readout.tradeYou;
     root.dataset['uiTradeThem'] = readout.tradeThem;
     root.dataset['uiTradeRects'] = tradeRects;
+    root.dataset['uiBarSlots'] = barSlots;
+    root.dataset['uiSelected'] = readout.selected;
+    root.dataset['uiSelectedRows'] = selectedRows;
     root.dataset['uiChat'] = readout.chat.join(';');
     root.dataset['uiChatOpen'] = String(readout.chatOpen);
     root.dataset['uiChatInput'] = readout.chatInput;
@@ -993,10 +1003,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   const forcedBar = actionBarFromQuery(location.search);
   let actionBar: readonly ActionSlot[] = forcedBar ?? ACTION_BAR;
-  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift), actionBar);
+  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
   /** The overlay's current box, so it is only rewritten when the letterbox moves. */
   let hudBox = { x: -1, y: -1, width: -1, height: -1 };
-  hud.onUse((abilityId) => pressAbility(abilityId));
   // Picking a weapon is an ordinary equip (spec 079): the server puts it in the
   // hand, recomputes the stat block, and the new `basicAttackId` comes back on
   // `Stats`. Nothing here decides what the right-click then does -- the next
@@ -1054,6 +1063,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     });
 
     const buttons = document.createElement('div');
+    // How far down this corner is occupied, for the mini HUD docked under it
+    // (spec 196). A marked element rather than a constant, exactly as
+    // `data-hud-bottom` is: seven popovers of different heights wrap on a narrow
+    // window, so where they end is a measurement and not a sum.
+    buttons.dataset['hudRight'] = 'settings';
     // Inset against the notch and the home indicator (spec 093): in landscape the
     // cutout is on a side edge, which is exactly where these sit.
     buttons.style.cssText =
@@ -1290,7 +1304,21 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     onSay: (text) => {
       client.say(text);
     },
+    // A slot was pressed on the bar (spec 196). The same `pressAbility` a key
+    // calls, because the bar and the keyboard reach one ability list.
+    onCastSlot: (abilityId) => {
+      pressAbility(abilityId);
+    },
   });
+
+  // The bar is on the interface canvas now (spec 196), so two facts have to
+  // cross once at the mount: what the frame's floor already holds -- the
+  // experience strip, which spans the whole width -- and, when `?slots=` forced
+  // a bar, which bar. The ordinary case is pushed per frame off the equipment.
+  ui.setActionBarFloorCss(hud.floorCss);
+  ui.setActionBarSlotCss(hud.slotSideCss);
+  ui.setShowsSlotKeys(hud.showsSlotKeys);
+  if (forcedBar) ui.setActionBarPlan(forcedBar);
 
   // The other half of that, and the half that had never been connected to
   // anything: `GameClient.onChat` has existed since the protocol did and its
@@ -1458,6 +1486,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     planner.clear();
     targetId = null;
     order = { abilityId: ability.id, targetEntityId, x: at.x, y: at.y, range: ability.range };
+  }
+
+  /**
+   * Point the mini HUD at whatever the cursor is over (spec 196).
+   *
+   * A click on empty ground clears it, because `pickUnitAt` answers null there
+   * and null is what "nothing is selected" is -- there is no second gesture for
+   * putting the panel away, and there should not be: the way you stop looking
+   * at something is to look at something else.
+   *
+   * Nothing is sent. A selection is a camera decision rather than a game one,
+   * so the server has no opinion about it, there is nothing to predict and
+   * nothing to be corrected. It is deliberately *not* an attack order either:
+   * `world.order` is what names a target, and a readout that also started a
+   * fight would make looking at a body dangerous.
+   */
+  function selectAtCursor(): void {
+    ui.select(cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null);
   }
 
   /** Throw the aim away. Nothing was asked for, so there is nothing to refund. */
@@ -1655,7 +1701,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // no label and no row in the window that offers to rebind everything else.
     // Nothing here asks what pressed them, so a key bound to `world.order` gives
     // an order at the cursor and a button bound to `skillbar.3` casts.
-    if (decision.confirmAim) confirmAim();
+    // One press, two readings (spec 196), in exactly the shape `world.order`
+    // below already has: with an aim pending it commits to it, and with none it
+    // names the body under the cursor. Two actions on one chord would be a
+    // conflict the keybindings window reports and a player could put on two
+    // different buttons -- and "left click" is one press, so it is one binding
+    // whose meaning is read off what the player is committed to. Which is why
+    // the reading is taken *here*: this is the only place `pendingAim` is
+    // visible.
+    if (decision.confirmAim) {
+      if (pendingAim) confirmAim();
+      else selectAtCursor();
+    }
 
     if (decision.trade) offerTradeAtCursor();
 
@@ -2490,15 +2547,27 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // (spec 188). Pushed rather than remembered, for the reason the window
     // buttons are: the equipment is the state, and a bar that kept its own copy
     // would be a second opinion about what the player is carrying -- which is
-    // exactly what a swap the server refused would leave behind. `setSlots`
-    // compares before it rebuilds, so a resend that changed nothing is free.
+    // exactly what a swap the server refused would leave behind. `sameBar`
+    // compares before anything is pushed, so a resend that changed nothing is
+    // free -- and the array pushed is the same one the *keys* are resolved
+    // against below, which is the rule spec 164 wrote `action-bar.ts` for.
     if (forcedBar === null) {
       const next = actionBarFor(view.equipment);
       if (!sameBar(next, actionBar)) {
         actionBar = next;
-        hud.setSlots(next);
+        ui.setActionBarPlan(next);
       }
     }
+    // The slot an aim came from, lit in the aim's own colour (spec 080), so the
+    // question on the ground and the button it came from are one thing. Pushed
+    // rather than read, because the interface may not reach into the game.
+    ui.setAiming(pendingAim?.abilityId ?? null);
+    // ...and back the other way: everything left along the bottom edge is placed
+    // against the bar, and the bar is now drawn on the interface canvas at the
+    // player's own scale (spec 196). The measured row rather than a second sum,
+    // because a second description of somebody else's layout is the mistake that
+    // put the chat log on the weapon switch.
+    hud.setActionBar(ui.actionBarBoxCss());
     hud.update(
       view,
       scene.screenAnchors(),
@@ -2578,7 +2647,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Last, over everything (spec 131). It is handed `now` rather than reading
     // one: nothing under `src/ui/` may touch a clock, which is what makes an
     // input replay of this interface exact rather than approximate.
-    ui.update(view, now);
+    ui.update(view, now, drawnTick);
     publishUiReadout();
 
     raf = requestAnimationFrame(frame);
