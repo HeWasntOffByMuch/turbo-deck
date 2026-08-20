@@ -23,7 +23,8 @@ import { createFlatPredictor, createWorldPredictor, type PredictStep } from './p
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { ServerMessageType } from '../net/protocol.js';
 import type { MapInfoMessage } from '../net/map-messages.js';
-import { navGridFor, NAV_BLOCKED } from '../../sim/pathfinding.js';
+import { FLAT_GROUND, navGridFor, NAV_BLOCKED } from '../../sim/pathfinding.js';
+import { createWorldColliders } from '../../sim/collision.js';
 import type { HeldChunk } from './map-cache.js';
 
 const mapText = readFileSync(new URL('../../../maps/arena.json', import.meta.url), 'utf8');
@@ -241,27 +242,46 @@ describe('the collider snapshot', () => {
     const second = map.snapshotColliders();
     expect(first).not.toBe(second);
     expect(first.circles.length).toBe(second.circles.length);
-    expect(navGridFor(SERVER_PLAYER_RADIUS, first, map.sampler())).not.toBe(
-      navGridFor(SERVER_PLAYER_RADIUS, second, map.sampler()),
+  });
+
+  /**
+   * The consequence of the assertion above, proved over a world small enough to
+   * build a grid for.
+   *
+   * It used to be proved by putting the *real* snapshots through `navGridFor`,
+   * which meant two real grids over the real arena -- and a grid is built over
+   * the map's declared extent rather than over the chunks that arrived, so spec
+   * 165 growing the map grew this to sixty-eight seconds. That is past a test
+   * budget, and worse than that it is past **birpc's**: a worker blocked in one
+   * synchronous call for a minute cannot answer `onTaskUpdate`, so the run ended
+   * with an unhandled `[vitest-worker]: Timeout calling "onTaskUpdate"` and a
+   * non-zero exit with 5832 tests passing and none failing. A test that fails
+   * the suite without failing is worse than a slow one.
+   *
+   * Nothing is given up by shrinking it. What the property is *about* is which
+   * key the cache uses, and a cache does not know how big its values are: two
+   * distinct-but-equal collider objects miss, and one object hits. Split in two
+   * this way each half is also checked at its own address -- that a snapshot is
+   * fresh belongs to `StreamedMap`, and that identity is the cache key belongs
+   * to `navGridFor`.
+   *
+   * The hit half is new, and it is the stronger of the two: without it a
+   * `navGridFor` that had no cache at all would pass.
+   */
+  it('is the key navGridFor caches on: two equal snapshots miss, one object hits', () => {
+    const bounds = { x: 0, y: 0, w: 400, h: 400 };
+    const first = createWorldColliders([], [], bounds);
+    const second = createWorldColliders([], [], bounds);
+    expect(first).not.toBe(second);
+    expect(first).toEqual(second);
+
+    expect(navGridFor(SERVER_PLAYER_RADIUS, first, FLAT_GROUND)).not.toBe(
+      navGridFor(SERVER_PLAYER_RADIUS, second, FLAT_GROUND),
     );
-    // Two real grids over the real arena, which is the cost this whole design
-    // is arranged around -- and the reason `view.ts` publishes a snapshot on a
-    // settle rather than on an arrival.
-    //
-    // The budget is three minutes rather than one because one stopped being a
-    // budget. Measured on a loaded CI-class container this pair takes 58.5s and
-    // 59.5s *run on its own* -- inside the old limit twice and over it as soon
-    // as the rest of the suite is competing for the same core, which is exactly
-    // the intermittent red it produced. Nothing here got slower on purpose: a
-    // grid is built over the map's declared extent rather than over the chunks
-    // that arrived, so spec 165 growing the map grew this, and the number
-    // underneath it was never revisited.
-    //
-    // Raised rather than narrowed, because every assertion above is the point:
-    // `navGridFor` caches on the colliders' object identity, and the only way
-    // to show a snapshot cannot be memoized across an arrival is to build the
-    // two grids and watch the cache miss.
-  }, 180_000);
+    expect(navGridFor(SERVER_PLAYER_RADIUS, first, FLAT_GROUND)).toBe(
+      navGridFor(SERVER_PLAYER_RADIUS, first, FLAT_GROUND),
+    );
+  });
 
   it('declares the whole map from the first frame, before any chunk', () => {
     const empty = new StreamedMap(mapInfo());
