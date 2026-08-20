@@ -130,6 +130,8 @@ interface RunResult {
    * played, not which slot they landed in.
    */
   readonly painted: readonly string[];
+  /** Handles the affliction layer stopped, so a leak is visible as an absence. */
+  readonly stoppedPaint: readonly number[];
   /** How many attacks were called off (spec 166), so a run that left every
    * one-shot to finish on its own cannot claim to have covered the cancel. */
   readonly cancels: number;
@@ -187,6 +189,7 @@ async function play(animate: boolean): Promise<RunResult> {
   // is an interface: the driver has no three.js in it and is driven here in
   // Node exactly as `scene.ts` drives it.
   const painted: string[] = [];
+  const stopped: number[] = [];
   let nextHandle = 1;
   const recorder: VfxPlayer = {
     has: () => true,
@@ -194,7 +197,12 @@ async function play(animate: boolean): Promise<RunResult> {
       painted.push(id);
       return nextHandle++;
     },
-    stop: () => {},
+    // Recorded rather than ignored: a cling is `durationTicks: 0` and stops only
+    // when it is told to, so "was anything ever stopped" is a real question
+    // about this run and a discarded handle is how a persistent effect leaks.
+    stop: (handle) => {
+      stopped.push(handle);
+    },
   };
   const afflictions = new AfflictionVfx(recorder);
   let cancels = 0;
@@ -314,7 +322,16 @@ async function play(animate: boolean): Promise<RunResult> {
     }
   }
 
-  return { states, events, yaws, drops, painted, cancels, flinchesTracked: flinches.tracked };
+  return {
+    states,
+    events,
+    yaws,
+    drops,
+    painted,
+    stoppedPaint: stopped,
+    cancels,
+    flinchesTracked: flinches.tracked,
+  };
 }
 
 describe('animation is presentation only', () => {
@@ -399,6 +416,11 @@ describe('animation is presentation only', () => {
     // an effect the registry does not hold -- for six of the seven.
     const kinds = new Set(clings.map((id) => id.replace(/_heavy$/, '')));
     expect(kinds.size).toBe(7);
+    // And they were let go of again. The developer trigger's afflictions run
+    // out inside this window, so a driver that started seven clings and stopped
+    // none of them would be the leak this whole handle-holding design exists to
+    // make impossible.
+    expect(animated.stoppedPaint.length).toBeGreaterThan(0);
   }, 30_000);
 
   it('drives the stagger flinch, and it changes no state (spec 173)', async () => {
