@@ -1950,7 +1950,19 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  of 128 slots -- so `forget` is called from the sweep that knows
                  a body has left, never inferred from an absence. Nothing in
                  this game had ever held a persistent attached effect, so this
-                 is the pattern rather than a use of one.
+                 is the pattern rather than a use of one. The other half of the
+                 same problem is **eviction**, and it was found by reading
+                 `claimInstance` rather than by anything failing: a full instance
+                 pool does not refuse, it takes the lowest-priority furthest
+                 instance, hands the slot over and bumps its generation, so every
+                 handle to it goes stale where it sits. A cling is priority 1 and
+                 therefore the first thing in the game to go -- correctly, since
+                 the fight in front of you matters more than paint on a body
+                 across the arena -- and a driver that went on believing its
+                 handle would leave that body unpainted for the rest of its life,
+                 silently, and only in the crowded fight that caused the
+                 pressure. `isLive` is asked every step and a dead handle is "not
+                 started".
                  The palette gained two ramps, and each had to be unmistakable
                  against the neighbour it would otherwise read as: Corrosion is a
                  *chemical* green pushed toward chartreuse against Poison's leaf,

@@ -1795,6 +1795,15 @@ did not start". Committing a refused id leaves a body silently unmarked for the
 rest of its life. Holding **handles** makes a refusal mean "not started yet", so
 a body that walks into range gets its paint on the frame it does.
 
+The same argument answers eviction, which is the half that had to be *read* for
+rather than tripped over. A full instance pool does not refuse: `claimInstance`
+takes the lowest-priority, furthest instance, hands the slot over and bumps its
+generation, so every handle to it goes stale in place. A cling is priority 1 and
+is therefore the first thing evicted -- correctly. A driver that kept believing
+its handle would leave that body unpainted permanently, and only in the crowded
+fight that caused the pressure. `isLive` is asked each step and a dead handle
+means "not started", so the restart happens the moment the pressure lifts.
+
 The obligation that comes with holding one: on despawn **nothing stops itself.**
 The attach hook answers false, the instance stays where it last resolved, and a
 `durationTicks: 0` effect hangs in the air forever holding one of 128 slots.
