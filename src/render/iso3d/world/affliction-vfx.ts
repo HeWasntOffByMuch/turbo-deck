@@ -286,6 +286,22 @@ export interface VfxPlayer {
   ): number;
   stop(handle: number): void;
   has(id: string): boolean;
+  /**
+   * Whether a handle still names a running effect.
+   *
+   * Not a nicety. When the instance pool is full, `claimInstance` does not
+   * refuse -- it **evicts** the lowest-priority, furthest instance it can find
+   * and hands the slot over, bumping the slot's generation so every handle to
+   * it goes stale. A cling is `priority: 1` and therefore the first thing in the
+   * game to be evicted, which is the right call: a fight in front of you matters
+   * more than paint on a body across the arena.
+   *
+   * What is *not* right is a driver that goes on believing it. Without this the
+   * held handle stays non-zero, the restart never happens, and the body has lost
+   * its paint permanently -- silently, and only in the crowded fight where the
+   * pressure came from.
+   */
+  isLive(handle: number): boolean;
 }
 
 /** Where a body is, and how big it is. */
@@ -374,6 +390,15 @@ export class AfflictionVfx {
         // when it refuses to flinch for a body that arrived already broken.
         own = { clingId: '', clingHandle: 0, landed: affliction.landed };
         held.set(affliction.dotId, own);
+      }
+
+      // Evicted out from under us. The pool is full and something with a better
+      // claim took the slot, so the handle names nothing and the paint is gone:
+      // forget it and let the restart below try again. It may well be refused
+      // again this frame, which is exactly what should happen while the pressure
+      // lasts -- and the moment it lifts, the body gets its paint back.
+      if (own.clingHandle !== 0 && !this.player.isLive(own.clingHandle)) {
+        own.clingHandle = 0;
       }
 
       // The severity changed, so the cling is a different effect. Stopping the

@@ -193,6 +193,10 @@ async function play(animate: boolean): Promise<RunResult> {
   let nextHandle = 1;
   const recorder: VfxPlayer = {
     has: () => true,
+    // Nothing here fills an instance pool, so no handle is ever evicted. The
+    // eviction path is `affliction-vfx.test.ts`'s to cover; what this run is
+    // for is that the layer changes no authoritative state.
+    isLive: (handle) => handle !== 0 && !stopped.includes(handle),
     play: (id) => {
       painted.push(id);
       return nextHandle++;

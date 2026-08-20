@@ -201,6 +201,16 @@ class Recorder implements VfxPlayer {
   readonly stopped: number[] = [];
   /** How many more `play` calls answer `0`. */
   refusals = 0;
+  /**
+   * Handles the pool has taken back, standing in for eviction.
+   *
+   * `claimInstance` does not refuse when the instance pool is full: it evicts
+   * the lowest-priority, furthest instance and bumps that slot's generation, so
+   * every handle to it goes stale in place. A cling is the lowest priority in
+   * the game and therefore the first thing evicted, and the only way a driver
+   * finds out is by asking.
+   */
+  readonly evicted = new Set<number>();
   private readonly known: ReadonlySet<string> | null;
   private next = 1;
 
@@ -230,6 +240,10 @@ class Recorder implements VfxPlayer {
       handle,
     });
     return handle;
+  }
+
+  isLive(handle: number): boolean {
+    return handle !== 0 && !this.evicted.has(handle) && !this.stopped.includes(handle);
   }
 
   stop(handle: number): void {
@@ -886,6 +900,40 @@ describe('AfflictionVfx', () => {
     for (let repeat = 0; repeat < 20; repeat++) driver.step(BODY, held, 40);
     expect(recorder.played).toHaveLength(after);
     expect(recorder.stopped).toEqual([]);
+  });
+
+  it('puts a cling back after the pool evicts it (spec 197)', () => {
+    // The failure this closes is silent and only happens in the fight that
+    // caused it: with the instance pool full, `claimInstance` evicts the
+    // lowest-priority instance it can find rather than refusing, and a cling is
+    // the lowest priority in the game. The handle goes stale in place. A driver
+    // that kept believing it would leave that body unpainted for the rest of
+    // its life, and every test that never filled the pool would stay green.
+    const player = new Recorder();
+    const driver = new AfflictionVfx(player);
+    const body = { entityId: 4, x: 0, y: 0, z: 0, radius: 16 };
+    const statuses = [status(StatusId.Burn, 400)];
+
+    driver.step(body, statuses, 10);
+    const first = player.played.filter((call) => call.id === 'affliction_burn');
+    expect(first).toHaveLength(1);
+
+    // Nothing has changed, so nothing should be started again.
+    driver.step(body, statuses, 11);
+    expect(player.played.filter((call) => call.id === 'affliction_burn')).toHaveLength(1);
+
+    // Now the pool takes the slot back.
+    player.evicted.add(first[0]?.handle ?? 0);
+    driver.step(body, statuses, 12);
+    const after = player.played.filter((call) => call.id === 'affliction_burn');
+    expect(after).toHaveLength(2);
+    // And it was restarted rather than stopped: stopping a handle the pool has
+    // already retired is a no-op at best, and at worst it names a slot somebody
+    // else is now using.
+    expect(player.stopped).not.toContain(first[0]?.handle);
+    // Settled again: the replacement is not restarted every frame.
+    driver.step(body, statuses, 13);
+    expect(player.played.filter((call) => call.id === 'affliction_burn')).toHaveLength(2);
   });
 
   it('costs nothing for a body that has never carried anything', () => {

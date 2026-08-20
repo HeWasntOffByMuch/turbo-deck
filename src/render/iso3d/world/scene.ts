@@ -759,6 +759,10 @@ export class WorldScene {
       play: (id, options) => this.vfx.play(id, options),
       stop: (handle) => this.vfx.stop(handle),
       has: (id) => this.vfx.system.has(id),
+      // A cling is the lowest-priority thing in the game and the first the
+      // instance pool evicts under pressure. Asking rather than assuming is what
+      // lets the driver put it back afterwards (spec 197).
+      isLive: (handle) => this.vfx.system.isLive(handle),
     });
     this.scene.add(this.vfx.root);
 
