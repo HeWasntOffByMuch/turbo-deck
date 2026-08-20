@@ -62,6 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
@@ -1823,7 +1824,110 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  twelve mechanics as twenty-four entity fields is twenty-four
                  places for an expiry to be forgotten. Expiry is a comparison and
                  never a sweep, so reading a stale entry cannot produce a live
-                 effect.
+                 effect. Since spec 190 an entry also carries `sourceId` and
+                 `appliedAtTick` -- who put it there, and when it *first* landed,
+                 kept across a refresh -- because a status can now kill, and
+                 because a periodic effect wants a phase rather than a countdown.
+                 `data/damage-over-time.ts` and `sim/damage-over-time.ts` are the
+                 afflictions (spec 190), and the thing to know about them is that
+                 **a pulse is not a blow**. Every point of damage in this game
+                 used to arrive at the instant a blow landed; the only thing that
+                 repeated was a channel, which is caster-bound. An affliction is
+                 the other shape -- it stays on the body after the thing that did
+                 it has walked away -- so it needed a rule of its own, and running
+                 one through `resolveBlow` sixty times a second would have rolled
+                 a crit each time (**the Rng draw count is protocol**), held
+                 `RecentlyHit` open for the whole duration and denied Perfect Exit
+                 with it, stacked Adaptation against an ability that does not
+                 exist, and re-provoked a body the applying blow had already
+                 provoked. So a pulse is short and honest: shield, then health,
+                 then the `hit` event, and **no armour** -- an affliction is
+                 already inside, and being the answer to a body you cannot get
+                 through is a role worth having. It draws nothing from the Rng at
+                 all.
+                 The table is one row per affliction and the three numbers it
+                 authors are the three a designer thinks in: how hard
+                 (`damagePerSecond`), how lumpy (`intervalTicks`) and how long
+                 (`pulses`). Everything else is derived, and one derivation is
+                 load-bearing: `dotDurationTicks` is `pulses * interval` **plus
+                 one tick**, because a pulse fires on `elapsed % interval === 0`
+                 and `statusOf` refuses an entry at `tick >= expiresAtTick`, so an
+                 exact multiple silently loses its last pulse and "eight pulses of
+                 4.5" means seven. Stated once in the derivation rather than seven
+                 times in seven hand-authored durations.
+                 Past the rate, each row carries at most one **rider**, and a
+                 rider is a reader in the system it belongs to rather than
+                 arithmetic here: Bleed's exertion is the *replicated* `activity`
+                 (`Moving` or `Casting`), so "stop moving and it hurts less" is a
+                 fact anybody watching can see; Corrosion's armour is
+                 `StatusId.Sundered`, so there is one armour-reduction reader in
+                 `blow.ts` and not two, and it is written **once when the
+                 affliction lands** rather than per pulse -- per pulse re-stamped
+                 a shared status thirty times a fight, and since `applyStatus`
+                 refreshes a clock rather than extending it, each stamp *shortened*
+                 a longer Sundered somebody else had applied; Corrosion's guard is
+                 the pool written directly and clamped at zero, so it can never
+                 break, because an affliction that staggered once a second for six
+                 seconds is a removal -- and authored against *regeneration*
+                 rather than against the pool, since a monster gets 6 guard a
+                 second back and the first cut took exactly 6, cancelling it
+                 precisely and doing nothing whatsoever to a stationary body; Decay's suppression is `healingScaleOf`,
+                 read at the three places health goes up that are not `applyHealing`
+                 -- resting is deliberately not a fourth, since a pulse stamps
+                 `InCombat` and `advanceRest` already refuses outright while that
+                 is live, which is stronger than any multiplier.
+                 Burn's *spread* and Shock's *chain* are one field with two radii,
+                 because "how does an affliction reach the body next to it" is one
+                 question and a second propagation system would be two answers to
+                 it. On a pulse it passes **what is left of itself** to the nearest
+                 body hostile to its *source* that is not already carrying it --
+                 measured against the source, so a player's fire spreads through
+                 the pack and can never turn round and catch the player. That one
+                 sentence is also the bound: a hop is only taken on a pulse, so
+                 every generation is strictly shorter than the last and the chain
+                 burns out by construction, with no generation counter, no hop
+                 limit and nothing to tune. Nearest wins and ties break on entity
+                 id, the rule `crowd.ts` already uses, so nothing is drawn.
+                 The pass is `3c` in the tick, between the projectiles and the
+                 kill credit, which is the one correctly bracketed slot:
+                 everything that can apply an affliction has run, and
+                 `creditDeaths` is driven off this tick's `died` events, so a
+                 pulse that kills has to have said so first.
+                 Three of `resolveBlow`'s side effects a pulse must *not*
+                 inherit, and each was got wrong first. **Hostility is re-asked
+                 every pulse**, because `isHostile` between two players needs
+                 both of them standing in a pvp zone and every blow and shot is
+                 measured where both bodies are when it lands -- an affliction
+                 is the first damage here that outlives its own delivery, so it
+                 is the first that could carry a wilderness fight over a
+                 safe-zone line. **A pulse does not shout**: the `hit` event
+                 carries a sim-only `periodic` flag and `rally` skips it, since
+                 that function's whole bound is one hop per actual blow and a
+                 poison ticking twenty times would drag a nest across the map
+                 for ten seconds. And **death drops the cast** -- the one thing
+                 `resolveBlow` does on a kill that is easy to leave out, and not
+                 cosmetic: a player's entity survives death, the cast pass
+                 refuses a corpse, and `respawn` rewrites eleven fields without
+                 touching `cast`, so a wind-up somebody died in came back with
+                 them and landed from the spawn pad on their first living tick,
+                 at the coordinates they had aimed at before dying.
+                 Reaching one is a single effect verb, `{ kind: 'applyDot',
+                 dotId }`, and the absence of the other fields is the design: no
+                 duration, no rate, no stacks. **The row is the affliction,
+                 whole** -- one whose numbers depended on which skill landed it is
+                 one the player carrying it cannot reason about. What does vary is
+                 the applier, whose `spellPower` is captured into `magnitude` the
+                 way Exposed already captures the exposer's coefficient.
+                 Two landings had been dropping `ability.effects` on the floor
+                 since spec 188 and both are closed here, because a poison dart is
+                 a ranged skill: a projectile's impact resolves in `world.ts` and
+                 called `applyDamage` directly (both the direct hit and the
+                 burst), and `landSelf` read `healing` and `healingFraction` and
+                 nothing else. Both go through the exported `applyToTarget` now,
+                 so a projectile skill and a melee one cannot come to different
+                 answers about what a row does. `aimShape` was the third of the
+                 same kind and had never read `ability.area` at all, so the one
+                 ability kind that *is* a shape was the one kind you could not see.
                  `data/status-visuals.ts` is which of those a player may see
                  (spec 186), and it exists because that map is deliberately
                  wider than anything anybody should be shown: some of what it
