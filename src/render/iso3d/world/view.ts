@@ -1030,6 +1030,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     });
 
     const buttons = document.createElement('div');
+    // How far down this corner is occupied, for the mini HUD docked under it
+    // (spec 190). A marked element rather than a constant, exactly as
+    // `data-hud-bottom` is: seven popovers of different heights wrap on a narrow
+    // window, so where they end is a measurement and not a sum.
+    buttons.dataset['hudRight'] = 'settings';
     // Inset against the notch and the home indicator (spec 093): in landscape the
     // cutout is on a side edge, which is exactly where these sit.
     buttons.style.cssText =
@@ -1436,6 +1441,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     order = { abilityId: ability.id, targetEntityId, x: at.x, y: at.y, range: ability.range };
   }
 
+  /**
+   * Point the mini HUD at whatever the cursor is over (spec 190).
+   *
+   * A click on empty ground clears it, because `pickUnitAt` answers null there
+   * and null is what "nothing is selected" is -- there is no second gesture for
+   * putting the panel away, and there should not be: the way you stop looking
+   * at something is to look at something else.
+   *
+   * Nothing is sent. A selection is a camera decision rather than a game one,
+   * so the server has no opinion about it, there is nothing to predict and
+   * nothing to be corrected. It is deliberately *not* an attack order either:
+   * `world.order` is what names a target, and a readout that also started a
+   * fight would make looking at a body dangerous.
+   */
+  function selectAtCursor(): void {
+    ui.select(cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null);
+  }
+
   /** Throw the aim away. Nothing was asked for, so there is nothing to refund. */
   function clearAim(): void {
     pendingAim = null;
@@ -1631,7 +1654,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // no label and no row in the window that offers to rebind everything else.
     // Nothing here asks what pressed them, so a key bound to `world.order` gives
     // an order at the cursor and a button bound to `skillbar.3` casts.
-    if (decision.confirmAim) confirmAim();
+    // One press, two readings (spec 190), in exactly the shape `world.order`
+    // below already has: with an aim pending it commits to it, and with none it
+    // names the body under the cursor. Two actions on one chord would be a
+    // conflict the keybindings window reports and a player could put on two
+    // different buttons -- and "left click" is one press, so it is one binding
+    // whose meaning is read off what the player is committed to. Which is why
+    // the reading is taken *here*: this is the only place `pendingAim` is
+    // visible.
+    if (decision.confirmAim) {
+      if (pendingAim) confirmAim();
+      else selectAtCursor();
+    }
 
     if (decision.trade) offerTradeAtCursor();
 
@@ -2536,7 +2570,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Last, over everything (spec 131). It is handed `now` rather than reading
     // one: nothing under `src/ui/` may touch a clock, which is what makes an
     // input replay of this interface exact rather than approximate.
-    ui.update(view, now);
+    ui.update(view, now, drawnTick);
     publishUiReadout();
 
     raf = requestAnimationFrame(frame);

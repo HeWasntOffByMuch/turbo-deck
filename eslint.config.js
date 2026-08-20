@@ -188,6 +188,11 @@ const PURE_RENDER = [
   // slot twice.
   'src/render/iso3d/world/trade-model.ts',
   'src/render/iso3d/world/ui-routing.ts',
+  // The mini HUD's view-model (spec 190). The one file that reads a replicated
+  // body and the status table out to the plain rows `src/ui/` is allowed to
+  // hold -- and, more to the point, the file that makes the corner panel and
+  // the mark over the same body two readings of one list rather than two.
+  'src/render/iso3d/world/selection.ts',
   // The interface's tree, its windows and what they are handed (spec 131). The
   // whole mount except the canvas, kept pure for one specific reason: mounting
   // an interface over the sim gets the same assertion animation got -- the same

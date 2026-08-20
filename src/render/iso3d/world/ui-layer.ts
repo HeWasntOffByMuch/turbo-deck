@@ -244,14 +244,23 @@ export class UiLayer {
    */
   /** The last measured bottom band, in CSS pixels. See {@link applySafeBottom}. */
   private measuredBand = 0;
+  /** ...and the top-right corner's, on the same terms (spec 190). */
+  private measuredRight = 0;
 
   private applyCssSize(): void {
     this.element.style.width = `${this.frame.cssWidth}px`;
     this.element.style.height = `${this.frame.cssHeight}px`;
   }
 
-  /** Everything a screen shows, then the blit. Cheap when nothing changed. */
-  update(view: ClientView, nowMs: number): void {
+  /**
+   * Everything a screen shows, then the blit. Cheap when nothing changed.
+   *
+   * `drawnTick` is the interpolated presentation tick the bodies are placed by,
+   * handed through rather than re-derived: it is what the mini HUD measures a
+   * status's remaining window against, and a second clock here would let the
+   * panel and the mark over the same body disagree about when one runs out.
+   */
+  update(view: ClientView, nowMs: number, drawnTick: number = view.estimatedTick): void {
     const began = performance.now();
     this.resize();
     // The HUD is built after this layer is mounted, so the measurement taken at
@@ -260,7 +269,8 @@ export class UiLayer {
     // not, and a `getBoundingClientRect` in the render loop is a forced layout
     // every frame for an answer that is settled after the first one.
     if (this.measuredBand === 0) this.applySafeBottom();
-    this.screens.update(view, nowMs);
+    if (this.measuredRight === 0) this.applySafeTopRight();
+    this.screens.update(view, nowMs, drawnTick);
     const list = this.screens.paint();
     // A still interface is not redrawn.
     //
@@ -341,6 +351,7 @@ export class UiLayer {
     this.screens.resize({ width: next.width, height: next.height });
     this.screens.setSafeTop(this.toUi({ x: 0, y: chromeBottomCss() }).y);
     this.applySafeBottom();
+    this.applySafeTopRight();
     // The canvas's backing store was just reallocated, so whatever was on it is
     // gone -- and the same draw list would otherwise be skipped as unchanged and
     // leave the interface blank until something moved.
@@ -393,6 +404,18 @@ export class UiLayer {
     this.screens.moveFocus(step);
   }
 
+  // --- the mini HUD (spec 190) ----------------------------------------------
+
+  /**
+   * Point the selected-unit panel at a body, or at nothing.
+   *
+   * A passthrough like the chat's below: this half is a canvas and a coordinate
+   * conversion, and what the interface *is* lives on the other side of it.
+   */
+  select(entityId: number | null): void {
+    this.screens.select(entityId);
+  }
+
   // --- chat (spec 189) ------------------------------------------------------
 
   /** A line arrived from the server. */
@@ -438,6 +461,24 @@ export class UiLayer {
     const band = bottomBandCss();
     this.measuredBand = band;
     this.screens.setSafeBottom(this.toUi({ x: 0, y: band }).y - this.toUi({ x: 0, y: 0 }).y);
+  }
+
+  /**
+   * How far down the top-right corner's own furniture reaches (spec 190).
+   *
+   * The counterpart to {@link applySafeBottom} and measured for the same reason
+   * it is: the tuning popovers are seven buttons of their own heights that wrap
+   * on a narrow window, and they are absent entirely on a handheld. A constant
+   * would be a second description of somebody else's layout -- which is the
+   * mistake that put the chat log on the weapon switch.
+   *
+   * A *point* rather than a distance, because that is what it is: the corner is
+   * occupied from the top of the frame down to where those buttons end.
+   */
+  private applySafeTopRight(): void {
+    const bottom = rightBandCss();
+    this.measuredRight = bottom;
+    this.screens.setSafeTopRight(this.toUi({ x: 0, y: bottom }).y);
   }
 
   /** Forget what was drawn, so the next frame redraws. For a surface swap. */
@@ -496,6 +537,23 @@ function bottomBandCss(): number {
   if (boxes.length === 0) return 0;
   const top = Math.min(...boxes.map((rect) => rect.top));
   return Math.max(0, globalThis.innerHeight - top);
+}
+
+/**
+ * How far down the frame anything marked `data-hud-right` reaches, in CSS
+ * pixels (spec 190).
+ *
+ * Today that is the strip of tuning popovers, and only on a pointer device --
+ * spec 140 does not build them on a handheld, so zero there is the truth rather
+ * than a not-yet-measured state. Zero is also what a headless or embedded case
+ * gets, which is correct for the same reason.
+ */
+function rightBandCss(): number {
+  const boxes = Array.from(document.querySelectorAll<HTMLElement>('[data-hud-right]'))
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0);
+  if (boxes.length === 0) return 0;
+  return Math.max(0, ...boxes.map((rect) => rect.bottom));
 }
 
 function chromeBottomCss(): number {
