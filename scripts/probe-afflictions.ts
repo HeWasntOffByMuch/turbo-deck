@@ -200,11 +200,15 @@ function distance2(a: Rgb, b: Rgb): number {
   return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
 }
 
-/** One state's measurement frame, plus which pixels are trustworthy in it. */
-interface Shot {
+/** A decoded screenshot: pixels, and nothing said yet about which to trust. */
+interface Frame {
   readonly width: number;
   readonly height: number;
   readonly data: Buffer;
+}
+
+/** One state's measurement frame, plus which pixels are trustworthy in it. */
+interface Shot extends Frame {
   /**
    * 1 where two captures {@link STILL_GAP_MS} apart agreed within
    * {@link CHANGE_THRESHOLD}; 0 where something in the live world -- a
@@ -232,6 +236,10 @@ function pixelAt(buffer: Buffer, index: number): Rgb {
  * in. The mask is built the same way `scripts/preview-paint.ts`'s `grab` does:
  * two states of the *same* live page, so anything that is still moving after
  * {@link STILL_GAP_MS} is flagged rather than trusted.
+ *
+ * Used for the **control** state only. Control carries no affliction, so
+ * "unstable" there really does mean "background noise" -- a swaying tree, the
+ * water -- with nothing else it could mean.
  */
 async function settledShot(page: Page): Promise<Shot> {
   const first = PNG.sync.read(await page.screenshot());
@@ -243,6 +251,44 @@ async function settledShot(page: Page): Promise<Shot> {
     still[i] = distance2(pixelAt(first.data, i), pixelAt(second.data, i)) < CHANGE_THRESHOLD ? 1 : 0;
   }
   return { width: second.width, height: second.height, data: second.data, still };
+}
+
+/** How many samples an affliction is captured over, and how far apart. */
+const BURST_FRAMES = 5;
+const BURST_GAP_MS = 200;
+
+/**
+ * Several screenshots of a *carrying* state, spread over about a second.
+ *
+ * Not the same two-frame trick as {@link settledShot}, on purpose. Spec 197's
+ * cling is deliberately ephemeral -- "each mark short-lived", authored to live
+ * about half a second and be renewed rather than accumulated -- so requiring
+ * two samples {@link STILL_GAP_MS} (650ms) apart to show the *exact same*
+ * colour, the test that correctly finds a static brush stroke on the ground
+ * in `preview-paint.ts`, systematically throws most of a healthy cling away:
+ * the specific marks alive at the first sample have mostly expired and been
+ * replaced by the second one. That is exactly what happened to Burn in this
+ * probe's first working run -- clearly visible by eye in the screenshot, a
+ * handful of orange sparks around the hand, and measured at 34 connected
+ * pixels because the two-frame test asked the wrong question of it.
+ *
+ * So a candidate is *sampled* rather than settled: several frames, and a
+ * pixel is trusted as "painted here" if it differs from control at *any* of
+ * them, not all. Reliability still comes from the control side alone --
+ * {@link compareCandidate} only looks at pixels control's own two-frame test
+ * called quiet -- so this does not need its own stability mask; what varies
+ * between these frames is allowed to vary, because a cling that is visibly
+ * present in three frames out of five and absent from the other two is
+ * exactly what "renewed rather than accumulated" looks like on screen.
+ */
+async function burstShot(page: Page): Promise<Frame[]> {
+  const frames: Frame[] = [];
+  for (let i = 0; i < BURST_FRAMES; i += 1) {
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, BURST_GAP_MS));
+    const png = PNG.sync.read(await page.screenshot());
+    frames.push({ width: png.width, height: png.height, data: png.data });
+  }
+  return frames;
 }
 
 /**
@@ -346,17 +392,28 @@ function bodyCrop(anchor: BarPoint, width: number, height: number): Crop {
 }
 
 /**
- * `candidate` against `control`, restricted to pixels both frames call
- * reliable and inside `crop`.
+ * `frames` against `control`, restricted to pixels control's own two-frame
+ * test called quiet and inside `crop`.
+ *
+ * A pixel counts as painted if it differs from control at **any** of the
+ * burst's frames -- see {@link burstShot} for why "any" rather than "all
+ * agree": the cling this is looking for is authored to flicker, and asking
+ * every sample to show the identical colour would fail it for being healthy.
+ * The colour reported for a painted pixel is the burst's **last** frame,
+ * simply because it is the one frame every painted pixel is guaranteed to
+ * have a reading in the union from, and it is no less representative of "how
+ * this affliction currently looks" than any other sample would be.
  *
  * Null when nothing changed at all -- which is the exact failure this probe
  * exists to catch, so the caller turns a null straight into a FAIL rather
  * than treating "nothing to measure" as "nothing to report".
  */
-function compareToControl(control: Shot, candidate: Shot, crop: Crop): Comparison | null {
-  if (control.width !== candidate.width || control.height !== candidate.height) {
+function compareCandidate(control: Shot, frames: readonly Frame[], crop: Crop): Comparison | null {
+  const last = frames[frames.length - 1];
+  if (!last) throw new Error('compareCandidate called with no frames');
+  if (control.width !== last.width || control.height !== last.height) {
     throw new Error(
-      `frame size mismatch: control ${control.width}x${control.height}, candidate ${candidate.width}x${candidate.height}`,
+      `frame size mismatch: control ${control.width}x${control.height}, candidate ${last.width}x${last.height}`,
     );
   }
   const n = control.width * control.height;
@@ -369,12 +426,13 @@ function compareToControl(control: Shot, candidate: Shot, crop: Crop): Compariso
     const x = i % control.width;
     const y = (i - x) / control.width;
     if (x < crop.left || x >= crop.right || y < crop.top || y >= crop.bottom) continue;
-    if (control.still[i] !== 1 || candidate.still[i] !== 1) continue;
+    if (control.still[i] !== 1) continue;
     const a = pixelAt(control.data, i);
-    const b = pixelAt(candidate.data, i);
-    if (distance2(a, b) < CHANGE_THRESHOLD) continue;
+    const paintedInAnyFrame = frames.some((frame) => distance2(a, pixelAt(frame.data, i)) >= CHANGE_THRESHOLD);
+    if (!paintedInAnyFrame) continue;
     changed[i] = 1;
     totalChanged += 1;
+    const b = pixelAt(last.data, i);
     or += b[0];
     og += b[1];
     ob += b[2];
@@ -390,7 +448,7 @@ function compareToControl(control: Shot, candidate: Shot, crop: Crop): Compariso
   let maxX = -1;
   let maxY = -1;
   for (const i of mass) {
-    const [r, g, b] = pixelAt(candidate.data, i);
+    const [r, g, b] = pixelAt(last.data, i);
     mr += r;
     mg += g;
     mb += b;
@@ -496,14 +554,20 @@ async function load(page: Page, afflict: string | null): Promise<void> {
   // Two waits, because they are two different facts (see `preview-world.ts`):
   // the terrain streams in during frames rather than before the first one, and
   // the view says when it is done before the sim is worth reading ticks from.
-  await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
+  // 120s rather than the more usual 60: this probe's own cost is a real one
+  // (roughly 169 chunks and several seconds of streaming a load, four times
+  // over), and on a shared machine under real contention that cost is not
+  // this script's to control -- a generous timeout costs nothing when the
+  // load is fast and is the difference between a report and a crash when it
+  // is not.
+  await page.waitForSelector('[data-world-ready="true"]', { timeout: 120_000 });
   await waitForTick(page, SETTLE_TICK);
   await page.mouse.move(4, 4);
 }
 
-async function writeShotPng(shot: Shot, path: string): Promise<void> {
-  const png = new PNG({ width: shot.width, height: shot.height });
-  shot.data.copy(png.data);
+async function writeFramePng(frame: Frame, path: string): Promise<void> {
+  const png = new PNG({ width: frame.width, height: frame.height });
+  frame.data.copy(png.data);
   await writeFile(path, PNG.sync.write(png));
 }
 
@@ -516,18 +580,18 @@ const LABEL_H = 10;
 const SHEET_BG: Rgb = [18, 18, 22];
 const INK: Rgb = [232, 236, 242];
 
-/** Nearest-neighbour downscale of one shot into a `CELL_W`x`CELL_H` buffer. */
-function downscale(shot: Shot): Buffer {
+/** Nearest-neighbour downscale of one frame into a `CELL_W`x`CELL_H` buffer. */
+function downscale(frame: Frame): Buffer {
   const out = Buffer.alloc(CELL_W * CELL_H * 4);
   for (let y = 0; y < CELL_H; y++) {
-    const sy = Math.min(shot.height - 1, Math.floor((y / CELL_H) * shot.height));
+    const sy = Math.min(frame.height - 1, Math.floor((y / CELL_H) * frame.height));
     for (let x = 0; x < CELL_W; x++) {
-      const sx = Math.min(shot.width - 1, Math.floor((x / CELL_W) * shot.width));
-      const si = (sy * shot.width + sx) * 4;
+      const sx = Math.min(frame.width - 1, Math.floor((x / CELL_W) * frame.width));
+      const si = (sy * frame.width + sx) * 4;
       const di = (y * CELL_W + x) * 4;
-      out[di] = shot.data[si] ?? 0;
-      out[di + 1] = shot.data[si + 1] ?? 0;
-      out[di + 2] = shot.data[si + 2] ?? 0;
+      out[di] = frame.data[si] ?? 0;
+      out[di + 1] = frame.data[si + 1] ?? 0;
+      out[di + 2] = frame.data[si + 2] ?? 0;
       out[di + 3] = 255;
     }
   }
@@ -550,7 +614,7 @@ function stampLabel(sheet: PNG, text: string, atX: number, atY: number): void {
 }
 
 /** Control plus the three afflictions, one labelled row, at a glance. */
-async function assembleContactSheet(shots: ReadonlyMap<string, Shot>): Promise<void> {
+async function assembleContactSheet(frames: ReadonlyMap<string, Frame>): Promise<void> {
   const names = ['control', ...AFFLICTIONS];
   const width = names.length * CELL_W + (names.length + 1) * GAP;
   const height = LABEL_H + GAP * 2 + CELL_H;
@@ -563,11 +627,11 @@ async function assembleContactSheet(shots: ReadonlyMap<string, Shot>): Promise<v
     sheet.data[p + 3] = 255;
   }
   names.forEach((name, index) => {
-    const shot = shots.get(name);
-    if (!shot) return;
+    const frame = frames.get(name);
+    if (!frame) return;
     const cellX = GAP + index * (CELL_W + GAP);
     const cellY = LABEL_H + GAP;
-    const scaled = downscale(shot);
+    const scaled = downscale(frame);
     for (let y = 0; y < CELL_H; y++) {
       for (let x = 0; x < CELL_W; x++) {
         const si = (y * CELL_W + x) * 4;
@@ -636,7 +700,7 @@ async function main(): Promise<void> {
   });
 
   const problems: string[] = [];
-  const shots = new Map<string, Shot>();
+  const frames = new Map<string, Frame>();
 
   try {
     await waitForServer(`http://localhost:${PORT}/`);
@@ -648,8 +712,8 @@ async function main(): Promise<void> {
       // filter for the same reason): it predates this probe, has nothing to
       // do with afflictions, and fires on every one of the four loads here
       // (control plus three afflictions), which would otherwise turn a
-      // script that measured three honest PASSes
-      // into a false FAIL over noise this probe did not create and cannot fix.
+      // script that measured three honest PASSes into a false FAIL over
+      // noise this probe did not create and cannot fix.
       if (message.type() === 'error' && !message.text().startsWith('[units]')) problems.push(message.text());
     });
 
@@ -667,21 +731,23 @@ async function main(): Promise<void> {
     console.log(`  player's own bar anchors the crop at (${anchor.x.toFixed(0)},${anchor.y.toFixed(0)})`);
     const crop = bodyCrop(anchor, VIEWPORT.width, VIEWPORT.height);
     const control = await settledShot(page);
-    shots.set('control', control);
-    await writeShotPng(control, join(outDir, 'afflictions-in-game-control.png'));
+    frames.set('control', control);
+    await writeFramePng(control, join(outDir, 'afflictions-in-game-control.png'));
     console.log('  wrote afflictions-in-game-control.png');
 
     for (const name of AFFLICTIONS) {
       console.log(`\n${name}`);
       await load(page, name);
-      const shot = await settledShot(page);
-      shots.set(name, shot);
-      await writeShotPng(shot, join(outDir, `afflictions-in-game-${name}.png`));
+      const burst = await burstShot(page);
+      const last = burst[burst.length - 1];
+      if (!last) throw new Error(`${name}: burstShot produced no frames`);
+      frames.set(name, last);
+      await writeFramePng(last, join(outDir, `afflictions-in-game-${name}.png`));
       console.log(`  wrote afflictions-in-game-${name}.png`);
 
-      const comparison = compareToControl(control, shot, crop);
+      const comparison = compareCandidate(control, burst, crop);
       if (!comparison) {
-        console.log('  FAIL: indistinguishable from the control frame -- no pixel both frames trust changed at all');
+        console.log('  FAIL: indistinguishable from the control frame -- no reliable pixel changed in any sample');
         problems.push(`${name}: no measurable difference from the control frame`);
         continue;
       }
@@ -689,7 +755,7 @@ async function main(): Promise<void> {
       const massW = comparison.maxX - comparison.minX + 1;
       const massH = comparison.maxY - comparison.minY + 1;
       const round = (c: Rgb): string => c.map((v) => v.toFixed(0)).join(',');
-      console.log(`  changed pixels, both frames trusted: ${comparison.totalChanged}`);
+      console.log(`  changed pixels (control quiet, any of ${BURST_FRAMES} samples differs): ${comparison.totalChanged}`);
       console.log(
         `  largest connected mass: ${comparison.massSize}px, ` +
           `box ${massW}x${massH} at (${comparison.minX},${comparison.minY})`,
@@ -707,7 +773,7 @@ async function main(): Promise<void> {
       }
     }
 
-    await assembleContactSheet(shots);
+    await assembleContactSheet(frames);
     console.log(`\nwrote ${join(outDir, 'afflictions-in-game.png')}`);
 
     if (problems.length > 0) {
