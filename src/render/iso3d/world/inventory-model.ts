@@ -65,6 +65,9 @@ const ICONS: Readonly<Record<string, string>> = {
   'sigil.stunningBlow': 'item:sigil',
   'sigil.whirlwind': 'item:sigil',
   'sigil.cripplingStrike': 'item:sigil',
+  // The test row's sigil (spec 190). The same picture again: it is a skill in
+  // a bag like the four above, and what says it is a test one is its name.
+  'sigil.testStatuses': 'item:sigil',
 };
 
 export const UNKNOWN_ICON = 'item:unknown';
