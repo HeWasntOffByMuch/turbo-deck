@@ -100,8 +100,10 @@ for a worse picture than getting hit by one.
   applies it too.
 - It never applies `secondWind.spent` or `perfectExit.spent`, so a body it
   marked can still fire both.
-- It does no more than 1 point of damage before mitigation, and does not kill a
-  full-health dummy however many times it lands.
+- Its damage is the single point the row authors — asserted with spell power
+  flattened, which is what `active-skills.test.ts` already does so a damage
+  assertion is arithmetic — and it cannot kill a full-health dummy however many
+  times it lands.
 - It does not stagger what it hits: the target's activity is unchanged and its
   guard pool is where it was.
 - It is refused unless it is carried, like every other `skill: true` row.
