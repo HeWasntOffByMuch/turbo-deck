@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applySpread, sampleShape, SHAPE, type CompiledShape } from './shapes.js';
+import {
+  applySpread,
+  sampleCapsuleSurface,
+  sampleShape,
+  SHAPE,
+  type CompiledShape,
+} from './shapes.js';
 import { VfxRng } from './rng.js';
 
 const out = new Float32Array(6);
@@ -135,3 +141,109 @@ describe('applySpread', () => {
     }
   });
 });
+
+describe('sampleCapsuleSurface (spec 197)', () => {
+  /** How far a point is from the capsule's surface, in radii. Zero is on it. */
+  function offSurface(point: Float32Array, heightRadii: number): number {
+    const straight = Math.max(0, heightRadii - 2);
+    const x = point[0] ?? 0;
+    const y = point[1] ?? 0;
+    const z = point[2] ?? 0;
+    // The nearest point of the capsule's spine, which runs from y = 1 to
+    // y = 1 + straight. Distance to the spine is the capsule's own radius
+    // everywhere, which is what makes this one expression rather than three
+    // cases.
+    const spineY = Math.min(1 + straight, Math.max(1, y));
+    return Math.abs(Math.hypot(x, y - spineY, z) - 1);
+  }
+
+  const HEIGHTS = [2, 2.5, 3, 5, 8];
+
+  it('lands on the surface of the capsule, never inside it and never off it', () => {
+    // The invariant the whole thing rests on: a mark clinging to a body has to
+    // be ON the body. Inside is a mark the mesh hides; outside is a mark
+    // floating beside a thing it is supposed to be stuck to.
+    for (const height of HEIGHTS) {
+      for (let seed = 0; seed < 400; seed++) {
+        const rng = new VfxRng(seed);
+        const point = new Float32Array(3);
+        sampleCapsuleSurface(rng, point, 0, height);
+        expect(offSurface(point, height)).toBeLessThan(1e-5);
+      }
+    }
+  });
+
+  it('stains a tall body evenly rather than giving it a hat and boots', () => {
+    // The mistake this function exists to avoid, stated as a number. Picking
+    // "cap or side" with an even coin gives the two caps half the marks whatever
+    // the body's proportions -- so on a body four radii tall, where the caps are
+    // a third of the surface, a third is what they must get.
+    //
+    // Measured against the real areas: the side is 2*pi*straight and the two
+    // caps together are one sphere, 4*pi.
+    const height = 6;
+    const straight = height - 2;
+    const expected = straight / (straight + 2);
+    let onSide = 0;
+    const total = 4000;
+    for (let seed = 0; seed < total; seed++) {
+      const rng = new VfxRng(seed + 1000);
+      const point = new Float32Array(3);
+      sampleCapsuleSurface(rng, point, 0, height);
+      const y = point[1] ?? 0;
+      if (y >= 1 - 1e-6 && y <= 1 + straight + 1e-6) onSide += 1;
+    }
+    expect(onSide / total).toBeCloseTo(expected, 1);
+  });
+
+  it('covers the whole height rather than bunching at one end', () => {
+    // The failure the area weighting is *for*, checked the way somebody looking
+    // at the body would: cut it into five bands and require every band to have
+    // been painted. A sampler that piled everything into the caps leaves the
+    // middle three empty.
+    const height = 7;
+    const bands = new Array<number>(5).fill(0);
+    for (let seed = 0; seed < 2000; seed++) {
+      const rng = new VfxRng(seed + 50);
+      const point = new Float32Array(3);
+      sampleCapsuleSurface(rng, point, 0, height);
+      const t = Math.min(0.999, Math.max(0, (point[1] ?? 0) / height));
+      bands[Math.floor(t * 5)] = (bands[Math.floor(t * 5)] ?? 0) + 1;
+    }
+    for (const count of bands) expect(count).toBeGreaterThan(100);
+  });
+
+  it('degenerates to a sphere for a body shorter than it is wide', () => {
+    // `straight` is clamped at zero, so a squat body is a ball rather than a
+    // capsule with a negative middle in it. The grazer is not far off this.
+    for (let seed = 0; seed < 200; seed++) {
+      const rng = new VfxRng(seed);
+      const point = new Float32Array(3);
+      sampleCapsuleSurface(rng, point, 0, 0.5);
+      const x = point[0] ?? 0;
+      const y = (point[1] ?? 0) - 1;
+      const z = point[2] ?? 0;
+      expect(Math.hypot(x, y, z)).toBeCloseTo(1, 4);
+    }
+  });
+
+  it('draws the same point for the same seed, twice', () => {
+    // A surface sample is as much a part of the painting as a velocity is, so
+    // two clients watching one poisoned body have to see the same marks.
+    const a = new Float32Array(3);
+    const b = new Float32Array(3);
+    sampleCapsuleSurface(new VfxRng(4242), a, 0, 4);
+    sampleCapsuleSurface(new VfxRng(4242), b, 0, 4);
+    expect([...a]).toEqual([...b]);
+  });
+
+  it('writes only the three floats it was given room for', () => {
+    // It is called with an offset into a six-float scratch buffer whose second
+    // half is the spawn direction, and overwriting that would send every mark
+    // off along its own position.
+    const scratch = new Float32Array(6).fill(-1);
+    sampleCapsuleSurface(new VfxRng(9), scratch, 0, 4);
+    expect([...scratch.slice(3)]).toEqual([-1, -1, -1]);
+  });
+});
+

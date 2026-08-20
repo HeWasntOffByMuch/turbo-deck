@@ -1007,7 +1007,22 @@ export function brushAffliction(params: BrushAfflictionParams): EffectDefinition
       // Opaque for four fifths of its life. The mark is coming apart into
       // islands by then and there is very little left for alpha to do.
       alpha: { keys: [[0, 1], [0.78, 1], [1, 0]] },
-      color: { stops: [[0, params.bright], [0.4, params.mid], [1, params.deep]] },
+      // Born bright and settling on the body colour, and it **never reaches
+      // `deep`** -- which is the rule the first cut got wrong. A cling is the
+      // layer that has to read, and reading is mostly a question of value: with
+      // the ramp running all the way down, a mark spent the back half of its
+      // life in the darkest tone the affliction has, and against grass and dirt
+      // that is mud. It showed up as Frostbite being far and away the most
+      // legible of the seven for no reason anybody had chosen -- its ramp is the
+      // only one whose dark end is still light.
+      //
+      // So the two layers split the ramp between them: the cling lives in the
+      // top two tones because it is what is *on* the body, and the shed below
+      // takes `mid` to `deep` because it is what is coming *off* it. Which also
+      // buys the thing a single ramp could not: the paint on a body and the
+      // paint falling from it are different colours, so the two layers separate
+      // without either needing a second palette entry.
+      color: { stops: [[0, params.bright], [0.35, params.mid], [1, params.mid]] },
       render: 'mesh',
       mesh: { shape: 'brush-blot' },
       blend: 'alpha',
@@ -1034,7 +1049,9 @@ export function brushAffliction(params: BrushAfflictionParams): EffectDefinition
       // Thins as it goes, unlike the cling: this one IS leaving.
       size: { keys: [[0, shedSize * 0.8], [0.3, shedSize], [1, shedSize * 0.42]] },
       alpha: { keys: [[0, 1], [0.6, 1], [1, 0]] },
-      color: { stops: [[0, params.mid], [0.55, params.mid], [1, params.deep]] },
+      // Mid to deep: this one is leaving, and going dark on the way out is what
+      // says so. See the cling above for why the two layers divide the ramp.
+      color: { stops: [[0, params.mid], [0.45, params.mid], [1, params.deep]] },
       render: 'mesh',
       mesh: { shape: shedShape },
       blend: 'alpha',
@@ -1352,8 +1369,14 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     clingLife: [26, 40],
     shedLife: [34, 54],
     bright: 'poisonPale',
-    mid: 'poisonDeep',
-    deep: 'poisonMurk',
+    // The cling settles on `mid`, so `mid` is the colour Poison *is* rather
+    // than the bottom of its ramp. Leaf green here read as mud on a body at
+    // this size, and it put Poison and Corrosion within a shade of each other
+    // at the one moment they most need telling apart -- the pale green against
+    // Corrosion's saturated chartreuse is the difference that survives the
+    // quantizer.
+    mid: 'poisonPale',
+    deep: 'poisonDeep',
   }),
   brushAffliction({
     id: 'affliction_poison_heavy',
@@ -1366,13 +1389,24 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     clingLife: [28, 44],
     shedLife: [38, 60],
     bright: 'poisonPale',
-    mid: 'poisonDeep',
-    deep: 'poisonMurk',
+    // The cling settles on `mid`, so `mid` is the colour Poison *is* rather
+    // than the bottom of its ramp. Leaf green here read as mud on a body at
+    // this size, and it put Poison and Corrosion within a shade of each other
+    // at the one moment they most need telling apart -- the pale green against
+    // Corrosion's saturated chartreuse is the difference that survives the
+    // quantizer.
+    mid: 'poisonPale',
+    deep: 'poisonDeep',
   }),
   // Corrosion: acid, and the one that is visibly *doing something to the
-  // surface*. Small, fast-renewed cling marks rather than broad ones, because
-  // what this eats through is the guard and the armour -- it should read as
-  // pitting rather than as a coat.
+  // surface*. The first cut authored it as **pitting** rather than a coat --
+  // small marks, renewed twice as fast as anything else -- on the argument that
+  // what it eats through is the guard and the armour. The contact sheet said no:
+  // it came out at a third of Frostbite's ink and was the one row of the seven
+  // you had to look for. Small and fast is *detail*, and this vocabulary's whole
+  // rule is silhouette over detail at three hundred pixels tall. It keeps the
+  // fast renewal, which is where the sense of something being eaten away comes
+  // from, and the marks are the size of everybody else's.
   brushAffliction({
     id: 'affliction_corrosion',
     cling: 17,
@@ -1380,8 +1414,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     rise: -110,
     turbulence: 24,
     shedSpeed: 13,
-    clingSize: 0.52,
-    clingLife: [14, 24],
+    clingSize: 0.62,
+    clingLife: [18, 30],
     shedLife: [24, 40],
     bright: 'corrodeBright',
     mid: 'corrodeBody',
@@ -1394,8 +1428,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     rise: -120,
     turbulence: 30,
     shedSpeed: 15,
-    clingSize: 0.6,
-    clingLife: [14, 26],
+    clingSize: 0.7,
+    clingLife: [18, 32],
     shedLife: [24, 42],
     bright: 'corrodeBright',
     mid: 'corrodeBody',
@@ -1419,7 +1453,7 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     rise: 18,
     turbulence: 66,
     shedSpeed: 20,
-    clingSize: 0.46,
+    clingSize: 0.54,
     clingLife: [8, 16],
     shedLife: [12, 22],
     shedSize: 0.3,
