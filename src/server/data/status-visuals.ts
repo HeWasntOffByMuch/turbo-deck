@@ -39,7 +39,14 @@ export type StatusIconId =
   | 'vulnerable'
   | 'sundered'
   | 'adapted'
-  | 'slowed';
+  | 'slowed'
+  | 'burn'
+  | 'bleed'
+  | 'poison'
+  | 'corrosion'
+  | 'shock'
+  | 'frostbite'
+  | 'decay';
 
 /**
  * Which way a status cuts.
@@ -68,19 +75,26 @@ export interface StatusVisual {
   /**
    * What the condition does, in one or two sentences (spec 191).
    *
-   * The **one** authored mechanical string in the description system, and the
-   * reason is that this row genuinely does not know: what a status does lives in
-   * `sim/blow.ts`, `sim/abilities.ts` and `SCALING`, and there is no field here
-   * to derive it from. Everything *around* it -- the stacking rule, the refresh
-   * rule, whether a count is drawn, which colour it takes -- is derived by
-   * `data/description.ts` from the fields above, and the rule that keeps the two
-   * apart is that nothing derivable may be authored here.
+   * Authored, and the reason is that this row genuinely does not know: what a
+   * boon does lives in `sim/blow.ts`, `sim/abilities.ts` and `SCALING`, and
+   * there is no field here to derive it from. Everything *around* it -- the
+   * stacking rule, the refresh rule, whether a count is drawn, which colour it
+   * takes -- is derived by `data/description.ts` from the fields above.
+   *
+   * **Absent for an affliction** (spec 190's seven), and that is the same rule
+   * rather than an exception to it: an affliction *is* a rate, a cadence and a
+   * length in `data/damage-over-time.ts`, so `describeStatus` derives its lines
+   * from that row and seven sentences here would be a second copy of
+   * `damagePerSecond` with nothing keeping it true. The rule is one sentence --
+   * **nothing derivable may be authored** -- and a row supplies exactly one of
+   * the two sources. `description.test.ts` fails a row that supplies neither or
+   * both.
    *
    * Written to `docs/mechanics-vocabulary.md`: no ticks, no internal pool names,
    * no magnitude that depends on who applied it. Where a number is a build's
    * rather than the status's, the line names the source instead of guessing one.
    */
-  readonly effect: string;
+  readonly effect?: string;
   /**
    * This status has no duration of its own (spec 191).
    *
@@ -104,7 +118,7 @@ export interface StatusVisual {
  *
  * Adaptation is per ability -- `adapt:bolt.arcane` -- so it is the one entry
  * here that is not a status id the sim ever writes. A mark over a head cannot
- * say *which* ability it has learned to shrug off, so the eight rows below carry
+ * say *which* ability it has learned to shrug off, so the rows below carry
  * one `adapted` and the packer folds every `adapt:` entry into it, keeping the
  * largest stack count. What is left is still true: this body is getting harder
  * to hurt the same way.
@@ -219,6 +233,43 @@ const DEFINITIONS: readonly StatusVisual[] = [
     maxStacks: 1,
     effect: 'Move speed is reduced. Never below 25% of normal speed.',
   },
+
+  // --- the afflictions (spec 190) ----------------------------------------
+  //
+  // Seven rows and the easiest decision in this table: an affliction is
+  // *losing health to something that is still on you*, which is the most
+  // pointable-at condition this game has. A player who cannot see one has no
+  // way to tell being poisoned from being wrong about their own health bar.
+  //
+  // `maxStacks` mirrors the row in `data/damage-over-time.ts`, because it is the
+  // same ceiling: the mark's count and the concentration doing the damage are
+  // one number, and a table that guessed its own would eventually disagree with
+  // the sim about what a player is carrying.
+  //
+  // They all read as one colour, like every other affliction here, and that is
+  // the rule working rather than a shortcoming -- seven warm tones over a head
+  // is a legend. Which one it is, is the glyph's job.
+  { id: StatusId.Burn, wire: 9, name: 'Burn', kind: 'affliction', icon: 'burn', maxStacks: 1 },
+  { id: StatusId.Bleed, wire: 10, name: 'Bleed', kind: 'affliction', icon: 'bleed', maxStacks: 3 },
+  { id: StatusId.Poison, wire: 11, name: 'Poison', kind: 'affliction', icon: 'poison', maxStacks: 5 },
+  {
+    id: StatusId.Corrosion,
+    wire: 12,
+    name: 'Corrosion',
+    kind: 'affliction',
+    icon: 'corrosion',
+    maxStacks: 3,
+  },
+  { id: StatusId.Shock, wire: 13, name: 'Shock', kind: 'affliction', icon: 'shock', maxStacks: 1 },
+  {
+    id: StatusId.Frostbite,
+    wire: 14,
+    name: 'Frostbite',
+    kind: 'affliction',
+    icon: 'frostbite',
+    maxStacks: 1,
+  },
+  { id: StatusId.Decay, wire: 15, name: 'Decay', kind: 'affliction', icon: 'decay', maxStacks: 1 },
 ];
 
 export const STATUS_VISUALS: readonly StatusVisual[] = DEFINITIONS;

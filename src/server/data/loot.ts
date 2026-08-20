@@ -202,11 +202,28 @@ export interface DropTable {
 export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropTable>([
   [
     'grazer',
-    { chance: 0.25, entries: [{ defId: 'potion.minor', count: 1, weight: 1 }] },
+    {
+      chance: 0.25,
+      entries: [
+        { defId: 'potion.minor', count: 1, weight: 6 },
+        // The two level-2 affliction sigils, on the earliest bodies in the
+        // world (spec 190). An affliction nobody can reach is a table nothing
+        // reads, and the two that go here are the two whose skills are cheap
+        // enough to be somebody's first: a dart you stack, and a cut that
+        // punishes a runner.
+        { defId: 'sigil.poisonDart', count: 1, weight: 1 },
+      ],
+    },
   ],
   [
     'small_spider',
-    { chance: 0.25, entries: [{ defId: 'potion.minor', count: 1, weight: 1 }] },
+    {
+      chance: 0.25,
+      entries: [
+        { defId: 'potion.minor', count: 1, weight: 6 },
+        { defId: 'sigil.rendingCut', count: 1, weight: 1 },
+      ],
+    },
   ],
   [
     'stalker',
@@ -219,6 +236,7 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
         // Strike is the level-2 sigil, which puts it on the earliest body that
         // drops anything worth walking over to.
         { defId: 'sigil.cripplingStrike', count: 1, weight: 2 },
+        { defId: 'sigil.acidSpray', count: 1, weight: 2 },
         { defId: 'trinket.swiftband', count: 1, weight: 1 },
       ],
     },
@@ -231,6 +249,9 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
         { defId: 'potion.minor', count: 2, weight: 10 },
         { defId: 'stars.weighted', count: 1, weight: 4 },
         { defId: 'sigil.cripplingStrike', count: 1, weight: 2 },
+        { defId: 'sigil.emberToss', count: 1, weight: 2 },
+        { defId: 'sigil.arcLash', count: 1, weight: 2 },
+        { defId: 'sigil.rimeTouch', count: 1, weight: 2 },
         { defId: 'focus.quartz', count: 1, weight: 1 },
       ],
     },
@@ -240,8 +261,13 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
     {
       chance: 0.5,
       entries: [
-        { defId: 'potion.minor', count: 2, weight: 12 },
-        { defId: 'chest.leather', count: 1, weight: 6 },
+        // The common anchor, raised by spec 190 from 12 and 6. Not a balance
+        // whim: this table sat at *exactly* 1.5 commons per rare, which is the
+        // boundary `loot.test.ts` asserts, so it had been passing on the roll of
+        // one seed rather than on the rule -- and one more rare row tipped it.
+        // Twice as much common weight as rare is the rule with room in it.
+        { defId: 'potion.minor', count: 2, weight: 16 },
+        { defId: 'chest.leather', count: 1, weight: 8 },
         { defId: 'sword.keen', count: 1, weight: 3 },
         { defId: 'maul.iron', count: 1, weight: 3 },
         // The two rare sigils, on the only body in the table that drops
@@ -249,6 +275,9 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
         // because a skill is worth roughly what a weapon is worth.
         { defId: 'sigil.stunningBlow', count: 1, weight: 3 },
         { defId: 'sigil.whirlwind', count: 1, weight: 3 },
+        // The one exceptional sigil, on the one body that could reasonably
+        // carry it (spec 190).
+        { defId: 'sigil.blight', count: 1, weight: 1 },
         { defId: 'trinket.bloodstone', count: 1, weight: 1 },
       ],
     },

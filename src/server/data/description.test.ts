@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { ALL_ABILITIES, abilityById } from './abilities.js';
 import { ALL_ITEMS } from './items.js';
 import { STATUS_VISUALS } from './status-visuals.js';
+import { ALL_DOTS, dotById, dotPulseDamage } from './damage-over-time.js';
 import { ALL_SKILLS } from './skills.js';
 import {
   GRANT_LABELS,
@@ -438,5 +439,57 @@ describe('the passive skill tree (spec 191)', () => {
       'trait:masteryRelief',
       'trait:overflowHealthPerResource',
     ]);
+  });
+});
+
+describe('afflictions are derived, never authored (spec 190)', () => {
+  it('gives every row exactly one source for what it does', () => {
+    // The rule the whole file rests on, as a check rather than a habit: an
+    // affliction *is* its row in `data/damage-over-time.ts`, so authoring a
+    // sentence beside it would be a second copy of `damagePerSecond` with
+    // nothing keeping it true -- and a row with neither source says nothing.
+    for (const visual of STATUS_VISUALS) {
+      const derived = dotById(visual.id) !== null;
+      const authored = visual.effect !== undefined;
+      expect(derived !== authored, `${visual.id}: derived=${String(derived)} authored=${String(authored)}`).toBe(true);
+    }
+  });
+
+  it('states each affliction’s rate, cadence and count off its own row', () => {
+    for (const dot of ALL_DOTS) {
+      const visual = STATUS_VISUALS.find((row) => row.id === dot.id);
+      expect(visual, dot.id).toBeDefined();
+      if (!visual) continue;
+      const text = technicalText(describeStatus(visual));
+      expect(text, dot.id).toContain(`Deals ${String(Math.round(dotPulseDamage(dot) * 100) / 100)} damage`);
+      expect(text, dot.id).toContain(`${String(dot.pulses)} times`);
+    }
+  });
+
+  it('never reports the expiry guard as a designed duration', () => {
+    // `dotDurationTicks` is `pulses * interval + 1`, and that one tick is slack
+    // so the last pulse lands inside `statusOf`'s comparison. Reported as-is it
+    // reads "over 4.02s", which is an implementation detail in front of a player.
+    for (const dot of ALL_DOTS) {
+      const visual = STATUS_VISUALS.find((row) => row.id === dot.id);
+      if (!visual) continue;
+      const text = technicalText(describeStatus(visual));
+      expect(text, dot.id).toContain(`over ${formatSeconds(dot.pulses * dot.intervalTicks)}`);
+    }
+  });
+
+  it('names an affliction a skill applies without restating its numbers', () => {
+    // `applyDot` carries one field -- the row *is* the affliction, whole -- so a
+    // skill that lands one names it and claims none of its numbers.
+    for (const ability of ALL_ABILITIES) {
+      for (const effect of ability.effects ?? []) {
+        if (effect.kind !== 'applyDot') continue;
+        const dot = dotById(effect.dotId);
+        expect(dot, `${ability.id} names ${effect.dotId}`).not.toBeNull();
+        if (!dot) continue;
+        const text = technicalText(describeAbility(ability));
+        expect(text, ability.id).toContain(`Applies ${dot.name}`);
+      }
+    }
   });
 });

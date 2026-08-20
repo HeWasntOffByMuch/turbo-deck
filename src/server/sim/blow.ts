@@ -39,6 +39,7 @@ import { SCALING } from '../data/scaling.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { applyArmor } from '../player/stats.js';
 import { provoke } from './aggro.js';
+import { healingScaleOf } from './damage-over-time.js';
 import { applyPoiseDamage, isResolute, poiseDamageOf, stagger } from './poise.js';
 import { markAssist } from './restoration.js';
 import {
@@ -418,7 +419,11 @@ function rewardAttacker(
   if (outcome.weakPoint) {
     resource += A.weakPointResource;
     if (outcome.killed && A.weakPointKillHeal > 0) {
-      health = Math.min(next.stats.maxHealth, health + next.stats.maxHealth * A.weakPointKillHeal);
+      // Third of the three restorations that never touch `applyHealing`, and so
+      // the third that has to consult the suppression itself (spec 190).
+      const mend =
+        next.stats.maxHealth * A.weakPointKillHeal * healingScaleOf(next.statuses, tick);
+      health = Math.min(next.stats.maxHealth, health + mend);
     }
     if (A.attunedFromWeakPoints > 0 && A.attunedTicks > 0) {
       statuses = applyStatus(statuses, StatusId.Attuned, tick, A.attunedTicks, {

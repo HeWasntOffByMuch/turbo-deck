@@ -31,6 +31,7 @@
 import type { Rng } from '../../shared/prng.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { subjectOf, type SkillEffect } from '../data/skill-effects.js';
+import { applyDot } from './damage-over-time.js';
 import { applyHealing } from './healing.js';
 import { resolveBlow } from './blow.js';
 import { applyPoiseDamage, isResolute, stagger } from './poise.js';
@@ -202,6 +203,14 @@ function applyOne(
 
     case 'removeStatus':
       return still({ ...target, statuses: clearStatus(target.statuses, effect.statusId) });
+
+    case 'applyDot':
+      // Through the system that owns afflictions and nowhere else (spec 190).
+      // Two lines, like every other case here: what an affliction is worth,
+      // how long it runs and who is answerable for what it kills are all
+      // decided by `applyDot` against its own table, so a skill row cannot
+      // author a Burn that is not the Burn.
+      return still(applyDot(target, effect.dotId, tick, caster));
 
     case 'heal': {
       const amount = (effect.amount ?? 0) + target.stats.maxHealth * (effect.fraction ?? 0);

@@ -42,6 +42,38 @@ export interface StatusState {
    * give the exposure of whoever happens to be standing there.
    */
   readonly magnitude: number;
+  /**
+   * Who put it there. 0 for a status nobody is responsible for (spec 190).
+   *
+   * The same argument {@link magnitude} makes at the top of this file, carried
+   * one step further. A status can now *kill* -- an affliction pulses damage
+   * long after the body that applied it has walked away -- and `died.killerId`
+   * has nowhere else to come from. Without it a poison's kill pays nobody: no
+   * restoration, no assists, no loot roll, no metrics.
+   *
+   * It follows the **magnitude** rather than the clock. Whoever's application
+   * set the number that is actually doing the damage owns the kill, so the
+   * credit and the number always describe the same body -- where "the last one
+   * to touch it" would let a weak applier take a strong one's poison while
+   * leaving the strong one's damage on it.
+   */
+  readonly sourceId: number;
+  /**
+   * The tick it **first** landed, kept across a refresh (spec 190).
+   *
+   * What makes a periodic effect a comparison rather than a stored countdown,
+   * in exactly the shape this file already commits to for expiry: a pulse is
+   * `elapsed % interval === 0` and nothing has to be written per tick.
+   *
+   * Kept across a refresh, which is three properties at once. Refreshing a
+   * poison cannot **delay** its next pulse, so a body inside a spammed refresh
+   * still takes damage rather than being ticked forever into the future; it
+   * cannot **double-tick** it either; and an escalating affliction measures its
+   * ramp from when it got in, so "worse the longer it goes on" survives being
+   * topped up. A fresh application -- one landing on a body whose last one had
+   * already run out -- resets it, because that is a new affliction.
+   */
+  readonly appliedAtTick: number;
 }
 
 export type Statuses = Readonly<Record<string, StatusState>>;
@@ -104,6 +136,31 @@ export const StatusId = {
    * different mechanic that should have to say so.
    */
   Slowed: 'slowed',
+
+  // --- the afflictions (spec 190) ---------------------------------------
+  //
+  // Seven ids and no seventh mechanic: each names a row in
+  // `data/damage-over-time.ts`, and what separates them is a rate, a cadence,
+  // a length and at most one rider that reaches into a system this game
+  // already has. They are in this map rather than in an affliction map of
+  // their own for the reason the file's header gives -- one map with one
+  // expiry rule is one place to get right -- and they are the first entries
+  // here whose `sourceId` is load-bearing, because they can kill.
+
+  /** Strong and short. Immediate pressure, and it spreads. */
+  Burn: 'burn',
+  /** Moderate, and worse while the body keeps moving or keeps swinging. */
+  Bleed: 'bleed',
+  /** Weak and long. Attrition: it stacks, and every dart refreshes the clock. */
+  Poison: 'poison',
+  /** Moderate, and it takes the guard and the armour with it. */
+  Corrosion: 'corrosion',
+  /** Bursts rather than a trickle, and it arcs to whoever is standing near. */
+  Shock: 'shock',
+  /** Escalating. Harmless at first and dangerous if it is left on. */
+  Frostbite: 'frostbite',
+  /** Slow, and nothing heals properly while it is running. */
+  Decay: 'decay',
 } as const;
 
 /** Adaptation is per ability id: `adapt:bolt.arcane`. */
@@ -145,16 +202,29 @@ export function applyStatus(
   id: string,
   tick: number,
   durationTicks: number,
-  options: { readonly maxStacks?: number; readonly magnitude?: number } = {},
+  options: {
+    readonly maxStacks?: number;
+    readonly magnitude?: number;
+    /** Who is responsible for this, for a status that can kill (spec 190). */
+    readonly sourceId?: number;
+  } = {},
 ): Statuses {
   if (!Number.isFinite(durationTicks) || durationTicks <= 0) return statuses;
   const maxStacks = Math.max(1, Math.floor(options.maxStacks ?? 1));
   const magnitude = options.magnitude ?? 0;
+  const sourceId = options.sourceId ?? 0;
   const held = statusOf(statuses, id, tick);
+  // The source follows the magnitude, not the clock (spec 190): whoever's
+  // application set the number doing the damage owns what that damage does.
+  // Ties go to whoever was already there, so the rule is total and stable.
+  const takesOver = !held || magnitude > held.magnitude;
   const next: StatusState = {
     expiresAtTick: tick + Math.round(durationTicks),
     stacks: Math.min(maxStacks, (held?.stacks ?? 0) + 1),
     magnitude: held ? Math.max(held.magnitude, magnitude) : magnitude,
+    sourceId: takesOver ? sourceId : held.sourceId,
+    // Kept, so a refresh moves the deadline and nothing else -- see the field.
+    appliedAtTick: held ? held.appliedAtTick : tick,
   };
   return { ...statuses, [id]: next };
 }

@@ -71,8 +71,18 @@ decision the game is built on and the words have to keep it apart.
 | **Weak point** | Perception's separate roll, which also applies Exposed. |
 
 **Do not use:** *DPS*, *hitpoints*/*HP* (say health), *mitigation*, *absorb* for
-armour, *heal over time* — nothing in this game heals over time; if something
-ever does, it is written `Heals X every Ys for Zs.`
+armour, *DoT*, *damage over time* as a noun, *tick* for a pulse. Nothing in this
+game heals over time; if something ever does, it is written
+`Heals X every Ys, N times.`
+
+**Damage over time is an affliction**, and it is written as a rate, a cadence
+and a count: `Deals 4.5 damage every 0.5s, 8 times.` The count rather than a
+span, because a span is `pulses * interval` **plus one tick** — slack so the last
+pulse lands inside the expiry comparison — and reporting that reads out an
+implementation guard as though a designer had chosen 4.02 seconds. The total is
+worth stating beside it (`36 damage in total over 4s`), because the total is what
+a player actually compares, and it is derived through the sim's own
+`dotTotalDamage` so an escalating affliction is not reported as `pulse × pulses`.
 
 **Damage and healing are never one term with a sign.** Internally a negative
 damage heals; a player is never shown that. A heal says *Heals*.
@@ -379,20 +389,23 @@ it in that order and reordering it is a balance change. Guard Break strips guard
 | Proportion of a pool | Percentage of the named pool | `35% of maximum health` |
 | Chance | Percentage, leading | `4% chance to ...` |
 | Target cap | `up to N` | `up to 6 enemies` |
+| Repeat count | `N times` | `every 0.5s, 8 times` |
 | Stack cap | `Stacks up to N times.` | |
 | Angle | Integer degrees, **full** opening angle | `in a 90° cone` |
 
-Rounding: durations to two decimals, percentages to one, everything else to the
-nearest integer — trailing zeros trimmed throughout. A number is never shown with
+Rounding: durations to two decimals, percentages to one, every other quantity to
+two — trailing zeros trimmed throughout. A number is never shown with
 more precision than the player can act on, and never with less than the sim uses
 in a way that changes the answer.
 
-Both of those decimal allowances were bought by an accuracy failure rather than
-chosen. Durations went to two because 0.35s is 21 ticks and one decimal calls it
-0.4s. Percentages went to one because Lightfoot grants 0.8% armour a rank, and an
-integer percentage calls that 1% — a quarter more than it is. This document's own
-priority order puts accuracy above consistency, so in both cases the rule moved
-and the number did not.
+Every one of those decimal allowances was bought by an accuracy failure rather
+than chosen, and the pattern is worth noticing. Durations went to two because
+0.35s is 21 ticks and one decimal calls it 0.4s. Percentages went to one because
+Lightfoot grants 0.8% armour a rank, and an integer percentage calls that 1% — a
+quarter more than it is. Quantities went to two because Burn's pulse is 4.5 and
+Bleed's exertion multiplier is 1.75, which an integer and one decimal
+respectively overstate. This document's own priority order puts accuracy above
+consistency, so each time the rule moved and the number did not.
 
 **Ticks never appear.** Neither do internal ids, internal pool names, or raw
 fractions where a percentage is meant.

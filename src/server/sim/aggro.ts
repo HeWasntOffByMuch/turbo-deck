@@ -183,6 +183,11 @@ export function rally(
   const changed = new Map<number, ServerEntity>();
   for (const event of events) {
     if (event.kind !== 'hit') continue;
+    // A pulse is not a blow, and is not a shout either (spec 190). The bound
+    // this whole function rests on is one hop per blow; an affliction ticking
+    // twenty times would raise twenty calls, each from wherever its applier had
+    // walked to since. The blow that applied it already rallied.
+    if (event.periodic) continue;
     const victim = entities.get(event.targetId);
     if (!victim || victim.kind !== EntityKindValue.Monster) continue;
     const attacker = entities.get(event.attackerId);

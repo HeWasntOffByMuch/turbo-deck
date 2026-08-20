@@ -300,6 +300,80 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     activeSkillId: 'skill.cripplingStrike',
     value: 60,
   },
+  // --- the affliction sigils (spec 190) ---
+  //
+  // One per affliction, and no numbers here either -- the same rule the four
+  // above keep. What they are spread across is `levelRequirement`, which is the
+  // only knob a sigil has: the dart is the cheap one you get early and stack,
+  // and the ones that deny ground or set a crowd alight sit later.
+  {
+    id: 'sigil.poisonDart',
+    name: 'Sigil of the Poison Dart',
+    slot: 'skill',
+    levelRequirement: 2,
+    modifiers: {},
+    activeSkillId: 'skill.poisonDart',
+    value: 60,
+  },
+  {
+    id: 'sigil.rendingCut',
+    name: 'Sigil of the Rending Cut',
+    slot: 'skill',
+    levelRequirement: 2,
+    modifiers: {},
+    activeSkillId: 'skill.rendingCut',
+    value: 65,
+  },
+  {
+    id: 'sigil.emberToss',
+    rarity: 'rare',
+    name: 'Sigil of the Ember Toss',
+    slot: 'skill',
+    levelRequirement: 4,
+    modifiers: {},
+    activeSkillId: 'skill.emberToss',
+    value: 135,
+  },
+  {
+    id: 'sigil.acidSpray',
+    rarity: 'rare',
+    name: 'Sigil of the Acid Spray',
+    slot: 'skill',
+    levelRequirement: 4,
+    modifiers: {},
+    activeSkillId: 'skill.acidSpray',
+    value: 130,
+  },
+  {
+    id: 'sigil.arcLash',
+    rarity: 'rare',
+    name: 'Sigil of the Arc Lash',
+    slot: 'skill',
+    levelRequirement: 5,
+    modifiers: {},
+    activeSkillId: 'skill.arcLash',
+    value: 150,
+  },
+  {
+    id: 'sigil.rimeTouch',
+    rarity: 'rare',
+    name: 'Sigil of the Rime Touch',
+    slot: 'skill',
+    levelRequirement: 5,
+    modifiers: {},
+    activeSkillId: 'skill.rimeTouch',
+    value: 145,
+  },
+  {
+    id: 'sigil.blight',
+    rarity: 'exceptional',
+    name: 'Sigil of the Blight',
+    slot: 'skill',
+    levelRequirement: 6,
+    modifiers: {},
+    activeSkillId: 'skill.blight',
+    value: 260,
+  },
   // The test row's sigil (spec 190). Not content, and three fields say so:
   // `levelRequirement: 1` so any character can wear it, no `rarity` so it
   // announces itself as quietly as loot can, and `value: 0` -- which is what

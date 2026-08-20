@@ -47,6 +47,12 @@ import type { SkillDefinition } from './skills.js';
 import { ATTRIBUTES } from './attributes.js';
 import { subjectOf, type SkillArea, type SkillEffect } from './skill-effects.js';
 import { visualFor, type StatusVisual } from './status-visuals.js';
+import {
+  dotById,
+  dotPulseDamage,
+  dotTotalDamage,
+  type DotDefinition,
+} from './damage-over-time.js';
 
 /**
  * Which register a line is in, so a surface can style the block without
@@ -93,9 +99,18 @@ export const GUARD_NAME = 'Guard';
 // The standard's §2.3, in four functions, so a number cannot be formatted two
 // ways in two places.
 
-/** A bare quantity: damage, healing, range, radius. Nearest integer. */
+/**
+ * A bare quantity: damage, healing, range, radius.
+ *
+ * Two decimals, trailing zeros trimmed, so an integer stays an integer and a
+ * fractional one survives. Rounding to a whole number was fine while every
+ * damage figure in the tables was one, and spec 190's afflictions are not:
+ * Burn's pulse is 4.5 and calling it 5 overstates every tick of it. Two rather
+ * than one because Bleed's exertion multiplier is 1.75, which one decimal calls
+ * 1.8 -- the same accuracy-over-tidiness call the percentage rule already lost.
+ */
 function amount(value: number): string {
-  return String(Math.round(value));
+  return String(Math.round(value * 100) / 100);
 }
 
 /**
@@ -348,6 +363,16 @@ function effectLine(effect: SkillEffect, ability: AbilityDefinition): readonly s
       const visual = visualFor(effect.statusId);
       if (!visual) return [];
       return [`Removes ${visual.name} from ${who}.`];
+    }
+
+    case 'applyDot': {
+      // The row *is* the affliction, whole -- a skill names one and adds no
+      // numbers of its own -- so the line names it and the reader gets the rate
+      // and the cadence from the affliction's own tooltip. Restating them here
+      // would be the skill claiming to own numbers it does not.
+      const dot = dotById(effect.dotId);
+      if (!dot) return [];
+      return [`Applies ${dot.name} to ${who}.`];
     }
 
     case 'heal': {
@@ -722,6 +747,81 @@ export function describeStatSkill(skill: SkillDefinition, level = 0): TechnicalD
 // --- statuses -----------------------------------------------------------
 
 /**
+ * What an affliction does, off its own row (spec 190).
+ *
+ * Every line here is arithmetic the table already exports: `dotPulseDamage`,
+ * `dotDurationTicks` and `dotTotalDamage` are the sim's own, so a description
+ * cannot come to a different answer than the pulse pass does. The total is
+ * `dotTotalDamage` rather than `pulse * pulses` because Frostbite escalates and
+ * the naive product is wrong for it by a factor of two and a bit -- the same
+ * trap `scripts/preview-afflictions.ts` was written to catch.
+ *
+ * The riders each name the system they reach into and none of them restates its
+ * arithmetic, which is the rule the whole resolver is built on.
+ */
+function afflictionLines(dot: DotDefinition): readonly TechnicalLine[] {
+  const out: TechnicalLine[] = [];
+  const per = dot.maxStacks > 1 ? ' per stack' : '';
+  out.push({
+    tone: 'effect',
+    text:
+      `Deals ${amount(dotPulseDamage(dot))} damage every ` +
+      `${formatSeconds(dot.intervalTicks)}, ${amount(dot.pulses)} times` +
+      `${per}.`,
+  });
+  out.push({
+    tone: 'effect',
+    // `pulses * interval`, **not** `dotDurationTicks`. That helper adds one tick
+    // of slack so the last pulse lands inside `statusOf`'s expiry comparison,
+    // and reporting it says "over 4.02s" -- an implementation guard read out to
+    // a player as though it were a designed number. The authored length is the
+    // one a player experiences, and the difference is a sixtieth of a second.
+    text: `${amount(dotTotalDamage(dot))} damage in total over ${formatSeconds(dot.pulses * dot.intervalTicks)}${per}.`,
+  });
+
+  if (dot.rampPerSecond !== undefined) {
+    const cap = dot.rampCap === undefined ? '' : `, up to ${amount(dot.rampCap)}x`;
+    // Measured from when it was first applied and a refresh does not move that,
+    // which is the whole of "dangerous if exposure continues" -- and the one
+    // part of this a player would otherwise have to infer from a health bar.
+    out.push({
+      tone: 'effect',
+      text: `The rate grows by ${percent(dot.rampPerSecond)} of itself each second it is held${cap}. Refreshing it does not restart the growth.`,
+    });
+  }
+  if (dot.exertionScale !== undefined) {
+    out.push({
+      tone: 'effect',
+      text: `Pulses are worth ${amount(dot.exertionScale)}x while the target is moving or casting.`,
+    });
+  }
+  if (dot.spreadRadius !== undefined) {
+    out.push({
+      tone: 'effect',
+      text: `Spreads to another enemy within ${amount(dot.spreadRadius)}.`,
+    });
+  }
+  if (dot.guardPerSecond !== undefined) {
+    out.push({
+      tone: 'effect',
+      text: `Removes ${amount(dot.guardPerSecond)} ${GUARD_NAME} a second. It cannot break it.`,
+    });
+  }
+  if (dot.sunderMagnitude !== undefined) {
+    // It applies the existing status rather than reducing armour its own way,
+    // so the description names the status a player can already see.
+    out.push({ tone: 'effect', text: 'Applies Sundered while it lasts.' });
+  }
+  if (dot.healingScale !== undefined) {
+    out.push({
+      tone: 'effect',
+      text: `Healing the target receives is multiplied by ${amount(dot.healingScale)}.`,
+    });
+  }
+  return out;
+}
+
+/**
  * The Technical Description for one status.
  *
  * The one place the writer reads an authored string as a *mechanical* line, and
@@ -730,8 +830,12 @@ export function describeStatSkill(skill: SkillDefinition, level = 0): TechnicalD
  * refresh rule, whether a count is shown -- is derived from the row.
  */
 export function describeStatus(visual: StatusVisual): TechnicalDescription {
+  // An affliction is a rate, a cadence and a length, all of them in
+  // `data/damage-over-time.ts` -- so it is derived rather than authored, and
+  // `StatusVisual.effect` is absent on exactly those seven rows.
+  const dot = dotById(visual.id);
   const lines: TechnicalLine[] = [
-    { tone: 'effect', text: visual.effect },
+    ...(dot ? afflictionLines(dot) : [{ tone: 'effect' as const, text: visual.effect ?? '' }]),
     {
       tone: 'note',
       text: visual.kind === 'boon' ? 'Beneficial.' : 'Harmful.',
