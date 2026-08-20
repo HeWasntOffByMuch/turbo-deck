@@ -30,14 +30,29 @@ import { afflictionsFromQuery } from './affliction-vfx.js';
 /**
  * How often `?afflict=` re-applies what it was asked for, in ticks (spec 197).
  *
- * Two seconds, against a shortest authored window of four (Burn: eight pulses
- * of half a second). Comfortably inside it, so the paint never lapses while
- * somebody is looking at it, and far enough apart that the re-application is
- * not itself the thing being watched -- a status refreshed every tick would
- * have a beat phase that never advanced, which is precisely the half of this
- * feature worth looking at.
+ * Three seconds, and the number is chosen rather than picked. Two constraints
+ * and they only leave a narrow band:
+ *
+ * **Inside the shortest window.** Burn is eight pulses of half a second, so it
+ * is gone 241 ticks after it lands; anything past that and the paint lapses
+ * while somebody is looking at it.
+ *
+ * **A common multiple of every pulse interval**, which is what 120 was not.
+ * `applyStatus` refreshes rather than extends and deliberately does not move
+ * `appliedAtTick`, so the *sim's* beat phase is unchanged by a refresh -- while
+ * the client derives its own from the expiry, which a refresh does move. The
+ * derived phase therefore shifts by `cadence mod intervalTicks` each time. The
+ * table runs at 30, 45 and 60 ticks; 180 is a multiple of all three and 120 is
+ * not, so at 120 Shock alone slid half an interval every three seconds and its
+ * beat walked off the damage it is drawing. At 180 every row stays exactly in
+ * step, which turns the header's stated post-refresh limit in
+ * `affliction-vfx.ts` into something this path does not have to pay at all.
+ *
+ * It is also far enough apart that the re-application is not itself the thing
+ * being watched: a status refreshed every tick has a beat phase that never
+ * advances, which is precisely the half of this feature worth looking at.
  */
-const FORCED_AFFLICTION_EVERY_TICKS = 120;
+const FORCED_AFFLICTION_EVERY_TICKS = 180;
 import { connectChannel } from '../../../server/net/transport-browser.js';
 import { GameServer } from '../../../server/server.js';
 import { planConnection, rememberSession } from './connection.js';

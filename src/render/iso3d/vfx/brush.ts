@@ -904,6 +904,20 @@ export const ORDER_MARK_REACH = ORDER_MARK_ARM * MARK_REACH;
  * with `drift: 26` and `turbulence: 62`. So 26 is a gentle lift, 62 is
  * "the marks come apart", and 900 is a real fall. Everything here is quieter
  * than a hit by design, and sits between those.
+ *
+ * ## Eighteen effects and no new draw calls
+ *
+ * A batch is keyed `family:blend:sheet:meshShape` (`compile.ts`), and every
+ * emitter here is a `mesh` in `alpha` on one of four marks the file already
+ * draws -- `brush-blot` from the explosion's smoke, and `brush-slash`,
+ * `brush-flick` and `brush-dab` from the hit. So the whole of this costs the
+ * registry **zero** additional batches, which matters because `library.test.ts`
+ * caps them at 25 and the table is sitting on that number.
+ *
+ * Neither `worldSpace` nor `strokeDecay` is in the key, and that is not luck:
+ * decay rides as a per-*instance* attribute precisely so two effects can share a
+ * mark and end it differently, which is what lets the cling fizzle and the beat
+ * retract out of the same geometry.
  */
 export interface BrushAfflictionParams {
   readonly id: string;
