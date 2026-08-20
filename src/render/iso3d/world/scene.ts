@@ -151,6 +151,7 @@ import {
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 import { AfflictionVfx } from './affliction-vfx.js';
+import { sampleCapsuleSurface } from '../vfx/shapes.js';
 import type { WorldAnchor } from './damage-popup.js';
 
 /** One sim tick, in seconds -- the clock an authored unit's speed is on. */
@@ -731,6 +732,13 @@ export class WorldScene {
          * Drawn from the system's own `VfxRng`, never `Math.random`: a
          * continuous emitter carries its generator across ticks, and this is
          * called from inside that stream.
+         *
+         * The sampling itself is `sampleCapsuleSurface`, shared with the judging
+         * rig rather than written twice. A rig that distributed paint
+         * differently from the game would be evidence about the rig -- the
+         * failure `probe-chat.ts` records having shipped once, where a clearance
+         * check measured the wrong furniture and passed while the log sat on the
+         * button beside it.
          */
         surface: (entityId, rng, out, at) => {
           const body = this.bodies.get(entityId);
@@ -738,20 +746,7 @@ export class WorldScene {
           const radius = Math.max(1, body.radius);
           // Height in radii, so the capsule keeps the body's proportions once
           // the instance scale multiplies it back up.
-          const tall = Math.max(0.4, body.headroom / radius);
-          // Cylindrical rather than spherical, and biased off the floor: a body
-          // is a standing thing, and a uniform sphere puts a third of the marks
-          // under its feet. The bias is toward the middle of the height, where
-          // the silhouette is widest and a mark reads best.
-          const angle = rng.float() * Math.PI * 2;
-          // sqrt so the draw is uniform over the disc rather than crowded at
-          // the axis, then pushed outward: a stain is on the surface, and marks
-          // drawn through the volume are marks hidden inside the body.
-          const out2 = 0.55 + 0.45 * Math.sqrt(rng.float());
-          const height = tall * (0.12 + 0.76 * rng.float());
-          out[at] = Math.cos(angle) * out2;
-          out[at + 1] = height;
-          out[at + 2] = Math.sin(angle) * out2;
+          sampleCapsuleSurface(rng, out, at, Math.max(2, body.headroom / radius));
           return true;
         },
       },
