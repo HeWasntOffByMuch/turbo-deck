@@ -15,6 +15,8 @@ import { compileRegistry } from './compile.js';
 import { sampleCurve, compileCurve, sampleGradient, compileGradient } from './curve.js';
 import { VfxSystem } from './system.js';
 import { DAMAGE_EFFECTS, DAMAGE_DEBRIS, effectsForBlow } from '../world/vfx-wire.js';
+import { AFFLICTION_ART } from '../world/affliction-vfx.js';
+import { ALL_DOTS } from '../../../server/data/damage-over-time.js';
 import { spriteSheet, sheetFrames } from './textures.js';
 import { MARK_REACH } from './meshes.js';
 
@@ -817,6 +819,114 @@ describe('the whole library actually runs', () => {
       return out;
     };
     expect(run()).toEqual(run());
+  });
+});
+
+
+/**
+ * The afflictions (spec 197).
+ *
+ * Both directions, and the second one is why this block exists. Checking that
+ * every id `AFFLICTION_ART` names is in the registry catches a typo -- the
+ * failure `aurasFor`'s own test names, "a name that looks right and silently
+ * plays nothing". Checking the other way catches the failure spec 197 was
+ * written to close: an effect that was **authored and then reached by nothing**.
+ * `EmitterShape`'s `{ kind: 'mesh' }` sat in the type for eighty specs with no
+ * definition that used it and no `surface` hook to resolve it, and every test in
+ * the tree was green throughout, because a table that agrees with itself is all
+ * a one-directional check can ever prove.
+ *
+ * The third assertion closes the same loop one table further out: an affliction
+ * added to `data/damage-over-time.ts` with no art is a mechanic that takes
+ * health with nothing on the body to say so, and from the neck down it is
+ * indistinguishable from being wrong about your own health bar -- which is the
+ * exact state this spec found the game in.
+ */
+describe('the afflictions (spec 197)', () => {
+  /** Every id reachable from the art table: the cling, its heavy tier, the beat. */
+  const named = new Set<string>();
+  for (const art of Object.values(AFFLICTION_ART)) {
+    named.add(art.cling);
+    if (art.heavy) named.add(art.heavy);
+    named.add(art.pulse);
+  }
+
+  it('names only effects the registry actually holds', () => {
+    for (const id of named) expect(ids.has(id), id).toBe(true);
+    // And the sweep reached something, or an empty table passes it.
+    expect(named.size).toBeGreaterThan(ALL_DOTS.length * 2);
+  });
+
+  it('reaches every affliction effect the registry holds', () => {
+    // The direction that catches an authored effect nothing plays. A `_heavy`
+    // for a row that cannot get worse, or a beat for an affliction that was
+    // renamed, is dead paint: it costs a batch in the compiled registry, it is
+    // previewed by `preview-afflictions-vfx.ts`, and it never appears in a game.
+    const authored = EFFECTS.filter((effect) => effect.id.startsWith('affliction_')).map(
+      (effect) => effect.id,
+    );
+    expect(authored.length).toBeGreaterThan(0);
+    for (const id of authored) expect(named.has(id), `${id} is authored and reached by nothing`).toBe(true);
+    // Both directions together mean the two sets are the same set.
+    expect([...named].sort()).toEqual([...authored].sort());
+  });
+
+  it('has art for every affliction the sim can apply', () => {
+    for (const row of ALL_DOTS) {
+      const art = AFFLICTION_ART[row.id];
+      expect(art, row.id).toBeDefined();
+      expect(art?.cling, row.id).toBeTruthy();
+      expect(art?.pulse, row.id).toBeTruthy();
+    }
+    expect(Object.keys(AFFLICTION_ART)).toHaveLength(ALL_DOTS.length);
+  });
+
+  it('gives every affliction its own paint rather than two rows sharing one', () => {
+    // Seven afflictions drawn with five effects is five afflictions, and the
+    // whole problem this spec opens on is that from the neck down they already
+    // looked alike.
+    const clings = ALL_DOTS.map((row) => AFFLICTION_ART[row.id]?.cling);
+    expect(new Set(clings).size).toBe(ALL_DOTS.length);
+    const pulses = ALL_DOTS.map((row) => AFFLICTION_ART[row.id]?.pulse);
+    expect(new Set(pulses).size).toBe(ALL_DOTS.length);
+  });
+
+  it('burns until stopped, and never hard-stops', () => {
+    // `durationTicks: 0` is what makes a cling a **state**: the driver owns the
+    // stop and owes one on despawn, because nothing in this system stops itself
+    // when the body it is attached to goes away. The stop is **soft**, unlike an
+    // aura's: a cling mark lives about half a second, so letting the last few
+    // dry is what an affliction ending should look like -- where `hardStop` was
+    // written for a single particle held for ten minutes, which is not this.
+    const byId = new Map(EFFECTS.map((effect) => [effect.id, effect]));
+    for (const art of Object.values(AFFLICTION_ART)) {
+      for (const id of [art.cling, art.heavy].filter((entry): entry is string => Boolean(entry))) {
+        expect(byId.get(id)?.durationTicks, id).toBe(0);
+        expect(byId.get(id)?.hardStop, id).toBeFalsy();
+      }
+      // A beat is the opposite kind of thing: an event, thrown and over, whose
+      // handle the driver drops on the floor. A rate emitter here would be an
+      // instance nobody is holding a handle to and nothing will ever stop.
+      const beat = byId.get(art.pulse);
+      expect(beat?.emitters.length, art.pulse).toBeGreaterThan(0);
+      for (const emitter of beat?.emitters ?? []) {
+        expect(emitter.emission.kind, `${art.pulse}/${emitter.id}`).toBe('burst');
+      }
+    }
+  });
+
+  it('paints in opaque marks throughout', () => {
+    // The painted vocabulary's opacity rule (spec 159): paint is opaque, and two
+    // translucent marks crossing make a third colour that is in neither of them.
+    // It matters more here than anywhere else in the file, because a cling is
+    // *many overlapping marks on one body by construction* -- the one
+    // arrangement where a translucent mark is guaranteed to cross another.
+    for (const effect of EFFECTS) {
+      if (!effect.id.startsWith('affliction_')) continue;
+      for (const emitter of effect.emitters) {
+        expect(emitter.blend, `${effect.id}/${emitter.id}`).toBe('alpha');
+      }
+    }
   });
 });
 

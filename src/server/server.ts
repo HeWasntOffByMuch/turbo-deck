@@ -66,7 +66,7 @@ import { RESTORATION } from './data/restoration.js';
 import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
 import { applyStatus, adaptedKey } from './sim/statuses.js';
 import { clearAfflictions } from './sim/damage-over-time.js';
-import { dotById, dotDurationTicks } from './data/damage-over-time.js';
+import { ALL_DOTS, dotById, dotDurationTicks } from './data/damage-over-time.js';
 import { ADAPTED_ID, STATUS_VISUALS } from './data/status-visuals.js';
 import {
   isRevealed,
@@ -3167,6 +3167,22 @@ export class GameServer implements AdminHost {
    */
   private static readonly STATUS_DEMO_TICKS = 600;
 
+  /**
+   * How far `admin:triggerEvent 'affliction'` reaches, in world units (spec 197).
+   *
+   * A constant rather than the `magnitude` its neighbours spend on reach,
+   * because that argument is already spent naming *which* affliction -- and of
+   * the two, which one is the question a developer actually has: the reach is a
+   * fight and the fight is where they are standing.
+   *
+   * Three hundred units is that fight. Wide enough to catch the body being
+   * looked at and whatever is swinging at it -- Shock's arc jumps 150 and
+   * Burn's fire creeps 90 -- and short enough not to reach a chunk away
+   * (`CHUNK_SIZE` is 400), so a trigger cannot quietly set something alight
+   * outside the frame the camera is showing.
+   */
+  private static readonly AFFLICTION_DEMO_REACH = 300;
+
   triggerEvent(eventName: string, x: number, y: number, magnitude: number): string {
     switch (eventName) {
       case 'raid': {
@@ -3251,6 +3267,82 @@ export class GameServer implements AdminHost {
           marked += 1;
         }
         return `marked ${marked} bodies with every visible status until tick ${until}`;
+      }
+      case 'affliction': {
+        // The developer path for spec 197's paint: **one named affliction**, on
+        // every body within reach, at full severity and for its own authored
+        // length.
+        //
+        // It is a second trigger rather than an argument to `status` because
+        // the two answer different questions. `status` puts all sixteen visible
+        // statuses on at once, which is exactly right for reading the mark row
+        // over a head -- the row is the thing being looked at, and a row with
+        // one entry in it says nothing about ordering or about width. It is
+        // useless for looking at one *effect*: a body wearing all seven
+        // afflictions is wearing seven clings and seven beats at once, and what
+        // fire looks like on a body is not recoverable from that.
+        //
+        // `magnitude` is the **ordinal into `ALL_DOTS`**, in the same register
+        // as `drop`, whose magnitude is already a rarity ordinal rather than a
+        // quantity. Clamped rather than refused, because an operator typing a
+        // number into a console box has no list in front of them and the
+        // failure mode of a refusal is a button that does nothing; the return
+        // string names what actually landed, so a wrong number is visible in the
+        // reply rather than silent.
+        //
+        // Which leaves nothing to carry the reach, so the reach is a constant
+        // (`AFFLICTION_DEMO_REACH`) -- see the field for why that is the right
+        // way round.
+        //
+        // Applied at `maxStacks`, which is `applyStatus` called that many times:
+        // it adds **one** stack per call and refreshing it on the same tick
+        // moves nothing else, so the loop is how a body reaches full severity.
+        // Full rather than one, because severity is precisely what the paint
+        // draws differently (`affliction_poison` against
+        // `affliction_poison_heavy`) and one stack of Poison is the tier nobody
+        // needs a trigger to see -- a single dart produces it.
+        //
+        // Like `status`, it writes **only** into `statuses` and draws nothing
+        // from `state.rng`, so it can no more change an outcome than the real
+        // thing can: the pulses come out of the same `sim/damage-over-time.ts`
+        // pass, at the same cadence, doing the same damage. The one thing it
+        // deliberately does not supply is a `sourceId` -- nobody is responsible
+        // for a conjured poison, so a kill by one pays no restoration, no
+        // assist and no loot roll, which is the honest answer for damage that
+        // came from a console rather than from a fight.
+        const ordinal = Math.max(
+          0,
+          Math.min(ALL_DOTS.length - 1, Number.isFinite(magnitude) ? Math.round(magnitude) : 0),
+        );
+        const row = ALL_DOTS[ordinal];
+        // Unreachable past that clamp, and written rather than cast because the
+        // table is authored data: an index into it is `| undefined` under this
+        // tsconfig, and an assertion here would be this file claiming something
+        // about a file somebody else edits.
+        if (!row) return `no affliction at ordinal ${ordinal}`;
+        const reach = GameServer.AFFLICTION_DEMO_REACH;
+        const duration = dotDurationTicks(row);
+        let afflicted = 0;
+        for (const entity of [...this.state.entities.values()]) {
+          if (entity.kind !== EntityKindValue.Player && entity.kind !== EntityKindValue.Monster) {
+            continue;
+          }
+          if (Math.hypot(entity.position.x - x, entity.position.y - y) > reach) continue;
+          let statuses = entity.statuses;
+          for (let stack = 0; stack < row.maxStacks; stack++) {
+            statuses = applyStatus(statuses, row.id, this.state.tick, duration, {
+              maxStacks: row.maxStacks,
+              // A neutral caster's spell power, exactly as the `status` case
+              // applies its own affliction rows: the demo is of the affliction
+              // rather than of whoever might have landed it.
+              magnitude: 1,
+            });
+          }
+          this.state = replaceEntity(this.state, { ...entity, statuses });
+          afflicted += 1;
+        }
+        const seconds = (duration / SERVER_TICK_RATE).toFixed(1);
+        return `marked ${afflicted} bodies with ${row.name} x${row.maxStacks} for ${seconds}s`;
       }
       case 'drop': {
         // The developer path (spec 158): a drop of a chosen tier, at a chosen

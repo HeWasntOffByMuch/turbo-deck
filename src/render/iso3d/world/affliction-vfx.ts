@@ -68,6 +68,7 @@
 import type { WireStatus } from '../../../server/net/messages.js';
 import { visualByWire } from '../../../server/data/status-visuals.js';
 import {
+  ALL_DOTS,
   dotById,
   dotDurationTicks,
   dotRampAt,
@@ -132,6 +133,14 @@ export const AFFLICTION_ART: Readonly<Record<string, AfflictionArt>> = {
 export interface LiveAffliction {
   /** The `StatusId`, which is also the `DotDefinition` id. */
   readonly dotId: string;
+  /**
+   * `StatusVisual.wire`, which is what the list is ordered by.
+   *
+   * Carried rather than looked up again, because the sort has to happen here and
+   * a second `visualByWire` call per comparison would be a table lookup inside a
+   * comparator.
+   */
+  readonly wire: number;
   /** The cling to play -- the heavy one where this has got worse. */
   readonly cling: string;
   readonly pulse: string;
@@ -210,8 +219,9 @@ export function afflictionIsHeavy(
  * Order is by **wire index**, for the reason `AURA_ORDER` is fixed: two bodies
  * carrying the same afflictions must produce the same list, and a mark must not
  * move because something else was applied. The wire is already sorted by index
- * (`visibleStatusesOf`), so this preserves rather than imposes it -- and does
- * not depend on that, because it reads the index it was sent.
+ * (`visibleStatusesOf`), so this changes nothing today -- and does not depend on
+ * it, because it sorts on the index it was sent rather than trusting the order
+ * it arrived in.
  */
 export function afflictionsOn(
   statuses: readonly WireStatus[],
@@ -232,13 +242,24 @@ export function afflictionsOn(
     live ??= [];
     live.push({
       dotId: row.id,
+      wire: visual.wire,
       cling: (heavy ? art.heavy : undefined) ?? art.cling,
       pulse: art.pulse,
       elapsedTicks,
       landed: pulsesLanded(row, status.expiresAtTick, tick),
     });
   }
-  return live ?? NONE;
+  if (live === null) return NONE;
+  // Sorted here rather than trusted from the wire, and the distinction is the
+  // whole of the header's claim above. `visibleStatusesOf` does end on a sort by
+  // wire index, so today this changes nothing -- which is exactly what makes it
+  // worth doing: the day a second producer packs a status list (the developer
+  // trigger, a replay, a test fixture) two identical bodies would wear their
+  // paint in a different order with every test still green. A list this short is
+  // a handful of comparisons and the alternative is a latent ordering bug whose
+  // symptom is "it looked different that time".
+  live.sort((a, b) => a.wire - b.wire);
+  return live;
 }
 
 // --- the driver --------------------------------------------------------------
@@ -458,4 +479,51 @@ export function seedFor(entityId: number, id: string, index: number): number {
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0) % 0x7fffffff;
+}
+
+// --- reaching one from the shipped page --------------------------------------
+
+/**
+ * The afflictions a `?afflict=` query parameter asks for, as ordinals into
+ * `ALL_DOTS`.
+ *
+ * A developer path and nothing else, in the same register as `?seed=`,
+ * `?wire=`, `?units=` and `?slots=` -- and it exists for exactly the reason
+ * `?slots=` does, restated one system along. **Nothing a player can do from the
+ * shipped page applies an affliction.** Every one of the seven arrives through
+ * a skill sigil that has to be looted and equipped, or through a monster that
+ * has to be authored to carry one, and no monster in the roster does. So the
+ * whole of spec 197 was unreachable from the Play tab: the paint could be
+ * asserted in Node and photographed in a rig, and nobody could walk up to a
+ * burning body in the game and look at it.
+ *
+ * Names rather than numbers -- `?afflict=burn,poison` -- because an ordinal is
+ * a thing you have to go and count, and the point of a developer path is that
+ * it is faster than the alternative. An unknown name is **dropped rather than
+ * refused**: a parameter is typed by hand and half a list arriving is better
+ * than none of it, and the tab has no way to report a parse error that anybody
+ * would see.
+ *
+ * Pure and returned in table order, so `?afflict=decay,burn` and
+ * `?afflict=burn,decay` are the same request.
+ */
+export function afflictionsFromQuery(search: string): readonly number[] {
+  const raw = new URLSearchParams(search).get('afflict');
+  if (raw === null) return [];
+  const wanted = new Set(
+    raw
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name !== ''),
+  );
+  if (wanted.size === 0) return [];
+  // `all` is a shorthand worth having: the seven together is the state the
+  // budget and the legibility both have to survive, and typing it out is the
+  // sort of thing that quietly stops being done.
+  const every = wanted.has('all');
+  const ordinals: number[] = [];
+  ALL_DOTS.forEach((row, index) => {
+    if (every || wanted.has(row.id)) ordinals.push(index);
+  });
+  return ordinals;
 }
