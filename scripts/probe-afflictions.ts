@@ -33,7 +33,7 @@
  * The world is alive even when nobody is doing anything to it: the trees sway,
  * the water moves, a body breathes. Comparing a control frame against an
  * affliction frame pixel-for-pixel would report every one of those as "this is
- * the affliction" -- and worse, the control and each affliction are FIVE
+ * the affliction" -- and worse, the control and each affliction are FOUR
  * separate page loads, so their wind phases are not even the same session's
  * phase offset by a few frames, they are uncorrelated: two swaying canopies
  * photographed at two unrelated moments in real time. A dark tile and a
@@ -46,7 +46,7 @@
  * throws out everything that moves on its own -- which is most of what a
  * sweeping tree canopy is -- and keeps everything that does not, which is a
  * body standing still wearing paint. This probe does that once per page load
- * (control and each of the four afflictions independently), and then compares
+ * (control and each of the three afflictions independently), and then compares
  * each affliction's stable frame against the control's stable frame, counting
  * only pixels both sides agree are reliable.
  *
@@ -60,6 +60,23 @@
  * 8-connected mass** of changed pixels, the same measurement
  * `scripts/preview-paint.ts` uses to find a stroke's own footprint against the
  * same kind of background noise.
+ *
+ * One more thing turned out to belong to "the world" in exactly the sense
+ * that trips this up, and it took a first, wrong run to find: the **floating
+ * damage numbers**. They hover over the body in the same world space the
+ * paint clings to, so nothing about "is this inside the HUD" tells them
+ * apart from a cling -- and they turned out to be the *larger*, more
+ * solidly-connected mass, because five stacks of Poison and a climbing
+ * Frostbite ramp both throw a lot of them. The first cut of this probe
+ * measured an identical 248x123 box at an identical position with
+ * near-identical mean colour for Poison and Frostbite both, which was not two
+ * afflictions coincidentally painting the same thing -- it was this probe
+ * finding the same stack of pale digits above the body in both runs. So the
+ * measured window is anchored on the player's own health-bar position
+ * (`selfBarPoint`, the same `data-entity`/`data-self` attributes
+ * `preview-world.ts` reads) rather than on the frame's geometric centre, sized
+ * to reach the body and the ground under it while stopping short of where a
+ * number stack rises to. See `bodyCrop` for the actual margins.
  *
  * ## What only a browser can answer
  *
@@ -140,7 +157,7 @@ const CHROMIUM_ARGS = [
  * one fact this wait actually depends on is that the *first* application lands
  * on the sim's own first tick (`afflictAgainAtTick` starts at 0), which is
  * true regardless of what the re-application interval is tuned to later. 300
- * ticks is five seconds of sim time -- comfortably past every one of the four
+ * ticks is five seconds of sim time -- comfortably past every one of the three
  * afflictions' own pulse interval (the slowest here, Shock, beats every 45
  * ticks), so by the time this fires there have been several pulses and the
  * continuous cling has had time to actually accumulate marks rather than
@@ -283,15 +300,60 @@ interface Comparison {
   readonly overallColor: Rgb;
 }
 
+/** A rectangle in screen pixels, half-open on the right and bottom. */
+interface Crop {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/**
+ * How far beside the player's own health-bar anchor this probe trusts a
+ * pixel to be about the player's body, in screen pixels at the default
+ * framing.
+ *
+ * A full-page diff was tried first and measured the wrong thing twice over.
+ * Excluding only the HUD's own chrome (the tab bar, spec 164's bottom band)
+ * still left the **floating damage numbers** inside the window -- they hover
+ * in world space over the body, the same way the paint does, so nothing about
+ * "is this inside the HUD" tells them apart. And they turned out to be the
+ * larger, more solidly-connected mass: Poison and Frostbite both measured an
+ * identical 248x123 box at the identical position with near-identical mean
+ * colour, which is not two afflictions coincidentally painting the same
+ * thing, it is this probe finding the same stack of pale digits above the
+ * body in both runs, because the demo trigger's five stacks of Poison and
+ * Frostbite's climbing ramp both throw a lot of them. So the window is
+ * anchored on the body itself: {@link ABOVE} stops short of where a number
+ * stack rises to (visibly forty-plus pixels above the health bar in the
+ * screenshots this probe already took), and {@link BELOW} reaches through the
+ * legs, the feet and the ground far enough to catch a downward shed mark
+ * (Poison, Corrosion and Decay's rider all fall rather than rise) without
+ * reaching the bottom HUD band.
+ */
+const HALF_WIDTH = 90;
+const ABOVE = 10;
+const BELOW = 190;
+
+/** The window around `anchor`, clamped to the frame. */
+function bodyCrop(anchor: BarPoint, width: number, height: number): Crop {
+  return {
+    left: Math.max(0, anchor.x - HALF_WIDTH),
+    right: Math.min(width, anchor.x + HALF_WIDTH),
+    top: Math.max(0, anchor.y - ABOVE),
+    bottom: Math.min(height, anchor.y + BELOW),
+  };
+}
+
 /**
  * `candidate` against `control`, restricted to pixels both frames call
- * reliable.
+ * reliable and inside `crop`.
  *
  * Null when nothing changed at all -- which is the exact failure this probe
  * exists to catch, so the caller turns a null straight into a FAIL rather
  * than treating "nothing to measure" as "nothing to report".
  */
-function compareToControl(control: Shot, candidate: Shot): Comparison | null {
+function compareToControl(control: Shot, candidate: Shot, crop: Crop): Comparison | null {
   if (control.width !== candidate.width || control.height !== candidate.height) {
     throw new Error(
       `frame size mismatch: control ${control.width}x${control.height}, candidate ${candidate.width}x${candidate.height}`,
@@ -304,6 +366,9 @@ function compareToControl(control: Shot, candidate: Shot): Comparison | null {
   let og = 0;
   let ob = 0;
   for (let i = 0; i < n; i++) {
+    const x = i % control.width;
+    const y = (i - x) / control.width;
+    if (x < crop.left || x >= crop.right || y < crop.top || y >= crop.bottom) continue;
     if (control.still[i] !== 1 || candidate.still[i] !== 1) continue;
     const a = pixelAt(control.data, i);
     const b = pixelAt(candidate.data, i);
@@ -373,6 +438,32 @@ async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promi
     await page.waitForTimeout(250);
   }
   throw new Error(`sim never reached tick ${ticks} (last seen: ${last})`);
+}
+
+/** Where a body's health bar is on screen. Lifted from `preview-world.ts`. */
+interface BarPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Where the local player's own bar is, or null if it is not on screen this
+ * frame (a reconnect, or a frame taken before the first delta).
+ *
+ * `data-entity` and `data-self` are read rather than re-derived from the
+ * camera projection, for the reason `preview-world.ts` gives: this asks the
+ * same question the player answers by looking at the screen, not this
+ * script's own copy of `hud.ts`'s placement arithmetic.
+ */
+async function selfBarPoint(page: Page): Promise<BarPoint | null> {
+  return page.$$eval('[data-entity]', (nodes) => {
+    for (const node of nodes) {
+      const element = node as HTMLElement;
+      if (element.dataset['self'] === undefined) continue;
+      return { x: element.offsetLeft, y: element.offsetTop };
+    }
+    return null;
+  });
 }
 
 /**
@@ -458,7 +549,7 @@ function stampLabel(sheet: PNG, text: string, atX: number, atY: number): void {
   }
 }
 
-/** Control plus the four afflictions, one labelled row, at a glance. */
+/** Control plus the three afflictions, one labelled row, at a glance. */
 async function assembleContactSheet(shots: ReadonlyMap<string, Shot>): Promise<void> {
   const names = ['control', ...AFFLICTIONS];
   const width = names.length * CELL_W + (names.length + 1) * GAP;
@@ -552,11 +643,29 @@ async function main(): Promise<void> {
     const page = await browser.newPage({ viewport: VIEWPORT });
     page.on('pageerror', (error) => problems.push(String(error)));
     page.on('console', (message) => {
-      if (message.type() === 'error') problems.push(message.text());
+      // The unit loader shouts about the pig's clips carrying root travel
+      // every time the page boots (`preview-paint.ts` carries the same
+      // filter for the same reason): it predates this probe, has nothing to
+      // do with afflictions, and fires on every one of the four loads here
+      // (control plus three afflictions), which would otherwise turn a
+      // script that measured three honest PASSes
+      // into a false FAIL over noise this probe did not create and cannot fix.
+      if (message.type() === 'error' && !message.text().startsWith('[units]')) problems.push(message.text());
     });
 
     console.log('control (no ?afflict, plain seed)');
     await load(page, null);
+    // Anchored once, off the control load, and reused for every affliction:
+    // the world is deterministic given this seed and no input is ever sent,
+    // so the player's body settles at the same screen point every session
+    // bar a pixel or two of camera-follow jitter -- which the generous
+    // {@link HALF_WIDTH}/{@link BELOW} margins in `bodyCrop` are sized to
+    // absorb. Falling back to the frame's own centre rather than throwing:
+    // the bar not being on screen yet is itself worth reporting rather than
+    // crashing the whole run over.
+    const anchor = (await selfBarPoint(page)) ?? { x: VIEWPORT.width / 2, y: VIEWPORT.height / 2 };
+    console.log(`  player's own bar anchors the crop at (${anchor.x.toFixed(0)},${anchor.y.toFixed(0)})`);
+    const crop = bodyCrop(anchor, VIEWPORT.width, VIEWPORT.height);
     const control = await settledShot(page);
     shots.set('control', control);
     await writeShotPng(control, join(outDir, 'afflictions-in-game-control.png'));
@@ -570,7 +679,7 @@ async function main(): Promise<void> {
       await writeShotPng(shot, join(outDir, `afflictions-in-game-${name}.png`));
       console.log(`  wrote afflictions-in-game-${name}.png`);
 
-      const comparison = compareToControl(control, shot);
+      const comparison = compareToControl(control, shot, crop);
       if (!comparison) {
         console.log('  FAIL: indistinguishable from the control frame -- no pixel both frames trust changed at all');
         problems.push(`${name}: no measurable difference from the control frame`);
@@ -606,7 +715,7 @@ async function main(): Promise<void> {
       for (const problem of problems) console.error(`  - ${problem}`);
       process.exitCode = 1;
     } else {
-      console.log('\nall four afflictions painted something a browser can actually see');
+      console.log('\nall three afflictions painted something a browser can actually see');
     }
   } finally {
     await browser.close();
