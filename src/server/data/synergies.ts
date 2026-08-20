@@ -56,8 +56,16 @@ const DEFINITIONS: readonly SynergyDefinition[] = [
     a: 'strength',
     b: 'agility',
     threshold: T,
-    name: 'Momentum',
-    effect: 'Breaking an enemy’s poise halves your next wind-up.',
+    // **Not "Momentum"** (spec 191). That is the name of the *status* this pair
+    // grants, which `STATUS_VISUALS` draws over every head in the world and
+    // which any description naming the status has to use. A pair's name is by
+    // design never shown to a player -- `character-model.test.ts` asserts it of
+    // the whole serialised view -- so the collision could only ever surface as a
+    // sheet that says "Momentum" and a hidden pair called the same thing, which
+    // is precisely the "fifteen things to build toward" this rule exists to
+    // stop. Renaming the hidden half costs nothing anybody can see.
+    name: 'Breakthrough',
+    effect: 'Breaking an enemy’s guard halves your next wind-up.',
     why: 'A status and a timing change off a combat event. Neither stat alone can shorten a wind-up by causing something.',
     grants: { traits: { momentumTicks: SCALING.agility.flowTicks, momentumWindupScale: 0.5 } },
   },

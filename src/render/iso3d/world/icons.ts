@@ -79,6 +79,14 @@ export const WEAPON_ICONS: Readonly<Record<string, string>> = {
     '<path d="M10.4 2.8 V9.6 L14.6 14 V21.2"/>' +
     '<path d="M14.6 21.2 h4"/>' +
     '<path d="M6 10.6 L15.4 6.8" stroke-width="1.6"/>',
+  // The test row (spec 190): a body with a full row of marks over its head,
+  // which is the only thing the skill does. Three ticks and a head rather than
+  // a weapon, because it is not one -- a sword shape here would put a test
+  // instrument in the same visual language as the four skills that ship.
+  'skill.testStatuses':
+    '<circle cx="12" cy="14.6" r="4.2"/>' +
+    '<path d="M12 18.8 v2.6"/>' +
+    '<path d="M5.4 6.6 v3.2 M12 5.4 v4.4 M18.6 6.6 v3.2" stroke-width="2.2"/>',
 };
 
 /**
@@ -174,16 +182,25 @@ export function stunIconSvg(options: IconOptions = {}): string {
 }
 
 /**
- * The eight status glyphs (spec 186).
+ * The status glyphs (specs 186, 190).
  *
  * The same constraints the swirl above states -- drawn small, over moving
  * ground, in a scene they must stay legible against -- plus one more that does
  * not apply to it: **there may be several of them at once, in a row.** So each
  * is built to be told apart at 14px by its *silhouette* rather than by its
- * detail, and the eight are deliberately spread across shape families: an
- * arrow, a chevron, a diamond, a ring, a crack, a target, a shield and a wave.
- * Two glyphs that were both "a circle with something in it" would be one glyph
- * as far as a player glancing at a fight is concerned.
+ * detail, and they are deliberately spread across shape families: an arrow, a
+ * chevron, a diamond, a ring, a crack, a target, a shield, a wave, a leg, a
+ * flame, a spatter, a trefoil, a bitten edge, a bolt, a star and a barred
+ * cross. Two glyphs that were both "a circle with something in it" would be one
+ * glyph as far as a player glancing at a fight is concerned.
+ *
+ * That constraint got sharper with spec 190, which is why the seven afflictions
+ * below reach for the most *conventional* shapes in the set rather than the
+ * most considered ones. Every mark here is one colour and they are all the same
+ * colour, so the silhouette is carrying the entire identity -- and a player
+ * reading a fight has no time to learn a private vocabulary. A flame is fire, a
+ * bolt is lightning, a barred cross is "not healing". Inventing a better sign
+ * for burning would have been a worse mark.
  *
  * Colour is not here and must not come here: it is set by `kind` at the mount,
  * so a boon and an affliction are told apart before either is identified.
@@ -214,6 +231,37 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
     '<path d="M14.5 9v4l-3.5 3.5V21"/>' +
     '<path d="M11 16.5L7 18"/>' +
     '<path d="M3 15h4M4 18.5h3"/>',
+
+  // --- the afflictions (spec 190) ----------------------------------------
+  // Burn -- a tongue of flame. Asymmetric at the top, so it is a flame at 14px
+  // and not the teardrop below it.
+  burn: '<path d="M12 3c4.1 3.9 5.6 6.3 5.6 9.1a5.6 5.6 0 0 1-11.2 0c0-2.1 1-3.8 2.7-5.4 0 1.7.6 2.6 1.6 2.9C10.3 7.6 10.6 5.4 12 3z"/>',
+  // Bleed -- a spatter rather than one drop: three, at three sizes, falling
+  // apart. One teardrop would have been the flame above with the top cut off.
+  bleed:
+    '<path d="M9 3.4c2 2.7 3.1 4.4 3.1 6.1a3.1 3.1 0 0 1-6.2 0C5.9 7.8 7 6.1 9 3.4z" fill="currentColor" stroke="none"/>' +
+    '<path d="M16.5 10.5c1.3 1.8 2 2.9 2 4a2 2 0 0 1-4 0c0-1.1.7-2.2 2-4z" fill="currentColor" stroke="none"/>' +
+    '<path d="M10 16c1 1.4 1.5 2.2 1.5 3a1.5 1.5 0 0 1-3 0c0-.8.5-1.6 1.5-3z" fill="currentColor" stroke="none"/>',
+  // Poison -- a trefoil. The one abstract sign in the seven, and it is here
+  // because there is no picture of "attrition": three rings round nothing is
+  // the shape a century of hazard labelling has already taught everybody.
+  poison: '<circle cx="12" cy="7" r="3.3"/><circle cx="7.1" cy="15.4" r="3.3"/><circle cx="16.9" cy="15.4" r="3.3"/>',
+  // Corrosion -- a surface with a bite taken out of it, and what is left of it
+  // running off underneath. The bar is what makes it armour rather than rain.
+  corrosion:
+    '<path d="M3.5 8h5.6a3 3 0 0 0 5.8 0h5.6"/>' +
+    '<path d="M7 12v2.5"/><path d="M12 13.5V17"/><path d="M17 12v2.5"/>',
+  // Shock -- a bolt. Nothing else needed considering.
+  shock: '<path d="M13.6 3 6.2 13.4h4.9l-1.7 7.6 8.4-10.6h-5.1z"/>',
+  // Frostbite -- a six-spoke star with barbs. No enclosing circle, which is the
+  // whole of what keeps it away from Vulnerable's target two rows up.
+  frostbite:
+    '<path d="M12 3v18"/><path d="M4.2 7.5l15.6 9"/><path d="M19.8 7.5l-15.6 9"/>' +
+    '<path d="M12 7.4 9.7 5.2M12 7.4l2.3-2.2M12 16.6l-2.3 2.2M12 16.6l2.3 2.2"/>',
+  // Decay -- a cross with a bar through it. The most literal mark in the table
+  // on purpose: what this affliction costs is not the damage, it is that the
+  // thing you would normally do about damage stops working.
+  decay: '<path d="M12 5.5v13"/><path d="M5.5 12h13"/><path d="M4.8 19.2 19.2 4.8"/>',
 };
 
 /** One status mark, as markup ready to drop into the HUD. */

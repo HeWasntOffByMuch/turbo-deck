@@ -50,7 +50,7 @@ export class MapWorkerCore {
 
   /** Start over on a fresh map. A different `mapId` is different ground. */
   setMap(info: MapInfoMessage, propRegionSize?: number): void {
-    // Before anything is bucketed (spec 192), and on this thread's own copy of
+    // Before anything is bucketed (spec 195), and on this thread's own copy of
     // the module: a worker has its own module graph, so the main thread setting
     // it does not reach here.
     if (propRegionSize !== undefined) setPropRegionSize(propRegionSize);

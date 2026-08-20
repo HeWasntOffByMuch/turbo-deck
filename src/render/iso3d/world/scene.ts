@@ -639,7 +639,10 @@ export class WorldScene {
     // browser to notice: no unit test constructs a WorldScene, because it needs
     // a canvas.
     this.controls = createViewControls();
-    this.controls.attachWheelZoom(canvas);
+    // No `attachWheelZoom` here since spec 189. The wheel is a binding now, so
+    // `world/view.ts` resolves the notch and calls `zoomNotch` -- a listener the
+    // scene attached would be a second opinion about what the wheel does, and it
+    // would win, because it is on the canvas and the binding is read on `root`.
     canvas.addEventListener('webglcontextlost', this.onContextLost);
     canvas.addEventListener('webglcontextrestored', this.onContextRestored);
 
@@ -1213,7 +1216,7 @@ export class WorldScene {
     const unsnap = this.applyPixelSnap(hike);
     this.collectAnchors();
 
-    // The split this whole readout exists for (spec 191): everything above is
+    // The split this whole readout exists for (spec 194): everything above is
     // JavaScript preparing the frame -- posing rigs, ageing effects, walking the
     // scene graph -- and everything below is handing it to the driver. They are
     // two different problems with two different fixes, and a single "render"

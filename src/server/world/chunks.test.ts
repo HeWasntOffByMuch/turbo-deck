@@ -89,7 +89,7 @@ describe('chunk manager', () => {
     expect(manager.activeChunks().has('10,10')).toBe(true);
   });
 
-  it('leaves the set alone while a player stays put (spec 190)', () => {
+  it('leaves the set alone while a player stays put (spec 193)', () => {
     const manager = new ChunkManager(SIZE, 1);
     manager.place(1, 50, 50, true);
     manager.refreshActive();

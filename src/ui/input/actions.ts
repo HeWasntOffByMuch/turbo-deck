@@ -15,12 +15,28 @@
 
 import document from './bindings.json';
 
-export type ActionCategory = 'movement' | 'combat' | 'skillbar' | 'ui' | 'debug';
+export type ActionCategory =
+  | 'movement'
+  | 'combat'
+  | 'world'
+  | 'skillbar'
+  | 'camera'
+  | 'ui'
+  | 'debug';
 
+/**
+ * The order the keybinding window's tabs come in.
+ *
+ * `world` sits beside combat and `camera` beside the interface, because that is
+ * what each is about: an order you give by pointing at something, and the view
+ * you give it through (spec 189).
+ */
 export const ACTION_CATEGORIES: readonly ActionCategory[] = [
   'movement',
   'combat',
+  'world',
   'skillbar',
+  'camera',
   'ui',
   'debug',
 ];
@@ -34,7 +50,18 @@ export const ACTION_CATEGORIES: readonly ActionCategory[] = [
  */
 export type BindingContext = 'gameplay' | 'ui';
 
-/** A physical key and its modifiers. `code` is `KeyboardEvent.code`. */
+/**
+ * A physical control and its modifiers.
+ *
+ * `code` is `KeyboardEvent.code` for a key, and one of {@link POINTER_CODES} for
+ * a mouse button or a wheel notch (spec 189). It was documented as
+ * `KeyboardEvent.code` alone for sixty specs and treated as an opaque token the
+ * whole time: `chordKey` joins it into a string, `chordsEqual` compares the join,
+ * the index is keyed on it and `readChord` accepts any non-empty string. Only
+ * {@link keyLabel} and {@link UNBINDABLE} ever look inside, which is why the
+ * pointer fits here without the type growing a field -- and why every stored
+ * profile written before this survives it untouched.
+ */
 export interface Chord {
   readonly code: string;
   readonly shift?: boolean;
@@ -89,6 +116,74 @@ export function skillbarIndex(actionId: string): number {
 }
 
 /**
+ * Every pointer control that can carry a binding, and what a player reads it as
+ * (spec 189).
+ *
+ * A table rather than a `startsWith('Mouse')` test, for the reason `naming.ts` is
+ * a table: a prefix rule is a second, invisible answer to "is this a pointer
+ * chord" that has to be re-derived at every boundary that asks, and it has
+ * nowhere to put the label. Adding a control is a row.
+ *
+ * The labels are the abbreviations rather than the words, and they were words
+ * first: `Right Click` is eleven characters and `Shift+Right Click` is
+ * seventeen, which is two more than a chord button holds at the gallery's
+ * viewport -- so the one row this spec exists to add drew as `hift+Right Clic`.
+ * A label here is *drawn* rather than typeset, so it clips in silence; widening
+ * the button instead only moved the clip onto `Previous control` in the column
+ * beside it. `keys-pointer.png` is the picture that caught it and
+ * `keybindings.test.ts` is the sum that keeps it caught.
+ *
+ * They also avoid every word {@link keyLabel} already produces. `Right` alone
+ * would have been the obvious short one and is taken -- `keyLabel('ArrowRight')`
+ * returns it -- so a movement row and a pointer row would have read identically
+ * in the same window.
+ */
+export const POINTER_CODES: Readonly<Record<string, string>> = {
+  MouseLeft: 'LMB',
+  MouseMiddle: 'MMB',
+  MouseRight: 'RMB',
+  Mouse4: 'Mouse 4',
+  Mouse5: 'Mouse 5',
+  WheelUp: 'Wheel Up',
+  WheelDown: 'Wheel Down',
+};
+
+/**
+ * `MouseEvent.button` as a code, or null.
+ *
+ * Null past the fifth button rather than a generated `Mouse6`: a code with no row
+ * in {@link POINTER_CODES} has no label and no schema entry, and a binding
+ * nobody can read back is worse than a button that cannot be bound.
+ */
+const BUTTON_CODES: readonly string[] = [
+  'MouseLeft',
+  'MouseMiddle',
+  'MouseRight',
+  'Mouse4',
+  'Mouse5',
+];
+
+export function pointerCode(button: number): string | null {
+  return BUTTON_CODES[button] ?? null;
+}
+
+/**
+ * A wheel notch as a code, or null when the wheel did not turn.
+ *
+ * `notches` is this layer's sign, from `wheelNotches`: positive is away from the
+ * player, which is the direction a view zooms in on.
+ */
+export function wheelCode(notches: number): string | null {
+  if (notches > 0) return 'WheelUp';
+  if (notches < 0) return 'WheelDown';
+  return null;
+}
+
+export function isPointerCode(code: string): boolean {
+  return Object.prototype.hasOwnProperty.call(POINTER_CODES, code);
+}
+
+/**
  * A chord as a key for a lookup table.
  *
  * Modifiers are part of it, so `Shift+KeyA` and `KeyA` are different bindings --
@@ -114,7 +209,9 @@ export function chordsEqual(a: Chord | null, b: Chord | null): boolean {
  * A chord as a player reads it.
  *
  * `KeyW` is a `code` and not a name; showing it raw in the keybinding window
- * would be showing the player an implementation detail of the DOM.
+ * would be showing the player an implementation detail of the DOM. A pointer
+ * chord needs no branch here -- {@link keyLabel} answers for both, which is the
+ * whole return on the pointer living in the same field.
  */
 export function chordLabel(chord: Chord | null): string {
   if (chord === null) return 'Unbound';
@@ -128,6 +225,10 @@ export function chordLabel(chord: Chord | null): string {
 }
 
 function keyLabel(code: string): string {
+  // The pointer first, so a `code` that names a button never falls through to the
+  // keyboard's prefix rules and comes back as itself.
+  const pointer = POINTER_CODES[code];
+  if (pointer !== undefined) return pointer;
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);
   if (code.startsWith('Numpad')) return `Num ${code.slice(6)}`;

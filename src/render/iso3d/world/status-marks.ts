@@ -51,6 +51,42 @@ import {
 export const FADE_TICKS = 8;
 
 /**
+ * A remaining time longer than this is read as indefinite (spec 191).
+ *
+ * One hour of ticks, against a game whose longest authored status window is
+ * Adaptation at ten seconds. Nothing between the two is a duration anybody could
+ * act on, so the threshold has an enormous amount of room either side of it.
+ *
+ * It exists because an indefinite status is not hypothetical. `world.ts` applies
+ * Prepared with `Number.MAX_SAFE_INTEGER - tick`, which is 2^53-ish and is
+ * written to the wire as a **u32** -- so what arrives is the truncated
+ * remainder, around 4.29 billion ticks. Drawing a countdown from that would put
+ * "49735 days" over a player's head, which is the exact failure the rule about
+ * misleading timers is about. `StatusVisual.indefinite` says the *design* has no
+ * clock; this refuses a *value* that cannot be trusted, and neither is a
+ * substitute for the other.
+ */
+export const INDEFINITE_AFTER_TICKS = 60 * 60 * 60;
+
+/**
+ * A remaining tick count as a countdown.
+ *
+ * One decimal below ten seconds and whole seconds above, which is a different
+ * rule from the standard's *stated* durations (up to two decimals) and
+ * deliberately so: a stated duration is read once and a countdown is read while
+ * it moves, and two decimals ticking at 60Hz is a number nobody can take in.
+ *
+ * Exported so a test can assert the boundary rather than infer it.
+ */
+export function formatTimer(remainingTicks: number): string {
+  const seconds = remainingTicks / 60;
+  if (seconds >= 10) return String(Math.ceil(seconds));
+  // Rounded *up*, so a status with any time left never reads "0.0" -- a mark
+  // that is still on a body must never show a countdown that has finished.
+  return (Math.ceil(seconds * 10) / 10).toFixed(1);
+}
+
+/**
  * There is no fade *in*, on purpose.
  *
  * A status arrives because something happened -- a blow found a weak point, a
@@ -72,6 +108,23 @@ export interface StatusMark {
   readonly showsCount: boolean;
   /** 0..1. Full until the window's last few ticks, then thinning into the end. */
   readonly opacity: number;
+  /**
+   * Ticks until it ends, or **null** when it does not end (spec 191).
+   *
+   * Null rather than zero, and rather than a very large number, because those
+   * are answers to a different question: zero means "ending now" and a large
+   * number means "ending in a while", and an indefinite status is neither. A
+   * caller that draws a timer draws nothing for null, which is the whole point
+   * -- *permanent or indefinite statuses must not display a misleading timer*.
+   */
+  readonly remainingTicks: number | null;
+  /**
+   * What a countdown draws -- `"2.4"`, `"12"` -- or null when there is none.
+   *
+   * Composed here rather than at the call site so the floating marks and the
+   * player's own row cannot round a countdown two different ways.
+   */
+  readonly timer: string | null;
 }
 
 /** Shared, so a body with nothing on it allocates nothing. */
@@ -109,6 +162,10 @@ export function statusMarks(
 
     const left = until - now;
     const stacks = Math.max(1, Math.min(visual.maxStacks, Math.floor(status.stacks)));
+    // Indefinite two ways, because there are two ways to know: the row says the
+    // design has no clock, and the remaining time says the number cannot be
+    // trusted. Either one is enough to refuse a timer.
+    const indefinite = visual.indefinite === true || left > INDEFINITE_AFTER_TICKS;
     marks ??= [];
     marks.push({
       id: visual.id,
@@ -122,6 +179,8 @@ export function statusMarks(
       // "this one does not stack".
       showsCount: visual.maxStacks > 1,
       opacity: left >= FADE_TICKS ? 1 : Math.max(0, left / FADE_TICKS),
+      remainingTicks: indefinite ? null : left,
+      timer: indefinite ? null : formatTimer(left),
     });
   }
 

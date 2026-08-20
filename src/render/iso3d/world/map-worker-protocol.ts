@@ -19,7 +19,7 @@ export type MapWorkerRequest =
       readonly kind: 'map';
       readonly info: MapInfoMessage;
       /**
-       * What to batch props by (spec 192). Rides the map rather than being read
+       * What to batch props by (spec 195). Rides the map rather than being read
        * from the URL on both threads, because the two must agree: a worker
        * bucketing at 1100 while the main thread asks for regions at 550 is a
        * prop field with holes in it.

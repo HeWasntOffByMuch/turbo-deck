@@ -11,7 +11,7 @@
  *   given an attack slot -- the cost of the world is proportional to where the
  *   players are rather than to how big the map is. Maintaining the set is
  *   likewise proportional to how often players cross a chunk boundary, which is
- *   what spec 190 is about.
+ *   what spec 193 is about.
  *
  * Pure of transport and of clocks: everything here is a function of the
  * positions it is told about, so a test can drive it directly.
@@ -35,7 +35,7 @@ export class ChunkManager {
   private readonly playerChunks = new Map<number, ChunkKey>();
   private active = new Set<ChunkKey>();
   /**
-   * Whether a player has moved between chunks since the last refresh (spec 190).
+   * Whether a player has moved between chunks since the last refresh (spec 193).
    *
    * The active set is a function of where the *players* are and of nothing else,
    * so this is exact rather than conservative: raised where that truth changes
@@ -114,7 +114,7 @@ export class ChunkManager {
   /**
    * The chunks a player is close enough to for the sim to step what is in them.
    *
-   * The live set rather than a copy (spec 190). `StepContext.activeChunks` is a
+   * The live set rather than a copy (spec 193). `StepContext.activeChunks` is a
    * `ReadonlySet`, and the tick used to build an array and a second `Set` on top
    * of this one every time it was asked. Aliasing is safe here for a stated
    * reason rather than by luck: {@link refreshActive} runs *after* `step()`
@@ -130,7 +130,7 @@ export class ChunkManager {
    *
    * The rebuild is not cheap -- `chunkKeysInRadius` allocates a coordinate and a
    * string per chunk, and at the shipped radius that is 289 of each per player.
-   * Doing it every tick made this 25% of the whole tick once spec 189 took the
+   * Doing it every tick made this 25% of the whole tick once spec 192 took the
    * collider walk out. It is not needed either: `CHUNK_SIZE` is 400 units, so a
    * player crosses a boundary every few seconds and the set is identical on
    * essentially every tick in between.

@@ -20,7 +20,7 @@
  *
  * Pure: a string in, five booleans out.
  *
- * `?props=` (spec 192) sits beside them and is not a boolean, because the
+ * `?props=` (spec 195) sits beside them and is not a boolean, because the
  * question it answers is not "what does this cost" but "what size should this
  * be" -- and the honest way to answer that is to try three and read the meter.
  */

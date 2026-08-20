@@ -12,6 +12,7 @@
  * Pure. The tick is an argument.
  */
 
+import { healingScaleOf } from './damage-over-time.js';
 import { salvageFrom } from './restoration.js';
 import type { ServerEntity } from './types.js';
 
@@ -54,7 +55,13 @@ export function applyHealing(entity: ServerEntity, amount: number, tick: number)
     entity.health / entity.stats.maxHealth <= traits.healingSurgeBelow
       ? 1 + traits.healingSurge
       : 1;
-  const total = amount * traits.healingScale * surge;
+  // Decay's suppression, here rather than at each caller (spec 190). This one
+  // line is what reaches the flask, Mend, a skill's heal and a collected mote,
+  // and it goes *before* the outlets rather than after them so that the shield,
+  // the conversion and Wisdom's salvage each see the amount that was actually
+  // restored -- a suppression applied afterwards would leave a body converting
+  // overheal it never got.
+  const total = amount * traits.healingScale * surge * healingScaleOf(entity.statuses, tick);
 
   const room = Math.max(0, entity.stats.maxHealth - entity.health);
   const healed = Math.min(room, total);

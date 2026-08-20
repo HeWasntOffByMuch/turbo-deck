@@ -129,7 +129,7 @@ export class FrameMeter {
 }
 
 /**
- * What one *part* of the frame costs, over the same window (spec 189).
+ * What one *part* of the frame costs, over the same window (spec 192).
  *
  * {@link FrameMeter} answers "how long was the frame"; this answers "how much of
  * it was X". Separate because the two are measured differently and one of them

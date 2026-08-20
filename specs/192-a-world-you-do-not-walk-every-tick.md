@@ -1,4 +1,4 @@
-# 189 — A world you do not walk every tick
+# 192 — A world you do not walk every tick
 
 ## Problem
 

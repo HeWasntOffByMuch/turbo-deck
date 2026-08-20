@@ -41,7 +41,7 @@ import {
 /**
  * Edge of one batching region, in world units.
  *
- * 2200 since spec 192, measured rather than reasoned. It was 1100, on the
+ * 2200 since spec 195, measured rather than reasoned. It was 1100, on the
  * argument that a region should be "small enough to be a meaningful fraction of
  * what is on screen, so culling actually bites" -- and culling does bite, and it
  * turns out not to matter. The frame is bound by **draw calls**, not by
@@ -83,7 +83,7 @@ export const PROP_REGION_SIZE = 2200;
 
 /**
  * The size in force, which is {@link PROP_REGION_SIZE} unless a measurement
- * asked for another (spec 192).
+ * asked for another (spec 195).
  *
  * Module state, deliberately, and set exactly once before any prop is bucketed:
  * `propRegionKey` is a free function called from both threads and from the

@@ -12,7 +12,7 @@
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
-import { StatusId } from '../sim/statuses.js';
+import { adaptedKey, StatusId } from '../sim/statuses.js';
 import type { SkillArea, SkillCosts, SkillEffect } from './skill-effects.js';
 
 export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel' | 'area';
@@ -220,12 +220,39 @@ export interface AbilityDefinition {
    * already down, and reordering the two rows is a balance change.
    */
   readonly effects?: readonly SkillEffect[];
+  /**
+   * Flavour, and **only** flavour (spec 191).
+   *
+   * What this ability does is said by `data/description.ts`, derived from the
+   * fields above, so nothing mechanical may be stated here: a claim in this
+   * string is a second copy of a rule with nothing keeping it true, and two of
+   * them were already false when the standard was written. Hunting Shot said it
+   * was "lobbed over whatever is in the way" and that it "lands where the target
+   * is, not where it was" -- but `sim/world.ts` states outright that an arc
+   * "buys nothing mechanical", `projectileHits` is a flat 2D overlap with no
+   * height term, and a point-aimed shot does not track anything.
+   *
+   * Kept as its own field rather than deleted because a game needs a voice. It
+   * is rendered separated from the technical block and is never concatenated
+   * into it.
+   */
   readonly description: string;
 }
 
 function seconds(value: number): number {
   return Math.max(1, Math.round(value * SERVER_TICK_RATE));
 }
+
+/**
+ * How long every status `skill.testStatuses` applies lasts (spec 190).
+ *
+ * One number for all nine rather than nine authored durations, because the row
+ * is a test instrument and not balance: what it is for is having them all live
+ * at the same instant, which is exactly what one shared window guarantees and
+ * what nine tuned ones would keep breaking. Long enough to walk round the body
+ * and look at the mark row, short enough that a tester is not waiting on it.
+ */
+export const TEST_STATUS_TICKS = seconds(8);
 
 const DEFINITIONS: readonly AbilityDefinition[] = [
   {
@@ -241,7 +268,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     damage: 14,
     arcCosSq: 0.5,
     basicAttack: true,
-    description: 'A quick forward cut. Free, and the fallback when nothing else is up.',
+    description: 'A quick forward cut, more habit than decision.',
   },
   {
     id: 'melee.heavy',
@@ -254,7 +281,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 90,
     damage: 42,
     arcCosSq: 0.65,
-    description: 'A long wind-up worth interrupting, and worth landing.',
+    description: 'Both hands, and everything you weigh, put behind one swing.',
   },
   {
     id: 'ranged.shot',
@@ -275,7 +302,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // body's length leaves almost flat (spec 089).
     projectile: { speed: 900, arc: 1, radius: 7, lifetimeTicks: seconds(2), look: 'arrow' },
     basicAttack: true,
-    description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',
+    description: "A hunter's arrow, loosed high over the grass.",
   },
   {
     id: 'ranged.star',
@@ -291,7 +318,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Flat, and therefore stoppable by anything that steps into the line.
     projectile: { speed: 1150, arc: 0, radius: 6, lifetimeTicks: seconds(1.5), look: 'shuriken' },
     basicAttack: true,
-    description: 'A fast flat star. Whatever wanders into the line takes it instead.',
+    description: 'Sharpened on four edges and thrown flat.',
   },
   {
     id: 'bolt.arcane',
@@ -304,7 +331,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 700,
     damage: 18,
     projectile: { speed: 620, arc: 0, radius: 8, lifetimeTicks: seconds(2) },
-    description: 'A flat, fast bolt that travels until it hits something.',
+    description: 'Raw force, shaped just enough to travel.',
   },
   {
     id: 'bolt.lob',
@@ -321,7 +348,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // constant it replaces -- the tell that the constant was always a 45-degree
     // shot with the distance filed off (spec 089).
     projectile: { speed: 300, arc: 1, radius: 12, lifetimeTicks: seconds(4) },
-    description: 'A slow lobbed pot that bursts where it lands.',
+    description: 'A clay pot of banked embers, thrown in a lazy arc.',
   },
   {
     id: 'bolt.seek',
@@ -339,7 +366,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // A third of the optimal arc: it skims rather than lobs, peaking at 42 over
     // its full 480 rather than the 120 a full arc would give it.
     projectile: { speed: 700, arc: 0.35, radius: 9, lifetimeTicks: seconds(3) },
-    description: 'A bolt that follows the body it was aimed at, until it arrives or burns out.',
+    description: 'It leaves knowing the shape of what you pointed it at.',
   },
   {
     id: 'ground.quake',
@@ -352,7 +379,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 420,
     damage: 46,
     radius: 140,
-    description: 'A telegraphed blast at a chosen point. Slow enough to walk out of.',
+    description: 'The ground remembers being struck, and answers.',
   },
   {
     id: 'self.mend',
@@ -365,7 +392,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 0,
     damage: 0,
     healing: 60,
-    description: 'Heals the caster. Long enough to be punished for using it badly.',
+    description: 'Knitting yourself back together is not a quick thing.',
   },
   {
     id: 'self.hearthdraught',
@@ -384,8 +411,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 0,
     damage: 0,
     healingFraction: 0.35,
-    description:
-      'A draught from the hearth flask. Limited charges, refilled by resting in a safe zone.',
+    description: 'A draught from the hearth flask, tasting of ash and home.',
   },
   // --- active skills (spec 188) ------------------------------------------
   //
@@ -429,7 +455,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       { kind: 'poiseDamage', amount: 25 },
       { kind: 'damage' },
     ],
-    description: 'Strips an enemy’s guard and leaves what is left of it hanging.',
+    description: 'You do not get inside a guard politely.',
   },
   {
     id: 'skill.stunningBlow',
@@ -453,7 +479,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       { kind: 'poiseDamage', amount: 30 },
       { kind: 'stun', ticks: seconds(1.4) },
     ],
-    description: 'A heavy, telegraphed blow that puts an enemy on the floor for a moment.',
+    description: 'Wound up from the shoulder, and telegraphed the whole way.',
   },
   {
     id: 'skill.whirlwind',
@@ -476,7 +502,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Damage and nothing else. A status here would be complexity bought with
     // nothing -- the skill's whole statement is "everything near you, at once".
     effects: [{ kind: 'damage' }],
-    description: 'A sweep at everything within reach. Costly, and worth it in a crowd.',
+    description: 'One turn, all the way round, blade out.',
   },
   {
     id: 'skill.cripplingStrike',
@@ -506,7 +532,275 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
         magnitude: 0.4,
       },
     ],
-    description: 'A cut behind the knee. Little damage, and they are not going anywhere fast.',
+    description: 'A cut behind the knee.',
+  },
+  // --- the afflictions (spec 190) ----------------------------------------
+  //
+  // Seven skills, one per affliction, and the reason there are seven rather
+  // than "a few" is the rule this repo keeps running into from the other side:
+  // an affliction with no way to apply it is a stranded path, and seven of them
+  // would be seven tables' worth of dead content. Between them they also go out
+  // through **every landing this game has** -- a tracked projectile, a bursting
+  // projectile, a named body, a cone, a lane, a circle at the caster's feet and
+  // a crater on the ground -- which is what makes "the effect list reaches all
+  // of them" a fact somebody can check rather than a claim.
+  //
+  // None of them names a duration, a rate or a stack count. That is
+  // `data/damage-over-time.ts`'s to say, whole, so every Burn in the game is
+  // the same Burn (spec 190).
+  {
+    id: 'skill.poisonDart',
+    name: 'Poison Dart',
+    kind: 'projectile',
+    // A body, named. `bolt.seek` already proves a projectile can carry a mark
+    // and follow it, and a dart that missed the thing you are stacking poison
+    // on would make the stack a dexterity test rather than a commitment.
+    targeting: 'unit',
+    skill: true,
+    // The shortest wind-up of the seven and by far the shortest cooldown: this
+    // is the one skill in the table you are *meant* to throw repeatedly, and
+    // the concentration is what it buys. Five casts is eight seconds against a
+    // poison that runs for ten, so a full stack is reachable and only just.
+    windupTicks: seconds(0.4),
+    cooldownTicks: seconds(2),
+    cost: 3,
+    range: 380,
+    // Almost nothing on impact. What you are paying for is the tenth pulse.
+    damage: 6,
+    projectile: { speed: 1000, arc: 0.2, radius: 6, lifetimeTicks: seconds(1.5), look: 'arrow' },
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Poison }],
+    description: 'A dart with something on it. Little on the way in, and it stacks.',
+  },
+  {
+    id: 'skill.emberToss',
+    name: 'Ember Toss',
+    kind: 'projectile',
+    targeting: 'point',
+    skill: true,
+    windupTicks: seconds(0.7),
+    cooldownTicks: seconds(8),
+    cost: 5,
+    range: 420,
+    damage: 14,
+    // A burst, so the fire starts on everything in the splash rather than on
+    // one body -- and then goes looking for the rest of them.
+    radius: 70,
+    projectile: { speed: 420, arc: 1, radius: 10, lifetimeTicks: seconds(3) },
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Burn }],
+    description: 'A pot of embers, lobbed. What it lands on burns, and so does what is next to it.',
+  },
+  {
+    id: 'skill.rendingCut',
+    name: 'Rending Cut',
+    kind: 'melee',
+    targeting: 'unit',
+    skill: true,
+    windupTicks: seconds(0.45),
+    castAngleDeg: 35,
+    cooldownTicks: seconds(7),
+    cost: 3,
+    range: 80,
+    damage: 16,
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Bleed }],
+    description: 'A cut that will not close while they keep using the arm it is in.',
+  },
+  {
+    id: 'skill.acidSpray',
+    name: 'Acid Spray',
+    // A cone, and therefore `melee` with an `arcCosSq` rather than an `area`
+    // with a shape: `landCone` is the wedge this game already has, `aimShape`
+    // already draws it, and a second description of the same geometry is the
+    // thing spec 188 spent a paragraph refusing.
+    kind: 'melee',
+    targeting: 'direction',
+    skill: true,
+    windupTicks: seconds(0.6),
+    cooldownTicks: seconds(10),
+    cost: 6,
+    range: 150,
+    damage: 10,
+    arcCosSq: 0.5,
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Corrosion }],
+    description: 'It goes through the guard and the armour first. Set up a break with it.',
+  },
+  {
+    id: 'skill.arcLash',
+    name: 'Arc Lash',
+    kind: 'area',
+    targeting: 'direction',
+    skill: true,
+    windupTicks: seconds(0.55),
+    cooldownTicks: seconds(9),
+    cost: 6,
+    range: 300,
+    damage: 12,
+    // The one lane in the table. Shock arcs on its own afterwards, so what this
+    // has to do is start it on a line rather than finish anything.
+    area: { shape: 'line', width: 60, range: 300, maxTargets: 4 },
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Shock }],
+    description: 'A lash down a line. It keeps arcing after it lands.',
+  },
+  {
+    id: 'skill.rimeTouch',
+    name: 'Rime Touch',
+    kind: 'area',
+    // Nothing to aim, like Whirlwind: the circle is on the caster's own feet.
+    targeting: 'self',
+    skill: true,
+    windupTicks: seconds(0.6),
+    cooldownTicks: seconds(11),
+    cost: 5,
+    range: 0,
+    damage: 8,
+    area: { shape: 'circle', origin: 'caster', radius: 140, maxTargets: 5 },
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Frostbite }],
+    description: 'Cold off the ground. Nothing much, until it has been on a while.',
+  },
+  {
+    id: 'skill.blight',
+    name: 'Blight',
+    kind: 'ground',
+    targeting: 'point',
+    skill: true,
+    // The longest wind-up here, which is what a zone denial has to cost: it is
+    // slow enough to walk out of, exactly as Quake is.
+    windupTicks: seconds(1.0),
+    cooldownTicks: seconds(12),
+    cost: 6,
+    range: 380,
+    damage: 10,
+    radius: 110,
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Decay }],
+    description: 'A patch of rot. Little damage, and nothing they do about it works properly.',
+  },
+  // --- the test row (spec 190) -------------------------------------------
+  //
+  // Not content. It exists to put **every mark the client can draw** on one
+  // body in one press, which is otherwise only reachable by building a
+  // character that earns each status and arranging a fight in which they all
+  // overlap -- so the full row, the case `MAX_VISIBLE_STATUSES` bounds and the
+  // one spec 186's own probe found drawn as 3px specks, has never been looked
+  // at in the game.
+  //
+  // It is in no loot table and no vendor stock and its sigil is worth nothing;
+  // `admin:giveItem` is how a tester gets one. Cheap and repeatable on purpose:
+  // free, a short wind-up, and a cooldown short enough to cast again and watch
+  // the three stacking marks climb.
+  {
+    id: 'skill.testStatuses',
+    // Thirteen characters, which is what "Throwing Star" already costs the
+    // refusal log, so it needs no `shortName`. Named plainly rather than
+    // flavoured: somebody who finds this on a bar should be able to tell at a
+    // glance that it is not a skill the game ships.
+    name: 'Test Statuses',
+    kind: 'melee',
+    targeting: 'unit',
+    skill: true,
+    windupTicks: seconds(0.3),
+    castAngleDeg: 35,
+    cooldownTicks: seconds(2),
+    cost: 0,
+    range: 85,
+    // Little to no damage, and `1` rather than `0` deliberately: the damage
+    // effect is what makes this a *blow*, so it raises a `hit`, draws a number,
+    // takes aggro -- and writes `recentlyHit` and `inCombat` on the target
+    // through `markTarget`, which is two of the four statuses with no mark
+    // arriving without this row having to author them.
+    //
+    // It cannot stagger what it marks: an ability blow carries
+    // `staggerPower * abilityPoiseFactor` of guard damage, and that factor is
+    // zero for everybody except the Strength+Intelligence pair.
+    damage: 1,
+    effects: [
+      { kind: 'damage' },
+      // Everything below is one `applyStatus` per row of `STATUS_VISUALS`, in
+      // that table's own wire order so the two lists read against each other.
+      // A tenth row there is a tenth line here.
+      //
+      // Magnitudes are small and **real** rather than zero. A zero magnitude
+      // draws the mark and does nothing, and a `Slowed` mark over a body moving
+      // at full speed is the interface asserting something untrue.
+      { kind: 'applyStatus', statusId: StatusId.Flow, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Momentum,
+        durationTicks: TEST_STATUS_TICKS,
+        // A tenth off the next wind-up: `windupScaleFor` reads this as
+        // `1 - magnitude`.
+        magnitude: 0.1,
+      },
+      { kind: 'applyStatus', statusId: StatusId.Prepared, durationTicks: TEST_STATUS_TICKS },
+      { kind: 'applyStatus', statusId: StatusId.Attuned, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Exposed,
+        durationTicks: TEST_STATUS_TICKS,
+        // A third of what a weak point leaves, so the mark is honest and the
+        // row is still not worth throwing for the damage.
+        magnitude: 0.05,
+      },
+      { kind: 'applyStatus', statusId: StatusId.Vulnerable, durationTicks: TEST_STATUS_TICKS },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Sundered,
+        durationTicks: TEST_STATUS_TICKS,
+        // The same armour a sundering blow takes off, since there is no smaller
+        // number that still means anything.
+        magnitude: 0.1,
+      },
+      {
+        kind: 'applyStatus',
+        // Adaptation is per ability, so the mark needs a key rather than an id
+        // -- and the key is **this row's own**, which is what keeps its blast
+        // radius to nothing: adapting to a skill that deals 1 is invisible,
+        // where adapting to `melee.slash` would quietly change every sword
+        // fight the tester is watching. The packer folds it to one `Adapted`
+        // either way.
+        statusId: adaptedKey('skill.testStatuses'),
+        durationTicks: TEST_STATUS_TICKS,
+        maxStacks: 8,
+      },
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.Slowed,
+        durationTicks: TEST_STATUS_TICKS,
+        // Visibly slower and nowhere near `SLOW_DEFAULTS.maxMagnitude`: this
+        // has to move `EntityField.MoveScale` to be worth testing, and must not
+        // pin the thing being measured in place.
+        magnitude: 0.2,
+      },
+      // The seven afflictions (spec 190), and they are the one group here that
+      // is **not** an `applyStatus`.
+      //
+      // Two reasons, and the first is this row's own rule. An affliction
+      // written through `applyStatus` gets a mark and no pulse -- the body is
+      // drawn burning and is not burning -- which is exactly the `Slowed`-at-
+      // full-speed lie the magnitudes above were chosen to avoid, in its worst
+      // form: the mark would be over a body that is not losing any health. The
+      // second is that an affliction has a *source*, a *cadence* and a
+      // first-landed tick that only `applyDot` establishes.
+      //
+      // So these arrive whole, at their own lengths rather than the shared
+      // window, because "the row is the affliction" is what lets a player
+      // reason about one -- and a test row that applied a weakened private Burn
+      // would be showing a mark for something the game does not have. What it
+      // costs is real damage over time, which a training dummy's hundred
+      // thousand health absorbs without noticing.
+      { kind: 'applyDot', dotId: StatusId.Burn },
+      { kind: 'applyDot', dotId: StatusId.Bleed },
+      { kind: 'applyDot', dotId: StatusId.Poison },
+      { kind: 'applyDot', dotId: StatusId.Corrosion },
+      { kind: 'applyDot', dotId: StatusId.Shock },
+      { kind: 'applyDot', dotId: StatusId.Frostbite },
+      { kind: 'applyDot', dotId: StatusId.Decay },
+      // **`secondWind.spent` and `perfectExit.spent` are absent on purpose.**
+      // They are inverted -- carrying one means the mechanic has fired and has
+      // not re-armed -- so applying them would silently switch two mechanics off
+      // on whatever is being measured. Neither has a mark, so nothing is missing
+      // from the picture this row exists to produce.
+    ],
+    description:
+      'A test blow: no damage worth the name, and every status the game can show, at once.',
   },
   {
     id: 'channel.drain',
@@ -521,7 +815,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     arcCosSq: 0.75,
     channelTicks: seconds(2),
     pulseIntervalTicks: seconds(0.25),
-    description: 'Pulses damage in a narrow cone while held. Cancel to stop early.',
+    description: 'It takes something out of them, and you can feel it arrive.',
   },
 ];
 

@@ -46,7 +46,7 @@ export interface WorldColliders {
   /** Vegetation footprints (spec 044): trees and bushes block like walls do. */
   readonly circles: readonly Circle[];
   /**
-   * Where those circles are (spec 189), so nothing has to walk all of them.
+   * Where those circles are (spec 192), so nothing has to walk all of them.
    *
    * Required rather than optional, and filled by `createWorldColliders` rather
    * than by callers: an absent index would mean a silent fall back to the linear

@@ -1,7 +1,7 @@
 /**
  * How much of a frame goes on the simulation: `npx tsx scripts/probe-sim-cost.ts`
  *
- * The frame meter grew a `sim` line in spec 189 and this is the half no headless
+ * The frame meter grew a `sim` line in spec 192 and this is the half no headless
  * test can see: the real Play tab, the real frame loop, the numbers read back
  * off the DOM rather than off the constants that produced them.
  *

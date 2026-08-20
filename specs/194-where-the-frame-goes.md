@@ -1,8 +1,8 @@
-# 191 — Where the frame goes
+# 194 — Where the frame goes
 
 ## Problem
 
-The meter says how long a frame took, and since spec 189 how much of it was the
+The meter says how long a frame took, and since spec 192 how much of it was the
 simulation. It cannot say anything about the other half. "The renderer is slow"
 covers three unrelated problems with three unrelated fixes — too much JavaScript
 building the frame, too many commands handed to the driver, and a GPU that

@@ -1369,8 +1369,16 @@ function landAbility(
  * target that walked out of it, the cone's geometry, the caster folded back --
  * instead of the effect pipeline growing a second, slightly different copy of
  * each.
+ *
+ * Exported since spec 190, for the one landing that does not happen in this
+ * file: a projectile's impact resolves in `world.ts`, which called `applyDamage`
+ * directly and so dropped `ability.effects` on the floor. Spec 188 listed that
+ * as out of scope and the four skills it shipped did not need it; a poison dart
+ * is a ranged skill, so it does. Exporting this rather than reimplementing the
+ * check there is the whole point -- two copies of "does this row have effects"
+ * is exactly how a projectile skill ends up subtly different from a melee one.
  */
-function applyToTarget(
+export function applyToTarget(
   ability: AbilityDefinition,
   attacker: ServerEntity,
   target: ServerEntity,
@@ -1594,9 +1602,17 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
   const amount =
     (ability.healing ?? 0) + caster.stats.maxHealth * (ability.healingFraction ?? 0);
   const restored = applyHealing(caster, amount, tick);
-  const healed = restored.entity.health;
+  // And then whatever else the row says (spec 190). `landSelf` read `healing`
+  // and `healingFraction` and nothing else, so a self-targeted skill's effect
+  // list was written, validated, typechecked and never run -- the same stranded
+  // path a projectile's was. Run *after* the healing rather than instead of it,
+  // because the two columns are independent: a row may be a heal, or a list, or
+  // both, and folding one into the other would make `self.mend` an effect list
+  // for no reason.
+  const applied = applyEffects(ability, restored.entity, restored.entity, tick, rng);
+  const healed = applied.target.health;
   return {
-    updated: new Map([[caster.id, restored.entity]]),
+    updated: new Map([[caster.id, applied.target]]),
     spawns: [],
     events: [
       {
@@ -1614,15 +1630,19 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
         kind: 'hit',
         attackerId: caster.id,
         targetId: caster.id,
-        damage: -(healed - caster.health),
+        damage: -(restored.entity.health - caster.health),
         targetHealth: healed,
         killed: false,
         critical: false,
         blocked: false,
         weakPoint: false,
       },
+      // The effect list's own events after the heal's, in the order they
+      // happened. The floating number above is still the *healing* only -- what
+      // an effect did to the caster reports itself.
+      ...applied.events,
     ],
-    rng,
+    rng: applied.rng,
   };
 }
 

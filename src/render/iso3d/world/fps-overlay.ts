@@ -25,7 +25,7 @@ export interface SimCost {
 }
 
 /**
- * What {@link FpsOverlay.set} is told about the rendering half (spec 191).
+ * What {@link FpsOverlay.set} is told about the rendering half (spec 194).
  *
  * Split at the first draw call, because "the renderer is slow" has two
  * unrelated causes. `prepareMs` is JavaScript building the frame -- rigs,
@@ -110,7 +110,7 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   work.dataset['fpsWork'] = '';
   work.style.cssText = 'color:#e0b45a;';
 
-  // The simulation's share of the frame (spec 189), on its own line and in its
+  // The simulation's share of the frame (spec 192), on its own line and in its
   // own colour, because it answers a different question from the two above it:
   // `draws` is what the GPU was asked for and `work` is the loader, and neither
   // can say that a frame went on `server.tick()`. Green, since the number it is
@@ -118,7 +118,7 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   const sim = document.createElement('div');
   sim.dataset['fpsSim'] = '';
   sim.style.cssText = 'color:#6edc96;';
-  // The rendering half, and the remainder (spec 191). Its own colour again, and
+  // The rendering half, and the remainder (spec 194). Its own colour again, and
   // the remainder is the number the whole line exists to show: the frame minus
   // everything this thread can account for. Large, and the answer is not on this
   // thread at all.

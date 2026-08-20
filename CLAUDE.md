@@ -62,6 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
@@ -121,6 +122,24 @@ docs/            durable direction that outlives one spec. vfx-plan.md, ui/, and
                  implemented**, because the risk with a document like that is a
                  direction reading as a backlog item and getting built as a side
                  effect of something else.
+                 mechanics-vocabulary.md (spec 191) is the other half of that
+                 idea, for words rather than for rewards: one controlled term per
+                 concept with the code that owns it, a grammar for every number a
+                 player is shown, and the Technical Description standard every
+                 skill, sigil, item and status description is written to. The
+                 rule it exists to enforce is that **a description is derived
+                 from the row the sim reads**, never authored beside it --
+                 `data/description.ts` is the one writer, so "two designers
+                 describing the same mechanic write the same lines" is a fact
+                 about the module graph rather than a habit. Its last section is
+                 an open-questions register, and that is not a to-do list: it is
+                 where a mechanic whose behaviour is *unclear* goes, because the
+                 standard's first rule is that an unclear line is omitted rather
+                 than guessed. Applying it found three things wrong in the
+                 tables, including an ability comment and two flavour lines
+                 claiming a lobbed shot flies over what is in its way when
+                 `sim/world.ts` says an arc "buys nothing mechanical" and
+                 `projectileHits` has no height term in it at all.
 schemas/         JSON Schema (draft-07) for the three unit documents and the weapon
                  document (spec 140), committed
                  and validated against in CI. additionalProperties is false
@@ -601,13 +620,49 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  a property over the whole easing table instead of a claim each
                  widget has to remember. text/ is the two bitmap faces; theme/ is theme.json plus the
                  atlas authored as text; widgets/ is the nine; screens/ is the
-                 eight (the HUD, the bag, the sheet, the shop, the keybindings,
-                 the trade table, the options window and its display page);
-                 input/ is the actions, the key map and the two preferences that
+                 nine (the HUD, the bag, the sheet, the shop, the keybindings,
+                 the trade table, the options window, its display page and the
+                 chat);
+                 input/ is the actions, the control map and the two preferences
+                 that
                  outlive a session -- the bindings and the interface scale, each
                  a versioned document over an injected `StorageLike` that never
                  throws, because a corrupt preference must cost defaults rather
-                 than a black screen;
+                 than a black screen.
+                 Since spec 189 a `Chord` names a **control** rather than a key,
+                 and the mouse is in it. Spec 125 deferred this with one line --
+                 "the chord type has no button field yet" -- and the cost was not
+                 a few missing bindings: the window listed the skillbar and the
+                 debug readout while the four things a player does all session
+                 were `if (event.button === 2)` in `world/view.ts`, with no id, no
+                 label and no row. The type still has no button field, because
+                 nothing between `chordOf` and the index ever opened `code` --
+                 `chordKey` joins it into a string, `chordsEqual` compares the
+                 join, `reindex` keys on it, `readChord` takes any non-empty
+                 string, `actionsForCode` compares with `===`, and only `keyLabel`
+                 and `UNBINDABLE` look inside. So `code` carries `MouseRight` and
+                 `WheelUp` beside `KeyW`, and the persistence, the index, the
+                 conflict report and the release path cost nothing and needed no
+                 version bump. What decides whether a code is a pointer one is
+                 `POINTER_CODES`, a **closed table** rather than a `Mouse` prefix,
+                 for the reason `naming.ts` is a table: a heuristic is a second,
+                 invisible answer that every boundary has to re-derive, and it has
+                 nowhere to put the label. The version deliberately does not move
+                 -- an older build reading a profile with `world.order` in it
+                 skips an override naming an action it has never heard of and
+                 keeps every other binding, where a bump to 2 would make
+                 `migrateBindings` throw the whole document away, so trying this
+                 build and going back would cost a player every keyboard rebind
+                 they had ever made. Five rows cover the seven verbs, and the
+                 arithmetic is the design: pick up / attack / walk are **one**
+                 press whose meaning is read off what is under the cursor (spec
+                 070), and refusing a pending aim is the same shape one level up,
+                 so `world.order` is one action with four readings exactly as it
+                 was one branch with four. Three bindings a player could put on
+                 three different buttons is not a preference, it is a broken
+                 order. The labels avoid every word `keyLabel` already makes:
+                 `Right` alone is taken -- it is what `ArrowRight` comes back as
+                 -- so the pointer says `Right Click`;
                  render/ is the only impure part. Everything else runs in Node.
                  Since spec 131 all but the HUD are in the Play tab, over
                  the world -- mounted by src/render/iso3d/world/ui-screens.ts,
@@ -624,6 +679,110 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that no `if` in the renderer changes an outcome is finally a fact
                  about the module graph. **No colour is spelled out** in a widget;
                  a hex literal there fails the build.
+                 chat.ts is the ninth and the only one that is not a window
+                 (spec 189): docked bottom-left in the `hud` layer, no title
+                 bar, never dragged, nothing in the layout store, because it is
+                 furniture that is always there rather than something the player
+                 opened. It exists because the chat protocol was finished at
+                 both ends and neither end had a caller -- `GameClient.say` and
+                 `GameClient.onChat` had none anywhere in the tree, so the
+                 `System` line the server sends on every death and every admin
+                 broadcast were encoded, framed, sent, decoded and handed to an
+                 empty listener list.
+                 Three rules, and the first is the one that decided its whole
+                 shape. **It wipes rather than fades**, and it sits on the one
+                 plate in this framework that blends. Leaving is a clip, the way
+                 a window arrives (spec 133): computed while painting, anchored
+                 at the bottom so the oldest line goes first and the one
+                 somebody is still reading goes last. It costs no layout, and
+                 `animate` answers reduce-motion centrally by snapping. A
+                 fade-to-nothing has nothing to fade *into* -- the UI canvas is
+                 cleared to transparent, so the background a departing log would
+                 dissolve towards is not a colour anything here can name.
+                 The plate is the framework's **only** blend, and the reason it
+                 is allowed is that the exception is measured rather than
+                 waived. `budget.test.ts` refuses a translucent quad because a
+                 source-over is the one operation `raster.ts` and a browser
+                 canvas round differently: a canvas stores premultiplied 8-bit
+                 and `getImageData` unpremultiplies, so a straight-alpha colour
+                 over a transparent pixel comes back rounded where `raster.ts`
+                 writes it through untouched. At 0.62 this plate came back
+                 `rgb(27,24,39)` in Chromium against `rgb(28,25,39)` in the
+                 rasterizer -- which is what `preview-ui-gallery.ts` reported
+                 before the number was chosen. But the round trip is lossy only
+                 for *some* alphas, and `PLATE_ALPHA` is one of the values where
+                 `round(round(c * a / 255) * 255 / a) === c` holds on every
+                 channel of `panelSunken`, so both backends agree byte for byte
+                 and the comparison stays **exact**. A tolerance would have
+                 hidden every future blending mistake along with this one; a
+                 chosen constant hides nothing, and `budget.test.ts` asserts the
+                 property so a change to either end of it fails in `npm test`.
+                 The fix if it ever does is a neighbouring alpha, never a looser
+                 check. One plate for the whole surface, drawn by the screen
+                 rather than by the scroller and the field separately, because
+                 two would overlap where they meet and the seam would be a third
+                 colour -- so those two are drawn chromeless, the field keeping
+                 the frame and focus ring that say "you can type here" and
+                 losing only its fill. Every glyph stays opaque: what is
+                 see-through is the backing and nothing else.
+                 And **nothing is drawn when nothing has been said** -- not the
+                 lines, not the scroller, not the plate. An empty plate over the
+                 world is a black bar announcing that the chat exists, which is
+                 the opposite of furniture. That decision is taken *before* the
+                 "have the lines changed" early-out, because an empty list is the
+                 one case that matches what is already shown: `sameLines` is true
+                 from the first frame, so a visibility settled after it is a
+                 decision never taken.
+                 **The field pushes `textEntry`**, which is what makes a typed
+                 `1` a one rather than a cast. That context has existed since
+                 spec 123 to justify `TextField` and nothing had ever pushed it:
+                 `setFocused` had no caller either. Which means a press landing
+                 anywhere else has to close the chat -- focus moves on its own,
+                 the field pops the context only when it is *told* it lost
+                 focus, and a stranded push swallows every key in the game from
+                 then on, the same failure a stranded keybinding capture used to
+                 cause.
+                 And **colour comes out of the nineteen that exist**: `focus`
+                 for a speaker's name, `text` for what they said, `textDim` for
+                 a death notice, `accent` for an operator's broadcast. The cap
+                 is against *invented* colour and a channel is not a new thing
+                 in the world -- it is three tones already doing what they mean.
+                 The mount adds two of its own. Up and Down are asked directly
+                 rather than routed, because `TextField` swallows every key it
+                 is given and answers the arrows it cares about itself, so a
+                 routed `ArrowUp` reaches the field and stops -- the same reason
+                 a keybinding capture is asked from the one place that sees
+                 every key. And **the wheel is only taken while the field is
+                 open**: the wheel is camera zoom in the Play tab, and a log
+                 that took it whenever the cursor happened to be bottom-left
+                 would break zoom in one corner of the screen with nothing drawn
+                 there to explain why.
+                 `world/chat-log.ts` is the client state beside it -- a capped
+                 scrollback, a ring of the lines this player sent, and the one
+                 timestamp `revealAt` measures. Pure, and stamped with the
+                 frame's time rather than a clock of its own, for the reason
+                 `error-log.ts` gives: a line arrives on a network callback,
+                 outside the frame loop, and a frame is a few milliseconds
+                 against a ten-second quiet window.
+                 Nothing is echoed locally, because `broadcastMessage` sends to
+                 every connection with a player on it and the sender is one of
+                 them.
+                 `npx tsx scripts/probe-chat.ts` is the half no headless test
+                 can see: two tabs, two players, one real server, and a line
+                 typed in one turning up in the other. It found the layout bug
+                 every green test had missed -- the log drawn straight over the
+                 weapon switch, because `setSafeBottom` had been *derived* from
+                 the pool bars, which sit lower and further right than the thing
+                 actually in that corner. It is measured off `data-hud-bottom`
+                 now -- *plus* a margin, since clearing something by nothing is
+                 still sitting on it -- and the probe reports which furniture it
+                 found lowest, because its own first cut measured the pool bars
+                 and passed while the log sat on the switch beside them: a
+                 clearance check against the wrong thing is worse than none,
+                 since it reads as evidence. Its walk check is every direction
+                 rather than one, for the same reason in miniature: a body
+                 pressed into one of the arena's trees reports a working
+                 keyboard as a broken one, and it did exactly that once.
                  Since spec 137 the bag is a *pointer* surface: one press and
                  one release on a cell is the whole gesture vocabulary (left
                  takes a stack, right takes half, shift+right takes one,
@@ -1113,6 +1272,29 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 `data/description.ts` is what those tables *say* (spec 191) --
+                 the one writer for every player-facing Technical Description,
+                 composing a row into a target, its effects in the row's own
+                 order, its costs, its timings and its notes. Derived rather
+                 than authored, so a retune is described correctly with nothing
+                 to remember, and `GRANT_LABELS` names each field of a
+                 `StatModifier` once so an item and a passive skill cannot
+                 disagree about what `attackSpeedPct` is called. Two rules keep
+                 it honest and both are tested. **Nothing derivable may be
+                 authored**: a `StatusVisual` carries one authored sentence
+                 because what a condition *does* lives in `sim/blow.ts` and
+                 `SCALING` and there is no field here to read it from, and
+                 everything around it -- the stacking rule, the refresh rule,
+                 whether a count is drawn -- is composed. And **a field with no
+                 label draws no line at all**, which is what lets three trait
+                 keys that cannot become a signed quantity reading correctly in
+                 English fall back to their row's own sentence rather than get
+                 an invented number; the test asserts that list exactly, so a
+                 fourth gap fails rather than passing quietly. `description`
+                 on a row is flavour and only flavour -- a mechanical claim
+                 there is a second copy of a rule with nothing keeping it true,
+                 and two of them were already false when the standard was
+                 written.
                  **Active skills** are the fourth thing an `AbilityDefinition`
                  can be (spec 188), and the point of them is how little is new:
                  a skill is `targeting + casting + costs + cooldown + effects`
@@ -1683,7 +1865,110 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  twelve mechanics as twenty-four entity fields is twenty-four
                  places for an expiry to be forgotten. Expiry is a comparison and
                  never a sweep, so reading a stale entry cannot produce a live
-                 effect.
+                 effect. Since spec 190 an entry also carries `sourceId` and
+                 `appliedAtTick` -- who put it there, and when it *first* landed,
+                 kept across a refresh -- because a status can now kill, and
+                 because a periodic effect wants a phase rather than a countdown.
+                 `data/damage-over-time.ts` and `sim/damage-over-time.ts` are the
+                 afflictions (spec 190), and the thing to know about them is that
+                 **a pulse is not a blow**. Every point of damage in this game
+                 used to arrive at the instant a blow landed; the only thing that
+                 repeated was a channel, which is caster-bound. An affliction is
+                 the other shape -- it stays on the body after the thing that did
+                 it has walked away -- so it needed a rule of its own, and running
+                 one through `resolveBlow` sixty times a second would have rolled
+                 a crit each time (**the Rng draw count is protocol**), held
+                 `RecentlyHit` open for the whole duration and denied Perfect Exit
+                 with it, stacked Adaptation against an ability that does not
+                 exist, and re-provoked a body the applying blow had already
+                 provoked. So a pulse is short and honest: shield, then health,
+                 then the `hit` event, and **no armour** -- an affliction is
+                 already inside, and being the answer to a body you cannot get
+                 through is a role worth having. It draws nothing from the Rng at
+                 all.
+                 The table is one row per affliction and the three numbers it
+                 authors are the three a designer thinks in: how hard
+                 (`damagePerSecond`), how lumpy (`intervalTicks`) and how long
+                 (`pulses`). Everything else is derived, and one derivation is
+                 load-bearing: `dotDurationTicks` is `pulses * interval` **plus
+                 one tick**, because a pulse fires on `elapsed % interval === 0`
+                 and `statusOf` refuses an entry at `tick >= expiresAtTick`, so an
+                 exact multiple silently loses its last pulse and "eight pulses of
+                 4.5" means seven. Stated once in the derivation rather than seven
+                 times in seven hand-authored durations.
+                 Past the rate, each row carries at most one **rider**, and a
+                 rider is a reader in the system it belongs to rather than
+                 arithmetic here: Bleed's exertion is the *replicated* `activity`
+                 (`Moving` or `Casting`), so "stop moving and it hurts less" is a
+                 fact anybody watching can see; Corrosion's armour is
+                 `StatusId.Sundered`, so there is one armour-reduction reader in
+                 `blow.ts` and not two, and it is written **once when the
+                 affliction lands** rather than per pulse -- per pulse re-stamped
+                 a shared status thirty times a fight, and since `applyStatus`
+                 refreshes a clock rather than extending it, each stamp *shortened*
+                 a longer Sundered somebody else had applied; Corrosion's guard is
+                 the pool written directly and clamped at zero, so it can never
+                 break, because an affliction that staggered once a second for six
+                 seconds is a removal -- and authored against *regeneration*
+                 rather than against the pool, since a monster gets 6 guard a
+                 second back and the first cut took exactly 6, cancelling it
+                 precisely and doing nothing whatsoever to a stationary body; Decay's suppression is `healingScaleOf`,
+                 read at the three places health goes up that are not `applyHealing`
+                 -- resting is deliberately not a fourth, since a pulse stamps
+                 `InCombat` and `advanceRest` already refuses outright while that
+                 is live, which is stronger than any multiplier.
+                 Burn's *spread* and Shock's *chain* are one field with two radii,
+                 because "how does an affliction reach the body next to it" is one
+                 question and a second propagation system would be two answers to
+                 it. On a pulse it passes **what is left of itself** to the nearest
+                 body hostile to its *source* that is not already carrying it --
+                 measured against the source, so a player's fire spreads through
+                 the pack and can never turn round and catch the player. That one
+                 sentence is also the bound: a hop is only taken on a pulse, so
+                 every generation is strictly shorter than the last and the chain
+                 burns out by construction, with no generation counter, no hop
+                 limit and nothing to tune. Nearest wins and ties break on entity
+                 id, the rule `crowd.ts` already uses, so nothing is drawn.
+                 The pass is `3c` in the tick, between the projectiles and the
+                 kill credit, which is the one correctly bracketed slot:
+                 everything that can apply an affliction has run, and
+                 `creditDeaths` is driven off this tick's `died` events, so a
+                 pulse that kills has to have said so first.
+                 Three of `resolveBlow`'s side effects a pulse must *not*
+                 inherit, and each was got wrong first. **Hostility is re-asked
+                 every pulse**, because `isHostile` between two players needs
+                 both of them standing in a pvp zone and every blow and shot is
+                 measured where both bodies are when it lands -- an affliction
+                 is the first damage here that outlives its own delivery, so it
+                 is the first that could carry a wilderness fight over a
+                 safe-zone line. **A pulse does not shout**: the `hit` event
+                 carries a sim-only `periodic` flag and `rally` skips it, since
+                 that function's whole bound is one hop per actual blow and a
+                 poison ticking twenty times would drag a nest across the map
+                 for ten seconds. And **death drops the cast** -- the one thing
+                 `resolveBlow` does on a kill that is easy to leave out, and not
+                 cosmetic: a player's entity survives death, the cast pass
+                 refuses a corpse, and `respawn` rewrites eleven fields without
+                 touching `cast`, so a wind-up somebody died in came back with
+                 them and landed from the spawn pad on their first living tick,
+                 at the coordinates they had aimed at before dying.
+                 Reaching one is a single effect verb, `{ kind: 'applyDot',
+                 dotId }`, and the absence of the other fields is the design: no
+                 duration, no rate, no stacks. **The row is the affliction,
+                 whole** -- one whose numbers depended on which skill landed it is
+                 one the player carrying it cannot reason about. What does vary is
+                 the applier, whose `spellPower` is captured into `magnitude` the
+                 way Exposed already captures the exposer's coefficient.
+                 Two landings had been dropping `ability.effects` on the floor
+                 since spec 188 and both are closed here, because a poison dart is
+                 a ranged skill: a projectile's impact resolves in `world.ts` and
+                 called `applyDamage` directly (both the direct hit and the
+                 burst), and `landSelf` read `healing` and `healingFraction` and
+                 nothing else. Both go through the exported `applyToTarget` now,
+                 so a projectile skill and a melee one cannot come to different
+                 answers about what a row does. `aimShape` was the third of the
+                 same kind and had never read `ability.area` at all, so the one
+                 ability kind that *is* a shape was the one kind you could not see.
                  `data/status-visuals.ts` is which of those a player may see
                  (spec 186), and it exists because that map is deliberately
                  wider than anything anybody should be shown: some of what it

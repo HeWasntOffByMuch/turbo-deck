@@ -80,7 +80,7 @@ function ledger(): ChunkIngest {
 }
 
 async function main(): Promise<void> {
-  // `PROPS=2200` measures the walk at another batching size (spec 192). The
+  // `PROPS=2200` measures the walk at another batching size (spec 195). The
   // frame's bill per region is flat, so what changes with size is how *often* a
   // region is rebuilt -- which is the half standing still cannot show.
   setPropRegionSize(Number(process.env['PROPS'] ?? PROP_REGION_SIZE));

@@ -37,7 +37,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Page } from 'playwright';
 import { BINDINGS_KEY, BINDINGS_VERSION } from '../src/ui/input/binding-store.js';
-import { TOGGLE_STATS_ACTION } from '../src/render/iso3d/world/key-actions.js';
+import { TOGGLE_STATS_ACTION } from '../src/render/iso3d/world/control-actions.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4331;

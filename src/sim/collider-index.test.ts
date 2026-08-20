@@ -1,5 +1,5 @@
 /**
- * The index answers what the walk answered (spec 189).
+ * The index answers what the walk answered (spec 192).
  *
  * One assertion carries this whole spec and the rest are details: over the real
  * arena, `pushOutOfObstacles` and `circleBlocked` return results **identical**

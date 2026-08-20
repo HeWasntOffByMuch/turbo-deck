@@ -36,7 +36,7 @@ export function createWorldColliders(
   circles: readonly Circle[] = [],
   bounds: Rect = WORLD_BOUNDS,
 ): WorldColliders {
-  // The index is built here and only here (spec 189), so it cannot be out of
+  // The index is built here and only here (spec 192), so it cannot be out of
   // step with the array it indexes: there is one factory, every construction
   // goes through it, and the field is not optional.
   return { bounds, rects, circles, index: buildColliderIndex(circles) };
@@ -87,7 +87,7 @@ export function circleHitsCircle(centre: Vec2, radius: number, circle: Circle): 
 export function circleBlocked(centre: Vec2, radius: number, world: WorldColliders = DEFAULT_WORLD): boolean {
   for (const rect of world.rects) if (circleHitsRect(centre, radius, rect)) return true;
   // The same test on the same circles, on the handful that could possibly answer
-  // yes rather than on all of them (spec 189). Rects stay linear: there are six,
+  // yes rather than on all of them (spec 192). Rects stay linear: there are six,
   // from a compiled-in constant, and a lookup would cost more than the walk.
   //
   // Correct by construction here, unlike in `pushOutOfObstacles`: the point does
@@ -175,7 +175,7 @@ export function pushOutOfObstacles(centre: Vec2, radius: number, world: WorldCol
       }
     }
 
-    // The circle half, narrowed by the index (spec 189) -- and this is the one
+    // The circle half, narrowed by the index (spec 192) -- and this is the one
     // place in that change where "narrower" is not obviously "the same".
     //
     // The walk this replaces tested every circle against the point *as it stood

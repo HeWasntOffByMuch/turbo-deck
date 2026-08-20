@@ -677,6 +677,20 @@ export type ServerSimEvent =
        * left behind that anybody can use.
        */
       readonly weakPoint: boolean;
+      /**
+       * This damage arrived from an affliction rather than from a blow
+       * (spec 190).
+       *
+       * Sim-only: it rides no wire, because a client draws a floating number
+       * the same way whatever caused it. What it exists for is `rally`, which
+       * is driven off this tick's `hit` events and whose whole bound is *"one
+       * hop per actual blow"* -- a poison pulsing twenty times would otherwise
+       * shout for the nest twenty times, from wherever the applier had got to
+       * by then. It is the same argument that keeps a pulse away from
+       * `provoke`: the blow that applied the affliction has already called
+       * everyone it was going to call.
+       */
+      readonly periodic?: boolean;
     }
   | {
       /**

@@ -1,4 +1,4 @@
-# 190 — An active set that is not rebuilt every tick
+# 193 — An active set that is not rebuilt every tick
 
 ## Problem
 
@@ -9,7 +9,7 @@ then diffs that against the previous set both ways. `GameServer.tick` then copie
 the result again — `activeChunks: new Set(this.chunks.activeChunks())` builds an
 array and a second `Set` on top. All of it is thrown away and rebuilt next tick.
 
-With the collider walk gone (spec 189) that bookkeeping is now **25.2% of the
+With the collider walk gone (spec 192) that bookkeeping is now **25.2% of the
 tick** — the single most expensive thing in it, and most of the 9.7% the garbage
 collector takes beside it.
 

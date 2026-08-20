@@ -1,5 +1,5 @@
 /**
- * Where the static colliders are, so nothing has to walk all of them (spec 189).
+ * Where the static colliders are, so nothing has to walk all of them (spec 192).
  *
  * `pushOutOfObstacles` and `circleBlocked` used to test every circle in the
  * world, and `resolveMovement` calls both for every body every tick -- so the

@@ -76,7 +76,7 @@ try {
   // Both scenes: the widget gallery (spec 123) and the six-window one (spec 124).
   // The budget the brief states is "six windows open", so the second is the one
   // the number actually belongs to.
-  for (const scene of ['widgets', 'windows', 'keys', 'bag', 'play', 'shop'] as const) {
+  for (const scene of ['widgets', 'windows', 'keys', 'bag', 'play', 'shop', 'chat'] as const) {
     const query = scene === 'widgets' ? '' : `?scene=${scene}`;
     await page.goto(`http://localhost:${PORT}/ui-gallery.html${query}`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
@@ -118,7 +118,7 @@ try {
     failed = true;
   }
 
-  console.log(`\nwrote .claude/screenshots/ui-{widgets,windows,keys,bag,play,shop}.png`);
+  console.log(`\nwrote .claude/screenshots/ui-{widgets,windows,keys,bag,play,shop,chat}.png`);
   await browser.close();
 } finally {
   server.kill();
