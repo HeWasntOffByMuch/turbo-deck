@@ -29,7 +29,7 @@ import { GameClient } from '../src/server/client/game-client.js';
 import { LoopbackTransport } from '../src/server/net/transport-loop.js';
 import { StreamedMap } from '../src/server/client/streamed-map.js';
 import { ChunkIngest, type WorldRect } from '../src/render/iso3d/world/chunk-ingest.js';
-import { PROP_REGION_SIZE } from '../src/render/iso3d/props.js';
+import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize } from '../src/render/iso3d/props.js';
 import { buildWorldFromMap } from '../src/server/world/build.js';
 import { parseMap } from '../src/terrain/map.js';
 import { createWorldPredictor } from '../src/server/client/prediction.js';
@@ -73,13 +73,17 @@ const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolv
 function ledger(): ChunkIngest {
   return new ChunkIngest({
     settleMs: PROP_SETTLE_MS,
-    regionSize: PROP_REGION_SIZE,
+    regionSize: propRegionSize(),
     regionsPerFlush: PROP_REGIONS_PER_FRAME,
     incompleteHoldMs: PROP_INCOMPLETE_HOLD_MS,
   });
 }
 
 async function main(): Promise<void> {
+  // `PROPS=2200` measures the walk at another batching size (spec 195). The
+  // frame's bill per region is flat, so what changes with size is how *often* a
+  // region is rebuilt -- which is the half standing still cannot show.
+  setPropRegionSize(Number(process.env['PROPS'] ?? PROP_REGION_SIZE));
   const text = readFileSync('maps/arena.json', 'utf8');
   const world = buildWorldFromMap(parseMap(text), text);
   const transport = new LoopbackTransport();
