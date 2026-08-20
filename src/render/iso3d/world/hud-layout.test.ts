@@ -65,9 +65,10 @@ const DESKTOP_BAR = barBox(1);
 const PHONE_BAR = barBox(8 / 3);
 
 describe('the HUD layout', () => {
-  it('keeps the desktop HUD as it was: a readout and a named weapon column', () => {
+  it('keeps the desktop HUD as it was: a readout, key numbers and a named column', () => {
     expect(desktop.compact).toBe(false);
     expect(desktop.showsReadout).toBe(true);
+    expect(desktop.showsKeyNumber).toBe(true);
     expect(desktop.weaponIconOnly).toBe(false);
     expect(desktop.weaponDirection).toBe('column');
     expect(desktop.showsTuningMenus).toBe(true);
@@ -116,9 +117,12 @@ describe('the HUD layout', () => {
     expect(poolBottom(compact, NO_ACTION_BAR)).toBe(bottomEdge(compact));
   });
 
-  it('drops the readout on a finger, and switches weapons to icons', () => {
+  it('drops the readout and the key numbers on a finger, and switches weapons to icons', () => {
     expect(compact.compact).toBe(true);
     expect(compact.showsReadout).toBe(false);
+    // No keyboard to name: spec 094's rule, and the bar honours it from the
+    // other side of the canvas now (spec 190).
+    expect(compact.showsKeyNumber).toBe(false);
     expect(compact.weaponIconOnly).toBe(true);
     expect(compact.weaponDirection).toBe('row');
     expect(compact.systemIconOnly).toBe(true);

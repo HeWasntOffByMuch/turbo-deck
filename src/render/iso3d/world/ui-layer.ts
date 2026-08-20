@@ -479,6 +479,11 @@ export class UiLayer {
     this.screens.setActionBarSlotSide((this.slotSideCss * dpr) / this.frame.scale);
   }
 
+  /** Whether a slot names the key that fires it. See `HudHandle.showsSlotKeys`. */
+  setShowsSlotKeys(shows: boolean): void {
+    this.screens.setShowsSlotKeys(shows);
+  }
+
   /** Every slot's box, in CSS pixels, and what it holds. See the note above. */
   actionBarSlotsCss(): readonly { readonly ability: string; readonly rect: Rect }[] {
     const dpr = globalThis.devicePixelRatio || 1;

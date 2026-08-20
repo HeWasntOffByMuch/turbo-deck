@@ -33,6 +33,16 @@ export interface BoxSize {
 export interface HudLayout {
   /** Whether this is the finger-sized HUD. */
   readonly compact: boolean;
+  /**
+   * Whether an action-bar slot names the key that fires it (spec 094).
+   *
+   * False on a finger, which has no keyboard to press: a "1" in the corner of a
+   * slot somebody taps is a label about a control that is not there. Still here
+   * after spec 190 moved the bar to the interface canvas, because it is a fact
+   * about the *device* and this is the file that answers those -- the mount is
+   * pure and cannot ask.
+   */
+  readonly showsKeyNumber: boolean;
   /** Whether the diagnostic readout is drawn (it is written either way). */
   readonly showsReadout: boolean;
   /**
@@ -128,6 +138,7 @@ export interface HudLayout {
 
 const DESKTOP: HudLayout = {
   compact: false,
+  showsKeyNumber: true,
   showsReadout: true,
   showsTuningMenus: true,
   showsWeaponSwitch: true,
@@ -177,6 +188,7 @@ const DESKTOP: HudLayout = {
  */
 const COMPACT: HudLayout = {
   compact: true,
+  showsKeyNumber: false,
   showsReadout: false,
   showsTuningMenus: false,
   showsWeaponSwitch: false,

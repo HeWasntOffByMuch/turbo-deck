@@ -48,9 +48,12 @@ body under the cursor**, and a click on nothing clears the selection. One
 
 The action **id does not move.** `world.confirmAim` is what a stored profile
 references, and spec 189 is explicit that a rename is a player's binding
-silently discarded. Only the label changes, to `Select / confirm aim`, because
-the label is what the keybindings window reads out and it is now describing two
-things.
+silently discarded. Only the label changes, to `Select / aim`, because the label
+is what the keybindings window reads out and it is now describing two things —
+and it is that short rather than `Select / confirm aim` because the longer one
+measures 139px against a 114px column, which `keybindings.test.ts` catches: the
+face is drawn rather than typeset, so a label too wide for its row clips in
+silence.
 
 Selection is **client state and nothing else**: no message, no field on the
 wire, no server opinion. It is a camera decision, not a game one.
@@ -71,14 +74,13 @@ the content tables become plain rows out here.
 
 ```ts
 export interface SelectedUnitView {
-  readonly id: number;
+  /** `displayName`, so the panel and the name over the body cannot differ. */
   readonly name: string;
-  /** 'Player', or the row's name from MONSTERS. Never a typeId. */
-  readonly kind: string;
-  readonly level: number;
+  /** The line under it: 'Lv 3', or 'Lv 12 Player'. */
+  readonly detail: string;
   readonly health: { readonly current: number; readonly max: number };
   readonly dead: boolean;
-  readonly statuses: readonly StatusMark[];
+  readonly statuses: readonly StatusRowView[];
 }
 
 export function selectionOf(input: {
@@ -87,6 +89,14 @@ export function selectionOf(input: {
   readonly drawnTick: number;
 }): SelectedUnitView | null;
 ```
+
+`detail` is a composed *string* rather than a level and a flag, because what a
+line is worth saying is decided out here — the same division the item tooltip
+keeps, where the view-model hands over a tone and `src/ui/` says what a tone
+looks like. A player's own name says nothing about what they are, so theirs names
+it; a grazer's name is already its kind, so its level stands alone. The rows are
+`StatusRowView` for the same reason: a label with its stack count in it, the
+seconds already formatted, a tone and whether it is about to run out.
 
 The statuses come from **`statusMarks`**, the same function the marks over the
 head are built from. That is the whole point of the module rather than a
@@ -145,12 +155,13 @@ player asks while standing still.
 
 ### The action bar, on the canvas (`src/ui/screens/action-bar.ts`)
 
-`SkillSlot` grows the five states the shipped bar has and the gallery's did not,
-and it grows them on the widget rather than in a screen, because they are all
-states *of a slot*:
+`SkillSlot` grows the states the shipped bar has and the gallery's did not, and
+it grows them on the widget rather than in a screen, because they are all states
+*of a slot*:
 
 ```ts
-side: number = SLOT_SIDE;              // the bar's slots are bigger than the gallery's
+side = SLOT_SIDE;                      // told by the mount; see below
+iconScale = 1;                         // derived from the side, in whole steps
 badge = '';                            // the vial's charges, bottom-right
 highlight: string | null = null;       // a frame token: aimed, casting, requested
 change: { label: string; progress: number } | null = null;   // a swap in flight (188)
@@ -163,14 +174,35 @@ bar's dashed square says: *something goes here*.
 is handed — pure, out here, off `ClientView` and the ability table, in the same
 shape as `character-model.ts`.
 
-**The bar keeps its box.** `hud-layout.ts` stays the authority on how big a slot
-is and how wide the strip is, in CSS pixels, and `ui-layer.ts` converts that to
-UI pixels — it is the file that owns the one conversion between the two. So the
-bar lands in the rectangle the DOM bar occupied, the pool block beside it is
-positioned by the arithmetic it already used, and `data-hud-bottom` still
-measures the same furniture for the chat's clearance. Nothing else in the bottom
-band moves: the pools keep their chunk and their kick, the experience strip
-keeps its place, the weapon switch keeps its corner.
+**A slot's size is told, not chosen**, and it is the one thing about this bar
+that is not simply "the framework's own slot". A bag cell is a thing you look at;
+these are **tap targets**, and the interface scale is chosen by two different
+constraints at the two ends of the range: on a phone by how many device pixels a
+finger covers, on a desktop by how much has to fit on screen. There is no single
+number of UI pixels that is right at both — 20 is a row of 20 CSS-pixel squares
+on a desktop, and 40 is a row 107 CSS pixels tall on a 390-pixel phone. So
+`ACTION_SLOT_CSS` lives in `hud-layout.ts` beside `MIN_TAP_PX`, which is the file
+that has always stated how big a thing a finger must hit, and `ui-layer.ts`
+converts it — the one place the two kinds of pixel meet, re-applied on every
+resize because the scale is what the conversion turns on.
+
+**And its width comes back the other way.** `HudLayout` loses `slot` entirely:
+`centredClearance`, `poolClearance` and `poolBottom` take the bar's *measured*
+box, pushed across as CSS pixels, because a second calculation of the bar's width
+on the DOM side would be a second description of this one — the mistake that put
+the chat log on the weapon switch. `poolBottom` clamps at the floor for the
+frames before the interface has laid itself out at all: centring on a box of
+nothing would put the pool block over the experience strip. Nothing else in the
+bottom band moves — the pools keep their chunk and their kick, the experience
+strip keeps its place, the weapon switch keeps its corner.
+
+A slot draws an **icon** rather than a name. The DOM bar drew the ability's name
+on a desktop and an icon on a phone, which is two layouts and two things to keep
+fitting; at this framework's scale no name in the table fits a slot at any size
+the face has, and every other slot in the game is already a square with a sprite
+in it. So `hud-layout.test.ts` loses its "a name fits a slot" assertion, there
+being no slot that draws one, and `barNameOf` keeps a live consumer as
+`AbilityView.name` with a test of its own beside the model.
 
 The DOM bar is **deleted**, not left hidden. Two bars would be two answers.
 
@@ -219,3 +251,11 @@ The DOM bar is **deleted**, not left hidden. Two bars would be two answers.
 - **A tooltip on a status row.** The row is a name and a count; what a status
   *does* is the character sheet's question, and the sheet is out of scope here
   too (spec 186 said so and nothing has changed).
+- **A tooltip on a bar slot.** The DOM buttons carried the ability's description
+  as a `title` and the canvas ones do not. `Tooltip` exists and the bag already
+  drives one, but wiring a second surface into it is a mount question rather than
+  a bar question, and what is being replaced here is the drawing.
+- **Accessibility.** The DOM slots carried `aria-label`s and a canvas carries
+  none. That is a property of the whole framework rather than of this bar — every
+  screen mounted since spec 131 has it — and it wants one answer covering all of
+  them rather than a fifth of one here.

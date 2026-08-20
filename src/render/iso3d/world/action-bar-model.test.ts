@@ -42,6 +42,7 @@ function source(overrides: Partial<ActionBarSource> = {}): ActionBarSource {
     swap: null,
     tick: 0,
     map: new InputMap(),
+    showsKeys: true,
     ...overrides,
   };
 }
@@ -64,6 +65,11 @@ describe('actionBarViewOf (spec 190)', () => {
     const view = actionBarViewOf(source({ map }));
     expect(view.slots[0]?.keyLabel).toBe('Q');
     expect(view.slots[1]?.keyLabel).toBe('2');
+  });
+
+  it('names no key on a finger, which has no keyboard to press', () => {
+    const view = actionBarViewOf(source({ showsKeys: false }));
+    expect(view.slots.map((entry) => entry.keyLabel)).toEqual(['', '', '', '', '']);
   });
 
   it('counts the flask on the vial and on nothing else', () => {

@@ -404,6 +404,14 @@ export interface HudHandle {
    */
   readonly slotSideCss: number;
   /**
+   * Whether a slot names the key that fires it (specs 094, 190).
+   *
+   * False on a finger, which has no keyboard: see `HudLayout.showsKeyNumber`.
+   * Told rather than asked, because the half of the mount that builds the bar's
+   * rows is pure and `isHandheldDevice` reads the platform.
+   */
+  readonly showsSlotKeys: boolean;
+  /**
    * What to call when a window button is pressed (spec 140). It hands back a
    * window id and nothing else -- the mount calls the same `ui.toggle` a key
    * binding calls, so nothing in this file decides what a button means.
@@ -1635,6 +1643,7 @@ export function createHud(project: Projector): HudHandle {
     },
     floorCss: bottomEdge(layout),
     slotSideCss: ACTION_SLOT_CSS,
+    showsSlotKeys: layout.showsKeyNumber,
     setActionBar(box) {
       if (box.width === actionBar.width && box.height === actionBar.height) return;
       actionBar = box;

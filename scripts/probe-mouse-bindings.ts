@@ -209,6 +209,30 @@ async function toCss(page: Page, at: { x: number; y: number }): Promise<{ x: num
   return point;
 }
 
+/**
+ * Every body the HUD is drawing a floating bar for, in CSS pixels (spec 190).
+ *
+ * The bar's *anchor* rather than the body: the holder is pinned above the head,
+ * so a press has to go some way below it to land on what it names. There is no
+ * element for a body -- it is drawn to the world canvas -- and this is the one
+ * handle the scene already publishes for one.
+ */
+async function bodies(page: Page): Promise<{ id: string; x: number; y: number }[]> {
+  return page.$$eval('[data-entity]', (nodes) =>
+    nodes.map((node) => {
+      const rect = (node as HTMLElement).getBoundingClientRect();
+      return { id: (node as HTMLElement).dataset['entity'] ?? '', x: rect.x + rect.width / 2, y: rect.y };
+    }),
+  );
+}
+
+/** What the mini HUD says it is showing: `name|detail`, empty for nothing. */
+async function selected(page: Page): Promise<string> {
+  return page.evaluate(
+    () => document.querySelector<HTMLElement>('[data-ui-selected]')?.dataset['uiSelected'] ?? '',
+  );
+}
+
 /** What the profile in storage says one action is bound to. */
 async function storedPrimary(page: Page, actionId: string): Promise<string> {
   const raw = await page.evaluate((key) => globalThis.localStorage?.getItem(key ?? '') ?? '', BINDINGS_KEY);
@@ -255,6 +279,38 @@ async function main(): Promise<void> {
     await wheel(page, 100);
     const further = await zoom(page);
     check(further > nearer, `a notch toward the player pushes it out (${nearer} -> ${further})`);
+
+    // The left button's second reading (spec 190). Everything the feature
+    // decides is asserted in Node -- that the decision reaches `selectionOf`,
+    // that the panel draws what it is handed -- and none of it can say whether
+    // a press on a body in the shipped page reaches any of it, which is the
+    // same gap this file was written for.
+    //
+    // The offset is swept rather than guessed: a body's anchor is the top of the
+    // holder above its head, and how far below that the body itself is depends
+    // on the camera and on how tall the thing is.
+    console.log('the left button naming a body');
+    let named = '';
+    for (const body of (await bodies(page)).filter((b) => b.x > 80 && b.x < 1200 && b.y > 100 && b.y < 640)) {
+      for (const below of [26, 36, 46, 18]) {
+        await page.mouse.click(body.x, body.y + below);
+        await page.waitForTimeout(400);
+        named = await selected(page);
+        if (named.length > 0) break;
+      }
+      if (named.length > 0) break;
+    }
+    check(named.length > 0, `a left click on a body names it in the corner (${named || 'nothing'})`);
+
+    if (named.length > 0) {
+      // ...and a click on nothing puts it away. There is no second gesture for
+      // that and there should not be: the way you stop looking at something is
+      // to look at something else.
+      await page.mouse.click(40, 700);
+      await page.waitForTimeout(400);
+      const after = await selected(page);
+      check(after === '', `a left click on empty ground clears it (${after || 'nothing'})`);
+    }
 
     console.log('a button nothing is bound to');
     check(await readoutOn(page), 'the readout is drawn to begin with');
@@ -334,7 +390,10 @@ async function main(): Promise<void> {
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exitCode = 1;
   } else {
-    console.log('\nthe wheel is a binding, a button reaches an action, and the window captures one');
+    console.log(
+      '\nthe wheel is a binding, a button reaches an action, the left one names a body,' +
+        ' and the window captures a press',
+    );
   }
 }
 

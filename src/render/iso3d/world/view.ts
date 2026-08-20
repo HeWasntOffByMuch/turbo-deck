@@ -1293,6 +1293,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // a bar, which bar. The ordinary case is pushed per frame off the equipment.
   ui.setActionBarFloorCss(hud.floorCss);
   ui.setActionBarSlotCss(hud.slotSideCss);
+  ui.setShowsSlotKeys(hud.showsSlotKeys);
   if (forcedBar) ui.setActionBarPlan(forcedBar);
 
   // The other half of that, and the half that had never been connected to

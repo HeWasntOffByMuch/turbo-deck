@@ -266,6 +266,13 @@ export class UiScreens {
   private barPlan: readonly ActionSlot[] = ACTION_BAR;
   /** What is being aimed, so the slot it came from is lit (spec 080). */
   private aimingAbilityId: string | null = null;
+  /**
+   * Whether a slot names the key that fires it (specs 094, 190).
+   *
+   * True until told otherwise, because that is what a keyboard gets and a
+   * keyboard is what this half has no way to ask about.
+   */
+  private showsSlotKeys = true;
 
   /** Windows whose size and position have been chosen. See the header. */
   private readonly placed = new Set<WindowId>();
@@ -854,6 +861,7 @@ export class UiScreens {
         swap,
         tick: drawnTick,
         map: this.options.map,
+        showsKeys: this.showsSlotKeys,
       }),
     );
 
@@ -1190,6 +1198,11 @@ export class UiScreens {
    */
   setActionBarPlan(plan: readonly ActionSlot[]): void {
     this.barPlan = plan;
+  }
+
+  /** Whether a slot names its key. False on a finger, which has no keyboard. */
+  setShowsSlotKeys(shows: boolean): void {
+    this.showsSlotKeys = shows;
   }
 
   /** How big one slot is, in UI pixels. See `ActionBarScreen.setSlotSide`. */

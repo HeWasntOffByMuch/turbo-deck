@@ -56,6 +56,16 @@ export interface ActionBarSource {
   readonly tick: number;
   /** The key map, so a slot says what actually fires it rather than a guess. */
   readonly map: InputMap;
+  /**
+   * Whether a slot names the key at all (specs 094, 190).
+   *
+   * False on a finger, which has no keyboard to press: a "1" in the corner of a
+   * slot somebody taps is a label about a control that is not there. The
+   * decision belongs to `hud-layout.ts`, which is the file that answers device
+   * questions; what is decided *here* is that the answer means an empty string
+   * rather than a widget with a flag on it.
+   */
+  readonly showsKeys: boolean;
 }
 
 export function actionBarViewOf(source: ActionBarSource): ActionBarView {
@@ -87,7 +97,9 @@ function slotViewOf(
   const ability = slot.abilityId === null ? null : abilityById(slot.abilityId);
   return {
     ability: ability ? abilityViewOf(source, ability) : null,
-    keyLabel: chordLabel(source.map.bindingsFor(`skillbar.${slot.keyNumber}`).primary),
+    keyLabel: source.showsKeys
+      ? chordLabel(source.map.bindingsFor(`skillbar.${slot.keyNumber}`).primary)
+      : '',
     // Only the vial counts anything. Its cost is a *charge* rather than
     // resource, so the dimming rule `affordable` already applies to it had
     // nothing on screen to point at: an empty flask and an unaffordable bolt
