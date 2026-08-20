@@ -321,7 +321,7 @@ export function attributeRowsOf(source: CharacterSource): readonly AttributeRowV
 }
 
 /**
- * What a skill row's tooltip says (spec 189).
+ * What a skill row's tooltip says (spec 191).
  *
  * Newline-joined rather than structured, because `SkillView.description` is a
  * string and `SkillRow.tooltip` splits it back into the lines the `Tooltip`
@@ -352,7 +352,7 @@ export function skillBranchesOf(source: CharacterSource): readonly BranchView[] 
         tier: skill.tier,
         level: levelOf(source.skills, skill.id),
         maxLevel: skill.maxLevel,
-        // The Technical Description, derived (spec 189). It replaces
+        // The Technical Description, derived (spec 191). It replaces
         // `description (trigger)`, which was the authored sentence and the
         // authored trigger and not one number -- so a player could read that
         // Crushing Blows made their blows "carry more weight" and never that it

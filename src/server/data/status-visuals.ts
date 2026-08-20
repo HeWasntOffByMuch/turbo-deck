@@ -66,7 +66,7 @@ export interface StatusVisual {
    */
   readonly maxStacks: number;
   /**
-   * What the condition does, in one or two sentences (spec 189).
+   * What the condition does, in one or two sentences (spec 191).
    *
    * The **one** authored mechanical string in the description system, and the
    * reason is that this row genuinely does not know: what a status does lives in
@@ -82,7 +82,7 @@ export interface StatusVisual {
    */
   readonly effect: string;
   /**
-   * This status has no duration of its own (spec 189).
+   * This status has no duration of its own (spec 191).
    *
    * True for exactly one row today. `world.ts` applies Prepared with
    * `Number.MAX_SAFE_INTEGER - tick`, so it never expires on its own and ends

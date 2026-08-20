@@ -56,7 +56,7 @@ const DEFINITIONS: readonly SynergyDefinition[] = [
     a: 'strength',
     b: 'agility',
     threshold: T,
-    // **Not "Momentum"** (spec 189). That is the name of the *status* this pair
+    // **Not "Momentum"** (spec 191). That is the name of the *status* this pair
     // grants, which `STATUS_VISUALS` draws over every head in the world and
     // which any description naming the status has to use. A pair's name is by
     // design never shown to a player -- `character-model.test.ts` asserts it of

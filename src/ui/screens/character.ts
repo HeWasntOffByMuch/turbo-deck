@@ -160,7 +160,7 @@ export class SkillRow extends Row {
   /**
    * What a tooltip over this row should say. The description, or the refusal.
    *
-   * Split into lines rather than handed over as prose (spec 189). A skill's
+   * Split into lines rather than handed over as prose (spec 191). A skill's
    * description is now its Technical Description -- a requirement, a trigger and
    * one line per thing it grants -- and `Tooltip` wraps *per line*, so passing
    * the whole thing as one string would run every fact into one paragraph and

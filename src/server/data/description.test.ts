@@ -1,5 +1,5 @@
 /**
- * The Technical Description standard, as assertions (spec 189).
+ * The Technical Description standard, as assertions (spec 191).
  *
  * These are the invariants `docs/mechanics-vocabulary.md` states in prose. The
  * point of having them here is that a standard nothing checks is a style guide,
@@ -311,7 +311,7 @@ describe('sigils', () => {
   });
 });
 
-describe('the passive skill tree (spec 189)', () => {
+describe('the passive skill tree (spec 191)', () => {
   it('describes every row with at least its requirement and its trigger', () => {
     for (const skill of ALL_SKILLS) {
       const lines = describeStatSkill(skill, 0).lines;

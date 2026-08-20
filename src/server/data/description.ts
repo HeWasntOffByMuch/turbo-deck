@@ -1,5 +1,5 @@
 /**
- * What a mechanic does, said once (spec 189).
+ * What a mechanic does, said once (spec 191).
  *
  * The writer for the Technical Description standard in
  * `docs/mechanics-vocabulary.md`. Every player-facing statement about an
@@ -445,7 +445,7 @@ function noteLines(ability: AbilityDefinition): readonly string[] {
 // --- what a modifier grants ---------------------------------------------
 
 /**
- * How one field of a {@link StatModifier} is written out (spec 189).
+ * How one field of a {@link StatModifier} is written out (spec 191).
  *
  * The naming table for the *other* half of the content: `describeAbility` reads
  * an ability's own columns, and this reads the generic bag of numbers that
@@ -654,7 +654,7 @@ export function grantsOf(modifier: StatModifier, times = 1): readonly Grant[] {
 // --- the passive skill tree ---------------------------------------------
 
 /**
- * The Technical Description for one row of the attuned tree (spec 189).
+ * The Technical Description for one row of the attuned tree (spec 191).
  *
  * The tree was the one thing the standard's first pass left out, and it is the
  * largest body of unexplained mechanics in the game: thirty-six rows granting

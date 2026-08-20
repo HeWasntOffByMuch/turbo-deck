@@ -245,7 +245,7 @@ export function detailsFor(defId: string): readonly ItemDetail[] {
   ];
   if (definition) {
     lines.push(...statDetails(definition.modifiers));
-    // A sigil's Technical Description is its *skill's* (spec 189). Before this,
+    // A sigil's Technical Description is its *skill's* (spec 191). Before this,
     // a sigil said its tier, that it went in a skill slot, and what it was
     // worth -- and nothing at all about what it did, because `modifiers` is
     // deliberately empty on those rows and the stat lines above are all a

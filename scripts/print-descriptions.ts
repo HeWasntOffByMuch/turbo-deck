@@ -1,5 +1,5 @@
 /**
- * Every Technical Description the game can produce (spec 189).
+ * Every Technical Description the game can produce (spec 191).
  *
  * The applied half of `docs/mechanics-vocabulary.md`: the standard says how a
  * mechanic is written down, and this prints what that comes to for every row in

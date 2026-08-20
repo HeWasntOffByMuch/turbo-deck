@@ -221,7 +221,7 @@ export interface AbilityDefinition {
    */
   readonly effects?: readonly SkillEffect[];
   /**
-   * Flavour, and **only** flavour (spec 189).
+   * Flavour, and **only** flavour (spec 191).
    *
    * What this ability does is said by `data/description.ts`, derived from the
    * fields above, so nothing mechanical may be stated here: a claim in this

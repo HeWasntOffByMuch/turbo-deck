@@ -51,7 +51,7 @@ import {
 export const FADE_TICKS = 8;
 
 /**
- * A remaining time longer than this is read as indefinite (spec 189).
+ * A remaining time longer than this is read as indefinite (spec 191).
  *
  * One hour of ticks, against a game whose longest authored status window is
  * Adaptation at ten seconds. Nothing between the two is a duration anybody could
@@ -109,7 +109,7 @@ export interface StatusMark {
   /** 0..1. Full until the window's last few ticks, then thinning into the end. */
   readonly opacity: number;
   /**
-   * Ticks until it ends, or **null** when it does not end (spec 189).
+   * Ticks until it ends, or **null** when it does not end (spec 191).
    *
    * Null rather than zero, and rather than a very large number, because those
    * are answers to a different question: zero means "ending now" and a large

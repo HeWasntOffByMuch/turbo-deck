@@ -112,7 +112,7 @@ describe('the character sheet', () => {
   });
 
   it('says why a skill cannot be taken, in the words the refusal would use', () => {
-    // A tooltip is a list of lines rather than one string since spec 189: a
+    // A tooltip is a list of lines rather than one string since spec 191: a
     // skill's description is its Technical Description, and `Tooltip` wraps per
     // line, so handing it over as prose would run every fact into a paragraph.
     const { screen } = harness();

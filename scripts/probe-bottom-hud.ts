@@ -301,11 +301,11 @@ async function main(): Promise<void> {
     await page.screenshot({ path: join(outDir, 'bottom-hud.png') });
     console.log('  wrote bottom-hud.png');
 
-    // --- the player's own status row (spec 189) ---------------------------
+    // --- the player's own status row (spec 191) ---------------------------
     //
     // Everything this row decides is asserted in Node by `status-marks.test.ts`.
     // What none of it can say is whether the row is wired to anything, which is
-    // the exact failure mode spec 189 was written against: the floating marks
+    // the exact failure mode spec 191 was written against: the floating marks
     // had a complete green test suite beside a mark that could not tell a player
     // what it meant.
     //

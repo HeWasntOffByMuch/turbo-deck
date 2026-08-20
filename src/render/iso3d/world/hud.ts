@@ -254,7 +254,7 @@ const STATUS_AFFLICTION = '#d0796f';
 const STATUS_ICON_PX = 13;
 
 /**
- * What hovering an ability says (spec 189).
+ * What hovering an ability says (spec 191).
  *
  * The name, then its Technical Description, then the flavour -- separated by a
  * blank line, because the standard's §2.6 is that flavour is never mixed into
@@ -803,7 +803,7 @@ export function createHud(
   root.append(poolBlock);
 
   /**
-   * The player's own statuses, above their own health bar (spec 189).
+   * The player's own statuses, above their own health bar (spec 191).
    *
    * A second row, and the reason it is not simply the floating one is that the
    * two answer different questions. A mark over a body is 13px and moving with
@@ -1819,7 +1819,7 @@ export function createHud(
     writePoolLabel(healthPool.label, pools.health.text);
     writePoolLabel(resourcePool.label, pools.resource.text);
 
-    // The player's own status row (spec 189). Same pure function the floating
+    // The player's own status row (spec 191). Same pure function the floating
     // marks are drawn from, so the two can never disagree about what is on the
     // body; what this one adds is the countdown and the description.
     const selfBody = view.entities.find((entity) => entity.id === view.selfEntityId);
@@ -1843,7 +1843,7 @@ export function createHud(
         });
         // `innerHTML` replaces the count element, so it goes back afterwards.
         slot.glyph.append(slot.count);
-        // The Technical Description, from the one writer (spec 189). Set with
+        // The Technical Description, from the one writer (spec 191). Set with
         // the glyph rather than per frame: it is a property of *which* status
         // this is and nothing about it changes as the clock runs down.
         const visual = visualFor(mark.id);

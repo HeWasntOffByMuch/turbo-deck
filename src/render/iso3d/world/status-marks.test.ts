@@ -136,7 +136,7 @@ describe('statusMarks (spec 186)', () => {
   });
 });
 
-describe('countdowns (spec 189)', () => {
+describe('countdowns (spec 191)', () => {
   it('counts down against the drawn tick', () => {
     const marks = statusMarks([status(StatusId.Exposed, 200)], 80);
     expect(marks[0]?.remainingTicks).toBe(120);
