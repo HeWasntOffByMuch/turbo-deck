@@ -21,8 +21,9 @@
  * and two things to keep fitting; at this framework's scale no name in the
  * table fits a slot at any size the face has, and every other slot in the game
  * -- the bag's cells, the paperdoll, the skill row -- is already a square with
- * an icon in it. One shape, and the bar stops being the odd one out. It is the
- * same {@link SLOT_SIDE} as those, too: see {@link barWidth}.
+ * an icon in it. One shape, and the bar stops being the odd one out. How big
+ * that square is is the one thing it does *not* share with them: see
+ * {@link ActionBarScreen.setSlotSide}.
  *
  * **The row is rebuilt only when what it holds changes.** Everything that moves
  * during a fight -- the wedge, the seconds, whether a slot can be afforded, the
