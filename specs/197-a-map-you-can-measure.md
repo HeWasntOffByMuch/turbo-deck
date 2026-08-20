@@ -33,7 +33,7 @@ every player's window stays in `state.entities`, and `runSpawners` walks every
 spawn point in the world on every tick regardless of residency, sampling
 `terrain.heightAt` at each one — so the first tick populates the whole map and
 entity memory grows with the world from then on, wherever the players are. That
-is measured here and fixed in spec 201; the number belongs in the harness that
+is measured here and fixed in spec 202; the number belongs in the harness that
 the fix will be judged by.
 
 ## Shape
@@ -95,7 +95,7 @@ the suite stays fast:
   not.** Two worlds, one four times the other, identical content near the
   origin, one player at the origin: the set of entities the tick *simulates* is
   identical, and the set it *contains* is not. Counted, not timed. The first
-  half is the property specs 056/192/193 claim; the second is the hole spec 201
+  half is the property specs 056/192/193 claim; the second is the hole spec 202
   closes, pinned here so that closing it is visible.
 - **`MapInfo` is the size of the world.** Recorded as a ratio, so the phase that
   changes it has to come here and say so.
@@ -111,7 +111,7 @@ the suite stays fast:
 - Two worlds differing only in size, with one player at the origin, simulate the
   **same entity set** — the claim specs 056/192/193 make and nothing checks.
 - The same two worlds **contain** entity counts that scale with the world, which
-  is the claim they do *not* make and which spec 201 has to fix.
+  is the claim they do *not* make and which spec 202 has to fix.
 - `interestSet` and `activeChunks` for that player are identical between the
   two worlds.
 - `MapInfo` bytes grow with chunk count and are recorded against a baseline.
