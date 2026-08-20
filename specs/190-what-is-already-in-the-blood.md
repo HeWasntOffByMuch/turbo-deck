@@ -110,15 +110,58 @@ applied it.
 
 What a pulse does instead, in order:
 
-1. shield before health, the same absorb `resolveBlow` does;
-2. **no armour, no adaptation, no resolve, no reads** — an affliction is
+1. **asks whether the source may still hurt this body at all** — see below;
+2. shield before health, the same absorb `resolveBlow` does;
+3. **no armour, no adaptation, no resolve, no reads** — an affliction is
    already inside, and being the answer to a high-armour target is a role worth
    having;
-3. a `hit` event, so the number floats, the metrics count it and the balance
-   harness can see it (`foldMetrics` reads damage off `hit` and nothing else);
-4. `InCombat`, so a burning player cannot walk into town and rest it off;
-5. a `died` event with `killerId: sourceId` when it kills, so `creditDeaths`
-   pays the restoration, the assists and the loot exactly as a blow's kill does.
+4. a `hit` event, so the number floats, the metrics count it and the balance
+   harness can see it (`foldMetrics` reads damage off `hit` and nothing else) —
+   marked `periodic`, see below;
+5. `InCombat`, so a burning player cannot walk into town and rest it off;
+6. on a kill: **drops the cast the body was holding and announces it**, then a
+   `died` event with `killerId: sourceId`, so `creditDeaths` pays the
+   restoration, the assists and the loot exactly as a blow's kill does.
+
+### The three things a pulse must not inherit, and the two it must
+
+Which of `resolveBlow`'s side effects a pulse keeps is the whole of the design,
+and three of the five decisions below were got wrong first and found by review.
+
+**Hostility is re-asked every pulse, not only where the affliction landed.**
+`isHostile` between two players requires *both* to be standing in a pvp zone,
+and `world.ts` states why at length: reading only the attacker's zone lets
+somebody reach into Hearthstead, and reading only the target's lets a target
+retreat into safety mid-swing. Every blow and every projectile is measured at
+the instant it lands, against where both bodies are then. An affliction is the
+first damage in this game that outlives its own delivery, so it is the first
+that could carry a wilderness fight across a safe-zone line — light somebody
+up, follow them into town, watch them die there. An affliction with *no* source
+— one a developer trigger applied — has no side to be measured against and
+keeps ticking, because refusing it would make the trigger inert.
+
+**Death drops the cast.** This is the first death in the game that is not a
+blow, and `resolveBlow` clears `cast` and emits `castEnded` for a stated
+reason: a client roots itself while it believes it is casting. Missing it was
+not cosmetic. A player's entity survives death, the cast pass refuses a corpse
+so nothing advances or cancels what it was holding, and `respawn` rewrites
+eleven fields without touching `cast` — so a wind-up somebody died in came back
+with them and **landed from the spawn pad on their first living tick**, at the
+coordinates they had aimed at before dying, stamping the cooldown a second
+time. Until it resolved, every attack they pressed was refused as
+`alreadyCasting`.
+
+**A pulse does not shout.** The `hit` event carries a sim-only `periodic` flag
+and `rally` skips it. That function's whole bound is *"one hop per actual
+blow"*; a poison ticking twenty times would raise twenty calls for the nest,
+each from wherever the applier had walked to by then, so one dart would drag a
+nest across the map for ten seconds. It is the same argument that keeps a pulse
+away from `provoke`: the blow that applied the affliction already called
+everyone it was going to call.
+
+What a pulse **does** inherit is the assist mark — a player whose poison did
+the work helped kill it — and `InCombat`, which is what stops the affliction
+being rested off.
 
 It draws **nothing from the Rng.** Spread picks the nearest eligible body and
 breaks ties on entity id — the rule `crowd.ts` already uses — so adding an
@@ -141,18 +184,26 @@ pass:
 |---|---|---|
 | Bleed's exertion | `ActivityValue` | the replicated activity: `Moving` or `Casting` is exertion, `Idle` is not |
 | Corrosion's armour | `StatusId.Sundered` | the DoT applies the status the game already has, so there is one armour-reduction reader and not two |
-| Corrosion's guard | the poise pool | written directly and clamped at zero, so it **cannot break** — spec 188's `poise` effect, same argument |
+| Corrosion's guard | the poise pool | written directly and clamped at zero, so it **cannot break** — spec 188's `poise` effect, same argument. Authored against *regeneration* rather than against the pool: a monster gets back 6 guard a second, so the first cut's 6 a second cancelled exactly and the rider did nothing at all to a stationary body, which is the only body anybody would use it on |
 | Decay's suppression | `applyHealing` | one multiplier at `healing.ts:57`, plus the three sites that bypass it |
 | Burn / Shock's spread | `isHostile` | the nearest body hostile to the **source**, so a player's fire spreads through the pack and never back onto the player |
 
-`healingScaleOf(statuses, tick)` is the fourth `xScaleOf` in `statuses.ts`,
-built to `moveScaleOf`'s shape and for its stated reason: `EffectiveStats` is
-derived on equip, so a timed state living there would either be recomputed per
-tick or go stale. It is read at **all four** places health goes up —
-`applyHealing`, resting, Second Wind and the weak-point-kill heal — because
-three of the four bypass `applyHealing` entirely and a suppression that only
-covered the first would be a status that reads as broken exactly when somebody
-is trying to survive one.
+`healingScaleOf(statuses, tick)` is built to `moveScaleOf`'s shape and for its
+stated reason: `EffectiveStats` is derived on equip, so a timed state living
+there would either be recomputed per tick or go stale.
+
+Health goes up in six places and only three of them go through `applyHealing`,
+so the suppression is read at three sites rather than one — `applyHealing`
+itself (which covers the flask, Mend, a skill's heal and a collected mote),
+**Second Wind**, and the **weak-point-kill heal**. A suppression that only
+covered the first would stop working at exactly the moment a Constitution build
+needs it, which is the one moment anybody would notice.
+
+Resting is deliberately *not* a fourth site, and it is not an omission: a pulse
+stamps `InCombat`, and `advanceRest` already refuses outright while that is
+live. A burning player cannot walk into town and heal it off — not at a reduced
+rate, at no rate. That is stronger than a multiplier would have been, and it is
+true of every affliction rather than only of Decay.
 
 ### Spread is one rule with two radii
 
@@ -245,12 +296,23 @@ built, which is not what death is meant to cost.
   from the same fight without them.
 * A corpse, a projectile, a mote, a drop and a body in an unsimulated chunk
   never pulse.
+* A pulse whose source may no longer hurt the target — the target reached a safe
+  zone — deals nothing, and stops dealing anything for as long as that holds; an
+  affliction with no source at all keeps pulsing.
+* A pulse that kills a body holding a cast clears that cast and emits
+  `castEnded`, so a respawned player cannot fire the wind-up they died in.
+* `rally` answers a blow and ignores a pulse, judged over one world so the flag
+  is the only difference between the two.
+* Corrosion's guard drain outruns poise regeneration in a real tick, and still
+  never breaks the guard.
 * Spread reaches the nearest body hostile to the **source**, never the source's
   own side, never a body already carrying it, and never more than one body per
   pulse; every hop is strictly shorter than its parent, so a fire in a crowd
   goes out.
-* Decay multiplies healing at all four places health goes up, and never to
-  zero.
+* Decay multiplies healing at `applyHealing`, at Second Wind and at the
+  weak-point-kill heal, and never to zero.
+* A body carrying any affliction cannot rest, because a pulse stamps
+  `InCombat`.
 * Corrosion applies `Sundered` and takes guard without ever breaking it.
 * `applyDot` is the only way a skill applies one, and it applies the row whole.
 * A `kind: 'projectile'` skill's effect list runs on impact — both on a direct

@@ -508,6 +508,145 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     ],
     description: 'A cut behind the knee. Little damage, and they are not going anywhere fast.',
   },
+  // --- the afflictions (spec 190) ----------------------------------------
+  //
+  // Seven skills, one per affliction, and the reason there are seven rather
+  // than "a few" is the rule this repo keeps running into from the other side:
+  // an affliction with no way to apply it is a stranded path, and seven of them
+  // would be seven tables' worth of dead content. Between them they also go out
+  // through **every landing this game has** -- a tracked projectile, a bursting
+  // projectile, a named body, a cone, a lane, a circle at the caster's feet and
+  // a crater on the ground -- which is what makes "the effect list reaches all
+  // of them" a fact somebody can check rather than a claim.
+  //
+  // None of them names a duration, a rate or a stack count. That is
+  // `data/damage-over-time.ts`'s to say, whole, so every Burn in the game is
+  // the same Burn (spec 190).
+  {
+    id: 'skill.poisonDart',
+    name: 'Poison Dart',
+    kind: 'projectile',
+    // A body, named. `bolt.seek` already proves a projectile can carry a mark
+    // and follow it, and a dart that missed the thing you are stacking poison
+    // on would make the stack a dexterity test rather than a commitment.
+    targeting: 'unit',
+    skill: true,
+    // The shortest wind-up of the seven and by far the shortest cooldown: this
+    // is the one skill in the table you are *meant* to throw repeatedly, and
+    // the concentration is what it buys. Five casts is eight seconds against a
+    // poison that runs for ten, so a full stack is reachable and only just.
+    windupTicks: seconds(0.4),
+    cooldownTicks: seconds(2),
+    cost: 3,
+    range: 380,
+    // Almost nothing on impact. What you are paying for is the tenth pulse.
+    damage: 6,
+    projectile: { speed: 1000, arc: 0.2, radius: 6, lifetimeTicks: seconds(1.5), look: 'arrow' },
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Poison }],
+    description: 'A dart with something on it. Little on the way in, and it stacks.',
+  },
+  {
+    id: 'skill.emberToss',
+    name: 'Ember Toss',
+    kind: 'projectile',
+    targeting: 'point',
+    skill: true,
+    windupTicks: seconds(0.7),
+    cooldownTicks: seconds(8),
+    cost: 5,
+    range: 420,
+    damage: 14,
+    // A burst, so the fire starts on everything in the splash rather than on
+    // one body -- and then goes looking for the rest of them.
+    radius: 70,
+    projectile: { speed: 420, arc: 1, radius: 10, lifetimeTicks: seconds(3) },
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Burn }],
+    description: 'A pot of embers, lobbed. What it lands on burns, and so does what is next to it.',
+  },
+  {
+    id: 'skill.rendingCut',
+    name: 'Rending Cut',
+    kind: 'melee',
+    targeting: 'unit',
+    skill: true,
+    windupTicks: seconds(0.45),
+    castAngleDeg: 35,
+    cooldownTicks: seconds(7),
+    cost: 3,
+    range: 80,
+    damage: 16,
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Bleed }],
+    description: 'A cut that will not close while they keep using the arm it is in.',
+  },
+  {
+    id: 'skill.acidSpray',
+    name: 'Acid Spray',
+    // A cone, and therefore `melee` with an `arcCosSq` rather than an `area`
+    // with a shape: `landCone` is the wedge this game already has, `aimShape`
+    // already draws it, and a second description of the same geometry is the
+    // thing spec 188 spent a paragraph refusing.
+    kind: 'melee',
+    targeting: 'direction',
+    skill: true,
+    windupTicks: seconds(0.6),
+    cooldownTicks: seconds(10),
+    cost: 6,
+    range: 150,
+    damage: 10,
+    arcCosSq: 0.5,
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Corrosion }],
+    description: 'It goes through the guard and the armour first. Set up a break with it.',
+  },
+  {
+    id: 'skill.arcLash',
+    name: 'Arc Lash',
+    kind: 'area',
+    targeting: 'direction',
+    skill: true,
+    windupTicks: seconds(0.55),
+    cooldownTicks: seconds(9),
+    cost: 6,
+    range: 300,
+    damage: 12,
+    // The one lane in the table. Shock arcs on its own afterwards, so what this
+    // has to do is start it on a line rather than finish anything.
+    area: { shape: 'line', width: 60, range: 300, maxTargets: 4 },
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Shock }],
+    description: 'A lash down a line. It keeps arcing after it lands.',
+  },
+  {
+    id: 'skill.rimeTouch',
+    name: 'Rime Touch',
+    kind: 'area',
+    // Nothing to aim, like Whirlwind: the circle is on the caster's own feet.
+    targeting: 'self',
+    skill: true,
+    windupTicks: seconds(0.6),
+    cooldownTicks: seconds(11),
+    cost: 5,
+    range: 0,
+    damage: 8,
+    area: { shape: 'circle', origin: 'caster', radius: 140, maxTargets: 5 },
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Frostbite }],
+    description: 'Cold off the ground. Nothing much, until it has been on a while.',
+  },
+  {
+    id: 'skill.blight',
+    name: 'Blight',
+    kind: 'ground',
+    targeting: 'point',
+    skill: true,
+    // The longest wind-up here, which is what a zone denial has to cost: it is
+    // slow enough to walk out of, exactly as Quake is.
+    windupTicks: seconds(1.0),
+    cooldownTicks: seconds(12),
+    cost: 6,
+    range: 380,
+    damage: 10,
+    radius: 110,
+    effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Decay }],
+    description: 'A patch of rot. Little damage, and nothing they do about it works properly.',
+  },
   {
     id: 'channel.drain',
     name: 'Drain',

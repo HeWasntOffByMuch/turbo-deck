@@ -12,7 +12,8 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORLD } from '../../sim/collision.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
-import { abilityById } from '../data/abilities.js';
+import { ABILITIES, abilityById, type AbilityDefinition } from '../data/abilities.js';
+import { dotById, dotDurationTicks, dotTotalDamage } from '../data/damage-over-time.js';
 import { monsterById } from '../data/monsters.js';
 import { computeEffectiveStats } from '../player/stats.js';
 import { skillAbilityIdsOf } from '../player/skill-slots.js';
@@ -27,11 +28,13 @@ import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { extraCostsFor } from './abilities.js';
+import { rally } from './aggro.js';
 import { MIN_MOVE_SCALE } from './movement.js';
 import { moveScaleOf, statusOf, StatusId } from './statuses.js';
 import { visualFor } from '../data/status-visuals.js';
 import {
   ActivityValue,
+  AggroValue,
   CastPhase,
   EntityKindValue,
   type ServerEntity,
@@ -117,22 +120,31 @@ function withPlayer(
   return { state: result.state, id: result.entity.id };
 }
 
-function withDummy(
+function withMonster(
   state: ServerWorldState,
+  typeId: string,
   x: number,
   y: number,
 ): { state: ServerWorldState; id: number } {
-  const definition = monsterById('dummy');
-  if (!definition) throw new Error('no dummy');
+  const definition = monsterById(typeId);
+  if (!definition) throw new Error(`no ${typeId}`);
   const result = spawnEntity(state, {
     kind: EntityKindValue.Monster,
-    typeId: 'dummy',
+    typeId,
     position: { x, y, z: 0 },
     stats: definition.stats,
     radius: definition.radius,
     zoneId: 'greenmarch',
   });
   return { state: result.state, id: result.entity.id };
+}
+
+function withDummy(
+  state: ServerWorldState,
+  x: number,
+  y: number,
+): { state: ServerWorldState; id: number } {
+  return withMonster(state, 'dummy', x, y);
 }
 
 function input(entityId: number, overrides: Partial<ServerInput> = {}): ServerInput {
@@ -482,11 +494,11 @@ describe('Crippling Strike', () => {
     const slowed = { ...({} as Record<string, never>) };
     void slowed;
     const statuses = {
-      [StatusId.Slowed]: { expiresAtTick: 100, stacks: 1, magnitude: 0.4 },
+      [StatusId.Slowed]: { expiresAtTick: 100, stacks: 1, magnitude: 0.4, sourceId: 0, appliedAtTick: 0 },
     };
     expect(moveScaleOf(statuses, 0, MIN_MOVE_SCALE)).toBeCloseTo(0.6, 5);
     // A magnitude past the floor is a hard slow, never a root.
-    const brutal = { [StatusId.Slowed]: { expiresAtTick: 100, stacks: 1, magnitude: 5 } };
+    const brutal = { [StatusId.Slowed]: { expiresAtTick: 100, stacks: 1, magnitude: 5, sourceId: 0, appliedAtTick: 0 } };
     expect(moveScaleOf(brutal, 0, MIN_MOVE_SCALE)).toBe(MIN_MOVE_SCALE);
     // And an expired one is not a slow at all.
     expect(moveScaleOf(statuses, 100, MIN_MOVE_SCALE)).toBe(1);
@@ -793,5 +805,523 @@ describe('a slowed body says so', () => {
     // ...and the visual table has a row for it, so it is a mark rather than a
     // status the wire silently drops.
     expect(visualFor(StatusId.Slowed)).not.toBeNull();
+  });
+});
+
+/**
+ * The seven afflictions, driven through the real `step` (spec 190).
+ *
+ * The arithmetic of a pulse -- how many, how big, on which ticks -- is asserted
+ * against the pass itself in `damage-over-time.test.ts`, where a real tick would
+ * only put movement, regeneration and monster intent between the reading and the
+ * thing being read. What is left here is the half that only exists inside a
+ * tick, and it is the half spec 190 exists to close: **an affliction has to
+ * survive the trip from a row to a body**, and the trip is different for every
+ * one of the seven.
+ *
+ * That is why the first block is seven separate tests rather than one about the
+ * mechanic. Two of the landing paths silently dropped `ability.effects` before
+ * this spec -- a projectile's impact resolved in `world.ts` and called
+ * `applyDamage` directly, and `landSelf` read `healing` and nothing else -- so a
+ * row could be authored, validated, typechecked and never run. Poison Dart is
+ * the headline: it is the projectile, and if it lands the seam is genuinely
+ * wired rather than merely written.
+ *
+ * The rest is what "damage over time" actually claims. A blow is right or wrong
+ * once and this is not a blow: the caster stops doing anything, the input frames
+ * go empty, and the target has to keep losing health with somebody still
+ * answerable for it.
+ */
+
+/** A loadout of up to four sigils, in slot order. Four is all there are. */
+function wearing(...sigils: readonly string[]): Equipment {
+  return {
+    ...EMPTY_EQUIPMENT,
+    skill1: sigils[0] ?? null,
+    skill2: sigils[1] ?? null,
+    skill3: sigils[2] ?? null,
+    skill4: sigils[3] ?? null,
+  };
+}
+
+/** How one skill is asked for: a body, a point, a direction, or nothing. */
+type Aim = (casterId: number, target: ServerEntity) => ServerInput;
+
+interface Affliction {
+  readonly name: string;
+  readonly ability: string;
+  readonly sigil: string;
+  readonly dotId: string;
+  readonly aim: Aim;
+}
+
+const atBody = (ability: string): Aim => (casterId, target) => cast(casterId, ability, target);
+
+const atPoint = (ability: string): Aim => (casterId, target) =>
+  input(casterId, {
+    castAbilityId: ability,
+    castTargetX: target.position.x,
+    castTargetY: target.position.y,
+  });
+
+/** Straight down +x, which is where `duel` stands the dummy. */
+const downRange = (ability: string): Aim => (casterId) =>
+  input(casterId, { castAbilityId: ability, castTargetX: 900, castTargetY: 450 });
+
+const atNothing = (ability: string): Aim => (casterId) =>
+  input(casterId, { castAbilityId: ability });
+
+/**
+ * One row per landing path, which is the point: `unit`, a burst, a melee body, a
+ * cone, a lane, a circle on the caster's own feet, and a patch of ground.
+ */
+const AFFLICTIONS: readonly Affliction[] = [
+  {
+    name: 'Poison Dart',
+    ability: 'skill.poisonDart',
+    sigil: 'sigil.poisonDart',
+    dotId: StatusId.Poison,
+    aim: atBody('skill.poisonDart'),
+  },
+  {
+    name: 'Ember Toss',
+    ability: 'skill.emberToss',
+    sigil: 'sigil.emberToss',
+    dotId: StatusId.Burn,
+    aim: atPoint('skill.emberToss'),
+  },
+  {
+    name: 'Rending Cut',
+    ability: 'skill.rendingCut',
+    sigil: 'sigil.rendingCut',
+    dotId: StatusId.Bleed,
+    aim: atBody('skill.rendingCut'),
+  },
+  {
+    name: 'Acid Spray',
+    ability: 'skill.acidSpray',
+    sigil: 'sigil.acidSpray',
+    dotId: StatusId.Corrosion,
+    aim: downRange('skill.acidSpray'),
+  },
+  {
+    name: 'Arc Lash',
+    ability: 'skill.arcLash',
+    sigil: 'sigil.arcLash',
+    dotId: StatusId.Shock,
+    aim: downRange('skill.arcLash'),
+  },
+  {
+    name: 'Rime Touch',
+    ability: 'skill.rimeTouch',
+    sigil: 'sigil.rimeTouch',
+    dotId: StatusId.Frostbite,
+    aim: atNothing('skill.rimeTouch'),
+  },
+  {
+    name: 'Blight',
+    ability: 'skill.blight',
+    sigil: 'sigil.blight',
+    dotId: StatusId.Decay,
+    aim: atPoint('skill.blight'),
+  },
+];
+
+interface Landing {
+  readonly state: ServerWorldState;
+  readonly events: ServerSimEvent[];
+  /** The first tick the target was carrying it, or null if it never was. */
+  readonly landedAtTick: number | null;
+  /** The target's health at the end of each tick, so a decline can be sampled. */
+  readonly health: ReadonlyMap<number, number>;
+  readonly casterId: number;
+  readonly targetId: number;
+}
+
+/**
+ * Casts one skill on tick 0 and then does **nothing at all** for the rest.
+ *
+ * Stepped one tick at a time rather than through `run`, because the tick the
+ * affliction first appears on is the anchor every later assertion is measured
+ * from -- a wind-up, a turn and a projectile's flight are three different
+ * delays, and inferring the landing from the length of the run would make the
+ * arithmetic a guess about scaffolding.
+ */
+function afflict(row: Affliction, ticks: number): Landing {
+  const { state, casterId, targetId } = duel(wearing(row.sigil));
+  const target = state.entities.get(targetId);
+  if (!target) throw new Error('no target');
+  const ctx = context();
+  const events: ServerSimEvent[] = [];
+  const health = new Map<number, number>();
+  let current = state;
+  let landedAtTick: number | null = null;
+  for (let i = 0; i < ticks; i++) {
+    const result = step(current, i === 0 ? [row.aim(casterId, target)] : [], ctx);
+    current = result.state;
+    events.push(...result.events);
+    const body = current.entities.get(targetId);
+    health.set(current.tick, body?.health ?? 0);
+    if (landedAtTick === null && statusOf(body?.statuses ?? {}, row.dotId, current.tick)) {
+      landedAtTick = current.tick;
+    }
+  }
+  return { state: current, events, landedAtTick, health, casterId, targetId };
+}
+
+function afflictionRow(id: string): Affliction {
+  const found = AFFLICTIONS.find((row) => row.ability === id);
+  if (!found) throw new Error(`no affliction skill ${id}`);
+  return found;
+}
+
+describe('every one of the seven reaches a body', () => {
+  for (const row of AFFLICTIONS) {
+    it(`${row.name} leaves ${row.dotId} on what it lands on, answerable to whoever cast it`, () => {
+      const landed = afflict(row, 120);
+      expect(rejections(landed.events)).toHaveLength(0);
+      const held = statusOf(
+        landed.state.entities.get(landed.targetId)?.statuses ?? {},
+        row.dotId,
+        landed.state.tick,
+      );
+      expect(held, row.ability).toBeTruthy();
+      expect(landed.landedAtTick).not.toBeNull();
+      // Without this the affliction's kill pays nobody -- and it is the field
+      // that had to be invented for a status that can kill.
+      expect(held?.sourceId).toBe(landed.casterId);
+    });
+  }
+});
+
+describe('an affliction outlives the blow that applied it', () => {
+  /**
+   * The whole claim, and it is asserted with the input frames empty from tick 1
+   * onward: the caster has thrown one dart and is standing still.
+   *
+   * Poison is the row to measure it on because it has no rider -- no ramp, no
+   * exertion, no spread -- so what the numbers come to is `pulses` and
+   * `dotTotalDamage` and nothing about the fight.
+   */
+  it('goes on taking health, in pulses credited to a caster who is doing nothing', () => {
+    const poison = dotById(StatusId.Poison);
+    if (!poison) throw new Error('no poison row');
+    const landed = afflict(afflictionRow('skill.poisonDart'), dotDurationTicks(poison) + 180);
+    const landedAt = landed.landedAtTick;
+    expect(landedAt).not.toBeNull();
+    if (landedAt === null) return;
+
+    const onTarget = hits(landed.events).filter((hit) => hit.targetId === landed.targetId);
+    // The dart's own impact first, then the affliction. Everything after the
+    // first is damage that arrived with nothing being done to cause it.
+    const pulses = onTarget.slice(1);
+    expect(pulses).toHaveLength(poison.pulses);
+    expect(pulses.every((hit) => hit.attackerId === landed.casterId)).toBe(true);
+    expect(pulses.reduce((sum, hit) => sum + hit.damage, 0)).toBeCloseTo(
+      dotTotalDamage(poison),
+      5,
+    );
+
+    // And the same thing read off the body rather than off the events: still
+    // falling a second in, five seconds in, and ten seconds in.
+    const sample = (tick: number): number => landed.health.get(tick) ?? Number.NaN;
+    expect(sample(landedAt + 60)).toBeLessThan(sample(landedAt));
+    expect(sample(landedAt + 300)).toBeLessThan(sample(landedAt + 60));
+    expect(sample(landedAt + 600)).toBeLessThan(sample(landedAt + 300));
+    // ...and stopped once the row has spent its pulses, rather than for ever.
+    expect(sample(landedAt + 700)).toBe(sample(landedAt + 600));
+  });
+});
+
+describe('a projectile skill’s effect list runs at both of its call sites', () => {
+  /**
+   * The burst is a **separate call site** from the direct hit in `world.ts`, so
+   * a dart landing on a body says nothing about a pot landing beside one.
+   *
+   * The pot is thrown at a patch of ground 70 units to the side of the dummy and
+   * misses it by construction: the flight path passes 57 units off, against a
+   * projectile radius of 10 and a body radius of 22. Nothing was struck, and the
+   * fire still has to start.
+   */
+  it('starts the fire on what the splash reached, not only on what it hit', () => {
+    const ember = abilityById('skill.emberToss');
+    if (!ember) throw new Error('no ember toss');
+    expect(ember.radius ?? 0).toBeGreaterThan(0);
+
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450, statsFor(wearing('sigil.emberToss')));
+    const beside = withDummy(caster.state, 700, 450);
+    const aimX = 700;
+    const aimY = 520;
+    const body = beside.state.entities.get(beside.id);
+    if (!body) throw new Error('no dummy');
+    // The two facts the argument above rests on, stated as arithmetic rather
+    // than left in a comment: the pot lands inside the splash and outside the
+    // body it sets alight.
+    const reach = Math.hypot(aimX - body.position.x, aimY - body.position.y);
+    expect(reach).toBeLessThanOrEqual((ember.radius ?? 0) + body.radius);
+    expect(reach).toBeGreaterThan((ember.projectile?.radius ?? 0) + body.radius);
+
+    const landed = run(beside.state, 120, {
+      0: [input(caster.id, { castAbilityId: 'skill.emberToss', castTargetX: aimX, castTargetY: aimY })],
+    });
+    const burnt = landed.state.entities.get(beside.id);
+    const burn = statusOf(burnt?.statuses ?? {}, StatusId.Burn, landed.state.tick);
+    expect(burn).toBeTruthy();
+    expect(burn?.sourceId).toBe(caster.id);
+  });
+});
+
+describe('Poison Dart is a thing you throw again', () => {
+  /**
+   * The concentration is what the skill buys, and three separate properties have
+   * to hold at once for it to be worth throwing twice.
+   *
+   * A refresh has to **add a stack** up to the row's cap, it has to **move the
+   * expiry**, and it must **not move `appliedAtTick`** -- because that is what
+   * the cadence is measured from, and a dart every second that pushed the phase
+   * out would be a poison that never ticked at all. Six casts against a cap of
+   * five, so the cap is asserted by a refusal to grow rather than by arriving at
+   * the number and stopping.
+   */
+  it('stacks up to the row’s cap and refreshes the clock without moving the cadence', () => {
+    const poison = dotById(StatusId.Poison);
+    if (!poison) throw new Error('no poison row');
+    const { state, casterId, targetId } = duel(wearing('sigil.poisonDart'));
+    const target = state.entities.get(targetId) ?? null;
+    const ctx = context();
+    // Just past the cooldown each time, so every cast is let through -- and
+    // inside the poison's own life, which is what makes the stack reachable.
+    const casts = new Set([0, 145, 290, 435, 580, 725]);
+    expect(casts.size).toBeGreaterThan(poison.maxStacks);
+
+    let current = state;
+    const stacks: number[] = [];
+    const expiries: number[] = [];
+    const appliedAt = new Set<number>();
+    for (let i = 0; i < 800; i++) {
+      const frame = casts.has(i) ? [cast(casterId, 'skill.poisonDart', target)] : [];
+      current = step(current, frame, ctx).state;
+      const held = statusOf(
+        current.entities.get(targetId)?.statuses ?? {},
+        StatusId.Poison,
+        current.tick,
+      );
+      if (!held) continue;
+      appliedAt.add(held.appliedAtTick);
+      if (stacks[stacks.length - 1] !== held.stacks) stacks.push(held.stacks);
+      if (expiries[expiries.length - 1] !== held.expiresAtTick) expiries.push(held.expiresAtTick);
+    }
+
+    expect(stacks).toEqual([1, 2, 3, 4, 5]);
+    // One expiry per cast, each later than the last: the sixth dart still
+    // refreshes a poison it can no longer make any stronger.
+    expect(expiries).toHaveLength(casts.size);
+    expect([...expiries].sort((a, b) => a - b)).toEqual(expiries);
+    // The one number a refresh may not touch.
+    expect([...appliedAt]).toHaveLength(1);
+  });
+});
+
+/**
+ * A test-only row, because `landSelf`'s hole cannot be reached from the shipped
+ * table.
+ *
+ * `landSelf` read `healing` and `healingFraction` and nothing else, so a
+ * self-targeted row's effect list was dropped on the floor -- and no shipped
+ * `kind: 'self'` row has one, since the two that exist are a heal and a flask.
+ * Registering one for the duration of the test is the only way to assert the
+ * path without changing what the game ships; it is removed again in `finally`,
+ * and it is deliberately not a `skill`, so nothing has to be worn to cast it.
+ */
+const SELF_ROW: AbilityDefinition = {
+  id: 'test.selfAffliction',
+  name: 'Self Affliction',
+  kind: 'self',
+  targeting: 'self',
+  windupTicks: 2,
+  cooldownTicks: 60,
+  cost: 0,
+  range: 0,
+  damage: 0,
+  healing: 5,
+  effects: [{ kind: 'applyDot', dotId: StatusId.Frostbite }],
+  description: 'Test-only: a self-cast whose effect list has to run.',
+};
+
+describe('a self-targeted skill’s effect list runs', () => {
+  it('lands on the caster, from a row whose only effect is an affliction', () => {
+    const table = ABILITIES as Map<string, AbilityDefinition>;
+    table.set(SELF_ROW.id, SELF_ROW);
+    try {
+      const { state, casterId } = duel(EMPTY_EQUIPMENT);
+      const landed = run(state, 20, { 0: [input(casterId, { castAbilityId: SELF_ROW.id })] });
+      expect(rejections(landed.events)).toHaveLength(0);
+      const caster = landed.state.entities.get(casterId);
+      const held = statusOf(caster?.statuses ?? {}, StatusId.Frostbite, landed.state.tick);
+      expect(held).toBeTruthy();
+      // The caster is both ends of a self-cast, which is what makes the credit
+      // worth asserting: it is the one landing where the two could be confused.
+      expect(held?.sourceId).toBe(casterId);
+    } finally {
+      table.delete(SELF_ROW.id);
+    }
+  });
+});
+
+describe('what an affliction must not do in a real tick', () => {
+  /**
+   * Two things a pulse looked correct doing in isolation and was wrong doing in
+   * a tick, both found by review rather than by a green test: the guard drain
+   * measured against a pool that was refilling under it, and a shout for help
+   * raised once per pulse instead of once per blow.
+   */
+  it('drains a guard that is regenerating under it, rather than tying with it', () => {
+    // `regenPoise` runs in `advanceProgression` every tick and a monster gets
+    // back `SCALING.combat.monsterPoiseRegen` a second. Corrosion was authored
+    // at exactly that, so the rider read as working everywhere it was measured
+    // on its own and did nothing whatsoever in a fight -- against the one body
+    // you would ever put it on, which is a stationary one being set up for a
+    // break.
+    const empty = createWorldState(5);
+    const caster = withPlayer(empty, 600, 450, statsFor(wearing('sigil.acidSpray')));
+    const target = withDummy(caster.state, 660, 450);
+    const before = target.state.entities.get(target.id)?.poise ?? 0;
+    expect(before).toBeGreaterThan(0);
+
+    const corrosion = dotById(StatusId.Corrosion);
+    if (!corrosion) throw new Error('no corrosion row');
+    const landed = run(target.state, dotDurationTicks(corrosion) + 10, {
+      0: [
+        input(caster.id, {
+          castAbilityId: 'skill.acidSpray',
+          castTargetX: 900,
+          castTargetY: 450,
+        }),
+      ],
+    });
+
+    const after = landed.state.entities.get(target.id)?.poise ?? 0;
+    expect(after).toBeLessThan(before);
+    // And it never broke the guard on its own: a body staggered once a second
+    // for six seconds is a removal rather than a setup.
+    expect(landed.events.filter((event) => event.kind === 'poiseBroken')).toHaveLength(0);
+  });
+
+  it('calls the nest once for the blow, and never again for the pulses', () => {
+    // `rally` is driven off this tick's `hit` events and its whole bound is one
+    // hop per blow. A poison ticking twenty times would raise twenty calls, each
+    // from wherever the applier had walked to by then -- so a single dart would
+    // drag a nest across the map for ten seconds.
+    const empty = createWorldState(5);
+    const caster = withPlayer(empty, 600, 450, statsFor(wearing('sigil.poisonDart')));
+    const bitten = withMonster(caster.state, 'small_spider', 800, 450);
+    const nest = withMonster(bitten.state, 'small_spider', 840, 450);
+    const target = bitten.state.entities.get(bitten.id) ?? null;
+
+    const poison = dotById(StatusId.Poison);
+    if (!poison) throw new Error('no poison row');
+    const landed = run(nest.state, dotDurationTicks(poison), {
+      0: [cast(caster.id, 'skill.poisonDart', target)],
+    });
+
+    // A real fight produced both kinds: one blow, and many pulses after it.
+    const produced = hits(landed.events).filter((event) => event.attackerId === caster.id);
+    const blow = produced.find((event) => event.periodic !== true);
+    const pulses = produced.filter((event) => event.periodic === true);
+    expect(blow, 'the dart never landed').toBeDefined();
+    expect(pulses.length).toBeGreaterThan(1);
+
+    // Put both through `rally` against **one** world, so the only difference
+    // between the two calls is the flag. A calm nest beside a live victim is
+    // the state rally exists for; by the end of a ten-second poison the
+    // neighbour is long since engaged and the victim may not be in the map at
+    // all, which is why the pair is judged here rather than where they arose.
+    const nestling = nest.state.entities.get(nest.id);
+    const victim = nest.state.entities.get(bitten.id);
+    const attacker = nest.state.entities.get(caster.id);
+    if (!nestling || !victim || !attacker) throw new Error('missing body');
+    const world = new Map([
+      [attacker.id, attacker],
+      [victim.id, victim],
+      [nestling.id, { ...nestling, aggro: AggroValue.Calm, targetId: null }],
+    ]);
+
+    if (blow) expect(rally([blow], world).size, 'a blow rallied nobody').toBeGreaterThan(0);
+    for (const event of pulses) {
+      expect(rally([event], world).size, 'a pulse rallied somebody').toBe(0);
+    }
+  });
+});
+
+describe('determinism holds with afflictions in play', () => {
+  /**
+   * Four appliers, two bodies and five hundred ticks, so the pass is exercised
+   * where it actually chooses something: Burn and Shock both spread, and a
+   * choice between two bodies is where an order dependency would hide.
+   */
+  function scripted(): ServerWorldState {
+    const empty = createWorldState(11);
+    const caster = withPlayer(
+      empty,
+      600,
+      450,
+      statsFor(wearing('sigil.poisonDart', 'sigil.emberToss', 'sigil.rendingCut', 'sigil.arcLash')),
+    );
+    const near = withDummy(caster.state, 660, 450);
+    // Inside Burn's 90 and Shock's 150 of the first, so what is on one reaches
+    // the other.
+    const behind = withDummy(near.state, 740, 450);
+    const target = behind.state.entities.get(near.id) ?? null;
+    return run(behind.state, 500, {
+      0: [cast(caster.id, 'skill.poisonDart', target)],
+      60: [
+        input(caster.id, {
+          castAbilityId: 'skill.emberToss',
+          castTargetX: 660,
+          castTargetY: 450,
+        }),
+      ],
+      160: [cast(caster.id, 'skill.rendingCut', target)],
+      280: [
+        input(caster.id, { castAbilityId: 'skill.arcLash', castTargetX: 900, castTargetY: 450 }),
+      ],
+    }).state;
+  }
+
+  it('replays the same seed and the same frames to bit-identical state', () => {
+    const snapshot = (state: ServerWorldState): string =>
+      JSON.stringify({
+        tick: state.tick,
+        nextEntityId: state.nextEntityId,
+        rng: state.rng.getState(),
+        entities: [...state.entities.values()],
+      });
+    expect(snapshot(scripted())).toBe(snapshot(scripted()));
+  });
+
+  /**
+   * Why the replay above is safe to add afflictions to at all: the pass draws
+   * **nothing**. Measured from the tick the poison is on -- by which point the
+   * dart has resolved and rolled whatever it was going to -- through four
+   * hundred more ticks of pulses, the generator has not moved.
+   */
+  it('never touches the Rng while it pulses', () => {
+    const { state, casterId, targetId } = duel(wearing('sigil.poisonDart'));
+    const target = state.entities.get(targetId) ?? null;
+    const ctx = context();
+    let current = state;
+    let quiet: string | null = null;
+    for (let i = 0; i < 400; i++) {
+      current = step(current, i === 0 ? [cast(casterId, 'skill.poisonDart', target)] : [], ctx).state;
+      const held = statusOf(
+        current.entities.get(targetId)?.statuses ?? {},
+        StatusId.Poison,
+        current.tick,
+      );
+      if (quiet === null && held) quiet = JSON.stringify(current.rng.getState());
+    }
+    expect(quiet).not.toBeNull();
+    expect(JSON.stringify(current.rng.getState())).toBe(quiet);
   });
 });

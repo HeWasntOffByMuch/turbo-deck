@@ -4,7 +4,7 @@ import type { EffectiveStats } from '../state/types.js';
 import { DeltaTracker } from './delta.js';
 import { decodeServerMessage, encodeServerMessage } from './messages.js';
 import { EntityField, ServerMessageType } from './protocol.js';
-import { applyStatus, StatusId, adaptedKey } from '../sim/statuses.js';
+import { applyStatus, StatusId, adaptedKey, type Statuses } from '../sim/statuses.js';
 import { ADAPTED_ID, visualFor } from '../data/status-visuals.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
@@ -269,13 +269,13 @@ describe('statuses on the wire (spec 186)', () => {
   /** A body carrying one live status, expiring at `until`. */
   function carrying(
     id: number,
-    held: Record<string, { expiresAtTick: number; stacks: number; magnitude: number }>,
+    held: Statuses,
   ): ServerEntity {
     return entity(id, { statuses: held });
   }
 
-  const flow = (until: number, stacks = 1) => ({
-    [StatusId.Flow]: { expiresAtTick: until, stacks, magnitude: 0 },
+  const flow = (until: number, stacks = 1): Statuses => ({
+    [StatusId.Flow]: { expiresAtTick: until, stacks, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
   });
 
   it('sends no status field for a body carrying nothing', () => {
@@ -294,9 +294,9 @@ describe('statuses on the wire (spec 186)', () => {
       carrying(7, {
         ...flow(200, 2),
         // Every one of these is live in the sim and none may be shown.
-        [StatusId.RecentlyHit]: { expiresAtTick: 200, stacks: 1, magnitude: 0 },
-        [StatusId.InCombat]: { expiresAtTick: 900, stacks: 1, magnitude: 0 },
-        [StatusId.SecondWindSpent]: { expiresAtTick: 900, stacks: 1, magnitude: 0 },
+        [StatusId.RecentlyHit]: { expiresAtTick: 200, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
+        [StatusId.InCombat]: { expiresAtTick: 900, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
+        [StatusId.SecondWindSpent]: { expiresAtTick: 900, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
       }),
     ]);
 
@@ -318,9 +318,9 @@ describe('statuses on the wire (spec 186)', () => {
     const tracker = new DeltaTracker();
     const delta = tracker.build(1, 0, [
       carrying(7, {
-        [adaptedKey('bolt.arcane')]: { expiresAtTick: 300, stacks: 2, magnitude: 0 },
-        [adaptedKey('melee.slash')]: { expiresAtTick: 400, stacks: 5, magnitude: 0 },
-        [adaptedKey('ground.quake')]: { expiresAtTick: 500, stacks: 1, magnitude: 0 },
+        [adaptedKey('bolt.arcane')]: { expiresAtTick: 300, stacks: 2, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
+        [adaptedKey('melee.slash')]: { expiresAtTick: 400, stacks: 5, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
+        [adaptedKey('ground.quake')]: { expiresAtTick: 500, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
       }),
     ]);
 
@@ -335,8 +335,8 @@ describe('statuses on the wire (spec 186)', () => {
     const tracker = new DeltaTracker();
     const first = tracker.build(1, 0, [
       carrying(7, {
-        [StatusId.Sundered]: { expiresAtTick: 300, stacks: 1, magnitude: 0 },
-        [StatusId.Flow]: { expiresAtTick: 300, stacks: 1, magnitude: 0 },
+        [StatusId.Sundered]: { expiresAtTick: 300, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
+        [StatusId.Flow]: { expiresAtTick: 300, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
       }),
     ]);
     const wires = (first.upserts[0]?.statuses ?? []).map((status) => status.wire);
@@ -345,8 +345,8 @@ describe('statuses on the wire (spec 186)', () => {
     // The same set, inserted the other way round, is not a change.
     const second = tracker.build(2, 0, [
       carrying(7, {
-        [StatusId.Flow]: { expiresAtTick: 300, stacks: 1, magnitude: 0 },
-        [StatusId.Sundered]: { expiresAtTick: 300, stacks: 1, magnitude: 0 },
+        [StatusId.Flow]: { expiresAtTick: 300, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
+        [StatusId.Sundered]: { expiresAtTick: 300, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
       }),
     ]);
     expect(second.upserts).toEqual([]);
@@ -383,7 +383,7 @@ describe('statuses on the wire (spec 186)', () => {
     const built = tracker.build(1, 0, [
       carrying(7, {
         ...flow(4321, 3),
-        [StatusId.Exposed]: { expiresAtTick: 99_999, stacks: 1, magnitude: 0.15 },
+        [StatusId.Exposed]: { expiresAtTick: 99_999, stacks: 1, magnitude: 0.15, sourceId: 0, appliedAtTick: 0 },
       }),
     ]);
 
@@ -442,5 +442,131 @@ describe('a slow on the wire (spec 188)', () => {
     const after = tracker.build(70, 0, [slowed]);
     expect((after.upserts[0]?.fields ?? 0) & EntityField.MoveScale).toBeTruthy();
     expect(after.upserts[0]?.moveScale).toBe(1);
+  });
+});
+
+/**
+ * The afflictions on the wire (spec 190).
+ *
+ * Spec 186 built the field and spec 190 is the first thing to put something on
+ * it that can *kill* you, which raises three edges the boons never did.
+ *
+ * The **whole life** of one has to cross: a body carrying nothing must cost no
+ * bytes, a dart landing has to arrive, a second dart has to arrive again
+ * because the count is drawn, and the end has to be said out loud -- the client
+ * replaces the entire set on this field, so a lifted affliction that is simply
+ * not mentioned is a mark that stays over the body forever.
+ *
+ * A body **carrying several at once** is now ordinary rather than exotic: seven
+ * rows, three of the seven applied by skills that can all be aimed at the same
+ * target, so the packing has to be one entry each and in a fixed order.
+ *
+ * And `magnitude` and `sourceId` must **not** ride. Both are new reasons to be
+ * tempted -- one is how hard it is burning and the other is who gets the kill
+ * -- and neither is a thing a watcher can act on. Left on, they would also cost
+ * a delta per pulse for a picture that cannot differ.
+ */
+describe('afflictions on the wire (spec 190)', () => {
+  /** One affliction held to `until`, at whatever concentration and from whoever. */
+  function affliction(
+    id: string,
+    until: number,
+    stacks = 1,
+    from: { readonly magnitude?: number; readonly sourceId?: number } = {},
+  ): Statuses {
+    return {
+      [id]: {
+        expiresAtTick: until,
+        stacks,
+        magnitude: from.magnitude ?? 0,
+        sourceId: from.sourceId ?? 0,
+        appliedAtTick: 0,
+      },
+    };
+  }
+
+  const carrying = (id: number, held: Statuses): ServerEntity => entity(id, { statuses: held });
+
+  it('is absent until it lands, re-sent when it deepens, and emptied when it lifts', () => {
+    const tracker = new DeltaTracker();
+
+    const clean = tracker.build(1, 0, [entity(7)]);
+    expect((clean.upserts[0]?.fields ?? 0) & EntityField.Statuses).toBe(0);
+    expect(clean.upserts[0]?.statuses).toBeUndefined();
+
+    // A dart lands. Poison is the row where the count is a live number rather
+    // than a decoration, so it is the one worth following the whole way.
+    const landed = tracker.build(2, 0, [carrying(7, affliction(StatusId.Poison, 620))]);
+    expect(landed.upserts[0]?.fields).toBe(EntityField.Statuses);
+    expect(landed.upserts[0]?.statuses).toEqual([
+      { wire: wireOf(StatusId.Poison), stacks: 1, expiresAtTick: 620 },
+    ]);
+
+    // Held at the same concentration on the same clock: a pulse is not news.
+    expect(tracker.build(3, 0, [carrying(7, affliction(StatusId.Poison, 620))]).upserts).toEqual([]);
+
+    // A second dart. The stack is what the mark draws, so it has to cross even
+    // though the body, the row and the mark itself are all unchanged.
+    const deeper = tracker.build(4, 0, [carrying(7, affliction(StatusId.Poison, 680, 2))]);
+    expect(deeper.upserts[0]?.fields).toBe(EntityField.Statuses);
+    expect(deeper.upserts[0]?.statuses).toEqual([
+      { wire: wireOf(StatusId.Poison), stacks: 2, expiresAtTick: 680 },
+    ]);
+
+    // Run out, with the entry still sitting in the map -- `expireStatuses` is a
+    // collector rather than a rule. The empty list is the only thing that can
+    // take the mark off, and it is not the same message as saying nothing.
+    const lifted = tracker.build(700, 0, [carrying(7, affliction(StatusId.Poison, 680, 2))]);
+    expect(lifted.upserts[0]?.fields).toBe(EntityField.Statuses);
+    expect(lifted.upserts[0]?.statuses).toEqual([]);
+  });
+
+  it('packs every affliction on one body, one entry each, in wire order', () => {
+    const tracker = new DeltaTracker();
+    // Inserted in the reverse of their wire order and mixed with a boon: what
+    // the client draws must be a fact about the table rather than about which
+    // skill happened to land first.
+    const delta = tracker.build(1, 0, [
+      carrying(7, {
+        ...affliction(StatusId.Decay, 500),
+        ...affliction(StatusId.Shock, 400),
+        ...affliction(StatusId.Bleed, 300, 3),
+        ...affliction(StatusId.Flow, 200, 2),
+      }),
+    ]);
+
+    expect(delta.upserts[0]?.statuses).toEqual([
+      { wire: wireOf(StatusId.Flow), stacks: 2, expiresAtTick: 200 },
+      { wire: wireOf(StatusId.Bleed), stacks: 3, expiresAtTick: 300 },
+      { wire: wireOf(StatusId.Shock), stacks: 1, expiresAtTick: 400 },
+      { wire: wireOf(StatusId.Decay), stacks: 1, expiresAtTick: 500 },
+    ]);
+    // Four afflictions at once is where a width bound would bite, so the codec
+    // is asked about the crowded case rather than only about the single one.
+    expect(decodeServerMessage(encodeServerMessage(delta))).toEqual(delta);
+  });
+
+  it('says nothing about how badly it burns, or about whose fire it is', () => {
+    // Deliberate, and it is the same argument that kept `magnitude` off the wire
+    // in spec 186 carried to the field spec 190 added beside it. The magnitude
+    // is the applier's own spellPower and the source is who the kill is credited
+    // to; the picture says THAT a body is burning and neither number changes it.
+    const mine = new DeltaTracker();
+    const theirs = new DeltaTracker();
+    const smouldering = carrying(
+      7,
+      affliction(StatusId.Burn, 480, 1, { magnitude: 0.2, sourceId: 3 }),
+    );
+    const roaring = carrying(7, affliction(StatusId.Burn, 480, 1, { magnitude: 9.5, sourceId: 41 }));
+
+    expect(mine.build(1, 0, [smouldering]).upserts).toEqual(theirs.build(1, 0, [roaring]).upserts);
+
+    // And a stronger applier taking the fire over is not a change at all: left
+    // as one it would cost a delta for a mark that cannot look any different.
+    const tracker = new DeltaTracker();
+    tracker.build(1, 0, [smouldering]);
+    const takenOver = tracker.build(2, 0, [roaring]);
+    expect(takenOver.upserts).toEqual([]);
+    expect(DeltaTracker.isEmpty(takenOver)).toBe(true);
   });
 });
