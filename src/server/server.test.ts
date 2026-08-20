@@ -12,6 +12,7 @@ import { encodeAdminRequest, decodeAdminReply, type AdminReply } from './net/adm
 import { decodeServerMessage, encodeClientMessage, type ServerMessage } from './net/messages.js';
 import {
   AdminMessageType,
+  AdminProgressMode,
   AdminReplyType,
   ClientMessageType,
   CorrectionReason,
@@ -19,7 +20,9 @@ import {
   ErrorCode,
   ServerMessageType,
 } from './net/protocol.js';
+import { experienceForLevel } from './player/levels.js';
 import { GameServer } from './server.js';
+import { applyHealing } from './sim/healing.js';
 import { WORLD_BOUNDS } from '../sim/constants.js';
 
 const SECRET = 'integration-secret';
@@ -394,6 +397,105 @@ describe('combat over the wire', () => {
     expect(result?.attackerId).toBe(entityId);
     expect(result?.damage).toBeGreaterThan(0);
     expect(result?.targetHealth).toBeGreaterThanOrEqual(0);
+  });
+});
+
+/**
+ * A level-up has to reach the body, not only the sheet.
+ *
+ * The entity carries its own `EffectiveStats`, taken when it spawned, and
+ * nothing in the tick ever looks a session up -- so a level-up that settled the
+ * record and told the client left the sim clamping every pool against the
+ * ceiling the character logged in with. What that looks like from the player's
+ * seat is a health bar that says 226 and a heal that stops at 218, because
+ * `applyHealing`'s room is `entity.stats.maxHealth - entity.health`.
+ *
+ * Both routes to a level are covered, because they are two call sites and only
+ * one of them is an action anybody reported: an admin's edit, and the kill that
+ * every level in a real session actually comes from.
+ */
+describe('a level-up reaches the authoritative body', () => {
+  it('raises the entity own ceiling on an admin edit, and lets a heal pass the old one', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+
+    const before = game.world.entities.get(entityId)?.stats.maxHealth ?? 0;
+    expect(before).toBeGreaterThan(0);
+
+    const outcome = await game.setProgress('alice', AdminProgressMode.AddLevels, 5);
+    expect(outcome.ok).toBe(true);
+
+    const session = game.playerManager.get('alice');
+    const body = game.world.entities.get(entityId);
+    expect(body).toBeDefined();
+    if (!body) return;
+    expect(session?.stats.maxHealth ?? 0).toBeGreaterThan(before);
+    // The half that was missing. The sheet and the body agreed about the level
+    // and disagreed about the pool.
+    expect(body.stats.maxHealth).toBe(session?.stats.maxHealth);
+    expect(body.level).toBe(session?.record.level);
+
+    // And the consequence, measured where the player felt it.
+    const healed = applyHealing({ ...body, health: before - 10 }, 1000, 0);
+    expect(healed.entity.health).toBeGreaterThan(before);
+    expect(healed.entity.health).toBe(session?.stats.maxHealth);
+  });
+
+  it('raises it on a kill, which is where a level comes from in a real session', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+    const at = game.world.entities.get(entityId)?.position ?? { x: 600, y: 450, z: 0 };
+
+    // One spider short of level 2, so the fight is one body rather than seven.
+    await game.setProgress('alice', AdminProgressMode.SetExperience, experienceForLevel(2) - 1);
+    expect(game.playerManager.get('alice')?.record.level).toBe(1);
+    const before = game.world.entities.get(entityId)?.stats.maxHealth ?? 0;
+
+    expect(game.spawnEntities('small_spider', at.x + 40, at.y, 1)).toBe(1);
+    const spiderId = [...game.world.entities.values()].find(
+      (entity) => entity.typeId === 'small_spider',
+    )?.id;
+    expect(spiderId).toBeDefined();
+
+    // Swing until it falls. Ferocious, so it closes and stays in reach rather
+    // than being chased; bounded, because a test that hangs is worse than one
+    // that fails.
+    let seq = 0;
+    for (let i = 0; i < 1200 && game.world.entities.has(spiderId ?? -1); i++) {
+      const me = game.world.entities.get(entityId);
+      if (me && me.cast === null) {
+        seq += 1;
+        await client.input(seq);
+        await game.receive(
+          client.connection,
+          encodeClientMessage({
+            type: ClientMessageType.UseAbility,
+            abilityId: 'melee.slash',
+            targetEntityId: spiderId ?? 0,
+            targetX: 0,
+            targetY: 0,
+            afterInputSeq: seq,
+          }),
+        );
+      }
+      game.tick();
+    }
+    expect(game.world.entities.has(spiderId ?? -1)).toBe(false);
+
+    // The grant is awaited off the tick -- it is a store write and a
+    // recalculation deep enough that draining the microtask queue is not
+    // enough, so this yields the loop the way the next real tick would.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const session = game.playerManager.get('alice');
+    expect(session?.record.level).toBe(2);
+    expect(session?.stats.maxHealth ?? 0).toBeGreaterThan(before);
+    expect(game.world.entities.get(entityId)?.stats.maxHealth).toBe(session?.stats.maxHealth);
+    expect(game.world.entities.get(entityId)?.level).toBe(2);
   });
 });
 

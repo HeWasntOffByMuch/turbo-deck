@@ -25,6 +25,7 @@ import type { ScreenAnchor } from './scene.js';
 import {
   abilityById,
   BASIC_ATTACK_ID,
+  type AbilityDefinition,
 } from '../../../server/data/abilities.js';
 import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
@@ -75,7 +76,8 @@ import {
 } from './icons.js';
 import { stunMark } from './stun-icon.js';
 import { statusMarks } from './status-marks.js';
-import { MAX_VISIBLE_STATUSES } from '../../../server/data/status-visuals.js';
+import { MAX_VISIBLE_STATUSES, visualFor } from '../../../server/data/status-visuals.js';
+import { describeAbility, describeStatus, technicalText } from '../../../server/data/description.js';
 import { BAR_SLOT_COUNT } from './action-bar.js';
 import {
   swapOverhead,
@@ -247,6 +249,26 @@ const STATUS_BOON = BAR_GUARD;
 const STATUS_AFFLICTION = '#d0796f';
 /** Small enough that eight fit over a body, big enough to tell apart. */
 const STATUS_ICON_PX = 13;
+
+/**
+ * What hovering an ability says (spec 191).
+ *
+ * The name, then its Technical Description, then the flavour -- separated by a
+ * blank line, because the standard's §2.6 is that flavour is never mixed into
+ * the mechanical block.
+ *
+ * One function for the action bar, the vial and the weapon switch, which used
+ * to hold three different formulations of it and all three showed only
+ * `ability.description`. That string is flavour and only flavour now, so before
+ * this the bar's hover said "Both hands, and everything you weigh, put behind
+ * one swing" and nothing about 42 damage, 1.1s or a 3s cooldown.
+ */
+function abilityTitle(ability: AbilityDefinition): string {
+  const described = describeAbility(ability);
+  const body = technicalText(described);
+  const flavour = described.flavor === null ? '' : `\n\n${described.flavor}`;
+  return `${ability.name}\n${body}${flavour}`;
+}
 /**
  * The resource pool (spec 164). Blue, and the one bar on screen that is *spent*
  * rather than lost -- health and guard are both taken off you by somebody else.
@@ -608,7 +630,96 @@ export function createHud(project: Projector): HudHandle {
   root.append(poolBlock);
 
   /**
-   * Place everything that hangs off the action bar, in one go (spec 190).
+   * The player's own statuses, above their own health bar (spec 191).
+   *
+   * A second row, and the reason it is not simply the floating one is that the
+   * two answer different questions. A mark over a body is 13px and moving with
+   * it: it says *that* something is on that body, at a glance, and it is not a
+   * thing anybody can point at -- a 13px hit target over every body in interest
+   * range that swallowed a click would break the movement order this whole game
+   * is driven by. A row anchored to the frame can be pointed at, so this is
+   * where the countdown and the Technical Description live.
+   *
+   * First child of `poolBlock`, which is anchored by its **bottom**: the block
+   * grows upward when a status appears and the two bars underneath do not move.
+   * The same property the floating holder's `translate(-50%,-100%)` gives it,
+   * and the reason the cast bar had to be taken out of flow in the first place.
+   */
+  const selfStatusRow = document.createElement('div');
+  selfStatusRow.dataset['bar'] = 'selfStatuses';
+  selfStatusRow.style.cssText = [
+    'display:none',
+    'align-items:flex-end',
+    `gap:${String(layout.poolGap)}px`,
+    `margin-bottom:${String(layout.poolGap)}px`,
+    // The row itself takes no pointer: only the marks in it do, so the gaps
+    // between them stay world.
+    'pointer-events:none',
+  ].join(';');
+  poolBlock.append(selfStatusRow);
+
+  interface SelfStatusSlot {
+    readonly root: HTMLElement;
+    readonly glyph: HTMLElement;
+    readonly count: HTMLElement;
+    readonly timer: HTMLElement;
+    /** What is currently drawn, so an unchanged mark costs no innerHTML parse. */
+    drawn: string;
+  }
+
+  /**
+   * Bigger than the 13px floating mark, because this one is read rather than
+   * noticed -- and it is the thing being hovered, so it has to be a target a
+   * pointer can find without care.
+   */
+  const SELF_STATUS_PX = 20;
+
+  const selfStatusSlots: SelfStatusSlot[] = [];
+  for (let index = 0; index < MAX_VISIBLE_STATUSES; index += 1) {
+    const slot = document.createElement('div');
+    slot.style.cssText = [
+      'display:none',
+      'flex:0 0 auto',
+      'flex-direction:column',
+      'align-items:center',
+      'gap:1px',
+      // The one place in this band that takes a pointer, so the tooltip has
+      // something to hang off.
+      'pointer-events:auto',
+      'cursor:help',
+    ].join(';');
+    const glyph = document.createElement('div');
+    glyph.style.cssText =
+      `position:relative;width:${String(SELF_STATUS_PX)}px;height:${String(SELF_STATUS_PX)}px;` +
+      'filter:drop-shadow(0 1px 2px rgba(0,0,0,.9));';
+    const count = document.createElement('div');
+    count.style.cssText = [
+      'position:absolute',
+      'right:0',
+      'bottom:0',
+      'font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+      'color:#f2f6fb',
+      'text-shadow:0 0 2px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,.95)',
+    ].join(';');
+    // Under the glyph rather than over it: a countdown moves every frame, and a
+    // moving number on top of a picture makes the picture unreadable.
+    const timer = document.createElement('div');
+    timer.style.cssText = [
+      'font:9px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+      'color:#d7deea',
+      'text-shadow:0 1px 2px rgba(0,0,0,.95)',
+      // Held even when empty, so an indefinite status does not make the marks
+      // beside it jump up by a line.
+      'min-height:9px',
+    ].join(';');
+    glyph.append(count);
+    slot.append(glyph, timer);
+    selfStatusRow.append(slot);
+    selfStatusSlots.push({ root: slot, glyph, count, timer, drawn: '' });
+  }
+
+  /**
+* Place everything that hangs off the action bar, in one go (spec 190).
    *
    * Called when the box changes rather than per frame: the bar's size follows
    * the interface scale, which moves when the window is resized or the player
@@ -890,7 +1001,7 @@ export function createHud(project: Projector): HudHandle {
       });
       button.append(name);
     }
-    button.title = ability ? `${ability.name} -- ${ability.description}` : weapon.itemId;
+    button.title = ability ? abilityTitle(ability) : weapon.itemId;
     button.addEventListener('click', () => equipHandler(weapon.itemId));
     weapons.append(button);
     return { ...weapon, button };
@@ -1459,6 +1570,47 @@ export function createHud(project: Projector): HudHandle {
     resourcePool.fill.style.width = `${pools.resource.fraction * 100}%`;
     writePoolLabel(healthPool.label, pools.health.text);
     writePoolLabel(resourcePool.label, pools.resource.text);
+
+    // The player's own status row (spec 191). Same pure function the floating
+    // marks are drawn from, so the two can never disagree about what is on the
+    // body; what this one adds is the countdown and the description.
+    const selfBody = view.entities.find((entity) => entity.id === view.selfEntityId);
+    const selfMarks = statusMarks(selfBody?.statuses ?? [], tick);
+    selfStatusRow.style.display = selfMarks.length > 0 ? 'flex' : 'none';
+    for (let index = 0; index < selfStatusSlots.length; index += 1) {
+      const slot = selfStatusSlots[index];
+      if (!slot) continue;
+      const mark = selfMarks[index];
+      if (!mark) {
+        slot.root.style.display = 'none';
+        continue;
+      }
+      slot.root.style.display = 'flex';
+      slot.root.style.opacity = mark.opacity.toFixed(2);
+      if (slot.drawn !== mark.id) {
+        slot.drawn = mark.id;
+        slot.glyph.innerHTML = statusIconSvg(mark.icon, {
+          size: SELF_STATUS_PX,
+          color: mark.kind === 'boon' ? STATUS_BOON : STATUS_AFFLICTION,
+        });
+        // `innerHTML` replaces the count element, so it goes back afterwards.
+        slot.glyph.append(slot.count);
+        // The Technical Description, from the one writer (spec 191). Set with
+        // the glyph rather than per frame: it is a property of *which* status
+        // this is and nothing about it changes as the clock runs down.
+        const visual = visualFor(mark.id);
+        slot.root.title =
+          visual === null ? mark.name : `${mark.name}\n${technicalText(describeStatus(visual))}`;
+        // Read by `scripts/probe-status-marks.ts`, like the floating row's.
+        slot.root.dataset['selfStatus'] = mark.id;
+      }
+      const count = mark.showsCount && mark.stacks > 1 ? String(mark.stacks) : '';
+      if (slot.count.textContent !== count) slot.count.textContent = count;
+      // Null timer draws nothing at all -- not a dash and not a zero. An
+      // indefinite status showing a clock is the one thing this must not do.
+      const timer = mark.timer ?? '';
+      if (slot.timer.textContent !== timer) slot.timer.textContent = timer;
+    }
 
     // The experience strip along the very bottom (spec 164). Written only when
     // it moves: a per-frame style write is a per-frame layout, and experience

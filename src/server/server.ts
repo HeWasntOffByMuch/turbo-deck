@@ -65,6 +65,8 @@ import { ALL_MONSTERS, monsterById } from './data/monsters.js';
 import { RESTORATION } from './data/restoration.js';
 import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
 import { applyStatus, adaptedKey } from './sim/statuses.js';
+import { clearAfflictions } from './sim/damage-over-time.js';
+import { dotById, dotDurationTicks } from './data/damage-over-time.js';
 import { ADAPTED_ID, STATUS_VISUALS } from './data/status-visuals.js';
 import {
   isRevealed,
@@ -1405,25 +1407,47 @@ export class GameServer implements AdminHost {
     // Accepted: the client is told the *derived* result, never trusted to
     // compute it. This is the recalculation reaching the client.
     this.sendStats(connection);
-    if (connection.entityId >= 0) {
-      const session = connection.playerId ? this.players.get(connection.playerId) : null;
-      const entity = this.state.entities.get(connection.entityId);
-      if (session && entity) {
-        this.state = replaceEntity(this.state, {
-          ...entity,
-          stats: session.stats,
-          health: Math.min(entity.health, session.stats.maxHealth),
-          // Poise is a live resource like health (spec 147), so it is held
-          // under the *fresh* ceiling for the same reason: a respec that
-          // shrinks the pool must not leave a body carrying a guard bigger than
-          // it now has. The sim's own reads clamp too, so this is belt and
-          // braces -- but a body that is briefly over its own maximum is the
-          // sort of thing that shows up as a bar past the end of its track.
-          poise: Math.min(entity.poise, session.stats.traits.maxPoise),
-          level: session.record.level,
-        });
-      }
-    }
+    if (connection.playerId !== null) this.syncEntityStats(connection.playerId);
+  }
+
+  /**
+   * Puts a session's freshly derived stats onto the body the sim actually steps.
+   *
+   * The other half of every recalculation, and the half that is invisible from
+   * both ends when it is left out. `PlayerManager.recalculate` settles the
+   * record and the `EffectiveStats` beside it, and `sendStats` tells the client
+   * what they now are -- but the authoritative entity carries its *own* copy of
+   * that object, taken when it spawned, and nothing in the tick ever looks a
+   * session up. So a client can be drawing a 226-point health bar over a body
+   * whose `stats.maxHealth` is still the 218 it logged in with, and the numbers
+   * that disagree are the ones nobody prints: `applyHealing`'s room is
+   * `entity.stats.maxHealth - entity.health`, so the player heals to a ceiling
+   * their sheet says they left behind.
+   *
+   * Which is why this is keyed on the player rather than living inside
+   * `reportAction`: a level-up is not an action anybody reported. It arrives
+   * from a kill, asynchronously, in the `died` event's grant -- and from an
+   * admin's `setProgress` -- and both of those had the client half and neither
+   * had this one.
+   */
+  private syncEntityStats(playerId: string): void {
+    const session = this.players.get(playerId);
+    if (!session || session.entityId < 0) return;
+    const entity = this.state.entities.get(session.entityId);
+    if (!entity) return;
+    this.state = replaceEntity(this.state, {
+      ...entity,
+      stats: session.stats,
+      health: Math.min(entity.health, session.stats.maxHealth),
+      // Poise is a live resource like health (spec 147), so it is held
+      // under the *fresh* ceiling for the same reason: a respec that
+      // shrinks the pool must not leave a body carrying a guard bigger than
+      // it now has. The sim's own reads clamp too, so this is belt and
+      // braces -- but a body that is briefly over its own maximum is the
+      // sort of thing that shows up as a bar past the end of its track.
+      poise: Math.min(entity.poise, session.stats.traits.maxPoise),
+      level: session.record.level,
+    });
   }
 
   /**
@@ -2639,6 +2663,14 @@ export class GameServer implements AdminHost {
       // momentum you had built, and never leaves you unable to start again.
       fallbackCharges: entity.stats.traits.fallbackCharges,
       restoration: 0,
+      // Afflictions, and afflictions only (spec 190). `respawn` has never
+      // cleared `statuses` and nothing had ever noticed, because until now no
+      // status could hurt you -- a player who died burning would have come back
+      // burning and taken the next pulse standing on the spawn pad. The boons
+      // stay: death already costs the meter and the run, and taking the Flow or
+      // the Attunement somebody built as well is not what it is meant to charge
+      // for.
+      statuses: clearAfflictions(entity.statuses),
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
       targetId: null,
@@ -2738,6 +2770,10 @@ export class GameServer implements AdminHost {
             .then(() => {
               const connection = this.connectionForEntity(event.killerId ?? -1);
               if (connection) this.sendStats(connection);
+              // And onto the body, which is the half a level-up needs most:
+              // every pool the sim clamps against -- health above all -- is
+              // read off the entity's own stats, never off the session.
+              this.syncEntityStats(killer.playerId);
             })
             .catch((error: unknown) => {
               console.warn('[server] experience grant failed', error);
@@ -2956,6 +2992,12 @@ export class GameServer implements AdminHost {
     const result = await this.players.setProgress(playerId, mode, amount);
     if (!result.ok) return { ok: false, detail: result.reason };
 
+    // Before the client push, and unconditionally: the derived stats belong on
+    // the entity whether or not the player happens to be connected to hear
+    // about them, and an edit that lowered a level must reach the pools the sim
+    // clamps against as surely as one that raised it.
+    this.syncEntityStats(playerId);
+
     const connection = this.connectionForPlayer(playerId);
     if (connection) {
       this.sendStats(connection);
@@ -3164,6 +3206,17 @@ export class GameServer implements AdminHost {
         // than the real thing can: every one of these is read by the sim through
         // the same `statusOf`, and what a demo Exposed does to a blow is exactly
         // what a real one does. Nothing here draws from `state.rng`.
+        //
+        // Spec 190 made one half of that sentence load-bearing rather than
+        // reassuring. An affliction written into `statuses` **does** damage, so
+        // the seven of them get their own authored length and a real magnitude
+        // rather than the demo window and a zero: at zero the mark would be a
+        // lie -- a body drawn burning that is not burning -- and over ten
+        // seconds all seven at once would kill whoever the developer pointed
+        // this at. Their marks therefore fade before the rest of the row does,
+        // which is the honest trade: what is being demonstrated is the mark, and
+        // a mark that outlives the thing it marks is the failure this table
+        // exists to prevent.
         const reach = Math.max(1, magnitude);
         const until = this.state.tick + GameServer.STATUS_DEMO_TICKS;
         let marked = 0;
@@ -3178,9 +3231,18 @@ export class GameServer implements AdminHost {
             // demonstrated through a real member of the family rather than by
             // inventing a key nothing else would ever read.
             const id = visual.id === ADAPTED_ID ? adaptedKey('melee.slash') : visual.id;
-            statuses = applyStatus(statuses, id, this.state.tick, GameServer.STATUS_DEMO_TICKS, {
-              maxStacks: visual.maxStacks,
-            });
+            const affliction = dotById(id);
+            statuses = applyStatus(
+              statuses,
+              id,
+              this.state.tick,
+              affliction ? dotDurationTicks(affliction) : GameServer.STATUS_DEMO_TICKS,
+              {
+                maxStacks: visual.maxStacks,
+                // A neutral caster's spell power. Every other row ignores it.
+                ...(affliction ? { magnitude: 1 } : {}),
+              },
+            );
           }
           this.state = {
             ...this.state,

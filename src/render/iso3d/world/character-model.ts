@@ -16,7 +16,8 @@
 
 import { abilityById } from '../../../server/data/abilities.js';
 import { ATTRIBUTES, type AttributeKey } from '../../../server/data/attributes.js';
-import { skillById, skillsFor } from '../../../server/data/skills.js';
+import { skillById, skillsFor, type SkillDefinition } from '../../../server/data/skills.js';
+import { describeStatSkill, technicalText } from '../../../server/data/description.js';
 import { experienceForLevel } from '../../../server/player/player-manager.js';
 import { RESPEC_COST, pointsSpent, validateAttributeSpend } from '../../../server/player/attributes.js';
 import { milestoneProgress } from '../../../server/player/progression.js';
@@ -66,6 +67,14 @@ const ABILITY_ICONS: Readonly<Record<string, string>> = {
   // The flask is a *thing* rather than a skill, which is the whole reason the
   // DOM bar drew it as an object too -- so it takes the item's art rather than
   // an ability glyph invented for it.
+  'skill.poisonDart': 'ability:poisonDart',
+  'skill.rendingCut': 'ability:rendingCut',
+  'skill.acidSpray': 'ability:acidSpray',
+  'skill.arcLash': 'ability:arcLash',
+  'skill.blight': 'ability:blight',
+  'skill.emberToss': 'ability:emberToss',
+  'skill.rimeTouch': 'ability:rimeTouch',
+  'skill.testStatuses': 'ability:testStatuses',
   'self.hearthdraught': 'item:potion',
 };
 
@@ -331,6 +340,20 @@ export function attributeRowsOf(source: CharacterSource): readonly AttributeRowV
   });
 }
 
+/**
+ * What a skill row's tooltip says (spec 191).
+ *
+ * Newline-joined rather than structured, because `SkillView.description` is a
+ * string and `SkillRow.tooltip` splits it back into the lines the `Tooltip`
+ * widget wraps individually. Keeping it a string is what lets the attribute
+ * rows and the stat lines go on answering `hintAt` exactly as they did.
+ */
+function skillTooltip(skill: SkillDefinition, level: number): string {
+  const described = describeStatSkill(skill, level);
+  const body = technicalText(described);
+  return described.flavor === null ? body : `${body}\n"${described.flavor}"`;
+}
+
 /** The attuned tree, as one `BranchView` per attribute (spec 147). */
 export function skillBranchesOf(source: CharacterSource): readonly BranchView[] {
   const totals = source.attributes as unknown as Record<AttributeKey, number>;
@@ -349,7 +372,13 @@ export function skillBranchesOf(source: CharacterSource): readonly BranchView[] 
         tier: skill.tier,
         level: levelOf(source.skills, skill.id),
         maxLevel: skill.maxLevel,
-        description: `${skill.description} (${skill.trigger})`,
+        // The Technical Description, derived (spec 191). It replaces
+        // `description (trigger)`, which was the authored sentence and the
+        // authored trigger and not one number -- so a player could read that
+        // Crushing Blows made their blows "carry more weight" and never that it
+        // was +18% Guard damage a rank. The flavour is still here and still
+        // last, separated by the quotes rather than run into the mechanics.
+        description: skillTooltip(skill, levelOf(source.skills, skill.id)),
         canSpend: check.ok,
         blockedBecause: check.ok ? '' : check.detail,
       };

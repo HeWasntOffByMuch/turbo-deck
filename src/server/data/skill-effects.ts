@@ -168,6 +168,22 @@ export type SkillEffect = { readonly on?: EffectSubject } & (
     }
   /** A status taken off, through `clearStatus`. */
   | { readonly kind: 'removeStatus'; readonly statusId: string }
+  /**
+   * An affliction, through `sim/damage-over-time.ts` (spec 190).
+   *
+   * One field, and the absence of the others is the design: no duration, no
+   * rate, no stack count. **The row is the affliction, whole.** An affliction
+   * whose numbers depended on which skill happened to land it is one the player
+   * carrying it cannot reason about -- and "content is data" means every Burn
+   * in the game is the same Burn.
+   *
+   * It is a separate verb from `applyStatus` rather than a use of it, because
+   * an affliction is not a flag with a clock on it: it carries a source, a
+   * cadence and a first-landed tick that the resolver has to establish, and a
+   * row that reached one through `applyStatus` would get a status that draws a
+   * mark and never pulses.
+   */
+  | { readonly kind: 'applyDot'; readonly dotId: string }
   /** Healing, through `applyHealing`, so Wisdom's scale and overheal apply. */
   | { readonly kind: 'heal'; readonly amount?: number; readonly fraction?: number }
   /** Pool. Positive restores, negative drains. Clamped at both ends. */

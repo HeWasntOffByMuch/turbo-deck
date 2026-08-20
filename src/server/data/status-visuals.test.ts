@@ -63,7 +63,7 @@ describe('the visible status table (spec 186)', () => {
     }
   });
 
-  it('shows the nine conditions a player can act on', () => {
+  it('shows the sixteen conditions a player can act on', () => {
     for (const id of [
       StatusId.Flow,
       StatusId.Momentum,
@@ -75,11 +75,21 @@ describe('the visible status table (spec 186)', () => {
       // The one a skill applies rather than a build earning (spec 188), and by
       // this table's own rule the most pointable-at of the lot.
       StatusId.Slowed,
+      // The seven afflictions (spec 190), and by the same rule the easiest
+      // decision this table has ever had to make: losing health to something
+      // that is still on you is the most pointable-at condition in the game.
+      StatusId.Burn,
+      StatusId.Bleed,
+      StatusId.Poison,
+      StatusId.Corrosion,
+      StatusId.Shock,
+      StatusId.Frostbite,
+      StatusId.Decay,
     ]) {
       expect(visualFor(id), id).not.toBeNull();
     }
     expect(visualFor(ADAPTED_ID)).not.toBeNull();
-    expect(STATUS_VISUALS).toHaveLength(9);
+    expect(STATUS_VISUALS).toHaveLength(16);
   });
 
   it('answers null for an index it has no row for', () => {
