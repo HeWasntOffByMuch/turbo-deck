@@ -1435,19 +1435,23 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     mid: 'corrodeBody',
     deep: 'corrodeDeep',
   }),
-  // Shock: almost nothing between the beats, which is the whole design. The
-  // lowest cling and shed of the seven, high turbulence so the little that is
-  // there jitters rather than sits, and the loudest pulse in the table to land
-  // on top of it. An affliction that "arrives in jolts" has to be *quiet*
-  // in between or the jolts are not arrivals.
+  // Shock: almost nothing between the beats, which is the whole design. High
+  // turbulence so the little that is there jitters rather than sits, and the
+  // loudest pulse in the table to land on top of it. An affliction that
+  // "arrives in jolts" has to be *quiet* in between or the jolts are not
+  // arrivals.
   brushAffliction({
     id: 'affliction_shock',
-    // Sixteen a second at a tenth-of-a-second life is about three marks alive at
-    // any instant -- still the sparsest cling of the seven, and *flickering*
-    // rather than merely thin. The first cut was four a second, which works out
-    // at under one live mark: a body between jolts drawn as a body with nothing
-    // on it, which is not "quiet", it is a missing effect. Quiet has to be
-    // something you can see being quiet.
+    // The highest rate in the table over the shortest life, which is not the
+    // contradiction it looks like: what is alive at any instant is about ten
+    // marks, the joint fewest of the seven, and each of them lasts an eighth of
+    // a second. That is the difference between *thin* and *flickering*, and
+    // flickering is what a body between jolts should be doing.
+    //
+    // The first cut was four a second, which works out at under one live mark --
+    // a body between jolts drawn as a body with nothing on it at all. That is
+    // not quiet, it is a missing effect. Quiet has to be something you can watch
+    // being quiet.
     cling: 30,
     shed: 9,
     rise: 18,
