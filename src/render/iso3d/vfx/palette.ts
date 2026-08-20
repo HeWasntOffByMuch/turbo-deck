@@ -154,6 +154,39 @@ export const VFX_PALETTE = {
   arcaneMagenta: 0xc04ab8,
   arcaneDeep: 0x4a2a7a,
 
+  /**
+   * The amber between the cream and the orange (spec 197 follow-up).
+   *
+   * `fire` runs `fireCore` (pale cream) to `fireBody` (a strong orange) to
+   * `fireDeep` (red), and that is right for a *flame*, which is a thing you look
+   * into. It was wrong for a body that is on fire: the cling settles on the mid
+   * tone, so a burning body wore `fireBody` and the paint coming off it ran
+   * straight to red -- orange and red, and no yellow anywhere in it.
+   *
+   * This is the missing step, and adding one rather than shifting `fireBody`
+   * matters: seventeen call sites read that key, including the torch, the
+   * campfire and the explosion's own ramp, and none of them asked for a
+   * different flame.
+   */
+  fireAmber: 0xffb833,
+  /**
+   * Lightning, as three colours that are not the bolt's (spec 197 follow-up).
+   *
+   * `boltWhite`/`boltYellow`/`boltViolet` are a *bolt* -- a cream white through
+   * a warm yellow to a purple -- which reads as arcane sparks on a body rather
+   * than as electricity. Lightning is near-white with a blue cast, and the blue
+   * has to be told apart from ice: `icePale` is cyan-leaning and this is
+   * violet-leaning, which is the difference that survives the quantizer when a
+   * shocked body and a frostbitten one are on screen together.
+   *
+   * The mid tone is deliberately barely blue at all. The cling settles there, so
+   * it is what a shocked body actually wears, and what it should wear is
+   * **white** -- the blue belongs to what comes off it and to the jolt.
+   */
+  boltFlash: 0xf4f8ff,
+  boltPale: 0xd2e2ff,
+  boltArc: 0x6478f0,
+
   // --- status auras ---
   auraBuff: 0x7fd08a,
   auraDebuff: 0xd0796f,

@@ -945,11 +945,17 @@ export interface BrushAfflictionParams {
   /** A shed mark's length, in body radii. */
   readonly shedSize?: number;
   /**
-   * The shed's mark. `brush-dab` for anything that drips or falls (it takes
-   * `velocity` orientation, so it lies along its own travel); `brush-flick` for
-   * anything that leaves fast enough to streak.
+   * The shed's mark, and the choice is an orientation choice (see the header).
+   *
+   * `brush-dab` takes `velocity`, so it lies along its own travel -- right for
+   * anything that drips or falls, where the direction *is* the information.
+   * `brush-flick` is `cardVelocity` and streaks, for anything leaving fast.
+   * `brush-blot` is `tumble`: it turns in world space and is the roundest mark
+   * in the set, which is the only one of the three that can be a **bubble** --
+   * a dab rising vertically is a vertical dash, and a dash going up is not a
+   * bubble however slowly it moves.
    */
-  readonly shedShape?: 'brush-dab' | 'brush-flick';
+  readonly shedShape?: 'brush-dab' | 'brush-flick' | 'brush-blot';
   /** Palest, for a mark that has just landed. */
   readonly bright: PaletteKey;
   /** The body colour, and most of what is on screen. */
@@ -1304,9 +1310,18 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // Shock, because there is no state of a body in this game where either is
   // worse than it already is.
 
-  // Burn: the most damage a second in the table and the shortest life. It is the
-  // only ramp that lifts, the only one with real turbulence in the cling, and
-  // the only one whose shed streaks rather than drips.
+  // Burn: the most damage a second in the table and the shortest life, and the
+  // only one whose shed *streaks* rather than dripping or drifting.
+  //
+  // It lifts hardest by a distance -- nearly three times Poison's bubbles, the
+  // only other row that goes up at all -- and that gap is what keeps the two
+  // apart at a glance: fire is thrown off a body and rot floats off it.
+  //
+  // Its ramp settles on `fireAmber` rather than `fireBody`, which is the
+  // difference between a burning body reading as yellow-into-orange and reading
+  // as orange-into-red. The flame effects keep the old ramp; a body on fire is
+  // a different subject from a fire, and the thing you want to see on it is the
+  // heat rather than the embers.
   brushAffliction({
     id: 'affliction_burn',
     cling: 22,
@@ -1320,7 +1335,7 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     shedSize: 0.36,
     shedShape: 'brush-flick',
     bright: 'fireCore',
-    mid: 'fireBody',
+    mid: 'fireAmber',
     deep: 'fireDeep',
   }),
   // Bleed: red, and it falls hard. The heaviest `rise` in the table by
@@ -1354,20 +1369,32 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     mid: 'bloodFresh',
     deep: 'bloodInk',
   }),
-  // Poison: the weakest rate and the longest life, and the numbers say so. It
-  // barely falls, it barely moves, and one stack is meant to be *barely worth
-  // noticing* -- so this is the quietest cling of the seven and the one that
-  // changes most when it stacks.
+  // Poison: the weakest rate and the longest life, and the numbers say so. One
+  // stack is meant to be *barely worth noticing*, so this is the quietest cling
+  // of the seven and the one that changes most when it stacks.
+  //
+  // It is also the one affliction whose character is in the **shed** rather than
+  // in the coat: bubbles, rising off the body and wobbling as they go. That is
+  // the only row here with a positive `rise` besides Burn, and the two are not
+  // confusable, because fire's lift is four times as hard and its marks streak
+  // where these drift. Everything a bubble needs is already in the vocabulary --
+  // a small round `brush-dab`, a slow upward push, and enough turbulence that
+  // they do not rise in a column -- so nothing about the shape language moves.
+  //
+  // The coat is deliberately thinner than it was to pay for it. A body that is
+  // both coated *and* fizzing reads as two afflictions.
   brushAffliction({
     id: 'affliction_poison',
-    cling: 13,
-    shed: 6,
-    rise: -34,
-    turbulence: 18,
-    shedSpeed: 7,
-    clingSize: 0.62,
+    cling: 8,
+    shed: 9,
+    rise: 26,
+    turbulence: 22,
+    shedShape: 'brush-blot',
+    shedSpeed: 5,
+    shedSize: 0.26,
+    clingSize: 0.5,
     clingLife: [26, 40],
-    shedLife: [34, 54],
+    shedLife: [40, 64],
     bright: 'poisonPale',
     // The cling settles on `mid`, so `mid` is the colour Poison *is* rather
     // than the bottom of its ramp. Leaf green here read as mud on a body at
@@ -1380,14 +1407,16 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   }),
   brushAffliction({
     id: 'affliction_poison_heavy',
-    cling: 30,
-    shed: 13,
-    rise: -28,
+    cling: 16,
+    shed: 20,
+    rise: 30,
     turbulence: 26,
-    shedSpeed: 8,
-    clingSize: 0.74,
+    shedShape: 'brush-blot',
+    shedSpeed: 6,
+    shedSize: 0.3,
+    clingSize: 0.6,
     clingLife: [28, 44],
-    shedLife: [38, 60],
+    shedLife: [42, 68],
     bright: 'poisonPale',
     // The cling settles on `mid`, so `mid` is the colour Poison *is* rather
     // than the bottom of its ramp. Leaf green here read as mud on a body at
@@ -1462,9 +1491,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     shedLife: [12, 22],
     shedSize: 0.3,
     shedShape: 'brush-flick',
-    bright: 'boltWhite',
-    mid: 'boltYellow',
-    deep: 'boltViolet',
+    bright: 'boltFlash',
+    mid: 'boltPale',
+    deep: 'boltArc',
   }),
   // Frostbite: the one that accumulates. Nothing here moves -- the slowest shed,
   // the least turbulence and the longest-lived cling marks in the table, so what
@@ -1536,7 +1565,7 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     spread: 0.9,
     markSize: 0.95,
     bright: 'fireCore',
-    mid: 'fireBody',
+    mid: 'fireAmber',
     deep: 'fireDeep',
   }),
   brushAfflictionPulse({
@@ -1553,12 +1582,12 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   }),
   brushAfflictionPulse({
     id: 'affliction_poison_pulse',
-    marks: 4,
+    marks: 6,
     lifetimeTicks: 20,
-    rise: -50,
-    velocity: 26,
+    rise: 60,
+    velocity: 22,
     spread: 1.35,
-    markSize: 0.7,
+    markSize: 0.6,
     bright: 'poisonPale',
     mid: 'poisonDeep',
     deep: 'poisonMurk',
@@ -1591,9 +1620,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     spread: 1.45,
     markSize: 1.25,
     shape: 'brush-slash',
-    bright: 'boltWhite',
-    mid: 'boltYellow',
-    deep: 'boltViolet',
+    bright: 'boltFlash',
+    mid: 'boltPale',
+    deep: 'boltArc',
   }),
   // Slashes for the opposite reason: not speed but *edge*. Cold is the one
   // affliction whose mark should look like it has a straight side, so this is a
