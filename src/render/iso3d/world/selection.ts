@@ -1,5 +1,5 @@
 /**
- * The body a left click named, as a panel can read it (spec 190).
+ * The body a left click named, as a panel can read it (spec 192).
  *
  * Beside `character-model.ts` and `inventory-model.ts`, and out here for the
  * reason those are: `src/ui/` may not reach the sim, so the replicated facts

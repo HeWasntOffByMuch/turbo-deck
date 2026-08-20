@@ -139,7 +139,7 @@ app.append(hud.element);
 hud.element.style.inset = '0';
 
 /**
- * The interface canvas, because the action bar is on it now (spec 190).
+ * The interface canvas, because the action bar is on it now (spec 192).
  *
  * The rig has to mount the real one rather than fake a row of boxes: what is
  * being asked is whether the five slots are *there*, whether an empty one is
@@ -235,7 +235,7 @@ function draw(): void {
 }
 
 /**
- * Where the interface drew its slots, in CSS pixels, on the page (spec 190).
+ * Where the interface drew its slots, in CSS pixels, on the page (spec 192).
  *
  * The bar is a canvas, so "there are five slots and the third is empty" has no
  * element to ask. Published in *CSS* pixels rather than UI ones, unlike the Play

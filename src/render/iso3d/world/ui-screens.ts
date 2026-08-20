@@ -121,7 +121,7 @@ export interface UiScreensOptions {
    * test can observe is a save nothing checks.
    */
   /**
-   * A slot on the action bar was pressed (spec 190).
+   * A slot on the action bar was pressed (spec 192).
    *
    * It hands back an *ability id* rather than an index, because which ability a
    * slot holds is decided in one place and this is not it -- the mount asks
@@ -240,7 +240,7 @@ export class UiScreens {
   private readonly chatDock = new Anchor('chat:dock');
   private chatRevision = -1;
   private chatLines: readonly ChatLineView[] = [];
-  /** The mini HUD for whatever was left-clicked (spec 190). */
+  /** The mini HUD for whatever was left-clicked (spec 192). */
   private readonly selectedUnit: SelectedUnitScreen;
   private readonly selectionDock = new Anchor('selected:dock');
   /**
@@ -252,7 +252,7 @@ export class UiScreens {
    * canvas, and this half is the one `mount-presentation.test.ts` can run.
    */
   private selectedId: number | null = null;
-  /** The bar along the bottom (spec 190), and what it holds. */
+  /** The bar along the bottom (spec 192), and what it holds. */
   private readonly actionBar: ActionBarScreen;
   private readonly actionBarDock = new Anchor('bar:dock');
   /**
@@ -267,7 +267,7 @@ export class UiScreens {
   /** What is being aimed, so the slot it came from is lit (spec 080). */
   private aimingAbilityId: string | null = null;
   /**
-   * Whether a slot names the key that fires it (specs 094, 190).
+   * Whether a slot names the key that fires it (specs 094, 192).
    *
    * True until told otherwise, because that is what a keyboard gets and a
    * keyboard is what this half has no way to ask about.
@@ -309,8 +309,6 @@ export class UiScreens {
   private safeTopRight = 0;
   /** How much of the frame's floor the experience strip has. See below. */
   private actionBarFloor = 0;
-  /** ...and how much of its left the pool block has. */
-  private actionBarReserve = 0;
   /**
    * How far up from the bottom edge the DOM HUD's own furniture reaches, in UI
    * pixels. The counterpart to {@link safeTop}, and what keeps the chat clear of
@@ -526,7 +524,7 @@ export class UiScreens {
       this.chatLog.touch(this.now);
     };
 
-    // The selected body's readout (spec 190), and the `hud` layer's second
+    // The selected body's readout (spec 192), and the `hud` layer's second
     // occupant. Furniture on the chat's terms: no title bar, never dragged,
     // nothing in the layout store, and `pointerTransparent` throughout -- the
     // world is underneath and a readout that took a click would be a hole in
@@ -537,7 +535,7 @@ export class UiScreens {
     this.selectionDock.place(this.selectedUnit, 'topRight');
     this.layers.place('hud', this.selectionDock);
 
-    // The action bar (spec 190), the `hud` layer's third occupant, and the only
+    // The action bar (spec 192), the `hud` layer's third occupant, and the only
     // one of the three that is *pressable*: the dock and the row pass the
     // pointer through and the slots do not.
     //
@@ -546,7 +544,7 @@ export class UiScreens {
     // placed beside this bar, so a bar that sat above it would be a loop.
     this.actionBar = new ActionBarScreen({ theme: THEME, slotCount: this.barPlan.length });
     this.actionBarDock.pointerTransparent = true;
-    this.actionBarDock.padding = actionBarInsets(THEME, 0, 0);
+    this.actionBarDock.padding = actionBarInsets(THEME, 0);
     this.actionBarDock.place(this.actionBar, 'bottom');
     this.layers.place('hud', this.actionBarDock);
     this.actionBar.onUse = (index) => {
@@ -830,7 +828,7 @@ export class UiScreens {
       reveal: revealAt(this.chatLog.lastAtMs, nowMs, this.chat.isOpen),
     });
 
-    // What the mini HUD draws (spec 190). Derived every frame rather than
+    // What the mini HUD draws (spec 192). Derived every frame rather than
     // remembered, because every fact in it -- health, the statuses, whether the
     // body is still there at all -- is replicated and moves without anything
     // here being told.
@@ -845,7 +843,7 @@ export class UiScreens {
     if (selected === null) this.selectedId = null;
     this.selectedUnit.setView(selected);
 
-    // What the bar draws (spec 190). Every field in it moves during a fight --
+    // What the bar draws (spec 192). Every field in it moves during a fight --
     // the wedge, the seconds, whether a slot can be paid for -- so it is derived
     // every frame and written into plain fields the widgets read at paint time.
     // Only an ability's *identity* changing costs a layout pass.
@@ -1000,7 +998,7 @@ export class UiScreens {
         { id: 'log', rect: this.chat.log.rect },
         ...(this.chat.isOpen ? [{ id: 'input', rect: this.chat.field.rect }] : []),
       ],
-      // The mini HUD (spec 190), for the reason the chat's lines are here: it
+      // The mini HUD (spec 192), for the reason the chat's lines are here: it
       // is drawn to a canvas, so "the panel names the body I clicked and lists
       // what is on it" has no element to ask -- and a harness that could only
       // say some pixels changed would pass just as happily over a panel showing
@@ -1014,7 +1012,7 @@ export class UiScreens {
       // tuning popovers it is docked under -- can be checked against the DOM on
       // the other side of the canvas.
       selectedRect: this.selectedUnit.visible ? this.selectedUnit.rect : null,
-      // The bar's five slots, keyed by what each holds (spec 190). A canvas has
+      // The bar's five slots, keyed by what each holds (spec 192). A canvas has
       // no elements, so "the bar shows the skill I equipped" is otherwise only
       // answerable by looking at pixels -- and an empty id is exactly what an
       // empty slot is, which is the state four of the five are in by design.
@@ -1161,7 +1159,7 @@ export class UiScreens {
 
   /**
    * Told how far down the tuning popovers in the top-right corner reach
-   * (spec 190).
+   * (spec 192).
    *
    * Measured off the DOM and converted outside, exactly as {@link setSafeBottom}
    * is, and for the same lesson: the chat's first cut *derived* its clearance
@@ -1191,7 +1189,7 @@ export class UiScreens {
   }
 
   /**
-   * Replace what the five slots hold (spec 190).
+   * Replace what the five slots hold (spec 192).
    *
    * Pushed in from `view.ts` every time the equipment changes, for the same
    * reason the window buttons are pushed rather than read: the equipment is the
@@ -1200,21 +1198,6 @@ export class UiScreens {
    */
   setActionBarPlan(plan: readonly ActionSlot[]): void {
     this.barPlan = plan;
-  }
-
-  /**
-   * What the bar leaves clear on its left, in UI pixels (spec 190).
-   *
-   * Applied as the dock's *padding*, which is what makes the centring one rule
-   * rather than an offset: an `Anchor` centres its child in whatever box is left
-   * after padding, so reserving the pool block's width on the left centres the
-   * pair rather than the bar.
-   */
-  setActionBarLeftReserve(uiPixels: number): void {
-    const next = Math.max(0, Math.floor(uiPixels));
-    if (next === this.actionBarReserve) return;
-    this.actionBarReserve = next;
-    this.applyActionBarInsets();
   }
 
   /** Whether a slot names its key. False on a finger, which has no keyboard. */
@@ -1247,7 +1230,7 @@ export class UiScreens {
   }
 
   /**
-   * Every slot's box and what it holds, in UI pixels (spec 190).
+   * Every slot's box and what it holds, in UI pixels (spec 192).
    *
    * For a harness, and for the same reason the bag's cells are published: a
    * canvas has no elements, so "there are five slots, four of them empty, and
@@ -1261,7 +1244,7 @@ export class UiScreens {
   }
 
   /**
-   * Point the mini HUD at a body, or at nothing (spec 190).
+   * Point the mini HUD at a body, or at nothing (spec 192).
    *
    * A *request* like every other callback in this file, and the one piece of
    * state in the mount the server has no opinion about at all: selecting is a
@@ -1298,7 +1281,7 @@ export class UiScreens {
   }
 
   /**
-   * How far up the frame's own floor is reserved, for the action bar (spec 190).
+   * How far up the frame's own floor is reserved, for the action bar (spec 192).
    *
    * Deliberately *not* {@link setSafeBottom}: that is the DOM HUD's furniture,
    * and the bar is what half of it is placed against -- a bar docked above the
@@ -1314,7 +1297,7 @@ export class UiScreens {
   }
 
   private applyActionBarInsets(): void {
-    this.actionBarDock.padding = actionBarInsets(THEME, this.actionBarFloor, this.actionBarReserve);
+    this.actionBarDock.padding = actionBarInsets(THEME, this.actionBarFloor);
     this.actionBarDock.invalidateArrange();
   }
 

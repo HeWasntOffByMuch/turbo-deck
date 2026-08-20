@@ -527,7 +527,7 @@ export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
     '.....AA.....',
   ],
   /**
-   * The four active skills (specs 188, 190).
+   * The four active skills (specs 188, 192).
    *
    * Drawn rather than borrowed, and the reason is what the bar looked like
    * without them: `abilityIconFor` answers `item:unknown` for an id with no row,
@@ -704,7 +704,7 @@ export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
     '..T..TT..T..',
   ],
   /**
-   * The test skill (spec 190 on main): a checklist.
+   * The test skill (spec 192 on main): a checklist.
    *
    * It is a developer path and it still needs art, because the alternative is
    * the question mark -- and a bar that draws one is a bar that looks broken

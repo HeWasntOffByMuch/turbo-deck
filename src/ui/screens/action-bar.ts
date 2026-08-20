@@ -1,5 +1,5 @@
 /**
- * The bar along the bottom of the screen (spec 190).
+ * The bar along the bottom of the screen (spec 192).
  *
  * Five {@link SkillSlot}s -- four skills and the vial -- and that is the whole
  * of the change: the widget was written for this job in spec 128 and had never
@@ -206,15 +206,6 @@ export class ActionBarScreen extends Row {
  * it. Plus a margin, for the reason `chatInsets` gives: clearing something by
  * nothing is still sitting on it.
  */
-export function actionBarInsets(theme: Theme, floor: number, leftReserve = 0): Insets {
-  return {
-    ...uniformInsets(theme.spacing.sm),
-    bottom: floor + theme.spacing.sm,
-    // Reserved rather than subtracted, and that is the whole of the centring:
-    // an `Anchor` centres its child in the box left after padding, so room made
-    // on the left for the pool block centres the *pair* -- which is what those
-    // two are, and what centring the bar alone visibly failed to do once the
-    // slots stopped being wide enough to hide it.
-    left: theme.spacing.sm + Math.max(0, leftReserve),
-  };
+export function actionBarInsets(theme: Theme, floor: number): Insets {
+  return { ...uniformInsets(theme.spacing.sm), bottom: floor + theme.spacing.sm };
 }

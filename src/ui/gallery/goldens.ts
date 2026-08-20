@@ -125,7 +125,7 @@ export interface WorldHudGoldenCase {
 }
 
 /**
- * The band the Play tab draws over the world with no window open (spec 190).
+ * The band the Play tab draws over the world with no window open (spec 192).
  *
  * The first goldens the action bar has ever had: it was five `<button>`s of
  * inline `cssText` until this spec, so what a slot on cooldown looked like was

@@ -99,7 +99,7 @@ export interface UiReadout {
   readonly chatOpen: boolean;
   readonly chatInput: string;
   /**
-   * The mini HUD and the action bar (spec 190), for the reason the chat is here.
+   * The mini HUD and the action bar (spec 192), for the reason the chat is here.
    *
    * `selected` is `name|detail` and empty for nothing selected; `selectedRows`
    * is each status as `label|remaining|tone`; `barSlots` is each slot keyed by
@@ -257,12 +257,10 @@ export class UiLayer {
    */
   /** The last measured bottom band, in CSS pixels. See {@link applySafeBottom}. */
   private measuredBand = 0;
-  /** ...and the top-right corner's, on the same terms (spec 190). */
+  /** ...and the top-right corner's, on the same terms (spec 192). */
   private measuredRight = 0;
   /** How big an action-bar slot should be, in CSS pixels. See below. */
   private slotSideCss = 0;
-  /** ...and what it leaves clear on its left for the pool block. */
-  private leftReserveCss = 0;
 
   private applyCssSize(): void {
     this.element.style.width = `${this.frame.cssWidth}px`;
@@ -370,7 +368,6 @@ export class UiLayer {
     this.applySafeBottom();
     this.applySafeTopRight();
     this.applySlotSide();
-    this.applyLeftReserve();
     // The canvas's backing store was just reallocated, so whatever was on it is
     // gone -- and the same draw list would otherwise be skipped as unchanged and
     // leave the interface blank until something moved.
@@ -423,7 +420,7 @@ export class UiLayer {
     this.screens.moveFocus(step);
   }
 
-  // --- the action bar (spec 190) ---------------------------------------------
+  // --- the action bar (spec 192) ---------------------------------------------
 
   /** Replace what the five slots hold. See `UiScreens.setActionBarPlan`. */
   setActionBarPlan(plan: readonly ActionSlot[]): void {
@@ -449,7 +446,14 @@ export class UiLayer {
     if (!rect) return NO_ACTION_BAR;
     const dpr = globalThis.devicePixelRatio || 1;
     const perUi = this.frame.scale / dpr;
-    return { width: Math.round(rect.width * perUi), height: Math.round(rect.height * perUi) };
+    return {
+      width: Math.round(rect.width * perUi),
+      height: Math.round(rect.height * perUi),
+      // Where the row actually ended up, not where it was asked to go: the dock
+      // adds the theme's own margin above the floor it was told, and a DOM half
+      // that assumed the floor put the pool block eight pixels low.
+      bottom: Math.round((this.frame.height - rect.y - rect.height) * perUi),
+    };
   }
 
   /**
@@ -464,7 +468,7 @@ export class UiLayer {
   }
 
   /**
-   * How big one slot should be, converted from CSS pixels (spec 190).
+   * How big one slot should be, converted from CSS pixels (spec 192).
    *
    * Re-applied on every resize rather than pushed once, because the scale is
    * what the conversion turns on: a player who picks a chunkier interface gets
@@ -480,22 +484,6 @@ export class UiLayer {
     if (this.slotSideCss <= 0) return;
     const dpr = globalThis.devicePixelRatio || 1;
     this.screens.setActionBarSlotSide((this.slotSideCss * dpr) / this.frame.scale);
-  }
-
-  /**
-   * What the bar leaves clear on its left, converted from CSS pixels (spec 190).
-   *
-   * Re-applied on resize with the slot size, and for the same reason: what a UI
-   * pixel is worth is the thing that changes.
-   */
-  setActionBarLeftReserveCss(cssPixels: number): void {
-    this.leftReserveCss = cssPixels;
-    this.applyLeftReserve();
-  }
-
-  private applyLeftReserve(): void {
-    const dpr = globalThis.devicePixelRatio || 1;
-    this.screens.setActionBarLeftReserve((this.leftReserveCss * dpr) / this.frame.scale);
   }
 
   /** Whether a slot names the key that fires it. See `HudHandle.showsSlotKeys`. */
@@ -519,7 +507,7 @@ export class UiLayer {
     }));
   }
 
-  // --- the mini HUD (spec 190) ----------------------------------------------
+  // --- the mini HUD (spec 192) ----------------------------------------------
 
   /**
    * Point the selected-unit panel at a body, or at nothing.
@@ -579,7 +567,7 @@ export class UiLayer {
   }
 
   /**
-   * How far down the top-right corner's own furniture reaches (spec 190).
+   * How far down the top-right corner's own furniture reaches (spec 192).
    *
    * The counterpart to {@link applySafeBottom} and measured for the same reason
    * it is: the tuning popovers are seven buttons of their own heights that wrap
@@ -656,7 +644,7 @@ function bottomBandCss(): number {
 
 /**
  * How far down the frame anything marked `data-hud-right` reaches, in CSS
- * pixels (spec 190).
+ * pixels (spec 192).
  *
  * Today that is the strip of tuning popovers, and only on a pointer device --
  * spec 140 does not build them on a handheld, so zero there is the truth rather

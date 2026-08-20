@@ -58,7 +58,6 @@ import { HealthFlashes } from './health-bar.js';
 import {
   ACTION_SLOT_CSS,
   bottomEdge,
-  bottomGroupWidth,
   NO_ACTION_BAR,
   poolReserve,
   type ActionBarBox,
@@ -397,7 +396,7 @@ export interface HudHandle {
    */
   showOpenWindows(open: readonly WindowId[]): void;
   /**
-   * How big the action bar is, in CSS pixels (spec 190).
+   * How big the action bar is, in CSS pixels (spec 192).
    *
    * The bar moved to the interface canvas, so its box is a fact about the UI
    * scale rather than about this file's table -- and everything left along that
@@ -410,7 +409,7 @@ export interface HudHandle {
    */
   setActionBar(box: ActionBarBox): void;
   /**
-   * How much of the frame's floor is spoken for, in CSS pixels (spec 190).
+   * How much of the frame's floor is spoken for, in CSS pixels (spec 192).
    *
    * The experience strip spans the whole width and is pinned to the bottom, so
    * everything else along that edge has to clear it -- including the action bar,
@@ -420,7 +419,7 @@ export interface HudHandle {
    */
   readonly floorCss: number;
   /**
-   * How big one action-bar slot should be drawn, in CSS pixels (spec 190).
+   * How big one action-bar slot should be drawn, in CSS pixels (spec 192).
    *
    * Beside {@link floorCss} and told for the same reason: the bar is on the
    * other surface, and how big a thing a finger has to hit is a physical fact
@@ -428,21 +427,13 @@ export interface HudHandle {
    */
   readonly slotSideCss: number;
   /**
-   * Whether a slot names the key that fires it (specs 094, 190).
+   * Whether a slot names the key that fires it (specs 094, 192).
    *
    * False on a finger, which has no keyboard: see `HudLayout.showsKeyNumber`.
    * Told rather than asked, because the half of the mount that builds the bar's
    * rows is pure and `isHandheldDevice` reads the platform.
    */
   readonly showsSlotKeys: boolean;
-  /**
-   * What the bar has to leave clear on its left, in CSS pixels (spec 190).
-   *
-   * The pool block and its gap: they are part of the same group, so the bar is
-   * centred with room for them rather than centred on its own. One number, both
-   * surfaces, each offset by its own half of it.
-   */
-  readonly leftReserveCss: number;
   /**
    * What to call when a window button is pressed (spec 140). It hands back a
    * window id and nothing else -- the mount calls the same `ui.toggle` a key
@@ -580,7 +571,7 @@ export function createHud(project: Projector): HudHandle {
   const bottom = `calc(${bottomEdge(layout)}px + env(safe-area-inset-bottom))`;
 
   /**
-   * Where the action bar is, in CSS pixels, told by the mount (spec 190).
+   * Where the action bar is, in CSS pixels, told by the mount (spec 192).
    *
    * The bar itself is drawn on the interface canvas now. What is left here is
    * everything placed *against* it -- the pool block, which sits immediately to
@@ -719,7 +710,7 @@ export function createHud(project: Projector): HudHandle {
   }
 
   /**
-* Place everything that hangs off the action bar, in one go (spec 190).
+* Place everything that hangs off the action bar, in one go (spec 192).
    *
    * Called when the box changes rather than per frame: the bar's size follows
    * the interface scale, which moves when the window is resized or the player
@@ -731,15 +722,14 @@ export function createHud(project: Projector): HudHandle {
    */
   const placeAgainstBar = (): void => {
     poolBlock.style.bottom = `calc(${poolBottom(layout, actionBar)}px + env(safe-area-inset-bottom))`;
-    // Half the *group's* width, which is what centring the group amounts to:
-    // the pools are the first thing in it and the bar reserves the same number
-    // on its own side (spec 190). Pinning the pools a whole bar-half plus their
-    // own width to the left of centre -- which is what this was -- centres the
-    // bar and leaves the pair sitting off to one side of the screen.
-    poolBlock.style.marginLeft = `${-bottomGroupWidth(layout, actionBar) / 2}px`;
+    // Left of a bar that is centred on the frame: half the bar, then the block
+    // and the gap beside it. `POOL_TO_BAR_GAP` rather than `poolGap`, which is
+    // the space *inside* the block -- sharing them had the pools hugging the
+    // slots.
+    poolBlock.style.marginLeft = `${-(actionBar.width / 2 + poolReserve(layout))}px`;
     if (layout.compact) {
       aimHint.style.bottom =
-        `calc(${bottomEdge(layout) + actionBar.height + 6}px + env(safe-area-inset-bottom))`;
+        `calc(${actionBar.bottom + actionBar.height + 6}px + env(safe-area-inset-bottom))`;
     }
   };
   placeAgainstBar();
@@ -1810,7 +1800,6 @@ export function createHud(project: Projector): HudHandle {
     floorCss: bottomEdge(layout),
     slotSideCss: ACTION_SLOT_CSS,
     showsSlotKeys: layout.showsKeyNumber,
-    leftReserveCss: poolReserve(layout),
     setActionBar(box) {
       if (box.width === actionBar.width && box.height === actionBar.height) return;
       actionBar = box;

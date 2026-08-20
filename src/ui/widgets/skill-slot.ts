@@ -46,7 +46,7 @@ export class SkillSlot extends StyledWidget {
   /**
    * How big the box is, in UI pixels.
    *
-   * A field rather than the constant since spec 190, and the reason is not
+   * A field rather than the constant since spec 192, and the reason is not
    * style: the action bar is a **tap target** and a bag cell is not. The
    * interface scale is chosen by two different constraints at the two ends of
    * the range -- on a phone by how many device pixels a finger covers, on a
@@ -67,7 +67,7 @@ export class SkillSlot extends StyledWidget {
    */
   iconScale = 1;
   /**
-   * A small count in the bottom-right corner: the vial's charges (spec 190).
+   * A small count in the bottom-right corner: the vial's charges (spec 192).
    *
    * Its own field rather than something derived from the ability, because what
    * it counts is not a property of abilities -- the flask's cost is a *charge*

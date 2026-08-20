@@ -676,7 +676,7 @@ export function renderChat(options: ChatRenderOptions = {}): ChatFrame {
 
 /**
  * The two things the Play tab draws over the world with no window open
- * (spec 190): the action bar along the bottom and the mini HUD in the corner.
+ * (spec 192): the action bar along the bottom and the mini HUD in the corner.
  *
  * One frame rather than two, because what a person reading a diff needs to see
  * is the *band* -- five slots at the framework's own size, a panel in the

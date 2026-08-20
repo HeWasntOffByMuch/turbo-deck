@@ -1,5 +1,5 @@
 /**
- * The selected-unit mini HUD (spec 190).
+ * The selected-unit mini HUD (spec 192).
  *
  * The two assertions the feature would be broken without and that nothing else
  * can see: that an empty selection draws *nothing at all* -- not even the panel

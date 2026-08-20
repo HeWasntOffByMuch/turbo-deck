@@ -15,13 +15,14 @@ import {
   ACTION_SLOT_CSS,
   bottomGroupWidth,
   hudLayout,
+  type ActionBarBox,
   NO_ACTION_BAR,
   MIN_TAP_PX,
   PHONE_LANDSCAPE,
   poolBlockHeight,
   poolBottom,
+  POOL_TO_BAR_GAP,
   poolClearance,
-  poolReserve,
   poolLabelFits,
   readoutShown,
   stripHeight,
@@ -36,7 +37,7 @@ const compact = hudLayout(true);
 const desktop = hudLayout(false);
 
 /**
- * The action bar's box, in CSS pixels, at a given interface scale (spec 190).
+ * The action bar's box, in CSS pixels, at a given interface scale (spec 192).
  *
  * The bar is drawn on the interface canvas now, so its *width* is a fact about
  * the UI scale rather than about this table -- and everything still in this
@@ -53,18 +54,22 @@ const desktop = hudLayout(false);
  *
  * `perUi` is CSS pixels per UI pixel, which is `scale / devicePixelRatio`.
  */
-function barBox(perUi: number): { width: number; height: number } {
+function barBox(perUi: number, layout = desktop): ActionBarBox {
   const side = Math.round(ACTION_SLOT_CSS / perUi);
   return {
     width: barWidth(BAR_SLOT_COUNT, side, THEME.spacing.xs) * perUi,
     height: side * perUi,
+    // Where the dock actually puts it: the floor it is told, plus the theme's
+    // own margin, converted. The mount *measures* this rather than computing it;
+    // written out here so the sums below have something to check against.
+    bottom: bottomEdge(layout) + THEME.spacing.sm * perUi,
   };
 }
 
 /** A 1920x1030 desktop, where `autoUiScale` picks 1. */
 const DESKTOP_BAR = barBox(1);
 /** An 844x390 phone at dpr 3, where a coarse pointer buys scale 8. */
-const PHONE_BAR = barBox(8 / 3);
+const PHONE_BAR = barBox(8 / 3, compact);
 
 describe('the HUD layout', () => {
   it('keeps the desktop HUD as it was: a readout, key numbers and a named column', () => {
@@ -95,18 +100,23 @@ describe('the HUD layout', () => {
     }
   });
 
-  it('centres the pool block on the bar rather than sharing its floor', () => {
+  /**
+   * The pools and the slots are centred *on each other*, vertically.
+   *
+   * This is the one the DOM half could not get right on its own: it knows what
+   * the frame's floor holds and the interface adds its own margin above that, so
+   * a block placed at `bottomEdge` sat eight pixels below the row it was meant
+   * to line up with. The bar's real bottom is measured and handed over.
+   */
+  it('lines the pool block up with the middle of the bar', () => {
     for (const [layout, bar] of [
       [desktop, DESKTOP_BAR],
       [compact, PHONE_BAR],
     ] as const) {
-      const block = poolBlockHeight(layout);
-      expect(block).toBeLessThanOrEqual(bar.height);
-      // The daylight above the block and the daylight below it are the same,
-      // give or take the odd pixel a rounding leaves.
-      const below = poolBottom(layout, bar) - bottomEdge(layout);
-      const above = bar.height - block - below;
-      expect(Math.abs(above - below)).toBeLessThanOrEqual(1);
+      expect(poolBlockHeight(layout)).toBeLessThanOrEqual(bar.height);
+      const barMiddle = bar.bottom + bar.height / 2;
+      const poolMiddle = poolBottom(layout, bar) + poolBlockHeight(layout) / 2;
+      expect(Math.abs(barMiddle - poolMiddle)).toBeLessThanOrEqual(1);
     }
   });
 
@@ -123,7 +133,7 @@ describe('the HUD layout', () => {
     expect(compact.compact).toBe(true);
     expect(compact.showsReadout).toBe(false);
     // No keyboard to name: spec 094's rule, and the bar honours it from the
-    // other side of the canvas now (spec 190).
+    // other side of the canvas now (spec 192).
     expect(compact.showsKeyNumber).toBe(false);
     expect(compact.weaponIconOnly).toBe(true);
     expect(compact.weaponDirection).toBe('row');
@@ -187,15 +197,15 @@ describe('the HUD layout', () => {
   /**
    * The assertion that is supposed to fail on the ninth ability.
    *
-   * The bottom *group* is centred and the window buttons sit bottom right
-   * (spec 140), so what has to hold is that half the leftover width clears that
-   * row. The weapon switch is no longer drawn on a phone (spec 141), but it is
-   * still checked against the *same* clearance: the day somebody puts it back,
-   * the sum should already say whether it fits rather than being discovered on
-   * a device.
+   * The bar is centred and the window buttons sit bottom right (spec 140), so
+   * what has to hold is that half the leftover width clears that row -- and that
+   * the whole band, pools included, still fits across the frame. The weapon
+   * switch is no longer drawn on a phone (spec 141), but it is still checked
+   * against the *same* clearance: the day somebody puts it back, the sum should
+   * already say whether it fits rather than being discovered on a device.
    */
-  it('fits the bottom group across a phone in landscape, clear of both corners', () => {
-    const clearance = centredClearance(compact, PHONE_BAR, PHONE_LANDSCAPE.width);
+  it('fits the bottom band across a phone in landscape, clear of both corners', () => {
+    const clearance = centredClearance(PHONE_BAR, PHONE_LANDSCAPE.width);
     const weapons = stripWidth(compact.weapon, compact.weaponGap, WEAPON_SWITCH.length);
     const windows = stripWidth(compact.systemButton, compact.systemGap, SYSTEM_BUTTONS.length);
     expect(bottomGroupWidth(compact, PHONE_BAR)).toBeLessThan(PHONE_LANDSCAPE.width);
@@ -204,25 +214,22 @@ describe('the HUD layout', () => {
   });
 
   /**
-   * The complaint spec 190 shipped and had to fix: the pools and the slots are
-   * one group (spec 164), so the *group* is what gets centred.
+   * The slots take the middle, and the pools sit to their left.
    *
-   * Centring the bar alone leaves the pair off to the left by half the pool
-   * block -- 12% of the group when the bar was 484px of name-wide slots, and 19%
-   * once it became 246px of squares, which is where somebody noticed.
+   * The bar rather than the whole band: the slots are what a player's eye
+   * centres on and what everything else centred on screen lines up with -- the
+   * experience strip that spans the frame, the death overlay, the loading bar.
    */
-  it('centres the group rather than the bar', () => {
+  it('centres the bar on the frame and hangs the pools off its left', () => {
     const frame = 1280;
-    const left = centredClearance(desktop, DESKTOP_BAR, frame);
-    const right = frame - left - bottomGroupWidth(desktop, DESKTOP_BAR);
-    expect(left).toBeCloseTo(right, 6);
-    // ...which puts the bar itself right of the frame's middle, by exactly half
-    // of what it left clear for the pools.
-    const barLeft = left + poolReserve(desktop);
-    expect(barLeft + DESKTOP_BAR.width / 2 - frame / 2).toBeCloseTo(
-      poolReserve(desktop) / 2,
-      6,
-    );
+    const left = centredClearance(DESKTOP_BAR, frame);
+    expect(left + DESKTOP_BAR.width / 2).toBeCloseTo(frame / 2, 6);
+    // The block ends exactly `POOL_TO_BAR_GAP` short of the bar's left edge --
+    // a gap of its own rather than the one *inside* the block, which is what
+    // left the two hugging.
+    const poolLeft = poolClearance(desktop, DESKTOP_BAR, frame);
+    expect(poolLeft + desktop.pool.width + POOL_TO_BAR_GAP).toBeCloseTo(left, 6);
+    expect(POOL_TO_BAR_GAP).toBeGreaterThan(desktop.poolGap);
   });
 
   /**

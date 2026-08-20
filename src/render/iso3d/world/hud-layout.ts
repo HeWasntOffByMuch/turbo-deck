@@ -38,7 +38,7 @@ export interface HudLayout {
    *
    * False on a finger, which has no keyboard to press: a "1" in the corner of a
    * slot somebody taps is a label about a control that is not there. Still here
-   * after spec 190 moved the bar to the interface canvas, because it is a fact
+   * after spec 192 moved the bar to the interface canvas, because it is a fact
    * about the *device* and this is the file that answers those -- the mount is
    * pure and cannot ask.
    */
@@ -240,7 +240,7 @@ export function stripHeight(box: BoxSize, gap: number, count: number): number {
 }
 
 /**
- * The box the action bar occupies, in CSS pixels (spec 190).
+ * The box the action bar occupies, in CSS pixels (spec 192).
  *
  * Told rather than derived, and that is the whole of what moved: the bar is
  * drawn on the interface canvas now, so how big it is is a fact about the UI
@@ -254,7 +254,7 @@ export function stripHeight(box: BoxSize, gap: number, count: number): number {
  * where a guessed constant would put it in the wrong place forever.
  */
 /**
- * How big one action-bar slot is, in CSS pixels (spec 190).
+ * How big one action-bar slot is, in CSS pixels (spec 192).
  *
  * Here rather than in `src/ui/screens/action-bar.ts` because it is the same
  * kind of number as {@link MIN_TAP_PX} beside it and answers the same question:
@@ -275,20 +275,33 @@ export const ACTION_SLOT_CSS = 46;
 export interface ActionBarBox {
   readonly width: number;
   readonly height: number;
+  /**
+   * How far the bar's own bottom sits above the frame's, in CSS pixels.
+   *
+   * Told rather than derived, and it is the same lesson the width already
+   * carries. This file knows what the *floor* holds -- the experience strip --
+   * and the interface adds its own margin above that, so a pool block placed at
+   * `bottomEdge` was eight pixels below a bar it was supposed to be centred on.
+   * Measuring the bar's real box is the only way this side can be right about
+   * it, and it is what the bar was already being asked for.
+   */
+  readonly bottom: number;
 }
 
-export const NO_ACTION_BAR: ActionBarBox = { width: 0, height: 0 };
+export const NO_ACTION_BAR: ActionBarBox = { width: 0, height: 0, bottom: 0 };
 
 /**
- * What sits immediately left of the bar and belongs to the same group, in CSS
- * pixels: the pool block and the gap between it and the slots.
+ * The gap between the pool block and the slots, in CSS pixels.
  *
- * Named because **both surfaces need it and it is one number** (spec 190). The
- * pools are DOM and the bar is drawn on the interface canvas, and what centres
- * them together is that each is offset by its own half of this.
+ * Its own number rather than {@link HudLayout.poolGap}, which is the gap
+ * *between the two bars* -- one is the space inside a block and the other is the
+ * space beside it, and sharing them left the pools hugging the slots.
  */
+export const POOL_TO_BAR_GAP = 8;
+
+/** What sits left of the bar and belongs with it: the pool block and its gap. */
 export function poolReserve(layout: HudLayout): number {
-  return layout.pool.width + layout.poolGap;
+  return layout.pool.width + POOL_TO_BAR_GAP;
 }
 
 /** The whole bottom group: the pool block, the gap, and the bar. */
@@ -297,31 +310,30 @@ export function bottomGroupWidth(layout: HudLayout, bar: ActionBarBox): number {
 }
 
 /**
- * The gap between the left edge of the centred bottom group and the frame's.
+ * The gap between the left edge of the centred **bar** and the frame's.
  *
- * The **group** rather than the bar, since spec 190, and the change is what the
- * bar shrinking made impossible to ignore: the pool block sits to one side of
- * the slots and is part of the same thing, so centring the bar alone leaves the
- * pair visibly off to the left -- which was 12% of the group's width when the
- * bar was 484px of name-wide slots and is 19% now that it is 246px of squares.
+ * The bar, not the group: the slots are what a player's eye centres on and what
+ * every other centred thing on screen lines up with, so they take the middle and
+ * the pools sit to their left. Centring the group instead puts the slots off to
+ * the right of the frame's own centre, which is what it looked like.
  *
- * Negative would mean the group is wider than the frame; anything less than the
+ * Negative would mean the bar is wider than the frame; anything less than the
  * weapon row's width means the two overlap, which is a button that cannot be
  * pressed because another button is on top of it.
  */
-export function centredClearance(layout: HudLayout, bar: ActionBarBox, frameWidth: number): number {
-  return (frameWidth - bottomGroupWidth(layout, bar)) / 2;
+export function centredClearance(bar: ActionBarBox, frameWidth: number): number {
+  return (frameWidth - bar.width) / 2;
 }
 
 /**
- * How far the pool block's left edge is from the frame's.
+ * How far the pool block's left edge is from the frame's, given a centred bar.
  *
- * Which is the group's own left edge, the block being the first thing in it --
- * its own function because that is a fact about the *pools*, and the day
- * something else joins the group on the left it stops being the same number.
+ * Negative means it has run off the left edge; anything less than the weapon
+ * switch's width means the two overlap, which is the same failure
+ * {@link centredClearance} exists to catch one group over.
  */
 export function poolClearance(layout: HudLayout, bar: ActionBarBox, frameWidth: number): number {
-  return centredClearance(layout, bar, frameWidth);
+  return centredClearance(bar, frameWidth) - poolReserve(layout);
 }
 
 /**
@@ -346,15 +358,18 @@ export function poolBlockHeight(layout: HudLayout): number {
  * lines up.
  */
 export function poolBottom(layout: HudLayout, bar: ActionBarBox): number {
-  // Clamped at the floor since spec 190, and the clamp is the whole difference:
-  // the bar is drawn at the interface's scale now, so it can be *shorter* than
-  // the block beside it -- on a display where `autoUiScale` picks 1, a slot is
-  // 20 CSS pixels and two pool bars stacked are 44. Centring on something
-  // shorter than you are means hanging below it, and below the floor is the
-  // experience strip, which is the one thing along this edge nothing may sit on.
-  // So the two share a floor where the bar cannot hold the block, and the block
-  // is centred on the bar wherever it can be.
-  return bottomEdge(layout) + Math.max(0, Math.round((bar.height - poolBlockHeight(layout)) / 2));
+  // Off the bar's **own** bottom, which is measured and handed over rather than
+  // assumed to be the floor: the interface adds its own margin above the
+  // experience strip, so a block placed at `bottomEdge` sat eight pixels below
+  // the row it was meant to be centred on.
+  //
+  // Floored at the frame's own bottom edge for the box before the interface has
+  // laid itself out, and for a bar *shorter* than the block beside it -- on a
+  // display where `autoUiScale` picks 1 a slot is 20 CSS pixels and two pool
+  // bars stacked are 44, and centring on something shorter than you means
+  // hanging below it, where the experience strip is.
+  const centred = bar.bottom + Math.round((bar.height - poolBlockHeight(layout)) / 2);
+  return Math.max(bottomEdge(layout), centred);
 }
 
 /**

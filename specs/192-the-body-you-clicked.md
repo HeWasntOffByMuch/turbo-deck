@@ -1,4 +1,4 @@
-# 190 — The body you clicked
+# 192 — The body you clicked
 
 ## Problem
 
@@ -230,14 +230,25 @@ the collision is impossible rather than unlikely. And the slot side is floored
 at `SLOT_SIDE`: the conversion is a physical size, legibility is a second
 constraint, and the answer is the larger of the two.
 
-**The group was not centred.** The pools and the slots are one group (spec 164)
-and only the bar was being centred, which left the pair sitting half a pool
-block to the left. That was 12% of the group's width when the bar was 484px of
-name-wide slots and 19% once it was 246px of squares — the same error, newly
-impossible to miss. `poolReserve` is the one number both surfaces need: the DOM
-offsets the pool block by half the *group*, and the bar's dock reserves the
-whole of it on the left, which an `Anchor` turns into the same shift because it
-centres in whatever box padding leaves.
+**The bottom band did not line up.** Three separate things, all of them the DOM
+half deriving something it should have been told.
+
+Horizontally, the **bar** is what is centred and the pools hang off its left:
+the slots are what an eye goes to and what everything else centred on screen
+lines up with — the experience strip that spans the frame, the death overlay,
+the loading bar. Centring the whole band instead puts the slots right of the
+frame's own middle, which is what it looked like.
+
+The gap between the pools and the slots is `POOL_TO_BAR_GAP`, its own number at
+8px. It was `poolGap`, which is the space *inside* the block, between its two
+bars — one is a gap in a thing and the other is a gap beside it, and sharing
+them had the pools hugging the slots.
+
+Vertically, `ActionBarBox` gains a **`bottom`**. The DOM knows what the frame's
+floor holds and the interface adds its own margin above that, so a pool block
+placed at `bottomEdge` sat exactly eight pixels below the row it was supposed to
+be centred on. The bar's real box is measured and handed over — like its width,
+and for the reason its width is.
 
 ## Invariants tested
 

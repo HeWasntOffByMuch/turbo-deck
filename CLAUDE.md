@@ -757,7 +757,7 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that took it whenever the cursor happened to be bottom-left
                  would break zoom in one corner of the screen with nothing drawn
                  there to explain why.
-                 action-bar.ts and selected-unit.ts are the two screens spec 190
+                 action-bar.ts and selected-unit.ts are the two screens spec 192
                  added, and both are the chat's kind of furniture: docked in the
                  `hud` layer, no title bar, never dragged, nothing in the layout
                  store. The bar is five `SkillSlot`s -- the widget written for
@@ -794,16 +794,23 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  clamps at the floor for the state that box has before the
                  interface has laid itself out once: centring on nothing would
                  put the pool block over the experience strip.
-                 What centring means there is the **group** and not the bar, and
-                 that was got wrong first: the pools and the slots are one thing
-                 (spec 164), so centring the bar alone leaves the pair half a
-                 pool block to the left -- 12% of the group while the bar was
-                 484px of name-wide slots, 19% once it became 246px of squares,
-                 which is where somebody noticed. `poolReserve` is the single
-                 number both surfaces need; the DOM offsets its block by half the
-                 group and the dock reserves the whole of it on the left, which
-                 an `Anchor` turns into exactly that shift because it centres in
-                 whatever box the padding leaves.
+                 What is centred is the **bar**, and the pools hang off its
+                 left: the slots are what an eye goes to and what everything else
+                 centred on screen lines up with -- the experience strip that
+                 spans the frame, the death overlay, the loading bar -- so
+                 centring the whole band instead puts the slots visibly right of
+                 the frame's own middle. `POOL_TO_BAR_GAP` is the space *beside*
+                 the block and is its own number: sharing `poolGap`, which is the
+                 space *inside* it, had the two hugging.
+                 The bar's box carries a **`bottom`** as well as a size, and that
+                 is the fix for the one thing the DOM half could not be right
+                 about on its own. It knows what the frame's floor holds -- the
+                 experience strip -- and the interface adds its own margin above
+                 that, so a pool block placed at `bottomEdge` sat eight pixels
+                 below the row it was meant to be centred on. Measured and handed
+                 over, like the width, for the reason the width is: a second
+                 description of somebody else's layout is the mistake that put
+                 the chat log on the weapon switch.
                  Two more the first cut had, both of the same kind -- a rule that
                  held for wide buttons and not for squares. Every slot drew
                  `item:unknown`, because `abilityIconFor` had no row for spec
@@ -2395,7 +2402,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the only way to fill a slot -- a harness that wants
                  `ground.quake` on the bar should not have to loot a sigil for
                  it first.
-                 Since spec 190 none of that is DOM: the row is
+                 Since spec 192 none of that is DOM: the row is
                  `src/ui/screens/action-bar.ts` on the interface canvas, the
                  plan is pushed into the mount rather than into `hud.ts`, and a
                  slot draws an **icon** rather than a name -- every other slot in
@@ -2521,7 +2528,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  dies, the overlay only appears when you lose, and the button
                  only after that.
                  selection.ts and action-bar-model.ts are the two view-models
-                 spec 190 added, out here for the reason every other one is:
+                 spec 192 added, out here for the reason every other one is:
                  `src/ui/` may not reach the sim, so the replicated facts and the
                  content tables become plain rows on this side of the fence --
                  including *what a line is worth saying*, which is the division

@@ -51,7 +51,7 @@ function source(overrides: Partial<ActionBarSource> = {}): ActionBarSource {
   };
 }
 
-describe('actionBarViewOf (spec 190)', () => {
+describe('actionBarViewOf (spec 192)', () => {
   it('fills a slot from the plan and leaves an empty one empty', () => {
     const view = actionBarViewOf(source());
     expect(view.slots).toHaveLength(BAR.length);

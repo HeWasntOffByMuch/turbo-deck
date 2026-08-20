@@ -210,7 +210,7 @@ async function toCss(page: Page, at: { x: number; y: number }): Promise<{ x: num
 }
 
 /**
- * Every body the HUD is drawing a floating bar for, in CSS pixels (spec 190).
+ * Every body the HUD is drawing a floating bar for, in CSS pixels (spec 192).
  *
  * The bar's *anchor* rather than the body: the holder is pinned above the head,
  * so a press has to go some way below it to land on what it names. There is no
@@ -280,7 +280,7 @@ async function main(): Promise<void> {
     const further = await zoom(page);
     check(further > nearer, `a notch toward the player pushes it out (${nearer} -> ${further})`);
 
-    // The left button's second reading (spec 190). Everything the feature
+    // The left button's second reading (spec 192). Everything the feature
     // decides is asserted in Node -- that the decision reaches `selectionOf`,
     // that the panel draws what it is handed -- and none of it can say whether
     // a press on a body in the shipped page reaches any of it, which is the

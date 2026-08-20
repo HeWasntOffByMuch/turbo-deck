@@ -168,7 +168,7 @@ async function main(): Promise<void> {
 
     // --- the slots --------------------------------------------------------
     console.log('the action bar');
-    // The bar is on the interface canvas since spec 190, so there is no element
+    // The bar is on the interface canvas since spec 192, so there is no element
     // to ask: `hud-probe.ts` publishes each slot's box in CSS pixels, read back
     // off the *laid-out* row rather than computed here, which is the only way a
     // harness on this side can know where a canvas drew something.
