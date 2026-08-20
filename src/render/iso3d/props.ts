@@ -42,20 +42,54 @@ import {
  * Edge of one batching region, in world units. Big enough that the view holds
  * only a few (so the draw-call count stays low), small enough that a region is
  * a meaningful fraction of what is on screen (so culling actually bites).
+ *
+ * The trade it names was settled against a camera that could pull back to
+ * `MAX_VIEW_HALF_WIDTH`. At the opening zoom the view covers 711x881 of ground,
+ * so a region is larger than the whole frame and a region that clips it submits
+ * every tree in it -- measured over the shipped map, 413 props submitted to draw
+ * 99. Whether shrinking it is a win depends on something no reading here can
+ * answer: whether a GPU minds triangles or draw calls more. See
+ * {@link setPropRegionSize}.
  */
-const REGION_SIZE = 1100;
+export const PROP_REGION_SIZE = 1100;
 
 /**
- * The square the prop field batches by, in world units.
+ * The size in force, which is {@link PROP_REGION_SIZE} unless a measurement
+ * asked for another (spec 192).
  *
- * Exported since spec 086: the editor rebuilds the regions an edit touched
- * rather than the whole field, so it has to be able to name them.
+ * Module state, deliberately, and set exactly once before any prop is bucketed:
+ * `propRegionKey` is a free function called from both threads and from the
+ * editor, and threading a size through every one of them would be a refactor in
+ * service of a switch that exists to be thrown twice and read off a meter.
+ *
+ * The rule that keeps it safe is that **both threads must agree**, so the size
+ * rides the worker's `map` message rather than being read from the URL twice --
+ * a worker bucketing props at 1100 while the main thread asks for regions at 550
+ * is a field with holes in it.
  */
-export const PROP_REGION_SIZE = REGION_SIZE;
+let regionSize = PROP_REGION_SIZE;
+
+/** What the field is batching by right now. */
+export function propRegionSize(): number {
+  return regionSize;
+}
+
+/**
+ * Change it, before anything has been bucketed.
+ *
+ * Refuses anything that is not a positive finite number, because the failure it
+ * would otherwise produce -- `Math.floor(x / 0)` is `Infinity`, and every prop
+ * lands in one region called "Infinity,Infinity" -- is a blank world with no
+ * error anywhere.
+ */
+export function setPropRegionSize(size: number): void {
+  if (!Number.isFinite(size) || size <= 0) return;
+  regionSize = size;
+}
 
 /** Which batching region a world point falls in. */
 export function propRegionKey(x: number, z: number): string {
-  return `${Math.floor(x / REGION_SIZE)},${Math.floor(z / REGION_SIZE)}`;
+  return `${Math.floor(x / regionSize)},${Math.floor(z / regionSize)}`;
 }
 
 /** Seeds for the per-instance variation hashes, so the draws stay independent. */

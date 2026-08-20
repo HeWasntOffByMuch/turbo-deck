@@ -25,7 +25,7 @@ self.onmessage = (event: MessageEvent<MapWorkerRequest>): void => {
   const request = event.data;
   switch (request.kind) {
     case 'map':
-      core.setMap(request.info);
+      core.setMap(request.info, request.propRegionSize);
       return;
     case 'chunk':
       for (const out of core.addChunk(request.held)) reply(out);

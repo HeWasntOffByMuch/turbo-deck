@@ -15,7 +15,17 @@ import type { WorldRect } from './chunk-ingest.js';
 
 export type MapWorkerRequest =
   /** A fresh map. Everything held is dropped: a different `mapId` is different ground. */
-  | { readonly kind: 'map'; readonly info: MapInfoMessage }
+  | {
+      readonly kind: 'map';
+      readonly info: MapInfoMessage;
+      /**
+       * What to batch props by (spec 192). Rides the map rather than being read
+       * from the URL on both threads, because the two must agree: a worker
+       * bucketing at 1100 while the main thread asks for regions at 550 is a
+       * prop field with holes in it.
+       */
+      readonly propRegionSize: number;
+    }
   /** One arrival, to be inserted and meshed along with whatever it dirtied. */
   | { readonly kind: 'chunk'; readonly held: HeldChunk }
   /** Build a grid over everything held so far. */

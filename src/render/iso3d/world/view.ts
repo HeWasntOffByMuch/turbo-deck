@@ -65,7 +65,7 @@ import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud } from './hud.js';
 import { ChunkIngest } from './chunk-ingest.js';
-import { parsePerfFlags } from './perf-flags.js';
+import { parsePerfFlags, parsePropRegionSize } from './perf-flags.js';
 import { FrameBudget } from './frame-budget.js';
 import { createMapWorker } from './map-worker-client.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
@@ -73,7 +73,7 @@ import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { CostMeter, FrameMeter } from './fps-meter.js';
 import { createFpsOverlay } from './fps-overlay.js';
-import { PROP_REGION_SIZE } from '../props.js';
+import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize } from '../props.js';
 import {
   abilityForSlot,
   actionBarFor,
@@ -423,6 +423,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // setting. See perf-flags.ts for why the frame is being taken apart this way.
   const perfFlags = parsePerfFlags(location.search);
   scene.setPerfFlags(perfFlags);
+  // Before a single prop is bucketed (spec 192), and before the worker is told
+  // about the map -- the size rides that message, so both threads agree by
+  // construction rather than by both happening to read the same URL.
+  setPropRegionSize(parsePropRegionSize(location.search) ?? PROP_REGION_SIZE);
   let streamed: StreamedMap | null = null;
   /**
    * The meshing queue and the prop-region bookkeeping (spec 165).
@@ -433,7 +437,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   const ingest = new ChunkIngest({
     settleMs: PROP_SETTLE_MS,
-    regionSize: PROP_REGION_SIZE,
+    regionSize: propRegionSize(),
     regionsPerFlush: PROP_REGIONS_PER_FRAME,
     incompleteHoldMs: PROP_INCOMPLETE_HOLD_MS,
   });
@@ -585,7 +589,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // Both sides are then fed the same chunks in the same order, and neither
       // is authoritative over the other -- this side answers `heightAt` now,
       // that side answers what the ground looks like later.
-      mapWorker.send({ kind: 'map', info: map.info });
+      mapWorker.send({ kind: 'map', info: map.info, propRegionSize: propRegionSize() });
       // Reported, not acted on (spec 146). Under 144 a mismatch turned
       // prediction off, because the alternative was colliding against a forest
       // the server did not have; now the colliders come from the stream either

@@ -19,6 +19,10 @@
  * back if a worker turns out to be the problem rather than the fix.
  *
  * Pure: a string in, five booleans out.
+ *
+ * `?props=` (spec 192) sits beside them and is not a boolean, because the
+ * question it answers is not "what does this cost" but "what size should this
+ * be" -- and the honest way to answer that is to try three and read the meter.
  */
 
 export interface PerfFlags {
@@ -49,6 +53,21 @@ const NONE: PerfFlags = {
  * by hand and by a probe, and a typo that silently measures the baseline is a
  * better failure than one that refuses to load the page.
  */
+/**
+ * Read `?props=` as the prop field's batching region, in world units.
+ *
+ * Null when absent or unusable, so the caller keeps `PROP_REGION_SIZE` rather
+ * than being handed a number to validate. Zero and negatives are refused here
+ * rather than downstream: `Math.floor(x / 0)` is `Infinity`, which buckets every
+ * prop in the world into one region and draws a blank field with no error.
+ */
+export function parsePropRegionSize(search: string): number | null {
+  const raw = new URLSearchParams(search).get('props');
+  if (raw === null || raw === '') return null;
+  const size = Number(raw);
+  return Number.isFinite(size) && size > 0 ? size : null;
+}
+
 export function parsePerfFlags(search: string): PerfFlags {
   const raw = new URLSearchParams(search).get('perf');
   if (raw === null || raw === '') return NONE;
