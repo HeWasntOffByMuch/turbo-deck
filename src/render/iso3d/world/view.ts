@@ -2507,8 +2507,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // (spec 188). Pushed rather than remembered, for the reason the window
     // buttons are: the equipment is the state, and a bar that kept its own copy
     // would be a second opinion about what the player is carrying -- which is
-    // exactly what a swap the server refused would leave behind. `setSlots`
-    // compares before it rebuilds, so a resend that changed nothing is free.
+    // exactly what a swap the server refused would leave behind. `sameBar`
+    // compares before anything is pushed, so a resend that changed nothing is
+    // free -- and the array pushed is the same one the *keys* are resolved
+    // against below, which is the rule spec 164 wrote `action-bar.ts` for.
     if (forcedBar === null) {
       const next = actionBarFor(view.equipment);
       if (!sameBar(next, actionBar)) {
