@@ -33,19 +33,6 @@ export interface BoxSize {
 export interface HudLayout {
   /** Whether this is the finger-sized HUD. */
   readonly compact: boolean;
-  /** One hotbar slot. Square when compact, so it is a target before it is a label. */
-  readonly slot: BoxSize;
-  readonly slotGap: number;
-  /**
-   * The countdown drawn over a slot on cooldown, in font pixels (spec 164).
-   *
-   * A scale rather than a point size since the whole bottom band moved to the
-   * game's own 5x7 face -- there is no `slotFontPx` beside it any more, because
-   * nothing in a slot is set in the browser's type.
-   */
-  readonly slotCountdownScale: number;
-  /** Whether a slot shows the keyboard number that casts it. */
-  readonly showsKeyNumber: boolean;
   /** Whether the diagnostic readout is drawn (it is written either way). */
   readonly showsReadout: boolean;
   /**
@@ -120,21 +107,6 @@ export interface HudLayout {
    * pixel to spare either side -- `poolLabelFits` below is that sum.
    */
   readonly poolScale: number;
-  /** The vial's charge count, and the slot's key number, in font pixels. */
-  readonly slotCountScale: number;
-  readonly slotKeyScale: number;
-  /** The ability name on a slot. One, because a name has to fit the box. */
-  readonly slotNameScale: number;
-  /**
-   * Whether a filled slot draws an icon instead of the ability's name.
-   *
-   * True on a finger, where the slot is a 46px square and no name in the table
-   * fits it in the game's own font at any scale -- "THROWING STAR" is 79 font
-   * pixels wide and the box has 42. The compact HUD already answers this
-   * question the same way everywhere else it is asked: the weapon switch and the
-   * window buttons are icons there and captions on a desktop.
-   */
-  readonly slotIconOnly: boolean;
   /** The hover line under the experience strip. */
   readonly xpDetailScale: number;
   /**
@@ -156,10 +128,6 @@ export interface HudLayout {
 
 const DESKTOP: HudLayout = {
   compact: false,
-  slot: { width: 92, height: 46 },
-  slotGap: 6,
-  slotCountdownScale: 3,
-  showsKeyNumber: true,
   showsReadout: true,
   showsTuningMenus: true,
   showsWeaponSwitch: true,
@@ -192,10 +160,6 @@ const DESKTOP: HudLayout = {
   pool: { width: 150, height: 20 },
   poolGap: 4,
   poolScale: 2,
-  slotCountScale: 1,
-  slotKeyScale: 2,
-  slotNameScale: 1,
-  slotIconOnly: false,
   xpDetailScale: 2,
   captionScale: 1,
   respawnScale: 3,
@@ -213,10 +177,6 @@ const DESKTOP: HudLayout = {
  */
 const COMPACT: HudLayout = {
   compact: true,
-  slot: { width: 46, height: 46 },
-  slotGap: 5,
-  slotCountdownScale: 2,
-  showsKeyNumber: false,
   showsReadout: false,
   showsTuningMenus: false,
   showsWeaponSwitch: false,
@@ -245,10 +205,6 @@ const COMPACT: HudLayout = {
   pool: { width: 104, height: 14 },
   poolGap: 4,
   poolScale: 1,
-  slotCountScale: 1,
-  slotKeyScale: 2,
-  slotNameScale: 1,
-  slotIconOnly: true,
   xpDetailScale: 2,
   captionScale: 1,
   respawnScale: 2,
@@ -272,14 +228,54 @@ export function stripHeight(box: BoxSize, gap: number, count: number): number {
 }
 
 /**
+ * The box the action bar occupies, in CSS pixels (spec 190).
+ *
+ * Told rather than derived, and that is the whole of what moved: the bar is
+ * drawn on the interface canvas now, so how big it is is a fact about the UI
+ * scale the player chose and this file has no business having an opinion about
+ * it. Everything else along that edge still has to clear it, which is what this
+ * type is for.
+ *
+ * Zero before the interface has laid itself out once, which is a real state and
+ * the reason every consumer below takes the number rather than reading a
+ * constant: a bar of no width puts the pool block in the middle for one frame,
+ * where a guessed constant would put it in the wrong place forever.
+ */
+/**
+ * How big one action-bar slot is, in CSS pixels (spec 190).
+ *
+ * Here rather than in `src/ui/screens/action-bar.ts` because it is the same
+ * kind of number as {@link MIN_TAP_PX} beside it and answers the same question:
+ * how big a thing a finger has to be able to hit. The interface draws the bar
+ * and states its own sizes in *UI* pixels, but the UI scale is chosen by two
+ * different constraints at the two ends of the range -- a phone's by how many
+ * device pixels a finger covers, a desktop's by how much has to fit -- so a
+ * fixed number of UI pixels is finger-sized on one and absurd on the other.
+ * `UiLayer` converts this through the scale, which is the one place the two
+ * kinds of pixel meet.
+ *
+ * 46 rather than 44 for the reason the compact HUD's square was 46: the extra
+ * two are what let five of them plus their gaps sit comfortably inside an 844px
+ * frame with both corners still clear.
+ */
+export const ACTION_SLOT_CSS = 46;
+
+export interface ActionBarBox {
+  readonly width: number;
+  readonly height: number;
+}
+
+export const NO_ACTION_BAR: ActionBarBox = { width: 0, height: 0 };
+
+/**
  * The gap between the left edge of a centred hotbar and the frame's edge.
  *
  * Negative would mean the hotbar is wider than the frame; anything less than the
  * weapon row's width means the two overlap, which is a button that cannot be
  * pressed because another button is on top of it.
  */
-export function centredClearance(layout: HudLayout, slots: number, frameWidth: number): number {
-  return (frameWidth - stripWidth(layout.slot, layout.slotGap, slots)) / 2;
+export function centredClearance(bar: ActionBarBox, frameWidth: number): number {
+  return (frameWidth - bar.width) / 2;
 }
 
 /**
@@ -291,8 +287,8 @@ export function centredClearance(layout: HudLayout, slots: number, frameWidth: n
  * anything less than the weapon switch's width means the two overlap, which is
  * the same failure {@link centredClearance} exists to catch one group over.
  */
-export function poolClearance(layout: HudLayout, slots: number, frameWidth: number): number {
-  return centredClearance(layout, slots, frameWidth) - layout.poolGap - layout.pool.width;
+export function poolClearance(layout: HudLayout, bar: ActionBarBox, frameWidth: number): number {
+  return centredClearance(bar, frameWidth) - layout.poolGap - layout.pool.width;
 }
 
 /**
@@ -316,8 +312,16 @@ export function poolBlockHeight(layout: HudLayout): number {
  * mistake rather than as a decision because everything else along that edge
  * lines up.
  */
-export function poolBottom(layout: HudLayout): number {
-  return bottomEdge(layout) + Math.round((layout.slot.height - poolBlockHeight(layout)) / 2);
+export function poolBottom(layout: HudLayout, bar: ActionBarBox): number {
+  // Clamped at the floor since spec 190, and the clamp is the whole difference:
+  // the bar is drawn at the interface's scale now, so it can be *shorter* than
+  // the block beside it -- on a display where `autoUiScale` picks 1, a slot is
+  // 20 CSS pixels and two pool bars stacked are 44. Centring on something
+  // shorter than you are means hanging below it, and below the floor is the
+  // experience strip, which is the one thing along this edge nothing may sit on.
+  // So the two share a floor where the bar cannot hold the block, and the block
+  // is centred on the bar wherever it can be.
+  return bottomEdge(layout) + Math.max(0, Math.round((bar.height - poolBlockHeight(layout)) / 2));
 }
 
 /**

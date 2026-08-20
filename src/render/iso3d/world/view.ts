@@ -917,10 +917,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // that a line somebody else said turns up on this screen.
     const chatRects = boxes(readout.chatRects);
     const chat = `${readout.chat.join(';')}|${String(readout.chatOpen)}|${readout.chatInput}|${chatRects}`;
+    // The bar (spec 190) and the mini HUD beside it. Both are drawn to the
+    // interface canvas, so neither has an element a harness could ask -- and
+    // both are claims about *what is on screen* rather than about a number in a
+    // model, which is the half a Node test cannot reach.
+    const barSlots = boxes(readout.barSlots);
+    const selectedRows = readout.selectedRows.join(';');
+    const selected = `${readout.selected}|${selectedRows}|${readout.selectedRect ? 'shown' : 'hidden'}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
       `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
-      `|${trade}|${tradeRects}|${chat}`;
+      `|${trade}|${tradeRects}|${chat}|${barSlots}|${selected}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
@@ -942,6 +949,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiTradeYou'] = readout.tradeYou;
     root.dataset['uiTradeThem'] = readout.tradeThem;
     root.dataset['uiTradeRects'] = tradeRects;
+    root.dataset['uiBarSlots'] = barSlots;
+    root.dataset['uiSelected'] = readout.selected;
+    root.dataset['uiSelectedRows'] = selectedRows;
     root.dataset['uiChat'] = readout.chat.join(';');
     root.dataset['uiChatOpen'] = String(readout.chatOpen);
     root.dataset['uiChatInput'] = readout.chatInput;
@@ -969,10 +979,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   const forcedBar = actionBarFromQuery(location.search);
   let actionBar: readonly ActionSlot[] = forcedBar ?? ACTION_BAR;
-  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift), actionBar);
+  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
   /** The overlay's current box, so it is only rewritten when the letterbox moves. */
   let hudBox = { x: -1, y: -1, width: -1, height: -1 };
-  hud.onUse((abilityId) => pressAbility(abilityId));
   // Picking a weapon is an ordinary equip (spec 079): the server puts it in the
   // hand, recomputes the stat block, and the new `basicAttackId` comes back on
   // `Stats`. Nothing here decides what the right-click then does -- the next
@@ -1271,7 +1280,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     onSay: (text) => {
       client.say(text);
     },
+    // A slot was pressed on the bar (spec 190). The same `pressAbility` a key
+    // calls, because the bar and the keyboard reach one ability list.
+    onCastSlot: (abilityId) => {
+      pressAbility(abilityId);
+    },
   });
+
+  // The bar is on the interface canvas now (spec 190), so two facts have to
+  // cross once at the mount: what the frame's floor already holds -- the
+  // experience strip, which spans the whole width -- and, when `?slots=` forced
+  // a bar, which bar. The ordinary case is pushed per frame off the equipment.
+  ui.setActionBarFloorCss(hud.floorCss);
+  ui.setActionBarSlotCss(hud.slotSideCss);
+  if (forcedBar) ui.setActionBarPlan(forcedBar);
 
   // The other half of that, and the half that had never been connected to
   // anything: `GameClient.onChat` has existed since the protocol did and its
@@ -2490,9 +2512,19 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       const next = actionBarFor(view.equipment);
       if (!sameBar(next, actionBar)) {
         actionBar = next;
-        hud.setSlots(next);
+        ui.setActionBarPlan(next);
       }
     }
+    // The slot an aim came from, lit in the aim's own colour (spec 080), so the
+    // question on the ground and the button it came from are one thing. Pushed
+    // rather than read, because the interface may not reach into the game.
+    ui.setAiming(pendingAim?.abilityId ?? null);
+    // ...and back the other way: everything left along the bottom edge is placed
+    // against the bar, and the bar is now drawn on the interface canvas at the
+    // player's own scale (spec 190). The measured row rather than a second sum,
+    // because a second description of somebody else's layout is the mistake that
+    // put the chat log on the weapon switch.
+    hud.setActionBar(ui.actionBarBoxCss());
     hud.update(
       view,
       scene.screenAnchors(),

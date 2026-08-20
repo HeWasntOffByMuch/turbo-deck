@@ -601,9 +601,9 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  a property over the whole easing table instead of a claim each
                  widget has to remember. text/ is the two bitmap faces; theme/ is theme.json plus the
                  atlas authored as text; widgets/ is the nine; screens/ is the
-                 nine (the HUD, the bag, the sheet, the shop, the keybindings,
-                 the trade table, the options window, its display page and the
-                 chat);
+                 eleven (the HUD, the bag, the sheet, the shop, the keybindings,
+                 the trade table, the options window, its display page, the
+                 chat, the action bar and the selected-unit readout);
                  input/ is the actions, the control map and the two preferences
                  that
                  outlive a session -- the bindings and the interface scale, each
@@ -738,6 +738,60 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that took it whenever the cursor happened to be bottom-left
                  would break zoom in one corner of the screen with nothing drawn
                  there to explain why.
+                 action-bar.ts and selected-unit.ts are the two screens spec 190
+                 added, and both are the chat's kind of furniture: docked in the
+                 `hud` layer, no title bar, never dragged, nothing in the layout
+                 store. The bar is five `SkillSlot`s -- the widget written for
+                 the job in spec 128 and mounted nowhere but the gallery for
+                 sixty specs, while the shipped bar was five `<button>`s of
+                 inline `cssText` with their own borders, their own dimming and
+                 their own cooldown shade. Two implementations is two answers to
+                 "what does a slot on cooldown look like", and the shipped one
+                 was the one nothing could test: `hud-layout.test.ts` could
+                 assert the *sum* of the boxes and no test in the tree could
+                 assert what was drawn in one. There are five golden frames of
+                 it now, which is five more than the bar has ever had.
+                 The one thing about it that is not simply "the framework's own
+                 slot" is that **its size is told rather than chosen**, and the
+                 reason is worth knowing because it is the trap: a bag cell is a
+                 thing you look at and these are **tap targets**, and the
+                 interface scale is picked by two different constraints at the
+                 two ends of the range -- a phone's by how many device pixels a
+                 finger covers, a desktop's by how much has to fit on screen.
+                 There is no single number of UI pixels that is right at both:
+                 20 is a row of 20 CSS-pixel squares on a desktop, and 40 is
+                 107 CSS pixels tall on a 390-pixel phone. So `ACTION_SLOT_CSS`
+                 lives in `hud-layout.ts` beside `MIN_TAP_PX`, which is the file
+                 that has always stated how big a thing a finger must hit, and
+                 `ui-layer.ts` converts it -- the one place the two kinds of
+                 pixel meet. The conversion is re-applied on every resize, since
+                 the scale is what it turns on.
+                 That the bar left the DOM is also why `HudLayout` no longer has
+                 a `slot`: `centredClearance`, `poolClearance` and `poolBottom`
+                 take the bar's **measured** box instead, pushed back across as
+                 CSS pixels, because a second calculation of the bar's width on
+                 the DOM side would be a second description of this one -- the
+                 mistake that put the chat log on the weapon switch. `poolBottom`
+                 clamps at the floor for the state that box has before the
+                 interface has laid itself out once: centring on nothing would
+                 put the pool block over the experience strip.
+                 selected-unit.ts is the readout in the opposite corner, and its
+                 four rules are the chat's and the stun swirl's over again.
+                 **Nothing is drawn when nothing is selected** -- settled before
+                 the has-anything-changed early-out, because an empty selection
+                 is the one state that matches what is already on screen, which
+                 is exactly the trap an empty chat log falls into. **The eight
+                 status rows are shown and hidden**, never created, so a fight
+                 costs field writes. **The pointer passes straight through**,
+                 everywhere: the world is underneath and a readout that took a
+                 click would be a hole in the game in one corner of the screen.
+                 And **the fade is `textDim` rather than an opacity**, because
+                 nothing in this framework blends. Its width is fixed, which is
+                 the one thing it overrides `measureSelf` for: anchored to the
+                 *right* edge, a width that followed the longest row would slide
+                 its left edge inward every time a status expired, and a readout
+                 that moves while you are reading it is worse than one that is
+                 sometimes wider than it needs to be.
                  `world/chat-log.ts` is the client state beside it -- a capped
                  scrollback, a ring of the lines this player sent, and the one
                  timestamp `revealAt` measures. Pure, and stamped with the
@@ -2166,21 +2220,22 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  It is pushed into the HUD every frame rather than remembered,
                  for the reason the window buttons are pushed: the equipment is
                  the state, and a bar that kept its own copy would be a second
-                 opinion about what the player is carrying. `setSlots` compares
-                 the ids before it rebuilds, so a resend that changed nothing is
-                 free, and it *rebuilds* rather than editing five labels because
-                 a slot's markup differs by kind and a partial edit would be a
-                 second copy of the eighty lines that build one. `?slots=` still
-                 exists and now **overrides** the equipped skills rather than
-                 being the only way to fill a slot -- a harness that wants
+                 opinion about what the player is carrying. `?slots=` still
+                 exists and **overrides** the equipped skills rather than being
+                 the only way to fill a slot -- a harness that wants
                  `ground.quake` on the bar should not have to loot a sigil for
-                 it first. `barNameOf` is what a slot draws: the bar sets a name
-                 in the game's own 5x7 face at a whole-number scale, so a 92px
-                 slot holds fifteen characters and there is no smaller size to
-                 fall back to. That was never worth stating while every row was
-                 under it; "Crippling Strike" is sixteen and makes it a rule,
-                 with `shortName` the authored answer and `hud-layout.test.ts`
-                 failing the row that stops obeying it.
+                 it first.
+                 Since spec 190 none of that is DOM: the row is
+                 `src/ui/screens/action-bar.ts` on the interface canvas, the
+                 plan is pushed into the mount rather than into `hud.ts`, and a
+                 slot draws an **icon** rather than a name -- every other slot in
+                 the game is a square with a sprite in it, and no name in the
+                 table fits at any size that face has there. `barNameOf` and its
+                 authored `shortName` survive as `AbilityView.name`, the
+                 ability's name-where-space-is-tight handed to the widget for
+                 whatever names a slot next, and `action-bar-model.test.ts` keeps
+                 them honest now that `hud-layout.test.ts` has no slot to measure
+                 a name against.
                  xp-bar.ts measures against the server's own
                  `experienceForLevel` rather than a copy of the curve, because
                  the strip and the character sheet disagreeing about how far
@@ -2295,6 +2350,35 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  session without a fight -- the strip only moves when something
                  dies, the overlay only appears when you lose, and the button
                  only after that.
+                 selection.ts and action-bar-model.ts are the two view-models
+                 spec 190 added, out here for the reason every other one is:
+                 `src/ui/` may not reach the sim, so the replicated facts and the
+                 content tables become plain rows on this side of the fence --
+                 including *what a line is worth saying*, which is the division
+                 the item tooltip already keeps. selection.ts is what the mini
+                 HUD is handed, and the whole reason it is a module rather than
+                 four lines in `view.ts` is that its statuses come from
+                 **`statusMarks`** -- the same function the marks over the head
+                 are built from, so the corner panel and the body are two views
+                 of one list rather than two answers about whether something has
+                 expired. `StatusMark` gained `ticksLeft` for it: a count rather
+                 than seconds, for the reason `FADE_TICKS` is one.
+                 What selects a body is the **left button**, and it is one
+                 action with two readings in exactly the shape `world.order`
+                 already has: with an aim pending it commits to it, with none it
+                 names what is under the cursor, and a click on nothing clears
+                 it. Two bindings a player could put on two different buttons is
+                 not a preference. The id does not move -- `world.confirmAim` is
+                 what a stored profile references and spec 189 is explicit that a
+                 rename is a binding silently discarded -- only the label, which
+                 is `Select / aim` rather than `Select / confirm aim` because the
+                 longer one measures 139px against a 114px column and
+                 `keybindings.test.ts` catches it: the face is drawn rather than
+                 typeset, so a clipped label fails in silence. Nothing about a
+                 selection is replicated and the server is never told; it is a
+                 camera decision rather than a game one, and deliberately not an
+                 attack order either, since a readout that also started a fight
+                 would make looking at a body dangerous.
                  inventory-model.ts, character-model.ts and shop-model.ts (what
                  the bag, the sheet and the shop are handed -- `src/ui/` may not
                  reach the sim, so the replicated facts and the content tables

@@ -193,6 +193,11 @@ const PURE_RENDER = [
   // hold -- and, more to the point, the file that makes the corner panel and
   // the mark over the same body two readings of one list rather than two.
   'src/render/iso3d/world/selection.ts',
+  // The action bar's view-model (spec 190). The bar moved onto the interface
+  // canvas, so what a slot draws -- its wedge, its badge, why it is lit -- is a
+  // mapping from replicated facts to plain rows, and a mapping is checked in
+  // Node rather than photographed.
+  'src/render/iso3d/world/action-bar-model.ts',
   // The interface's tree, its windows and what they are handed (spec 131). The
   // whole mount except the canvas, kept pure for one specific reason: mounting
   // an interface over the sim gets the same assertion animation got -- the same

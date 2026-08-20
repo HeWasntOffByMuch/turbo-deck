@@ -21,6 +21,7 @@ import type {
   WindowsRenderOptions,
   TradeRenderOptions,
   ChatRenderOptions,
+  WorldHudRenderOptions,
 } from './render.js';
 
 export interface GoldenCase {
@@ -114,6 +115,48 @@ export const CHAT_GOLDEN_CASES: readonly ChatGoldenCase[] = [
     name: 'chat-leaving',
     options: { closed: true, reveal: 0.45 },
     covers: 'the wipe half done, clipped from the top so the newest line is the last to go',
+  },
+];
+
+export interface WorldHudGoldenCase {
+  readonly name: string;
+  readonly options: WorldHudRenderOptions;
+  readonly covers: string;
+}
+
+/**
+ * The band the Play tab draws over the world with no window open (spec 190).
+ *
+ * The first goldens the action bar has ever had: it was five `<button>`s of
+ * inline `cssText` until this spec, so what a slot on cooldown looked like was
+ * only ever checkable by photographing a browser -- which is to say, by nobody,
+ * in CI.
+ */
+export const WORLD_HUD_GOLDEN_CASES: readonly WorldHudGoldenCase[] = [
+  {
+    name: 'world-hud',
+    options: {},
+    covers: 'the resting band: two filled slots, two empty, the vial with its charges, and a body’s statuses in the corner',
+  },
+  {
+    name: 'world-hud-busy',
+    options: { cooldowns: { 0: 0.75, 2: 0.3 }, poor: true, highlight: { slot: 2, kind: 'aimed' } },
+    covers: 'two wedges at different depths, what cannot be paid for, and the slot an aim came from',
+  },
+  {
+    name: 'world-hud-swapping',
+    options: { change: { slot: 1, progress: 0.55 }, highlight: { slot: 0, kind: 'casting' } },
+    covers: 'a skill going into an empty slot, beside the slot that is mid-cast',
+  },
+  {
+    name: 'world-hud-alone',
+    options: { noSelection: true },
+    covers: 'nothing selected: the bar alone, and no panel frame in the corner at all',
+  },
+  {
+    name: 'world-hud-dead',
+    options: { dead: true },
+    covers: 'a body that is down, which says the word rather than reading 0/60',
   },
 ];
 

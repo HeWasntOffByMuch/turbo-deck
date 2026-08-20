@@ -34,6 +34,13 @@ import {
   type SkillView,
 } from '../screens/character.js';
 import { ChatScreen, chatInsets, type ChatLineView } from '../screens/chat.js';
+import { ActionBarScreen, actionBarInsets, type SlotHighlight } from '../screens/action-bar.js';
+import type { AbilityView } from '../widgets/skill-slot.js';
+import {
+  SelectedUnitScreen,
+  selectedUnitInsets,
+  type StatusRowView,
+} from '../screens/selected-unit.js';
 import { ShopScreen, type ShopRow, type ShopView } from '../screens/shop.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
@@ -665,6 +672,119 @@ export function renderChat(options: ChatRenderOptions = {}): ChatFrame {
   replay(surface, root.paint().finish());
 
   return { surface, root, chat };
+}
+
+/**
+ * The two things the Play tab draws over the world with no window open
+ * (spec 190): the action bar along the bottom and the mini HUD in the corner.
+ *
+ * One frame rather than two, because what a person reading a diff needs to see
+ * is the *band* -- five slots at the framework's own size, a panel in the
+ * opposite corner, and neither of them touching the other. Two frames would
+ * halve the ink and hide exactly the thing a golden is for.
+ */
+export interface WorldHudFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly bar: ActionBarScreen;
+  readonly selected: SelectedUnitScreen;
+}
+
+export interface WorldHudRenderOptions {
+  readonly viewport?: Size;
+  /** Nothing selected, which is what most of a session looks like. */
+  readonly noSelection?: boolean;
+  /** A body at the end of its life, so the bar says the word rather than 0/60. */
+  readonly dead?: boolean;
+  /** Slot index -> fraction of its cooldown still to run. */
+  readonly cooldowns?: Readonly<Record<number, number>>;
+  /** Resource left, so the unaffordable frame is in the picture. */
+  readonly poor?: boolean;
+  /** Which slot is lit, and why. */
+  readonly highlight?: { readonly slot: number; readonly kind: SlotHighlight };
+  /** A skill-slot change in flight over a slot (spec 188). */
+  readonly change?: { readonly slot: number; readonly progress: number };
+}
+
+/** The four skills and the vial, as a fresh character with two sigils has them. */
+const DEMO_BAR: readonly (AbilityView | null)[] = [
+  { id: 'melee.heavy', name: 'Heavy', icon: 'ability:heavy', cost: 12, sweep: 0, affordable: true, secondsLeft: 0 },
+  null,
+  { id: 'ground.quake', name: 'Quake', icon: 'ability:quake', cost: 22, sweep: 0, affordable: true, secondsLeft: 0 },
+  null,
+  { id: 'self.hearthdraught', name: 'Draught', icon: 'item:potion', cost: 0, sweep: 0, affordable: true, secondsLeft: 0 },
+];
+
+/** A grazer with one of each kind on it, so both tones are in the frame. */
+const DEMO_STATUSES: readonly StatusRowView[] = [
+  { id: 'flow', label: 'Flow x2', remaining: '1.2s', tone: 'boon', fading: false },
+  { id: 'exposed', label: 'Exposed', remaining: '4.0s', tone: 'affliction', fading: false },
+  { id: 'sundered', label: 'Sundered', remaining: '0.1s', tone: 'affliction', fading: true },
+];
+
+export function renderWorldHud(options: WorldHudRenderOptions = {}): WorldHudFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const layers = new LayerStack();
+
+  // The size the mount converts `ACTION_SLOT_CSS` into on a desktop, which is
+  // where a person reading a diff is: a golden of a slot at the widget's bare
+  // default would be a picture of a size the game never draws.
+  const bar = new ActionBarScreen({ theme, slotCount: DEMO_BAR.length, slotSide: 46 });
+  const barDock = new Anchor('barDock');
+  barDock.pointerTransparent = true;
+  barDock.padding = actionBarInsets(theme, 0);
+  barDock.place(bar, 'bottom');
+  layers.place('hud', barDock);
+
+  const selected = new SelectedUnitScreen({ theme });
+  const selectedDock = new Anchor('selectedDock');
+  selectedDock.pointerTransparent = true;
+  selectedDock.padding = selectedUnitInsets(theme, 0);
+  selectedDock.place(selected, 'topRight');
+  layers.place('hud', selectedDock);
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, layers });
+
+  bar.setView({
+    slots: DEMO_BAR.map((entry, index) => ({
+      ability:
+        entry === null
+          ? null
+          : {
+              ...entry,
+              sweep: options.cooldowns?.[index] ?? 0,
+              secondsLeft: (options.cooldowns?.[index] ?? 0) * 8,
+              affordable: options.poor !== true || entry.cost === 0,
+            },
+      keyLabel: String(index + 1),
+      badge: index === DEMO_BAR.length - 1 ? '2/3' : '',
+      highlight: options.highlight?.slot === index ? options.highlight.kind : null,
+      change:
+        options.change?.slot === index ? { label: 'EQUIP', progress: options.change.progress } : null,
+    })),
+  });
+
+  selected.setView(
+    options.noSelection === true
+      ? null
+      : {
+          name: 'Grazer',
+          detail: 'Lv 3',
+          health: options.dead === true ? { current: 0, max: 60 } : { current: 41, max: 60 },
+          dead: options.dead === true,
+          statuses: DEMO_STATUSES,
+        },
+  );
+
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, bar, selected };
 }
 
 /**

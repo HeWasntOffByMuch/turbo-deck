@@ -34,6 +34,8 @@ import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import type { WindowId } from './control-actions.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
+import type { ActionSlot } from './action-bar.js';
+import { NO_ACTION_BAR, type ActionBarBox } from './hud-layout.js';
 import { DEFAULT_SHOW_FPS, type ScaleChoice } from '../../../ui/input/display-store.js';
 
 export type { WindowId } from './control-actions.js';
@@ -96,6 +98,17 @@ export interface UiReadout {
   readonly chat: readonly string[];
   readonly chatOpen: boolean;
   readonly chatInput: string;
+  /**
+   * The mini HUD and the action bar (spec 190), for the reason the chat is here.
+   *
+   * `selected` is `name|detail` and empty for nothing selected; `selectedRows`
+   * is each status as `label|remaining|tone`; `barSlots` is each slot keyed by
+   * the ability it holds, with an empty id for one nothing has been put in yet.
+   */
+  readonly selected: string;
+  readonly selectedRows: readonly string[];
+  readonly selectedRect: Rect | null;
+  readonly barSlots: readonly { readonly id: string; readonly rect: Rect }[];
   readonly chatRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
@@ -246,6 +259,8 @@ export class UiLayer {
   private measuredBand = 0;
   /** ...and the top-right corner's, on the same terms (spec 190). */
   private measuredRight = 0;
+  /** How big an action-bar slot should be, in CSS pixels. See below. */
+  private slotSideCss = 0;
 
   private applyCssSize(): void {
     this.element.style.width = `${this.frame.cssWidth}px`;
@@ -352,6 +367,7 @@ export class UiLayer {
     this.screens.setSafeTop(this.toUi({ x: 0, y: chromeBottomCss() }).y);
     this.applySafeBottom();
     this.applySafeTopRight();
+    this.applySlotSide();
     // The canvas's backing store was just reallocated, so whatever was on it is
     // gone -- and the same draw list would otherwise be skipped as unchanged and
     // leave the interface blank until something moved.
@@ -402,6 +418,81 @@ export class UiLayer {
 
   moveFocus(step: number): void {
     this.screens.moveFocus(step);
+  }
+
+  // --- the action bar (spec 190) ---------------------------------------------
+
+  /** Replace what the five slots hold. See `UiScreens.setActionBarPlan`. */
+  setActionBarPlan(plan: readonly ActionSlot[]): void {
+    this.screens.setActionBarPlan(plan);
+  }
+
+  /** Which ability is being aimed, so the slot it came from is lit (spec 080). */
+  setAiming(abilityId: string | null): void {
+    this.screens.setAiming(abilityId);
+  }
+
+  /**
+   * The box the bar occupies, in **CSS** pixels.
+   *
+   * The one conversion this file exists for, run the other way round: everything
+   * the DOM HUD still draws along the bottom edge is placed against the bar, and
+   * the bar is measured in UI pixels at whatever scale the player chose. Zero
+   * before the interface has laid itself out once, which is a real state and one
+   * the HUD is written to survive.
+   */
+  actionBarBoxCss(): ActionBarBox {
+    const rect = this.screens.actionBarBox();
+    if (!rect) return NO_ACTION_BAR;
+    const dpr = globalThis.devicePixelRatio || 1;
+    const perUi = this.frame.scale / dpr;
+    return { width: Math.round(rect.width * perUi), height: Math.round(rect.height * perUi) };
+  }
+
+  /**
+   * How much of the frame's floor the DOM HUD has reserved, in CSS pixels.
+   *
+   * Converted here rather than by the caller, because this file is where UI
+   * pixels and CSS pixels meet and a second conversion anywhere else is a second
+   * answer. A *distance* rather than a point, so it is the gap between two.
+   */
+  setActionBarFloorCss(cssPixels: number): void {
+    this.screens.setActionBarFloor(this.toUi({ x: 0, y: cssPixels }).y - this.toUi({ x: 0, y: 0 }).y);
+  }
+
+  /**
+   * How big one slot should be, converted from CSS pixels (spec 190).
+   *
+   * Re-applied on every resize rather than pushed once, because the scale is
+   * what the conversion turns on: a player who picks a chunkier interface gets
+   * *fewer* UI pixels for the same physical square, and a bar that kept the old
+   * number would be the one thing on the canvas drawn at the previous scale.
+   */
+  setActionBarSlotCss(cssPixels: number): void {
+    this.slotSideCss = cssPixels;
+    this.applySlotSide();
+  }
+
+  private applySlotSide(): void {
+    if (this.slotSideCss <= 0) return;
+    const dpr = globalThis.devicePixelRatio || 1;
+    this.screens.setActionBarSlotSide((this.slotSideCss * dpr) / this.frame.scale);
+  }
+
+  /** Every slot's box, in CSS pixels, and what it holds. See the note above. */
+  actionBarSlotsCss(): readonly { readonly ability: string; readonly rect: Rect }[] {
+    const dpr = globalThis.devicePixelRatio || 1;
+    const perUi = this.frame.scale / dpr;
+    const origin = this.element.getBoundingClientRect();
+    return this.screens.actionBarSlots().map((slot) => ({
+      ability: slot.ability,
+      rect: {
+        x: origin.left + slot.rect.x * perUi,
+        y: origin.top + slot.rect.y * perUi,
+        width: slot.rect.width * perUi,
+        height: slot.rect.height * perUi,
+      },
+    }));
   }
 
   // --- the mini HUD (spec 190) ----------------------------------------------

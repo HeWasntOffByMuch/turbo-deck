@@ -24,13 +24,10 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import type { ScreenAnchor } from './scene.js';
 import {
   abilityById,
-  barNameOf,
   BASIC_ATTACK_ID,
-  type AbilityDefinition,
 } from '../../../server/data/abilities.js';
 import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
-import { attackTimingFor } from '../../../server/sim/abilities.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
@@ -58,15 +55,16 @@ import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.j
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
 import {
+  ACTION_SLOT_CSS,
   bottomEdge,
+  NO_ACTION_BAR,
+  type ActionBarBox,
   errorStackBottom,
   hudLayout,
   poolBottom,
   readoutShown,
-  stripWidth,
 } from './hud-layout.js';
 import {
-  slotIconSvg,
   statusIconSvg,
   stunIconSvg,
   systemIconSvg,
@@ -76,20 +74,16 @@ import {
 import { stunMark } from './stun-icon.js';
 import { statusMarks } from './status-marks.js';
 import { MAX_VISIBLE_STATUSES } from '../../../server/data/status-visuals.js';
+import { BAR_SLOT_COUNT } from './action-bar.js';
 import {
-  barSlotOf,
-  swapLabel,
   swapOverhead,
-  swapProgress,
 } from './skill-swap-view.js';
-import { ACTION_BAR, sameBar, type ActionSlot } from './action-bar.js';
 import { deathOverlay } from './death.js';
 import { poolBars } from './pool-bars.js';
 import { xpBar, XP_SUBDIVISIONS } from './xp-bar.js';
 import type { WindowId } from './control-actions.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
-const AIM_HIGHLIGHT = '#7fd4ff';
 
 /**
  * The refusal stack's ink (spec 143, the wind-up warnings).
@@ -379,17 +373,36 @@ export interface HudHandle {
    */
   showOpenWindows(open: readonly WindowId[]): void;
   /**
-   * Replace what the five slots hold (spec 188).
+   * How big the action bar is, in CSS pixels (spec 190).
    *
-   * Pushed in every frame from the player's equipment, for the same reason
-   * {@link showOpenWindows} is pushed rather than read: the equipment is the
-   * state, and a bar that remembered what was last equipped would be a second
-   * opinion about what the player is carrying. A plan that matches what is
-   * already drawn costs a comparison.
+   * The bar moved to the interface canvas, so its box is a fact about the UI
+   * scale rather than about this file's table -- and everything left along that
+   * edge is placed *relative to it*: the pool block sits immediately left of it
+   * and centred on it, and the aim hint sits above it. Told rather than derived,
+   * because a second description of somebody else's layout is the mistake that
+   * put the chat log on the weapon switch.
+   *
+   * A box that has not changed costs a comparison.
    */
-  setSlots(plan: readonly ActionSlot[]): void;
-  /** What to call when a hotbar button is clicked. */
-  onUse(handler: (abilityId: string) => void): void;
+  setActionBar(box: ActionBarBox): void;
+  /**
+   * How much of the frame's floor is spoken for, in CSS pixels (spec 190).
+   *
+   * The experience strip spans the whole width and is pinned to the bottom, so
+   * everything else along that edge has to clear it -- including the action bar,
+   * which is drawn on the other surface and therefore has to be *told*. Constant
+   * for the life of the HUD: it is a fact about which layout is in force, and
+   * that is decided once (spec 094).
+   */
+  readonly floorCss: number;
+  /**
+   * How big one action-bar slot should be drawn, in CSS pixels (spec 190).
+   *
+   * Beside {@link floorCss} and told for the same reason: the bar is on the
+   * other surface, and how big a thing a finger has to hit is a physical fact
+   * this file's table has always been the one to state.
+   */
+  readonly slotSideCss: number;
   /**
    * What to call when a window button is pressed (spec 140). It hands back a
    * window id and nothing else -- the mount calls the same `ui.toggle` a key
@@ -425,15 +438,7 @@ export interface HudHandle {
  * because it is the same function every frame; it reads the camera as it stands
  * when it is called, which is why `update` must run after the scene has drawn.
  */
-export function createHud(
-  project: Projector,
-  /**
-   * What the five slots hold (spec 164). Handed in rather than imported, so the
-   * HUD's buttons and `view.ts`'s keys are driven by one array -- a bar built
-   * twice is two answers about what is in slot 3.
-   */
-  slotPlan: readonly ActionSlot[] = ACTION_BAR,
-): HudHandle {
+export function createHud(project: Projector): HudHandle {
   // The one device question, asked once (spec 094). Everything below reads sizes
   // out of the table rather than deciding them, so what "compact" means is
   // asserted in Node instead of measured on a phone.
@@ -534,11 +539,15 @@ export function createHud(
   // group has to clear it rather than sit beside it.
   const bottom = `calc(${bottomEdge(layout)}px + env(safe-area-inset-bottom))`;
 
-  const bar = document.createElement('div');
-  bar.style.cssText =
-    `position:absolute;left:50%;bottom:${bottom};transform:translateX(-50%);display:flex;` +
-    `gap:${layout.slotGap}px;pointer-events:auto;`;
-  root.append(bar);
+  /**
+   * Where the action bar is, in CSS pixels, told by the mount (spec 190).
+   *
+   * The bar itself is drawn on the interface canvas now. What is left here is
+   * everything placed *against* it -- the pool block, which sits immediately to
+   * its left and centred on it, and the aim hint above it -- so this file needs
+   * its box and nothing else about it.
+   */
+  let actionBar: ActionBarBox = NO_ACTION_BAR;
 
   /**
    * What the next tap does, while a skill is aimed (spec 080).
@@ -553,209 +562,10 @@ export function createHud(
   if (layout.compact) {
     aimHint.style.cssText =
       `position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;` +
-      `bottom:calc(${bottomEdge(layout) + layout.slot.height + 6}px + env(safe-area-inset-bottom));` +
       'font:11px ui-monospace,Menlo,monospace;color:#dbe3ee;background:rgba(10,14,20,.72);' +
       'padding:3px 8px;border-radius:5px;pointer-events:none;';
     root.append(aimHint);
   }
-
-  let useHandler: (abilityId: string) => void = () => undefined;
-
-  /**
-   * The five slots (spec 164): four a skill will go into, and the vial.
-   *
-   * An empty slot is built exactly like a full one -- same box, same sweep, same
-   * countdown -- and differs only in holding no ability. That is what keeps the
-   * update loop below free of a branch per slot kind: everything it does to a
-   * slot is a function of `slot.ability`, which is simply null for four of them.
-   */
-  /**
-   * One built slot: its plan entry, the ability behind it, and the four
-   * elements the update loop writes into.
-   */
-  interface SlotView extends ActionSlot {
-    readonly ability: AbilityDefinition | null;
-    readonly button: HTMLButtonElement;
-    readonly sweep: HTMLDivElement;
-    readonly remaining: HTMLSpanElement;
-    readonly charges: HTMLSpanElement;
-    /** The overlay a skill-slot change in flight draws (spec 188). */
-    readonly change: HTMLDivElement;
-    readonly changeLabel: HTMLSpanElement;
-    readonly changeFill: HTMLDivElement;
-  }
-
-  const buildSlots = (plan: readonly ActionSlot[]): readonly SlotView[] =>
-    plan.map((entry, index) => {
-    const ability = entry.abilityId === null ? null : abilityById(entry.abilityId);
-    const button = document.createElement('button');
-    button.style.cssText =
-      `width:${layout.slot.width}px;height:${layout.slot.height}px;border-radius:6px;` +
-      'border:1px solid #33405a;background:#182130;cursor:pointer;box-sizing:border-box;' +
-      'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
-      // A *stated* height on both, since spec 164. It used to be the compact
-      // square and, on a desktop, whatever the padding and the line height added
-      // up to -- which was 46 by coincidence and stopped being 46 the moment the
-      // label became a glyph path. The pool block beside it is centred against
-      // `layout.slot.height`, so a slot whose real height is decided by its
-      // contents is a slot the block cannot be centred on.
-      (layout.compact ? 'padding:2px;' : 'padding:4px;gap:3px;');
-    button.style.position = 'relative';
-    button.style.overflow = 'hidden';
-    // Says which slot this is, and what is in it. Nothing in the game reads
-    // either; they are how `scripts/preview-world.ts` and the refusal probe find
-    // a slot without counting children -- the same handle a health bar carries.
-    button.dataset['slot'] = String(index);
-    button.dataset['slotKind'] = entry.kind;
-    if (entry.abilityId !== null) button.dataset['ability'] = entry.abilityId;
-
-    // What a slot draws, and the one place the three kinds differ.
-    //
-    // The vial is an icon because it is a *thing* rather than a skill, and it
-    // has been on the bar as the word "Hearthdraught" since spec 156 -- eleven
-    // characters in a 92px box, which wrapped. An empty slot is a dashed square:
-    // "something goes here" without a caption claiming there is a plan for what.
-    // The key number and the name are drawn in the game's own 5x7 face rather
-    // than set in the browser's monospace (spec 164). The bar sits over a
-    // posterized, low-resolution world and system text over it reads like a
-    // debug overlay somebody left on -- the same argument spec 065 made about
-    // the damage numbers and 143 about the refusals.
-    //
-    // Two scales, because they are two different jobs: the digit is the key you
-    // press and is read at a glance, the name is a label you read once. At the
-    // name's scale the longest ability in the table still fits a 92px slot,
-    // which is the reason it is 1 and the sum that keeps it honest is in
-    // `hud-layout.test.ts`.
-    const key = layout.showsKeyNumber
-      ? `<span style="display:flex;justify-content:center;">` +
-        `${pixelTextSvg(String(entry.keyNumber), { scale: layout.slotKeyScale, fill: '#dfe7f2', outline: '#0a0d14' })}</span>`
-      : '';
-    const centred = (body: string): string =>
-      `<span style="display:flex;justify-content:center;">${body}</span>`;
-    if (entry.kind === 'vial') {
-      button.innerHTML = key + centred(slotIconSvg('vial', { size: layout.compact ? 26 : 22 }));
-      button.setAttribute('aria-label', ability?.name ?? 'Vial');
-      button.title = ability ? `${ability.name} -- ${ability.description}` : 'Vial';
-    } else if (ability) {
-      // An icon on a finger and a name on a desktop, the same way the weapon
-      // switch and the window buttons answer it: no name in the table fits a
-      // 46px square in this font, and the compact HUD is icons.
-      button.innerHTML =
-        key +
-        centred(
-          layout.slotIconOnly
-            ? weaponIconSvg(ability.id, { size: 24 })
-            : pixelTextSvg(barNameOf(ability).toUpperCase(), {
-                scale: layout.slotNameScale,
-                fill: '#cfd6e0',
-                outline: '#0a0d14',
-              }),
-        );
-      button.setAttribute('aria-label', ability.name);
-      button.title = ability.description;
-    } else {
-      button.innerHTML =
-        key +
-        `<span style="display:flex;justify-content:center;opacity:.5;">` +
-        `${slotIconSvg('empty', { size: layout.compact ? 24 : 22 })}</span>`;
-      button.setAttribute('aria-label', `Empty slot ${entry.keyNumber}`);
-      button.title = 'Empty — no skill assigned';
-    }
-    // An empty slot is not a button that does nothing quietly: it says so, and
-    // nothing is sent. `abilityForSlot` is the same gate on the key side.
-    if (entry.abilityId === null) button.style.cursor = 'default';
-    button.addEventListener('click', () => {
-      if (entry.abilityId === null) return;
-      useHandler(entry.abilityId);
-    });
-
-    // The cooldown sweep: a shade that drains off the bottom as the ability
-    // comes back. Drawn under the label rather than over it, so a greyed button
-    // is still readable.
-    const sweep = document.createElement('div');
-    sweep.style.cssText =
-      'position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(8,12,20,.72);' +
-      'pointer-events:none;';
-    button.append(sweep);
-
-    const remaining = document.createElement('span');
-    remaining.style.cssText =
-      'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
-      'pointer-events:none;';
-    button.append(remaining);
-
-    /**
-     * How many draughts are left, in the corner of the vial (spec 164).
-     *
-     * On the slot rather than in the readout because the flask's cost is a
-     * charge and not resource -- the dimming rule `affordable` already applies
-     * to it had nothing on screen to point at, so an empty flask and an
-     * unaffordable bolt looked identical and only one of them refills by
-     * standing still.
-     */
-    const charges = document.createElement('span');
-    charges.style.cssText = 'position:absolute;right:2px;bottom:1px;pointer-events:none;';
-    if (entry.kind === 'vial') button.append(charges);
-
-    /**
-     * A skill-slot change in flight, over the slot it is happening to
-     * (spec 188).
-     *
-     * Its own overlay rather than a reuse of the cooldown sweep, because the
-     * two say opposite things: a sweep is "this is not ready yet" and drains
-     * *down*, and this is "this is becoming something else" and fills *up*.
-     * Sharing the element would have made a swap look like a cooldown, which is
-     * the one other reason a slot is unusable.
-     *
-     * Built for every slot including the vial and the empty ones, since a
-     * change into an empty slot is the commonest case there is -- putting your
-     * first skill on.
-     */
-    const change = document.createElement('div');
-    change.style.cssText =
-      'position:absolute;inset:0;display:none;flex-direction:column;align-items:center;' +
-      'justify-content:center;gap:3px;background:rgba(8,14,20,.78);pointer-events:none;';
-    const changeLabel = document.createElement('span');
-    changeLabel.style.cssText = 'display:flex;justify-content:center;';
-    const changeTrack = document.createElement('div');
-    changeTrack.style.cssText =
-      'position:absolute;left:3px;right:3px;bottom:3px;height:4px;border-radius:2px;' +
-      'background:rgba(0,0,0,.6);overflow:hidden;';
-    const changeFill = document.createElement('div');
-    // The teal the bar over the body uses, so the two surfaces showing one
-    // commitment are visibly the same commitment.
-    changeFill.style.cssText = 'height:100%;width:0;background:#6bd7cf;';
-    changeTrack.append(changeFill);
-    change.append(changeLabel, changeTrack);
-    button.append(change);
-
-    bar.append(button);
-    return { ...entry, ability, button, sweep, remaining, charges, change, changeLabel, changeFill };
-  });
-
-  let slots = buildSlots(slotPlan);
-
-  /**
-   * Rebuild the row when what is in it changes (spec 188).
-   *
-   * A rebuild rather than an in-place edit of five labels, and the reason is
-   * the one this file already gives about the slot's contents: a slot's markup
-   * differs by *kind* -- an icon for the vial, a name or an icon for a skill, a
-   * dashed square for an empty one -- so editing would be a second, partial
-   * copy of the eighty lines above, free to disagree with them about what a
-   * slot with a newly-equipped skill looks like. Five buttons is a handful of
-   * DOM nodes, and it happens when a player changes a skill rather than per
-   * frame.
-   *
-   * Guarded on the ids so an equipment resend twenty times a second is a
-   * comparison rather than a teardown -- and so the button under the cursor is
-   * still the same object between two frames in which nothing changed.
-   */
-  const setSlots = (plan: readonly ActionSlot[]): void => {
-    if (sameBar(plan, slots)) return;
-    bar.replaceChildren();
-    slots = buildSlots(plan);
-  };
 
   /**
    * The two pools, immediately left of the slots (spec 164).
@@ -775,11 +585,31 @@ export function createHud(
   poolBlock.dataset['hudBottom'] = 'pools';
   poolBlock.style.cssText =
     `position:absolute;left:50%;` +
-    `bottom:calc(${poolBottom(layout)}px + env(safe-area-inset-bottom));` +
     `display:flex;flex-direction:column;` +
-    `gap:${layout.poolGap}px;width:${layout.pool.width}px;pointer-events:none;` +
-    `margin-left:${-(stripWidth(layout.slot, layout.slotGap, slotPlan.length) / 2 + layout.poolGap + layout.pool.width)}px;`;
+    `gap:${layout.poolGap}px;width:${layout.pool.width}px;pointer-events:none;`;
   root.append(poolBlock);
+
+  /**
+   * Place everything that hangs off the action bar, in one go (spec 190).
+   *
+   * Called when the box changes rather than per frame: the bar's size follows
+   * the interface scale, which moves when the window is resized or the player
+   * chooses a different one, and not otherwise. A box of zero is what the frames
+   * before the interface has laid itself out look like, and it puts the pool
+   * block in the middle for one of them -- which is honest, and is why the
+   * number is told rather than guessed at with a constant that would be wrong
+   * forever.
+   */
+  const placeAgainstBar = (): void => {
+    poolBlock.style.bottom = `calc(${poolBottom(layout, actionBar)}px + env(safe-area-inset-bottom))`;
+    poolBlock.style.marginLeft =
+      `${-(actionBar.width / 2 + layout.poolGap + layout.pool.width)}px`;
+    if (layout.compact) {
+      aimHint.style.bottom =
+        `calc(${bottomEdge(layout) + actionBar.height + 6}px + env(safe-area-inset-bottom))`;
+    }
+  };
+  placeAgainstBar();
 
   interface Pool {
     readonly fill: HTMLElement;
@@ -1571,107 +1401,6 @@ export function createHud(
       weapon.button.style.color = current ? '#f2f6fb' : '#98a4b4';
     }
 
-    // Which slot is being changed, and how far through (spec 188). Worked out
-    // once outside the loop: it is one change at a time and asking per slot
-    // would be four answers to a question with one.
-    const changing = swapProgress(view.pendingSwap, tick);
-    const changingSlot = barSlotOf(changing);
-
-    for (const [index, slot] of slots.entries()) {
-      // The change in flight, drawn **before** the empty-slot branch below:
-      // putting your first skill into an empty slot is the commonest change
-      // there is, and it is exactly the case that branch would have skipped.
-      const marked = changing !== null && index === changingSlot;
-      slot.change.style.display = marked ? 'flex' : 'none';
-      if (marked && changing) {
-        slot.changeFill.style.width = `${changing.progress * 100}%`;
-        // Words, and only where there is room for them: a 46px square cannot
-        // hold "EQUIPPING" at any scale this face has, so a phone gets the bar
-        // alone -- which still says "something is happening here, and how far
-        // along it is", which is the half that matters.
-        const label = layout.slotIconOnly ? '' : swapLabel(changing.kind);
-        if (slot.changeLabel.dataset['text'] !== label) {
-          slot.changeLabel.dataset['text'] = label;
-          slot.changeLabel.innerHTML =
-            label === ''
-              ? ''
-              : pixelTextSvg(label, {
-                  scale: layout.slotNameScale,
-                  fill: '#a8ece6',
-                  outline: '#06181a',
-                });
-        }
-      }
-
-      // An empty slot has nothing to be lit by, on cooldown, or unaffordable
-      // (spec 164). Dimmed once, here, rather than being asked every question
-      // below with `null` standing in for an ability.
-      if (slot.abilityId === null || !slot.ability) {
-        slot.button.style.borderColor = '#2a3346';
-        slot.button.style.background = '#141b27';
-        slot.button.style.opacity = '0.75';
-        continue;
-      }
-      const casting = view.casts.some(
-        (cast) => cast.entityId === view.selfEntityId && cast.abilityId === slot.abilityId,
-      );
-      const requested = view.requestedAbilityId === slot.abilityId;
-      slot.button.style.borderColor = casting ? '#ffcf6b' : requested ? '#5c7ba6' : '#33405a';
-      slot.button.style.opacity = affordable(view, slot.ability) ? '1' : '0.45';
-
-      // The slot being aimed, lit in the aim's own colour (spec 080), so the
-      // question on the ground and the button it came from are one thing.
-      const aimed = slot.abilityId === aiming.abilityId;
-      slot.button.style.borderColor = aimed ? AIM_HIGHLIGHT : '#33405a';
-      slot.button.style.background = aimed ? '#1d2c3d' : '#182130';
-
-      // How many draughts are left, on the vial itself.
-      if (slot.kind === 'vial') {
-        const count = `${view.restoration.charges}/${view.restoration.maxCharges}`;
-        if (slot.charges.dataset['text'] !== count) {
-          slot.charges.dataset['text'] = count;
-          slot.charges.innerHTML = pixelTextSvg(count, {
-            scale: layout.slotCountScale,
-            fill: '#ffd489',
-            outline: '#0a0d14',
-          });
-        }
-      }
-
-      // The sweep is the server's cooldown, played back (spec 065). Its *length*
-      // comes from the ability table so the shade shrinks proportionally; the
-      // client never decides when something is ready.
-      const readyAt = view.cooldowns[slot.abilityId] ?? 0;
-      const left = readyAt - tick;
-      // The sweep's length is the cadence the cooldown was stamped with, which
-      // for the basic attack is the player's own attack interval (specs 070,
-      // 144) -- against the table's number the shade would start part-drained
-      // and finish early. Through `attackTimingFor`, so the sweep and the sim
-      // cannot come to different answers about how long a swing takes.
-      const total = Math.max(
-        1,
-        view.stats
-          ? attackTimingFor(slot.ability, { stats: view.stats }).intervalTicks
-          : slot.ability.cooldownTicks,
-      );
-      const countdown = left > 0 ? formatSeconds(left / SERVER_TICK_RATE) : '';
-      slot.sweep.style.height = left > 0 ? `${Math.min(1, left / total) * 100}%` : '0';
-      // Only when it changes: this is markup rather than a text node now, and
-      // rebuilding a glyph path sixty times a second for a number that ticks ten
-      // times would be a lot of parsing for nothing.
-      if (slot.remaining.dataset['text'] !== countdown) {
-        slot.remaining.dataset['text'] = countdown;
-        slot.remaining.innerHTML =
-          countdown === ''
-            ? ''
-            : pixelTextSvg(countdown, {
-                scale: layout.slotCountdownScale,
-                fill: '#e8eef6',
-                outline: '#0a0d14',
-              });
-      }
-    }
-
     // The two pools, left of the slots (spec 164). Both numbers have been on the
     // wire since spec 069 and both were text in a hidden readout.
     //
@@ -1904,11 +1633,12 @@ export function createHud(
         slot.button.setAttribute('aria-pressed', String(on));
       }
     },
-    setSlots(plan) {
-      setSlots(plan);
-    },
-    onUse(handler) {
-      useHandler = handler;
+    floorCss: bottomEdge(layout),
+    slotSideCss: ACTION_SLOT_CSS,
+    setActionBar(box) {
+      if (box.width === actionBar.width && box.height === actionBar.height) return;
+      actionBar = box;
+      placeAgainstBar();
     },
     onOpen(handler) {
       openHandler = handler;
@@ -1970,7 +1700,7 @@ function aimLine(aiming: { readonly abilityId: string | null; readonly pending: 
       // The range is derived rather than typed, or it goes stale the next time a
       // row is added to the bar -- which is exactly what spec 156 did to the
       // `1-8` that was here.
-      : `right-click ground to move, a unit to attack · WASD · 1-${ACTION_BAR.length} slots · Esc cancel`;
+      : `right-click ground to move, a unit to attack · WASD · 1-${BAR_SLOT_COUNT} slots · Esc cancel`;
   }
   if (!aiming.pending) {
     return touch
@@ -1988,29 +1718,3 @@ function aimLine(aiming: { readonly abilityId: string | null; readonly pending: 
   return `aiming ${ability.name} — ${pick}, right-click to cancel`;
 }
 
-/** A cooldown countdown: whole seconds while there are several, tenths at the end. */
-function formatSeconds(seconds: number): string {
-  if (seconds >= 10) return String(Math.ceil(seconds));
-  if (seconds >= 1) return seconds.toFixed(1);
-  return seconds.toFixed(1);
-}
-
-/**
- * Whether the player could pay for an ability right now. Cosmetic dimming only:
- * the server decides, and refuses a cast it will not fund whatever this said.
- *
- * Against the live pool since spec 069. It used to compare with `maxResource`,
- * which only ever answered "could this *ever* be afforded" -- the live number
- * was on the entity and had never been on the wire, so a button for a bolt the
- * player could not currently pay for looked exactly like one they could.
- */
-function affordable(view: ClientView, ability: AbilityDefinition | null): boolean {
-  if (!ability || !view.stats) return true;
-  // The flask's cost is a charge, not resource (spec 156), and an empty one is
-  // the same kind of "you cannot press this" as an empty pool. Read off the
-  // replicated count minus what a request in flight has already spent, so a
-  // second press inside the round trip is dimmed rather than refused.
-  const charges = ability.chargeCost ?? 0;
-  if (charges > 0 && view.restoration.charges < charges) return false;
-  return ability.cost <= view.resource;
-}

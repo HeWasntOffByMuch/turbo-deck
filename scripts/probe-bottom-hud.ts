@@ -26,8 +26,8 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Page } from 'playwright';
-import { hudLayout, stripWidth } from '../src/render/iso3d/world/hud-layout.js';
-import { ACTION_BAR } from '../src/render/iso3d/world/action-bar.js';
+import { hudLayout, MIN_TAP_PX } from '../src/render/iso3d/world/hud-layout.js';
+import { ACTION_BAR, VIAL_ABILITY_ID } from '../src/render/iso3d/world/action-bar.js';
 import { xpBar } from '../src/render/iso3d/world/xp-bar.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -168,47 +168,54 @@ async function main(): Promise<void> {
 
     // --- the slots --------------------------------------------------------
     console.log('the action bar');
-    const slotBoxes = await page.$$eval('[data-slot]', (nodes) =>
-      nodes.map((node) => {
-        const element = node as HTMLElement;
-        const rect = element.getBoundingClientRect();
-        return {
-          kind: element.dataset['slotKind'] ?? '',
-          ability: element.dataset['ability'] ?? '',
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          bottom: rect.bottom,
-        };
-      }),
-    );
+    // The bar is on the interface canvas since spec 190, so there is no element
+    // to ask: `hud-probe.ts` publishes each slot's box in CSS pixels, read back
+    // off the *laid-out* row rather than computed here, which is the only way a
+    // harness on this side can know where a canvas drew something.
+    const slotBoxes = await page.evaluate(() => {
+      const raw = document.getElementById('app')?.dataset['barSlots'] ?? '';
+      return raw
+        .split(';')
+        .filter((entry) => entry.length > 0)
+        .map((entry) => {
+          const [ability = '', box = ''] = entry.split('@');
+          const [x = 0, y = 0, width = 0, height = 0] = box.split(',').map(Number);
+          return { ability, x, y, width, height, bottom: y + height };
+        });
+    });
     check(slotBoxes.length === ACTION_BAR.length, `there are ${ACTION_BAR.length} slots`);
     check(
       slotBoxes.filter((slot) => slot.ability === '').length === 4,
       'four of them hold nothing',
     );
     check(
-      slotBoxes.filter((slot) => slot.kind === 'vial').length === 1,
+      slotBoxes.filter((slot) => slot.ability === VIAL_ABILITY_ID).length === 1,
       'one of them is the vial',
     );
     check(
       slotBoxes.every((slot) => slot.bottom <= VIEWPORT.height - layout.xpBarHeight),
       'they clear the experience strip',
     );
+    check(
+      slotBoxes.every((slot) => slot.width >= MIN_TAP_PX && slot.height >= MIN_TAP_PX),
+      // The whole reason the slot's size crosses the canvas as CSS pixels: the
+      // interface scale is what a UI pixel means, and a tap target is physical.
+      `each slot is at least ${MIN_TAP_PX}px square (${slotBoxes[0]?.width ?? 0}x${slotBoxes[0]?.height ?? 0})`,
+    );
 
     // An empty slot is inert, and this is the only place that can be checked:
-    // the button exists, it is on screen, and clicking it sends nothing.
-    const empty = slotBoxes[0];
+    // the slot is there, it is on screen, and clicking it sends nothing.
+    const empty = slotBoxes.find((slot) => slot.ability === '');
     if (empty) {
-      await page.mouse.click(empty.x + empty.width / 2, empty.y + 10);
+      await page.mouse.click(empty.x + empty.width / 2, empty.y + empty.height / 2);
       await page.waitForTimeout(30);
     }
     const usedAfterEmpty = await page.evaluate(() => window.hudProbe?.used() ?? []);
     check(usedAfterEmpty.length === 0, 'clicking an empty slot asks for nothing');
 
-    const vial = slotBoxes.find((slot) => slot.kind === 'vial');
+    const vial = slotBoxes.find((slot) => slot.ability === VIAL_ABILITY_ID);
     if (vial) {
-      await page.mouse.click(vial.x + vial.width / 2, vial.y + 10);
+      await page.mouse.click(vial.x + vial.width / 2, vial.y + vial.height / 2);
       await page.waitForTimeout(30);
     }
     const usedAfterVial = await page.evaluate(() => window.hudProbe?.used() ?? []);
@@ -253,7 +260,6 @@ async function main(): Promise<void> {
         `the pool block is centred on the slots (off by ${(blockMiddle - (slotTop + slotBottom) / 2).toFixed(1)}px)`,
       );
     }
-    void stripWidth;
 
     // --- the white chunk -------------------------------------------------
     //

@@ -60,6 +60,15 @@ export const SKILL_SLOTS = SKILL_EQUIP_SLOTS.length;
 export const ACTION_BAR: readonly ActionSlot[] = buildActionBar([]);
 
 /**
+ * How many places there are on the bar, vial included.
+ *
+ * Named rather than read off {@link ACTION_BAR}`.length` at the call site, so a
+ * consumer that only wants the *count* -- the hint line in the HUD says which
+ * number keys there are -- does not have to import a whole bar to get it.
+ */
+export const BAR_SLOT_COUNT = SKILL_SLOTS + 1;
+
+/**
  * The bar a player's equipment produces (spec 188).
  *
  * The one way a slot comes to hold something now: a skill is an item worn in

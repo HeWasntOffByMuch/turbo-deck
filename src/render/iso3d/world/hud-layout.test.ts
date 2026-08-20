@@ -7,13 +7,14 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ALL_ABILITIES, barNameOf } from '../../../server/data/abilities.js';
 import {
   bottomEdge,
   centredClearance,
   errorLineWidth,
   errorStackBottom,
+  ACTION_SLOT_CSS,
   hudLayout,
+  NO_ACTION_BAR,
   MIN_TAP_PX,
   PHONE_LANDSCAPE,
   poolBlockHeight,
@@ -24,18 +25,49 @@ import {
   stripHeight,
   stripWidth,
 } from './hud-layout.js';
-import { textWidth } from './pixel-font.js';
-import { ACTION_BAR } from './action-bar.js';
+import { BAR_SLOT_COUNT } from './action-bar.js';
+import { barWidth } from '../../../ui/screens/action-bar.js';
+import { THEME } from '../../../ui/theme/theme.js';
 import { SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
 
 const compact = hudLayout(true);
 const desktop = hudLayout(false);
 
+/**
+ * The action bar's box, in CSS pixels, at a given interface scale (spec 190).
+ *
+ * The bar is drawn on the interface canvas now, so its *width* is a fact about
+ * the UI scale rather than about this table -- and everything still in this
+ * table that sits along the bottom edge is placed against it. Computed from the
+ * framework's own arithmetic rather than written down here, which is the whole
+ * point: a second number would be a second answer, and the drift between them
+ * would be a pool block that no longer touches the bar.
+ *
+ * The *height* does not vary, because {@link ACTION_SLOT_CSS} is a physical
+ * size: the mount converts it into UI pixels through the scale, so the slot
+ * comes back out the same number of CSS pixels it went in as -- which is the
+ * point of stating a tap target in CSS pixels at all. The gap does vary, since
+ * it is the theme's and the theme is in UI pixels.
+ *
+ * `perUi` is CSS pixels per UI pixel, which is `scale / devicePixelRatio`.
+ */
+function barBox(perUi: number): { width: number; height: number } {
+  const side = Math.round(ACTION_SLOT_CSS / perUi);
+  return {
+    width: barWidth(BAR_SLOT_COUNT, side, THEME.spacing.xs) * perUi,
+    height: side * perUi,
+  };
+}
+
+/** A 1920x1030 desktop, where `autoUiScale` picks 1. */
+const DESKTOP_BAR = barBox(1);
+/** An 844x390 phone at dpr 3, where a coarse pointer buys scale 8. */
+const PHONE_BAR = barBox(8 / 3);
+
 describe('the HUD layout', () => {
-  it('keeps the desktop HUD as it was: a readout, key numbers and a named column', () => {
+  it('keeps the desktop HUD as it was: a readout and a named weapon column', () => {
     expect(desktop.compact).toBe(false);
     expect(desktop.showsReadout).toBe(true);
-    expect(desktop.showsKeyNumber).toBe(true);
     expect(desktop.weaponIconOnly).toBe(false);
     expect(desktop.weaponDirection).toBe('column');
     expect(desktop.showsTuningMenus).toBe(true);
@@ -60,41 +92,33 @@ describe('the HUD layout', () => {
     }
   });
 
-  it('fits the longest ability name inside a slot, in the game’s own font', () => {
-    // The *drawn* name, which is `shortName` where a row has one (spec 188).
-    // Measuring `name` would fail a row that already answered the constraint,
-    // and measuring nothing would let the next long one through silently.
-    const longest = ALL_ABILITIES.reduce(
-      (worst, ability) => (barNameOf(ability).length > worst.length ? barNameOf(ability) : worst),
-      '',
-    );
-    // Only where a slot draws a name at all: on a finger it draws an icon,
-    // because no name in the table fits a 46px square in this font.
-    for (const layout of [desktop, compact].filter((it) => !it.slotIconOnly)) {
-      const width = (textWidth(longest.toUpperCase()) + 2) * layout.slotNameScale;
-      expect(width, `"${longest}" at scale ${layout.slotNameScale}`).toBeLessThanOrEqual(
-        layout.slot.width,
-      );
-    }
-    expect(compact.slotIconOnly, 'a phone draws icons in its slots').toBe(true);
-  });
-
-  it('centres the pool block on the slot row rather than sharing its floor', () => {
-    for (const layout of [desktop, compact]) {
+  it('centres the pool block on the bar rather than sharing its floor', () => {
+    for (const [layout, bar] of [
+      [desktop, DESKTOP_BAR],
+      [compact, PHONE_BAR],
+    ] as const) {
       const block = poolBlockHeight(layout);
-      expect(block).toBeLessThanOrEqual(layout.slot.height);
+      expect(block).toBeLessThanOrEqual(bar.height);
       // The daylight above the block and the daylight below it are the same,
       // give or take the odd pixel a rounding leaves.
-      const below = poolBottom(layout) - bottomEdge(layout);
-      const above = layout.slot.height - block - below;
+      const below = poolBottom(layout, bar) - bottomEdge(layout);
+      const above = bar.height - block - below;
       expect(Math.abs(above - below)).toBeLessThanOrEqual(1);
     }
   });
 
-  it('drops the readout and the key numbers on a finger, and switches weapons to icons', () => {
+  it('never lets the pool block hang below the floor, however short the bar is', () => {
+    // The bar is on the other surface now, and it is measured there: the frames
+    // before the interface has laid itself out once report a box of nothing, and
+    // centring on nothing would put the block over the experience strip -- the
+    // one thing along this edge nothing may sit on.
+    expect(poolBottom(desktop, NO_ACTION_BAR)).toBe(bottomEdge(desktop));
+    expect(poolBottom(compact, NO_ACTION_BAR)).toBe(bottomEdge(compact));
+  });
+
+  it('drops the readout on a finger, and switches weapons to icons', () => {
     expect(compact.compact).toBe(true);
     expect(compact.showsReadout).toBe(false);
-    expect(compact.showsKeyNumber).toBe(false);
     expect(compact.weaponIconOnly).toBe(true);
     expect(compact.weaponDirection).toBe('row');
     expect(compact.systemIconOnly).toBe(true);
@@ -134,22 +158,23 @@ describe('the HUD layout', () => {
   });
 
   /**
-   * The reason the compact slot is a square and not the smallest box a label
-   * fits in. A button under 44px is one the player misses, and a missed button
-   * during a wind-up is the blow they meant to answer with.
+   * A button under 44px is one the player misses, and a missed button during a
+   * wind-up is the blow they meant to answer with.
+   *
+   * The action bar is no longer in this list, and does not need to be: it is the
+   * framework's own slot at the framework's own scale, and `autoUiScale` picks
+   * that scale so that a `maxTapUiPx` target *is* finger-sized. That the phone's
+   * bar clears the bar is asserted below off the real number instead.
    */
   it('gives every compact tap target a square at least MIN_TAP_PX on a side', () => {
-    for (const box of [compact.slot, compact.weapon, compact.systemButton]) {
+    for (const box of [compact.weapon, compact.systemButton]) {
       expect(box.width).toBe(box.height);
       expect(box.width).toBeGreaterThanOrEqual(MIN_TAP_PX);
     }
+    expect(PHONE_BAR.height).toBeGreaterThanOrEqual(MIN_TAP_PX);
   });
 
-  it('makes the compact hotbar smaller than the desktop one', () => {
-    expect(compact.slot.width).toBeLessThan(desktop.slot.width);
-    expect(compact.slot.width * compact.slot.height).toBeLessThan(
-      desktop.slot.width * desktop.slot.height,
-    );
+  it('makes the compact weapon switch smaller than the desktop one', () => {
     expect(compact.weapon.width).toBeLessThan(desktop.weapon.width);
   });
 
@@ -162,14 +187,13 @@ describe('the HUD layout', () => {
    * against the *same* clearance: the day somebody puts it back, the sum should
    * already say whether it fits rather than being discovered on a device.
    */
-  it('fits the compact slots across a phone in landscape, clear of both corners', () => {
-    const slots = ACTION_BAR.length;
-    const clearance = centredClearance(compact, slots, PHONE_LANDSCAPE.width);
+  it('fits the bar across a phone in landscape, clear of both corners', () => {
+    const clearance = centredClearance(PHONE_BAR, PHONE_LANDSCAPE.width);
     const weapons = stripWidth(compact.weapon, compact.weaponGap, WEAPON_SWITCH.length);
     const windows = stripWidth(compact.systemButton, compact.systemGap, SYSTEM_BUTTONS.length);
-    expect(stripWidth(compact.slot, compact.slotGap, slots)).toBeLessThan(PHONE_LANDSCAPE.width);
-    expect(clearance).toBeGreaterThanOrEqual(compact.edge + windows + compact.slotGap);
-    expect(clearance).toBeGreaterThanOrEqual(compact.edge + weapons + compact.slotGap);
+    expect(PHONE_BAR.width).toBeLessThan(PHONE_LANDSCAPE.width);
+    expect(clearance).toBeGreaterThanOrEqual(compact.edge + windows);
+    expect(clearance).toBeGreaterThanOrEqual(compact.edge + weapons);
   });
 
   /**
@@ -178,26 +202,27 @@ describe('the HUD layout', () => {
    * frame's left edge and a centred bar, in the corner the weapon switch is
    * already in on a desktop.
    */
-  it('fits the pool block left of the slots, clear of the weapon switch', () => {
-    const slots = ACTION_BAR.length;
+  it('fits the pool block left of the bar, clear of the weapon switch', () => {
     // The desktop switch is a *column* (`weaponDirection`), so what it occupies
     // across the frame is one button plus the panel padding it is backed with --
     // not three of them side by side.
     const weapons = desktop.weapon.width + 16;
-    expect(poolClearance(desktop, slots, 1280)).toBeGreaterThanOrEqual(desktop.edge + weapons);
+    expect(poolClearance(desktop, DESKTOP_BAR, 1280)).toBeGreaterThanOrEqual(
+      desktop.edge + weapons,
+    );
     // On a phone the switch is not drawn at all, so clearing the frame's own
     // edge is the whole requirement -- and it is a narrower frame.
-    expect(poolClearance(compact, slots, PHONE_LANDSCAPE.width)).toBeGreaterThanOrEqual(
+    expect(poolClearance(compact, PHONE_BAR, PHONE_LANDSCAPE.width)).toBeGreaterThanOrEqual(
       compact.edge,
     );
-    // Two bars stacked are no taller than one slot, so the block sits beside the
-    // bar rather than raising the whole band.
-    expect(stripHeight(compact.pool, compact.poolGap, 2)).toBeLessThanOrEqual(compact.slot.height);
+    // Two bars stacked are no taller than the bar, so the block sits beside it
+    // rather than raising the whole band.
+    expect(stripHeight(compact.pool, compact.poolGap, 2)).toBeLessThanOrEqual(PHONE_BAR.height);
   });
 
-  it('keeps the compact bottom band to a quarter of the frame', () => {
-    expect(bottomEdge(compact) + compact.slot.height).toBeLessThanOrEqual(
-      PHONE_LANDSCAPE.height / 4,
+  it('keeps the compact bottom band to a third of the frame', () => {
+    expect(bottomEdge(compact) + PHONE_BAR.height).toBeLessThanOrEqual(
+      PHONE_LANDSCAPE.height / 3,
     );
   });
 

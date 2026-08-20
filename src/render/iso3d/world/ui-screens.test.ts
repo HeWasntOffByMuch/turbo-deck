@@ -90,6 +90,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
       onTradeDismiss: () => requests.push('tradeDismiss'),
+      onCastSlot: (abilityId: string) => requests.push(`cast:${abilityId}`),
       onSay: (text: string) => requests.push(`say:${text}`),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
@@ -959,10 +960,24 @@ describe('the tooltip, over the world (spec 136)', () => {
 });
 
 describe('drawing', () => {
-  it('draws nothing at all when nothing is open', () => {
+  /**
+   * With no window open, the only thing on the canvas is the furniture: the
+   * action bar, which is always there (spec 190), and the chat, which draws
+   * nothing until somebody says something.
+   *
+   * Asserted as "opening the bag adds to it" rather than as an absolute count,
+   * because the count is a fact about how many quads five slots take and would
+   * fail on a change to the frame art rather than on a change to what is shown.
+   */
+  it('draws only the bar when nothing is open', () => {
     const { screens } = harness();
     screens.update(viewFixture(), 0);
-    expect(screens.paint()).toEqual([]);
+    const furniture = screens.paint().length;
+    expect(furniture).toBeGreaterThan(0);
+
+    screens.show('inventory');
+    screens.update(viewFixture(), 0);
+    expect(screens.paint().length).toBeGreaterThan(furniture);
   });
 
   it('draws the bag once it is open', () => {

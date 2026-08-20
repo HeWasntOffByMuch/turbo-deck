@@ -136,6 +136,7 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
       onTradeDismiss: () => requests.push('tradeDismiss'),
+      onCastSlot: (abilityId: string) => requests.push(`cast:${abilityId}`),
       onSay: (text: string) => requests.push(`say:${text}`),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),

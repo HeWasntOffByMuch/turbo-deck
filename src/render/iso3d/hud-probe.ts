@@ -1,4 +1,6 @@
 import { createHud } from './world/hud.js';
+import { UiLayer } from './world/ui-layer.js';
+import { InputMap } from '../../ui/input/input-map.js';
 import type { ClientView } from '../../server/client/game-client.js';
 
 /**
@@ -133,9 +135,49 @@ const hud = createHud(() => ({ x: PROBE_POINT.x, y: PROBE_POINT.y, onScreen: tru
 hud.onRespawn(() => {
   respawnCount += 1;
 });
-hud.onUse((abilityId) => used.push(abilityId));
 app.append(hud.element);
 hud.element.style.inset = '0';
+
+/**
+ * The interface canvas, because the action bar is on it now (spec 190).
+ *
+ * The rig has to mount the real one rather than fake a row of boxes: what is
+ * being asked is whether the five slots are *there*, whether an empty one is
+ * inert, and whether the pool block still sits clear of them -- and the last of
+ * those is a claim about two surfaces, which is exactly the kind that passes in
+ * Node while being wrong on screen.
+ *
+ * Every callback is a no-op except the one this rig measures. None of them can
+ * reach a server: there isn't one.
+ */
+const nothing = (): void => undefined;
+const ui = new UiLayer(app, {
+  map: new InputMap(),
+  onMove: nothing,
+  onDropItem: nothing,
+  onSpend: nothing,
+  onAllocate: nothing,
+  onRespec: nothing,
+  onBuy: nothing,
+  onSell: nothing,
+  onBuyBack: nothing,
+  onVendor: nothing,
+  nearestVendor: () => null,
+  onTradeOffer: nothing,
+  onTradeAccept: nothing,
+  onTradeRespond: nothing,
+  onTradeCancel: nothing,
+  onTradeDismiss: nothing,
+  onSay: nothing,
+  onBindingsChanged: nothing,
+  onScaleChosen: nothing,
+  onShowFpsChosen: nothing,
+  onLayoutChanged: nothing,
+  onCastSlot: (abilityId) => {
+    used.push(abilityId);
+    draw();
+  },
+});
 
 /**
  * The floating bars this rig draws, if any (spec 186).
@@ -149,7 +191,34 @@ let anchors: { id: number; x: number; y: number; onScreen: boolean }[] = [];
 
 function draw(): void {
   const view = { ...baseView(), ...overrides } as unknown as ClientView;
+  // The interface first, so the bar has been laid out by the time the HUD is
+  // asked to place the pool block against it.
+  ui.update(view, 1000, 400);
+  hud.setActionBar(ui.actionBarBoxCss());
   hud.update(view, anchors, 400, 0, null, { abilityId: null, pending: false }, null, 1000);
+  publish();
+}
+
+/**
+ * Where the interface drew its slots, in CSS pixels, on the page (spec 190).
+ *
+ * The bar is a canvas, so "there are five slots and the third is empty" has no
+ * element to ask. Published in *CSS* pixels rather than UI ones, unlike the Play
+ * tab's own readout, because everything else this rig is measured against is a
+ * DOM box and a harness comparing the two should not have to do the conversion
+ * twice.
+ */
+function publish(): void {
+  const slots = ui.actionBarSlotsCss();
+  app?.setAttribute(
+    'data-bar-slots',
+    slots
+      .map(
+        ({ ability, rect }) =>
+          `${ability}@${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)},${Math.round(rect.height)}`,
+      )
+      .join(';'),
+  );
 }
 
 draw();
