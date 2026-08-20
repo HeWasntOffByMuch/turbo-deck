@@ -67,7 +67,7 @@ export class SkillSlot extends StyledWidget {
    */
   iconScale = 1;
   /**
-   * A small count in the bottom-right corner: the vial's charges (spec 192).
+   * A small count in the bottom-right corner: the vial's charges (spec 196).
    *
    * Its own field rather than something derived from the ability, because what
    * it counts is not a property of abilities -- the flask's cost is a *charge*

@@ -37,7 +37,7 @@ const compact = hudLayout(true);
 const desktop = hudLayout(false);
 
 /**
- * The action bar's box, in CSS pixels, at a given interface scale (spec 192).
+ * The action bar's box, in CSS pixels, at a given interface scale (spec 196).
  *
  * The bar is drawn on the interface canvas now, so its *width* is a fact about
  * the UI scale rather than about this table -- and everything still in this
@@ -133,7 +133,7 @@ describe('the HUD layout', () => {
     expect(compact.compact).toBe(true);
     expect(compact.showsReadout).toBe(false);
     // No keyboard to name: spec 094's rule, and the bar honours it from the
-    // other side of the canvas now (spec 192).
+    // other side of the canvas now (spec 196).
     expect(compact.showsKeyNumber).toBe(false);
     expect(compact.weaponIconOnly).toBe(true);
     expect(compact.weaponDirection).toBe('row');

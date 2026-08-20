@@ -941,7 +941,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // that a line somebody else said turns up on this screen.
     const chatRects = boxes(readout.chatRects);
     const chat = `${readout.chat.join(';')}|${String(readout.chatOpen)}|${readout.chatInput}|${chatRects}`;
-    // The bar (spec 192) and the mini HUD beside it. Both are drawn to the
+    // The bar (spec 196) and the mini HUD beside it. Both are drawn to the
     // interface canvas, so neither has an element a harness could ask -- and
     // both are claims about *what is on screen* rather than about a number in a
     // model, which is the half a Node test cannot reach.
@@ -1064,7 +1064,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
     const buttons = document.createElement('div');
     // How far down this corner is occupied, for the mini HUD docked under it
-    // (spec 192). A marked element rather than a constant, exactly as
+    // (spec 196). A marked element rather than a constant, exactly as
     // `data-hud-bottom` is: seven popovers of different heights wrap on a narrow
     // window, so where they end is a measurement and not a sum.
     buttons.dataset['hudRight'] = 'settings';
@@ -1304,14 +1304,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     onSay: (text) => {
       client.say(text);
     },
-    // A slot was pressed on the bar (spec 192). The same `pressAbility` a key
+    // A slot was pressed on the bar (spec 196). The same `pressAbility` a key
     // calls, because the bar and the keyboard reach one ability list.
     onCastSlot: (abilityId) => {
       pressAbility(abilityId);
     },
   });
 
-  // The bar is on the interface canvas now (spec 192), so two facts have to
+  // The bar is on the interface canvas now (spec 196), so two facts have to
   // cross once at the mount: what the frame's floor already holds -- the
   // experience strip, which spans the whole width -- and, when `?slots=` forced
   // a bar, which bar. The ordinary case is pushed per frame off the equipment.
@@ -1489,7 +1489,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * Point the mini HUD at whatever the cursor is over (spec 192).
+   * Point the mini HUD at whatever the cursor is over (spec 196).
    *
    * A click on empty ground clears it, because `pickUnitAt` answers null there
    * and null is what "nothing is selected" is -- there is no second gesture for
@@ -1701,7 +1701,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // no label and no row in the window that offers to rebind everything else.
     // Nothing here asks what pressed them, so a key bound to `world.order` gives
     // an order at the cursor and a button bound to `skillbar.3` casts.
-    // One press, two readings (spec 192), in exactly the shape `world.order`
+    // One press, two readings (spec 196), in exactly the shape `world.order`
     // below already has: with an aim pending it commits to it, and with none it
     // names the body under the cursor. Two actions on one chord would be a
     // conflict the keybindings window reports and a player could put on two
@@ -2564,7 +2564,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     ui.setAiming(pendingAim?.abilityId ?? null);
     // ...and back the other way: everything left along the bottom edge is placed
     // against the bar, and the bar is now drawn on the interface canvas at the
-    // player's own scale (spec 192). The measured row rather than a second sum,
+    // player's own scale (spec 196). The measured row rather than a second sum,
     // because a second description of somebody else's layout is the mistake that
     // put the chat log on the weapon switch.
     hud.setActionBar(ui.actionBarBoxCss());

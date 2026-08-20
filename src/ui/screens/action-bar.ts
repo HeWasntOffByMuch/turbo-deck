@@ -1,5 +1,5 @@
 /**
- * The bar along the bottom of the screen (spec 192).
+ * The bar along the bottom of the screen (spec 196).
  *
  * Five {@link SkillSlot}s -- four skills and the vial -- and that is the whole
  * of the change: the widget was written for this job in spec 128 and had never
@@ -67,7 +67,7 @@ export interface ActionSlotView {
   /** What the slot casts, or null for one nothing has been put in yet. */
   readonly ability: AbilityView | null;
   /**
-   * What hovering it says, already composed (spec 192).
+   * What hovering it says, already composed (spec 196).
    *
    * Lines rather than prose, and *given* rather than derived, for the reason
    * every other view-model here is: what a line is worth saying -- and what

@@ -42,7 +42,7 @@ function entity(overrides: Partial<ReplicatedEntity> = {}): ReplicatedEntity {
   };
 }
 
-describe('selectionOf (spec 192)', () => {
+describe('selectionOf (spec 196)', () => {
   it('says nothing when nothing is selected', () => {
     expect(selectionOf({ selectedId: null, entities: [entity()], drawnTick: 0 })).toBeNull();
   });
@@ -135,7 +135,7 @@ describe('selectionOf (spec 192)', () => {
   });
 });
 
-describe('formatRemaining (spec 192)', () => {
+describe('formatRemaining (spec 196)', () => {
   it('is a tenth under ten seconds and a whole number above', () => {
     expect(formatRemaining(60)).toBe('1.0s');
     expect(formatRemaining(90)).toBe('1.5s');

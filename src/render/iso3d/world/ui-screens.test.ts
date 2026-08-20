@@ -114,7 +114,7 @@ function windowSize(screens: UiScreens, id: WindowId): Rect {
   return placement;
 }
 
-describe('the mini HUD (spec 192)', () => {
+describe('the mini HUD (spec 196)', () => {
   function body(overrides: Record<string, unknown> = {}): unknown {
     return {
       id: 4,
@@ -962,7 +962,7 @@ describe('the tooltip, over the world (spec 136)', () => {
 describe('drawing', () => {
   /**
    * With no window open, the only thing on the canvas is the furniture: the
-   * action bar, which is always there (spec 192), and the chat, which draws
+   * action bar, which is always there (spec 196), and the chat, which draws
    * nothing until somebody says something.
    *
    * Asserted as "opening the bag adds to it" rather than as an absolute count,

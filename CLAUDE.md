@@ -2410,7 +2410,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the only way to fill a slot -- a harness that wants
                  `ground.quake` on the bar should not have to loot a sigil for
                  it first.
-                 Since spec 192 none of that is DOM: the row is
+                 Since spec 196 none of that is DOM: the row is
                  `src/ui/screens/action-bar.ts` on the interface canvas, the
                  plan is pushed into the mount rather than into `hud.ts`, and a
                  slot draws an **icon** rather than a name -- every other slot in
@@ -2536,7 +2536,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  dies, the overlay only appears when you lose, and the button
                  only after that.
                  selection.ts and action-bar-model.ts are the two view-models
-                 spec 192 added, out here for the reason every other one is:
+                 spec 196 added, out here for the reason every other one is:
                  `src/ui/` may not reach the sim, so the replicated facts and the
                  content tables become plain rows on this side of the fence --
                  including *what a line is worth saying*, which is the division

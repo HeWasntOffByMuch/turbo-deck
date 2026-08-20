@@ -396,7 +396,7 @@ export interface HudHandle {
    */
   showOpenWindows(open: readonly WindowId[]): void;
   /**
-   * How big the action bar is, in CSS pixels (spec 192).
+   * How big the action bar is, in CSS pixels (spec 196).
    *
    * The bar moved to the interface canvas, so its box is a fact about the UI
    * scale rather than about this file's table -- and everything left along that
@@ -409,7 +409,7 @@ export interface HudHandle {
    */
   setActionBar(box: ActionBarBox): void;
   /**
-   * How much of the frame's floor is spoken for, in CSS pixels (spec 192).
+   * How much of the frame's floor is spoken for, in CSS pixels (spec 196).
    *
    * The experience strip spans the whole width and is pinned to the bottom, so
    * everything else along that edge has to clear it -- including the action bar,
@@ -419,7 +419,7 @@ export interface HudHandle {
    */
   readonly floorCss: number;
   /**
-   * How big one action-bar slot should be drawn, in CSS pixels (spec 192).
+   * How big one action-bar slot should be drawn, in CSS pixels (spec 196).
    *
    * Beside {@link floorCss} and told for the same reason: the bar is on the
    * other surface, and how big a thing a finger has to hit is a physical fact
@@ -427,7 +427,7 @@ export interface HudHandle {
    */
   readonly slotSideCss: number;
   /**
-   * Whether a slot names the key that fires it (specs 094, 192).
+   * Whether a slot names the key that fires it (specs 094, 196).
    *
    * False on a finger, which has no keyboard: see `HudLayout.showsKeyNumber`.
    * Told rather than asked, because the half of the mount that builds the bar's
@@ -571,7 +571,7 @@ export function createHud(project: Projector): HudHandle {
   const bottom = `calc(${bottomEdge(layout)}px + env(safe-area-inset-bottom))`;
 
   /**
-   * Where the action bar is, in CSS pixels, told by the mount (spec 192).
+   * Where the action bar is, in CSS pixels, told by the mount (spec 196).
    *
    * The bar itself is drawn on the interface canvas now. What is left here is
    * everything placed *against* it -- the pool block, which sits immediately to
@@ -710,7 +710,7 @@ export function createHud(project: Projector): HudHandle {
   }
 
   /**
-* Place everything that hangs off the action bar, in one go (spec 192).
+* Place everything that hangs off the action bar, in one go (spec 196).
    *
    * Called when the box changes rather than per frame: the bar's size follows
    * the interface scale, which moves when the window is resized or the player

@@ -1,5 +1,5 @@
 /**
- * What the bar along the bottom is handed, every frame (spec 192).
+ * What the bar along the bottom is handed, every frame (spec 196).
  *
  * Beside `character-model.ts` and `inventory-model.ts` for the reason those are
  * out here: `src/ui/` may not reach the sim, so the replicated facts, the
@@ -59,7 +59,7 @@ export interface ActionBarSource {
   /** The key map, so a slot says what actually fires it rather than a guess. */
   readonly map: InputMap;
   /**
-   * Whether a slot names the key at all (specs 094, 192).
+   * Whether a slot names the key at all (specs 094, 196).
    *
    * False on a finger, which has no keyboard to press: a "1" in the corner of a
    * slot somebody taps is a label about a control that is not there. The
@@ -123,7 +123,7 @@ function slotViewOf(
 }
 
 /**
- * What hovering a slot says (specs 191, 192).
+ * What hovering a slot says (specs 191, 196).
  *
  * The DOM bar carried this as a browser `title`; a canvas has none, so the
  * lines are composed here and the framework's own `Tooltip` draws them. Through

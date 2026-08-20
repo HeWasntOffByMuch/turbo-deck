@@ -105,7 +105,7 @@ export interface StatusMark {
   /** Live stacks. 1 for the ones that do not stack. */
   readonly stacks: number;
   /**
-   * Ticks until the window ends, from the tick being drawn (spec 192).
+   * Ticks until the window ends, from the tick being drawn (spec 196).
    *
    * A count of ticks rather than seconds, for the reason {@link FADE_TICKS} is
    * one: this layer is handed an *end* and a tick and nothing else, so the

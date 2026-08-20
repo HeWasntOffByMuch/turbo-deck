@@ -57,7 +57,7 @@ const ABILITY_ICONS: Readonly<Record<string, string>> = {
   'ranged.shot': 'ability:seek',
   'ranged.star': 'ability:slash',
   // The four active skills (spec 188) and the flask, which had no rows at all
-  // until spec 192 put them on a bar somebody looks at: an id with no entry
+  // until spec 196 put them on a bar somebody looks at: an id with no entry
   // draws the box, so every skill a player equipped and the vial beside them
   // came out as the same question mark.
   'skill.guardBreak': 'ability:guardBreak',

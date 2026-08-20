@@ -48,11 +48,11 @@ describe('the status marks’ glyphs (spec 190)', () => {
   });
 });
 
-describe('the art the action bar draws (spec 192)', () => {
+describe('the art the action bar draws (spec 196)', () => {
   /**
    * This used to measure a skill's *name* against a 92px slot.
    *
-   * Spec 192 moved the bar onto the interface canvas, where a slot is a square
+   * Spec 196 moved the bar onto the interface canvas, where a slot is a square
    * with a sprite in it and no name in the table fits at any size the face has.
    * So the failure this file names -- "added to the table and to the icon set in
    * two separate files, and only one of them is imported by anything the server

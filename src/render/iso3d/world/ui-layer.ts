@@ -99,7 +99,7 @@ export interface UiReadout {
   readonly chatOpen: boolean;
   readonly chatInput: string;
   /**
-   * The mini HUD and the action bar (spec 192), for the reason the chat is here.
+   * The mini HUD and the action bar (spec 196), for the reason the chat is here.
    *
    * `selected` is `name|detail` and empty for nothing selected; `selectedRows`
    * is each status as `label|remaining|tone`; `barSlots` is each slot keyed by
@@ -257,7 +257,7 @@ export class UiLayer {
    */
   /** The last measured bottom band, in CSS pixels. See {@link applySafeBottom}. */
   private measuredBand = 0;
-  /** ...and the top-right corner's, on the same terms (spec 192). */
+  /** ...and the top-right corner's, on the same terms (spec 196). */
   private measuredRight = 0;
   /** How big an action-bar slot should be, in CSS pixels. See below. */
   private slotSideCss = 0;
@@ -420,7 +420,7 @@ export class UiLayer {
     this.screens.moveFocus(step);
   }
 
-  // --- the action bar (spec 192) ---------------------------------------------
+  // --- the action bar (spec 196) ---------------------------------------------
 
   /** Replace what the five slots hold. See `UiScreens.setActionBarPlan`. */
   setActionBarPlan(plan: readonly ActionSlot[]): void {
@@ -468,7 +468,7 @@ export class UiLayer {
   }
 
   /**
-   * How big one slot should be, converted from CSS pixels (spec 192).
+   * How big one slot should be, converted from CSS pixels (spec 196).
    *
    * Re-applied on every resize rather than pushed once, because the scale is
    * what the conversion turns on: a player who picks a chunkier interface gets
@@ -507,7 +507,7 @@ export class UiLayer {
     }));
   }
 
-  // --- the mini HUD (spec 192) ----------------------------------------------
+  // --- the mini HUD (spec 196) ----------------------------------------------
 
   /**
    * Point the selected-unit panel at a body, or at nothing.
@@ -567,7 +567,7 @@ export class UiLayer {
   }
 
   /**
-   * How far down the top-right corner's own furniture reaches (spec 192).
+   * How far down the top-right corner's own furniture reaches (spec 196).
    *
    * The counterpart to {@link applySafeBottom} and measured for the same reason
    * it is: the tuning popovers are seven buttons of their own heights that wrap
@@ -644,7 +644,7 @@ function bottomBandCss(): number {
 
 /**
  * How far down the frame anything marked `data-hud-right` reaches, in CSS
- * pixels (spec 192).
+ * pixels (spec 196).
  *
  * Today that is the strip of tuning popovers, and only on a pointer device --
  * spec 140 does not build them on a handheld, so zero there is the truth rather

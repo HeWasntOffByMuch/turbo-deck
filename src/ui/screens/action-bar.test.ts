@@ -1,5 +1,5 @@
 /**
- * The action bar screen (spec 192).
+ * The action bar screen (spec 196).
  *
  * What is asserted here is what only exists once the widgets have been laid out:
  * that the bar is five slots of the framework's own size, that it takes a click

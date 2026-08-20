@@ -1,5 +1,5 @@
 /**
- * The body you clicked, in the corner (spec 192).
+ * The body you clicked, in the corner (spec 196).
  *
  * Docked top-right in the `hud` layer beside the chat, and built to the rules
  * the chat established for furniture: not a `UiWindow`, no title bar, never

@@ -38,7 +38,7 @@ export interface HudLayout {
    *
    * False on a finger, which has no keyboard to press: a "1" in the corner of a
    * slot somebody taps is a label about a control that is not there. Still here
-   * after spec 192 moved the bar to the interface canvas, because it is a fact
+   * after spec 196 moved the bar to the interface canvas, because it is a fact
    * about the *device* and this is the file that answers those -- the mount is
    * pure and cannot ask.
    */
@@ -240,7 +240,7 @@ export function stripHeight(box: BoxSize, gap: number, count: number): number {
 }
 
 /**
- * The box the action bar occupies, in CSS pixels (spec 192).
+ * The box the action bar occupies, in CSS pixels (spec 196).
  *
  * Told rather than derived, and that is the whole of what moved: the bar is
  * drawn on the interface canvas now, so how big it is is a fact about the UI
@@ -254,7 +254,7 @@ export function stripHeight(box: BoxSize, gap: number, count: number): number {
  * where a guessed constant would put it in the wrong place forever.
  */
 /**
- * How big one action-bar slot is, in CSS pixels (spec 192).
+ * How big one action-bar slot is, in CSS pixels (spec 196).
  *
  * Here rather than in `src/ui/screens/action-bar.ts` because it is the same
  * kind of number as {@link MIN_TAP_PX} beside it and answers the same question:
