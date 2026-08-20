@@ -83,6 +83,30 @@ describe('actionBarViewOf (spec 192)', () => {
     }
   });
 
+  /**
+   * The tooltip the DOM slots carried as a `title` and a canvas has no way to.
+   *
+   * Through spec 191's vocabulary rather than a sentence written for the bar,
+   * which is what that vocabulary was built for -- and each line keeps the tone
+   * it was given there, so `src/ui/` can colour it without knowing what any of
+   * it means.
+   */
+  it('says what a slot holds, in the words the ability table already has', () => {
+    const view = actionBarViewOf(source());
+    const lines = view.slots[0]?.hint ?? [];
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines[0]?.text).toBe(abilityById('melee.heavy')?.name);
+    // Every line past the name carries a colour token; the name takes the
+    // tooltip's own.
+    expect(lines.slice(1).every((line) => (line.colorToken ?? '').length > 0)).toBe(true);
+  });
+
+  it('says nothing at all for an empty slot', () => {
+    // "Empty -- no skill assigned" is a box that pops up to tell a player what
+    // they can already see.
+    expect(actionBarViewOf(source()).slots[1]?.hint).toEqual([]);
+  });
+
   it('says what actually fires each slot, off the key map', () => {
     // Never a guess and never the slot's own number: a rebound skillbar key has
     // to reach the label, which is the whole reason the map is an input here.

@@ -19,6 +19,7 @@
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { abilityById, barNameOf, type AbilityDefinition } from '../../../server/data/abilities.js';
 import { attackTimingFor } from '../../../server/sim/abilities.js';
+import { describeAbility, type Tone } from '../../../server/data/description.js';
 import type { EffectiveStats } from '../../../server/state/types.js';
 import { chordLabel } from '../../../ui/input/actions.js';
 import type { InputMap } from '../../../ui/input/input-map.js';
@@ -26,6 +27,7 @@ import type {
   ActionBarView,
   ActionSlotView,
   SlotHighlight,
+  TooltipLine,
 } from '../../../ui/screens/action-bar.js';
 import type { AbilityView } from '../../../ui/widgets/skill-slot.js';
 import { abilityIconFor } from './character-model.js';
@@ -116,8 +118,54 @@ function slotViewOf(
       source.swap && changingSlot === index
         ? { label: swapLabel(source.swap.kind), progress: source.swap.progress }
         : null,
+    hint: hintFor(ability),
   };
 }
+
+/**
+ * What hovering a slot says (specs 191, 192).
+ *
+ * The DOM bar carried this as a browser `title`; a canvas has none, so the
+ * lines are composed here and the framework's own `Tooltip` draws them. Through
+ * `describeAbility` rather than a second sentence written for the bar, which is
+ * what spec 191 built the vocabulary for -- and the tone each line was given
+ * there becomes the colour it is drawn in, which is the division the item
+ * tooltip already keeps: the model says what a line *is*, `src/ui/` says what
+ * that looks like.
+ *
+ * An empty slot says nothing at all. "Empty -- no skill assigned" is a tooltip
+ * that tells a player what they can already see, and a box that pops up to do
+ * it is worse than one that stays quiet.
+ */
+function hintFor(ability: AbilityDefinition | null): readonly TooltipLine[] {
+  if (!ability) return NO_HINT;
+  const described = describeAbility(ability);
+  return [
+    { text: described.name },
+    ...described.lines.map((line) => ({ text: line.text, colorToken: TONE_TOKENS[line.tone] })),
+    // Flavour last and dim, kept out of the rules exactly as `technicalText`
+    // keeps it out of them: a caller that wants both puts them in two styles.
+    ...(described.flavor === null ? [] : [{ text: described.flavor, colorToken: 'textDim' }]),
+  ];
+}
+
+const NO_HINT: readonly TooltipLine[] = [];
+
+/**
+ * What each of spec 191's five tones is drawn in.
+ *
+ * Out of the nineteen that exist, and each already means this somewhere else:
+ * `focus` is what the interface says a target in, `text` is a plain statement,
+ * `danger` is what something costs you, `accent` is a commitment with a clock
+ * on it, and `textDim` is the aside it already draws every quiet thing in.
+ */
+const TONE_TOKENS: Readonly<Record<Tone, string>> = {
+  target: 'focus',
+  effect: 'text',
+  cost: 'danger',
+  timing: 'accent',
+  note: 'textDim',
+};
 
 /**
  * Why a slot is lit, in the order the states outrank each other.

@@ -34,11 +34,13 @@
  */
 
 import { Row } from '../core/containers.js';
-import { uniformInsets, type Insets } from '../core/geom.js';
+import { uniformInsets, type Insets, type Point } from '../core/geom.js';
 import type { Theme } from '../theme/theme.js';
 import { SkillSlot, SLOT_SIDE, type AbilityView } from '../widgets/skill-slot.js';
+import { Tooltip, type TooltipLine } from '../widgets/tooltip.js';
 
 export type { AbilityView } from '../widgets/skill-slot.js';
+export type { TooltipLine } from '../widgets/tooltip.js';
 
 /**
  * Why a slot is lit.
@@ -64,6 +66,15 @@ export const HIGHLIGHT_TOKENS: Readonly<Record<SlotHighlight, string>> = {
 export interface ActionSlotView {
   /** What the slot casts, or null for one nothing has been put in yet. */
   readonly ability: AbilityView | null;
+  /**
+   * What hovering it says, already composed (spec 192).
+   *
+   * Lines rather than prose, and *given* rather than derived, for the reason
+   * every other view-model here is: what a line is worth saying -- and what
+   * tone it is worth saying it in -- is decided outside `src/ui/`, which may
+   * not read the ability table's description vocabulary at all.
+   */
+  readonly hint: readonly TooltipLine[];
   /** The key that fires it, from the InputMap and never guessed. */
   readonly keyLabel: string;
   /** A count in the corner: the vial's charges. Empty draws none. */
@@ -108,8 +119,18 @@ export function iconScaleFor(side: number): number {
 }
 
 export class ActionBarScreen extends Row {
+  /**
+   * What a slot says when the cursor rests on it (spec 191's vocabulary).
+   *
+   * Its own tooltip rather than the bag's, and in the same layer: a tooltip is
+   * about the thing under the cursor and both screens can be under it at once,
+   * but they are separate screens with separate lifetimes -- the bag's is
+   * cleared when the bag closes, and this one never closes.
+   */
+  readonly tooltip = new Tooltip('bar:tooltip');
   private readonly slotWidgets: SkillSlot[] = [];
   private slotSide = SLOT_SIDE;
+  private hints: readonly (readonly TooltipLine[])[] = [];
   onUse: ((index: number) => void) | null = null;
 
   constructor(options: ActionBarOptions) {
@@ -180,6 +201,7 @@ export class ActionBarScreen extends Row {
    * running cooldowns is free and equipping a skill costs one pass.
    */
   setView(view: ActionBarView): void {
+    this.hints = view.slots.map((entry) => entry.hint);
     for (const [index, slot] of this.slotWidgets.entries()) {
       const entry = view.slots[index];
       slot.setAbility(entry?.ability ?? null);
@@ -195,6 +217,31 @@ export class ActionBarScreen extends Row {
       }
     }
   }
+
+  /**
+   * Point the tooltip at whatever is under the cursor. Driven by the mount.
+   *
+   * Off the slot's own rect rather than a hit test, because `SkillSlot` is a
+   * button and the row between them is not: a hit test would answer null in the
+   * gaps and flicker the tooltip off every time the cursor crossed one.
+   */
+  pointerMoved(at: Point, nowMs: number): void {
+    for (const [index, slot] of this.slotWidgets.entries()) {
+      const rect = slot.rect;
+      const inside =
+        at.x >= rect.x && at.x < rect.x + rect.width && at.y >= rect.y && at.y < rect.y + rect.height;
+      if (!inside) continue;
+      const hint = this.hints[index] ?? [];
+      this.tooltip.point(hint.length > 0 ? hint : null, at, nowMs);
+      return;
+    }
+    this.tooltip.point(null, at, nowMs);
+  }
+
+  /** Advance the tooltip's delay. Called once a frame by the mount. */
+  updateTooltip(nowMs: number, delayMs: number): void {
+    this.tooltip.update(nowMs, delayMs);
+  }
 }
 
 /**
@@ -208,4 +255,5 @@ export class ActionBarScreen extends Row {
  */
 export function actionBarInsets(theme: Theme, floor: number): Insets {
   return { ...uniformInsets(theme.spacing.sm), bottom: floor + theme.spacing.sm };
+
 }

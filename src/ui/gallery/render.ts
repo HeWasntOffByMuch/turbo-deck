@@ -768,6 +768,7 @@ export function renderWorldHud(options: WorldHudRenderOptions = {}): WorldHudFra
               affordable: options.poor !== true || entry.cost === 0,
             },
       keyLabel: String(index + 1),
+      hint: entry === null ? [] : [{ text: entry.name }],
       badge: index === DEMO_BAR.length - 1 ? '2/3' : '',
       highlight: options.highlight?.slot === index ? options.highlight.kind : null,
       change:

@@ -295,10 +295,14 @@ and for the reason its width is.
 - **A tooltip on a status row.** The row is a name and a count; what a status
   *does* is the character sheet's question, and the sheet is out of scope here
   too (spec 186 said so and nothing has changed).
-- **A tooltip on a bar slot.** The DOM buttons carried the ability's description
-  as a `title` and the canvas ones do not. `Tooltip` exists and the bag already
-  drives one, but wiring a second surface into it is a mount question rather than
-  a bar question, and what is being replaced here is the drawing.
+- ~~**A tooltip on a bar slot.**~~ Restored rather than deferred, because main
+  landed spec 191's description vocabulary while this branch was out and the DOM
+  buttons were its consumer: dropping the `title` would have undone that. The
+  bar has its own `Tooltip` in the same layer as the bag's, composed through
+  `describeAbility` — each line keeping the *tone* spec 191 gave it, which
+  `src/ui/` turns into a colour without knowing what any of it means. An empty
+  slot says nothing: "no skill assigned" is a box that pops up to tell a player
+  what they can already see.
 - **Accessibility.** The DOM slots carried `aria-label`s and a canvas carries
   none. That is a property of the whole framework rather than of this bar — every
   screen mounted since spec 131 has it — and it wants one answer covering all of

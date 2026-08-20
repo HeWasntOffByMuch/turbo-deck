@@ -87,6 +87,7 @@ function slot(overrides: Partial<ActionSlotView> = {}): ActionSlotView {
   return {
     ability: ability(),
     keyLabel: '1',
+    hint: [{ text: 'Heavy' }],
     badge: '',
     highlight: null,
     change: null,

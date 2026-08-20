@@ -547,6 +547,10 @@ export class UiScreens {
     this.actionBarDock.padding = actionBarInsets(THEME, 0);
     this.actionBarDock.place(this.actionBar, 'bottom');
     this.layers.place('hud', this.actionBarDock);
+    // In the same layer as the bag's and the sheet's, above every window: a
+    // tooltip is about whatever is under the cursor, and the bar is under it
+    // whether or not something else is open.
+    this.layers.place('tooltip', this.actionBar.tooltip);
     this.actionBar.onUse = (index) => {
       // The one gate (spec 164). An empty slot and an index past the last one
       // are the same nothing here as they are on the key, because both ends ask
@@ -806,6 +810,10 @@ export class UiScreens {
     }
     this.inventory.updateTooltip(nowMs);
     // The sheet's, on the same terms (spec 147).
+    // The bar's, on the same terms -- except that it is never closed, so there
+    // is no shut-window case to clear it for.
+    this.actionBar.tooltip.viewport = this.root.viewport;
+    this.actionBar.updateTooltip(nowMs, THEME.input.tooltipDelayMs);
     this.character.tooltip.viewport = this.root.viewport;
     if (!this.isOpen('character')) this.character.clearTooltip();
     this.character.updateTooltip(nowMs, THEME.input.tooltipDelayMs);
@@ -1563,6 +1571,10 @@ export class UiScreens {
     // A move with no button down reaches no gesture, and two things need it: a
     // carry follows the cursor with nothing held, and a tooltip is by definition
     // about hovering (spec 136). This is the one place that sees every move.
+    // The bar first: it is furniture rather than a window, so it is under the
+    // cursor whenever nothing else is, and asking it last would mean a hover
+    // over a slot with the bag open pointed two tooltips at once.
+    if (phase === 'move') this.actionBar.pointerMoved(pos, this.now);
     if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
     if (phase === 'move' && this.isOpen('character')) this.character.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));

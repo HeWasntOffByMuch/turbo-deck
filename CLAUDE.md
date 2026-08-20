@@ -802,6 +802,14 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  the frame's own middle. `POOL_TO_BAR_GAP` is the space *beside*
                  the block and is its own number: sharing `poolGap`, which is the
                  space *inside* it, had the two hugging.
+                 A slot has a **tooltip**, which the DOM buttons carried as a
+                 `title` and a canvas has no way to: it is the framework's own
+                 `Tooltip` in the same layer as the bag's, composed through spec
+                 191's `describeAbility` rather than a sentence written for the
+                 bar, with each line keeping the *tone* that vocabulary gave it
+                 -- `src/ui/` turns a tone into a colour without ever learning
+                 what one means. An empty slot says nothing, because "no skill
+                 assigned" is a box that pops up to state what a player can see.
                  The bar's box carries a **`bottom`** as well as a size, and that
                  is the fix for the one thing the DOM half could not be right
                  about on its own. It knows what the frame's floor holds -- the
