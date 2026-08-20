@@ -120,6 +120,36 @@ export const VFX_PALETTE = {
   boltWhite: 0xfffbe0,
   boltYellow: 0xffe08a,
   boltViolet: 0x9a5ad0,
+  /**
+   * Corrosion's acid (spec 197) -- and it is a *third* green in a table that
+   * already has two, which is only worth the entry because of what it has to be
+   * told apart from.
+   *
+   * Poison is a leaf green and Corrosion is a chemical one. If they read as the
+   * same colour they read as one affliction at two intensities, which is exactly
+   * backwards: Poison is the weakest rate in the table and Corrosion is the one
+   * that takes the guard and the armour with it. So this ramp is pushed hard
+   * toward yellow -- chartreuse rather than leaf -- and its dark end goes to a
+   * rusted olive-brown rather than to Poison's murk, because what Corrosion
+   * leaves behind is rust and what Poison leaves behind is more poison.
+   */
+  corrodeBright: 0xe9f77a,
+  corrodeBody: 0xa8c22f,
+  corrodeDeep: 0x8a6a2e,
+  /**
+   * Decay's rot (spec 197): the one affliction whose colour is an *absence*.
+   *
+   * Every other ramp here is saturated, because every other effect is something
+   * arriving. Decay suppresses healing -- what it costs you is the health you
+   * cannot put back -- so it is the one that should look like colour draining
+   * rather than colour landing, and it is the only desaturated ramp in the
+   * table. Violet-grey with an olive cast, so it is neither Corrosion's acid nor
+   * the neutral smoke greys, and so that it reads as *sick* beside
+   * `auraHeal`'s clean pale green rather than as dust.
+   */
+  decayBright: 0xc3b8c9,
+  decayBody: 0x8b7f9a,
+  decayDeep: 0x6e6a52,
   arcaneLilac: 0xd7bdf0,
   arcaneMagenta: 0xc04ab8,
   arcaneDeep: 0x4a2a7a,

@@ -5,7 +5,9 @@ auras as drawn sigils (spec 124), impacts as crystals (spec 125), the shockwave
 combined and the counts made tunable (spec 126), blood lit and bent (spec 139),
 and a painted vocabulary added beside all of it (spec 158), corrected (159) and
 given two lingering variants (160), a second way for a mark to end (161) and a
-preview that can actually show it (162) — the last at its review gate.**
+preview that can actually show it (162). Spec 197 put the vocabulary on a
+*body*: the seven afflictions, as paint that clings and beats — the last at its
+review gate.**
 
 | Phase | State |
 |---|---|
@@ -25,7 +27,8 @@ preview that can actually show it (162) — the last at its review gate.**
 | the painted vocabulary, corrected (spec 159) | done |
 | two variants that linger (spec 160) | done |
 | a mark that comes apart (spec 161) | done |
-| the tab could not show what it was editing (spec 162) | **at the review gate** |
+| the tab could not show what it was editing (spec 162) | done |
+| the afflictions, as paint on a body (spec 197) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1672,3 +1675,138 @@ Its measure is **piece count**, not pixel churn, and that is the transferable
 part: a broken stroke and an intact one overlap everywhere except the gap, so the
 obvious measurement is small when the read is completely different. Gating on it
 would have got the shader retuned to satisfy a number rather than the picture.
+
+---
+
+## 11. The afflictions, as paint on a body (spec 197)
+
+The painted vocabulary had three builders and all three were *events*: a hit, a
+blast, a placed cross. Nothing in it held to a body, and nothing in it lasted
+longer than a second and a bit. Spec 190 had meanwhile shipped seven afflictions
+— the one damage in this game that stays on a body after the thing that did it
+has walked away — and the only thing separating four seconds of fire from ten
+seconds of rot was which thirteen-pixel glyph sat in a row of glyphs over the
+head.
+
+### Three sockets, each with a comment naming this work
+
+Worth recording together, because the pattern is the finding rather than any one
+of them:
+
+- `world/auras.ts` has said since spec 121 that *"the day a status list is
+  replicated, `aurasFor` gains a branch and nothing else in the renderer
+  changes."* Spec 186 replicated it. `aurasFor` and `AuraTracker` still had no
+  caller outside their own test — seventy-five specs of written, tested,
+  mounted-nowhere code.
+- `EmitterShape`'s `{ kind: 'mesh' }` is documented as *"the surface of whatever
+  the effect is attached to … which is what makes a **burning-unit** definition
+  safe to preview in isolation."* There was no burning-unit definition, and
+  `scene.ts` supplied no `surface` hook, so in the game that shape had never
+  once resolved to anything but a point.
+- `scene.ts`'s `attach` hook says *"the effects that need a socket — **a burning
+  unit**, a weapon trail — arrive with the fire and slash work."*
+
+### The one decision the whole thing turns on
+
+**The beat is derived, not sent.** `WireStatus` carries an *absolute*
+`expiresAtTick` and `data/damage-over-time.ts` is shared code, so the client can
+recover the entire schedule:
+
+```
+elapsed = tick - (expiresAtTick - dotDurationTicks(row))
+landed  = clamp(floor(elapsed / row.intervalTicks), 0, row.pulses)
+```
+
+Every client beats together, nothing new crosses the wire, and the paint lands on
+the frame the damage number does. That is the whole difference between "there is
+a green haze on that thing" and "that thing is being poisoned."
+
+It is a **count** rather than "is this tick a pulse tick", and that is the
+load-bearing half. A frame drains several ticks — three at 20fps, and this
+environment paints a real page at about five — so a rule that asked whether
+`tick` were exactly a multiple would skip most beats and all of them on a slow
+frame. Counting what has landed and firing on the increase is frame-rate
+independent by construction, and fires **once** for a frame that drained three,
+because a beat is a beat and not a quantity.
+
+The stated limit: the sim measures elapsed from `appliedAtTick`, which a refresh
+does not move; the client has only the expiry, which a refresh does. So after a
+refresh the derived phase can sit up to `intervalTicks - 1` off. The *cadence*
+stays exact and the offset is under half a second on every row, so it is accepted
+rather than fixed with a protocol change.
+
+### Two layers, and one of them is the whole feature
+
+**The cling** is a state — marks born on the body's own surface, riding it,
+renewed about twice a second, `worldSpace: false`. **The shed** is what says
+*which* — marks leaving that surface along `rise`, and up-or-down is the cheapest
+direction there is: fire lifts, every rot falls, cold barely moves.
+
+There is deliberately no third layer. The hit has three because it is a *gesture*
+and needs a dominant mark to carry the bearing. An affliction has no bearing.
+
+### What the vocabulary decided, rather than taste
+
+- **`worldSpace: false` is the whole of "it clings."** The compiled default is
+  `true`, and attaching an effect moves only the emission *origin* — so a mark
+  born on a walking body and left in world space is one the body walks out of.
+  It is a translation and not a rotation, so a stain does not turn with a body
+  spinning on the spot; at half a second a mark and twice a second a refresh,
+  that is not visible, and paying for it would mean giving every particle a
+  frame.
+- **The shape choice is the orientation choice.** `brush-blot` is `tumble`
+  (world space, where this vocabulary's depth comes from) so the cling turns with
+  the body's volume; `brush-slash`/`brush-flick` are `cardVelocity`, always
+  camera-facing, so the beat always reads. `brush-mark` is `ground` and is the
+  one brush shape that cannot go on a body at all.
+- **`fizzle`, never `retract`, for the cling.** Spec 161's rule, and this is the
+  case it was written about.
+- **`alpha`, nothing additive.** It matters more here than anywhere else in the
+  file, because a cling is *many overlapping marks on one body by construction* —
+  the one arrangement where a translucent mark is guaranteed to cross another.
+
+### Lengths are in body radii
+
+Every length is a multiple of the effect's own scale, the driver plays with
+`scale` set to the body's footprint radius, and the `surface` hook answers in the
+same units. `system.ts` multiplies *both* the shape's local coordinates and the
+size curve by the instance scale, so one authored definition lands on a spider
+and on a player at the right place **and** the right size. Speed and gravity are
+not scaled, which is correct: gravity is gravity.
+
+### Two severities, not five
+
+`stacks` rides the wire, and Poison at five must not look like Poison at one. But
+the count is already drawn — the mark over the head carries it — so what the paint
+owes is *severity*, and two tiers is the honest resolution at three hundred pixels
+tall. More paint, never brighter paint: brightness is what the beat says, and one
+signal meaning two things is a legend nobody can read. Frostbite crosses on
+**elapsed** rather than stacks, because its ramp is that row's whole design.
+
+Burn and Shock get no heavy tier at all. Neither stacks and neither ramps, so
+there is no state of a body where either is worse than it already is, and a
+louder version would be a picture of something that never happens.
+
+### Why the driver does its own diff instead of using `AuraTracker`
+
+`play` returns **0** on refusal — unknown id, over budget, or beyond
+`cullDistance` — and a tracker that records *ids* cannot say "wanted, asked for,
+did not start". Committing a refused id leaves a body silently unmarked for the
+rest of its life. Holding **handles** makes a refusal mean "not started yet", so
+a body that walks into range gets its paint on the frame it does.
+
+The obligation that comes with holding one: on despawn **nothing stops itself.**
+The attach hook answers false, the instance stays where it last resolved, and a
+`durationTicks: 0` effect hangs in the air forever holding one of 128 slots.
+Nothing in this game had ever held a persistent attached effect, so `forget` is
+the pattern rather than a use of one — and it is called from the sweep that knows
+a body has left, never inferred from an absence.
+
+### Two colours the palette did not have
+
+Five of the seven already had a ramp. Corrosion and Decay did not, and both had
+to be unmistakable against the neighbour they would otherwise read as: Corrosion
+is a *chemical* green pushed hard toward chartreuse against Poison's leaf, and
+Decay is the only **desaturated** ramp in the table — it suppresses healing, so it
+should look like colour draining rather than colour landing.
+
