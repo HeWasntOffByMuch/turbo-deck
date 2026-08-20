@@ -247,7 +247,21 @@ describe('the collider snapshot', () => {
     // Two real grids over the real arena, which is the cost this whole design
     // is arranged around -- and the reason `view.ts` publishes a snapshot on a
     // settle rather than on an arrival.
-  }, 60_000);
+    //
+    // The budget is three minutes rather than one because one stopped being a
+    // budget. Measured on a loaded CI-class container this pair takes 58.5s and
+    // 59.5s *run on its own* -- inside the old limit twice and over it as soon
+    // as the rest of the suite is competing for the same core, which is exactly
+    // the intermittent red it produced. Nothing here got slower on purpose: a
+    // grid is built over the map's declared extent rather than over the chunks
+    // that arrived, so spec 165 growing the map grew this, and the number
+    // underneath it was never revisited.
+    //
+    // Raised rather than narrowed, because every assertion above is the point:
+    // `navGridFor` caches on the colliders' object identity, and the only way
+    // to show a snapshot cannot be memoized across an arrival is to build the
+    // two grids and watch the cache miss.
+  }, 180_000);
 
   it('declares the whole map from the first frame, before any chunk', () => {
     const empty = new StreamedMap(mapInfo());
