@@ -79,6 +79,14 @@ export const WEAPON_ICONS: Readonly<Record<string, string>> = {
     '<path d="M10.4 2.8 V9.6 L14.6 14 V21.2"/>' +
     '<path d="M14.6 21.2 h4"/>' +
     '<path d="M6 10.6 L15.4 6.8" stroke-width="1.6"/>',
+  // The test row (spec 190): a body with a full row of marks over its head,
+  // which is the only thing the skill does. Three ticks and a head rather than
+  // a weapon, because it is not one -- a sword shape here would put a test
+  // instrument in the same visual language as the four skills that ship.
+  'skill.testStatuses':
+    '<circle cx="12" cy="14.6" r="4.2"/>' +
+    '<path d="M12 18.8 v2.6"/>' +
+    '<path d="M5.4 6.6 v3.2 M12 5.4 v4.4 M18.6 6.6 v3.2" stroke-width="2.2"/>',
 };
 
 /**

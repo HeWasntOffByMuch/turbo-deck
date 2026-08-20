@@ -12,9 +12,17 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORLD } from '../../sim/collision.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
-import { ABILITIES, abilityById, type AbilityDefinition } from '../data/abilities.js';
+import {
+  ABILITIES,
+  abilityById,
+  TEST_STATUS_TICKS,
+  type AbilityDefinition,
+} from '../data/abilities.js';
 import { dotById, dotDurationTicks, dotTotalDamage } from '../data/damage-over-time.js';
 import { monsterById } from '../data/monsters.js';
+import { itemById } from '../data/items.js';
+import { DROP_TABLES } from '../data/loot.js';
+import { ALL_VENDORS } from '../data/vendors.js';
 import { computeEffectiveStats } from '../player/stats.js';
 import { skillAbilityIdsOf } from '../player/skill-slots.js';
 import {
@@ -31,7 +39,7 @@ import { extraCostsFor } from './abilities.js';
 import { rally } from './aggro.js';
 import { MIN_MOVE_SCALE } from './movement.js';
 import { moveScaleOf, statusOf, StatusId } from './statuses.js';
-import { visualFor } from '../data/status-visuals.js';
+import { STATUS_VISUALS, visualFor } from '../data/status-visuals.js';
 import {
   ActivityValue,
   AggroValue,
@@ -1323,5 +1331,198 @@ describe('determinism holds with afflictions in play', () => {
     }
     expect(quiet).not.toBeNull();
     expect(JSON.stringify(current.rng.getState())).toBe(quiet);
+  });
+});
+
+/**
+ * The test row (spec 190).
+ *
+ * Not content, so nothing here asserts a number anybody balanced. What it
+ * asserts is the one thing the row exists to do -- put the **whole** mark row on
+ * one body in one press -- and the three ways a test instrument could quietly
+ * stop being one: by hurting what it measures, by knocking it over, or by
+ * leaking into the economy.
+ */
+describe('a skill that marks everything', () => {
+  const TEST_SIGIL: Equipment = { ...EMPTY_EQUIPMENT, skill1: 'sigil.testStatuses' };
+
+  function marked(): { run: Run; target: ServerEntity | undefined; before: ServerEntity | undefined } {
+    const { state, casterId, targetId } = duel(TEST_SIGIL);
+    const before = state.entities.get(targetId);
+    const windup = abilityById('skill.testStatuses')?.windupTicks ?? 0;
+    const landed = run(state, windup + 2, {
+      0: [cast(casterId, 'skill.testStatuses', before ?? null)],
+    });
+    return { run: landed, target: landed.state.entities.get(targetId), before };
+  }
+
+  /**
+   * Written over `STATUS_VISUALS` rather than over a list of ids, which is the
+   * whole point of the assertion: a tenth row added to that table fails this
+   * test until this row applies it too, where a hand-written list would go on
+   * passing while the thing it is for -- the full row -- was no longer full.
+   *
+   * Mapped through `visualFor` for the same reason the packer is: `adapted` is
+   * not an id the sim ever writes, so what has to be true is that some live
+   * status *draws as* each row.
+   */
+  it('leaves every mark the client can draw live on one body, at once', () => {
+    const { run: landed, target } = marked();
+    const drawn = new Set(
+      Object.keys(target?.statuses ?? {})
+        .filter((id) => statusOf(target?.statuses ?? {}, id, landed.state.tick) !== null)
+        .map((id) => visualFor(id)?.id)
+        .filter((id): id is string => id !== undefined),
+    );
+    for (const visual of STATUS_VISUALS) {
+      expect(drawn.has(visual.id), `${visual.id} is not on the target`).toBe(true);
+    }
+    expect(drawn.size).toBe(STATUS_VISUALS.length);
+  });
+
+  /**
+   * Two of the twelve ids arrive without the row authoring them, because this
+   * lands as a real blow and `markTarget` writes both. That is the argument for
+   * keeping a damage effect at all, so it is asserted rather than assumed.
+   */
+  it('gets the two in-a-fight timers from the blow itself', () => {
+    const { run: landed, target } = marked();
+    for (const id of [StatusId.RecentlyHit, StatusId.InCombat]) {
+      expect(statusOf(target?.statuses ?? {}, id, landed.state.tick), id).toBeTruthy();
+    }
+  });
+
+  /**
+   * The two it deliberately leaves alone. Both are inverted -- carrying one
+   * means the mechanic has fired and has not re-armed -- so a test row that
+   * applied them would switch Second Wind and Perfect Exit off on the very body
+   * somebody is measuring.
+   */
+  it('never writes the two inverted flags, so what it marked can still recover', () => {
+    const { run: landed, target } = marked();
+    for (const id of [StatusId.SecondWindSpent, StatusId.PerfectExitSpent]) {
+      expect(statusOf(target?.statuses ?? {}, id, landed.state.tick), id).toBeNull();
+    }
+  });
+
+  /**
+   * Two windows, not one, and the split is the two specs meeting rather than a
+   * loosened assertion.
+   *
+   * The nine this row *authors* share `TEST_STATUS_TICKS`, for the reason the
+   * constant gives: what the row is for is having them live at the same
+   * instant, and nine tuned durations would keep breaking that. The seven
+   * afflictions do not, because they are not authored here at all -- spec 190
+   * applies a row **whole**, so a test Burn is the Burn, at the length the
+   * table states. A test instrument showing a mark for something the game does
+   * not have would be worse than one whose marks expire at different times.
+   */
+  it('holds the marks it authors for one window, and an affliction for its own', () => {
+    const { run: landed, target } = marked();
+    for (const [id, held] of Object.entries(target?.statuses ?? {})) {
+      if (visualFor(id) === null) continue;
+      const affliction = dotById(id);
+      if (affliction) {
+        expect(held.expiresAtTick - held.appliedAtTick, id).toBe(dotDurationTicks(affliction));
+        continue;
+      }
+      expect(held.expiresAtTick, id).toBeLessThanOrEqual(landed.state.tick + TEST_STATUS_TICKS);
+    }
+  });
+
+  it('does little to no damage: one point before mitigation, and no kill', () => {
+    const { run: landed, target, before } = marked();
+    const blows = hits(landed.events);
+    expect(blows.length).toBe(1);
+    expect(blows[0]?.damage).toBeLessThanOrEqual(1);
+    expect(blows[0]?.killed).toBe(false);
+    expect((before?.health ?? 0) - (target?.health ?? 0)).toBeLessThanOrEqual(1);
+  });
+
+  /**
+   * Cast until the cooldown has come round several times. A test instrument that
+   * kills what it is measuring after a minute of use is not one.
+   */
+  it('cannot kill what it is marking, however many times it lands', () => {
+    const { state, casterId, targetId } = duel(TEST_SIGIL);
+    const ability = abilityById('skill.testStatuses');
+    if (!ability) throw new Error('no skill.testStatuses');
+    const target = state.entities.get(targetId);
+    const period = ability.windupTicks + ability.cooldownTicks + 2;
+    const frames: Record<number, ServerInput[]> = {};
+    for (let i = 0; i < 8; i++) frames[i * period] = [cast(casterId, 'skill.testStatuses', target ?? null)];
+    const landed = run(state, period * 8, frames);
+    const after = landed.state.entities.get(targetId);
+    expect(hits(landed.events).length).toBeGreaterThan(1);
+    expect(after?.health ?? 0).toBeGreaterThan(0);
+  });
+
+  /**
+   * The stacking marks are the other half of a short cooldown: three of the nine
+   * rows draw a count, and a count that never moved would be a picture nobody
+   * had checked.
+   */
+  it('builds the stacking marks up when it is cast again', () => {
+    const { state, casterId, targetId } = duel(TEST_SIGIL);
+    const ability = abilityById('skill.testStatuses');
+    if (!ability) throw new Error('no skill.testStatuses');
+    const target = state.entities.get(targetId);
+    const period = ability.windupTicks + ability.cooldownTicks + 2;
+    const landed = run(state, period * 2 + 2, {
+      0: [cast(casterId, 'skill.testStatuses', target ?? null)],
+      [period]: [cast(casterId, 'skill.testStatuses', target ?? null)],
+    });
+    const after = landed.state.entities.get(targetId);
+    expect(statusOf(after?.statuses ?? {}, StatusId.Flow, landed.state.tick)?.stacks).toBe(2);
+  });
+
+  /**
+   * An ability blow carries `staggerPower * abilityPoiseFactor` of guard damage,
+   * and that factor is zero for everyone but the Strength+Intelligence pair --
+   * so a mark measured through a body that cannot move is exactly what this row
+   * must not produce.
+   */
+  it('does not knock over what it marks', () => {
+    const { target, before } = marked();
+    expect(target?.activity).not.toBe(ActivityValue.Stunned);
+    expect(target?.poise).toBe(before?.poise);
+  });
+
+  it('actually slows what it marked, so the mark is not a claim about nothing', () => {
+    const { run: landed, target } = marked();
+    const scale = moveScaleOf(target?.statuses ?? {}, landed.state.tick, MIN_MOVE_SCALE);
+    expect(scale).toBeLessThan(1);
+    expect(scale).toBeGreaterThan(MIN_MOVE_SCALE);
+  });
+
+  it('is refused unless it is carried, like every other skill', () => {
+    const { state, casterId, targetId } = duel(EMPTY_EQUIPMENT);
+    const target = state.entities.get(targetId);
+    const { events } = run(state, 4, { 0: [cast(casterId, 'skill.testStatuses', target ?? null)] });
+    expect(rejections(events)).toContain('notEquipped');
+  });
+
+  it('is worn in any of the four skill slots', () => {
+    for (const slot of ['skill1', 'skill2', 'skill3', 'skill4'] as const) {
+      expect(skillAbilityIdsOf({ ...EMPTY_EQUIPMENT, [slot]: 'sigil.testStatuses' })).toEqual([
+        'skill.testStatuses',
+      ]);
+    }
+  });
+
+  /**
+   * The leak that would make it content by accident. `value: 0` is what stops
+   * both prices, and the two tables are what stop it arriving on its own.
+   */
+  it('is worth nothing and is in no drop table and no vendor stock', () => {
+    expect(itemById('sigil.testStatuses')?.value).toBe(0);
+    for (const [monsterId, table] of DROP_TABLES) {
+      for (const entry of table.entries) {
+        expect(entry.defId, `${monsterId} drops it`).not.toBe('sigil.testStatuses');
+      }
+    }
+    for (const vendor of ALL_VENDORS) {
+      expect(vendor.stock, vendor.id).not.toContain('sigil.testStatuses');
+    }
   });
 });

@@ -264,6 +264,26 @@ affliction, that is a stranded path and this spec exists to not leave any.
 | Rime Touch | area circle at the caster | Frostbite |
 | Blight | ground, `point` | Decay |
 
+### The test row that marks everything
+
+`skill.testStatuses` — the other spec 190, merged while this was being written —
+exists to put **every mark the client can draw** on one body in one press, and
+its own note says a new row in `STATUS_VISUALS` is a new line in it. Seven new
+rows, so it gains seven lines.
+
+They are the one group in that row applied through `applyDot` rather than
+`applyStatus`, and both reasons are that row's own rules read back. An
+affliction written through `applyStatus` draws a mark and never pulses — a body
+drawn burning that is not burning, which is the `Slowed`-at-full-speed lie those
+magnitudes were chosen to avoid, in its worst form. And an affliction has a
+source, a cadence and a first-landed tick that only `applyDot` establishes.
+
+So they arrive **whole**, at their own lengths rather than the row's shared
+window: a test Burn is the Burn, because "the row is the affliction" is what
+lets anybody reason about one, and a weakened private Burn would be a mark for
+something the game does not have. What it costs is real damage over time, which
+a training dummy's hundred thousand health absorbs without noticing.
+
 ### Respawn
 
 `respawn` never cleared `statuses`, which nothing had ever noticed because no
@@ -322,6 +342,9 @@ built, which is not what death is meant to cost.
   `activeSkillId` names a real ability row.
 * Every DoT id has a `STATUS_VISUALS` row, a distinct wire index and a glyph.
 * Respawning clears afflictions and leaves boons alone.
+* The test row still leaves **every** `STATUS_VISUALS` mark live on one body,
+  with the nine it authors sharing one window and the seven afflictions each
+  holding the length their own row states.
 * `presentation-only` still holds with afflictions in play.
 
 ## Out of scope

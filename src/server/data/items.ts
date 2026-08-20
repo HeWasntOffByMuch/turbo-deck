@@ -374,6 +374,21 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     activeSkillId: 'skill.blight',
     value: 260,
   },
+  // The test row's sigil (spec 190). Not content, and three fields say so:
+  // `levelRequirement: 1` so any character can wear it, no `rarity` so it
+  // announces itself as quietly as loot can, and `value: 0` -- which is what
+  // both prices are derived from, so it can be neither bought nor sold. It is
+  // in no loot table and no vendor stock either; `admin:giveItem` is the way one
+  // reaches a tester, which is the same path every other operator action takes.
+  {
+    id: 'sigil.testStatuses',
+    name: 'Sigil of Test Statuses',
+    slot: 'skill',
+    levelRequirement: 1,
+    modifiers: {},
+    activeSkillId: 'skill.testStatuses',
+    value: 0,
+  },
   // --- carried ---
   // Nothing drinks this yet: consuming an item is its own spec, and it is here
   // because stacking has to be a rule about real rows to be worth testing. A
