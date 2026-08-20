@@ -136,17 +136,80 @@ check.
 
 **Two things it does not buy, and both are content rules worth writing down:**
 
-- **The shore needs a margin.** At the widest zoom the camera reaches ~3107
-  units ≈ **5 map chunks**. Water must be baked at least that far past the last
-  walkable shore, or the player frames undeclared void. Past the margin,
-  no chunk at all is correct — spec 078's three-valued solidity already reads
-  "outside the declaration" as a real wall.
+- **The shore needs a margin.** Water must be baked far enough past the last
+  walkable shore that the camera never frames undeclared void. How far is set
+  by the zoom cap below: **2 map chunks (1232 units)** at a 420 cap, against 6
+  (3696 units) at today's 1400. Past the margin, no chunk at all is correct —
+  spec 078's three-valued solidity already reads "outside the declaration" as a
+  real wall.
 - **Seabed is not currently cheap.** Measured: a real chunk serializes to 15.1
   KB, a flat all-water chunk to **6.9 KB** — only 2.2× better, because heights
   are 841 explicit numbers per chunk whatever they are. If the island is much
   smaller than its bounding rectangle, a constant-height chunk form would take
-  seabed to well under 1 KB. Listed as an optional lever in phase 7 with a real
+  seabed to well under 1 KB. Listed as an optional lever in phase 8 with a real
   number attached, not assumed.
+
+## The zoom cap is the cheapest lever there is
+
+Three server constants are sized off one question — *what can the camera
+frame?* — and all three are currently sized against `MAX_VIEW_HALF_WIDTH =
+1400`. Capping the widest zoom at **420** shrinks every one of them, and it is a
+few lines of change.
+
+Run through the real `cameraFrustum` / `internalRenderSize`, worst case across
+16:10, 16:9, 21:9, 32:9 and portrait windows:
+
+| | cap 1400 (today) | **cap 420** | |
+|---|---|---|---|
+| worst ground reach | 3107 u | **932 u** | 3.3× |
+| `INTEREST_CHUNK_RADIUS` | 8 → 289 chunks | **3 → 49 chunks** | 5.9× |
+| `MAP_CHUNK_REQUEST_RADIUS` | 6 → 169 chunks | **2 → 25 chunks** | 6.8× |
+| `MAP_CHUNK_BURST` | 169 | **25** | — |
+| shore margin to author | 6 chunks (3696 u) | **2 chunks (1232 u)** | 3× |
+
+The worst case is 32:9 in both rows, for the reason `INTEREST_CHUNK_RADIUS`
+already documents: `internalRenderSize` trades height rather than capping the
+aspect, so horizontal reach keeps growing with the window.
+
+What that buys, in the terms the rest of this plan is written in:
+
+- **Resident terrain per player: 169 → 25 map chunks.** At ~82 KB/chunk in
+  memory that is ~14 MB → **~2 MB per player**. This is what makes phase 4
+  decisive rather than merely helpful.
+- **Per-chunk nav becomes trivial.** 25 chunks × 5 radii at a 616-unit chunk and
+  a 10-unit cell is about **480 k cells (~0.5 MB)**, against 246 M cells at 4×.
+- **Cold start: 25 chunks instead of 169** — and `MAP_CHUNK_BURST` is already
+  *derived* from the radius, so it follows on its own.
+- **Three times less ocean to author** around the island's perimeter.
+
+Two things it does **not** fix, and they are the expensive ones: the map file
+and the boot are O(map), not O(camera). Phases 2, 3 and 5 are unchanged in
+necessity. What the cap changes is that phase 4's payoff gets much larger and
+phase 6 gets much cheaper.
+
+### One rule this must be built to
+
+**The server sizes its windows off the cap, never off the player's chosen
+zoom.** The temptation is per-connection interest sized to what that player is
+actually framing — it is 420/320 = 1.3× at best, and it would reopen the hole
+spec 072 closed on purpose: `decideChunkRequest` validates against *the server's
+own* position precisely so a client cannot widen its read window by lying.
+A client-reported zoom is exactly such a claim. The server should not learn the
+setting at all.
+
+### Where it lives
+
+`MAX_VIEW_HALF_WIDTH` stops being the band's edge and becomes the **ceiling on a
+setting**. The setting itself belongs on the options window's Display page —
+`src/ui/screens/display.ts` beside interface scale and the frame-time readout,
+persisted through `src/ui/input/display-store.ts`, the versioned document over
+an injected `StorageLike` that already holds both.
+
+"That might change" is already handled: `interest.test.ts` and
+`map-radius.test.ts` assert the *relationship* rather than the numbers, and
+`MAP_CHUNK_BURST` is derived from the radius. Move the cap and the tests say
+which constants have to move with it — which is exactly what they were written
+for.
 
 ## What does *not* need fixing at this scale
 
@@ -172,16 +235,18 @@ and leaves the game playable.
 | # | Spec | Kills | Cost |
 |---|---|---|---|
 | 0 | 197 — a map you can measure | nothing; the harness the rest is judged by | small |
-| 1 | 198 — the map leaves the bundle | 14 MB → ~186 MB bundle | **small** |
-| 2 | 199 — a map that is many files | 184 MB in git; the V8 ceiling | medium |
-| 3 | 200 — the server loads what it needs | 48 s boot, 2.0 GB heap | **large** |
-| 4 | 201 — routes without a warmed world | 94 s nav warm, 246 M cells | medium |
-| 5 | 202 — a client that forgets behind it | unbounded client residency | medium |
-| 6 | 203 — growing without rewriting | slow grows, unreviewable diffs | small |
-| 7 | 204 — the shore | void at the frame edge; seabed cost | small |
+| 1 | 198 — a zoom you choose, and a cap that means something | 6.8× oversized interest and streaming windows | **small** |
+| 2 | 199 — the map leaves the bundle | 14 MB → ~186 MB bundle | **small** |
+| 3 | 200 — a map that is many files | 184 MB in git; the V8 ceiling | medium |
+| 4 | 201 — the server loads what it needs | 48 s boot, 2.0 GB heap | **large** |
+| 5 | 202 — routes without a warmed world | 94 s nav warm, 246 M cells | medium |
+| 6 | 203 — a client that forgets behind it | unbounded client residency | medium |
+| 7 | 204 — growing without rewriting | slow grows, unreviewable diffs | small |
+| 8 | 205 — the shore | void at the frame edge; seabed cost | small |
 
-Phases 1 and 2 are prerequisites for 3. Phase 4 is independent of 2–3 and can
-run in parallel. Phases 5–7 are finishing.
+Phase 1 first because it sets the arithmetic every later phase is sized
+against, and because it is a few lines. Phases 2 and 3 are prerequisites for 4.
+Phase 5 is independent of 3–4 and can run in parallel. Phases 6–8 are finishing.
 
 ### Phase 0 — a map you can measure (spec 197)
 
@@ -193,7 +258,21 @@ Assert the **slope**, not the value: "doubling the world did not double this" is
 the assertion no test in the tree can currently make, and it is what stops the
 later phases from being believed rather than checked.
 
-### Phase 1 — the map leaves the bundle (spec 198)
+### Phase 1 — a zoom you choose, and a cap that means something (spec 198)
+
+`MAX_VIEW_HALF_WIDTH` 1400 → **420**, and the widest zoom becomes a player
+setting on the Display page rather than a constant. `INTEREST_CHUNK_RADIUS` 8 →
+3, `MAP_CHUNK_REQUEST_RADIUS` 6 → 2; `MAP_CHUNK_BURST` follows on its own,
+being derived.
+
+The two relationship tests keep passing across the change and are the guard for
+the next time the cap moves. The server never learns the player's choice — see
+the rule above.
+
+Open: does `MIN_VIEW_HALF_WIDTH` move from 200 to 320 as well? "320–420" reads
+like the whole band, but only the maximum touches any of the arithmetic here.
+
+### Phase 2 — the map leaves the bundle (spec 199)
 
 Replace the three `?raw` imports with a fetch of a static asset. The Play tab
 already streams its terrain from the server over `MapInfo`/`MapChunk`; the
@@ -207,7 +286,7 @@ regress again. That gate is the durable half of the phase.
 Smallest change here, largest immediate return: it takes the shipped bundle from
 14.07 MB to well under 2 MB today, before the map grows at all.
 
-### Phase 2 — a map that is many files (spec 199)
+### Phase 3 — a map that is many files (spec 200)
 
 ```
 maps/arena/manifest.json         grid scalars, layers, bounds, parts, mapId
@@ -235,7 +314,7 @@ round-trip test asserting the recombined document is byte-identical to what is
 there now. `parseMap`/`serializeMap` keep working on a whole document — this is
 a storage layout, not a format change.
 
-### Phase 3 — the server loads what it needs (spec 200)
+### Phase 4 — the server loads what it needs (spec 201)
 
 The big one, and the reason phases 1–2 come first.
 
@@ -277,7 +356,7 @@ window, not the path; the existing replay tests pass unchanged; and a replay
 that unloads mid-recording still reproduces bit-identically, which is the
 determinism risk this phase carries.
 
-### Phase 4 — routes without a warmed world (spec 201)
+### Phase 5 — routes without a warmed world (spec 202)
 
 `warmRouting` stops being a boot step. Nav grids are built per chunk with the
 chunk, at the same `ROUTING_RADII`, and discarded with it. `PATH_MAX_NODES`
@@ -297,15 +376,15 @@ grids before and after.
 
 Independent of phases 2–3; can be built in parallel.
 
-### Phase 5 — a client that forgets behind it (spec 202)
+### Phase 6 — a client that forgets behind it (spec 203)
 
 The client holds everything it has ever been sent — `MapChunkCache.chunks` only
 grows, `StreamedMap` inserts and never removes, meshes are never disposed, and
 `MapChunkStore.removeChunk` has no caller on this path. Thirty minutes of
 exploring a 4× world is a lot of held ground.
 
-- Evict past a radius comfortably wider than `MAP_CHUNK_REQUEST_RADIUS` (6), so
-  eviction and re-request cannot oscillate.
+- Evict past a radius comfortably wider than `MAP_CHUNK_REQUEST_RADIUS` (2
+  after phase 1), so eviction and re-request cannot oscillate.
 - Dispose geometry through the `TerrainMeshHandle` seam the brush and the
   streamer already share.
 - An evicted chunk returns to "not held, not in flight, not absent" so it
@@ -316,7 +395,7 @@ exploring a 4× world is a lot of held ground.
 The rest the client already has: it pages colliders, it knows what it does not
 know, and it meshes on a budget.
 
-### Phase 6 — growing without rewriting (spec 203)
+### Phase 7 — growing without rewriting (spec 204)
 
 `grow-map.ts` and the editor's save read and write only the regions they touch.
 `bakePart` is unchanged — it still reads neighbouring chunks at a join, which is
@@ -327,11 +406,13 @@ The editor stops opening the whole world to move one marker. `POST /api/map`
 (spec 177) becomes a per-region write, keeping the atomic temp-then-rename and
 the `parseMap` validation it already does.
 
-### Phase 7 — the shore (spec 204)
+### Phase 8 — the shore (spec 205)
 
-- Write down the **5-chunk water margin** past the last walkable shore, and
-  assert it: a test that walks the authored perimeter and fails if walkable
-  ground sits within 5 chunks of undeclared space.
+- Write down the water margin past the last walkable shore — **2 map chunks**
+  at a 420 zoom cap — and assert it: a test that walks the authored perimeter
+  and fails if walkable ground sits within `MAP_CHUNK_REQUEST_RADIUS` chunks of
+  undeclared space. Derived from the radius, not typed in, so moving the cap
+  moves the content rule with it.
 - Confirm `worldBoundsOf`'s rectangle is now only a backstop.
 - **Optional**, with a measured payoff: a constant-height chunk form taking
   seabed from 6.9 KB to well under 1 KB. Worth it only if the island turns out
@@ -340,7 +421,7 @@ the `parseMap` validation it already does.
 
 ## Risks
 
-- **Determinism under residency (phase 3).** An entity's history must not depend
+- **Determinism under residency (phase 4).** An entity's history must not depend
   on when its chunk was resident. Ageing forward on activation is the mitigation
   and it needs a replay test that unloads mid-recording. This is the one place
   the top rule of `CLAUDE.md` is genuinely at stake.
@@ -350,12 +431,12 @@ the `parseMap` validation it already does.
 - **The residency boundary is where bugs will live** — a monster half in an
   evicted chunk, a route to ground that just left. Hysteresis and spec 078's
   three-valued "unknown" are the defences, and both already exist.
-- **Phase 4 changes routing behaviour** in ways a player may notice before a
+- **Phase 5 changes routing behaviour** in ways a player may notice before a
   test does.
-- **Scope.** Phases 1–2 are days. Phase 3 is the real work. If the schedule
-  slips, 1, 2 and 4 alone take boot from ~142 s to roughly 50 s and the bundle
-  to something shippable — that is a playable 4× world without touching
-  residency at all.
+- **Scope.** Phases 1–3 are days. Phase 4 is the real work. If the schedule
+  slips, **1, 2, 3 and 5 alone** take boot from ~142 s to roughly 50 s, the
+  bundle to something shippable, and the resident window to a quarter of what it
+  is — a playable 4× world without touching residency at all.
 
 ## Out of scope
 
