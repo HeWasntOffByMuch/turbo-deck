@@ -149,17 +149,23 @@ check.
   seabed to well under 1 KB. Listed as an optional lever in phase 8 with a real
   number attached, not assumed.
 
-## The zoom cap is the cheapest lever there is
+## The supported zoom is the cheapest lever there is
 
 Three server constants are sized off one question — *what can the camera
 frame?* — and all three are currently sized against `MAX_VIEW_HALF_WIDTH =
-1400`. Capping the widest zoom at **420** shrinks every one of them, and it is a
-few lines of change.
+1400`, a zoom the game is not going to be played at. Sizing them against a
+**supported** widest zoom of 420 shrinks every one of them, and it is a few
+lines of change.
+
+This does **not** block the viewport: the slider keeps its current reach and
+marks anything past the supported band a dev setting. See *the cap and the
+slider are two different numbers* below — the split is what lets the arithmetic
+land now and the real cap land whenever it suits.
 
 Run through the real `cameraFrustum` / `internalRenderSize`, worst case across
 16:10, 16:9, 21:9, 32:9 and portrait windows:
 
-| | cap 1400 (today) | **cap 420** | |
+| | sized for 1400 (today) | **sized for 420** | |
 |---|---|---|---|
 | worst ground reach | 3107 u | **932 u** | 3.3× |
 | `INTEREST_CHUNK_RADIUS` | 8 → 289 chunks | **3 → 49 chunks** | 5.9× |
@@ -197,19 +203,55 @@ own* position precisely so a client cannot widen its read window by lying.
 A client-reported zoom is exactly such a claim. The server should not learn the
 setting at all.
 
+### The cap and the slider are two different numbers
+
+The viewport is **not blocked**. What the game is *sized for* and what the
+slider will *physically go to* are separate, and conflating them is what would
+force the cap to land before anybody wants it:
+
+```
+SUPPORTED_MAX_VIEW_HALF_WIDTH = 420    what the server's windows are sized off
+MAX_VIEW_HALF_WIDTH           = 1400   where the slider actually stops
+```
+
+Everything above derives from the first. The second stays where it is, and past
+the first the setting says so — a dev setting, with the warning stating **what
+actually happens** rather than merely that it is unsupported: *terrain and units
+beyond the supported view may not be loaded.* Capping for real, later, is then
+one line — make them equal — and every number in this plan follows without
+being touched.
+
+Three properties make that safe rather than merely tolerable, and they are worth
+stating because they are why a slider that overshoots costs nothing:
+
+- **Past the supported cap the world degrades visibly and harmlessly.** Ground
+  past ~1232 units is a hole and bodies past ~1200 wink out. Nothing crashes,
+  nothing desyncs — for a dev it is arguably a feature, since it draws the
+  streaming boundary on screen.
+- **A wide zoom cannot ask for more.** `MapChunkCache.wanted` is handed
+  `MAP_CHUNK_REQUEST_RADIUS`, a constant; the zoom is not an input to it. So
+  overshooting costs no extra requests and no throttle pressure — and it *cannot
+  be made to work* from the client side, because `decideChunkRequest` refuses
+  anything past the same radius server-side. That is the security property from
+  the rule above, doing its second job.
+- **Zooming closer is unconstrained, by construction.** A narrower view never
+  needs data a wider one did not, so `MIN_VIEW_HALF_WIDTH` is outside all of
+  this arithmetic and going closer stays free at any value.
+
 ### Where it lives
 
-`MAX_VIEW_HALF_WIDTH` stops being the band's edge and becomes the **ceiling on a
-setting**. The setting itself belongs on the options window's Display page —
+The setting belongs on the options window's Display page —
 `src/ui/screens/display.ts` beside interface scale and the frame-time readout,
 persisted through `src/ui/input/display-store.ts`, the versioned document over
-an injected `StorageLike` that already holds both.
+an injected `StorageLike` that already holds both. `clampViewHalfWidth` is
+already the single funnel every path to the zoom goes through, so the band is
+one constant and the funnel keeps holding.
 
 "That might change" is already handled: `interest.test.ts` and
 `map-radius.test.ts` assert the *relationship* rather than the numbers, and
-`MAP_CHUNK_BURST` is derived from the radius. Move the cap and the tests say
-which constants have to move with it — which is exactly what they were written
-for.
+`MAP_CHUNK_BURST` is derived from the radius. They re-point at
+`SUPPORTED_MAX_VIEW_HALF_WIDTH`; move it and the tests say which constants have
+to move with it — which is exactly what they were written for.
 
 ## What does *not* need fixing at this scale
 
@@ -260,17 +302,22 @@ later phases from being believed rather than checked.
 
 ### Phase 1 — a zoom you choose, and a cap that means something (spec 198)
 
-`MAX_VIEW_HALF_WIDTH` 1400 → **420**, and the widest zoom becomes a player
-setting on the Display page rather than a constant. `INTEREST_CHUNK_RADIUS` 8 →
-3, `MAP_CHUNK_REQUEST_RADIUS` 6 → 2; `MAP_CHUNK_BURST` follows on its own,
-being derived.
+Introduce `SUPPORTED_MAX_VIEW_HALF_WIDTH = 420` and size the server off it:
+`INTEREST_CHUNK_RADIUS` 8 → 3, `MAP_CHUNK_REQUEST_RADIUS` 6 → 2;
+`MAP_CHUNK_BURST` follows on its own, being derived.
 
-The two relationship tests keep passing across the change and are the guard for
-the next time the cap moves. The server never learns the player's choice — see
-the rule above.
+**`MAX_VIEW_HALF_WIDTH` does not move.** The slider still reaches 1400; past
+420 the Display page marks it a dev setting and says what degrades. `MIN` does
+not move either — going closer is free.
 
-Open: does `MIN_VIEW_HALF_WIDTH` move from 200 to 320 as well? "320–420" reads
-like the whole band, but only the maximum touches any of the arithmetic here.
+The two relationship tests re-point at the supported cap and are the guard for
+the next time it moves. The server never learns the player's choice — see the
+rule above.
+
+Worth one test of its own: that the chunk request window is **independent of the
+zoom**, so a dev setting can never become a bandwidth surface. It is true today
+by accident (`wanted` takes a constant); this is the phase that makes it true on
+purpose.
 
 ### Phase 2 — the map leaves the bundle (spec 199)
 
