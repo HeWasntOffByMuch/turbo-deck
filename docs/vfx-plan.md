@@ -1890,3 +1890,38 @@ are uncorrelated. So each state is captured twice a beat apart and only pixels
 that agreed both times are trusted — `preview-paint.ts`'s trick, and the same
 reason it needed it.
 
+### The art-direction pass on three of them
+
+Three notes after the first look, none of which moved the shape language.
+
+**Shock was a bolt, not lightning.** `boltWhite`/`boltYellow`/`boltViolet` is a
+cream white through a warm yellow to purple, which on a *body* reads as arcane
+sparks rather than as electricity. It is near-white with an off-blue cast now,
+and the blue is chosen against Frostbite rather than in isolation: ice is
+cyan-leaning and this is violet-leaning, which is the difference that survives
+the quantizer when a shocked body and a frostbitten one are on screen together.
+Its mid tone is barely blue at all, deliberately — the cling settles on `mid`,
+so that is what the body wears, and what a shocked body should wear is white.
+
+**Burn had no yellow in it.** The ramp settled on `fireBody` and ran to
+`fireDeep`, so a burning body was orange into red. `fireAmber` between the cream
+and the orange gives it yellow, orange, red in that order and takes the red off
+the body itself, leaving it on what falls away.
+
+**Poison's character moved from the coat to the shed.** Bubbles, rising off the
+body and wobbling as they go, with the coat thinned to pay for them — a body
+both coated *and* fizzing reads as two afflictions. It is the second row with a
+positive `rise` and the two are not confusable: fire lifts nearly three times as
+hard and its marks streak where these drift.
+
+The one thing in that which is not a number: the shed became a `brush-blot`
+rather than a `brush-dab`, and that is the whole of whether it reads as bubbles.
+`orientOf` gives a dab `velocity`, so it lies along its own travel — a dab
+rising is a vertical dash, and a dash going up is not a bubble however slowly it
+moves. A blot is `tumble`, turning in world space, and is the roundest mark in
+the set.
+
+All three arrived as **new palette keys rather than edited ones**. `fireBody`
+alone has seventeen call sites — the torch, the campfire, the explosion's own
+ramp — and none of them asked for a different flame.
+
