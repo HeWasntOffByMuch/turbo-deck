@@ -884,9 +884,26 @@ export const ORDER_MARK_REACH = ORDER_MARK_ARM * MARK_REACH;
  * size, because `system.ts` multiplies both the shape's local coordinates and
  * the size curve by the instance scale.
  *
- * Speed and gravity are *not* scaled by it, which is correct and worth knowing:
- * a big body's paint drips at the same rate as a small one's, because gravity is
- * gravity.
+ * ## ...but speed, acceleration and turbulence are world units
+ *
+ * `system.ts` multiplies the shape's local coordinates and the size curve by the
+ * instance scale and **nothing else** -- a particle's velocity, the constant push
+ * on it and its turbulence amplitude are all integrated in world units per
+ * second. That is correct rather than an omission: a big body's paint drips at
+ * the same rate as a small one's, because gravity is gravity.
+ *
+ * It is written down because it is the one asymmetry in this file and the
+ * mistake it invites is silent. Authored as if they were radii, every one of
+ * these numbers comes out about a hundred times too small, and the result is not
+ * an effect that looks wrong -- it is a shed layer that never leaves the surface
+ * it was born on, which reads as a cling with more marks in it.
+ *
+ * The calibration to hold them against is `bloodHit`, in this file: a hit's
+ * primary mark leaves at `scale * 7` -- about 180 units a second -- under
+ * `gravity: -900`, and the mist that *hangs* rather than falling replaces that
+ * with `drift: 26` and `turbulence: 62`. So 26 is a gentle lift, 62 is
+ * "the marks come apart", and 900 is a real fall. Everything here is quieter
+ * than a hit by design, and sits between those.
  */
 export interface BrushAfflictionParams {
   readonly id: string;
@@ -895,15 +912,16 @@ export interface BrushAfflictionParams {
   /** Marks leaving it, per second. The layer that says which affliction. */
   readonly shed?: number;
   /**
-   * Where the shed goes, in body radii per second squared. Positive rises.
+   * Where the shed goes, in **world** units per second squared. Positive rises.
    *
    * The one number that separates the seven at a glance. Fire lifts, every rot
-   * falls, and cold barely moves at all.
+   * falls, and cold barely moves at all. Against `bloodHit`'s `drift: 26` for a
+   * gentle lift and its `gravity: -900` for a real fall.
    */
   readonly rise?: number;
-  /** How far a shed mark wanders, in body radii per second squared. */
+  /** How far a shed mark wanders, **world** units per second squared. */
   readonly turbulence?: number;
-  /** How fast a shed mark leaves the surface, in body radii per second. */
+  /** How fast a shed mark leaves the surface, **world** units per second. */
   readonly shedSpeed?: number;
   /** Ticks a cling mark lives. Short: paint being renewed, not accumulating. */
   readonly clingLife?: readonly [number, number];
@@ -933,7 +951,7 @@ export function brushAffliction(params: BrushAfflictionParams): EffectDefinition
   const shed = Math.max(0, params.shed ?? 3);
   const rise = params.rise ?? 0;
   const turbulence = Math.max(0, params.turbulence ?? 0);
-  const shedSpeed = Math.max(0, params.shedSpeed ?? 0.22);
+  const shedSpeed = Math.max(0, params.shedSpeed ?? 9);
   const [clingMin, clingMax] = params.clingLife ?? [22, 34];
   const [shedMin, shedMax] = params.shedLife ?? [26, 44];
   const clingSize = params.clingSize ?? 0.62;
@@ -954,7 +972,13 @@ export function brushAffliction(params: BrushAfflictionParams): EffectDefinition
       shape: { kind: 'mesh' },
       emission: { kind: 'rate', perSecond: cling },
       lifetimeTicks: [Math.round(clingMin), Math.round(clingMax)],
-      speed: [0.02, 0.09],
+      // World units a second, and small: with `drag: 7` a mark sheds almost all
+      // of this inside a sixth of a second and travels well under a unit. That
+      // is the point -- it is a mark being *put on*, not one going anywhere --
+      // and it is the difference between paint and wallpaper. At exactly zero
+      // every mark sits on the point it was born at and the layer reads as a
+      // texture that was always there.
+      speed: [1.5, 5],
       // Nearly a full hemisphere. The surface hook hands back a point and a
       // straight-up direction (`system.ts`), so without this every cling mark on
       // a body would set off in the same direction and the layer would read as a
@@ -1048,9 +1072,9 @@ export interface BrushPulseParams {
   /** Marks thrown. Few: a beat is a punctuation mark, not a burst. */
   readonly marks?: number;
   readonly lifetimeTicks?: number;
-  /** Body radii per second squared. Positive rises. */
+  /** **World** units per second squared. Positive rises. */
   readonly rise?: number;
-  /** Body radii per second the marks leave at. */
+  /** **World** units per second the marks leave at. */
   readonly velocity?: number;
   /** Half-angle thrown through, radians. */
   readonly spread?: number;
@@ -1068,7 +1092,7 @@ export function brushAfflictionPulse(params: BrushPulseParams): EffectDefinition
   const marks = Math.max(1, Math.round(params.marks ?? 3));
   const life = Math.max(4, Math.round(params.lifetimeTicks ?? 14));
   const rise = params.rise ?? 0;
-  const velocity = params.velocity ?? 1.1;
+  const velocity = params.velocity ?? 45;
   const spread = params.spread ?? 1.1;
   const markSize = params.markSize ?? 0.85;
 
@@ -1256,9 +1280,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_burn',
     cling: 11,
     shed: 7,
-    rise: 2.2,
-    turbulence: 1.6,
-    shedSpeed: 0.5,
+    rise: 72,
+    turbulence: 40,
+    shedSpeed: 22,
     clingSize: 0.52,
     clingLife: [16, 26],
     shedLife: [22, 38],
@@ -1275,9 +1299,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_bleed',
     cling: 7,
     shed: 4,
-    rise: -3,
-    turbulence: 0.2,
-    shedSpeed: 0.28,
+    rise: -260,
+    turbulence: 5,
+    shedSpeed: 9,
     clingSize: 0.48,
     shedSize: 0.3,
     shedLife: [18, 30],
@@ -1289,9 +1313,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_bleed_heavy',
     cling: 14,
     shed: 8,
-    rise: -3.2,
-    turbulence: 0.25,
-    shedSpeed: 0.34,
+    rise: -270,
+    turbulence: 6,
+    shedSpeed: 11,
     clingSize: 0.58,
     shedSize: 0.34,
     shedLife: [18, 32],
@@ -1307,9 +1331,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_poison',
     cling: 6,
     shed: 3,
-    rise: -0.9,
-    turbulence: 0.7,
-    shedSpeed: 0.22,
+    rise: -34,
+    turbulence: 18,
+    shedSpeed: 7,
     clingSize: 0.55,
     clingLife: [26, 40],
     shedLife: [34, 54],
@@ -1321,9 +1345,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_poison_heavy',
     cling: 15,
     shed: 8,
-    rise: -0.7,
-    turbulence: 1.1,
-    shedSpeed: 0.26,
+    rise: -28,
+    turbulence: 26,
+    shedSpeed: 8,
     clingSize: 0.66,
     clingLife: [28, 44],
     shedLife: [38, 60],
@@ -1339,9 +1363,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_corrosion',
     cling: 8,
     shed: 5,
-    rise: -1.9,
-    turbulence: 0.9,
-    shedSpeed: 0.34,
+    rise: -110,
+    turbulence: 24,
+    shedSpeed: 13,
     clingSize: 0.46,
     clingLife: [14, 24],
     shedLife: [24, 40],
@@ -1353,9 +1377,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_corrosion_heavy',
     cling: 17,
     shed: 9,
-    rise: -2.1,
-    turbulence: 1.2,
-    shedSpeed: 0.4,
+    rise: -120,
+    turbulence: 30,
+    shedSpeed: 15,
     clingSize: 0.52,
     clingLife: [14, 26],
     shedLife: [24, 42],
@@ -1370,13 +1394,19 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // in between or the jolts are not arrivals.
   brushAffliction({
     id: 'affliction_shock',
-    cling: 4,
-    shed: 2,
-    rise: 0.3,
-    turbulence: 2.4,
-    shedSpeed: 0.42,
+    // Sixteen a second at a tenth-of-a-second life is about three marks alive at
+    // any instant -- still the sparsest cling of the seven, and *flickering*
+    // rather than merely thin. The first cut was four a second, which works out
+    // at under one live mark: a body between jolts drawn as a body with nothing
+    // on it, which is not "quiet", it is a missing effect. Quiet has to be
+    // something you can see being quiet.
+    cling: 16,
+    shed: 5,
+    rise: 18,
+    turbulence: 66,
+    shedSpeed: 20,
     clingSize: 0.4,
-    clingLife: [10, 18],
+    clingLife: [8, 16],
     shedLife: [12, 22],
     shedSize: 0.3,
     shedShape: 'brush-flick',
@@ -1393,9 +1423,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_frostbite',
     cling: 8,
     shed: 1.4,
-    rise: -0.25,
-    turbulence: 0.15,
-    shedSpeed: 0.12,
+    rise: -10,
+    turbulence: 3,
+    shedSpeed: 4,
     clingSize: 0.58,
     clingLife: [34, 52],
     shedLife: [30, 46],
@@ -1408,9 +1438,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_frostbite_heavy',
     cling: 19,
     shed: 3,
-    rise: -0.2,
-    turbulence: 0.2,
-    shedSpeed: 0.14,
+    rise: -9,
+    turbulence: 4,
+    shedSpeed: 5,
     clingSize: 0.72,
     clingLife: [40, 62],
     shedLife: [30, 48],
@@ -1428,9 +1458,9 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_decay',
     cling: 5,
     shed: 2.5,
-    rise: -0.7,
-    turbulence: 0.35,
-    shedSpeed: 0.16,
+    rise: -28,
+    turbulence: 9,
+    shedSpeed: 6,
     clingSize: 0.6,
     clingLife: [40, 62],
     shedLife: [44, 70],
@@ -1449,8 +1479,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_burn_pulse',
     marks: 4,
     lifetimeTicks: 13,
-    rise: 4.5,
-    velocity: 1.5,
+    rise: 300,
+    velocity: 55,
     spread: 0.9,
     markSize: 0.95,
     bright: 'fireCore',
@@ -1461,8 +1491,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_bleed_pulse',
     marks: 3,
     lifetimeTicks: 12,
-    rise: -4,
-    velocity: 1.6,
+    rise: -380,
+    velocity: 75,
     spread: 1,
     markSize: 0.9,
     bright: 'bloodBright',
@@ -1473,8 +1503,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_poison_pulse',
     marks: 4,
     lifetimeTicks: 20,
-    rise: -0.8,
-    velocity: 0.7,
+    rise: -50,
+    velocity: 26,
     spread: 1.35,
     markSize: 0.7,
     bright: 'poisonPale',
@@ -1485,8 +1515,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_corrosion_pulse',
     marks: 4,
     lifetimeTicks: 15,
-    rise: -2.6,
-    velocity: 1.2,
+    rise: -180,
+    velocity: 48,
     spread: 1.15,
     markSize: 0.8,
     bright: 'corrodeBright',
@@ -1499,9 +1529,13 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   brushAfflictionPulse({
     id: 'affliction_shock_pulse',
     marks: 5,
-    lifetimeTicks: 8,
-    rise: 0.6,
-    velocity: 2.6,
+    // Ten rather than eight. Still by some way the shortest beat in the table --
+    // the next is a third longer again -- but eight ticks is 133ms, which is
+    // four frames at 30fps and fewer than that on a frame that stutters. A jolt
+    // should be brief; it should not be missable.
+    lifetimeTicks: 10,
+    rise: 40,
+    velocity: 130,
     spread: 1.45,
     markSize: 1.25,
     shape: 'brush-slash',
@@ -1517,8 +1551,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_frostbite_pulse',
     marks: 5,
     lifetimeTicks: 22,
-    rise: -0.2,
-    velocity: 0.35,
+    rise: -12,
+    velocity: 12,
     spread: 1.4,
     markSize: 0.72,
     shape: 'brush-slash',
@@ -1530,8 +1564,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     id: 'affliction_decay_pulse',
     marks: 3,
     lifetimeTicks: 26,
-    rise: -0.6,
-    velocity: 0.4,
+    rise: -40,
+    velocity: 15,
     spread: 1.2,
     markSize: 0.85,
     bright: 'decayBright',
