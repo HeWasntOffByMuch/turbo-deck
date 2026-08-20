@@ -178,6 +178,41 @@ const ui = new UiLayer(app, {
     draw();
   },
 });
+// The two facts the bar needs that only the HUD's table knows: how much of the
+// frame's floor the experience strip has, and how big a slot must be for a
+// finger. Pushed once here exactly as `view.ts` pushes them, or the bar draws at
+// the widget's bare default and the rig measures a size the game never shows.
+ui.setActionBarFloorCss(hud.floorCss);
+ui.setActionBarSlotCss(hud.slotSideCss);
+ui.setShowsSlotKeys(hud.showsSlotKeys);
+
+/**
+ * Hand the interface the mouse, the way `view.ts` does.
+ *
+ * The UI canvas is `pointer-events: none` -- it sits over the world and the
+ * world's own listeners offer it every press first -- so a rig that mounts the
+ * layer and forwards nothing has an action bar that draws perfectly and cannot
+ * be clicked. Which is exactly what a harness asking "is an empty slot inert"
+ * would then be measuring: nothing at all, correctly, for the wrong reason.
+ *
+ * Coordinates are relative to the UI canvas's own box, which is what `toUi`
+ * expects and what the world canvas gives it in the game.
+ */
+const NO_MODS = { shift: false, ctrl: false, alt: false, meta: false };
+for (const phase of ['down', 'up', 'move'] as const) {
+  const name = phase === 'move' ? 'mousemove' : phase === 'down' ? 'mousedown' : 'mouseup';
+  globalThis.addEventListener(name, (raw) => {
+    const event = raw as MouseEvent;
+    const rect = ui.element.getBoundingClientRect();
+    ui.handlePointer(
+      phase,
+      { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      phase === 'move' ? -1 : event.button,
+      NO_MODS,
+    );
+    draw();
+  });
+}
 
 /**
  * The floating bars this rig draws, if any (spec 186).
