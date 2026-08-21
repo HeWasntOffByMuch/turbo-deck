@@ -35,7 +35,7 @@ import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
-import { FLEE_DISTANCE, notice, rally, settle } from './aggro.js';
+import { FLEE_DISTANCE, notice, playersOf, rally, settle } from './aggro.js';
 import { SlotBoard, slotAngle, slotNearest } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import {
@@ -760,6 +760,11 @@ export function step(
   // past its leash, it loses interest, its chunk stops being simulated
   // (spec 187).
   openSlotBoard(SLOTS, state.entities, isSimulated);
+  // Gathered once for the whole tick rather than rediscovered per monster
+  // (spec 202). `notice` used to walk the entire entity map to find a handful of
+  // players, once for every calm monster that could see anything -- so what it
+  // cost was what the world held rather than who was in it.
+  const players = playersOf(working);
   for (const entity of state.entities.values()) {
     const current = working.get(entity.id) ?? entity;
     if (current.health <= 0) {
@@ -795,7 +800,7 @@ export function step(
     } else {
       // A monster's route is entity state, so deciding where to walk can change
       // the entity -- see `monsterIntent`.
-      const decision = monsterIntent(current, working, tick, context, SLOTS);
+      const decision = monsterIntent(current, working, players, tick, context, SLOTS);
       rawIntent = decision.input;
       steered = decision.entity;
       charging = decision.charging;
@@ -1978,6 +1983,7 @@ interface MonsterDecision {
 function monsterIntent(
   monster: ServerEntity,
   entities: ReadonlyMap<number, ServerEntity>,
+  players: readonly ServerEntity[],
   tick: number,
   context: StepContext,
   slots: SlotBoard,
@@ -2010,7 +2016,7 @@ function monsterIntent(
   // it would leave a body walking home that still reports the player it has
   // given up on.
   if (!target) {
-    monster = notice(settle(monster, null, tick), entities, tick);
+    monster = notice(settle(monster, null, tick), players, tick);
     target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   } else {
     // Deliberately no `notice` on this side: a territorial body that has just
@@ -2371,6 +2377,65 @@ interface SpawnerResult {
 }
 
 /**
+ * How many bodies are in each chunk, counted once (spec 202).
+ *
+ * From the **live** entity map rather than from `ChunkManager`, which is what
+ * makes it this tick's answer: the manager is updated after `step()` returns, so
+ * during a tick it describes the previous one and would still be holding a body
+ * the sweep a few passes above has already buried.
+ */
+function populationByChunk(
+  entities: ReadonlyMap<number, ServerEntity>,
+  chunkSize: number,
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const entity of entities.values()) {
+    const key = chunkKeyOf(entity.position.x, entity.position.y, chunkSize);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Which spawn points are in which chunk, by their **authored index**.
+ *
+ * Memoized on the point list itself, because a map's spawn points are fixed for
+ * the life of the server and rebuilding this per tick would be exactly the walk
+ * it exists to remove. A `WeakMap`, so a world that goes away takes its index
+ * with it; nested on the chunk size, because that is the other thing the answer
+ * depends on and a test may use a different one.
+ *
+ * Indices rather than points, so the caller can sort them back into the order
+ * the document listed them -- see the note at the call site about entity ids.
+ */
+const SPAWN_INDEX = new WeakMap<readonly SpawnPoint[], Map<number, ReadonlyMap<string, number[]>>>();
+
+function spawnIndexFor(
+  points: readonly SpawnPoint[],
+  chunkSize: number,
+): ReadonlyMap<string, number[]> {
+  let bySize = SPAWN_INDEX.get(points);
+  if (!bySize) {
+    bySize = new Map();
+    SPAWN_INDEX.set(points, bySize);
+  }
+  const held = bySize.get(chunkSize);
+  if (held) return held;
+
+  const built = new Map<string, number[]>();
+  for (let at = 0; at < points.length; at++) {
+    const point = points[at];
+    if (!point) continue;
+    const key = chunkKeyOf(point.x, point.y, chunkSize);
+    const list = built.get(key);
+    if (list) list.push(at);
+    else built.set(key, [at]);
+  }
+  bySize.set(chunkSize, built);
+  return built;
+}
+
+/**
  * Refills the map's spawn points (spec 076).
  *
  * One spawner, one monster, one timer each. A spawner with no entry has never
@@ -2408,7 +2473,42 @@ function runSpawners(
 
   if (interval === null) return { nextEntityId, spawners, events };
 
-  for (const point of spawnPoints) {
+  // Only the spawn points near a player, in the order the map authored them
+  // (spec 202).
+  //
+  // It used to walk every point the map declares, every tick, resident or not --
+  // so what a tick cost was a function of how big the world was rather than of
+  // where anybody was standing. The index is built once and memoized on the
+  // point list, because building it per tick would be the walk it replaces.
+  //
+  // Gathered by chunk and then **sorted back into authored order**, which is the
+  // part that is not an optimisation: a spawn takes the next entity id, so the
+  // order two spawners are visited in decides which id each body gets, and ids
+  // are replicated. Sorting makes the result independent of the order
+  // `activeChunks` happens to iterate in, which is a `Set`'s insertion order and
+  // is nobody's intended contract.
+  const index = spawnIndexFor(spawnPoints, chunkSize);
+  const resident: number[] = [];
+  for (const key of context.activeChunks) {
+    const here = index.get(key);
+    if (here) resident.push(...here);
+  }
+  resident.sort((a, b) => a - b);
+
+  // Counted once for the tick rather than once per spawner (spec 202). It was
+  // `for (const entity of entities.values())` *inside* the loop below, which
+  // made the cap `O(spawn points x entities)`.
+  //
+  // Counted here rather than read off `ChunkManager.populationOf`, which the
+  // plan proposed: that index is maintained by `chunks.track`/`remove`, which
+  // run *after* `step()` returns, so inside a tick it holds the previous tick's
+  // occupancy -- it would not see a body killed by the sweep a few passes above
+  // this one.
+  const population = config.maxEntitiesPerChunk > 0 ? populationByChunk(entities, chunkSize) : null;
+
+  for (const at of resident) {
+    const point = spawnPoints[at];
+    if (!point) continue;
     const current = spawners.get(point.id) ?? EMPTY_SPAWNER;
 
     // Still holding a live body: nothing to do. A body that vanished by some
@@ -2424,13 +2524,9 @@ function runSpawners(
     // The population cap is the one thing that can still refuse a spawn: a
     // spawner inside a chunk that is already full waits rather than tipping it
     // over, and tries again next tick.
-    if (config.maxEntitiesPerChunk > 0) {
+    if (population) {
       const key = chunkKeyOf(point.x, point.y, chunkSize);
-      let population = 0;
-      for (const entity of entities.values()) {
-        if (chunkKeyOf(entity.position.x, entity.position.y, chunkSize) === key) population += 1;
-      }
-      if (population >= config.maxEntitiesPerChunk) continue;
+      if ((population.get(key) ?? 0) >= config.maxEntitiesPerChunk) continue;
     }
 
     const definition = monsterById(point.monsterId);

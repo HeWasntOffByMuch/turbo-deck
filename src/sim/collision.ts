@@ -1,5 +1,5 @@
 import { ARENA_OBSTACLES, SEPARATION_ITERATIONS, WORLD_BOUNDS } from './constants.js';
-import { MAX_NEAR_COLLIDERS, buildColliderIndex, circlesNear } from './collider-index.js';
+import { MAX_NEAR_COLLIDERS, buildColliderIndex, circlesInRect, circlesNear } from './collider-index.js';
 import type { Circle, Rect, Vec2, WorldColliders } from './types.js';
 
 /**
@@ -307,11 +307,49 @@ export function segmentClear(a: Vec2, b: Vec2, radius: number, world: WorldColli
       return false;
     }
   }
-  for (const circle of world.circles) {
-    if (segmentHitsCircle(a, b, radius, circle)) return false;
+
+  // Narrowed through the index rather than walked (spec 202). Spec 192 built
+  // `ColliderIndex` because "`pushOutOfObstacles` and `circleBlocked` used to
+  // test every circle in the world", indexed those two, and left this one on the
+  // walk -- and this one is what `pathClear` is and what aggro's line of sight
+  // is, so every routing monster paid for every tree on the map every tick. On
+  // `maps/arena` that is 28,919 circles and 84us a call, against 1.27us here;
+  // at the 4x target the walk becomes ~1,300us, which is one sight check for a
+  // twelfth of a tick.
+  //
+  // The **bounding box** of the segment rather than a walk down the cells it
+  // crosses. A long diagonal over-fetches, and a few dozen circles against
+  // 28,919 is not a difference worth a second query shape for.
+  //
+  // Order-independent, which is what makes this safe in the deterministic core:
+  // the answer is "did anything hit", so the bucket order `circlesInRect`
+  // returns gives the same boolean as the authored order the walk used. That is
+  // exactly the property `pushOutOfObstacles` does *not* have -- it applies
+  // corrections in sequence -- which is why `circlesNear` promises ascending
+  // original order and this does not.
+  const minX = (a.x < b.x ? a.x : b.x) - radius;
+  const maxX = (a.x > b.x ? a.x : b.x) + radius;
+  const minY = (a.y < b.y ? a.y : b.y) - radius;
+  const maxY = (a.y > b.y ? a.y : b.y) + radius;
+  const near = segmentScratch;
+  near.length = 0;
+  circlesInRect(world.index, minX, minY, maxX, maxY, near);
+  for (const at of near) {
+    const circle = world.circles[at];
+    if (circle !== undefined && segmentHitsCircle(a, b, radius, circle)) return false;
   }
   return true;
 }
+
+/**
+ * One scratch array for every `segmentClear` call.
+ *
+ * Reused rather than allocated because this is called several times per routing
+ * body per tick and the gathered set is a few dozen numbers. Safe for the same
+ * reason `NavScratch` is: the function never yields, so no second call can be in
+ * flight, and nothing outside it ever sees the array.
+ */
+const segmentScratch: number[] = [];
 
 /**
  * Separate overlapping units, then push everyone back out of the walls.

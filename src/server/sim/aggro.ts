@@ -86,14 +86,19 @@ export function provoke(target: ServerEntity, attackerId: number, tick: number):
 /**
  * What standing near a player does to a calm monster's mind.
  *
- * A linear scan of the entity map, which is the same shape and the same size as
- * the one spec 076 removed. There is no broadphase in this repo and this does
- * not add one: it runs only for a body that is both calm and able to notice
- * anything at all, which is two comparisons for every monster that is neither.
+ * A linear scan of the **players**, gathered once for the tick (spec 202). It
+ * used to scan the whole entity map, which made deciding whether one body had
+ * seen another cost what the world contained rather than who was in it: a
+ * resident monster walked past every monster everywhere else, every tick.
+ *
+ * There is still no broadphase over the players and this does not add one --
+ * there are a handful of them, and it runs only for a body that is both calm and
+ * able to notice anything at all, which is two comparisons for every monster
+ * that is neither.
  */
 export function notice(
   monster: ServerEntity,
-  entities: ReadonlyMap<number, ServerEntity>,
+  players: readonly ServerEntity[],
   tick: number,
 ): ServerEntity {
   if (monster.aggro !== AggroValue.Calm) return monster;
@@ -104,7 +109,7 @@ export function notice(
   // range -- the scan below cannot be reached with a body that has none.
   if (temperament.kind === 'skittish' || temperament.kind === 'defensive') return monster;
 
-  const found = nearestQuarry(monster, entities, temperament.noticeRange);
+  const found = nearestQuarry(monster, players, temperament.noticeRange);
   if (found === null) return monster;
 
   // Insertion order breaks a tie, via `nearestQuarry`'s strict `<` -- the same
@@ -216,16 +221,26 @@ export function rally(
   return changed;
 }
 
-/** Nearest living player within `range`, by id, or null. */
+/**
+ * Nearest living player within `range`, by id, or null.
+ *
+ * Handed the **players** rather than every entity in the world (spec 202). It
+ * used to walk the whole entity map to find a handful of them, once per
+ * noticing monster per tick, so the cost of deciding whether one body had seen
+ * another was proportional to how many bodies existed everywhere else. The list
+ * is gathered once in `step` and is the same list for every monster in the tick.
+ *
+ * `playersOf` keeps the entity map's insertion order, which the tie rule below
+ * depends on.
+ */
 function nearestQuarry(
   monster: ServerEntity,
-  entities: ReadonlyMap<number, ServerEntity>,
+  players: readonly ServerEntity[],
   range: number,
 ): number | null {
   let bestId: number | null = null;
   let bestSq = range * range;
-  for (const other of entities.values()) {
-    if (other.kind !== EntityKindValue.Player) continue;
+  for (const other of players) {
     if (other.health <= 0) continue;
     const dx = other.position.x - monster.position.x;
     const dy = other.position.y - monster.position.y;
@@ -237,6 +252,23 @@ function nearestQuarry(
     }
   }
   return bestId;
+}
+
+/**
+ * The living-or-not players in the world, in the entity map's own order.
+ *
+ * Order matters: `nearestQuarry` breaks an exact tie with a strict `<`, so the
+ * first body in insertion order keeps it -- the rule the proximity scan spec 076
+ * deleted used, and deterministic for the same reason. A gathered list that
+ * reordered them would be a different answer on a tie, which is the sort of
+ * divergence that shows up once in a thousand replays.
+ */
+export function playersOf(entities: ReadonlyMap<number, ServerEntity>): ServerEntity[] {
+  const out: ServerEntity[] = [];
+  for (const entity of entities.values()) {
+    if (entity.kind === EntityKindValue.Player) out.push(entity);
+  }
+  return out;
 }
 
 /** Squared-distance comparison, so noticing costs no square roots. */

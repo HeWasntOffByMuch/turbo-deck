@@ -547,6 +547,15 @@ anywhere**, and it is the wrong fix regardless: `chunks.track`/`remove` run afte
 `step()` returns, so within a tick the manager's occupancy is the previous
 tick's and would not see a body killed earlier in the same tick.
 
+**Done.** `bench-tick-scale` reads ×1.0 / ×1.0 / ×1.1 / ×0.7 / ×1.0 across
+worlds of 14 to 12,800 spawn points at fixed residency, against ×1.0 / ×0.8 /
+×3.7 / ×13.7 / ×73.1 before — 7,492 µs to 32 µs at the far end. The two
+assertions spec 197 wrote asserting the *hole* are inverted, as their own note
+promised they would be. The bench itself was wrong twice first, both times a
+fixture varying something other than the thing measured: a fixed area makes a
+bigger count a denser world, and a grid laid from a corner moves the player onto
+different ground on every row.
+
 ### Phase 6 — a world that is only where the players are (spec 203)
 
 Bounded residency over **terrain, colliders, nav and entities as one

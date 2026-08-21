@@ -65,6 +65,7 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
+| `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 202) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -2193,6 +2194,50 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  is still true. `magnitude` does not ride at all, on the same
                  argument that made poise a fraction: the picture says *that* a
                  body is Exposed, never by how much.
+                 Three things inside a tick used to be sized by **what the
+                 world contains** rather than by what is near anybody, and spec
+                 202 is all three. With one player and 49 chunks active on every
+                 row, a tick went from 102us to 7,492us as the world's spawn
+                 point count went from 14 to 12,800 -- residency identical
+                 throughout. It is flat now, and 32us at the far end.
+                 The biggest one had nothing to do with residency and was
+                 already expensive at today's size: **`segmentClear` walked
+                 every collider in the world**, all 28,919 of them, at 84us a
+                 call. Spec 192 built `ColliderIndex` precisely because
+                 "`pushOutOfObstacles` and `circleBlocked` used to test every
+                 circle in the world"; it indexed those two and left this one --
+                 which is what `pathClear` is and what aggro's line of sight is,
+                 so every routing monster paid for every tree on the map every
+                 tick. Off the index it is 1.27us, and the query is the
+                 segment's **bounding box** rather than a walk down the cells it
+                 crosses: a long diagonal over-fetches, and a few dozen circles
+                 against 28,919 is not worth a second query shape. Safe in the
+                 deterministic core because the answer is "did anything hit",
+                 which is order-independent -- exactly the property
+                 `pushOutOfObstacles` does *not* have, and why `circlesNear`
+                 promises ascending original order and `circlesInRect` does not.
+                 `nearestQuarry` is handed the **players**, gathered once by
+                 `playersOf` at the top of the tick, rather than walking the
+                 whole entity map once per noticing monster. The gathered list
+                 keeps the entity map's insertion order, because the tie rule is
+                 a strict `<` and reordering it is a different answer on a tie.
+                 And `runSpawners` visits only the spawn points in active
+                 chunks, through an index memoized on the point list -- built
+                 per tick it would be the walk it replaces. The resident points
+                 are then **sorted back into authored order**, which is not an
+                 optimisation: a spawn takes the next entity id, so visit order
+                 decides which body gets which id, and ids are replicated;
+                 sorting makes the result independent of the order
+                 `activeChunks` happens to iterate in, which is a `Set`'s
+                 insertion order and nobody's intended contract. Its population
+                 cap is counted **once per tick** from the live entity map
+                 rather than once per spawner. Not from
+                 `ChunkManager.populationOf`, which the plan proposed and which
+                 has no caller anywhere in the tree: that index is maintained by
+                 `chunks.track`/`remove`, which run *after* `step()` returns, so
+                 inside a tick it holds the previous tick's occupancy and would
+                 still be counting a body the sweep a few passes above
+                 `runSpawners` has already buried.
                  `sim/blow.ts` is one blow with all of it applied, in one
                  order, written once -- and the line in it that must not move is
                  that **crit is rolled before the weak point and always**: the Rng

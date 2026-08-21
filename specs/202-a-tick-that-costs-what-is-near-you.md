@@ -135,6 +135,39 @@ And `runSpawners` iterates **resident** spawn points: a `chunk → spawn point
 ids` index, built with the spawn point list rather than per tick, intersected
 with `activeChunks`.
 
+## What it measured
+
+`npx tsx scripts/bench-tick-scale.ts`, before and after, on the identical
+fixture — one player, 49 chunks active, the same handful of spawn points inside
+the window, and the only difference between rows being how much world there is
+*further out*:
+
+| spawn points | before: entities / tick | after: entities / tick |
+|---|---|---|
+| 14 | 15 / 102 µs (×1.0) | 5 / 33 µs (×1.0) |
+| 200 | 201 / 79 µs (×0.8) | 10 / 32 µs (×1.0) |
+| 800 | 801 / 377 µs (×3.7) | 10 / 36 µs (×1.1) |
+| 3,200 | 3,201 / 1,405 µs (×13.7) | 10 / 24 µs (×0.7) |
+| 12,800 | 12,801 / 7,492 µs (×73.1) | 5 / 32 µs (×1.0) |
+
+**×73 → flat**, and 7,492 µs → 32 µs at the extreme. The entity column is half
+the story on its own: the world used to hold every monster it declared from the
+first tick, and now holds the ones somebody is near.
+
+Two things the bench itself got wrong first, both of the same kind — a fixture
+that varied something other than the thing being measured:
+
+- **Fixed area, growing count, is a density test.** Spreading `n` points over a
+  constant square makes a bigger `n` a *denser* world, so more of them land
+  inside the window and the tick grows because more is resident — correct
+  behaviour reported as a failure. It is fixed *spacing* now, so a bigger world
+  is bigger elsewhere.
+- **A grid laid from a corner moves the player.** With the origin at a corner
+  the player stood in a different place on every row — inside the arena's trees
+  for the small worlds, far outside them for the big ones — and one row came
+  back five times its neighbours. Centred, every row puts the player on the same
+  ground with the same neighbours.
+
 ## Invariants tested
 
 - **`segmentClear` answers exactly what the walk answered.** Over thousands of

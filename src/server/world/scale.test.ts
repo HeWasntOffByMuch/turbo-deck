@@ -244,7 +244,7 @@ describe('what the tick simulates is bounded by where the players are', () => {
   });
 });
 
-describe('what the world holds is not bounded by anything', () => {
+describe('what the world holds is bounded by residency (spec 202)', () => {
   /**
    * A document with `count` spawner-bearing chunks and nothing else in it.
    * Terrain is not what this is about, and a real bake would bury it -- the
@@ -303,21 +303,42 @@ describe('what the world holds is not bounded by anything', () => {
   }
 
   /**
-   * The hole spec 202 closes, asserted as it stands. `runSpawners` walks every
-   * spawn point in the world with no residency gate, so a spawner nobody is
-   * near still fills on the first tick -- and a bigger map is a bigger
-   * population from tick one however small the window the player is in.
+   * These two are **inverted**, on purpose and as promised.
    *
-   * When 202 lands these assertions invert, and that is why they are written
+   * Written in spec 197 asserting the hole rather than the fix -- `runSpawners`
+   * walked every spawn point in the world with no residency gate, so a spawner
+   * nobody was near filled on the first tick, and a bigger map was a bigger
+   * population from tick one however small the window. The note on them said
+   * "when 202 lands these assertions invert, and that is why they are written
    * down now: the fix has to come here and say so rather than quietly changing
-   * a number nobody was watching.
+   * a number nobody was watching."
+   *
+   * It landed. This is that.
    */
-  it('fills a spawner that no player is anywhere near', () => {
-    expect(populate(1)).toBe(1);
+  it('leaves a spawner nobody is near empty', () => {
+    expect(populate(1)).toBe(0);
   });
 
-  it('holds more the bigger the map is, whatever the window', () => {
-    expect(populate(8)).toBeGreaterThan(populate(2));
+  it('holds the same however big the map is, for the same window', () => {
+    // The invariant, stated as a slope rather than a value: four times the
+    // world, none of it near the player, and the population does not move.
+    expect(populate(8)).toBe(populate(2));
+  });
+
+  it('still fills a spawner a player *is* near', () => {
+    // The control. "Nothing spawns" would pass both assertions above and be a
+    // world with no monsters in it, which is not the feature.
+    const context: StepContext = {
+      world: createWorldColliders([], [], { x: -100000, y: -100000, w: 200000, h: 200000 }),
+      terrain: FLAT_TERRAIN,
+      zones: new ZoneManager(),
+      config: DEFAULT_LIVE_CONFIG,
+      // The spawners all sit within 100 units of the origin; stand on them.
+      activeChunks: activeAround(50, 50),
+      chunkSize: CHUNK_SIZE,
+      spawnPoints: spawnPointsFrom(docWithSpawners(4)),
+    };
+    expect(step(createWorldState(1), [], context).state.entities.size).toBe(4);
   });
 });
 
