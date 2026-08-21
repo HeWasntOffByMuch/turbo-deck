@@ -152,6 +152,38 @@ export const PROTOCOL_VERSION = 18;
 export const MAP_CHUNK_REQUEST_RADIUS = 6;
 
 /**
+ * How far a chunk may be from the *server's* own position and still be served
+ * (spec 201).
+ *
+ * The pair of guards in `map-request.ts` have always been described as bounding
+ * different things -- range bounds *where* a client may read, the bucket bounds
+ * how fast -- and this is the third thing neither of them was bounding: the two
+ * positions the range is measured between are not the same position.
+ * `requestChunks` asks from `prediction.drawn` and `handleChunkRequest`
+ * measures from the entity, correctly refusing to trust the client's claim. A
+ * predicting client leads the server by its own latency, so whenever the two
+ * straddle a chunk boundary the entire leading-edge column comes back
+ * `OutOfRange` -- 52 of them on a measured sixty-second run at
+ * `MOVE_SPEED_HARD_MAX`, every one on the edge the body was running toward, and
+ * every one legal a tick later.
+ *
+ * One chunk of slack, and it is **derived rather than judged**. The sim already
+ * keeps a client's claim within `correctionThreshold` of the server's position,
+ * and `drawn` adds at most `MAX_EASED_OFFSET` of visual offset that has not
+ * decayed yet -- under a hundred units of honest disagreement, on a grid whose
+ * chunks are 616 units wide. A disagreement smaller than a chunk cannot move a
+ * chunk index by more than one, so this is exactly the slack a correct client
+ * needs and no more. `map-request.test.ts` asserts that relationship rather than
+ * the number 7.
+ *
+ * What it does not widen: a client claiming to stand across the map is still
+ * refused, because the claim never enters this arithmetic at all -- and
+ * {@link MAP_CHUNK_BURST} still prices a cold start off the *request* radius,
+ * which is what a client actually asks for.
+ */
+export const MAP_CHUNK_SERVE_RADIUS = MAP_CHUNK_REQUEST_RADIUS + 1;
+
+/**
  * How long a chunk request goes unanswered before the client asks again
  * (spec 147). Three seconds at 60Hz.
  *
