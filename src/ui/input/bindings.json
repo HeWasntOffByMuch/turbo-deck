@@ -61,10 +61,10 @@
     {
       "id": "combat.stop",
       "category": "combat",
-      "label": "Stop",
+      "label": "Stop everything",
       "context": "gameplay",
       "primary": {
-        "code": "KeyX"
+        "code": "Space"
       }
     },
     {
