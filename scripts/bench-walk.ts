@@ -42,6 +42,8 @@ const PROP_INCOMPLETE_HOLD_MS = 4000;
 const PROP_REGIONS_PER_FRAME = 1;
 /** ...and behind the loading screen, where a lurch costs nothing. */
 const PROP_REGIONS_LOADING = 8;
+/** The ledger's backstop for a mesh reply that never comes (spec 201). */
+const MESH_TIMEOUT_MS = 10_000;
 /**
  * What one region costs the *frame*, from `bench-stream.ts`.
  *
@@ -76,6 +78,7 @@ function ledger(): ChunkIngest {
     regionSize: propRegionSize(),
     regionsPerFlush: PROP_REGIONS_PER_FRAME,
     incompleteHoldMs: PROP_INCOMPLETE_HOLD_MS,
+    meshTimeoutMs: MESH_TIMEOUT_MS,
   });
 }
 

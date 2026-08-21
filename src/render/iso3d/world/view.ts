@@ -236,6 +236,37 @@ const PROP_INCOMPLETE_HOLD_MS = 4000;
  * prediction aid that the server's routing corrects.
  */
 const GROUND_REFRESH_MIN_CHUNKS = 8;
+
+/**
+ * How long a chunk offered to the mesher may go unanswered before the ledger
+ * gives up on it (spec 201).
+ *
+ * Ten seconds, which is far longer than a mesh has ever taken and is meant to
+ * be: this is a backstop for a reply that is never coming, not a schedule for
+ * one that is late. Sweeping a live chunk costs one extra prop rebuild;
+ * sweeping too late costs nothing at all -- so the number errs long.
+ *
+ * What it protects is not the mesh, it is everything downstream of the count:
+ * a chunk stuck in the queue holds every prop region it touches `inFlight` for
+ * the session and keeps `ingest.pending` off zero, which is the condition both
+ * the load gate and the first nav grid wait on.
+ */
+const MESH_TIMEOUT_MS = 10_000;
+
+/**
+ * How long a nav grid may be outstanding before another is allowed (spec 201).
+ *
+ * `navRequested` is a one-in-flight latch, and a latch with no way out is a
+ * wedge: a reply that never arrives -- a worker that died, a message dropped on
+ * a page that was backgrounded mid-build -- leaves the client routing and
+ * predicting against the last grid it managed to adopt, for as long as the
+ * session lasts. A generation counter already refuses a stale grid that lands
+ * late, so the only cost of re-arming early is one extra build.
+ *
+ * Thirty seconds: the slowest measured grid on the shipped map is a first one
+ * at 3.7 seconds, so this is most of an order of magnitude of headroom.
+ */
+const NAV_REPLY_TIMEOUT_MS = 30_000;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
 /** Ms between deltas -- the interval the renderer interpolates across. */
@@ -426,6 +457,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     regionSize: propRegionSize(),
     regionsPerFlush: PROP_REGIONS_PER_FRAME,
     incompleteHoldMs: PROP_INCOMPLETE_HOLD_MS,
+    meshTimeoutMs: MESH_TIMEOUT_MS,
   });
   /**
    * Where the load actually happens (spec 180).
@@ -480,6 +512,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let chunksAtGroundRefresh = -1;
   /** Whether a grid is being built right now, so only one is ever in flight. */
   let navRequested = false;
+  /** When that request went out, so a reply that never comes is not forever. */
+  let navRequestedAtMs = 0;
   /**
    * The chunk count of the newest grid adopted.
    *
@@ -605,6 +639,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // to keep the ledger and the prop regions, which is 0.1ms against the
       // 3.4ms a build is (spec 180).
       const dirty = streamed.add(held);
+      // Forwarded whether or not it dirtied anything here (spec 201). The two
+      // stores are only the same world because they are fed the same chunks:
+      // skipping the send for a chunk this side declined to insert -- an unknown
+      // layer, a refused `insertChunk` -- leaves the worker's store short of
+      // ground it would otherwise have had, permanently, and the nav grid and
+      // the prop regions it builds are then of a map nobody is playing. The
+      // worker takes a duplicate as a no-op, which is the cheap side of the
+      // trade.
+      mapWorker.send({ kind: 'chunk', held });
       if (dirty.length === 0) continue;
       ingest.offer(dirty, nowMs);
       // The memo is over the ground this chunk just changed. Everything it
@@ -612,7 +655,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // invalidated on the *insert* rather than when the triangles come back,
       // because the memo is about the store and the store has this ground now.
       scene.invalidateGroundSamples();
-      mapWorker.send({ kind: 'chunk', held });
     }
 
     stage('insert', performance.now() - insertStart);
@@ -692,6 +734,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // exist and spends the worker on a grid of a map that is one twentieth
     // arrived -- and then again at sixteen, and again at twenty-four, each one
     // queued behind the last, so the grid that matters arrives last.
+    //
+    // `navRequested` is a one-in-flight latch, and a latch is a wedge when the
+    // reply can fail to arrive (spec 201). A worker that died, or a message
+    // dropped on a page backgrounded mid-build, used to leave this client
+    // routing and predicting against the last grid it managed to adopt for the
+    // rest of the session. Re-arming costs at worst one extra build, and
+    // `navGeneration` already refuses a stale grid that lands after it.
+    if (navRequested && nowMs - navRequestedAtMs > NAV_REPLY_TIMEOUT_MS) navRequested = false;
     if (
       plan.mode === 'remote' &&
       firstGroundBuilt &&
@@ -699,6 +749,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       streamed.size - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS
     ) {
       navRequested = true;
+      navRequestedAtMs = nowMs;
       chunksAtGroundRefresh = streamed.size;
       mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
     }
@@ -776,6 +827,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       firstGroundBuilt = true;
       chunksAtGroundRefresh = streamed.size;
       navRequested = true;
+      navRequestedAtMs = performance.now();
       mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
     }
 

@@ -30,14 +30,99 @@ function chunk(cx: number, cz: number): ChunkRef {
   };
 }
 
-function ingest(settleMs = 120, regionsPerFlush = 8, incompleteHoldMs = 4000): ChunkIngest {
-  return new ChunkIngest({ settleMs, regionSize: 1100, regionsPerFlush, incompleteHoldMs });
+/** Far longer than any test's clock runs, so a sweep never fires by accident. */
+const MESH_TIMEOUT_MS = 10_000;
+
+function ingest(
+  settleMs = 120,
+  regionsPerFlush = 8,
+  incompleteHoldMs = 4000,
+  meshTimeoutMs = MESH_TIMEOUT_MS,
+): ChunkIngest {
+  return new ChunkIngest({ settleMs, regionSize: 1100, regionsPerFlush, incompleteHoldMs, meshTimeoutMs });
 }
 
 /** Complete everything offered, as a worker's replies eventually do. */
 function completeAll(queue: ChunkIngest, offered: readonly ChunkRef[], nowMs: number): void {
   for (const c of offered) queue.complete(c.layer, c.cx, c.cz, nowMs);
 }
+
+/**
+ * A promise in two halves, and until spec 201 nothing ever failed the second
+ * one.
+ *
+ * `offer` when the ground lands, `complete` when its triangles come back -- and
+ * a mesh reply can simply not arrive: the worker drops one for a layer it cannot
+ * mesh or a chunk that will not build, and the renderer skips `complete` when
+ * the scene refuses the adopt. Nothing re-offers, so one lost reply used to hold
+ * every region it touches back **for the session**.
+ */
+describe('a mesh reply that never comes', () => {
+  it('used to hold its regions for as long as the session lasted', () => {
+    // The exact wedge, with the timeout pushed past the clock this test runs.
+    const queue = ingest(120, 8, 4000, 10_000_000);
+    const offered = [chunk(0, 0), chunk(2, 0)];
+    queue.offer(offered, 0);
+    queue.complete(0, 2, 0, 16);
+
+    // A full minute of total quiet, and the first chunk's region is still owed.
+    const rects = queue.takePropRects(60_000, 8, () => true);
+    expect(rects.some((r) => r.minX <= 0 && r.maxX > 0)).toBe(false);
+    expect(queue.pending).toBe(1);
+    expect(queue.idle).toBe(false);
+  });
+
+  it('gives up on it and hands the region back', () => {
+    const queue = ingest();
+    queue.offer([chunk(0, 0), chunk(2, 0)], 0);
+    queue.complete(0, 2, 0, 16);
+
+    const rects = queue.takePropRects(60_000, 8, () => true);
+    expect(rects.some((r) => r.minX <= 0 && r.maxX > 0)).toBe(true);
+    expect(queue.pending).toBe(0);
+    expect(queue.idle).toBe(true);
+    // Counted rather than silent: a wedge quietly worked around is one nobody
+    // ever fixes.
+    expect(queue.abandonedCount).toBe(1);
+  });
+
+  it('leaves a chunk alone while its mesh is merely slow', () => {
+    const queue = ingest();
+    queue.offer([chunk(0, 0)], 0);
+    // Most of the way to the deadline, and still owed.
+    expect(queue.takePropRects(9_000, 8, () => true)).toEqual([]);
+    expect(queue.pending).toBe(1);
+    expect(queue.abandonedCount).toBe(0);
+
+    queue.complete(0, 0, 0, 9_100);
+    expect(queue.pending).toBe(0);
+    expect(queue.abandonedCount).toBe(0);
+  });
+
+  it('restarts the clock when a neighbour re-offers the same ground', () => {
+    const queue = ingest();
+    queue.offer([chunk(0, 0)], 0);
+    // Re-offered at 9s because a neighbour landed: the promise is new, so the
+    // age that matters is the new one.
+    queue.offer([chunk(0, 0)], 9_000);
+    queue.takePropRects(15_000, 8, () => true);
+    expect(queue.pending).toBe(1);
+    expect(queue.abandonedCount).toBe(0);
+  });
+
+  it('takes a late reply for a swept chunk as the no-op it is', () => {
+    const queue = ingest();
+    queue.offer([chunk(0, 0)], 0);
+    queue.takePropRects(60_000, 8, () => true);
+    expect(queue.pending).toBe(0);
+
+    // The worker finally answers. Nothing holds the key any more, so this is
+    // exactly what `complete` already does for a key it does not have.
+    expect(queue.complete(0, 0, 0, 60_100)).toBe(false);
+    expect(queue.pending).toBe(0);
+    expect(queue.abandonedCount).toBe(1);
+  });
+});
 
 describe('the ledger of ground owed a mesh', () => {
   it('holds a chunk pending until its triangles come back', () => {
