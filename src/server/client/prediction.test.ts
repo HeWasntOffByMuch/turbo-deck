@@ -292,3 +292,37 @@ describe('a slow the client has been told about (spec 188)', () => {
     expect(buffer.position.x).toBeCloseTo(11, 6);
   });
 });
+
+/**
+ * The other half of the same question, and the opposite answer. A slow rides
+ * the input because the client hears about it late; a *stat* change is settled
+ * on the tick the server derives it and sends the stats, so the step itself is
+ * swapped and everything still in flight is replayed at the new speed.
+ */
+describe('gear that changes how fast the body walks', () => {
+  it('steps at the new speed from the swap onward', () => {
+    const buffer = new PredictionBuffer({ x: 0, y: 0 }, createFlatPredictor(60, 60));
+    buffer.apply({ seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    expect(buffer.position.x).toBeCloseTo(1, 6);
+    buffer.setStep(createFlatPredictor(120, 60));
+    buffer.apply({ seq: 2, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    expect(buffer.position.x).toBeCloseTo(3, 6);
+  });
+
+  /**
+   * Only the step is replaced, never the buffer. The unacknowledged inputs are
+   * the state a correction replays from, so building a second buffer around the
+   * new speed would throw away the very thing that makes a correction smooth.
+   */
+  it('keeps the inputs the server has not acknowledged', () => {
+    const buffer = new PredictionBuffer({ x: 0, y: 0 }, createFlatPredictor(60, 60));
+    buffer.apply({ seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    buffer.apply({ seq: 2, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    buffer.setStep(createFlatPredictor(120, 60));
+    expect(buffer.pending.map((input) => input.seq)).toEqual([1, 2]);
+    // Corrected as of input 1: input 2 is still there to replay, at the speed
+    // the server is now walking it at.
+    buffer.reconcile(1, { x: 10, y: 0 });
+    expect(buffer.position.x).toBeCloseTo(12, 6);
+  });
+});

@@ -2208,6 +2208,22 @@ export class GameClient {
         this.baseStats = message.baseStats;
         this.attributes = message.attributes;
         this.unspentAttributePoints = message.unspentAttributePoints;
+        // The recalculation reaching the *prediction* rather than only the
+        // sheet. The step closes over the derived speed, so a client told it
+        // now walks at 155 rather than 161 has to be walked at 155 -- otherwise
+        // taking a pair of greaves off leaves the local body running at the
+        // speed it wore, and the server disagrees with it on every tick of
+        // every step from then on.
+        //
+        // Every stats message rather than only the ones whose speed moved,
+        // because `options.predictor` is handed the whole `EffectiveStats` and
+        // is free to close over any of it. A rebuild is one closure. `welcome`
+        // is non-null wherever `prediction` is -- the buffer is built from its
+        // tick rate -- but it is that tick rate that is wanted here, so it is
+        // asked for rather than asserted.
+        if (this.prediction && this.welcome) {
+          this.prediction.setStep(this.predictStepFor(message.stats, this.welcome.tickRate));
+        }
         break;
 
       case ServerMessageType.Delta: {
@@ -2419,10 +2435,24 @@ export class GameClient {
       this.wantedFacing = self.facing;
       this.facingSeeded = true;
     }
-    const build = this.options.predictor ?? ((stats, rate) => createFlatPredictor(stats.moveSpeed, rate));
     this.prediction = new PredictionBuffer(
       { x: self.x, y: self.y },
-      build(this.stats, this.welcome.tickRate),
+      this.predictStepFor(this.stats, this.welcome.tickRate),
     );
+  }
+
+  /**
+   * The local step for the stats this client currently has.
+   *
+   * A method rather than the expression it used to be inside
+   * {@link startPredictingIfReady}, because the step is built more than once.
+   * It closes over how fast this body walks, and that number is derived: a
+   * level, an attribute allocation and every piece of gear carrying a
+   * `moveSpeed` modifier change it mid-session. See
+   * {@link PredictionBuffer.setStep}.
+   */
+  private predictStepFor(stats: EffectiveStats, tickRate: number): PredictStep {
+    const build = this.options.predictor ?? ((s, rate) => createFlatPredictor(s.moveSpeed, rate));
+    return build(stats, tickRate);
   }
 }
