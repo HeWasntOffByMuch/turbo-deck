@@ -68,6 +68,7 @@ change a game outcome.
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
 | `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 209) |
+| `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -1373,6 +1374,56 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  solidity and the water line, a prop's colour comes from its own
                  part rather than from what it stands on, and a marker sits at a
                  height.
+                 prop-residency.ts is which trees arrive next (spec 211), and it
+                 exists because `buildPropField` composed every region in the
+                 world before the editor could draw a frame -- **half** of
+                 everything opening the editor costs, at every world size
+                 `bench-editor.ts` measures, and 4.5s on the map we ship. Spec
+                 207 named `buildChunks` as the editor's next problem and it is
+                 under a third; nothing had measured the rest. The field is
+                 built `deferred` now and `pumpProps` composes regions nearest
+                 the camera's **pivot** first, so the trees you are looking at
+                 arrive before the far corner of the map -- 4,153ms to 1ms at
+                 the open. It is the pivot rather than the rectangle the camera
+                 frames because this camera *orbits*: its footprint is not
+                 axis-aligned, and a rect standing in for it would be an
+                 approximation of a value used only to sort. The seam was
+                 already there and unused from here -- `adoptRegion` and
+                 `buildRegionInstances` are spec 181's, built for the Play tab.
+                 What does **not** move with them is the composition itself: the
+                 Play tab's props are immutable once streamed, so a worker can
+                 hold a copy, and the editor's change under every tool, so a
+                 worker's copy of them would be a second description of the
+                 document. Paced rather than moved.
+                 Two things in it were learned by getting them wrong. **The
+                 budget cannot bound the frame**, and pretending otherwise would
+                 be the comment lying: one region is 55ms to compose (median
+                 over the shipped map's 72, 77ms at the worst), `FrameBudget` is
+                 checked *after* a unit of work and nothing here can subdivide a
+                 region, so the pump does exactly one region a frame. What that
+                 buys is still the feature -- the first region lands in 55ms
+                 where the eager field took 4.5s to land anything, and the tab
+                 pans and paints throughout -- and the fix if a bounded frame is
+                 ever wanted is a smaller region, which spec 195 chose for the
+                 *Play tab* on a real GPU and left `?props=` to re-ask. And
+                 **`held` is not a subset of the regions that exist**: an edit
+                 marks every region its rectangle touched, empty ones included,
+                 so `held.size >= regions.size` can be true with regions still
+                 owed -- written as the size comparison it obviously wants to
+                 be, the fill stops dead after a stroke near the edge of the map
+                 and the trees never arrive, silently. `propRegionsPending`
+                 counts instead, and the test pins the trap rather than the
+                 happy case. The grid itself moved to `prop-regions.ts`, which
+                 is `props.ts` minus three, so the pure half can key a region
+                 without a second copy of the arithmetic.
+                 `npx tsx scripts/probe-editor-props.ts` is the half no headless
+                 test can see, and the reason it exists is that every rule above
+                 is green in Node beside a frame loop that might call none of
+                 them -- an editor that opens instantly and draws no trees ever
+                 passes all of them. It reads `data-props`, published from what
+                 is **attached to the scene graph** rather than from what was
+                 asked for, so a region composed into batches that never reached
+                 the group reads as absent.
                  `npx tsx scripts/preview-parts.ts` drives the tools in a real
                  browser, since the drag and the commit live in view.ts, and
                  `npx tsx scripts/probe-map-editor.ts` is the one that asks
