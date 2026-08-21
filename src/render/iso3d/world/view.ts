@@ -49,7 +49,7 @@ import type { BaseStatKey } from '../../../server/state/types.js';
 import { viewSeed } from '../seed.js';
 import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
 import { ASSET_MANIFEST_HASH } from './unit-assets.js';
-import mapText from '../../../../maps/arena.json?raw';
+import { loadShippedMapText } from '../map-asset.js';
 import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { HeldChunk } from '../../../server/client/map-cache.js';
@@ -260,7 +260,21 @@ const KEEPALIVE_TICKS = Math.round(KEEPALIVE_MS / TICK_MS);
 /** Ms between deltas -- the interval the renderer interpolates across. */
 const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
-export function mountWorld(container: HTMLElement): ViewHandle {
+export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
+  /**
+   * The shipped map, fetched rather than bundled (spec 199).
+   *
+   * Awaited here and nowhere deeper: everything below is synchronous from
+   * `buildWorldFromMap` through `warmRouting`, `fillGround` and the transport,
+   * and threading a promise into that would be a rewrite of the whole function.
+   * The mount boundary is the one place a wait costs nothing but a frame.
+   *
+   * Fetched on the remote path too, even though only a loopback tab builds a
+   * world from it: `mapIdOf(mapText)` is how this tab tells the server it is on
+   * the same document, and a client that skipped the fetch could not make that
+   * comparison at all.
+   */
+  const mapText = await loadShippedMapText();
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#0b0b12;';
 

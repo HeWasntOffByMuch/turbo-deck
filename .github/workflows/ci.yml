@@ -31,3 +31,11 @@ jobs:
       # (`npm test` already compares against them; this catches a stale *commit*.)
       - run: npm run bake:ui-goldens
       - run: git diff --exit-code src/ui/gallery/goldens
+      # The build has never run here (spec 199), which is how `index-*.js`
+      # reached 14 MB without anybody noticing: the map was `?raw`-imported, so
+      # 11.5 MB of world was compiled in as a string literal. It is a fetched
+      # asset now and the bundle is 2 MB, and this is what keeps it that way --
+      # a ceiling on emitted JavaScript catches a large asset walking back in by
+      # any route, because every route has the same symptom.
+      - run: npm run build
+      - run: npm run check:bundle

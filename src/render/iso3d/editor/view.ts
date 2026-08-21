@@ -48,6 +48,7 @@ import {
   writeAutosave,
 } from './persistence.js';
 import { openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
+import { loadShippedMapText } from '../map-asset.js';
 import { writeMapToDisk } from './map-write.js';
 import { buildEditorPanel, type EditorPanel } from './panel.js';
 import { createEditorSettings, cursorColor, cursorRadius, NEW_ROCK_TIER } from './tools.js';
@@ -439,7 +440,7 @@ const OVERLAY_CSS =
  * time directly. That is not a determinism exception -- nothing in this view can
  * decide a game outcome.
  */
-export function mountEditor(container: HTMLElement): ViewHandle {
+export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#0b0b12;';
 
@@ -489,7 +490,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const restored = storage ? readAutosave(storage) : null;
   // What this session is editing: `maps/arena.json` unless `?map=generated`
   // asks for a world from a seed (spec 176).
-  const source = openEditorMap(globalThis.location?.search ?? '', viewSeed());
+  const source = await openEditorMap(globalThis.location?.search ?? '', viewSeed(), loadShippedMapText);
   const scene = new EditorScene(
     canvas,
     restored ? { document: restored, map: loadMap(restored) } : source,

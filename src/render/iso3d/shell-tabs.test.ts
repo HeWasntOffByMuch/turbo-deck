@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { showsTabButtons, visibleTabs, type ShellTab } from './shell-tabs.js';
+import { mountLanded, showsTabButtons, tabPress, visibleTabs, type ShellTab } from './shell-tabs.js';
 
 const TABS: readonly ShellTab[] = [
   { label: 'Play', game: true },
@@ -44,5 +44,38 @@ describe('the tabs a device is offered', () => {
   it('draws no tab buttons when there is only one tab to be on', () => {
     expect(showsTabButtons(visibleTabs(TABS, true))).toBe(false);
     expect(showsTabButtons(visibleTabs(TABS, false))).toBe(true);
+  });
+});
+
+describe('what pressing a tab does while a mount is in flight (spec 199)', () => {
+  const none = new Set<number>();
+
+  it('mounts a tab that has never been mounted', () => {
+    expect(tabPress(1, 0, none, false)).toBe('mount');
+  });
+
+  it('shows one that was mounted and put away', () => {
+    expect(tabPress(1, 0, none, true)).toBe('show');
+  });
+
+  it('ignores a press on the tab already showing', () => {
+    expect(tabPress(0, 0, none, true)).toBe('ignore');
+  });
+
+  it('ignores a second press while the first mount is still in flight', () => {
+    // The one that matters. `active` moves on the press so the button lights
+    // at once, so without the in-flight set a second press would see
+    // `index !== active` only on the *first* press and `held` false on both --
+    // two mounts, two in-tab servers, one of them orphaned.
+    expect(tabPress(1, 1, new Set([1]), false)).toBe('ignore');
+    expect(tabPress(1, 0, new Set([1]), false)).toBe('ignore');
+  });
+
+  it('shows a mount that lands on the tab still being looked at', () => {
+    expect(mountLanded(2, 2)).toBe('show');
+  });
+
+  it('shelves one that lands after the player moved on', () => {
+    expect(mountLanded(2, 0)).toBe('shelve');
   });
 });
