@@ -2483,6 +2483,54 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  at its uphill edge and floats over the downhill one by whatever
                  the ground fell across it, which for a mark this size is a couple
                  of units on anything walkable),
+                 crosshair.ts (what the pointer *is* over the world, spec 200:
+                 two marks that are the same mark at two lengths, authored as a
+                 9x9 table of `#` in `pixel-font.ts`'s register and rendered as
+                 crisp rects -- which is why the art is odd-sided, since what a
+                 crosshair marks is its centre pixel and an even box has none.
+                 The **small** one -- a centre dot and the four arm tips -- says
+                 a click would act on the body under the pointer; the **full**
+                 one says a skill is armed and the next click places it.
+                 Everywhere else the page's own arrow stands, because a mark that
+                 is always on says nothing by being on.
+                 They are **drawn in the page** rather than handed to CSS as
+                 cursor images, and that is the whole lesson of this spec. The
+                 first two cuts were a `cursor: url(...) 11 11` data URI, and on
+                 a real machine the mark landed four to seven pixels up and left
+                 of the point it was marking -- about *half* the hotspot -- with
+                 the pointer provably still. It took a phone recording of the
+                 screen to see at all, because neither a headless screenshot nor
+                 OBS captures what the compositor draws for a cursor; and the
+                 first fix, assigning the style inside the input event rather
+                 than in the frame, changed nothing. A hotspot is applied between
+                 the style and the glass by a layer that also has a device scale
+                 and a page zoom to apply, and CSS cannot ask what it did.
+                 Drawn, the mark is placed from the pointer position the game
+                 already tracks, in the coordinate space everything else on that
+                 layer is placed in -- so there is no hotspot to be right about,
+                 and a probe can finally *measure* where the mark went, which is
+                 the check that matters and the one a cursor image made
+                 impossible. It costs a frame against a composited cursor, so it
+                 is placed from the pointer event as well as from the frame.
+                 `worldCursor` says `none` exactly where `worldMark` draws
+                 something, derived from it rather than deciding twice: a hidden
+                 cursor with nothing drawn is a pointer the player cannot find.
+                 The order is the order of commitment -- an armed skill beats a
+                 body and beats the drop's pointer (spec 158), since its click
+                 *places* the aim rather than doing anything to what is
+                 underneath -- and what counts as a body is `attackable`'s
+                 answer, the same predicate the right-click attack order reads,
+                 so the mark and what the button does cannot disagree. Nothing is
+                 drawn while the pointer is over the interface or off the canvas,
+                 since `cursor` is already null there: a button keeps the arrow
+                 that says it is a button, and no hidden cursor is left over a
+                 window. `npx tsx scripts/probe-aim-cursor.ts` is the measurement
+                 -- the mark's own rectangle against the point the pointer was
+                 moved to, in every state -- and its first run caught two things
+                 at once: an unsized holder, whose absolutely-positioned children
+                 are out of flow and so reported a zero rectangle eleven pixels
+                 up and left of the truth, and the deliberate rule above about
+                 the interface),
                  action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
                  band, spec 164 -- everything the HUD grew along the edge of the
                  frame, each pure and each about one number). action-bar.ts is
