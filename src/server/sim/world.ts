@@ -35,7 +35,7 @@ import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
-import { FLEE_DISTANCE, notice, rally, settle } from './aggro.js';
+import { bolt, notice, rally, settle } from './aggro.js';
 import { SlotBoard, slotAngle, slotNearest } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import {
@@ -154,6 +154,7 @@ function blankEntity(id: number): ServerEntity {
     targetId: null,
     aggro: AggroValue.Calm,
     aggroUntilTick: 0,
+    fleeGoal: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -306,6 +307,7 @@ export function spawnEntity(
     // attacker means. Without a target it is calm, which is the same state.
     aggro: spec.targetId === undefined ? AggroValue.Calm : AggroValue.Engaged,
     aggroUntilTick: 0,
+    fleeGoal: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -2103,12 +2105,28 @@ function monsterIntent(
 /**
  * The other way out of a fight (spec 163): away, as fast as this body goes.
  *
- * Aimed at a point {@link FLEE_DISTANCE} directly opposite whatever it is
- * running from, and routed with the same `routeToward` a chase uses -- so the
- * common case is a straight line that touches no grid at all, and a cornered
- * body goes round the corner instead of grinding along it. Recomputed every
- * tick, so a grazer that gets outflanked mid-flight turns rather than committing
- * to the direction it set off in.
+ * Aimed at the point the body bolted for when the blow landed, and routed with
+ * the same `routeToward` a chase uses -- so the common case is a straight line
+ * that touches no grid at all, and a cornered body goes round the corner instead
+ * of grinding along it.
+ *
+ * **The goal is not recomputed while the flight runs** (spec 201), and that is
+ * the whole of this function's correctness. It used to be re-derived every tick
+ * as "directly away from wherever my attacker is now", which is stable only
+ * while the attacker is slower than its quarry -- and no player is. A pursuer at
+ * 155 against the grazer's 40 overshoots *through* the fleeing body every frame,
+ * so the away vector flipped sign at 60Hz: measured off a real `step`, the
+ * velocity alternated +40, -40, +40, -40 and the body oscillated between two
+ * coordinates two thirds of a unit apart for the rest of its flight. It never
+ * dropped its target and never left `Fleeing` early -- it simply stopped
+ * getting anywhere, which from outside is indistinguishable from having given
+ * up.
+ *
+ * So it re-aims on two events and no others: the goal is reached, or a fresh
+ * blow lands -- which is `provoke`'s business, not this function's. The fallback
+ * when the router has nothing to say runs *at the committed goal* rather than
+ * away from the attacker, for the same reason: the goal holds still and the
+ * attacker does not.
  *
  * The intent it returns carries no `castAbilityId` at all, which is the rule
  * stated once rather than checked at each caller: a fleeing body never swings,
@@ -2120,18 +2138,28 @@ function fleeFrom(
   tick: number,
   context: StepContext,
 ): MonsterDecision {
-  const away = unit(monster.position.x - from.position.x, monster.position.y - from.position.y);
-  // Standing exactly on top of its attacker leaves no direction to run in, so it
-  // keeps the one it is already facing rather than dividing by zero.
-  const heading = away ?? { x: Math.cos(monster.facing), y: Math.sin(monster.facing) };
-  const goal: Vec3 = {
-    x: monster.position.x + heading.x * FLEE_DISTANCE,
-    y: monster.position.y + heading.y * FLEE_DISTANCE,
-    z: monster.position.z,
-  };
+  // A goal is normally already there -- `provoke` writes one on the blow that
+  // starts the flight. It is picked here only for a body put into `Fleeing` by
+  // some other route (a test seeding one, an admin), and re-picked when the
+  // committed goal has been reached, which at 900 units is a body that has
+  // genuinely got away.
+  const committed = monster.fleeGoal;
+  const arrived =
+    committed !== null &&
+    Math.hypot(committed.x - monster.position.x, committed.y - monster.position.y) <= monster.radius;
+  const aim = committed !== null && !arrived ? committed : bolt(monster, from);
+  const aiming = aim === committed ? monster : { ...monster, fleeGoal: aim };
 
-  const steer = routeToward(monster, goal, tick, context);
-  const direction = steer.direction ?? heading;
+  const goal: Vec3 = { x: aim.x, y: aim.y, z: monster.position.z };
+  const steer = routeToward(aiming, goal, tick, context);
+  const direction =
+    steer.direction ??
+    unit(aim.x - monster.position.x, aim.y - monster.position.y) ??
+    // Only reachable for a body standing exactly on its own goal, which the
+    // re-aim above has already ruled out -- `bolt` always answers a full
+    // {@link FLEE_DISTANCE} away. Kept because a fallback that cannot be reached
+    // is cheaper than a direction that could be zero.
+    { x: Math.cos(monster.facing), y: Math.sin(monster.facing) };
   return {
     entity: steer.entity,
     // Still the one body it does not dodge, and for the same reason as a chase

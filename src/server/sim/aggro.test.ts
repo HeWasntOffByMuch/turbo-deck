@@ -91,19 +91,49 @@ function withMonster(
   x: number,
   y: number,
   anchor?: { x: number; y: number },
+  /** For the one case that needs a body to survive more blows than its row does. */
+  stats?: Partial<EffectiveStats>,
 ) {
   const definition = monsterById(typeId);
   if (!definition) throw new Error(`no monster ${typeId}`);
+  const merged = stats ? { ...definition.stats, ...stats } : definition.stats;
   const result = spawnEntity(state, {
     kind: EntityKindValue.Monster,
     typeId,
     position: { x, y, z: 0 },
-    stats: definition.stats,
+    stats: merged,
     radius: definition.radius,
     zoneId: 'greenmarch',
     ...(anchor === undefined ? {} : { anchor }),
   });
   return { state: result.state, id: result.entity.id };
+}
+
+/**
+ * The player walks at whatever is under `toward` for one tick.
+ *
+ * Separate from `run` because the flight tests are about what happens when the
+ * thing chasing is *faster than its quarry*, which is every player: 155 against
+ * the grazer's 40. Standing still is the case spec 163 already covers.
+ */
+function chase(
+  state: ServerWorldState,
+  playerId: number,
+  towardId: number,
+  seq: number,
+  ctx: StepContext,
+): ServerWorldState {
+  const player = state.entities.get(playerId);
+  const quarry = state.entities.get(towardId);
+  if (!player || !quarry) throw new Error('gone');
+  const dx = quarry.position.x - player.position.x;
+  const dy = quarry.position.y - player.position.y;
+  const length = Math.hypot(dx, dy) || 1;
+  return step(
+    state,
+    [input(playerId, { seq, moveX: dx / length, moveY: dy / length, facing: Math.atan2(dy, dx) })],
+    ctx,
+  ).state;
 }
 
 function input(entityId: number, overrides: Partial<ServerInput> = {}): ServerInput {
@@ -215,6 +245,108 @@ describe('skittish: it runs', () => {
       expect(now).toBeGreaterThan(previous);
       previous = now;
     }
+  });
+
+  it('keeps its heading while a faster pursuer runs straight through it', () => {
+    // The bug spec 201 exists for. The heading used to be re-derived every tick
+    // from where the attacker was *now*, which is stable only while the attacker
+    // is slower than its quarry -- and no player is. A player at 155 closing on
+    // a grazer at 40 overshoots through it every frame, so the away vector
+    // flipped sign at 60Hz: the velocity alternated +40, -40, +40, -40 and the
+    // body oscillated between two coordinates two thirds of a unit apart for the
+    // rest of its flight, holding its target and its `Fleeing` state throughout.
+    const anchor = { x: 640, y: 450 };
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const grazer = withMonster(state, 'grazer', anchor.x, anchor.y, anchor);
+    state = grazer.state;
+    const ctx = context();
+
+    const hit = swing(state, player.id, grazer.id, ctx);
+    expect(hit.landed).toBe(true);
+    state = hit.state;
+
+    const row = monsterById('grazer');
+    if (row?.temperament.kind !== 'skittish') throw new Error('the grazer stopped being skittish');
+
+    let previous: { x: number; y: number } | null = null;
+    let seq = 100;
+    for (let tick = 0; tick < row.temperament.fleeTicks - 4; tick++) {
+      state = chase(state, player.id, grazer.id, seq++, ctx);
+      const now = state.entities.get(grazer.id);
+      if (!now) throw new Error('the grazer left the world');
+      expect(now.aggro).toBe(AggroValue.Fleeing);
+      // The measurement that fails on the old code and only on the old code: a
+      // body running away does not reverse between one tick and the next.
+      if (previous) expect(previous.x * now.velocity.x + previous.y * now.velocity.y).toBeGreaterThan(0);
+      previous = { x: now.velocity.x, y: now.velocity.y };
+    }
+
+    // And it actually got somewhere. Its own speed over the flight is the bound;
+    // half of it is well clear of the 0.67 units the oscillation covered.
+    const away = Math.hypot(
+      (state.entities.get(grazer.id)?.position.x ?? 0) - anchor.x,
+      (state.entities.get(grazer.id)?.position.y ?? 0) - anchor.y,
+    );
+    const flight = ((row.temperament.fleeTicks - 4) / SERVER_TICK_RATE) * row.stats.moveSpeed;
+    expect(away).toBeGreaterThan(flight * 0.5);
+  });
+
+  it('commits the goal it bolted for, and a fresh blow re-aims it', () => {
+    // Tough enough to take two blows, which no grazer's row is: what is being
+    // asserted is that the *second* one moves the goal and that nothing else
+    // does.
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const grazer = withMonster(state, 'grazer', 640, 450, { x: 640, y: 450 }, { maxHealth: 400 });
+    state = grazer.state;
+    const ctx = context();
+
+    state = swing(state, player.id, grazer.id, ctx).state;
+    const bolted = state.entities.get(grazer.id)?.fleeGoal;
+    if (!bolted) throw new Error('a flight with no goal');
+    // Struck from the west, so it is headed east.
+    expect(bolted.x).toBeGreaterThan(640);
+
+    // Held, tick after tick, while the player weaves around it.
+    let seq = 200;
+    for (let tick = 0; tick < 30; tick++) {
+      state = chase(state, player.id, grazer.id, seq++, ctx);
+      expect(state.entities.get(grazer.id)?.fleeGoal).toEqual(bolted);
+    }
+
+    // Now hit it from the east instead. The flight is re-aimed on the blow and
+    // on nothing else, so this is the one thing that moves it.
+    const grz = state.entities.get(grazer.id);
+    if (!grz) throw new Error('gone');
+    const ambusher = withPlayer(state, grz.position.x + 40, grz.position.y);
+    state = ambusher.state;
+    state = swing(state, ambusher.id, grazer.id, ctx).state;
+    const reaimed = state.entities.get(grazer.id)?.fleeGoal;
+    if (!reaimed) throw new Error('a flight with no goal');
+    expect(reaimed).not.toEqual(bolted);
+    expect(reaimed.x).toBeLessThan(state.entities.get(grazer.id)?.position.x ?? 0);
+  });
+
+  it('carries no flee goal once it is calm again', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const grazer = withMonster(state, 'grazer', 640, 450, { x: 640, y: 450 });
+    state = grazer.state;
+    const ctx = context();
+    expect(state.entities.get(grazer.id)?.fleeGoal).toBeNull();
+
+    state = swing(state, player.id, grazer.id, ctx).state;
+    expect(state.entities.get(grazer.id)?.fleeGoal).not.toBeNull();
+
+    const row = monsterById('grazer');
+    if (row?.temperament.kind !== 'skittish') throw new Error('the grazer stopped being skittish');
+    state = run(state, row.temperament.fleeTicks + 2, ctx);
+    expect(state.entities.get(grazer.id)?.aggro).toBe(AggroValue.Calm);
+    expect(state.entities.get(grazer.id)?.fleeGoal).toBeNull();
   });
 
   it('stops running when its clock runs out, and turns for home', () => {

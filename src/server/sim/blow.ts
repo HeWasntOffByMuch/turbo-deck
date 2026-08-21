@@ -217,7 +217,7 @@ export function resolveBlow(
       activity: killed ? ActivityValue.Dead : target.activity,
       stillSinceTick: tick,
     },
-    attacker.id,
+    attacker,
     tick,
   );
 
