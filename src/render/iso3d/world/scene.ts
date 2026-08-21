@@ -919,6 +919,26 @@ export class WorldScene {
     this.unwalkableStale = true;
   }
 
+  /**
+   * Stop drawing one region's props, and dispose them (spec 211).
+   *
+   * The counterpart to {@link adoptPropRegion}, as `dropTerrainChunk` is to
+   * `adoptTerrainChunk` -- and the same story: the takedown existed inside
+   * `adoptRegion` from spec 086 and could only be reached by composing an empty
+   * region, which is the one thing a client that has just thrown the ground
+   * away cannot do.
+   */
+  dropPropRegion(key: string): boolean {
+    const dropped = this.propField?.dropRegion(key) ?? false;
+    if (dropped) this.unwalkableStale = true;
+    return dropped;
+  }
+
+  /** Region keys with props on the scene graph. For the drop pass to reconcile. */
+  heldPropRegions(): readonly string[] {
+    return this.propField?.heldRegions() ?? [];
+  }
+
   refreshPropsWithin(rects: PropRect | readonly PropRect[]): void {
     if (!this.map || !this.propField) return;
     if (Array.isArray(rects) && rects.length === 0) return;

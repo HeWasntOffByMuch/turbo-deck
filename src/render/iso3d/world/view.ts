@@ -71,7 +71,8 @@ import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { CostMeter, FrameMeter } from './fps-meter.js';
 import { createFpsOverlay } from './fps-overlay.js';
-import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize } from '../props.js';
+import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize, type PropRect } from '../props.js';
+import { orphanedPropRegions, propRegionHasGround } from './prop-residency.js';
 import {
   abilityForSlot,
   actionBarFor,
@@ -625,7 +626,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     if (stale.length > 0) {
       const { removed, restitch } = streamed.remove(stale);
       for (const ref of removed) {
-        pendingInserts.delete(`${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`);
+        const key = `${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`;
+        pendingInserts.delete(key);
+        // The ledger too (spec 211). `drawnChunks` is what `data-chunks-drawn`
+        // publishes, and spec 208 left it growing for the session -- so it
+        // counted chunks *ever* drawn against chunks *now* held, and
+        // `probe-streaming.ts`'s one invariant, `drawn >= held`, quietly became
+        // satisfiable by anything. Pruned here it means "drawn and still held"
+        // and the check has its teeth back.
+        drawnChunks.delete(key);
         const layerId = streamed.meshLayers[ref.layer]?.id;
         if (layerId !== undefined) scene.dropTerrainChunk(layerId, ref.cx, ref.cz);
       }
@@ -636,6 +645,32 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // (spec 153), the same reason an insert invalidates it.
       scene.invalidateGroundSamples();
       mapWorker.send({ kind: 'evict', refs: stale });
+
+      // The trees standing on it (spec 211).
+      //
+      // Reconciled against the *field's own* region list rather than derived
+      // from the chunks that just went, for the reason the terrain reconcile
+      // above is written the same way: a region only loses its last ground when
+      // a chunk in it is removed, so the two are the same set today -- and
+      // reading what is actually on the scene graph is the version that stays
+      // right if a region ever arrives by some other path. It is O(regions
+      // held), and regions held is bounded by exactly the thing this enforces.
+      //
+      // Ground rather than a radius of its own: a region is drawn because
+      // something under it is held, so it is dropped when nothing is. That is
+      // what makes this unable to fight the streamer without deriving a second
+      // keep distance -- the trees cannot go while their ground is there, and
+      // cannot be asked for before it arrives, because both read one held set.
+      const ground = streamed;
+      const holds = (rect: PropRect): boolean => ground.holdsAnyIn(rect);
+      for (const key of orphanedPropRegions(scene.heldPropRegions(), holds)) {
+        scene.dropPropRegion(key);
+      }
+      // ...and nothing is owed for ground that has gone. Over the ingest's own
+      // ledger rather than over what was just dropped, because a region whose
+      // ground arrived and went inside one settle period was never drawn and so
+      // was never dropped -- and it is the one still waiting to be composed.
+      ingest.forgetRegions((key) => !propRegionHasGround(key, holds));
     }
 
     const insertStart = performance.now();
@@ -713,6 +748,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       if (!reply || reply.kind !== 'props') continue;
       adoptedRegions++;
       propsInFlight = Math.max(0, propsInFlight - 1);
+      // Ground that went while this was being composed (spec 211). A region
+      // asked for on one frame, evicted on the next and delivered on the one
+      // after would be hung up *behind* the drop pass, and nothing would ever
+      // take it down again -- the drop is driven by eviction, and this ground
+      // has already been evicted. The same predicate the drop pass reads,
+      // asked at the moment it would be drawn.
+      if (!propRegionHasGround(reply.region, (rect) => held.holdsAnyIn(rect))) continue;
       scene.adoptPropRegion(reply.region, reply.instances);
     }
     stage('props', performance.now() - propStart);
@@ -848,12 +890,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     //
     // A readout, not an input: nothing in the game reads these.
     const streamedCount = streamed?.size ?? 0;
-    const meshState = `${streamedCount}:${drawnChunks.size}:${ingest.pending}`;
+    // Published from what is *attached* rather than from what was asked for, the
+    // same rule `data-held-weapons` follows: a region composed and hung on
+    // nothing should read as absent, which is the failure this number exists to
+    // make visible (spec 211).
+    const regionsDrawn = scene.heldPropRegions().length;
+    const meshState = `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
       root.dataset['chunksDrawn'] = String(drawnChunks.size);
       root.dataset['chunksPending'] = String(ingest.pending);
+      root.dataset['propRegions'] = String(regionsDrawn);
     }
 
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;

@@ -120,6 +120,48 @@ export function propRegionKey(x: number, z: number): string {
   return `${Math.floor(x / regionSize)},${Math.floor(z / regionSize)}`;
 }
 
+/**
+ * Every batching region a world rectangle touches, inclusive of the far edge.
+ *
+ * The arithmetic `rebuildWithin` here and `MapWorkerCore.propRegions` on the
+ * other thread were each writing out from `propRegionKey`. Written once because
+ * a third copy is how the field and the thing that evicts it come to disagree
+ * about which region a tree is in, and a region nobody agrees on is one nothing
+ * can take down.
+ *
+ * (`ChunkIngest` deliberately still keeps its own: it is pure and this module
+ * imports three, so it is handed the region size as an option instead.)
+ */
+export function propRegionsIn(rect: PropRect): readonly string[] {
+  const lox = Math.floor(rect.minX / regionSize);
+  const loz = Math.floor(rect.minZ / regionSize);
+  const hix = Math.floor(rect.maxX / regionSize);
+  const hiz = Math.floor(rect.maxZ / regionSize);
+  const keys: string[] = [];
+  for (let rz = loz; rz <= hiz; rz++) {
+    for (let rx = lox; rx <= hix; rx++) keys.push(`${String(rx)},${String(rz)}`);
+  }
+  return keys;
+}
+
+/**
+ * The world rectangle one region covers (spec 211).
+ *
+ * The inverse of {@link propRegionKey}, for the one caller that has a region and
+ * needs to ask the map a question about the ground under it.
+ */
+export function propRegionBounds(key: string): PropRect {
+  const comma = key.indexOf(',');
+  const rx = Number(key.slice(0, comma));
+  const rz = Number(key.slice(comma + 1));
+  return {
+    minX: rx * regionSize,
+    minZ: rz * regionSize,
+    maxX: (rx + 1) * regionSize,
+    maxZ: (rz + 1) * regionSize,
+  };
+}
+
 /** Seeds for the per-instance variation hashes, so the draws stay independent. */
 const HASH_SPECIES = 0x5eed01;
 const HASH_TIERS = 0x5eed02;
@@ -1635,6 +1677,24 @@ export interface PropFieldHandle {
    * by two implementations agreeing.
    */
   adoptRegion(key: string, instances: RegionInstances): void;
+  /**
+   * Stop drawing one region, and free everything only it owned (spec 211).
+   *
+   * The counterpart to {@link adoptRegion}, and the takedown that function has
+   * always performed on the way past: it frees the held region before hanging
+   * up the new one, so an empty reply was already a clean removal. What this
+   * adds is a way to reach it without composing an empty region on another
+   * thread first -- which matters because the reason to take a region down is
+   * that its ground has gone, and there is nothing left over there to compose
+   * it from.
+   *
+   * Answers whether anything was there, since disposal is a call rather than a
+   * value and a caller reconciling against held ground has no other way to
+   * count what it dropped.
+   */
+  dropRegion(key: string): boolean;
+  /** Region keys with batches on the scene graph. For the drop pass. */
+  heldRegions(): readonly string[];
   dispose(): void;
 }
 
@@ -2244,15 +2304,21 @@ export function buildPropField(
     group,
     undrawn: countUndrawn(props),
     adoptRegion,
+    dropRegion(key): boolean {
+      const held = regions.get(key);
+      if (!held) return false;
+      disposeRegion(held);
+      regions.delete(key);
+      return true;
+    },
+    heldRegions(): readonly string[] {
+      return [...regions.keys()];
+    },
     rebuildWithin(next, rect): void {
       const rects = Array.isArray(rect) ? (rect as readonly PropRect[]) : [rect as PropRect];
       const wanted = new Set<string>();
       for (const one of rects) {
-        const lo = propRegionKey(one.minX, one.minZ).split(',').map(Number) as [number, number];
-        const hi = propRegionKey(one.maxX, one.maxZ).split(',').map(Number) as [number, number];
-        for (let rz = lo[1]; rz <= hi[1]; rz++) {
-          for (let rx = lo[0]; rx <= hi[0]; rx++) wanted.add(`${rx},${rz}`);
-        }
+        for (const key of propRegionsIn(one)) wanted.add(key);
       }
       if (wanted.size === 0) return;
 

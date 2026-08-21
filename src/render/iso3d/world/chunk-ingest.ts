@@ -189,6 +189,33 @@ export class ChunkIngest {
     return out;
   }
 
+  /**
+   * Drop what is owed for regions whose ground has gone (spec 211).
+   *
+   * A region is dirtied when its ground moves and cleared when its trees are
+   * handed out. Eviction is the third way it can end: the ground it was dirtied
+   * for is not coming back until the player does, and `takePropRects` would
+   * otherwise hand it out anyway once `incompleteHoldMs` expired -- a region
+   * composed on the far thread out of props that thread has also evicted, to
+   * take down batches this side took down already.
+   *
+   * A predicate over this ledger rather than a list of what was dropped, and
+   * that is the whole of it: the regions *drawn* are not the regions *owed*. A
+   * region whose ground arrived and was evicted again inside one settle period
+   * was never drawn, so it appears in no drop list -- and it is precisely the
+   * one still sitting here waiting for its clock to run out.
+   *
+   * Answers how many entries went, because "nothing is owed for ground we do
+   * not have" is otherwise a claim with nothing to read it off.
+   */
+  forgetRegions(lost: (key: string) => boolean): number {
+    let gone = 0;
+    for (const key of [...this.dirtyRegions.keys()]) {
+      if (lost(key) && this.dirtyRegions.delete(key)) gone++;
+    }
+    return gone;
+  }
+
   /** Chunks queued and not yet meshed. */
   get pending(): number {
     return this.queue.size;

@@ -32,7 +32,7 @@ import {
   navGridFor,
 } from '../../../sim/pathfinding.js';
 import { buildChunkArrays, footprintOf } from '../terrain-arrays.js';
-import { buildRegionInstances, propRegionKey, setPropRegionSize } from '../props.js';
+import { buildRegionInstances, propRegionKey, propRegionsIn, setPropRegionSize } from '../props.js';
 import type { WorldRect } from './chunk-ingest.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 
@@ -172,11 +172,7 @@ export class MapWorkerCore {
 
     const wanted = new Set<string>();
     for (const rect of rects) {
-      const [lox, loz] = keyParts(propRegionKey(rect.minX, rect.minZ));
-      const [hix, hiz] = keyParts(propRegionKey(rect.maxX, rect.maxZ));
-      for (let rz = loz; rz <= hiz; rz++) {
-        for (let rx = lox; rx <= hix; rx++) wanted.add(`${rx},${rz}`);
-      }
+      for (const key of propRegionsIn(rect)) wanted.add(key);
     }
     if (wanted.size === 0) return [];
 
@@ -263,12 +259,6 @@ export class MapWorkerCore {
  * The mesh arrays are safe because `buildChunkArrays` allocates fresh ones per
  * call and nothing here keeps them.
  */
-/** `"3,-1"` as a pair of numbers. */
-function keyParts(key: string): [number, number] {
-  const [x, z] = key.split(',').map(Number);
-  return [x ?? 0, z ?? 0];
-}
-
 export function transfersOf(reply: MapWorkerReply): ArrayBuffer[] {
   if (reply.kind === 'mesh') {
     const out: ArrayBuffer[] = [];

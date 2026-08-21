@@ -92,6 +92,8 @@ interface Counts {
   held: number;
   drawn: number;
   pending: number;
+  /** Prop batching regions on the scene graph (spec 211). */
+  regions: number;
   ready: boolean;
 }
 
@@ -162,6 +164,7 @@ async function counts(page: Page): Promise<Counts> {
       held: Number(root?.dataset['chunksHeld'] ?? 0),
       drawn: Number(root?.dataset['chunksDrawn'] ?? 0),
       pending: Number(root?.dataset['chunksPending'] ?? 0),
+      regions: Number(root?.dataset['propRegions'] ?? 0),
       ready: ready !== null,
     };
   });
@@ -270,9 +273,22 @@ async function main(): Promise<void> {
       final = await counts(page);
     }
 
-    console.log(`  chunks held ${final.held}, drawn ${final.drawn}, pending ${final.pending}`);
+    console.log(
+      `  chunks held ${final.held}, drawn ${final.drawn}, pending ${final.pending},` +
+        ` prop regions ${final.regions}`,
+    );
     check('every chunk held has been drawn', final.held > 0 && final.drawn >= final.held,
       `held ${final.held}, drawn ${final.drawn}`);
+    // The trees, in a real browser (spec 211). Not the eviction itself -- this
+    // walk is a few seconds and the keep radius is four chunks, so nothing has
+    // gone yet -- but that the field is drawing regions at all *and* that the
+    // count is a small one rather than a region per chunk, which is what a
+    // reconcile reading the wrong grid would produce.
+    check(
+      'the prop field is drawing a handful of regions, not one per chunk',
+      final.regions > 0 && final.regions < final.held,
+      `regions ${final.regions}, chunks ${final.held}`,
+    );
     check('the mesh queue drained', final.pending === 0, `pending ${final.pending}`);
 
     // A frame budget rather than a target: this container paints through

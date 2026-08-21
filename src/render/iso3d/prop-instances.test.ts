@@ -201,3 +201,101 @@ describe('the geometry is shared and the instanced attributes are not', () => {
     expect(instancedIn(field.group).length).toBe(first);
   });
 });
+
+/**
+ * The takedown reachable without composing a region first (spec 211).
+ *
+ * `adoptRegion` has freed the held region on the way past since spec 086, so an
+ * empty reply was always a clean removal -- but the reason to take a region down
+ * is that its ground has gone, and a client that has just evicted the ground has
+ * nothing left to compose an empty region *from*. What is asserted here is that
+ * reaching that path directly frees the same things and no more.
+ */
+describe('a region dropped rather than rebuilt', () => {
+  const near = stand(0, 0);
+  const far = stand(PROP_REGION_SIZE * 3, PROP_REGION_SIZE * 3);
+  const farKey = propRegionKey(far[0]?.x ?? 0, far[0]?.y ?? 0);
+  const nearKey = propRegionKey(near[0]?.x ?? 0, near[0]?.y ?? 0);
+
+  it('reports the regions it is drawing, which is what a drop pass reconciles against', () => {
+    const field = buildPropField([...near, ...far], flat, undefined, SMOOTH);
+    expect([...field.heldRegions()].sort()).toEqual([nearKey, farKey].sort());
+  });
+
+  it('takes one region off the scene graph and leaves the other alone', () => {
+    const field = buildPropField([...near, ...far], flat, undefined, SMOOTH);
+    const before = instancedIn(field.group).length;
+    expect(field.dropRegion(nearKey)).toBe(true);
+
+    expect(field.heldRegions()).toEqual([farKey]);
+    expect(instancedIn(field.group).length).toBeLessThan(before);
+    expect(instancedIn(field.group).length).toBeGreaterThan(0);
+  });
+
+  it('answers false for a region it was not drawing, so a caller can count what went', () => {
+    const field = buildPropField(near, flat, undefined, SMOOTH);
+    expect(field.dropRegion(farKey)).toBe(false);
+    // ...and dropping twice is not two drops.
+    expect(field.dropRegion(nearKey)).toBe(true);
+    expect(field.dropRegion(nearKey)).toBe(false);
+  });
+
+  it('disposes the batch it owned', () => {
+    const field = buildPropField(near, flat, undefined, SMOOTH);
+    const meshes = instancedIn(field.group);
+    expect(meshes.length).toBeGreaterThan(0);
+    const disposed = new Set<THREE.Material>();
+    for (const mesh of meshes) {
+      const material = mesh.material as THREE.Material;
+      material.addEventListener('dispose', () => disposed.add(material));
+    }
+
+    field.dropRegion(nearKey);
+    expect(disposed.size).toBe(meshes.length);
+  });
+
+  /**
+   * The ownership hazard spec 181 wrote `disposeShell` for, on the new path:
+   * three's `onGeometryDispose` frees the GPU buffer of every attribute a
+   * geometry holds, so a shell disposed as-is takes the *shared* vertex data
+   * with it and every other region re-uploads.
+   */
+  it('frees what the batch owned and not the vertex data it borrowed', () => {
+    const field = buildPropField([...near, ...far], flat, undefined, SMOOTH);
+    // What each geometry was still holding at the instant it was disposed --
+    // which is the only moment the hazard is observable, since three frees the
+    // GPU buffer of every attribute a geometry holds *then*, and the JS arrays
+    // survive either way. Checking `array.length` afterwards would pass on the
+    // broken version.
+    const atDispose = new Map<THREE.BufferGeometry, string[]>();
+    for (const mesh of instancedIn(field.group)) {
+      const geometry = mesh.geometry;
+      geometry.addEventListener('dispose', () => {
+        atDispose.set(geometry, Object.keys(geometry.attributes));
+      });
+    }
+
+    field.dropRegion(nearKey);
+
+    expect(atDispose.size).toBeGreaterThan(0);
+    for (const [, names] of atDispose) {
+      expect(names).not.toContain('position');
+      expect(names).not.toContain('normal');
+    }
+    // ...and the region that kept its ground is still drawing.
+    const survivors = instancedIn(field.group);
+    expect(survivors.length).toBeGreaterThan(0);
+    for (const mesh of survivors) {
+      expect((mesh.geometry.getAttribute('position')?.array.length ?? 0) > 0).toBe(true);
+    }
+  });
+
+  it('draws the region again when it is adopted back', () => {
+    const field = buildPropField([...near, ...far], flat, undefined, SMOOTH);
+    const before = instancedIn(field.group).length;
+    field.dropRegion(nearKey);
+    field.adoptRegion(nearKey, buildRegionInstances(near, flat));
+    expect(field.heldRegions().length).toBe(2);
+    expect(instancedIn(field.group).length).toBe(before);
+  });
+});

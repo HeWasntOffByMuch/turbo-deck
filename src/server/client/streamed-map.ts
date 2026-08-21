@@ -195,6 +195,36 @@ export class StreamedMap {
    * declared but outside the request radius -- that never arrives either, and
    * the caller's timer is what covers it.
    */
+  /**
+   * Whether *any* chunk overlapping this rectangle is held (spec 211).
+   *
+   * The other question about the same rectangle. {@link rectCovered} asks
+   * whether everything declared over it has arrived, which is what decides when
+   * a region's trees may be drawn; this asks whether anything over it is left,
+   * which is what decides when they must stop being drawn.
+   *
+   * Held rather than declared, unlike its neighbour, and that is the whole
+   * difference: a region over ground the map declares and this client has
+   * evicted has nothing to draw, and a rule reading `declared` would keep every
+   * region of the map forever -- which is the bug this exists to close.
+   */
+  holdsAnyIn(rect: { minX: number; minZ: number; maxX: number; maxZ: number }): boolean {
+    for (let layer = 0; layer < this.info.layers.length; layer++) {
+      const info = this.info.layers[layer];
+      if (!info) continue;
+      const lowCx = Math.floor((rect.minX - info.origin.x) / this.chunkExtent);
+      const highCx = Math.floor((rect.maxX - info.origin.x) / this.chunkExtent);
+      const lowCz = Math.floor((rect.minZ - info.origin.z) / this.chunkExtent);
+      const highCz = Math.floor((rect.maxZ - info.origin.z) / this.chunkExtent);
+      for (let cz = lowCz; cz <= highCz; cz++) {
+        for (let cx = lowCx; cx <= highCx; cx++) {
+          if (this.has(layer, cx, cz)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   rectCovered(rect: { minX: number; minZ: number; maxX: number; maxZ: number }): boolean {
     for (let layer = 0; layer < this.info.layers.length; layer++) {
       const info = this.info.layers[layer];
