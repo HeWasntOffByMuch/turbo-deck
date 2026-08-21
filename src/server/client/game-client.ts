@@ -633,6 +633,14 @@ export class GameClient {
   private mapCache: MapChunkCache | null = null;
   /** Ticks to wait before asking for chunks again, after being throttled. */
   private chunkBackoffTicks = 0;
+  /**
+   * The `moveSpeed` the current `PredictStep` was built from (spec 201).
+   *
+   * Held rather than re-read off `this.stats`, because the two are only the same
+   * number while nothing has changed -- and the whole bug was that a change in
+   * one never reached the other. Null until prediction starts.
+   */
+  private predictedSpeed: number | null = null;
   /** The spawner readout, when it has been asked for (spec 076). */
   private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
@@ -2179,6 +2187,10 @@ export class GameClient {
 
       case ServerMessageType.Stats:
         this.stats = message.stats;
+        // Before anything reads it: a speed that changed has to reach the
+        // closure that walks the body, or the client predicts at the speed it
+        // used to have for the rest of the session (spec 201).
+        this.refreshPredictorSpeed();
         this.level = message.level;
         this.experience = message.experience;
         this.unspentSkillPoints = message.unspentSkillPoints;
@@ -2397,10 +2409,41 @@ export class GameClient {
       this.wantedFacing = self.facing;
       this.facingSeeded = true;
     }
-    const build = this.options.predictor ?? ((stats, rate) => createFlatPredictor(stats.moveSpeed, rate));
+    this.predictedSpeed = this.stats.moveSpeed;
     this.prediction = new PredictionBuffer(
       { x: self.x, y: self.y },
-      build(this.stats, this.welcome.tickRate),
+      this.buildPredictor(this.stats, this.welcome.tickRate),
     );
+  }
+
+  /**
+   * Rebuild the step when the speed it was built from moves (spec 201).
+   *
+   * `startPredictingIfReady` opens with `if (this.prediction) return`, which is
+   * right -- a body is placed once -- and used to mean the *step* was built once
+   * too. A `Stats` message updated `this.stats` and reached nothing, so a player
+   * who equipped a pair of boots was predicted at the speed they had before
+   * them: 3.3 units of divergence per tick on +200, forever, which the server
+   * answers with a correction on essentially every tick.
+   *
+   * Keyed on `moveSpeed` because a `PredictStep` is a movement function and that
+   * is the only field either shipped builder reads off the stats. A predictor
+   * that came to depend on another one would have to be rebuilt here too, which
+   * is why this compares a named field rather than the object -- a new `Stats`
+   * arrives on every accepted action, and rebuilding on identity would discard
+   * `createGroundPredictor`'s memo of the world it collides against several
+   * times a fight for nothing.
+   */
+  private refreshPredictorSpeed(): void {
+    const stats = this.stats;
+    const welcome = this.welcome;
+    if (!this.prediction || !stats || !welcome || stats.moveSpeed === this.predictedSpeed) return;
+    this.predictedSpeed = stats.moveSpeed;
+    this.prediction.setStep(this.buildPredictor(stats, welcome.tickRate));
+  }
+
+  private buildPredictor(stats: EffectiveStats, tickRate: number): PredictStep {
+    const build = this.options.predictor ?? ((s, rate) => createFlatPredictor(s.moveSpeed, rate));
+    return build(stats, tickRate);
   }
 }

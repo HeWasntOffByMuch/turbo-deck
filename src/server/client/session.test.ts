@@ -188,6 +188,49 @@ describe('loopback session', () => {
     expect(client.view().self?.y).toBeCloseTo(authoritative?.position.y ?? 0, 1);
   });
 
+  /**
+   * The reported bug, over the wire (spec 201).
+   *
+   * A player put `{ moveSpeed: 200 }` on a pair of boots and was pulled
+   * backwards on every step from then on: the `PredictStep` was built from the
+   * first `Stats` and never rebuilt, so the client kept predicting the speed it
+   * started with while the server walked the body at the new one. The gap is
+   * per *tick*, so it never settles -- the server corrects, the client walks
+   * short again, the server corrects again.
+   *
+   * The greaves are the honest test rather than a fabricated +200: they are in
+   * `STARTING_KIT`, they carry `moveSpeed: 6`, and before this they were enough
+   * on their own to turn the silent walk above into a corrected one.
+   *
+   * The equip comes *before* the walk for a reason that is about the map rather
+   * than the bug: at the faster speed the same number of ticks covers more
+   * ground, and past a couple of hundred units this seed has trees in it -- so a
+   * walk-then-equip run counts a flat predictor meeting a trunk, which is spec
+   * 063's business and not this one.
+   */
+  it('predicts at the speed it was just given, not the one it started with', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const before = client.view().stats?.moveSpeed ?? 0;
+    client.equip('legs', 'legs.traveller');
+    await settle();
+    await advance(test, 1);
+    const after = client.view().stats?.moveSpeed ?? 0;
+    expect(after).toBeGreaterThan(before);
+
+    for (let round = 0; round < 40; round++) {
+      await inputTick(test, client, { moveX: 0, moveY: 1, facing: Math.PI / 2, buttons: 0 });
+    }
+    expect(client.correctionCount).toBe(0);
+
+    // ...and the body really did walk at the speed it was given, on both sides.
+    const authoritative = test.server.world.entities.get(client.view().selfEntityId);
+    expect(client.view().self?.y).toBeCloseTo(authoritative?.position.y ?? 0, 1);
+    expect(authoritative?.stats.moveSpeed).toBe(after);
+  });
+
   it('re-derives stats server-side when the client asks to equip', async () => {
     const test = harness();
     const client = await connect(test, 'alice');

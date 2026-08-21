@@ -39,6 +39,48 @@ describe('local prediction', () => {
   });
 });
 
+/**
+ * A predictor is built from stats, and stats move (spec 201).
+ *
+ * The failure this replaces: the step was built once, from the first `Stats`,
+ * and a later one reached nothing -- so a body that equipped a pair of boots was
+ * predicted at the speed it had before them, forever.
+ */
+describe('a step that follows the stats it was built from', () => {
+  it('steps at the new speed after the swap', () => {
+    const local = buffer();
+    local.apply(input(1));
+    expect(local.position.x).toBeCloseTo(PER_TICK, 9);
+
+    local.setStep(createFlatPredictor(SPEED * 2, SERVER_TICK_RATE));
+    local.apply(input(2));
+    expect(local.position.x).toBeCloseTo(PER_TICK * 3, 9);
+  });
+
+  it('keeps the position and the pending inputs across the swap', () => {
+    const local = buffer();
+    for (let seq = 1; seq <= 3; seq++) local.apply(input(seq));
+    const before = local.position;
+
+    local.setStep(createFlatPredictor(SPEED * 2, SERVER_TICK_RATE));
+
+    // The rule for getting to the next position changed; the current one did
+    // not. Throwing it away would turn equipping an item into a visible jump.
+    expect(local.position).toEqual(before);
+    expect(local.pending.map((i) => i.seq)).toEqual([1, 2, 3]);
+    expect(local.correctionCount).toBe(0);
+  });
+
+  it('replays through the step it holds now', () => {
+    const local = buffer();
+    for (let seq = 1; seq <= 3; seq++) local.apply(input(seq));
+    local.setStep(createFlatPredictor(SPEED * 2, SERVER_TICK_RATE));
+
+    // Two inputs outstanding after seq 1, both replayed at the speed in hand.
+    expect(local.reconcile(1, { x: 100, y: 0 }).x).toBeCloseTo(100 + PER_TICK * 4, 9);
+  });
+});
+
 describe('acknowledgement', () => {
   it('keeps only the inputs the server has not accounted for', () => {
     const local = buffer();
