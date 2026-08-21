@@ -1,8 +1,8 @@
 # A map that keeps growing — plan
 
-Status: **phases 0–3 are done — specs 197, 198, 199 and 200 are written and
-implemented.** The shape, the phase order and the numbers are settled; the next
-action is spec 201, tiled navigation.
+Status: **phases 0–4 are done — specs 197 through 201 are written and
+implemented.** The next action is spec 202. Phase 5 was **split in two** after
+measuring; see the phase table.
 
 Everything is measured against `maps/arena.json` at `43fd6b40` on this branch's
 container, and every projection says which measurement it scales. Where a claim
@@ -350,10 +350,18 @@ the game playable.
 | 2 | 199 — the map leaves the bundle | 14 MB → ~186 MB bundle | **small** |
 | 3 | 200 — a map that is many files | 184 MB in git; the V8 ceiling | medium |
 | 4 | 201 — routes without a warmed world | 94 s nav warm, 246 M cells | **large** |
-| 5 | 202 — a world that is only where the players are | 48 s boot, 2.0 GB heap | **large** |
-| 6 | 203 — a client that forgets behind it | unbounded client residency | medium |
-| 7 | 204 — growing without rewriting | slow grows, unreviewable diffs | small |
-| 8 | 205 — the shore | void at the frame edge; seabed cost | small |
+| 5 | 202 — a tick that costs what is near you | per-tick work sized by the world | medium |
+| 6 | 203 — a world that is only where the players are | 48 s boot, 2.0 GB heap | **large** |
+| 7 | 204 — a client that forgets behind it | unbounded client residency | medium |
+| 8 | 205 — growing without rewriting | slow grows, unreviewable diffs | small |
+| 9 | 206 — the shore | void at the frame edge; seabed cost | small |
+
+Phase 5 is a **split**, made after measuring rather than planned: what was one
+"bounded residency" phase turns out to be two problems with different shapes.
+One is memory and boot and needs asynchronous acquisition threaded through the
+sampler; the other is three costs *inside the tick* that are sized by the world's
+totals and need no I/O at all. The second is smaller, is already expensive at
+today's size, and ships on its own — so it goes first.
 
 **Nav comes before residency**, and that is a correction rather than a
 preference. `createNavGrid` allocates over `colliders.bounds` — the world
@@ -513,7 +521,33 @@ target" into "there is a way to this other spot" for a window.
 likely phase to change observable behaviour, so it wants that corpus green and a
 route-equivalence test over the resident envelope.
 
-### Phase 5 — a world that is only where the players are (spec 202)
+### Phase 5 — a tick that costs what is near you (spec 202)
+
+Three things inside a tick are sized by what the **world contains** rather than
+by what is near anybody, and measuring them is what split this phase off. With
+one player and 49 chunks active throughout, a tick goes from 38 µs to 107 ms as
+the world's spawner count goes from 14 to 12,800 — residency never changed.
+
+The urgent one is already expensive at today's size and has nothing to do with
+residency at all: **`segmentClear` walks every collider in the world**, all
+28,919 of them, at **84 µs a call**. Spec 192 built `ColliderIndex` because
+"`pushOutOfObstacles` and `circleBlocked` used to test every circle in the
+world"; it indexed those two and missed this one, which is what `pathClear` is
+and what aggro's line of sight is. Indexed it is **1.27 µs**, with zero
+disagreements over 2,000 segments. At the 4× target the linear version becomes
+~1,300 µs — one line-of-sight check for a twelfth of a tick.
+
+The other two are `nearestQuarry` walking every entity per noticing monster, and
+`runSpawners` walking every declared spawn point with an `O(spawn points ×
+entities)` population cap inside it.
+
+**A correction.** This plan said "the fix already exists —
+`ChunkManager.populationOf(key)` is O(1)". It exists and has **no caller
+anywhere**, and it is the wrong fix regardless: `chunks.track`/`remove` run after
+`step()` returns, so within a tick the manager's occupancy is the previous
+tick's and would not see a body killed earlier in the same tick.
+
+### Phase 6 — a world that is only where the players are (spec 203)
 
 Bounded residency over **terrain, colliders, nav and entities as one
 invariant**.
@@ -548,7 +582,7 @@ interest window; **no player observes a body reset**; the existing replay tests
 pass unchanged; and a replay that unloads mid-recording reproduces
 bit-identically.
 
-### Phase 6 — a client that forgets behind it (spec 203)
+### Phase 7 — a client that forgets behind it (spec 204)
 
 `MapChunkCache.chunks` only grows, `StreamedMap` never removes, meshes are never
 disposed, and `MapChunkStore.removeChunk` has no caller on this path. Evict past
@@ -558,7 +592,7 @@ eviction and re-request cannot oscillate; dispose geometry through the
 to "not held, not in flight, not absent". Props are still rebuilt whole on a
 quiet stream (spec 165) and go per-region here.
 
-### Phase 7 — growing without rewriting (spec 204)
+### Phase 8 — growing without rewriting (spec 205)
 
 `grow-map.ts` and the editor's save read and write only the regions they touch,
 through phase 3's manifest-last commit. `bakePart` is unchanged — it still reads
@@ -566,7 +600,7 @@ neighbouring chunks at a join, which is what makes the seam continuous, and the
 region loader supplies them. The editor stops opening the whole world to move one
 marker; `POST /api/map` becomes a per-region write.
 
-### Phase 8 — the shore (spec 205)
+### Phase 9 — the shore (spec 206)
 
 A perimeter test that fails when walkable ground sits within
 `MAP_CHUNK_REQUEST_RADIUS` chunks of undeclared space — derived from the radius,
@@ -583,10 +617,11 @@ payoff: a constant-height chunk form taking seabed from 6.9 KB to under 1 KB.
 | 2 | bundle under 2 MB, `npm run build` in CI behind a size gate |
 | 3 | `maps/arena/` round-trips byte-identical; a one-chunk edit touches one region; a crash between writes leaves a loadable map |
 | 4 | no `warmRouting` at boot; `pathfinding-ground.test.ts` green on tiled grids; boundary components never pockets |
-| 5 | boot slope at 4× within tolerance of 1×; resident memory bounded after a 100-chunk round trip; no observable body reset; replay bit-identical across an unload |
-| 6 | client residency bounded over a 30-minute walk; an evicted chunk re-requests and re-meshes cleanly |
-| 7 | a grow reads and writes only the regions it touches; the editor opens without the whole world |
-| 8 | the perimeter test fails on a shore too close to undeclared space |
+| 5 | `segmentClear` answers identically off the index; the tick's slope flat against a 16× world at fixed residency; replay bit-identical |
+| 6 | boot slope at 4× within tolerance of 1×; resident memory bounded after a 100-chunk round trip; no observable body reset; replay bit-identical across an unload |
+| 7 | client residency bounded over a 30-minute walk; an evicted chunk re-requests and re-meshes cleanly |
+| 8 | a grow reads and writes only the regions it touches; the editor opens without the whole world |
+| 9 | the perimeter test fails on a shore too close to undeclared space |
 
 **Flat means asymptotically flat, not identical.** The manifest, the chunk
 presence list and the spawner index legitimately grow with the world, so the gate
