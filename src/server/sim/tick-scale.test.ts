@@ -1,5 +1,5 @@
 /**
- * A tick that costs what is near you (spec 202).
+ * A tick that costs what is near you (spec 205).
  *
  * Three things inside a tick used to be sized by what the world contained
  * rather than by what was near anybody. `segment-clear.test.ts` covers the

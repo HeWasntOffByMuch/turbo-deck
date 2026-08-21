@@ -1,9 +1,9 @@
-# 202 — A tick that costs what is near you
+# 205 — A tick that costs what is near you
 
 ## Problem
 
 The sim already knows what is resident: `isSimulated` gates stepping on
-`activeChunks`, and spec 198 narrowed that to 7×7 interest chunks. But three
+`activeChunks`, and spec 201 narrowed that to 7×7 interest chunks. But three
 things inside a tick are sized by **what the world contains** rather than by what
 is near anybody, and each of them gets worse in direct proportion to the map
 growing.
@@ -108,7 +108,7 @@ export function segmentClear(a, b, radius, world = DEFAULT_WORLD): boolean;
 ```
 
 Internally it narrows the circles to the segment's bounding box inflated by
-`radius`, through `circlesInRect` (added in spec 201 for nav tiles). A bounding
+`radius`, through `circlesInRect` (added in spec 204 for nav tiles). A bounding
 box rather than a walk down the segment's cells: a long diagonal over-fetches,
 and that is still a few dozen circles against 28,919.
 
@@ -194,7 +194,7 @@ that varied something other than the thing being measured:
 ## Out of scope
 
 - **Terrain residency.** The map is still loaded whole; boot and heap are
-  untouched. That is spec 203, and it is where the 48 s and 2.0 GB live.
+  untouched. That is spec 206, and it is where the 48 s and 2.0 GB live.
 - **Entity eviction.** Nothing is unloaded here — non-resident bodies keep
   existing and keep being skipped, exactly as they are today. Making them stop
   existing needs the `SpawnerState` third state and the "eviction is not death"

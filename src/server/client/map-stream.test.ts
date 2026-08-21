@@ -188,9 +188,9 @@ describe('the range check on a live server', () => {
   });
 });
 
-describe('a client that forgets behind it (spec 204)', () => {
+describe('a client that forgets behind it (spec 207)', () => {
   it('drops the ground it walked away from, and picks it up again', async () => {
-    // The integration half of spec 204: `eviction.test.ts` drives the cache and
+    // The integration half of spec 207: `eviction.test.ts` drives the cache and
     // the store directly, and this is the three lines in `GameClient` that make
     // any of it happen. Without them a session holds every chunk it ever saw.
     const test = harness();

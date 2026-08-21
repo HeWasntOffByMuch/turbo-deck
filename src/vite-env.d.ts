@@ -1,7 +1,7 @@
 /**
  * Vite's `?raw` imports, typed (spec 072).
  *
- * The map stopped using this in spec 199 -- it was 11.5 MB of world compiled
+ * The map stopped using this in spec 202 -- it was 11.5 MB of world compiled
  * into the bundle as a string literal -- and is fetched as a JSON asset now.
  * `?raw` remains for the things it suits: small text a page genuinely wants
  * inline rather than behind a request.

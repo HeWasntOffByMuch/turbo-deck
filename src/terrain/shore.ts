@@ -1,5 +1,5 @@
 /**
- * Where the world stops, and whether a player can see it (spec 206).
+ * Where the world stops, and whether a player can see it (spec 209).
  *
  * The map has no edge; it has a place where it stops. On `maps/arena` today,
  * 212 of 810 chunks are walkable ground within two chunks of undeclared space,

@@ -135,7 +135,7 @@ describe('what is walkable', () => {
 
 describe('the bake', () => {
   it('fills the store, and leaves the document alone', () => {
-    // Spec 200: baked walkability is runtime state for the editor's overlay and
+    // Spec 203: baked walkability is runtime state for the editor's overlay and
     // is not part of the format. It used to ride in every chunk of every map
     // file and on the wire to every client, for a dev visualisation that is off
     // by default.
@@ -164,7 +164,7 @@ describe('the bake', () => {
 
   it('does not survive a document round trip, and does not need to', () => {
     // The bake is a pure function of the ground it was baked from, which is the
-    // whole argument for spec 200 dropping it from the format: a reloaded map
+    // whole argument for spec 203 dropping it from the format: a reloaded map
     // has none, and baking again reproduces it exactly. Storing it was paying
     // 10.5% of every map file to avoid work that costs a function call.
     const map = loaded([{ kind: 'hill', x: 0, z: 0, radius: 100, edge: 30, height: 180 }]);

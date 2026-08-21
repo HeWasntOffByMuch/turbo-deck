@@ -70,7 +70,7 @@ describe('parseArgs', () => {
 
 describe('growing the shipped map through the script', () => {
   it('grows ground and writes no walkability with it', () => {
-    // It used to re-bake the whole layer's `nav` afterwards. Spec 200 took that
+    // It used to re-bake the whole layer's `nav` afterwards. Spec 203 took that
     // field out of the format, so growing the map is `growMap` and nothing else
     // -- which is also why this no longer has to assert that a re-bake left the
     // parts list alone on the way past.
@@ -87,7 +87,7 @@ describe('growing the shipped map through the script', () => {
   });
 
   it('reports a ragged layer, and a rectangular one as clean', () => {
-    // Asked of the **manifest** since spec 205, because the partial grow path
+    // Asked of the **manifest** since spec 208, because the partial grow path
     // never holds the world to count -- which also means this exercises the
     // per-region cell count end to end rather than trusting it.
     const unfilled = (d: MapDocument, id: string): number => unfilledCells(splitMap(d).manifest, id);

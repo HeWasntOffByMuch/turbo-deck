@@ -1,5 +1,5 @@
 /**
- * The server's nav, sized by where the players are (spec 201).
+ * The server's nav, sized by where the players are (spec 204).
  *
  * Owns a `NavField` and the residency that decides which windows are worth
  * holding, and is the one thing `routeToward` asks. Everything it decides is

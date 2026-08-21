@@ -86,7 +86,7 @@ export function parseArgs(argv: readonly string[]): Args {
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const doc = bakeMap(args.seed, args.nav);
-  // A manifest and a grid of regions, manifest last (spec 200). `writeSplit`
+  // A manifest and a grid of regions, manifest last (spec 203). `writeSplit`
   // owns the commit order so the three writers cannot each invent one.
   const split = splitMap(doc);
   writeSplit(args.out, split.manifest, split.regions);

@@ -176,7 +176,7 @@ describe('what a choice is called', () => {
   });
 });
 
-describe('the widest-zoom preference (spec 198)', () => {
+describe('the widest-zoom preference (spec 201)', () => {
   it('reads as "supported" when nothing was ever written', () => {
     expect(loadMaxZoom(storage())).toBe('supported');
   });

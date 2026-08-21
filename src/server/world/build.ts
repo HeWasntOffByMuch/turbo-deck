@@ -36,7 +36,7 @@ import { spawnPointsFrom, type SpawnPoint } from './spawners.js';
  * in the table. Deduplicated, because three of the four monsters are within a
  * couple of units of each other and a grid is per radius.
  *
- * These are the radii a nav *tile* is graded for (spec 201). They stay named in
+ * These are the radii a nav *tile* is graded for (spec 204). They stay named in
  * one place for the reason they always were: two callers grading different sets
  * would mean a body asking for a route the field cannot answer -- which
  * `NavField` now refuses out loud rather than answering openly.
@@ -97,7 +97,7 @@ export interface BuiltMapWorld extends BuiltWorld {
  * tell which of the two made it, which is the point -- the sim never learns
  * that the world became editable.
  *
- * `mapId` is handed in rather than derived here (spec 200). A map is a manifest
+ * `mapId` is handed in rather than derived here (spec 203). A map is a manifest
  * and a grid of regions now, and its identity is a hash of ordered region
  * hashes that the manifest already carries -- so re-deriving it would mean
  * re-reading the world to learn a number that was written down. A caller that

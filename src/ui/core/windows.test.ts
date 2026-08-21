@@ -664,6 +664,130 @@ describe('tabs', () => {
   });
 });
 
+/**
+ * The strip is never inside the thing it scrolls (spec 198).
+ *
+ * The whole feature is one sentence and it is a claim about *rectangles*: the
+ * body may scroll as far as it likes and the tab headers do not move. What made
+ * it worth a spec is that the mount used to wrap a whole screen in one
+ * `ScrollView`, so reading the bottom of the character sheet's skill tree
+ * scrolled the tab headers clean off the top of the window.
+ */
+describe('a tab strip that stays put', () => {
+  /** A panel with more in each tab than the box it is given. */
+  function tall(viewport: Size = { width: 160, height: 90 }): { panel: TabPanel; root: UiRoot } {
+    const panel = new TabPanel();
+    const rows = (id: string, count: number): Column => {
+      const column = new Column(`rows:${id}`);
+      for (let i = 0; i < count; i++) column.add(new Label(`${id} row ${i}`, 'body'));
+      return column;
+    };
+    panel.addTab('long', 'Long', () => rows('long', 40));
+    panel.addTab('short', 'Short', () => rows('short', 1));
+    const root = new UiRoot(panel, { theme: THEME, atlas: ATLAS, viewport });
+    root.update(0);
+    return { panel, root };
+  }
+
+  it('scrolls the body when it is given a height', () => {
+    const { panel } = tall();
+    expect(panel.bodyScroller?.scrollable).toBe(true);
+  });
+
+  it('leaves the tab headers exactly where they were when the body scrolls', () => {
+    const { panel, root } = tall();
+    const before = panel.tabRects().map((rect) => ({ ...rect }));
+    const strip = { ...panel.headerStrip.rect };
+
+    panel.bodyScroller?.scrollTo(9999);
+    root.update(16);
+
+    expect(panel.bodyScroller?.scrollOffset).toBeGreaterThan(0);
+    expect(panel.headerStrip.rect).toEqual(strip);
+    expect(panel.tabRects()).toEqual(before);
+    // And the body is genuinely under them rather than over them.
+    expect(panel.bodyViewport().y).toBeGreaterThanOrEqual(strip.y + strip.height);
+  });
+
+  /**
+   * The property that lets this live in the widget rather than in three screens.
+   *
+   * A `ScrollView` offered an unbounded height measures to its content, so a
+   * panel inside somebody else's scroller has nothing to scroll and behaves
+   * exactly as it did before any of this.
+   */
+  it('scrolls nothing when nobody bounded it', () => {
+    const panel = new TabPanel();
+    const column = new Column('rows');
+    for (let i = 0; i < 40; i++) column.add(new Label(`row ${i}`, 'body'));
+    panel.addTab('long', 'Long', () => column);
+    const outer = new ScrollView(panel, 'outer');
+    const root = new UiRoot(outer, { theme: THEME, atlas: ATLAS, viewport: { width: 160, height: 90 } });
+    root.update(0);
+
+    expect(outer.scrollable).toBe(true);
+    expect(panel.bodyScroller?.scrollable).toBe(false);
+  });
+
+  /** Spec 124's rule reaches the offset too: a tab keeps where you left it. */
+  it('gives each tab its own scroll position', () => {
+    const { panel, root } = tall();
+    panel.bodyScroller?.scrollTo(9999);
+    root.update(16);
+    const left = panel.bodyScroller?.scrollOffset ?? 0;
+    expect(left).toBeGreaterThan(0);
+
+    panel.select('short');
+    root.update(32);
+    // A short tab is at the top -- it has not inherited the long one's offset.
+    expect(panel.bodyScroller?.scrollOffset).toBe(0);
+
+    panel.select('long');
+    root.update(48);
+    expect(panel.bodyScroller?.scrollOffset).toBe(left);
+  });
+
+  /**
+   * The bug the `layoutGrow` brought with it, kept as a test because nothing
+   * else in the tree would have caught it.
+   *
+   * `visible` is a bare field and `invalidateMeasure` walks *up*, so a panel
+   * that is the same height whichever tab is showing has a body whose rect never
+   * changes -- and `arrange` early-returns on that. The tab just selected was
+   * never handed a rectangle: nothing drawn, and every row in it hit-testing at
+   * the origin.
+   */
+  it('lays out a tab selected after one exactly as tall', () => {
+    const panel = new TabPanel();
+    const label = (id: string): Label => new Label(`${id} content`, 'body');
+    panel.addTab('one', 'One', () => label('one'));
+    panel.addTab('two', 'Two', () => label('two'));
+    const root = new UiRoot(panel, { theme: THEME, atlas: ATLAS, viewport: { width: 160, height: 90 } });
+    root.update(0);
+
+    panel.select('two');
+    root.update(16);
+    const shown = panel.bodyScroller?.content.rect;
+    expect(shown?.width).toBeGreaterThan(0);
+    expect(shown?.height).toBeGreaterThan(0);
+    expect(shown?.y).toBeGreaterThanOrEqual(panel.bodyViewport().y);
+  });
+
+  it('spends a wheel over the strip on the body under it', () => {
+    const { panel, root } = tall();
+    const strip = panel.headerStrip.rect;
+    root.handle({
+      kind: 'wheel',
+      pos: { x: strip.x + strip.width - 2, y: strip.y + 2 },
+      delta: -3,
+      mods: NO_MODIFIERS,
+      time: 16,
+    });
+    root.update(16);
+    expect(panel.bodyScroller?.scrollOffset).toBeGreaterThan(0);
+  });
+});
+
 describe('six windows open at once', () => {
   it('lays out once and then does nothing on a still frame', () => {
     const h = harness(6);

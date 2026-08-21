@@ -1,5 +1,5 @@
 /**
- * Splitting the map, and putting it back (spec 200).
+ * Splitting the map, and putting it back (spec 203).
  *
  * The property everything rests on is that a split is *lossless* -- a world
  * that goes out as a manifest and a grid of files comes back as the world it
@@ -147,7 +147,7 @@ describe('splitting the shipped map', () => {
   it('hoists the spawners the server would have computed, not a lookalike list', () => {
     // The test above walks the chunks by hand, which proves the arithmetic and
     // not the agreement: `spawnPointsFrom` is what the server actually calls,
-    // and a boot that reads the manifest instead (spec 202) gets whatever this
+    // and a boot that reads the manifest instead (spec 205) gets whatever this
     // list says. If the two ever drift, the world gets different monsters.
     const fromChunks = spawnPointsFrom(SHIPPED);
     const fromManifest = [...split.manifest.layers.flatMap((l) => l.spawners)].sort((a, b) =>

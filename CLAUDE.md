@@ -65,9 +65,9 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
-| `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 202) |
-| `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 206). `--strict` for an exit code |
-| `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 205) |
+| `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 205) |
+| `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 209). `--strict` for an exit code |
+| `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 208) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -166,7 +166,7 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  no parts); spec 165 grew the map and the coincidence went with
                  it. Checked in so the world reviews as a diff.
                  recipes/shore.json is the one a coastline is grown from
-                 (spec 206), and the number worth knowing is its **depth**: the
+                 (spec 209), and the number worth knowing is its **depth**: the
                  shipped map has 212 walkable chunks within two of undeclared
                  space and **not one chunk of sea**, so its whole perimeter is
                  ground ending at nothing, with the sim's wall at exactly the
@@ -178,8 +178,8 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  recipes/ are the feature lists parts are grown from (spec 083) --
                  `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
                  --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
-                 rather than regenerating it -- and since spec 205 it reads only
-                 the regions the bake reaches rather than the world. Spec 200 had
+                 rather than regenerating it -- and since spec 208 it reads only
+                 the regions the bake reaches rather than the world. Spec 203 had
                  made a grow *write* only what it touched and it still opened
                  everything to get there: 6.9s on a 12,960-chunk map to change
                  one region, of which 1,691ms was joining every region, 1,234ms
@@ -269,7 +269,7 @@ src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  so `crowd.ts` re-sorts by distance and breaks ties on entity id,
                  because the linear program's answer can depend on the order its
                  half-planes arrive in.
-                 nav-tiles.ts is nav that is not sized by the map (spec 201).
+                 nav-tiles.ts is nav that is not sized by the map (spec 204).
                  `createNavGrid` allocates over `colliders.bounds` -- the whole
                  world rectangle -- so route planning cost what the *map* was
                  rather than what was near anybody: 3.08 M cells per body radius
@@ -768,6 +768,77 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  order. The labels avoid every word `keyLabel` already makes:
                  `Right` alone is taken -- it is what `ArrowRight` comes back as
                  -- so the pointer says `Right Click`;
+                 Since spec 198 a `TabPanel` scrolls its **own body**: each
+                 tab's content is wrapped in a scroller when it is built, so the
+                 strip is that scroller's *sibling* and **a tab strip is never
+                 inside the thing it scrolls**. That is a fact about the widget
+                 tree rather than a rule a screen has to remember, and it exists
+                 because whether a tabbed screen scrolled used to be the mount's
+                 decision -- and neither answer it can give keeps the tabs
+                 reachable. Wrapped in one `ScrollView`, which is what the mount
+                 does to every screen, reading the bottom of the character
+                 sheet's skill tree scrolled the tab headers clean off the top of
+                 the window and there was no way back to Attributes without
+                 scrolling up first. *Un*wrapped, which is how the options window
+                 is registered, a keybinding category with more rows than the
+                 window is tall met `Linear.shareSpace`'s overflow branch instead
+                 -- every row shrunk toward nothing, no bar, and the rows at the
+                 bottom unreachable rather than merely off screen. It costs
+                 nothing where nobody wanted it: a `ScrollView` offered an
+                 unbounded height measures to its content, so a panel inside
+                 somebody else's scroller still scrolls nothing and behaves
+                 exactly as it did. One scroller **per tab** rather than one for
+                 the body, because spec 124's rule reaches the offset too -- the
+                 comment that rule is written under names "a scroll position" as
+                 one of the things nobody thinks of as state, and a shared
+                 scroller clamps a long tab's offset against a short tab's
+                 content the moment you switch. Two consequences worth knowing.
+                 A screen that pins a band *above* the strip has to hand the
+                 wheel down (`CharacterScreen.onEvent` into `wheelBody`), since a
+                 notch over the heading has nothing above it that scrolls and a
+                 window that scrolls everywhere except its own top inch reads as
+                 a broken wheel. And a hit test against a tab's rows has to be
+                 inside `bodyViewport()`: a row scrolled out of the body keeps
+                 the rectangle it was last arranged into, which is the same class
+                 of bug `showing()` was written for, one level out.
+                 Since spec 199 `combat.stop` is a control rather than a row.
+                 It had been listed under Combat, bound to `X`, rebindable and
+                 saved since spec 125 and reached **nothing** -- spec 183's
+                 finding one tab over, and for the same reason: every action that
+                 was not a move, a slot, a window or the cancel fell off the end
+                 of `decideControlDown`. It ships on `Space` now and drops
+                 everything a body is committed to in one press: the wind-up, the
+                 standing attack order, the walk over to a drop, a pending aim,
+                 a confirmed one, the click-to-move order and its route, and
+                 whatever is held. The id does not move, because a stored profile
+                 references it; the label does, because "Stop" beside "Cancel
+                 cast" does not say which is which. Three rules. It is
+                 **unconditional** -- Escape asks whether anything is committed to
+                 and reaches for the menu when nothing is (spec 135), and one
+                 control that sometimes opens a window is enough. **Nothing new
+                 crosses the wire**, because stopping is the *absence* of a
+                 request: `moveIntent` yields (0,0) and the server stops the body,
+                 and the one thing that does need saying is already
+                 `CancelCast`. And **a control still physically down is disarmed
+                 until it is let go**, which is the rule the feature does not work
+                 without and the one no test in this tree could have found: a held
+                 key repeats `keydown` at the platform's own rate and `onKeyDown`
+                 has never read `event.repeat`, so every repeat put `move.north`
+                 straight back in `held` and the walk somebody asked to stop
+                 resumed on its own half a second later. It catches the stop's own
+                 key first -- Space held down fires once rather than sending
+                 `cancelCast` thirty times a second. `npx tsx
+                 scripts/probe-stop.ts` is the half no headless test can see, and
+                 the measurement that makes it honest is that it checks the
+                 browser *marked* its synthesised presses as repeats before
+                 believing what it measured from them: a stop that "held" against
+                 events that were never repeats is evidence of nothing. It reads
+                 `data-orders` (what has been asked for, in a fixed vocabulary, so
+                 a missing word is a specific drop that did not happen) beside
+                 `data-self-at` (whether the body is actually still moving), and
+                 needs both -- a stop that cleared the bookkeeping and left the
+                 legs running is the failure worth catching, and the first
+                 attribute alone would report it as a pass;
                  render/ is the only impure part. Everything else runs in Node.
                  Since spec 131 all but the HUD are in the Play tab, over
                  the world -- mounted by src/render/iso3d/world/ui-screens.ts,
@@ -1366,7 +1437,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the generator, and terrain reaches clients as MapInfo plus the
                  MapChunks a player is standing near -- a seed cannot describe a
                  map somebody edited by hand.
-                 Boot **meshes nothing** (spec 203). `loadMap` used to build
+                 Boot **meshes nothing** (spec 206). `loadMap` used to build
                  every chunk's mesh data eagerly -- a jittered world position and
                  a normal per corner, 54 million height lookups over a 4x map --
                  and `buildWorldFromDocument` reads `world` and `props` and never
@@ -1384,14 +1455,14 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  acquisition and three residency states, and measuring said boot
                  was a wasted eager computation rather than a residency problem --
                  with heap at 0.26 GB rather than the 2.0 GB projected before spec
-                 200 took `nav` out of the format. It is deferred with the reading
+                 203 took `nav` out of the format. It is deferred with the reading
                  that would bring it back written down: `bench-map`'s `heap` past
                  ~1 GB at the target size, or its `build` past ~2s. What the
                  change does *not* fix is the **editor's** boot -- `buildChunks`
                  still costs 30.7s at 4x when it is called, and the editor calls
                  it, which is a different problem because the editor genuinely
                  wants the mesh.
-                 Since spec 204 a client **forgets** what it walked past. Nothing
+                 Since spec 207 a client **forgets** what it walked past. Nothing
                  on the map path removed anything: `MapChunkCache` had `accept`
                  and no counterpart, `StreamedMap` never called
                  `MapChunkStore.removeChunk`, and terrain geometry is disposed by
@@ -1431,8 +1502,46 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
+                 net/transport-ws.ts pings (spec 197), and the reason is the one
+                 thing spec 157 could not have known: it moved the heartbeat off
+                 `requestAnimationFrame` onto a wall-clock `setInterval` because
+                 "a browser clamps it to about a second when hidden but never
+                 stops", and that is true for five minutes. Chrome throttles a
+                 page hidden and silent past that to **one timer firing a
+                 minute**, and an open socket does not exempt it -- so a
+                 ten-second `CONNECTION_TIMEOUT_TICKS` dropped anybody who went
+                 to read their email. The heartbeat that survives is the one the
+                 page is not holding: RFC 6455 makes answering a ping the
+                 *endpoint's* job, so a browser pongs from its network stack with
+                 no JavaScript running at all. `Channel.onAlive` is how that
+                 reaches `lastSeenTick`, and it is **optional** on purpose --
+                 `transport.ts` is "the smallest thing both implementations can
+                 honestly provide", a loopback channel has no wire to prove
+                 anything about, and an absent member says so where a required
+                 one would make it lie. It is also *better* evidence than the
+                 application ping it backs up: that one proves the tab's
+                 JavaScript is running, this proves the socket is, and the case
+                 the timeout exists for -- a dead router, a suspended phone, no
+                 `close` -- answers neither.
+                 What that leaves the client's interval doing is the visible
+                 case and the reconnect ladder, and the ladder had the same bug
+                 in miniature (`render/iso3d/world/keepalive.ts`): it advanced by
+                 a *constant* 30 ticks per firing, which is 60 a second only if
+                 something is really firing twice a second. At the hidden tab's
+                 1s clamp the ladder took 79 seconds against a 30-second resume
+                 grace; under the intensive throttle its first rung landed a
+                 minute out, past the point where there was a body left to resume
+                 into. It converts the gap it actually got now, so the ladder is
+                 the same number of seconds however often the timer fires -- and
+                 a long gap delivered in one step is safe by construction, since
+                 `ReconnectingChannel.deliver` opens at most one attempt per call
+                 and its rung advances on a *failed attempt* rather than on the
+                 clock. The other half is that `visibilitychange` is finally
+                 listened to: coming back to the tab is the one moment the cause
+                 of an outage is known to be gone, and it was the one moment the
+                 client did nothing, waiting out the timer that was the problem.
                  world/nav.ts and world/nav-residency.ts are which window a body
-                 routes in (spec 201), over `src/sim/nav-tiles.ts`. The obvious
+                 routes in (spec 204), over `src/sim/nav-tiles.ts`. The obvious
                  answer -- one window over the bounding box of every active chunk
                  -- is the bug in a different hat, because two players ten
                  thousand units apart have a bounding box the size of the world;
@@ -2303,7 +2412,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  body is Exposed, never by how much.
                  Three things inside a tick used to be sized by **what the
                  world contains** rather than by what is near anybody, and spec
-                 202 is all three. With one player and 49 chunks active on every
+                 205 is all three. With one player and 49 chunks active on every
                  row, a tick went from 102us to 7,492us as the world's spawn
                  point count went from 14 to 12,800 -- residency identical
                  throughout. It is flat now, and 32us at the far end.

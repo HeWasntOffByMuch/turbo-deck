@@ -36,7 +36,7 @@ describe('the shipped map', () => {
     // matters here is that the field survived parsing as a real number.
     expect(Number.isFinite(file.doc.seed)).toBe(true);
     // The identity comes off the manifest now rather than from hashing the
-    // whole world (spec 200), so it is 8 hex digits rather than a document.
+    // whole world (spec 203), so it is 8 hex digits rather than a document.
     expect(file.mapId).toHaveLength(8);
     expect(file.manifest.layers.length).toBeGreaterThan(0);
   });

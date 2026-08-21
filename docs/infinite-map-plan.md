@@ -1,6 +1,6 @@
 # A map that keeps growing — plan
 
-Status: **every phase is done — specs 197 through 206 are written and
+Status: **every phase is done — specs 200 through 209 are written and
 implemented.** Two of them did not turn out to be the phase that was planned:
 phase 5 **split in two** after measuring, and phase 6's designed `ChunkSource`
 was **deferred** in favour of the one line that was actually costing the boot.
@@ -91,7 +91,7 @@ One caveat stated rather than buried: an attempt to attribute the nav share
 between ground sampling, the collider pass and the component flood **conflated
 its variables** — removing props enlarges the open area, so `labelComponents`
 floods further and "no props" measured *slower* than "props". That breakdown is
-not claimed here. It is exactly what spec 197's nav benchmark exists to produce.
+not claimed here. It is exactly what spec 200's nav benchmark exists to produce.
 
 ## The four things that actually break
 
@@ -376,7 +376,7 @@ consumes, so it is built first.
 Phase 1 first because it sets the arithmetic everything else is sized against.
 Phases 2 and 3 are prerequisites for 4. Phases 6–8 are finishing.
 
-### Phase 0 — a map you can measure (spec 197)
+### Phase 0 — a map you can measure (spec 200)
 
 Written. `scripts/bench-map.ts` reports boot, resident bytes, `MapInfo` bytes,
 live entity count and per-tick µs across world sizes with a slope column, plus
@@ -385,7 +385,7 @@ crossing at p95/p99, and nav construction with and without `chunk.nav`. Tests
 assert what is countable, including the claim specs 056/192/193 make and the one
 they do not.
 
-### Phase 1 — a zoom you choose (spec 198) — **done**
+### Phase 1 — a zoom you choose (spec 201) — **done**
 
 `SUPPORTED_MAX_VIEW_HALF_WIDTH = 420` drives `INTEREST_CHUNK_RADIUS` 8 → 3 and
 `MAP_CHUNK_REQUEST_RADIUS` 6 → 2; `MAP_CHUNK_BURST` follows, being derived.
@@ -413,7 +413,7 @@ Three things it turned up that the plan had not predicted:
 Retuning the radii broke **no** behavioural test — 318 of 319 files passed
 untouched, and the one failure was the store document gaining a field.
 
-### Phase 2 — the map leaves the bundle (spec 199) — **done**
+### Phase 2 — the map leaves the bundle (spec 202) — **done**
 
 **It also broke the whole app for six phases, and nothing here noticed.** Making
 `Tab.mount` async introduced `tabPress`, and the shell asked it
@@ -452,7 +452,7 @@ under 3 MB **summed across chunks**, so code-splitting is not a way round it,
 and a map asset over 1 MB — a build that got small by losing the world boots
 into nothing and would pass a size check.
 
-### Phase 3 — a map that is many files (spec 200)
+### Phase 3 — a map that is many files (spec 203)
 
 ```
 maps/arena/manifest.json     the complete eager index
@@ -493,7 +493,7 @@ of 224 regions untouched**, 173 KB rewritten of a 9.88 MB map. The first cut of
 `splitMap` rewrote *all* of them, because a region carried the layer's `bounds`
 and a grow moves it; a region declares its own extent now, and that is a test.
 
-### Phase 4 — routes without a warmed world (spec 201)
+### Phase 4 — routes without a warmed world (spec 204)
 
 `warmRouting` stops being a boot step. Nav is tiled, tiles are assembled into a
 window, and components are recomputed over the window on residency change; its
@@ -541,7 +541,7 @@ target" into "there is a way to this other spot" for a window.
 likely phase to change observable behaviour, so it wants that corpus green and a
 route-equivalence test over the resident envelope.
 
-### Phase 5 — a tick that costs what is near you (spec 202)
+### Phase 5 — a tick that costs what is near you (spec 205)
 
 Three things inside a tick are sized by what the **world contains** rather than
 by what is near anybody, and measuring them is what split this phase off. With
@@ -570,13 +570,13 @@ tick's and would not see a body killed earlier in the same tick.
 **Done.** `bench-tick-scale` reads ×1.0 / ×1.0 / ×1.1 / ×0.7 / ×1.0 across
 worlds of 14 to 12,800 spawn points at fixed residency, against ×1.0 / ×0.8 /
 ×3.7 / ×13.7 / ×73.1 before — 7,492 µs to 32 µs at the far end. The two
-assertions spec 197 wrote asserting the *hole* are inverted, as their own note
+assertions spec 200 wrote asserting the *hole* are inverted, as their own note
 promised they would be. The bench itself was wrong twice first, both times a
 fixture varying something other than the thing measured: a fixed area makes a
 bigger count a denser world, and a grid laid from a corner moves the player onto
 different ground on every row.
 
-### Phase 6 — a boot that does not mesh the world (spec 203)
+### Phase 6 — a boot that does not mesh the world (spec 206)
 
 **The designed phase was not built, because measuring said it was not the
 problem.** What follows is the phase as planned, kept because the reasoning for
@@ -595,7 +595,7 @@ Made lazy, `buildWorldFromMap` goes **32,402 ms → 731 ms** at the 4× target a
 goes 8,105 ms → 233 ms.
 
 And **heap measures 0.26 GB at 12,960 chunks, not the 2.0 GB projected here** —
-that projection predates spec 200 taking `nav` out of the format, an array per
+that projection predates spec 203 taking `nav` out of the format, an array per
 chunk that was 10.5% of every region with one reader, a dev overlay that is off
 by default.
 
@@ -644,7 +644,7 @@ interest window; **no player observes a body reset**; the existing replay tests
 pass unchanged; and a replay that unloads mid-recording reproduces
 bit-identically.
 
-### Phase 7 — a client that forgets behind it (spec 204)
+### Phase 7 — a client that forgets behind it (spec 207)
 
 **Done.** Measured by driving a real cache and a real `StreamedMap` around a
 circuit of the shipped map: **392 chunks held against a 25-chunk request
@@ -671,9 +671,9 @@ eviction and re-request cannot oscillate; dispose geometry through the
 to "not held, not in flight, not absent". Props are still rebuilt whole on a
 quiet stream (spec 165) and go per-region here.
 
-### Phase 8 — growing without rewriting (spec 205)
+### Phase 8 — growing without rewriting (spec 208)
 
-**Done.** Spec 200 made a grow *write* only what it touched; it still opened the
+**Done.** Spec 203 made a grow *write* only what it touched; it still opened the
 world to get there. Measured on a 12,960-chunk map, growing a 2×2 part: 9 ms to
 parse the manifest, 1,691 ms to join every region, 1,234 ms in `growMap`,
 3,990 ms to re-split — **6.9 s to change one region**.
@@ -709,7 +709,7 @@ neighbouring chunks at a join, which is what makes the seam continuous, and the
 region loader supplies them. The editor stops opening the whole world to move one
 marker; `POST /api/map` becomes a per-region write.
 
-### Phase 9 — the shore (spec 206)
+### Phase 9 — the shore (spec 209)
 
 **Done, as a tool rather than as content.** Measured on the shipped map: **212
 walkable chunks within two of undeclared space, 110 of them directly against it,

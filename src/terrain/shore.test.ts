@@ -1,5 +1,5 @@
 /**
- * Where the world stops (spec 206).
+ * Where the world stops (spec 209).
  *
  * The rule is about **walkable** ground rather than about the edge: open water
  * against the void is exactly what a shore is, and grass against the void is the

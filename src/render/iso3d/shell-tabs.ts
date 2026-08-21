@@ -53,7 +53,7 @@ export function showsTabButtons(visible: readonly ShellTab[]): boolean {
 }
 
 /**
- * What pressing a tab should do (spec 199).
+ * What pressing a tab should do (spec 202).
  *
  * A mount can take a network round trip now -- the Play tab and the editor fetch
  * the shipped map rather than carrying it in the bundle -- so a press is no

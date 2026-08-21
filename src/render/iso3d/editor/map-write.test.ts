@@ -128,7 +128,7 @@ describe('writing the file', () => {
 
   it('writes a real map document, as a manifest and its regions', () => {
     // The name on the wire is still `arena.json` -- it is what a download is
-    // called -- and what lands is `maps/arena/` (spec 200).
+    // called -- and what lands is `maps/arena/` (spec 203).
     const { root, text } = seeded();
     const result = writeMapFile('arena.json', text, root);
     expect(result.ok).toBe(true);

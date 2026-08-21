@@ -116,6 +116,7 @@ import { spawnerLabels } from './spawner-overlay.js';
 import type { WorldAnchor } from './damage-popup.js';
 import { XpGains } from './xp-gain.js';
 import { castRefusalText } from './error-log.js';
+import { backoffTicksFor, KEEPALIVE_MS } from './keepalive.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -238,29 +239,12 @@ const PROP_INCOMPLETE_HOLD_MS = 4000;
 const GROUND_REFRESH_MIN_CHUNKS = 8;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
-/**
- * Wall-clock period for the two things that must outlive the frame loop
- * (spec 157): the heartbeat, and the reconnect backoff.
- *
- * Both used to ride `requestAnimationFrame`, which a browser throttles to
- * nothing in a hidden tab -- so switching tabs for a minute stopped the pings,
- * the server's ten-second timeout dropped the connection, and the backoff that
- * would have brought it back was frozen by the same stall. A `setInterval` is
- * clamped to about a second when hidden but never stops, which is the whole
- * difference between "slower" and "never".
- *
- * 500ms is the rate the frame loop drove them at, so nothing about a visible
- * tab changes.
- */
-const KEEPALIVE_MS = 500;
-/** Ticks of backoff clock per keep-alive, so `ReconnectingChannel` stays tick-driven. */
-const KEEPALIVE_TICKS = Math.round(KEEPALIVE_MS / TICK_MS);
 /** Ms between deltas -- the interval the renderer interpolates across. */
 const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
 export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   /**
-   * The shipped map, fetched rather than bundled (spec 199).
+   * The shipped map, fetched rather than bundled (spec 202).
    *
    * Awaited here and nowhere deeper: everything below is synchronous from
    * `buildWorldFromMap` through `warmRouting`, `fillGround` and the transport,
@@ -324,7 +308,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // function of the frame rate -- five seconds of work became thirty of waiting
   // on a slow machine.
   //
-  // Spec 201 deleted the thing being warmed. Nav is windows now, and a window is
+  // Spec 204 deleted the thing being warmed. Nav is windows now, and a window is
   // built inside the tick that first wants one: ~140ms of sampling for one
   // player's surroundings rather than 3.6s for the world, on a map where the
   // window does not grow when the map does. There is nothing left to have ready.
@@ -625,7 +609,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       pendingInserts.set(`${held.layer}:${held.cx},${held.cz}`, held);
     }
 
-    // Ground the cache has let go of (spec 204).
+    // Ground the cache has let go of (spec 207).
     //
     // Reconciled against the cache's held list rather than being told, because
     // the cache is what decides residency and a message saying "these went"
@@ -924,6 +908,45 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     root.dataset['vfxParticles'] = String(readout.particles);
     root.dataset['vfxDecals'] = String(readout.decals);
     root.dataset['vfxStarted'] = playing;
+  }
+
+  /**
+   * Mirrors what the body is committed to onto the root element (spec 199).
+   *
+   * The same window `publishUnitReadout` opens, for the same reason and read by
+   * nobody in the game: what a stop drops lives as half a dozen closure `let`s
+   * in this file, so a browser harness has nothing to ask about them -- and
+   * `scripts/probe-stop.ts` is the only thing that can say whether the branch
+   * this spec added reaches any of them. Two attributes rather than one, because
+   * they answer different questions: `data-orders` is what has been *asked for*,
+   * and `data-self-at` is whether the body is actually still moving, which is a
+   * fact about the server rather than about this file's bookkeeping.
+   *
+   * Named in the vocabulary the spec's table uses, in a fixed order, so a
+   * missing word is a specific drop that did not happen rather than a diff.
+   * Written only when it changes: a per-frame attribute write is a per-frame
+   * style invalidation, and a walking body writes one every frame anyway --
+   * which is exactly why the position is rounded to a whole world unit here.
+   */
+  let lastOrders = '';
+  function publishOrders(): void {
+    const me = selfPosition();
+    const orders = [
+      destination !== null ? 'walk' : '',
+      targetId !== null ? 'attack' : '',
+      pickupId !== null ? 'pickup' : '',
+      pendingAim !== null ? 'aim' : '',
+      order !== null ? 'cast' : '',
+      held.size > 0 ? 'keys' : '',
+    ]
+      .filter((word) => word !== '')
+      .join(' ');
+    const at = `${Math.round(me.x)},${Math.round(me.y)}`;
+    const text = `${orders}|${at}`;
+    if (text === lastOrders) return;
+    lastOrders = text;
+    root.dataset['orders'] = orders;
+    root.dataset['selfAt'] = at;
   }
 
   /**
@@ -1251,6 +1274,23 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * `scripts/probe-orbit.ts` drives a real page.
    */
   const heldKeys = new Set<string>();
+  /**
+   * Key codes that were physically down when a stop fired (spec 199).
+   *
+   * The rule without which the stop does not work at all, and one no unit test
+   * in this tree could have found, because it is a fact about the browser rather
+   * than about the game: a key held down repeats `keydown` at the platform's own
+   * rate, and `onKeyDown` has never looked at `event.repeat`. So every repeat
+   * puts `move.north` straight back into {@link held}, and a player walking north
+   * who asks to stop watches the walk resume on its own half a second later.
+   *
+   * A code goes in when the stop is applied and comes out when it is actually
+   * released. It costs nothing anywhere else -- a repeat only ever re-adds what
+   * its own first press already added -- and it catches the stop's own key first:
+   * Space held down fires once rather than sending `cancelCast` thirty times a
+   * second.
+   */
+  const disarmed = new Set<string>();
   const inputMap = new InputMap();
   /**
    * Where the key profile lives. Reached for here, at the DOM edge, exactly as
@@ -1278,7 +1318,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * Every callback below is a *request*: the screens emit intents and the server
    * decides. Nothing here writes to a container, a purse or a skill tree.
    */
-  // The widest zoom the player has asked for (spec 198), read once and applied
+  // The widest zoom the player has asked for (spec 201), read once and applied
   // to the camera before the first frame -- a ceiling honoured only on the next
   // change would leave a restored session framing wider than it was told to.
   const storedMaxZoom = loadMaxZoom(bindingStorage);
@@ -1329,7 +1369,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       ui.setShowFps(show);
       saveShowFps(bindingStorage, show);
     },
-    // The same three steps again (spec 198): honour it on the camera, tell the
+    // The same three steps again (spec 201): honour it on the camera, tell the
     // page so its slider matches what is drawn, and save it before the frame
     // that could lose it. The *choice* is stored rather than the number it
     // resolves to, so `'supported'` keeps tracking the cap when the cap moves.
@@ -1577,6 +1617,51 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
+   * Call off the blow, and the orders whose whole job is to aim one (spec 199).
+   *
+   * What a stop shares with Escape, said once. Both used to write these three
+   * lines out, and two lists of what "calling off a blow" drops is two answers
+   * that drift the first time a fourth kind of order is added.
+   *
+   * `cancelCast` refunds the cost and the cooldown before the attack point and
+   * returns only the legs after it (spec 144) -- so what a called-off cast spends
+   * is exactly the time it took. `targetId` goes with it because withdrawing from
+   * a blow the auto-attack would re-commit to on the next tick is not withdrawing
+   * from anything.
+   */
+  function dropCommitments(): void {
+    client.cancelCast();
+    targetId = null;
+    clearAim();
+  }
+
+  /**
+   * Everything the body is committed to, dropped in one press (spec 199).
+   *
+   * `dropCommitments` plus the legs: the walk over to a drop, the standing move
+   * order and the route planned for it, and whatever is held. Unconditional --
+   * a stop asked at rest drops nothing, opens nothing and costs nothing, which
+   * is the whole difference from Escape, whose rule is to reach for the menu
+   * when there is nothing to back out of (spec 135). One control that sometimes
+   * opens a menu is enough.
+   *
+   * Nothing new crosses the wire, because stopping is the *absence* of a
+   * request: with `held` empty and no destination, `moveIntent` asks for (0, 0)
+   * and the server stops the body on the next tick it applies. The one thing
+   * that does need saying is already a message, and `cancelCast` sends it.
+   */
+  function stopEverything(): void {
+    dropCommitments();
+    pickupId = null;
+    destination = null;
+    planner.clear();
+    held.clear();
+    // The keys and buttons still down when this fired. Without this the walk
+    // resumes on its own at the browser's repeat rate; see `disarmed`.
+    for (const code of heldKeys) disarmed.add(code);
+  }
+
+  /**
    * Whether a right-click on this body should attack it rather than walk to it.
    *
    * Deliberately thin, and deliberately not a rule: it keeps the cursor from
@@ -1652,12 +1737,24 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // camera key is the same bug with the view spinning instead.
       held.clear();
       heldKeys.clear();
+      disarmed.clear();
       return;
     }
 
     // Recorded before the map is consulted, because these are the keys the map
     // does not know about (spec 140).
     heldKeys.add(event.code);
+
+    // A key the stop disarmed, still down and repeating (spec 199). Dropped
+    // whole rather than filtered down to its non-move half: a repeat carries no
+    // new intent by construction, since its own first press already did
+    // everything this one would. The default is prevented anyway, because the
+    // press this repeats prevented it -- and the disarmed key most often held
+    // down is the stop's own Space, which scrolls a page that does not stop it.
+    if (event.repeat && disarmed.has(event.code)) {
+      event.preventDefault();
+      return;
+    }
 
     if (applyDecision(decideControlDown(inputMap, event.code, modifiersOf(event)))) {
       event.preventDefault();
@@ -1751,12 +1848,20 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // both facts are visible -- that half may not see a cast, on purpose.
       const committed =
         pendingAim !== null || order !== null || targetId !== null || client.view().selfRoot !== null;
-      client.cancelCast();
-      // Withdrawing from a blow that the auto-attack would re-commit to on the
-      // next tick is not withdrawing from anything.
-      targetId = null;
-      clearAim();
+      dropCommitments();
       if (!committed) ui.toggle('options');
+    }
+
+    // And the control that means all of it (spec 199). It is Escape's three
+    // drops plus the legs and the route, with no condition on any of it: the
+    // row has been in the keybindings window since spec 125 asserting that a key
+    // does something, and until now the key did nothing at all.
+    //
+    // The default is prevented because Space scrolls a page, and because the
+    // action is rebindable -- so is whatever gets here.
+    if (decision.stop) {
+      stopEverything();
+      prevent = true;
     }
 
     // The verbs the pointer ships bound to, and they are branches on an action
@@ -1813,6 +1918,8 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // Dropped whatever the interface said, for the reason below: a release the
     // UI swallowed is a key held forever, and here that is a view that spins.
     heldKeys.delete(event.code);
+    // Letting go is what re-arms a control the stop disarmed (spec 199).
+    disarmed.delete(event.code);
     // Released whatever the interface said, always. A release that the UI
     // swallowed is a held action with no way out, and the symptom is walking
     // into a wall until the same key is pressed and released again.
@@ -2101,6 +2208,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   const onBlur = (): void => {
     held.clear();
     heldKeys.clear();
+    // Beside the two above and for the reason they are here: focus lost is every
+    // key released as far as this tab is concerned, and a code left disarmed
+    // would swallow the repeats of the next press of it.
+    disarmed.clear();
     // A gesture interrupted by losing focus never sends its pointerup, and the
     // next finger down would otherwise land mid-pinch.
     gestures.clear();
@@ -2461,6 +2572,43 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   let backoffTick = 0;
   /** The wall-clock timer driving the heartbeat and the backoff. 0 when stopped. */
   let keepAlive = 0;
+  /** When `pump` last ran, so the backoff can be advanced by the gap it got. */
+  let lastPumpMs = 0;
+
+  /**
+   * One beat of the clock that outlives the frame loop (spec 197).
+   *
+   * Called by the interval, and again the instant the tab becomes visible --
+   * which is the one moment we know the reason for an outage has gone, and the
+   * one moment the old code did nothing, because it sat waiting for the very
+   * timer the browser had throttled. Both callers want exactly this, so it is a
+   * function rather than two copies that could drift.
+   *
+   * The gap is measured rather than assumed: see `keepalive.ts` for why a
+   * constant per firing halved the reconnect ladder in a hidden tab.
+   */
+  function pump(nowMs: number): void {
+    const elapsed = lastPumpMs === 0 ? KEEPALIVE_MS : nowMs - lastPumpMs;
+    lastPumpMs = nowMs;
+    client.keepAlive();
+    backoffTick += backoffTicksFor(elapsed, SERVER_TICK_RATE);
+    reconnecting?.deliver(backoffTick);
+  }
+
+  /**
+   * The tab being looked at again.
+   *
+   * Two things, and the second is the reason this is not only about the socket:
+   * the frame clock is reset the way `start()` resets it, so the first frame
+   * after ten hidden minutes is one tick long rather than a ten-minute `dt`
+   * handed to the camera and averaged into the frame meter.
+   */
+  function onVisible(): void {
+    if (document.visibilityState !== 'visible') return;
+    last = 0;
+    frames.reset();
+    pump(performance.now());
+  }
 
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
@@ -2707,6 +2855,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
     publishUnitReadout();
     publishVfxReadout();
+    publishOrders();
 
     // Last, over everything (spec 131). It is handed `now` rather than reading
     // one: nothing under `src/ui/` may touch a clock, which is what makes an
@@ -2725,6 +2874,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
       window.addEventListener('blur', onBlur);
+      document.addEventListener('visibilitychange', onVisible);
       // Pointer events rather than mouse events, so a tap is read once: the
       // compatibility `mousedown` a touch also fires would arrive as button 0
       // and confirm an aim nobody asked about (spec 093).
@@ -2749,12 +2899,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           // rather than a second body beside the first (spec 150).
           rememberSession(sessionStorage, client.sessionToken);
         });
-        // The heartbeat and the backoff, on a clock a hidden tab cannot stop.
-        keepAlive = window.setInterval(() => {
-          client.keepAlive();
-          backoffTick += KEEPALIVE_TICKS;
-          reconnecting?.deliver(backoffTick);
-        }, KEEPALIVE_MS);
+        // The heartbeat and the backoff, on a clock the frame loop cannot
+        // stop. Not one a *browser* cannot stop -- it throttles this to one
+        // firing a minute past five minutes hidden, which is why the
+        // connection is held from the far end now (spec 197's `SERVER_PING_MS`)
+        // and this drives the visible case and the reconnect ladder.
+        keepAlive = window.setInterval(() => pump(performance.now()), KEEPALIVE_MS);
         void client.connect().catch((error: unknown) => {
           banner.refuse(error instanceof Error ? error.message : String(error));
         });
@@ -2764,6 +2914,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
       last = 0;
       accumulator = 0;
+      lastPumpMs = 0;
       raf = requestAnimationFrame(frame);
     },
     stop(): void {
@@ -2775,6 +2926,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisible);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointerup', onPointerUp);

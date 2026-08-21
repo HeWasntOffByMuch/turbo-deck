@@ -1,5 +1,5 @@
 /**
- * The server's nav cache and its invalidation rule (spec 201).
+ * The server's nav cache and its invalidation rule (spec 204).
  *
  * What is worth asserting is the rule the file exists for: **windows go when
  * residency changes, tiles stay while anything wants them.** Everything else --

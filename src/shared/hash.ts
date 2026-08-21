@@ -33,7 +33,7 @@ export function hashUnit2(x: number, y: number, seed: number): number {
 }
 
 /**
- * FNV-1a over a string, as 8 hex digits (spec 200).
+ * FNV-1a over a string, as 8 hex digits (spec 203).
  *
  * Not a security hash and does not need to be: it answers "is this the same
  * text I was told about", where the adversary is a stale tab rather than an

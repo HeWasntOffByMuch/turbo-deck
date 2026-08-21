@@ -13,6 +13,7 @@ describe('what a control press means to the Play tab', () => {
       move: ['move.north'],
       skillbar: [],
       cancel: false,
+      stop: false,
       windows: [],
       toggleStats: false,
       confirmAim: false,
@@ -44,6 +45,54 @@ describe('what a control press means to the Play tab', () => {
     expect(decideControlDown(map, 'KeyW', NONE).cancel).toBe(false);
   });
 
+  /**
+   * The stop (spec 199). The row has been in `bindings.json` since spec 125 and
+   * reached nothing, exactly as `debug.toggleStats` did until spec 183.
+   */
+  it('drops everything on the stop action, and nothing else with it', () => {
+    const map = new InputMap();
+    expect(decideControlDown(map, 'Space', NONE)).toEqual({
+      move: [],
+      skillbar: [],
+      cancel: false,
+      stop: true,
+      windows: [],
+      toggleStats: false,
+      confirmAim: false,
+      order: false,
+      trade: false,
+      zoom: 0,
+      chat: false,
+    });
+  });
+
+  it('leaves the stop alone for every other shipped binding', () => {
+    // The other half of the assertion, and the half worth having: a field set by
+    // everything is the same bug as a field set by nothing. Escape is in the
+    // list on purpose -- `combat.cancel` is the neighbouring row and the two are
+    // deliberately different questions.
+    const map = new InputMap();
+    for (const code of ['KeyW', 'Digit1', 'KeyI', 'KeyC', 'Escape', 'F3', 'MouseRight']) {
+      expect(decideControlDown(map, code, NONE).stop, code).toBe(false);
+    }
+  });
+
+  it('no longer answers the key the stop used to ship on', () => {
+    // `KeyX` was the row's default until spec 199 moved it to Space. A stale
+    // default reaching the branch would pass every other assertion here.
+    const map = new InputMap();
+    expect(decideControlDown(map, 'KeyX', NONE)).toEqual(NO_DECISION);
+  });
+
+  it('follows a rebind of the stop, and fires from nothing when it is unbound', () => {
+    const map = new InputMap();
+    map.bind('combat.stop', 'primary', { code: 'KeyZ' });
+    expect(decideControlDown(map, 'KeyZ', NONE).stop).toBe(true);
+    expect(decideControlDown(map, 'Space', NONE).stop).toBe(false);
+    map.bind('combat.stop', 'primary', null);
+    expect(decideControlDown(map, 'KeyZ', NONE).stop).toBe(false);
+  });
+
   it('toggles the diagnostic readout on the debug action', () => {
     // The row has been in `bindings.json` since spec 125 and reached nothing:
     // every action that was not a move, a slot, a window or the cancel fell off
@@ -53,6 +102,7 @@ describe('what a control press means to the Play tab', () => {
       move: [],
       skillbar: [],
       cancel: false,
+      stop: false,
       windows: [],
       toggleStats: true,
       confirmAim: false,
@@ -74,7 +124,7 @@ describe('what a control press means to the Play tab', () => {
     // The other half of the assertion: a field that is set by everything is the
     // same bug as a field that is set by nothing.
     const map = new InputMap();
-    for (const code of ['KeyW', 'Digit1', 'KeyI', 'KeyC', 'Escape', 'KeyX']) {
+    for (const code of ['KeyW', 'Digit1', 'KeyI', 'KeyC', 'Escape', 'Space']) {
       expect(decideControlDown(map, code, NONE).toggleStats).toBe(false);
     }
   });

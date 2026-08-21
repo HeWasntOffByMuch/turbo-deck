@@ -1,5 +1,5 @@
 /**
- * Which window a body routes in (spec 201).
+ * Which window a body routes in (spec 204).
  *
  * `NavField` knows how to build a tile and assemble a window; this decides
  * *which* window, which is the half that depends on where the players are.

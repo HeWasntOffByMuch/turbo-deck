@@ -1,5 +1,5 @@
 /**
- * Growing without opening the world (spec 205).
+ * Growing without opening the world (spec 208).
  *
  * The property everything rests on is that the partial path and the whole-world
  * path produce the **same map** -- same manifest identity, same bytes for every

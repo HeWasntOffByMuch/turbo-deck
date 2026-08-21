@@ -24,7 +24,7 @@ const LAYER = 'ground';
 /**
  * The shipped world, joined from `maps/arena/`.
  *
- * There is no whole-file text to compare against since spec 200 split the map
+ * There is no whole-file text to compare against since spec 203 split the map
  * across a manifest and 224 regions, so what the round trip asserts below is a
  * *fixed point* rather than equality with a canonical string -- which is the
  * stronger claim anyway, and the one `regions.test.ts` makes about the split

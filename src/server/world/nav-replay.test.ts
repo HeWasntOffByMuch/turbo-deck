@@ -1,5 +1,5 @@
 /**
- * A real fight, replayed through the windowed nav (spec 201).
+ * A real fight, replayed through the windowed nav (spec 204).
  *
  * `nav.test.ts` asserts the cache answers the same whatever it has built before;
  * this asserts the consequence, which is the rule the whole project turns on:

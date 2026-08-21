@@ -73,7 +73,7 @@ describe('the chunk request radius covers the camera', () => {
   });
 
   it('does not cover the slider\'s own maximum, which is a dev setting', () => {
-    // Spec 198. Past the supported band terrain outside the window is a hole
+    // Spec 201. Past the supported band terrain outside the window is a hole
     // with the sky through it -- the worse of the two degradations, and exactly
     // what the Display page's warning has to name.
     expect(groundReach(MAX_VIEW_HALF_WIDTH, 3840, 1080).x).toBeGreaterThan(GUARANTEED_REACH);
@@ -105,7 +105,7 @@ describe('the chunk budget covers the request radius', () => {
     // The relationship the client's own pacing comment claims and nothing
     // asserted: a pass sized above the burst would make the server's throttle
     // the thing that shapes a cold start, which is exactly what it is not for.
-    // Spec 198 narrowed the radius and moved the burst underneath this number,
+    // Spec 201 narrowed the radius and moved the burst underneath this number,
     // which is how it was found.
     expect(CHUNK_REQUESTS_PER_PASS).toBeLessThanOrEqual(MAP_CHUNK_BURST);
   });

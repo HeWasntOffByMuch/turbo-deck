@@ -75,7 +75,7 @@ const world =
 // There used to be a `warmRouting(world)` here (spec 130): route planning wanted
 // the ground sampled into a grid, which was ~3.6s on today's map and about a
 // minute at the size this is heading for, so it was paid at boot rather than
-// inside the first tick a monster's line was blocked. Spec 201 deleted the thing
+// inside the first tick a monster's line was blocked. Spec 204 deleted the thing
 // it was warming -- nav is windows now, sized by where the players are, so there
 // is no world-sized grid to have ready and boot does not sample any ground.
 

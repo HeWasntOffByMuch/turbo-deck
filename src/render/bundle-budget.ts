@@ -1,5 +1,5 @@
 /**
- * What the build is allowed to emit (spec 199).
+ * What the build is allowed to emit (spec 202).
  *
  * The map used to be `?raw`-imported, which made 11.5 MB of world into a
  * JavaScript module: `index-*.js` was 14,074 kB and nothing in CI was looking,
@@ -38,8 +38,8 @@ export const MAX_JS_BYTES = 3 * 1024 * 1024;
  * stopped shipping *at all* is not a pass -- it is a build that boots into an
  * empty world, and it would sail through a size ceiling.
  *
- * A **sum** rather than the largest single asset, which is what spec 199 could
- * measure when the map was one 11.5 MB file. Spec 200 split it into a manifest
+ * A **sum** rather than the largest single asset, which is what spec 202 could
+ * measure when the map was one 11.5 MB file. Spec 203 split it into a manifest
  * and 224 regions of about 58 KB, so the largest asset is 0.09 MB and a
  * largest-asset check fails a build that shipped the entire world.
  *
@@ -85,7 +85,7 @@ export function checkBundle(files: readonly Emitted[]): BundleReport {
       `emitted JavaScript is ${(jsBytes / 1048576).toFixed(2)} MB, over the ${(
         MAX_JS_BYTES / 1048576
       ).toFixed(2)} MB ceiling. Largest: ${biggest}. ` +
-        `Something large is being imported as code rather than fetched as an asset (spec 199).`,
+        `Something large is being imported as code rather than fetched as an asset (spec 202).`,
     );
   }
   if (mapBytes < MIN_MAP_BYTES) {
@@ -93,7 +93,7 @@ export function checkBundle(files: readonly Emitted[]): BundleReport {
       `the build emitted ${(mapBytes / 1048576).toFixed(2)} MB of map, under the ` +
         `${(MIN_MAP_BYTES / 1048576).toFixed(2)} MB floor. The bundle is small because the ` +
         `world is missing, which is not the same as passing. The likely cause is ` +
-        `\`import.meta.glob\` in map-asset.ts matching no region files (spec 200).`,
+        `\`import.meta.glob\` in map-asset.ts matching no region files (spec 203).`,
     );
   }
   return { jsBytes, mapBytes, failures };

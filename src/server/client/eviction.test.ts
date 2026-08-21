@@ -1,5 +1,5 @@
 /**
- * A client that forgets behind it (spec 204).
+ * A client that forgets behind it (spec 207).
  *
  * The measurement this exists for: driven around a circuit of the shipped map,
  * a real cache and a real `StreamedMap` held **392 chunks against a 25-chunk

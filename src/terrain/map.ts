@@ -42,7 +42,7 @@ import { FENCE_KINDS, type Prop, type PropKind } from './vegetation.js';
  */
 
 /**
- * 3 drops `chunk.nav` (spec 200).
+ * 3 drops `chunk.nav` (spec 203).
  *
  * It was baked walkability at the document's own cell size, 10.5% of every map
  * file, and it rode the wire to every client. Its only reader was the editor's
@@ -755,7 +755,7 @@ function parseChunk(value: unknown, what: string): MapChunk {
       parseMarker(m, `${what}.markers[${i}]`),
     ),
   };
-  // `nav` is read off a version 1 or 2 document and dropped (spec 200). Not
+  // `nav` is read off a version 1 or 2 document and dropped (spec 203). Not
   // refused: an older map is still a map, and the field it carries is one the
   // editor now bakes for itself.
   // Decoding is the length check: a run list that does not cover exactly the

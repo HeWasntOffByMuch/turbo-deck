@@ -1,5 +1,5 @@
 /**
- * A world of any size, out of a world that exists (spec 197).
+ * A world of any size, out of a world that exists (spec 200).
  *
  * Every number that paces the server is a straight line through the map's area,
  * and nothing in the tree varies that area to find out. Baking real ground per

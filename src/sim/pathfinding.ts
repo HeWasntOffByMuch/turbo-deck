@@ -103,7 +103,7 @@ export interface NavGrid {
   /** Body radius this grid was built for. */
   readonly radius: number;
   /**
-   * Whether this grid is a **window** onto a larger world (spec 201).
+   * Whether this grid is a **window** onto a larger world (spec 204).
    *
    * It decides what a point outside the rectangle means. On a world grid,
    * outside is a body that has walked past the edge of the ground that exists --
@@ -149,7 +149,7 @@ export interface NavGrid {
   /** How many cells each component holds, indexed by component id. */
   readonly componentSizes: Int32Array;
   /**
-   * 1 where a component reaches this grid's own edge (spec 201).
+   * 1 where a component reaches this grid's own edge (spec 204).
    *
    * Its true size is then **unknown**, because the grid is a window onto a
    * bigger world and the rest of the region is outside. So `isPocket` must not
@@ -530,7 +530,7 @@ export interface NavShape {
 
 /**
  * Grade a rectangle of cells against the world: water, ground nobody has, the
- * world's rim, and every collider that reaches it (spec 201).
+ * world's rim, and every collider that reaches it (spec 204).
  *
  * Extracted from `createNavGrid` so that a world-sized grid and a single nav
  * tile go through **one description of what blocks a body**. Two of them would
@@ -650,7 +650,7 @@ function labelComponents(
   const sizes: number[] = [];
   // Whether each component reaches the grid's own edge, computed in the same
   // flood because it is one comparison per popped cell and a second pass would
-  // be a second walk of the whole grid (spec 201).
+  // be a second walk of the whole grid (spec 204).
   const atEdge: number[] = [];
   // One shared stack, reused across floods: the regions partition the grid, so
   // no cell is ever pushed twice and the total pushes are bounded by cell count.
@@ -743,7 +743,7 @@ export function createNavGrid(
 }
 
 /**
- * Where a window's cells come from: one tile's worth at a time (spec 201).
+ * Where a window's cells come from: one tile's worth at a time (spec 204).
  *
  * An interface rather than an import, so `pathfinding.ts` does not depend on
  * `nav-tiles.ts` -- that file already depends on this one for `gradeNavCells`,
@@ -758,7 +758,7 @@ export interface NavTileSource {
 }
 
 /**
- * A grid over a rectangle of tiles (spec 201).
+ * A grid over a rectangle of tiles (spec 204).
  *
  * The same `NavGrid` `findPath` has always walked -- flat arrays, `cols`,
  * `rows`, an origin -- filled by copying tiles in rather than by sampling and
@@ -1028,7 +1028,7 @@ function cellOf(grid: NavGrid, point: Vec2): number {
   return row * grid.cols + col;
 }
 
-/** Whether a world point falls inside a grid's own rectangle (spec 201). */
+/** Whether a world point falls inside a grid's own rectangle (spec 204). */
 function insideGrid(grid: NavGrid, point: Vec2): boolean {
   return (
     point.x >= grid.originX &&
@@ -1126,7 +1126,7 @@ function isPocket(grid: NavGrid, cell: number, escape: number): boolean {
   const component = grid.components[cell] ?? -1;
   if (component < 0 || component === (grid.components[escape] ?? -2)) return false;
   // A component that reaches the grid's edge has an unknown true size, so it is
-  // never a pocket however little of it is visible here (spec 201).
+  // never a pocket however little of it is visible here (spec 204).
   if ((grid.componentAtEdge[component] ?? 0) === 1) return false;
   return (grid.componentSizes[component] ?? 0) < POCKET_CELLS;
 }

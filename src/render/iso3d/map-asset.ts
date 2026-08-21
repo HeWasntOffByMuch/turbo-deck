@@ -1,5 +1,5 @@
 /**
- * The shipped map, fetched rather than bundled (spec 199), and split (spec 200).
+ * The shipped map, fetched rather than bundled (spec 202), and split (spec 203).
  *
  * `?raw` made `maps/arena.json` a JavaScript module exporting an 11.5 MB string,
  * so the whole document was compiled into the bundle at three separate sites.
@@ -15,7 +15,7 @@
  * so two callers racing the first load get one fetch between them.
  *
  * Every region is fetched, which is what a whole-world reader needs and what
- * spec 202 stops doing. The split makes lazy loading *possible*; this is still
+ * spec 205 stops doing. The split makes lazy loading *possible*; this is still
  * the whole world, in parallel rather than in one request.
  */
 

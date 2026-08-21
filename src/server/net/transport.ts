@@ -19,6 +19,20 @@ export interface Channel {
   /** Replaces any previous handler; there is exactly one reader per channel. */
   onMessage(handler: (bytes: Uint8Array) => void): void;
   onClose(handler: () => void): void;
+  /**
+   * Out-of-band evidence the peer is still there, for a transport that has any
+   * (spec 197).
+   *
+   * Optional, and that is the point rather than a convenience. A socket has a
+   * protocol-level ping whose pong the peer's *network stack* answers, with no
+   * JavaScript involved -- which is the only heartbeat a background tab whose
+   * timers Chrome has throttled to one a minute can still produce. A loopback
+   * channel has no wire to prove anything about, so an absent member says "this
+   * transport has no such signal" where a required one would make it lie.
+   *
+   * Replaces any previous handler, like the other two.
+   */
+  onAlive?(handler: () => void): void;
 }
 
 export interface ServerTransport {

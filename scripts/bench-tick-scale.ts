@@ -1,5 +1,5 @@
 /**
- * What a tick costs, against how much the world holds (spec 202).
+ * What a tick costs, against how much the world holds (spec 205).
  *
  * Residency is **identical on every row** -- one player, one 7x7 interest
  * window, 49 chunks, and the same handful of spawn points inside it -- and the
@@ -133,5 +133,5 @@ for (const r of rows) {
 }
 console.log(
   '\nFlat is the goal. Residency never changes, so a climbing slope is per-tick\n' +
-    'work sized by the world rather than by what is near anybody (spec 202).',
+    'work sized by the world rather than by what is near anybody (spec 205).',
 );

@@ -51,7 +51,7 @@ export const CHUNK_SIZE = 400;
  * How many chunks out from their own a player is told about.
  *
  * This has to cover **what the camera can frame** at the widest zoom the game is
- * *sized for* -- `SUPPORTED_MAX_VIEW_HALF_WIDTH`, 420 since spec 198, rather
+ * *sized for* -- `SUPPORTED_MAX_VIEW_HALF_WIDTH`, 420 since spec 201, rather
  * than the 1400 the slider still reaches. Measured through the real
  * `cameraFrustum` across every window shape a real monitor comes in, 420 reaches
  * 932 world units; 3 chunks of 400 guarantees 1200, which covers it.
@@ -120,7 +120,7 @@ export const INTEREST_CHUNK_RADIUS = 3;
  * Only the ids `data/status-visuals.ts` names ride, as a table index rather
  * than a string, and each carries an absolute expiry so the mark drawn from it
  * needs no client state.
- * 19: a map chunk no longer carries baked walkability (spec 200). It was a run
+ * 19: a map chunk no longer carries baked walkability (spec 203). It was a run
  * list per chunk sent to every client, and its only reader was the editor's nav
  * overlay -- which loads the map off disk and has never streamed. Removed from
  * the document in the same change, so there is nothing left to send.
@@ -145,7 +145,7 @@ export const PROTOCOL_VERSION = 19;
  *
  * Was 6, sized against the 3107 units the slider's own maximum frames: a 13x13
  * window of 169 chunks against the 5x5 and 25 this is. At the ~10ms a cold chunk
- * costs to bring resident (spec 197) that is a quarter-second of prefetch rather
+ * costs to bring resident (spec 200) that is a quarter-second of prefetch rather
  * than two and a half seconds, which is what makes bounded residency affordable
  * at all.
  *
@@ -161,7 +161,7 @@ export const PROTOCOL_VERSION = 19;
 export const MAP_CHUNK_REQUEST_RADIUS = 2;
 
 /**
- * How far a client keeps a chunk it has stopped asking for (spec 204).
+ * How far a client keeps a chunk it has stopped asking for (spec 207).
  *
  * Derived from the request radius rather than chosen, because the one thing
  * eviction must not do is fight the streamer. A chunk is requested inside
@@ -235,6 +235,21 @@ export const RESUME_GRACE_TICKS = 1800;
 export const CONNECTION_TIMEOUT_TICKS = 600;
 
 /**
+ * Ms between the server's protocol-level pings (spec 197).
+ *
+ * The application heartbeat rides the client's timers, and Chrome throttles a
+ * page hidden for five minutes down to one timer firing a minute -- so the
+ * heartbeat that has to be relied on is the one the page is not holding. A
+ * WebSocket pong is answered in the peer's network stack; the tab's JavaScript
+ * never sees it and cannot be throttled out of it.
+ *
+ * Three chances inside {@link CONNECTION_TIMEOUT_TICKS}, so a single dropped
+ * pong is not a disconnection. `transport-ws.test.ts` asserts that relationship
+ * rather than trusting the two numbers to be edited together.
+ */
+export const SERVER_PING_MS = 3000;
+
+/**
  * Token bucket on chunk sends, per connection (spec 072).
  *
  * The radius check bounds *where* a client may read; this bounds how fast. They
@@ -270,7 +285,7 @@ export const CONNECTION_TIMEOUT_TICKS = 600;
  */
 export const MAP_CHUNK_BURST = (2 * MAP_CHUNK_REQUEST_RADIUS + 1) ** 2;
 /**
- * The sustained rate, and since spec 198 it is derived rather than typed in.
+ * The sustained rate, and since spec 201 it is derived rather than typed in.
  *
  * It was 32, chosen against a burst of 169. Narrowing the request radius took
  * the burst to 25 and left the refill **above** it -- a bucket that refills more

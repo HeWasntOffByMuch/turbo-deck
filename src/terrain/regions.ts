@@ -1,5 +1,5 @@
 /**
- * A map that is many files (spec 200).
+ * A map that is many files (spec 203).
  *
  * `maps/arena.json` was one 11.5 MB document that every reader parsed whole,
  * and three things broke as it grew: `grow-map.ts` rewrites the whole file so
@@ -39,7 +39,7 @@ import {
  * Measured rather than picked. The residency unit is a *chunk* and a region is
  * the unit of *storage*, so every chunk in a region is materialized whether or
  * not it was wanted -- which makes the deciding number **amplification**: how
- * many chunks a 5x5 resident window (spec 198's request radius of 2) drags in
+ * many chunks a 5x5 resident window (spec 201's request radius of 2) drags in
  * at worst alignment.
  *
  * | R | chunks pulled for 25 | amplification |
@@ -88,7 +88,7 @@ export interface RegionEntry {
   /** Content address of the region's text. See {@link mapIdFromManifest}. */
   readonly hash: string;
   /**
-   * Terrain cells the region's chunks hold, summed (spec 205).
+   * Terrain cells the region's chunks hold, summed (spec 208).
    *
    * So the manifest can answer "how much ground is there" without opening
    * anything, which is what a manifest is for -- and specifically so
@@ -437,7 +437,7 @@ export function parseManifest(text: string): MapManifest {
   if (recomputed !== mapId) {
     throw new Error(`invalid manifest: mapId is ${mapId} but its contents hash to ${recomputed}`);
   }
-  // `cells` joined the region entry in spec 205 and is not part of `mapId`, so a
+  // `cells` joined the region entry in spec 208 and is not part of `mapId`, so a
   // manifest written before it passes the check above and then answers
   // `undefined` to every question about how much ground there is. Refused here
   // instead, naming the fix -- a silently wrong cell count is how a layer stops
@@ -447,7 +447,7 @@ export function parseManifest(text: string): MapManifest {
       if (typeof region.cells !== 'number') {
         throw new Error(
           `invalid manifest: region ${String(region.rx)},${String(region.rz)} has no cell count. ` +
-            'It was written before spec 205; re-bake with `npx tsx scripts/bake-map.ts`.',
+            'It was written before spec 208; re-bake with `npx tsx scripts/bake-map.ts`.',
         );
       }
     }
@@ -462,7 +462,7 @@ export interface RegionCoord {
 }
 
 /**
- * How far past a rectangle a bake reads, in chunks (spec 205).
+ * How far past a rectangle a bake reads, in chunks (spec 208).
  *
  * `bakePart` reaches into the existing world in exactly one place:
  * `stitchedHeight` walks out along the four axes looking for a corner the store
@@ -494,7 +494,7 @@ export function regionsAround(
 
 /**
  * A document holding only these regions, with the manifest's own scalars
- * (spec 205).
+ * (spec 208).
  *
  * What a grow reads instead of the world. Everything `growMap` needs beyond the
  * chunks it stitches against is manifest-level -- the layer's origin, seed,
@@ -547,7 +547,7 @@ export function partialMap(
 }
 
 /**
- * A previous manifest with a part's regions written over it (spec 205).
+ * A previous manifest with a part's regions written over it (spec 208).
  *
  * One rule, and it is what makes the result exact rather than approximately
  * right: **the part's regions are authoritative for what is in them, and the

@@ -251,7 +251,7 @@ function sortAscending(out: Int32Array, count: number): number {
 }
 
 /**
- * Every circle that could reach a **rectangle**, appended to `out` (spec 201).
+ * Every circle that could reach a **rectangle**, appended to `out` (spec 204).
  *
  * `circlesNear` answers for a point and writes into a fixed `Int32Array`,
  * because its caller is `pushOutOfObstacles` -- one body, a handful of

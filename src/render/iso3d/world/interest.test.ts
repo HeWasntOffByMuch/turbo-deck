@@ -69,7 +69,7 @@ describe('interest covers the camera', () => {
    * ceiling to test against -- 32:9 is simply where monitors stop.
    */
   it('is not asked to cover the slider\'s own maximum, which is a dev setting', () => {
-    // Spec 198: the slider still reaches `MAX_VIEW_HALF_WIDTH`, and past the
+    // Spec 201: the slider still reaches `MAX_VIEW_HALF_WIDTH`, and past the
     // supported band bodies wink out inside the frame. That is the degradation
     // the Display page names rather than a bug, and it is written down here so
     // that the gap between the two constants is a stated fact rather than a

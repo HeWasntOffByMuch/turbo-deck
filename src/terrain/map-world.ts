@@ -105,7 +105,7 @@ interface StoredChunk {
   readonly props: Prop[];
   readonly markers: MapMarker[];
   /**
-   * Baked walkability, for the editor's overlay and for nothing else (spec 200).
+   * Baked walkability, for the editor's overlay and for nothing else (spec 203).
    *
    * In memory only. It left the document and the wire because its one reader is
    * a dev visualisation that is off by default, and because it is the wrong
@@ -292,7 +292,7 @@ export class MapChunkStore {
       solid: decodeRuns(chunk.solid, cells),
       materials: decodeRuns(chunk.materials, cells),
       tones: decodeRuns(chunk.tones, cells),
-      // Baked walkability is runtime state now, not stored state (spec 200): a
+      // Baked walkability is runtime state now, not stored state (spec 203): a
       // loaded chunk starts with none, and the editor bakes its overlay the
       // first time the overlay is actually switched on.
       nav: null,
@@ -311,7 +311,7 @@ export class MapChunkStore {
       // convention props use. Holding the two differently is how a world
       // coordinate ends up written into a local field and lands a chunk away.
       markers: chunk.markers.map((m) => ({ ...m, x: originX + m.x, z: originZ + m.z })),
-      // Baked walkability is runtime state now, not stored state (spec 200): a
+      // Baked walkability is runtime state now, not stored state (spec 203): a
       // loaded chunk starts with none and the editor bakes its overlay when the
       // overlay is asked for.
     };
@@ -1531,7 +1531,7 @@ export function meshLayerFor(store: MapChunkStore, layerId: string): MeshLayer |
  */
 export function loadMap(doc: MapDocument): LoadedMap {
   const store = new MapChunkStore(doc);
-  // Built on first read rather than at load (spec 203).
+  // Built on first read rather than at load (spec 206).
   //
   // `chunks` is *mesh* data -- a jittered world position and a normal per corner
   // -- and building it is the whole of a server boot: 32.6s of the 34s it takes

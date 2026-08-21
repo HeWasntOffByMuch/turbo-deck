@@ -75,7 +75,7 @@ export function resolveMapWrite(name: string, root = repoRoot): MapWriteTarget |
  *
  * The name on the wire is still `arena.json` -- it is what a download is called
  * and what `resolveMapWrite` validates -- but a map is a manifest and a grid of
- * regions now (spec 200), so it is written to `maps/arena/`. Deriving the
+ * regions now (spec 203), so it is written to `maps/arena/`. Deriving the
  * directory from the validated path rather than from the raw name means the
  * traversal guards above still cover it.
  */
@@ -173,7 +173,7 @@ export function mapWritePlugin(root = repoRoot): Plugin {
           .then((text) => {
             const target = resolveMapWrite(name, root);
             // Stamped *before* the write, so the watcher cannot beat us to it.
-            // A directory rather than a file since spec 200: one save touches a
+            // A directory rather than a file since spec 203: one save touches a
             // manifest and however many regions changed, and every one of them
             // would otherwise reload the tab that made it.
             if (!('refusal' in target)) justWroteUnder = { dir: mapDirFor(target), at: Date.now() };

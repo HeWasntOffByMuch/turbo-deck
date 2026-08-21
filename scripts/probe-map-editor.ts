@@ -56,7 +56,7 @@ const SHIPPED_MAP_DIR = join(root, 'maps', 'arena');
 /**
  * The whole shipped world as one string, for comparing before against after.
  *
- * The map is a manifest and a grid of regions since spec 200, so "did the file
+ * The map is a manifest and a grid of regions since spec 203, so "did the file
  * change" became "did any of 225 files change". The manifest carries a hash of
  * ordered region hashes, which is exactly that question already answered -- so
  * the identity is what this compares, and the joined document is what it counts
@@ -217,7 +217,7 @@ async function save(page: Page): Promise<{ name: string; doc: MapFile }> {
  */
 async function devHalf(browser: Browser, problems: string[]): Promise<void> {
   // A whole directory now, so the backup is a copy of the tree rather than of
-  // one file (spec 200).
+  // one file (spec 203).
   const backup = `${SHIPPED_MAP_DIR}.probe-backup`;
   rmSync(backup, { recursive: true, force: true });
   cpSync(SHIPPED_MAP_DIR, backup, { recursive: true });

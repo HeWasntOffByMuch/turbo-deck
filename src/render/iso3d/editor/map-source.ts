@@ -19,7 +19,7 @@ import { mapFilename } from './persistence.js';
  *
  * The map it opens is **the map the game plays** -- `maps/arena.json`, the file
  * `src/server/world/map-file.ts` boots from and the Play tab fetches through the
- * same `map-asset.ts` (spec 199; it was a shared `?raw` module before that). It did not used to be. The editor baked a world from
+ * same `map-asset.ts` (spec 202; it was a shared `?raw` module before that). It did not used to be. The editor baked a world from
  * `viewSeed()`, which falls back to the clock, so every session opened a
  * different generated world while the game played the shipped arena, and nothing
  * placed in the editor -- a marker least of all -- had anywhere to arrive. That
@@ -66,7 +66,7 @@ export function editorMapChoice(search: string): EditorMapChoice {
 }
 
 /**
- * Where the shipped map comes from (spec 199, a document since 200).
+ * Where the shipped map comes from (spec 202, a document since 200).
  *
  * Handed in rather than reached for, the way `StorageLike` is: in a browser it
  * is `map-asset.ts`'s fetch of a manifest and its regions, and in Node it is
@@ -117,7 +117,7 @@ export async function shippedEditorMap(read: ReadMapDocument): Promise<{ documen
 /**
  * What the editor opens, and what to call it.
  *
- * Asynchronous since spec 199, because the shipped map is fetched rather than
+ * Asynchronous since spec 202, because the shipped map is fetched rather than
  * bundled. The generated branch still needs nothing but a seed and resolves
  * immediately -- it is `async` for one shape rather than two, since a caller
  * that had to know which branch it was on would be a caller that has to know

@@ -55,7 +55,7 @@ import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } fro
  * and 8 per 50ms pump is twenty-one pumps of asking before the last one is even
  * requested (spec 165). 24 brought the ask down to about seven pumps.
  *
- * Since spec 198 narrowed the request radius to 2 the whole window is 25 chunks,
+ * Since spec 201 narrowed the request radius to 2 the whole window is 25 chunks,
  * so one pass now very nearly covers a cold start outright -- which is what this
  * number was always trying to buy. It stays at 24 rather than shrinking with the
  * window: the pass is a *ceiling* on one pump, and there is nothing to gain from
@@ -1904,7 +1904,7 @@ export class GameClient {
     if (!cache || !at) return;
     // Forget before asking, and on the same cadence, because both questions are
     // "where is the player" and asking them at different moments is two answers
-    // (spec 204). Before rather than after, so a chunk that has just gone out of
+    // (spec 207). Before rather than after, so a chunk that has just gone out of
     // keep range cannot be re-requested on the very pass that drops it -- the
     // radii are two apart so it could not anyway, and doing it in the order that
     // makes it impossible costs nothing.

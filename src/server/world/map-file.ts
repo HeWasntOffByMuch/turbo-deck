@@ -48,7 +48,7 @@ export interface LoadedMapFile {
  * precisely the failure spec 072 exists to remove, and it would be invisible
  * until a player walked through a wall someone had drawn.
  *
- * Every region is read here, which is exactly what spec 202 stops doing. The
+ * Every region is read here, which is exactly what spec 205 stops doing. The
  * split is what makes that *possible*; this is still the whole world at boot.
  */
 export function loadMapFile(path: string = DEFAULT_MAP_PATH): LoadedMapFile {
@@ -79,7 +79,7 @@ export function loadMapFile(path: string = DEFAULT_MAP_PATH): LoadedMapFile {
 }
 
 /**
- * Just the manifest, and a way to read a region (spec 205).
+ * Just the manifest, and a way to read a region (spec 208).
  *
  * For an operation that is *local* -- a grow reaches one chunk past its own
  * rectangle and no further -- so opening the world to change a corner of it is

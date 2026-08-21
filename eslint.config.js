@@ -424,7 +424,7 @@ export default tseslint.config(
     },
   },
   {
-    // The client session (spec 198). Transport-agnostic and drawn by the
+    // The client session (spec 201). Transport-agnostic and drawn by the
     // renderer, never the reverse -- so it may not reach back into it.
     //
     // The rule it exists to hold is narrow and load-bearing:
@@ -432,7 +432,7 @@ export default tseslint.config(
     // checked server-side against the server's own position for that player
     // precisely so a client cannot widen its own read window by lying (spec
     // 072). A request window derived from something the camera knows -- the
-    // zoom above all, which since spec 198 is a player setting that can be
+    // zoom above all, which since spec 201 is a player setting that can be
     // pushed past the supported band -- would be that same hole reopened from
     // the inside. There is nothing in `src/render/` this half needs, so the
     // cheapest way to keep it that way is to make it impossible.
@@ -453,7 +453,7 @@ export default tseslint.config(
             {
               group: ['**/render', '**/render/**'],
               message:
-                'The client session never imports the renderer. A request window derived from what the camera knows is the read-window guard reopened from the inside (spec 198).',
+                'The client session never imports the renderer. A request window derived from what the camera knows is the read-window guard reopened from the inside (spec 201).',
             },
           ],
         },

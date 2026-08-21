@@ -64,7 +64,7 @@ export class MapWorkerCore {
   }
 
   /**
-   * Let go of ground the client has walked away from (spec 204).
+   * Let go of ground the client has walked away from (spec 207).
    *
    * Returns the meshes for whatever is left drawing a seam against it: a
    * chunk's apron is built from its neighbours, so dropping one leaves the four

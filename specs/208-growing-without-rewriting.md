@@ -1,8 +1,8 @@
-# 205 — Growing without rewriting
+# 208 — Growing without rewriting
 
 ## Problem
 
-Spec 200 made a grow **write** only the regions it touched — 223 of 224
+Spec 203 made a grow **write** only the regions it touched — 223 of 224
 untouched, 173 KB of a 9.88 MB map. It still **reads and re-splits the whole
 world** to get there.
 
@@ -148,7 +148,7 @@ ways produces byte-for-byte identical directories.
   `POST /api/map` still parses and splits all of it. Making that incremental
   needs the editor to say what it changed across the browser boundary, and it
   already knows (spec 085 tracks created and deleted chunks for undo). A separate
-  change, and behind spec 203's larger finding that the editor's *open* is 30.7 s
+  change, and behind spec 206's larger finding that the editor's *open* is 30.7 s
   at 4× anyway.
 - **`bake-map.ts`**, which regenerates the whole world by definition.
 - **`species` shrinking.** The merge unions the part's species with the

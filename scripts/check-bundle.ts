@@ -1,5 +1,5 @@
 /**
- * The bundle gate (spec 199), as a command.
+ * The bundle gate (spec 202), as a command.
  *
  *   npm run build && npm run check:bundle
  *

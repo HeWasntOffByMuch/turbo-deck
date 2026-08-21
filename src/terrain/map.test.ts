@@ -147,7 +147,7 @@ describe('exportMap', () => {
   });
 
   it('writes no walkability field at all', () => {
-    // Spec 200 took it out of the format: 10.5% of every map file, on the wire
+    // Spec 203 took it out of the format: 10.5% of every map file, on the wire
     // to every client, for a dev overlay that bakes its own.
     expect(JSON.stringify(soleLayer(bake(testWorld())))).not.toContain('"nav"');
   });

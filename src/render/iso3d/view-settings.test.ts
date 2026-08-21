@@ -118,7 +118,7 @@ describe('clampViewHalfWidth', () => {
   });
 });
 
-describe('spanForMaxZoom (spec 198, corrected)', () => {
+describe('spanForMaxZoom (spec 201, corrected)', () => {
   const CEILING = 420;
 
   it('frames a ceiling the player just chose, in both directions', () => {
@@ -329,7 +329,7 @@ describe('the defaults the view opens at (spec 044)', () => {
   });
 });
 
-describe('the widest zoom a player chose (spec 198)', () => {
+describe('the widest zoom a player chose (spec 201)', () => {
   it('holds the span under the ceiling rather than the band maximum', () => {
     expect(clampViewHalfWidth(1400, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(SUPPORTED_MAX_VIEW_HALF_WIDTH);
     expect(clampViewHalfWidth(300, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(300);

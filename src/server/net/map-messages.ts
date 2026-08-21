@@ -257,7 +257,7 @@ export function encodeMapChunk(msg: MapChunkMessage): Uint8Array {
   writeRuns(w, c.materials);
   writeRuns(w, c.tones);
 
-  // `nav` left this wire in spec 200. It was a run list per chunk carrying baked
+  // `nav` left this wire in spec 203. It was a run list per chunk carrying baked
   // walkability to every client, and the only thing that ever read it was the
   // *editor's* overlay -- which loads the map off disk and never streams.
 

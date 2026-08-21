@@ -1,5 +1,5 @@
 /**
- * A boot that does not mesh the world (spec 203).
+ * A boot that does not mesh the world (spec 206).
  *
  * `LoadedMap.chunks` is mesh data -- a jittered world position and a normal per
  * corner -- and building it was the whole of a server boot: 32.4s of the 34s to

@@ -308,7 +308,7 @@ export function segmentClear(a: Vec2, b: Vec2, radius: number, world: WorldColli
     }
   }
 
-  // Narrowed through the index rather than walked (spec 202). Spec 192 built
+  // Narrowed through the index rather than walked (spec 205). Spec 192 built
   // `ColliderIndex` because "`pushOutOfObstacles` and `circleBlocked` used to
   // test every circle in the world", indexed those two, and left this one on the
   // walk -- and this one is what `pathClear` is and what aggro's line of sight
