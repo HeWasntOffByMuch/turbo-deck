@@ -183,9 +183,35 @@ export class PredictionBuffer {
 
   constructor(
     start: Point,
-    private readonly step: PredictStep,
+    private step: PredictStep,
   ) {
     this.local = start;
+  }
+
+  /**
+   * Swaps the local step, keeping everything else.
+   *
+   * The step closes over how fast this body walks, and that is not a constant
+   * of a session: a level, an attribute and every piece of gear carrying a
+   * `moveSpeed` modifier move it. A step built once and kept walks at whatever
+   * the player happened to be wearing when prediction started, which the server
+   * then corrects on every tick for as long as they keep moving -- which is
+   * exactly what spec 067's drift nudges are not for.
+   *
+   * Only the step, never the buffer: the unacknowledged inputs are the state a
+   * correction replays from, so building a second `PredictionBuffer` around the
+   * new speed would throw away the very thing that makes a correction smooth.
+   *
+   * The inputs still in flight are replayed at the *new* speed rather than at
+   * the one that applied when each was made -- which is the opposite of what
+   * {@link PredictedInput.moveScale} does, and deliberately so. A slow is a
+   * timed state the client is told about a broadcast interval late, so its
+   * buffered inputs were genuinely walked at the old scale; a stat change is
+   * settled on the tick the server derives it and sends the stats, so the
+   * inputs it has not consumed yet are the ones it will walk at the new speed.
+   */
+  setStep(step: PredictStep): void {
+    this.step = step;
   }
 
   /** The predicted position: what the server is told, and what replays from. */
