@@ -9,6 +9,21 @@
  *
  * Overflow is handled by scrolling the strip rather than by shrinking the tabs
  * until the labels are unreadable. A tab whose name you cannot read is not a tab.
+ *
+ * The second rule is spec 198's, and it is about the strip rather than about a
+ * tab: **a tab strip is never inside the thing it scrolls.** A tab's content is
+ * wrapped in a scroller of its own when it is built, so the strip is that
+ * scroller's *sibling* -- which makes "the tabs cannot scroll away" a fact about
+ * the widget tree rather than a rule each screen has to remember. It cost
+ * nothing to get wrong before this: the mount wraps a whole screen in one
+ * `ScrollView`, so reading the bottom of the character sheet's skill tree
+ * scrolled the tab headers clean off the top of the window.
+ *
+ * A panel nobody bounded is unaffected, and that is what makes this safe to put
+ * here rather than in three screens: a `ScrollView` offered an unbounded height
+ * measures to its content and has nothing to scroll, so a panel inside somebody
+ * else's scroller behaves exactly as it did. A panel becomes a scroller only
+ * when it is *given* a height, which is what a window does.
  */
 
 import type { DrawList } from '../core/draw-list.js';
@@ -22,10 +37,11 @@ import {
   type Rect,
   type Size,
 } from '../core/geom.js';
-import { alignTextX, centerTextY, drawNineSlice, drawTextClipped } from '../core/paint.js';
+import { alignTextX, centerTextY, drawFocusRing, drawNineSlice, drawTextClipped } from '../core/paint.js';
 import type { LayoutContext, PaintContext, Widget } from '../core/widget.js';
 import { fontById, measureText } from '../text/font.js';
 import { StyledWidget } from './base.js';
+import { ScrollView } from './scroll-view.js';
 
 /** One tab's header. Its own widget so it can be hit, hovered and styled. */
 export class Tab extends StyledWidget {
@@ -187,11 +203,35 @@ export class TabStrip extends StyledWidget {
   }
 }
 
+/**
+ * One tab's scroller, with its plate and its frame taken off.
+ *
+ * A subclass rather than a flag, the way `ChatLogView` is one: `TabPanel` draws
+ * the panel box around its body already, and a second frame here would be a
+ * rectangle inside a rectangle. The focus ring stays, because this is focusable
+ * -- Home, End and the two page keys reach a scroller through the keyboard --
+ * and a focus stop that shows nothing is a keystroke that appears to do nothing.
+ */
+class TabBody extends ScrollView {
+  protected override paintSelf(out: DrawList, context: PaintContext): void {
+    if (context.focused === (this as unknown as Widget) && this.enabled) {
+      drawFocusRing(out, context.atlas, this.rect, context.theme.color('focus'));
+    }
+  }
+}
+
 interface TabEntry {
   readonly id: string;
   readonly tab: Tab;
   readonly build: () => Widget;
   content: Widget | null;
+  /**
+   * What `content` sits in. Built with it and kept with it, so a tab remembers
+   * where it was scrolled to for the same reason it remembers what was typed
+   * into it (spec 124). One scroller shared by the body would clamp a long
+   * tab's offset against a short tab's content the moment you switched.
+   */
+  scroller: ScrollView | null;
 }
 
 /** The strip plus the body, and the rule that content is built once. */
@@ -235,7 +275,7 @@ export class TabPanel extends Column {
     tab.onSelect = () => {
       this.select(id);
     };
-    this.entries.push({ id, tab, build, content: null });
+    this.entries.push({ id, tab, build, content: null, scroller: null });
     this.strip.add(tab);
     if (this.active === '') this.select(id);
     return this;
@@ -249,17 +289,75 @@ export class TabPanel extends Column {
     for (const other of this.entries) {
       other.tab.active = other.id === id;
       // Hidden, never removed: a tab you come back to still has what you left.
-      if (other.content) other.content.visible = other.id === id;
+      // The *scroller* carries the visibility, since it is what the body holds;
+      // the content inside one stays visible, so a row's own flag goes on
+      // meaning what a screen set it to.
+      if (other.scroller) other.scroller.visible = other.id === id;
     }
     if (!entry.content) {
       entry.content = entry.build();
-      entry.content.layoutGrow = 1;
-      this.body.add(entry.content);
+      entry.content.visible = true;
+      const scroller = new TabBody(entry.content, `${this.name}:body:${id}`);
+      scroller.layoutGrow = 1;
+      entry.scroller = scroller;
+      this.body.add(scroller);
     }
-    entry.content.visible = true;
+    if (entry.scroller) entry.scroller.visible = true;
     this.strip.revealTab(entry.tab);
-    this.invalidateMeasure();
+    // The *body* is invalidated, not just this panel, and the difference is a
+    // tab that draws nothing. `visible` is a bare field and `invalidateMeasure`
+    // walks *up*, so marking the panel leaves the body's own flags clean -- and
+    // `arrange` early-returns on a node that is clean and whose rect has not
+    // moved, which is exactly the body once the panel has a `layoutGrow` and is
+    // the same height whichever tab is showing. The tab just selected is then
+    // never handed a rectangle at all: nothing drawn, and every row in it
+    // hit-testing at the origin. It used to work by accident -- the panel took
+    // its natural height, so switching to a tab of a different length moved
+    // every rect below it. Marking the body covers the panel too -- the walk
+    // goes up from there.
+    this.body.invalidateMeasure();
     this.onSelect?.(id);
+  }
+
+  /**
+   * The active tab's scroller, or null before anything has been built.
+   *
+   * Exposed so a screen with a pinned band of its own can hand a wheel down into
+   * it, and so a test can drive the scroll that the strip has to survive.
+   */
+  get bodyScroller(): ScrollView | null {
+    return this.entries.find((entry) => entry.id === this.active)?.scroller ?? null;
+  }
+
+  /**
+   * The box a tab's rows are actually visible in.
+   *
+   * What a hit test against those rows has to be inside: a row scrolled out of
+   * the body keeps the rectangle it was last arranged into, which is above the
+   * viewport and under whatever the screen pinned above the strip.
+   */
+  bodyViewport(): Rect {
+    return this.bodyScroller?.rect ?? this.body.rect;
+  }
+
+  /** Spend wheel notches on the active tab's body. Whether anything moved. */
+  wheelBody(delta: number): boolean {
+    return this.bodyScroller?.wheelBy(delta) ?? false;
+  }
+
+  /**
+   * A wheel that reached the panel scrolls the body.
+   *
+   * It only gets here when nothing under the cursor spent it: a notch over the
+   * rows is taken by the tab's own scroller, and a notch over the strip is taken
+   * by the strip when the strip has somewhere to go. What is left is a notch
+   * over a strip with no overflow -- which is the common case, and where doing
+   * nothing reads as a dead wheel over the one part of the window that never
+   * moves.
+   */
+  onEvent(context: EventContext): void {
+    if (context.event.kind !== 'wheel') return;
+    if (this.wheelBody(context.event.delta)) context.stopPropagation();
   }
 
   /**

@@ -27,6 +27,44 @@ function key(code: string, mods: Modifiers = NONE): UiEvent {
   return { kind: 'key', phase: 'down', code, mods: { ...NO_MODIFIERS, ...mods }, time: 0 };
 }
 
+/**
+ * A category taller than the window scrolls rather than squashing (spec 198).
+ *
+ * This window is registered unscrolled and the screen had no scroller in it, so
+ * `Linear.shareSpace`'s overflow branch was what a long category met: every row
+ * shrunk toward nothing, no bar, and the rows at the bottom unreachable rather
+ * than merely off screen. The rows are all one height by construction, so
+ * "nobody was squashed" is exactly "they are all the same height as the first".
+ */
+describe('a category too long for its window', () => {
+  it('keeps every row its own height and scrolls instead', () => {
+    const map = new InputMap();
+    const built = new KeybindingsScreen({ theme: THEME, map, contexts: new ContextStack() });
+    built.buildAllTabs();
+    const root = new UiRoot(built, { theme: THEME, atlas: ATLAS, viewport: { width: 260, height: 96 } });
+    root.update(0);
+
+    // The longest category there is, since a short one would fit and prove
+    // nothing.
+    const longest = [...built.tabs.tabIds].sort(
+      (a, b) =>
+        map.definitions.filter((action) => action.category === b).length -
+        map.definitions.filter((action) => action.category === a).length,
+    )[0];
+    expect(longest).toBeDefined();
+    if (!longest) return;
+    built.tabs.select(longest);
+    root.update(16);
+
+    const rows = built.builtRows().filter((row) => row.action.category === longest);
+    expect(rows.length).toBeGreaterThan(1);
+    const first = rows[0]?.rect.height ?? 0;
+    expect(first).toBeGreaterThan(0);
+    for (const row of rows) expect(row.rect.height).toBe(first);
+    expect(built.tabs.bodyScroller?.scrollable).toBe(true);
+  });
+});
+
 describe('the keybinding screen', () => {
   it('has a tab per category and a row per action', () => {
     const { screen: built, map } = screen();

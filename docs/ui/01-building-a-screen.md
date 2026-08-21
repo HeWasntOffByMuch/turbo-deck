@@ -612,3 +612,42 @@ settled would be worse than one that waits a round trip.
 rather than reimplementing "can you afford it and is there room". Same rule the
 character sheet follows for `validateSkillSpend`, and it means the reason a
 button gives is the reason a refusal would have given.
+
+---
+
+## ADR notes for spec 198
+
+**ADR-125 — A `TabPanel` scrolls its own body, so the strip is never inside the
+thing it scrolls.**
+Whether a screen scrolls used to be the mount's decision, and neither answer it
+can give keeps the tab headers reachable: wrapped in one `ScrollView` (the
+character sheet) the strip scrolls off the top with the content, and unwrapped
+(the options window) a category taller than the window is squashed by
+`Linear.shareSpace` with no bar at all. Each tab's content is wrapped in a
+scroller when it is built, which makes the strip that scroller's *sibling* — a
+fact about the widget tree rather than a rule each screen has to remember. It
+costs nothing where nobody wanted it: a `ScrollView` offered an unbounded height
+measures to its content, so a panel inside somebody else's scroller still scrolls
+nothing.
+
+**ADR-126 — One scroller per tab, not one shared by the body.**
+Spec 124's rule is that a tab keeps what you left in it, and the comment it was
+written under names a scroll position as one of the things nobody thinks of as
+state. A shared scroller clamps a long tab's offset against a short tab's content
+the moment you switch, and the position is gone.
+
+**ADR-127 — A screen that pins a band above its tabs has to hand the wheel
+down.**
+The wheel bubbles, so a notch over the rows or over the strip is spent without
+anybody's help. A notch over the pinned heading has nothing above it that scrolls
+— the panel is not on that path — so `CharacterScreen` forwards it into
+`TabPanel.wheelBody`. Without it the window scrolls everywhere except its own top
+inch, which reads as a broken wheel rather than as a pinned header.
+
+**ADR-128 — Toggling `visible` invalidates the *body*, not just the panel.**
+`visible` is a bare field and `invalidateMeasure` walks up, so a panel whose
+height no longer depends on which tab is showing has a body whose rect never
+changes — and `arrange` early-returns on that. The tab just selected is never
+handed a rectangle: nothing drawn, every row in it hit-testing at the origin. It
+used to work by accident, because the panel took its natural height and switching
+tabs moved every rect below it.
