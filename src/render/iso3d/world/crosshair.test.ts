@@ -16,7 +16,7 @@ import {
 } from './crosshair.js';
 
 /** The art as a grid of booleans, which is what every shape claim below reads. */
-function lit(art: CrosshairArt = 'aiming'): boolean[][] {
+function lit(art: CrosshairArt = 'full'): boolean[][] {
   const grid: boolean[][] = Array.from({ length: CROSSHAIR_SIDE }, () =>
     Array.from({ length: CROSSHAIR_SIDE }, () => false),
   );
@@ -34,7 +34,7 @@ function anchorOf(cursor: string): string {
 }
 
 describe('the crosshair art', () => {
-  it.each<CrosshairArt>(['aiming', 'resting'])('%s is inside its own box', (art) => {
+  it.each<CrosshairArt>(['full', 'small'])('%s is inside its own box', (art) => {
     for (const rect of crosshairRects(art)) {
       expect(rect.w).toBe(1);
       expect(rect.h).toBe(1);
@@ -49,7 +49,7 @@ describe('the crosshair art', () => {
     expect(CROSSHAIR_SIDE % 2).toBe(1);
   });
 
-  it.each<CrosshairArt>(['aiming', 'resting'])('%s is symmetric about both axes', (art) => {
+  it.each<CrosshairArt>(['full', 'small'])('%s is symmetric about both axes', (art) => {
     const grid = lit(art);
     const last = CROSSHAIR_SIDE - 1;
     for (let y = 0; y < CROSSHAIR_SIDE; y++) {
@@ -88,10 +88,10 @@ describe('the crosshair art', () => {
   });
 });
 
-describe('the resting mark', () => {
+describe('the small mark', () => {
   it('is the crosshair with its arms pulled in, not a second design', () => {
-    const aiming = lit('aiming');
-    const resting = lit('resting');
+    const aiming = lit('full');
+    const resting = lit('small');
     // Every pixel it lights is one the crosshair lights too: arming a skill
     // extends the mark, it never redraws it somewhere else.
     for (let y = 0; y < CROSSHAIR_SIDE; y++) {
@@ -102,7 +102,7 @@ describe('the resting mark', () => {
   });
 
   it('keeps the centre dot and the four tips, and nothing between', () => {
-    const grid = lit('resting');
+    const grid = lit('small');
     const mid = (CROSSHAIR_SIDE - 1) / 2;
     const last = CROSSHAIR_SIDE - 1;
     expect(grid[mid]?.[mid]).toBe(true);
@@ -110,13 +110,13 @@ describe('the resting mark', () => {
     expect(grid[last]?.[mid]).toBe(true);
     expect(grid[mid]?.[0]).toBe(true);
     expect(grid[mid]?.[last]).toBe(true);
-    expect(crosshairRects('resting')).toHaveLength(5);
+    expect(crosshairRects('small')).toHaveLength(5);
   });
 
   it('is quieter than the mark it becomes', () => {
-    // It is on screen the whole time a player is walking around, so it has to
-    // stay out of the way of everything it is sitting on top of.
-    expect(crosshairRects('resting').length).toBeLessThan(crosshairRects('aiming').length);
+    // It sits on top of the body it is pointing out, so it has to stay out of
+    // the way of the thing a player is actually looking at.
+    expect(crosshairRects('small').length).toBeLessThan(crosshairRects('full').length);
   });
 });
 
@@ -180,43 +180,48 @@ describe('the drawn cursor', () => {
 });
 
 describe('which cursor the world wears', () => {
-  it('is the crosshair while an aim is pending', () => {
-    expect(worldCursor({ aiming: true, overDrop: false })).toBe(crosshairCursor({ art: 'aiming' }));
+  const NOTHING = { aiming: false, overEnemy: false, overDrop: false };
+
+  it('is the full crosshair while an aim is pending', () => {
+    expect(worldCursor({ ...NOTHING, aiming: true })).toBe(crosshairCursor({ art: 'full' }));
   });
 
-  it('is the crosshair even over a drop', () => {
-    // A left click places the aim, so a pointing hand would promise a pickup the
-    // click is not going to perform.
-    expect(worldCursor({ aiming: true, overDrop: true })).toBe(crosshairCursor({ art: 'aiming' }));
+  it('is the full crosshair over anything at all, once a skill is armed', () => {
+    // A left click places the aim, so neither a pointing hand nor the small
+    // mark may promise something the click is not going to perform.
+    const armed = crosshairCursor({ art: 'full' });
+    expect(worldCursor({ aiming: true, overEnemy: true, overDrop: false })).toBe(armed);
+    expect(worldCursor({ aiming: true, overEnemy: false, overDrop: true })).toBe(armed);
   });
 
-  it('is the pointer over a drop with nothing aimed', () => {
-    expect(worldCursor({ aiming: false, overDrop: true })).toBe('pointer');
+  it('is the small mark over a body a click would act on', () => {
+    expect(worldCursor({ ...NOTHING, overEnemy: true })).toBe(crosshairCursor({ art: 'small' }));
   });
 
-  it('is the resting mark otherwise, never the arrow', () => {
-    // The arrow is what the jump came from: its hotspot is its tip and a
-    // crosshair's is its centre, so a hand-over moves the mark by half itself
-    // while leaving the click point exactly where it was.
-    const idle = worldCursor({ aiming: false, overDrop: false });
-    expect(idle).toBe(crosshairCursor({ art: 'resting' }));
-    expect(idle).not.toBe('');
+  it('is the pointer over a drop', () => {
+    expect(worldCursor({ ...NOTHING, overDrop: true })).toBe('pointer');
   });
 
-  it('arms the aim without moving anything', () => {
-    // The one invariant this whole pair exists for: two images, one box, one
-    // hotspot -- so swapping the one for the other cannot shift the mark by a
-    // pixel, whatever either of them is drawn as.
-    const resting = worldCursor({ aiming: false, overDrop: false });
-    const aiming = worldCursor({ aiming: true, overDrop: false });
-    expect(anchorOf(resting)).toBe(anchorOf(aiming));
-    expect(anchorOf(aiming)).toBe(`${CROSSHAIR_HOTSPOT} ${CROSSHAIR_HOTSPOT}, crosshair`);
+  it('is the page s own arrow with nothing under the pointer', () => {
+    // A mark that is always on says nothing by being on: these two are worth
+    // drawing because their absence is the ordinary case.
+    expect(worldCursor(NOTHING)).toBe('');
+  });
+
+  it('arms the aim over a body without moving anything', () => {
+    // The one invariant the pair exists for: two images, one box, one hotspot,
+    // so a skill armed over a body you were already pointing at extends the
+    // arms and shifts not a pixel.
+    const hovering = worldCursor({ ...NOTHING, overEnemy: true });
+    const armed = worldCursor({ aiming: true, overEnemy: true, overDrop: false });
+    expect(anchorOf(hovering)).toBe(anchorOf(armed));
+    expect(anchorOf(armed)).toBe(`${CROSSHAIR_HOTSPOT} ${CROSSHAIR_HOTSPOT}, crosshair`);
     // ...and they are not the same picture, or there would be no aim to see.
-    expect(resting).not.toBe(aiming);
+    expect(hovering).not.toBe(armed);
   });
 
   it('declares both marks at the same size', () => {
-    for (const svg of [crosshairSvg({ art: 'aiming' }), crosshairSvg({ art: 'resting' })]) {
+    for (const svg of [crosshairSvg({ art: 'full' }), crosshairSvg({ art: 'small' })]) {
       expect(svg).toContain(`width="${CROSSHAIR_BOX}"`);
       expect(svg).toContain(`height="${CROSSHAIR_BOX}"`);
     }

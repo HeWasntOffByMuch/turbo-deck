@@ -1540,13 +1540,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     return entity.kind === EntityKind.Drop;
   }
 
-  /** Whether the cursor is over a drop this frame. Nothing else reads it. */
-  function hoveringDrop(view: ReturnType<typeof client.view>, hovered: number | null): boolean {
-    if (hovered === null) return false;
-    const entity = view.entities.find((candidate) => candidate.id === hovered);
-    return entity !== undefined && collectable(entity);
-  }
-
   /**
    * The only place in the game that turns a `KeyboardEvent` into a decision
    * (spec 125).
@@ -2585,17 +2578,27 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     );
     // The cursor says what the next click would do (specs 158, 197).
     //
-    // Two things change it. A drop, because it is the one thing in the world the
-    // cursor *does* something to that has no other affordance: a monster lights
-    // up when hovered, a window has a border, and an item on the ground has
-    // neither. And a pending aim, because that is the one state in which the
-    // pointer is being used to choose a *point* rather than to point at a thing
-    // -- so it becomes the game's own crosshair, with its hotspot on the pixel
-    // the click will land under. Which of the two wins is `worldCursor`'s to
-    // answer, in a module a test can reach; this line assigns what it says.
+    // Three things change it, and the arrow is what stands the rest of the time.
+    // A pending aim gets the full crosshair, because that is the one state in
+    // which the pointer is choosing a *point* rather than pointing at a thing.
+    // A body a click would act on gets the same mark with its arms pulled in. A
+    // drop keeps the pointing hand it has had since spec 158, being the one
+    // thing in the world the cursor does something to that has no affordance of
+    // its own: a monster lights up when hovered, a window has a border, and an
+    // item on the ground has neither.
+    //
+    // Which of the three wins is `worldCursor`'s to answer, in a module a test
+    // can reach; this line assigns what it says. The hovered body is resolved
+    // once and asked both questions, rather than found twice -- a drop and an
+    // attackable body are two readings of the same id.
+    const hoveredBody =
+      scene.hoveredEntityId === null
+        ? undefined
+        : view.entities.find((entity) => entity.id === scene.hoveredEntityId);
     canvas.style.cursor = worldCursor({
       aiming: pendingAim !== null,
-      overDrop: hoveringDrop(client.view(), scene.hoveredEntityId),
+      overEnemy: hoveredBody !== undefined && attackable(hoveredBody, view.selfEntityId),
+      overDrop: hoveredBody !== undefined && collectable(hoveredBody),
     });
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.

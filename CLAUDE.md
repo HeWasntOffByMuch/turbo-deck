@@ -2375,45 +2375,52 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the ground fell across it, which for a mark this size is a couple
                  of units on anything walkable),
                  crosshair.ts (what the pointer *is* over the world, spec 197:
-                 a 9x9 table of `#` in `pixel-font.ts`'s register, rendered
-                 as crisp rects and handed to CSS as a data URI with its hotspot
+                 two marks that are the same mark at two lengths, authored as a
+                 9x9 table of `#` in `pixel-font.ts`'s register, rendered as
+                 crisp rects and handed to CSS as data URIs with the hotspot
                  named -- which is why the art is odd-sided, since the hotspot is
-                 the centre pixel and an even box has none. Two of the browser's
-                 limits shape it and both are stated rather than discovered: an
-                 image over 32px square is refused outright by some engines,
-                 which is why the drawn box is 22, and an SVG cursor is not
-                 honoured at all by others, which is why every value ends in a
-                 `crosshair` keyword -- a refused image is an arrow, and an arrow
-                 is exactly what this replaces. The four pixels around the centre
-                 are dark, because a crosshair whose arms meet is a plus sign and
-                 the gap is what lets the mark sit on what it points at.
-                 There are **two** marks and they are the same mark, which is
-                 the fix for what this shipped wrong first. An image is placed by
-                 its hotspot; an arrow's is its *tip* and a crosshair's is its
-                 *centre*, so drawing the crosshair only while aiming meant every
-                 press swapped one for the other -- which leaves the click point
-                 exactly where it was and moves everything the eye tracks, by
-                 about half the mark. No hotspot value fixes that, because centre
-                 is where a crosshair's has to be or it stops marking the point.
-                 What fixes it is never handing over from the arrow: the resting
-                 canvas wears the same crosshair with its arms retracted to four
-                 tips and a centre dot, in the same box with the same hotspot, so
-                 arming a skill extends the arms and moves nothing -- asserted in
-                 Node and again in the browser rather than promised. `worldCursor`
-                 is the one place the canvas's cursor is decided, and the aim
-                 beats the drop's pointer (spec 158): while a skill is aimed a
-                 left click *places* it, so a pointing hand would promise a pickup
-                 the click will not perform. That hand is the one hand-over left
-                 and is kept on purpose -- an affordance, on a hover the player
-                 chose to make rather than on a key press mid-fight. A *confirmed*
-                 aim retracts the arms again, since the question has been answered
-                 and the body is walking into range, and there is no second
-                 variant for out of range, which the dimmed shape and the range
-                 ring already say on the ground. `npx tsx scripts/probe-aim-cursor.ts` is the half no
-                 headless test can see, and its second check is the one that
-                 matters: a computed `cursor` reports what was *declared*
-                 whether or not the engine could decode the image, so the probe
-                 loads the same URI as an `Image` and requires it back at 22x22),
+                 the centre pixel and an even box has none. The **small** one --
+                 a centre dot and the four arm tips -- says a click would act on
+                 the body under the pointer; the **full** one says a skill is
+                 armed and the next click places it. Everywhere else the page's
+                 own arrow stands, because a mark that is always on says nothing
+                 by being on.
+                 The one thing the pair guarantees is that **going from one to
+                 the other moves nothing**: same box, same hotspot, and every
+                 pixel the small mark lights the full one lights too, so arming a
+                 skill over a body already under the pointer extends the arms and
+                 shifts not a pixel. That is not a nicety -- a cursor image is
+                 placed by its hotspot, and an arrow's is its *tip* where a
+                 crosshair's is its *centre*, so a hand-over between two marks
+                 that disagree moves everything the eye tracks while leaving the
+                 click point exactly where it was. The arrow's own hand-over
+                 still costs that, and is kept: it happens on a hover the player
+                 chose to make rather than on a key press mid-fight. Asserted in
+                 Node and again in the browser rather than promised.
+                 Two of the browser's limits shape the size and both are stated
+                 rather than discovered: an image over 32px square is refused
+                 outright by some engines, which is why the drawn box is 22, and
+                 an SVG cursor is not honoured at all by others, which is why
+                 every value ends in a `crosshair` keyword -- a refused image is
+                 an arrow. The four pixels around the full crosshair's centre are
+                 dark, because a crosshair whose arms meet is a plus sign and the
+                 gap is what lets the mark sit on what it points at.
+                 `worldCursor` is the one place the canvas's cursor is decided,
+                 and the order is the order of commitment: an armed skill beats a
+                 body and beats the drop's pointer (spec 158), since its click
+                 *places* the aim rather than doing anything to what is
+                 underneath. What counts as a body is `attackable`'s answer, the
+                 same predicate the right-click attack order reads, so the mark
+                 and what the button does cannot disagree.
+                 `npx tsx scripts/probe-aim-cursor.ts` is the half no headless
+                 test can see, and two things in it are worth knowing: a computed
+                 `cursor` reports what was *declared* whether or not the engine
+                 could decode the image, so the probe loads both URIs as an
+                 `Image` and requires them back at 22x22; and the body it points
+                 at is *found* rather than assumed, walking a ladder of offsets
+                 below a floating health bar, because a bar is anchored over a
+                 head and a fixed drop that missed would report a working cursor
+                 as a broken one),
                  action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
                  band, spec 164 -- everything the HUD grew along the edge of the
                  frame, each pure and each about one number). action-bar.ts is

@@ -1,39 +1,37 @@
 /**
- * The mouse cursor while a skill is being aimed (spec 197).
+ * The mark the world puts under the pointer (spec 197).
  *
- * A hotbar press starts an *aim* (spec 080): the shape of the blow is drawn on
- * the ground and the game waits for the click that answers it. What was left
- * pointing at that decision was the browser's own arrow -- the one thing on
- * screen that belongs to the operating system rather than to this game, and the
- * one thing whose tip is not where the click will land.
+ * Two of them, and they are the same mark at two lengths. The **small** one --
+ * a centre dot and the four arm tips -- says there is a body under the pointer
+ * that a click would act on. The **full** one -- the arms extended to the edge
+ * of the same box -- says a skill is armed and the next click places it
+ * (spec 080). Everywhere else the page's own arrow stands, because a pointer
+ * that never changes says nothing, and what these two are for is saying
+ * something.
  *
- * So while an aim is pending the canvas wears a crosshair, authored the way
- * `pixel-font.ts` is authored and for the same three reasons: nothing may be
- * fetched, a bitmap is a binary blob nobody can review in a diff, and a table of
- * `#` is the same register as the posterized world behind it. It is rendered as
- * axis-aligned rects with `shape-rendering: crispEdges`, so it is exact at
- * whatever scale it is asked for rather than something that has to be kept at
- * 1x, and handed to CSS as a data URI with the hotspot named -- the *middle
- * pixel*, which is why the art is odd-sided and has a centre to name at all.
+ * They are authored the way `pixel-font.ts` is authored and for the same three
+ * reasons: nothing may be fetched, a bitmap is a binary blob nobody can review
+ * in a diff, and a table of `#` is the same register as the posterized world
+ * behind it. Rendered as axis-aligned rects with
+ * `shape-rendering: crispEdges`, so each is exact at whatever scale it is asked
+ * for rather than something that has to be kept at 1x, and handed to CSS as a
+ * data URI with the hotspot named -- the *middle pixel*, which is why the art
+ * is odd-sided and has a centre to name at all.
  *
- * Two limits the size is chosen against, both of them the browser's: a cursor
- * image over 32px square is refused outright by some engines, and an SVG cursor
- * is not honoured at all by others. The first is why the drawn box is 22px; the
- * second is why every value here ends in a keyword fallback, so a browser that
- * drops the image still gets a crosshair rather than an arrow.
+ * The one thing the pair guarantees is that **going from the small mark to the
+ * full one moves nothing**: same box, same hotspot, and every pixel the small
+ * one lights the full one lights too, so arming a skill over a body you were
+ * already pointing at extends the arms and shifts not one pixel. A cursor image
+ * is placed by its hotspot, so two marks that disagreed about theirs would jump
+ * against each other -- which is exactly what the arrow does, its hotspot being
+ * its tip where a crosshair's is its centre. That jump is accepted where the
+ * arrow hands over, because that is a deliberate hover onto a body, and refused
+ * between these two, because that is a key press in the middle of a fight.
  *
- * There are **two** marks and they are the same mark, which is the whole of the
- * fix for the thing this shipped wrong first. A cursor image is placed by its
- * *hotspot*, and an arrow's hotspot is its tip while a crosshair's is its
- * centre -- so swapping the one for the other on a key press leaves the click
- * point exactly where it was and moves everything the eye actually tracks, by
- * about half the mark. Nothing about a hotspot value can fix that: centre is
- * where a crosshair's hotspot has to be, or it stops marking the point. What
- * fixes it is not handing over from the arrow at all -- so the canvas wears a
- * mark of ours at rest too, the same crosshair with its arms retracted to four
- * tips and a centre dot, in the same box with the same hotspot. Aiming extends
- * the arms and moves nothing, and `sameHotspot` in the tests is that as an
- * assertion rather than as a promise.
+ * Two of the browser's limits shape the size and both are stated rather than
+ * discovered: a cursor image over 32px square is refused outright by some
+ * engines, which is why the drawn box is 22, and an SVG cursor is not honoured
+ * at all by others, which is why every value here ends in a keyword fallback.
  *
  * Pure: no DOM, no three.js, no clock. `view.ts` assigns what
  * {@link worldCursor} returns to `canvas.style.cursor` and decides nothing.
@@ -42,14 +40,14 @@
 import type { PixelRect } from './pixel-font.js';
 
 /**
- * Nine by nine, `#` for a lit pixel.
+ * The full crosshair: nine by nine, `#` for a lit pixel.
  *
  * The four pixels around the centre are dark on purpose: a crosshair whose arms
  * meet is a plus sign, and the gap is the whole reason a mark can sit on top of
  * what it is pointing at and still leave it readable. Odd-sided, so there is a
  * centre pixel for the hotspot to be.
  */
-const CROSSHAIR: readonly string[] = [
+const FULL: readonly string[] = [
   '....#....',
   '....#....',
   '....#....',
@@ -62,16 +60,16 @@ const CROSSHAIR: readonly string[] = [
 ];
 
 /**
- * The same mark at rest: the four arm *tips*, and the centre dot.
+ * The small mark: the four arm *tips*, and the centre dot.
  *
- * What the canvas wears when nothing is being aimed. It is not a second design
- * -- it is this crosshair with its arms pulled in, on the same grid, so that
- * arming a skill reads as the arms extending out of a mark that was already
- * there rather than as the pointer jumping. Sparse on purpose: it has to say
- * "the point is here" over grass, water and a body without competing with any
- * of them, and everything a player is actually looking at is under it.
+ * What a body under the pointer gets. It is not a second design -- it is the
+ * crosshair above with its arms pulled in, on the same grid, so that arming a
+ * skill over that body reads as the arms extending out of a mark that was
+ * already there. Sparse on purpose: what a player is looking at is the body it
+ * is sitting on, and a mark that filled the same box solidly would be in front
+ * of the thing it is pointing out.
  */
-const RESTING: readonly string[] = [
+const SMALL: readonly string[] = [
   '....#....',
   '.........',
   '.........',
@@ -84,17 +82,17 @@ const RESTING: readonly string[] = [
 ];
 
 /** The art's side, in font pixels. Square, so one number covers both. */
-export const CROSSHAIR_SIDE = CROSSHAIR.length;
+export const CROSSHAIR_SIDE = FULL.length;
 
 /** Which of the two marks a caller wants. */
-export type CrosshairArt = 'aiming' | 'resting';
+export type CrosshairArt = 'full' | 'small';
 
 function artFor(art: CrosshairArt): readonly string[] {
-  return art === 'aiming' ? CROSSHAIR : RESTING;
+  return art === 'full' ? FULL : SMALL;
 }
 
 /** One rect per lit pixel, origin at the top left, in font-pixel coordinates. */
-export function crosshairRects(art: CrosshairArt = 'aiming'): readonly PixelRect[] {
+export function crosshairRects(art: CrosshairArt = 'full'): readonly PixelRect[] {
   const rows = artFor(art);
   const rects: PixelRect[] = [];
   for (let row = 0; row < rows.length; row++) {
@@ -109,14 +107,14 @@ export function crosshairRects(art: CrosshairArt = 'aiming'): readonly PixelRect
 }
 
 /** One SVG path `d` covering every lit pixel. */
-export function crosshairPath(art: CrosshairArt = 'aiming'): string {
+export function crosshairPath(art: CrosshairArt = 'full'): string {
   return crosshairRects(art)
     .map((rect) => `M${rect.x} ${rect.y}h${rect.w}v${rect.h}h-${rect.w}z`)
     .join('');
 }
 
 export interface CrosshairOptions {
-  /** Which mark: the aimed crosshair, or the same one at rest. */
+  /** Which mark: the full crosshair, or the same one with its arms pulled in. */
   readonly art?: CrosshairArt;
   /** Screen pixels per font pixel. 2 gives the 22x22 the cursor is drawn at. */
   readonly scale?: number;
@@ -160,7 +158,7 @@ export function crosshairSvg(options: CrosshairOptions = {}): string {
   const fill = options.fill ?? CROSSHAIR_FILL;
   const outline = options.outline ?? CROSSHAIR_OUTLINE;
 
-  const path = crosshairPath(options.art ?? 'aiming');
+  const path = crosshairPath(options.art ?? 'full');
   const box = CROSSHAIR_SIDE + MARGIN * 2;
 
   const offsets: readonly (readonly [number, number])[] = [
@@ -203,8 +201,8 @@ export function crosshairCursor(options: CrosshairOptions = {}): string {
 }
 
 /** Built once each: the art is constant, and a data URI rebuilt per frame is churn. */
-const AIM_CURSOR = crosshairCursor({ art: 'aiming' });
-const REST_CURSOR = crosshairCursor({ art: 'resting' });
+const FULL_CURSOR = crosshairCursor({ art: 'full' });
+const SMALL_CURSOR = crosshairCursor({ art: 'small' });
 
 export interface WorldCursorInput {
   /**
@@ -216,6 +214,11 @@ export interface WorldCursorInput {
    */
   readonly aiming: boolean;
   /**
+   * True while the cursor is over a body a click would act on -- `attackable`'s
+   * answer, so the mark and what the button actually does cannot disagree.
+   */
+  readonly overEnemy: boolean;
+  /**
    * True while the cursor is over a drop (spec 158) -- the one thing in the
    * world with no other affordance saying it can be clicked.
    */
@@ -223,26 +226,28 @@ export interface WorldCursorInput {
 }
 
 /**
- * Every cursor this file can return, for the test that asserts the two of ours
- * name the same hotspot -- which is what makes the swap on a key press
+ * Every cursor this file can return, for the test that asserts the two marks
+ * name the same hotspot -- which is what makes going from one to the other
  * positionless.
  */
-export const WORLD_CURSORS = { aiming: AIM_CURSOR, resting: REST_CURSOR } as const;
+export const WORLD_CURSORS = { full: FULL_CURSOR, small: SMALL_CURSOR } as const;
 
 /**
- * What the canvas's `cursor` should be, in one place rather than two.
+ * What the canvas's `cursor` should be, in one place rather than three.
  *
- * The aim wins over the drop, and it has to: while a skill is aimed a left
- * click places it, so a pointing hand would promise a pickup the click is not
- * going to perform.
+ * The order is the order of commitment, and each step of it earns its mark. An
+ * armed skill outranks everything, and it has to: while a skill is aimed a left
+ * click *places* it, so a pointing hand -- or a mark that said "this body" --
+ * would promise something the click is not going to perform. A body under the
+ * pointer is next, because a click there does something to it. The drop's hand
+ * is last of the three and is spec 158's, kept as it was.
  *
- * The drop's hand is the one hand-over left, and it is kept deliberately: it is
- * an *affordance* rather than an aim, saying that the thing under the pointer
- * can be clicked at all, which is the whole of spec 158's argument for it. It
- * costs the same few pixels of apparent movement the arrow used to, on a hover
- * the player chose to make rather than on a key press in the middle of a fight.
+ * Everything else is the empty string: whatever the page says, which is the
+ * arrow. A mark that is always on says nothing by being on, and these two are
+ * only worth drawing because their absence is the ordinary case.
  */
 export function worldCursor(input: WorldCursorInput): string {
-  if (input.aiming) return AIM_CURSOR;
-  return input.overDrop ? 'pointer' : REST_CURSOR;
+  if (input.aiming) return FULL_CURSOR;
+  if (input.overEnemy) return SMALL_CURSOR;
+  return input.overDrop ? 'pointer' : '';
 }

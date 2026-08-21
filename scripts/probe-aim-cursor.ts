@@ -1,17 +1,18 @@
 /**
- * Is the aim cursor actually on the canvas? (spec 197)
+ * What the pointer actually is, in a real page (spec 197).
  *
- * Everything the crosshair *is* -- the art, its symmetry, the gap at its
- * centre, the hotspot, the encoding, and which cursor wins when a drop and an
- * aim both apply -- is pure and asserted in `crosshair.test.ts`. What no
- * headless test can see is the half that makes it a feature: that the value
- * reaches a real canvas, that the browser accepts it (an engine that refuses
- * the image silently falls back to a keyword, which is a working test beside a
- * cursor nobody chose), and that it goes away again when the aim does.
+ * Everything the two marks *are* -- the art, their symmetry, the gap at the
+ * crosshair's centre, the shared hotspot, the encoding, and which of the three
+ * cursors wins -- is pure and asserted in `crosshair.test.ts`. What no headless
+ * test can see is the half that makes it a feature: that the value reaches a
+ * real canvas, that the browser accepts it (an engine that refuses the image
+ * falls back to a keyword, which is a green test beside a cursor nobody chose),
+ * that hovering a real body actually produces the small mark, and that all of
+ * it goes away again.
  *
  * A cursor is drawn by the compositor and is not in a screenshot, so there is
- * nothing to photograph here: what is read is the computed style of the canvas
- * the pointer is over, which is the same string the browser is drawing from.
+ * nothing to photograph here: what is read is the computed style of the canvas,
+ * which is the string the browser draws from, plus the images decoded out of it.
  *
  *   npm run build && npx tsx scripts/probe-aim-cursor.ts
  *
@@ -33,6 +34,19 @@ const CHROMIUM_ARGS = [
 
 /** The bar ships empty (spec 164), so the skills have to be put in it to press. */
 const SLOTS = 'melee.heavy,bolt.seek,ground.quake,self.mend';
+
+/**
+ * How far below a floating health bar to look for the body it belongs to, in
+ * CSS pixels.
+ *
+ * A ladder rather than one number, and searched rather than assumed, for the
+ * reason `preview-paint.ts` searches for its aim: a bar is anchored over a
+ * head, bodies are different heights, and a fixed offset that happened to miss
+ * would report a working cursor as a broken one. What is reported is the offset
+ * that worked, so a change in framing shows up as a number rather than as a
+ * failure.
+ */
+const BODY_OFFSETS = [16, 24, 32, 40, 52, 64];
 
 async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -62,9 +76,9 @@ async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promi
 /**
  * What the *browser* thinks the cursor is, not what we assigned.
  *
- * The computed value is the one the compositor draws from, so a data URI the
- * engine parsed and a data URI it threw away read differently here -- which is
- * the whole reason this is a probe rather than an assertion about a string.
+ * The computed value is the one the compositor draws from, so this reports the
+ * whole chain -- the assignment, the frame that made it, and the element the
+ * pointer is actually over.
  */
 async function cursorOf(page: Page): Promise<string> {
   return page.$eval('canvas', (node) => getComputedStyle(node).cursor);
@@ -84,6 +98,21 @@ async function cursorSettles(
     await page.waitForTimeout(100);
   }
   return seen;
+}
+
+/** Where every floating health bar is, so a real body can be pointed at. */
+async function bodyBars(page: Page): Promise<{ id: string; x: number; y: number }[]> {
+  return page.$$eval('[data-entity]', (nodes) =>
+    nodes
+      .filter((node) => (node as HTMLElement).dataset['self'] === undefined)
+      .map((node) => {
+        const box = node.getBoundingClientRect();
+        // The holder is translated by -100%, so its bottom edge is the anchor
+        // the HUD placed over the body's head.
+        return { id: (node as HTMLElement).dataset['entity'] ?? '', x: box.left + box.width / 2, y: box.bottom };
+      })
+      .filter((bar) => bar.x > 0 && bar.y > 0),
+  );
 }
 
 const isOurs = (value: string): boolean => value.startsWith('url("data:image/svg+xml');
@@ -109,92 +138,104 @@ async function main(): Promise<void> {
     await page.waitForSelector('canvas');
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await waitForTick(page, 150);
+
+    // Over open ground: the page's own arrow, which is the ordinary case and
+    // the thing the two marks are only worth drawing against.
     await page.mouse.move(640, 400);
+    const idle = await cursorSettles(page, isArrow);
+    console.log(`  open ground: ${idle}`);
+    if (!isArrow(idle)) problems.push(`open ground wore ${idle}, not the page's own arrow`);
 
-    // At rest the canvas wears our own mark rather than the OS arrow, and that
-    // is the fix rather than a flourish: an arrow's hotspot is its tip and a
-    // crosshair's is its centre, so handing over between them moves the mark by
-    // half itself on the very key press the player is watching.
-    const idle = await cursorSettles(page, isOurs);
-    console.log(`  idle:        ${idle.slice(0, 60)}...`);
-    if (!isOurs(idle)) problems.push(`the idle canvas wore ${idle}, not the resting mark`);
-
-    // Slot 3 is `ground.quake`: a point aim, so the press asks for a click.
-    await page.keyboard.press('Digit3');
-    const aiming = await cursorSettles(page, (value) => isOurs(value) && value !== idle);
-    console.log(`  aiming:      ${aiming.slice(0, 60)}...`);
-    if (aiming === idle) problems.push('arming a skill did not change the mark at all');
-    if (!isOurs(aiming)) {
-      problems.push(`a pending ground aim wore ${aiming}, not the crosshair`);
-    } else {
-      // The reason the pair exists: one box, one hotspot, so arming the aim
-      // extends the arms and moves nothing. Checked here as well as in Node
-      // because it is the browser that places the image.
-      if (anchorOf(aiming) !== anchorOf(idle)) {
-        problems.push(`the two marks name different hotspots: ${anchorOf(idle)} vs ${anchorOf(aiming)}`);
+    // Over a real body: the small mark. Found rather than assumed -- a bar is
+    // anchored over a head and a fixed drop below it could miss the body.
+    const bars = await bodyBars(page);
+    console.log(`  bodies:      ${bars.length} on screen`);
+    if (bars.length === 0) problems.push('no other body was on screen to point at');
+    let hovering = '';
+    let landedAt = -1;
+    let body = { x: 0, y: 0 };
+    for (const bar of bars) {
+      for (const drop of BODY_OFFSETS) {
+        await page.mouse.move(bar.x, bar.y + drop);
+        const seen = await cursorSettles(page, isOurs, 700);
+        if (isOurs(seen)) {
+          hovering = seen;
+          landedAt = drop;
+          body = { x: bar.x, y: bar.y + drop };
+          break;
+        }
       }
-      // The engine parsed the image: a refused one falls through to the keyword
-      // and would read as `crosshair` alone, which is a fallback rather than the
-      // mark this spec is about.
-      if (!aiming.includes('svg')) problems.push('the cursor url is not the SVG we built');
-      if (!/\d+ \d+, crosshair$/.test(aiming)) {
-        problems.push(`the cursor names no hotspot or no fallback: ${aiming.slice(-40)}`);
+      if (hovering !== '') break;
+    }
+    console.log(`  over a body: ${hovering === '' ? '(never found one)' : `${hovering.slice(0, 46)}... at +${landedAt}px`}`);
+    if (hovering === '') problems.push('pointing at a body never produced the small mark');
+
+    // ...and armed over that same body: the full crosshair, at the same hotspot,
+    // which is the one invariant the pair exists for.
+    await page.keyboard.press('Digit3');
+    const armed = await cursorSettles(page, (value) => isOurs(value) && value !== hovering);
+    console.log(`  armed:       ${armed.slice(0, 46)}...`);
+    if (!isOurs(armed)) problems.push(`a pending ground aim wore ${armed}, not the full crosshair`);
+    if (armed === hovering) problems.push('arming a skill over a body did not extend the mark');
+    if (isOurs(armed) && hovering !== '') {
+      if (anchorOf(armed) !== anchorOf(hovering)) {
+        problems.push(`the two marks name different hotspots: ${anchorOf(hovering)} vs ${anchorOf(armed)}`);
+      }
+      if (!/\d+ \d+, crosshair$/.test(armed)) {
+        problems.push(`the cursor names no hotspot or no fallback: ${armed.slice(-40)}`);
       }
     }
 
     // The computed style reports what was *declared*, image or no image -- so
-    // the value above proves the wiring and says nothing about whether this
-    // browser can draw it. Decoding it is the other half, and it is the half
-    // that would catch a malformed path, a bad encoding or a size the engine
-    // refuses: the same URI, loaded as an image, has to come back at the box
-    // the SVG declares.
-    const decode = async (value: string) => {
-      if (!isOurs(value)) return { ok: false, width: 0, height: 0 };
-      return await page.evaluate(async (url: string) => {
-        return await new Promise<{ ok: boolean; width: number; height: number }>((resolve) => {
-          const image = new Image();
-          image.onload = () =>
-            resolve({ ok: true, width: image.naturalWidth, height: image.naturalHeight });
-          image.onerror = () => resolve({ ok: false, width: 0, height: 0 });
-          image.src = url;
-        });
-      }, value.slice(value.indexOf('url("') + 5, value.indexOf('")')));
-      return { ok: false, width: 0, height: 0 };
-    };
+    // the values above prove the wiring and say nothing about whether this
+    // browser can draw them. Decoding is the other half, and the half that
+    // catches a malformed path, a bad encoding, or a size an engine refuses.
     for (const [name, value] of [
-      ['resting', idle],
-      ['aiming', aiming],
+      ['small', hovering],
+      ['full', armed],
     ] as const) {
-      const decoded = await decode(value);
+      if (!isOurs(value)) continue;
+      const decoded = await page.evaluate(
+        async (url: string) =>
+          await new Promise<{ ok: boolean; width: number; height: number }>((resolve) => {
+            const image = new Image();
+            image.onload = () =>
+              resolve({ ok: true, width: image.naturalWidth, height: image.naturalHeight });
+            image.onerror = () => resolve({ ok: false, width: 0, height: 0 });
+            image.src = url;
+          }),
+        value.slice(value.indexOf('url("') + 5, value.indexOf('")')),
+      );
       console.log(`  decoded ${name}: ${decoded.ok ? `${decoded.width}x${decoded.height}` : 'refused'}`);
-      if (!decoded.ok) problems.push(`the browser could not decode the ${name} cursor image`);
-      // Over 32 and some engines drop the image; a different number here means
-      // the SVG is not the size `CROSSHAIR_BOX` says it is. Both marks have to
-      // come back the same size, or the swap moves the drawn mark after all.
+      if (!decoded.ok) problems.push(`the browser could not decode the ${name} mark`);
+      // Both have to come back the same size, or the swap moves the drawn mark
+      // however well the hotspots agree. Over 32 and some engines drop it.
       if (decoded.ok && (decoded.width !== 22 || decoded.height !== 22)) {
-        problems.push(`the ${name} cursor decoded at ${decoded.width}x${decoded.height}, not 22x22`);
+        problems.push(`the ${name} mark decoded at ${decoded.width}x${decoded.height}, not 22x22`);
       }
     }
 
-    // Right-click calls the aim off (spec 080), and the arms retract with it.
-    await page.mouse.click(640, 400, { button: 'right' });
-    const cancelled = await cursorSettles(page, (value) => value === idle);
-    console.log(`  cancelled:   ${cancelled.slice(0, 60)}...`);
-    if (cancelled !== idle) problems.push(`a cancelled aim left ${cancelled} behind`);
-    if (isArrow(cancelled)) problems.push('a cancelled aim fell back to the OS arrow');
+    // Off the body with the aim still armed: still the full crosshair, because
+    // an armed skill outranks what happens to be under the pointer.
+    await page.mouse.move(640, 700);
+    const armedOffBody = await cursorSettles(page, (value) => value === armed);
+    if (armedOffBody !== armed) {
+      problems.push(`an armed aim over open ground wore ${armedOffBody}`);
+    }
 
-    // Slot 2 is `bolt.seek`: a *unit* aim, which is the other gesture and the
-    // one whose click lands on a body rather than on the ground.
-    await page.keyboard.press('Digit2');
-    const unit = await cursorSettles(page, (value) => value === aiming);
-    console.log(`  unit aim:    ${unit.slice(0, 60)}...`);
-    if (!isOurs(unit)) problems.push(`a pending unit aim wore ${unit}, not the crosshair`);
-    if (unit !== aiming) problems.push('the two gestures wore different crosshairs');
-
+    // Escape puts it all back.
     await page.keyboard.press('Escape');
-    const escaped = await cursorSettles(page, (value) => value === idle);
-    console.log(`  escaped:     ${escaped.slice(0, 60)}...`);
-    if (escaped !== idle) problems.push(`Escape left ${escaped} behind`);
+    const escaped = await cursorSettles(page, isArrow);
+    console.log(`  escaped:     ${escaped}`);
+    if (!isArrow(escaped)) problems.push(`Escape left ${escaped} behind`);
+
+    // ...and the body still wears the small mark afterwards, so cancelling an
+    // aim does not take the hover state with it.
+    if (hovering !== '') {
+      await page.mouse.move(body.x, body.y);
+      const again = await cursorSettles(page, (value) => value === hovering);
+      if (again !== hovering) problems.push(`after Escape, the body wore ${again}`);
+    }
   } finally {
     await browser.close();
     server.kill();
@@ -205,7 +246,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log('  the world wears our mark throughout, and arming a skill only extends it');
+  console.log('  arrow on open ground, the small mark on a body, the full crosshair when armed');
 }
 
 await main();
