@@ -1,7 +1,8 @@
 # A map that keeps growing — plan
 
-Status: **final. Spec 197 is written; nothing is implemented.** The shape, the
-phase order and the numbers are settled. The next action is the phase 0 harness.
+Status: **phases 0 and 1 are done. Specs 197 and 198 are written and
+implemented.** The shape, the phase order and the numbers are settled; the next
+action is spec 199, taking the map out of the JavaScript bundle.
 
 Everything is measured against `maps/arena.json` at `43fd6b40` on this branch's
 container, and every projection says which measurement it scales. Where a claim
@@ -374,15 +375,33 @@ crossing at p95/p99, and nav construction with and without `chunk.nav`. Tests
 assert what is countable, including the claim specs 056/192/193 make and the one
 they do not.
 
-### Phase 1 — a zoom you choose (spec 198)
+### Phase 1 — a zoom you choose (spec 198) — **done**
 
 `SUPPORTED_MAX_VIEW_HALF_WIDTH = 420` drives `INTEREST_CHUNK_RADIUS` 8 → 3 and
 `MAP_CHUNK_REQUEST_RADIUS` 6 → 2; `MAP_CHUNK_BURST` follows, being derived.
-`MAX_VIEW_HALF_WIDTH` and `MIN` do not move. Both relationship tests re-point at
-the supported cap. Two tests of its own: that the **default zoom is inside the
-supported band** — otherwise ordinary play ships visible holes described as
-dev-only degradation — and that the **request window does not read the zoom**,
-true today by accident and made true on purpose.
+`MAX_VIEW_HALF_WIDTH` and `MIN` did not move, and the widest zoom is a Display
+page setting stored as `'supported' | number` — the same sentinel shape `scale:
+'auto'` already had, so the preference tracks the cap when the cap moves rather
+than freezing today's number.
+
+Three things it turned up that the plan had not predicted:
+
+- **The refill rate outran the burst.** `MAP_CHUNK_REFILL_PER_SECOND` was 32
+  against a burst of 169; narrowing the radius took the burst to 25 and left a
+  bucket that refills more than a whole burst a second, which is not a throttle.
+  It is derived now — `2 * (2R+1)`, the edge row a boundary crossing brings in,
+  twice a second — and reproduces roughly the old constant at the old radius.
+- **The client's own pacing was one under the burst.** `CHUNK_REQUESTS_PER_PASS`
+  is 24 against the new 25. Its comment claimed the relationship and nothing
+  asserted it, so it is asserted now.
+- **Nothing stopped the request window reading the zoom.**
+  `src/server/client/` is not in the deterministic core's file list, so
+  `game-client.ts` could have imported `view-settings.ts`. It is lint-forbidden
+  now, which makes "a client cannot widen its own read window" a fact about the
+  module graph rather than a habit.
+
+Retuning the radii broke **no** behavioural test — 318 of 319 files passed
+untouched, and the one failure was the store document gaining a field.
 
 ### Phase 2 — the map leaves the bundle (spec 199)
 

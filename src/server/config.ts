@@ -50,34 +50,29 @@ export const CHUNK_SIZE = 400;
 /**
  * How many chunks out from their own a player is told about.
  *
- * This has to cover **what the camera can frame**, and the old 3-at-100-units
- * did not come close. Measured against the real camera at a 1280x800 window: the
- * default zoom frames +-320 by +-441 world units and the widest frames +-1400 by
- * +-1927, against an interest window that reached 300 to 400. Monsters vanished
- * on screen at every zoom, which is exactly what was reported.
+ * This has to cover **what the camera can frame** at the widest zoom the game is
+ * *sized for* -- `SUPPORTED_MAX_VIEW_HALF_WIDTH`, 420 since spec 198, rather
+ * than the 1400 the slider still reaches. Measured through the real
+ * `cameraFrustum` across every window shape a real monitor comes in, 420 reaches
+ * 932 world units; 3 chunks of 400 guarantees 1200, which covers it.
  *
- * 8 at 400 units guarantees 3200, which covers the widest zoom on a 32:9
- * monitor (~3110). It has to be sized off the *window shape*, not just the zoom:
+ * It has to be sized off the *window shape*, not just the zoom:
  * `internalRenderSize` trades height rather than capping the aspect past 2.53,
- * so the horizontal ground reach keeps growing with the window and there is no
- * ceiling to aim at. 32:9 is where real monitors stop; a pathological aspect at
- * maximum zoom could still outrun this, and the answer there would be a cap on
- * the zoom rather than an ever-wider window.
+ * so horizontal ground reach keeps growing with the window and 32:9 is simply
+ * where monitors stop. A pathological aspect at maximum zoom could still outrun
+ * this, and the answer there would be a cap on the zoom rather than an
+ * ever-wider window.
  *
- * The window is 17x17 chunks -- 289 rather than the 49 it was. That is 289 map
- * lookups per connection per broadcast, twenty times a second, which is nothing.
- *
- * Worth being straight about the consequence: the generated world is ~4400 by
- * ~4100, so a window this wide contains most of it and culling currently culls
- * almost nothing. That is the right trade -- a player seeing bodies wink out
- * inside the frame is a bug, and an optimisation with nothing to optimise is
- * not -- but interest management only starts earning its keep again when the
- * map outgrows the camera.
+ * Was 8, which guaranteed 3200 against the 3107 the *slider's* maximum frames.
+ * That is a 17x17 window of 289 chunks against the 7x7 and 49 this is -- nearly
+ * six times the interest set, permanently, for a zoom the game is not played at.
+ * Past the supported band a body outside the window winks out, which is the
+ * degradation the Display page's dev-setting warning names.
  *
  * `src/render/iso3d/world/interest.test.ts` asserts the relationship rather than
  * the numbers, so the next person to touch the camera finds out here.
  */
-export const INTEREST_CHUNK_RADIUS = 8;
+export const INTEREST_CHUNK_RADIUS = 3;
 
 /**
  * Bumped whenever the wire format changes incompatibly; checked on connect.
@@ -135,21 +130,31 @@ export const PROTOCOL_VERSION = 18;
  * 400-unit interest chunks of {@link CHUNK_SIZE}. Three independent grids now
  * exist and merging them would couple a draw-call decision to a bandwidth one.
  *
- * Sized off what the camera can frame, exactly as {@link INTEREST_CHUNK_RADIUS}
- * is, and for a worse failure: a monster outside the interest window winks out,
- * but terrain outside this one is a hole with the sky showing through.
+ * Sized off what the camera can frame at `SUPPORTED_MAX_VIEW_HALF_WIDTH`,
+ * exactly as {@link INTEREST_CHUNK_RADIUS} is, and for a worse failure: a
+ * monster outside the interest window winks out, but terrain outside this one is
+ * a hole with the sky showing through. 420 reaches 932 units and 2 chunks of 616
+ * guarantees 1232.
  *
  * It has to be sized off the *window shape*, not just the zoom -- the same trap
- * `INTEREST_CHUNK_RADIUS` documents. 4 looked right against the widest zoom's
- * +-1400 by +-1927 on a 16:9 window and was wrong: `internalRenderSize` trades
- * height rather than capping the aspect, so a 32:9 monitor at maximum zoom
- * reaches ~3107 units and radius 4 guarantees only 4 * 616 = 2464. 6 guarantees
- * 3696, which covers it with room to spare.
+ * `INTEREST_CHUNK_RADIUS` documents.
+ *
+ * Was 6, sized against the 3107 units the slider's own maximum frames: a 13x13
+ * window of 169 chunks against the 5x5 and 25 this is. At the ~10ms a cold chunk
+ * costs to bring resident (spec 197) that is a quarter-second of prefetch rather
+ * than two and a half seconds, which is what makes bounded residency affordable
+ * at all.
+ *
+ * **Nothing may make this a function of a client's zoom.** It is the guard that
+ * bounds *where* a client may read, checked against the server's own position
+ * for that player, and a radius derived from a value the client reported would
+ * be the client widening its own read window. `map-radius.test.ts` asserts that
+ * `MapChunkCache.wanted` does not read the zoom.
  *
  * `src/render/iso3d/world/map-radius.test.ts` asserts that relationship rather
- * than the literal 6 -- it is the test that caught the 4.
+ * than the literal 2.
  */
-export const MAP_CHUNK_REQUEST_RADIUS = 6;
+export const MAP_CHUNK_REQUEST_RADIUS = 2;
 
 /**
  * How long a chunk request goes unanswered before the client asks again
@@ -238,7 +243,26 @@ export const CONNECTION_TIMEOUT_TICKS = 600;
  * to cross a whole 616-unit chunk thirty-two times a second to need it.
  */
 export const MAP_CHUNK_BURST = (2 * MAP_CHUNK_REQUEST_RADIUS + 1) ** 2;
-export const MAP_CHUNK_REFILL_PER_SECOND = 32;
+/**
+ * The sustained rate, and since spec 198 it is derived rather than typed in.
+ *
+ * It was 32, chosen against a burst of 169. Narrowing the request radius took
+ * the burst to 25 and left the refill **above** it -- a bucket that refills more
+ * than a whole burst every second is not a throttle at all, which is what
+ * `map-radius.test.ts` caught the moment the radius moved.
+ *
+ * So it is derived from the same quantity the burst is. Crossing one chunk
+ * boundary brings a whole edge row of the window into range -- `2R+1` chunks --
+ * and twice that per second is the rate. At the shipped radius that is 10/s
+ * against the ~1.25/s a player walking at 155 units/s actually needs (a
+ * 616-unit chunk takes four seconds to cross), so it is eight times what
+ * ordinary play asks for and still a third of a burst.
+ *
+ * Reassuringly it also reproduces roughly the old constant at the old radius:
+ * `2 * 13` is 26 against the 32 that was there. The number was about right and
+ * only its *relationship* to the burst was missing.
+ */
+export const MAP_CHUNK_REFILL_PER_SECOND = 2 * (2 * MAP_CHUNK_REQUEST_RADIUS + 1);
 
 /**
  * How far the client's modelled resource may be from the server's before it is

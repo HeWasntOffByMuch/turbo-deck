@@ -172,6 +172,7 @@ const ui = new UiLayer(app, {
   onBindingsChanged: nothing,
   onScaleChosen: nothing,
   onShowFpsChosen: nothing,
+  onMaxZoomChosen: nothing,
   onLayoutChanged: nothing,
   onCastSlot: (abilityId) => {
     used.push(abilityId);

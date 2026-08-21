@@ -16,6 +16,7 @@ import {
   offsetToOrbit,
   orbitToOffset,
   pinchViewHalfWidth,
+  SUPPORTED_MAX_VIEW_HALF_WIDTH,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -278,5 +279,43 @@ describe('the defaults the view opens at (spec 044)', () => {
       expect(nearest).toBeGreaterThan(CAMERA_NEAR);
       expect(furthest).toBeLessThan(CAMERA_FAR);
     }
+  });
+});
+
+describe('the widest zoom a player chose (spec 198)', () => {
+  it('holds the span under the ceiling rather than the band maximum', () => {
+    expect(clampViewHalfWidth(1400, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(SUPPORTED_MAX_VIEW_HALF_WIDTH);
+    expect(clampViewHalfWidth(300, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(300);
+  });
+
+  it('leaves every existing caller alone, because the ceiling defaults to the maximum', () => {
+    expect(clampViewHalfWidth(1400)).toBe(MAX_VIEW_HALF_WIDTH);
+    expect(clampViewHalfWidth(99_999)).toBe(MAX_VIEW_HALF_WIDTH);
+  });
+
+  it('cannot be widened past the band by a stored preference', () => {
+    // A profile written by a build with a wider band must not widen this one's.
+    // The band is the wall; the ceiling only ever lowers it.
+    expect(clampViewHalfWidth(99_999, 99_999)).toBe(MAX_VIEW_HALF_WIDTH);
+  });
+
+  it('never stops the camera getting closer', () => {
+    // Going closer is outside all of this arithmetic: a narrower view never
+    // needs data a wider one did not.
+    expect(clampViewHalfWidth(MIN_VIEW_HALF_WIDTH, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(MIN_VIEW_HALF_WIDTH);
+    expect(clampViewHalfWidth(1, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(MIN_VIEW_HALF_WIDTH);
+  });
+
+  it('holds a wheel gesture to the ceiling', () => {
+    // Scrolling out from the ceiling stays at it, however hard.
+    let span = SUPPORTED_MAX_VIEW_HALF_WIDTH;
+    for (let i = 0; i < 20; i++) span = zoomViewHalfWidth(span, 100, 0, SUPPORTED_MAX_VIEW_HALF_WIDTH);
+    expect(span).toBe(SUPPORTED_MAX_VIEW_HALF_WIDTH);
+  });
+
+  it('holds a pinch to the ceiling too, so no gesture frames outside it', () => {
+    let span = SUPPORTED_MAX_VIEW_HALF_WIDTH;
+    for (let i = 0; i < 20; i++) span = pinchViewHalfWidth(span, 0.5, SUPPORTED_MAX_VIEW_HALF_WIDTH);
+    expect(span).toBe(SUPPORTED_MAX_VIEW_HALF_WIDTH);
   });
 });

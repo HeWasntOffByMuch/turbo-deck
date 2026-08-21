@@ -98,10 +98,14 @@ import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import {
   DEFAULT_SHOW_FPS,
   loadScale,
+  loadMaxZoom,
   loadShowFps,
+  resolveMaxZoom,
   saveScale,
+  saveMaxZoom,
   saveShowFps,
 } from '../../../ui/input/display-store.js';
+import { SUPPORTED_MAX_VIEW_HALF_WIDTH } from '../view-settings.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
@@ -1234,6 +1238,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * Every callback below is a *request*: the screens emit intents and the server
    * decides. Nothing here writes to a container, a purse or a skill tree.
    */
+  // The widest zoom the player has asked for (spec 198), read once and applied
+  // to the camera before the first frame -- a ceiling honoured only on the next
+  // change would leave a restored session framing wider than it was told to.
+  const storedMaxZoom = loadMaxZoom(bindingStorage);
+  scene.controls.setMaxZoom(resolveMaxZoom(storedMaxZoom, SUPPORTED_MAX_VIEW_HALF_WIDTH));
+
   const ui = new UiLayer(root, {
     map: inputMap,
     onMove: (from, to, count) => client.moveItem(from, to, count),
@@ -1279,9 +1289,19 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       ui.setShowFps(show);
       saveShowFps(bindingStorage, show);
     },
+    // The same three steps again (spec 198): honour it on the camera, tell the
+    // page so its slider matches what is drawn, and save it before the frame
+    // that could lose it. The *choice* is stored rather than the number it
+    // resolves to, so `'supported'` keeps tracking the cap when the cap moves.
+    onMaxZoomChosen: (choice) => {
+      scene.controls.setMaxZoom(resolveMaxZoom(choice, SUPPORTED_MAX_VIEW_HALF_WIDTH));
+      ui.setMaxZoom(choice);
+      saveMaxZoom(bindingStorage, choice);
+    },
     // The one place the platform is asked, beside the media queries.
     scale: loadScale(bindingStorage),
     showFps: loadShowFps(bindingStorage),
+    maxZoom: storedMaxZoom,
     // Where the windows were (spec 147). Read here and written back here, for
     // the third time and the third reason: the mount is pure, so the document
     // arrives as a value and leaves as a callback. `saveLayout` cannot throw --
