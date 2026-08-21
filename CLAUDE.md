@@ -66,6 +66,7 @@ change a game outcome.
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 202) |
+| `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 206). `--strict` for an exit code |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -163,6 +164,16 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  (`bake-map.ts` defaults to seed 1, and the arena was seed 1 with
                  no parts); spec 165 grew the map and the coincidence went with
                  it. Checked in so the world reviews as a diff.
+                 recipes/shore.json is the one a coastline is grown from
+                 (spec 206), and the number worth knowing is its **depth**: the
+                 shipped map has 212 walkable chunks within two of undeclared
+                 space and **not one chunk of sea**, so its whole perimeter is
+                 ground ending at nothing, with the sim's wall at exactly the
+                 same place. A strip `n` chunks deep gives `n - 1` rows of true
+                 sea, because `bakePart` eases the recipe in over a skirt where
+                 it meets existing ground -- so a shore is grown
+                 `MAP_CHUNK_REQUEST_RADIUS + 1` deep, measured: 3 clears an
+                 edge, 4 and 5 buy nothing.
                  recipes/ are the feature lists parts are grown from (spec 083) --
                  `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
                  --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map

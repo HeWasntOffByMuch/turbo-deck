@@ -15,12 +15,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { loadMap } from '../../terrain/map-world.js';
-import { MAP_CHUNK_REQUEST_RADIUS } from '../config.js';
+import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS } from '../config.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { buildWorldFromMap } from '../world/build.js';
 import { GameClient } from './game-client.js';
-import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS } from '../config.js';
 import { chunksToDocument } from './map-rebuild.js';
 import { loadMapFile } from '../../server/world/map-file.js';
 

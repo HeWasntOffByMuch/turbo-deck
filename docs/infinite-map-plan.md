@@ -1,7 +1,9 @@
 # A map that keeps growing — plan
 
-Status: **phases 0–7 are done — specs 197 through 204 are written and
-implemented.** The next action is phase 8 (spec 205), growing without rewriting.
+Status: **phases 0–7 and 9 are done — specs 197 through 204 and 206 are written
+and implemented.** Phase 8 (spec 205, growing without rewriting) is the one left,
+and it is the smallest remaining win; see its notes for what measurement says
+about it.
 Phase 5 was **split in two** after measuring, and phase 6's designed mechanism
 was **deferred** after measuring; see the phase table and each phase's notes.
 
@@ -661,6 +663,30 @@ region loader supplies them. The editor stops opening the whole world to move on
 marker; `POST /api/map` becomes a per-region write.
 
 ### Phase 9 — the shore (spec 206)
+
+**Done, as a tool rather than as content.** Measured on the shipped map: **212
+walkable chunks within two of undeclared space, 110 of them directly against it,
+and not one chunk entirely under water.** The whole perimeter is ground ending
+at nothing, with the sim's wall at exactly the same place — an invisible wall at
+the edge of the grass, and at the supported zoom about a sixth of the screen
+showing the void.
+
+`shoreProblems` is the check and `scripts/check-shore.ts` runs it. The radius is
+`MAP_CHUNK_REQUEST_RADIUS`, derived, because the rule is "a player must not be
+able to *see* the end of the world" and what a player sees is what the client
+streams — so moving the zoom cap moves the content rule with it.
+
+It deliberately **does not author a coastline**: where an island ends is a design
+decision, and a skirt grown around today's rectangle would be an invented shape
+nobody chose, committed as data and inherited forever. So the test is a
+**ratchet** (212 must not grow) rather than a gate — a gate committed red is a
+gate somebody turns off — and `maps/recipes/shore.json` is what a person grows
+the answer with.
+
+The number that makes that usable: a strip `n` chunks deep gives `n - 1` rows of
+true sea, because `bakePart` eases the recipe in over a skirt where it meets
+existing ground (spec 083). So a shore is grown `MAP_CHUNK_REQUEST_RADIUS + 1`
+deep — measured, 3 clears an edge and 4 and 5 buy nothing.
 
 A perimeter test that fails when walkable ground sits within
 `MAP_CHUNK_REQUEST_RADIUS` chunks of undeclared space — derived from the radius,
