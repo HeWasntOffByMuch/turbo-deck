@@ -137,14 +137,19 @@ export interface MonsterDefinition {
 }
 
 /**
- * What a row that does not say gets: a modest ramble around its own spawn.
+ * What a row that does not say gets: a ramble around its own spawn.
  *
- * 70 units is far enough that a body is somewhere different every few seconds
- * and near enough that a spawner still means a place. Eight seconds is about
- * half walking and half standing for the slowest thing in the table, which is
- * the ratio that reads as an animal rather than as a patrol.
+ * The radius and the cycle are one decision rather than two, and that is the
+ * only thing to know before changing either. A cycle has to cover the walk *and*
+ * leave something over, because what is left over is the dwell -- so raising the
+ * radius alone buys a body permanently in transit rather than a body that roams
+ * further. At `IDLE_PACE` the ravager crosses 150 units in about three and a
+ * half seconds of the twelve, which leaves the pause. `idle.test.ts` measures
+ * that off the real tick for every row, since the product of a radius, a cycle,
+ * a pace and a move speed is exactly the arithmetic nobody re-does after
+ * changing one of them.
  */
-export const DEFAULT_IDLE: Idle = { kind: 'wander', radius: 70, cycleTicks: seconds(8) };
+export const DEFAULT_IDLE: Idle = { kind: 'wander', radius: 150, cycleTicks: seconds(12) };
 
 /** Stands still. What anything with no row at all gets. */
 const SENTINEL: Idle = { kind: 'sentinel' };
@@ -226,10 +231,10 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // if something ever made it stand, which nothing does.
     temperament: { kind: 'skittish', fleeTicks: seconds(2.5) },
     // The one animal on the map that literally grazes, so it gets the widest
-    // ramble in the table. At 40 move speed an amble covers its 110 units in
-    // about six of the nine seconds, which leaves a real pause at the far end
-    // rather than a body permanently in transit.
-    idle: { kind: 'wander', radius: 110, cycleTicks: seconds(9) },
+    // ramble in the table. It initiates nothing, so nothing bounds this but the
+    // leash: measured, it spends about half its life walking and gets 161 units
+    // from its spawner, which is a herd animal rather than a decoration.
+    idle: { kind: 'wander', radius: 200, cycleTicks: seconds(16) },
     stats: {
       maxHealth: 24,
       moveSpeed: 40,
@@ -256,10 +261,16 @@ const AUTHORED: readonly AuthoredMonster[] = [
     temperament: { kind: 'territorial', noticeRange: 320, alertTicks: seconds(1) },
     // A sentry that alerts is only interesting if the sentry goes somewhere: an
     // alert from the same square every time is a tripwire, and one off a body
-    // walking a beat is a thing the player has to time. Four posts at 110 is a
-    // 155-unit walk between them, about three and a half seconds of the five, so
+    // walking a beat is a thing the player has to time. Four posts at 150 is a
+    // 212-unit walk between them, about four and a half seconds of the seven, so
     // it stops and looks at each corner.
-    idle: { kind: 'patrol', radius: 110, points: 4, legTicks: seconds(5) },
+    //
+    // What caps the radius is *not* the leash, and this is the trap in the whole
+    // idle table: what a territorial body can reach is its notice range plus how
+    // far it has walked from its post, so a patrol radius spends the budget spec
+    // 163 tuned the notice range against. 320 + 150 is 470, inside the ceiling
+    // `idle.test.ts` states.
+    idle: { kind: 'patrol', radius: 150, points: 4, legTicks: seconds(7) },
     stats: {
       maxHealth: 40,
       moveSpeed: 105,
@@ -329,8 +340,9 @@ const AUTHORED: readonly AuthoredMonster[] = [
     temperament: { kind: 'ferocious', noticeRange: 300, assistRange: 260 },
     // Nest-bound, and much tighter than the default for it: a nest is a *place*,
     // and the whole shape of the encounter is walking into one. Four spiders
-    // each rambling 70 units is a nest smeared across the field with no middle.
-    idle: { kind: 'wander', radius: 45, cycleTicks: seconds(6) },
+    // each rambling the default 150 is a nest smeared across the field with no
+    // middle. 300 + 90 leaves its reach well inside the ceiling as well.
+    idle: { kind: 'wander', radius: 90, cycleTicks: seconds(7) },
     stats: {
       maxHealth: 22,
       moveSpeed: 115,
@@ -369,9 +381,15 @@ const AUTHORED: readonly AuthoredMonster[] = [
     temperament: { kind: 'territorial', noticeRange: 380, alertTicks: seconds(1.4) },
     // A shorter beat than the stalker's and one fewer post, because a picket
     // that throws does not need to cover ground to be dangerous -- what it wants
-    // is to keep its own standoff, and a tight triangle at 90 never gives much
+    // is to keep its own standoff, and a tight triangle at 100 never gives much
     // of it away.
-    idle: { kind: 'patrol', radius: 90, points: 3, legTicks: seconds(5) },
+    //
+    // It is also the row the reach ceiling actually binds. This one already
+    // watches furthest in the table, so 380 + 100 is 480 and a radius of 140
+    // would put it at exactly 520 -- the number spec 163 rejected, arrived at
+    // from the other end without touching the field 163 changed. `idle.test.ts`
+    // fails on it rather than leaving it to be re-discovered.
+    idle: { kind: 'patrol', radius: 100, points: 3, legTicks: seconds(6) },
     stats: {
       maxHealth: 34,
       moveSpeed: 90,

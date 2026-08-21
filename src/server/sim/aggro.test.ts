@@ -350,11 +350,16 @@ describe('skittish: it runs', () => {
   });
 
   it('stops running when its clock runs out, and turns for home', () => {
-    const anchor = { x: 640, y: 450 };
+    // Struck a long way from where it lives, which is what makes the homecoming
+    // half of this observable at all: since spec 201 widened the roam, a body
+    // startled *on its own ground* is still on its own ground when the clock
+    // runs out -- its 200-unit ring is twice the ~100 units a 2.5s flight at 40
+    // covers -- so there would be nothing to walk back from.
+    const anchor = { x: 240, y: 450 };
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
-    const grazer = withMonster(state, 'grazer', anchor.x, anchor.y, anchor);
+    const grazer = withMonster(state, 'grazer', 640, 450, anchor);
     state = grazer.state;
     const ctx = context();
 

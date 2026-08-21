@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORLD } from '../../sim/collision.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
-import { DEFAULT_IDLE, idlePlanOf, monsterById } from '../data/monsters.js';
+import { ALL_MONSTERS, DEFAULT_IDLE, idlePlanOf, monsterById, noticeRangeOf } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
@@ -376,6 +376,73 @@ describe('recovery', () => {
     };
     state = run(state, SERVER_TICK_RATE * 3, context());
     expect(at(state, one.id).health).toBe(30);
+  });
+});
+
+describe('what the rows actually produce', () => {
+  /**
+   * Two guards on the numbers rather than on the code, both of them for the
+   * same reason: a roam radius is the one field in this feature somebody will
+   * reach for without reading anything, and both ways of getting it wrong are
+   * silent.
+   */
+
+  /**
+   * How far a body that *initiates* may end up able to reach.
+   *
+   * Spec 163 cut the slinger's notice range from 520 to 380 because the arena is
+   * 1200 by 900 with `DEFAULT_SPAWN` at its centre, so 520 was a body watching
+   * nearly half the playable world and, in practice, the tile every character
+   * respawns on. Roaming re-opens that from the other end: what a territorial
+   * body can reach is its notice range *plus how far it has walked from its
+   * post*, so raising a patrol radius spends the budget 163 was tuned against
+   * without touching the number 163 tuned. This is that budget, stated once.
+   */
+  const MAX_INITIATOR_REACH = 500;
+
+  it('keeps an initiating body inside the reach spec 163 tuned for', () => {
+    for (const row of ALL_MONSTERS) {
+      const range = noticeRangeOf(row.temperament);
+      if (range === 0) continue;
+      const plan = row.idle;
+      const roam = plan.kind === 'sentinel' ? 0 : plan.radius;
+      expect(
+        range + roam,
+        `${row.id} can reach ${range + roam}: a ${range} notice range from anywhere on a ${roam} roam`,
+      ).toBeLessThanOrEqual(MAX_INITIATOR_REACH);
+    }
+  });
+
+  it('gives every roaming row both a walk and a rest', () => {
+    // Measured off the real tick rather than derived, because what a body
+    // actually does is the product of four numbers that live in three files --
+    // the radius and the cycle here, `IDLE_PACE` in `idle.ts`, and the body's
+    // own `moveSpeed` -- and the arithmetic between them is exactly the sort
+    // nobody re-does when they change one. Both failure modes are silent from
+    // inside a data table: a cycle too short for the radius is a body
+    // permanently in transit, and one too long is the field of statues this
+    // spec exists to replace.
+    const ctx = context();
+    for (const row of ALL_MONSTERS) {
+      if (row.idle.kind === 'sentinel') continue;
+      const anchor = { x: 600, y: 450 };
+      let state = createWorldState(3);
+      const spawned = withMonster(state, row.id, anchor.x, anchor.y, { anchor });
+      state = spawned.state;
+
+      let moving = 0;
+      const ticks = SERVER_TICK_RATE * 120;
+      for (let tick = 0; tick < ticks; tick++) {
+        const before = at(state, spawned.id).position;
+        state = step(state, [], ctx).state;
+        const after = at(state, spawned.id).position;
+        if (Math.hypot(after.x - before.x, after.y - before.y) > 1e-6) moving += 1;
+      }
+
+      const fraction = moving / ticks;
+      expect(fraction, `${row.id} never moves`).toBeGreaterThan(0.05);
+      expect(fraction, `${row.id} never rests`).toBeLessThan(0.85);
+    }
   });
 });
 
