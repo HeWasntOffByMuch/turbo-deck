@@ -663,6 +663,44 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  order. The labels avoid every word `keyLabel` already makes:
                  `Right` alone is taken -- it is what `ArrowRight` comes back as
                  -- so the pointer says `Right Click`;
+                 Since spec 198 `combat.stop` is a control rather than a row.
+                 It had been listed under Combat, bound to `X`, rebindable and
+                 saved since spec 125 and reached **nothing** -- spec 183's
+                 finding one tab over, and for the same reason: every action that
+                 was not a move, a slot, a window or the cancel fell off the end
+                 of `decideControlDown`. It ships on `Space` now and drops
+                 everything a body is committed to in one press: the wind-up, the
+                 standing attack order, the walk over to a drop, a pending aim,
+                 a confirmed one, the click-to-move order and its route, and
+                 whatever is held. The id does not move, because a stored profile
+                 references it; the label does, because "Stop" beside "Cancel
+                 cast" does not say which is which. Three rules. It is
+                 **unconditional** -- Escape asks whether anything is committed to
+                 and reaches for the menu when nothing is (spec 135), and one
+                 control that sometimes opens a window is enough. **Nothing new
+                 crosses the wire**, because stopping is the *absence* of a
+                 request: `moveIntent` yields (0,0) and the server stops the body,
+                 and the one thing that does need saying is already
+                 `CancelCast`. And **a control still physically down is disarmed
+                 until it is let go**, which is the rule the feature does not work
+                 without and the one no test in this tree could have found: a held
+                 key repeats `keydown` at the platform's own rate and `onKeyDown`
+                 has never read `event.repeat`, so every repeat put `move.north`
+                 straight back in `held` and the walk somebody asked to stop
+                 resumed on its own half a second later. It catches the stop's own
+                 key first -- Space held down fires once rather than sending
+                 `cancelCast` thirty times a second. `npx tsx
+                 scripts/probe-stop.ts` is the half no headless test can see, and
+                 the measurement that makes it honest is that it checks the
+                 browser *marked* its synthesised presses as repeats before
+                 believing what it measured from them: a stop that "held" against
+                 events that were never repeats is evidence of nothing. It reads
+                 `data-orders` (what has been asked for, in a fixed vocabulary, so
+                 a missing word is a specific drop that did not happen) beside
+                 `data-self-at` (whether the body is actually still moving), and
+                 needs both -- a stop that cleared the bookkeeping and left the
+                 legs running is the failure worth catching, and the first
+                 attribute alone would report it as a pass;
                  render/ is the only impure part. Everything else runs in Node.
                  Since spec 131 all but the HUD are in the Play tab, over
                  the world -- mounted by src/render/iso3d/world/ui-screens.ts,

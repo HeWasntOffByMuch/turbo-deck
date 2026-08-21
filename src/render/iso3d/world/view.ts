@@ -867,6 +867,45 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
+   * Mirrors what the body is committed to onto the root element (spec 198).
+   *
+   * The same window `publishUnitReadout` opens, for the same reason and read by
+   * nobody in the game: what a stop drops lives as half a dozen closure `let`s
+   * in this file, so a browser harness has nothing to ask about them -- and
+   * `scripts/probe-stop.ts` is the only thing that can say whether the branch
+   * this spec added reaches any of them. Two attributes rather than one, because
+   * they answer different questions: `data-orders` is what has been *asked for*,
+   * and `data-self-at` is whether the body is actually still moving, which is a
+   * fact about the server rather than about this file's bookkeeping.
+   *
+   * Named in the vocabulary the spec's table uses, in a fixed order, so a
+   * missing word is a specific drop that did not happen rather than a diff.
+   * Written only when it changes: a per-frame attribute write is a per-frame
+   * style invalidation, and a walking body writes one every frame anyway --
+   * which is exactly why the position is rounded to a whole world unit here.
+   */
+  let lastOrders = '';
+  function publishOrders(): void {
+    const me = selfPosition();
+    const orders = [
+      destination !== null ? 'walk' : '',
+      targetId !== null ? 'attack' : '',
+      pickupId !== null ? 'pickup' : '',
+      pendingAim !== null ? 'aim' : '',
+      order !== null ? 'cast' : '',
+      held.size > 0 ? 'keys' : '',
+    ]
+      .filter((word) => word !== '')
+      .join(' ');
+    const at = `${Math.round(me.x)},${Math.round(me.y)}`;
+    const text = `${orders}|${at}`;
+    if (text === lastOrders) return;
+    lastOrders = text;
+    root.dataset['orders'] = orders;
+    root.dataset['selfAt'] = at;
+  }
+
+  /**
    * Mirrors what the interface is showing onto the root element (spec 131).
    *
    * The same window `publishUnitReadout` opens, and needed for the same reason
@@ -1191,6 +1230,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * `scripts/probe-orbit.ts` drives a real page.
    */
   const heldKeys = new Set<string>();
+  /**
+   * Key codes that were physically down when a stop fired (spec 198).
+   *
+   * The rule without which the stop does not work at all, and one no unit test
+   * in this tree could have found, because it is a fact about the browser rather
+   * than about the game: a key held down repeats `keydown` at the platform's own
+   * rate, and `onKeyDown` has never looked at `event.repeat`. So every repeat
+   * puts `move.north` straight back into {@link held}, and a player walking north
+   * who asks to stop watches the walk resume on its own half a second later.
+   *
+   * A code goes in when the stop is applied and comes out when it is actually
+   * released. It costs nothing anywhere else -- a repeat only ever re-adds what
+   * its own first press already added -- and it catches the stop's own key first:
+   * Space held down fires once rather than sending `cancelCast` thirty times a
+   * second.
+   */
+  const disarmed = new Set<string>();
   const inputMap = new InputMap();
   /**
    * Where the key profile lives. Reached for here, at the DOM edge, exactly as
@@ -1497,6 +1553,51 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
+   * Call off the blow, and the orders whose whole job is to aim one (spec 198).
+   *
+   * What a stop shares with Escape, said once. Both used to write these three
+   * lines out, and two lists of what "calling off a blow" drops is two answers
+   * that drift the first time a fourth kind of order is added.
+   *
+   * `cancelCast` refunds the cost and the cooldown before the attack point and
+   * returns only the legs after it (spec 144) -- so what a called-off cast spends
+   * is exactly the time it took. `targetId` goes with it because withdrawing from
+   * a blow the auto-attack would re-commit to on the next tick is not withdrawing
+   * from anything.
+   */
+  function dropCommitments(): void {
+    client.cancelCast();
+    targetId = null;
+    clearAim();
+  }
+
+  /**
+   * Everything the body is committed to, dropped in one press (spec 198).
+   *
+   * `dropCommitments` plus the legs: the walk over to a drop, the standing move
+   * order and the route planned for it, and whatever is held. Unconditional --
+   * a stop asked at rest drops nothing, opens nothing and costs nothing, which
+   * is the whole difference from Escape, whose rule is to reach for the menu
+   * when there is nothing to back out of (spec 135). One control that sometimes
+   * opens a menu is enough.
+   *
+   * Nothing new crosses the wire, because stopping is the *absence* of a
+   * request: with `held` empty and no destination, `moveIntent` asks for (0, 0)
+   * and the server stops the body on the next tick it applies. The one thing
+   * that does need saying is already a message, and `cancelCast` sends it.
+   */
+  function stopEverything(): void {
+    dropCommitments();
+    pickupId = null;
+    destination = null;
+    planner.clear();
+    held.clear();
+    // The keys and buttons still down when this fired. Without this the walk
+    // resumes on its own at the browser's repeat rate; see `disarmed`.
+    for (const code of heldKeys) disarmed.add(code);
+  }
+
+  /**
    * Whether a right-click on this body should attack it rather than walk to it.
    *
    * Deliberately thin, and deliberately not a rule: it keeps the cursor from
@@ -1572,12 +1673,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // camera key is the same bug with the view spinning instead.
       held.clear();
       heldKeys.clear();
+      disarmed.clear();
       return;
     }
 
     // Recorded before the map is consulted, because these are the keys the map
     // does not know about (spec 140).
     heldKeys.add(event.code);
+
+    // A key the stop disarmed, still down and repeating (spec 198). Dropped
+    // whole rather than filtered down to its non-move half: a repeat carries no
+    // new intent by construction, since its own first press already did
+    // everything this one would. The default is prevented anyway, because the
+    // press this repeats prevented it -- and the disarmed key most often held
+    // down is the stop's own Space, which scrolls a page that does not stop it.
+    if (event.repeat && disarmed.has(event.code)) {
+      event.preventDefault();
+      return;
+    }
 
     if (applyDecision(decideControlDown(inputMap, event.code, modifiersOf(event)))) {
       event.preventDefault();
@@ -1671,12 +1784,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // both facts are visible -- that half may not see a cast, on purpose.
       const committed =
         pendingAim !== null || order !== null || targetId !== null || client.view().selfRoot !== null;
-      client.cancelCast();
-      // Withdrawing from a blow that the auto-attack would re-commit to on the
-      // next tick is not withdrawing from anything.
-      targetId = null;
-      clearAim();
+      dropCommitments();
       if (!committed) ui.toggle('options');
+    }
+
+    // And the control that means all of it (spec 198). It is Escape's three
+    // drops plus the legs and the route, with no condition on any of it: the
+    // row has been in the keybindings window since spec 125 asserting that a key
+    // does something, and until now the key did nothing at all.
+    //
+    // The default is prevented because Space scrolls a page, and because the
+    // action is rebindable -- so is whatever gets here.
+    if (decision.stop) {
+      stopEverything();
+      prevent = true;
     }
 
     // The verbs the pointer ships bound to, and they are branches on an action
@@ -1733,6 +1854,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Dropped whatever the interface said, for the reason below: a release the
     // UI swallowed is a key held forever, and here that is a view that spins.
     heldKeys.delete(event.code);
+    // Letting go is what re-arms a control the stop disarmed (spec 198).
+    disarmed.delete(event.code);
     // Released whatever the interface said, always. A release that the UI
     // swallowed is a held action with no way out, and the symptom is walking
     // into a wall until the same key is pressed and released again.
@@ -2021,6 +2144,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const onBlur = (): void => {
     held.clear();
     heldKeys.clear();
+    // Beside the two above and for the reason they are here: focus lost is every
+    // key released as far as this tab is concerned, and a code left disarmed
+    // would swallow the repeats of the next press of it.
+    disarmed.clear();
     // A gesture interrupted by losing focus never sends its pointerup, and the
     // next finger down would otherwise land mid-pinch.
     gestures.clear();
@@ -2664,6 +2791,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
     publishUnitReadout();
     publishVfxReadout();
+    publishOrders();
 
     // Last, over everything (spec 131). It is handed `now` rather than reading
     // one: nothing under `src/ui/` may touch a clock, which is what makes an
