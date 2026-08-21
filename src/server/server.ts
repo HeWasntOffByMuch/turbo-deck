@@ -571,6 +571,14 @@ export class GameServer implements AdminHost {
     channel.onClose(() => {
       void this.disconnect(connection);
     });
+    // A pong stamps exactly the field a frame stamps (spec 197). It is what
+    // keeps a player whose tab is hidden -- and whose timers the browser has
+    // throttled to one a minute -- from being swept as a lost socket, because
+    // nothing in that tab has to run for the answer to be sent. Optional call:
+    // a loopback channel has no wire and says so by not having the method.
+    channel.onAlive?.(() => {
+      connection.lastSeenTick = this.state.tick;
+    });
     return connection;
   }
 

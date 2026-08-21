@@ -114,6 +114,7 @@ import { spawnerLabels } from './spawner-overlay.js';
 import type { WorldAnchor } from './damage-popup.js';
 import { XpGains } from './xp-gain.js';
 import { castRefusalText } from './error-log.js';
+import { backoffTicksFor, KEEPALIVE_MS } from './keepalive.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -236,23 +237,6 @@ const PROP_INCOMPLETE_HOLD_MS = 4000;
 const GROUND_REFRESH_MIN_CHUNKS = 8;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
-/**
- * Wall-clock period for the two things that must outlive the frame loop
- * (spec 157): the heartbeat, and the reconnect backoff.
- *
- * Both used to ride `requestAnimationFrame`, which a browser throttles to
- * nothing in a hidden tab -- so switching tabs for a minute stopped the pings,
- * the server's ten-second timeout dropped the connection, and the backoff that
- * would have brought it back was frozen by the same stall. A `setInterval` is
- * clamped to about a second when hidden but never stops, which is the whole
- * difference between "slower" and "never".
- *
- * 500ms is the rate the frame loop drove them at, so nothing about a visible
- * tab changes.
- */
-const KEEPALIVE_MS = 500;
-/** Ticks of backoff clock per keep-alive, so `ReconnectingChannel` stays tick-driven. */
-const KEEPALIVE_TICKS = Math.round(KEEPALIVE_MS / TICK_MS);
 /** Ms between deltas -- the interval the renderer interpolates across. */
 const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
@@ -2397,6 +2381,43 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let backoffTick = 0;
   /** The wall-clock timer driving the heartbeat and the backoff. 0 when stopped. */
   let keepAlive = 0;
+  /** When `pump` last ran, so the backoff can be advanced by the gap it got. */
+  let lastPumpMs = 0;
+
+  /**
+   * One beat of the clock that outlives the frame loop (spec 197).
+   *
+   * Called by the interval, and again the instant the tab becomes visible --
+   * which is the one moment we know the reason for an outage has gone, and the
+   * one moment the old code did nothing, because it sat waiting for the very
+   * timer the browser had throttled. Both callers want exactly this, so it is a
+   * function rather than two copies that could drift.
+   *
+   * The gap is measured rather than assumed: see `keepalive.ts` for why a
+   * constant per firing halved the reconnect ladder in a hidden tab.
+   */
+  function pump(nowMs: number): void {
+    const elapsed = lastPumpMs === 0 ? KEEPALIVE_MS : nowMs - lastPumpMs;
+    lastPumpMs = nowMs;
+    client.keepAlive();
+    backoffTick += backoffTicksFor(elapsed, SERVER_TICK_RATE);
+    reconnecting?.deliver(backoffTick);
+  }
+
+  /**
+   * The tab being looked at again.
+   *
+   * Two things, and the second is the reason this is not only about the socket:
+   * the frame clock is reset the way `start()` resets it, so the first frame
+   * after ten hidden minutes is one tick long rather than a ten-minute `dt`
+   * handed to the camera and averaged into the frame meter.
+   */
+  function onVisible(): void {
+    if (document.visibilityState !== 'visible') return;
+    last = 0;
+    frames.reset();
+    pump(performance.now());
+  }
 
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
@@ -2661,6 +2682,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
       window.addEventListener('blur', onBlur);
+      document.addEventListener('visibilitychange', onVisible);
       // Pointer events rather than mouse events, so a tap is read once: the
       // compatibility `mousedown` a touch also fires would arrive as button 0
       // and confirm an aim nobody asked about (spec 093).
@@ -2685,12 +2707,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
           // rather than a second body beside the first (spec 150).
           rememberSession(sessionStorage, client.sessionToken);
         });
-        // The heartbeat and the backoff, on a clock a hidden tab cannot stop.
-        keepAlive = window.setInterval(() => {
-          client.keepAlive();
-          backoffTick += KEEPALIVE_TICKS;
-          reconnecting?.deliver(backoffTick);
-        }, KEEPALIVE_MS);
+        // The heartbeat and the backoff, on a clock the frame loop cannot
+        // stop. Not one a *browser* cannot stop -- it throttles this to one
+        // firing a minute past five minutes hidden, which is why the
+        // connection is held from the far end now (spec 197's `SERVER_PING_MS`)
+        // and this drives the visible case and the reconnect ladder.
+        keepAlive = window.setInterval(() => pump(performance.now()), KEEPALIVE_MS);
         void client.connect().catch((error: unknown) => {
           banner.refuse(error instanceof Error ? error.message : String(error));
         });
@@ -2700,6 +2722,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
       last = 0;
       accumulator = 0;
+      lastPumpMs = 0;
       raf = requestAnimationFrame(frame);
     },
     stop(): void {
@@ -2711,6 +2734,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisible);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointerup', onPointerUp);

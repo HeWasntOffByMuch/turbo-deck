@@ -1299,6 +1299,44 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
+                 net/transport-ws.ts pings (spec 197), and the reason is the one
+                 thing spec 157 could not have known: it moved the heartbeat off
+                 `requestAnimationFrame` onto a wall-clock `setInterval` because
+                 "a browser clamps it to about a second when hidden but never
+                 stops", and that is true for five minutes. Chrome throttles a
+                 page hidden and silent past that to **one timer firing a
+                 minute**, and an open socket does not exempt it -- so a
+                 ten-second `CONNECTION_TIMEOUT_TICKS` dropped anybody who went
+                 to read their email. The heartbeat that survives is the one the
+                 page is not holding: RFC 6455 makes answering a ping the
+                 *endpoint's* job, so a browser pongs from its network stack with
+                 no JavaScript running at all. `Channel.onAlive` is how that
+                 reaches `lastSeenTick`, and it is **optional** on purpose --
+                 `transport.ts` is "the smallest thing both implementations can
+                 honestly provide", a loopback channel has no wire to prove
+                 anything about, and an absent member says so where a required
+                 one would make it lie. It is also *better* evidence than the
+                 application ping it backs up: that one proves the tab's
+                 JavaScript is running, this proves the socket is, and the case
+                 the timeout exists for -- a dead router, a suspended phone, no
+                 `close` -- answers neither.
+                 What that leaves the client's interval doing is the visible
+                 case and the reconnect ladder, and the ladder had the same bug
+                 in miniature (`render/iso3d/world/keepalive.ts`): it advanced by
+                 a *constant* 30 ticks per firing, which is 60 a second only if
+                 something is really firing twice a second. At the hidden tab's
+                 1s clamp the ladder took 79 seconds against a 30-second resume
+                 grace; under the intensive throttle its first rung landed a
+                 minute out, past the point where there was a body left to resume
+                 into. It converts the gap it actually got now, so the ladder is
+                 the same number of seconds however often the timer fires -- and
+                 a long gap delivered in one step is safe by construction, since
+                 `ReconnectingChannel.deliver` opens at most one attempt per call
+                 and its rung advances on a *failed attempt* rather than on the
+                 clock. The other half is that `visibilitychange` is finally
+                 listened to: coming back to the tab is the one moment the cause
+                 of an outage is known to be gone, and it was the one moment the
+                 client did nothing, waiting out the timer that was the problem.
                  sim/attack-timing.ts is how long an attack takes, in every sense
                  of the question (spec 144), and the only place any of it is
                  worked out. The idea it exists to hold is that the **attack
