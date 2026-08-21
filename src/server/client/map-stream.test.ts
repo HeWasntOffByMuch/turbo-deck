@@ -20,6 +20,7 @@ import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { buildWorldFromMap } from '../world/build.js';
 import { GameClient } from './game-client.js';
+import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS } from '../config.js';
 import { chunksToDocument } from './map-rebuild.js';
 import { loadMapFile } from '../../server/world/map-file.js';
 
@@ -185,5 +186,45 @@ describe('the range check on a live server', () => {
     const after = client.view().map;
     if (!after) throw new Error('no map on the view');
     expect(after.chunks.some((c) => c.cx === far.cx && c.cz === far.cz)).toBe(false);
+  });
+});
+
+describe('a client that forgets behind it (spec 204)', () => {
+  it('drops the ground it walked away from, and picks it up again', async () => {
+    // The integration half of spec 204: `eviction.test.ts` drives the cache and
+    // the store directly, and this is the three lines in `GameClient` that make
+    // any of it happen. Without them a session holds every chunk it ever saw.
+    const test = harness();
+    const client = await connect(test);
+    await run(test, client, 120);
+
+    const home = client.view().self;
+    if (!home) throw new Error('no player');
+    const first = client.view().map;
+    if (!first) throw new Error('no map');
+    const startedWith = first.chunks.length;
+    expect(startedWith).toBeGreaterThan(0);
+    const homeKey = `${String(first.chunks[0]?.cx ?? 0)},${String(first.chunks[0]?.cz ?? 0)}`;
+
+    // Well past the keep radius, so everything here is out of range of there.
+    const extent = doc.grid.cellSize * doc.grid.chunkCells;
+    const far = MAP_CHUNK_KEEP_RADIUS + MAP_CHUNK_REQUEST_RADIUS + 2;
+    expect(test.server.teleport('p1', home.x + far * extent, home.y)).toBe(true);
+    await run(test, client, 120);
+
+    const after = client.view().map;
+    if (!after) throw new Error('no map');
+    // Bounded, and specifically no longer holding where it started.
+    expect(after.chunks.length).toBeLessThanOrEqual((2 * MAP_CHUNK_KEEP_RADIUS + 1) ** 2);
+    const keys = new Set(after.chunks.map((c) => `${String(c.cx)},${String(c.cz)}`));
+    expect(keys.has(homeKey)).toBe(false);
+
+    // And walking back brings it back, which is what makes eviction a cache
+    // rather than a loss.
+    expect(test.server.teleport('p1', home.x, home.y)).toBe(true);
+    await run(test, client, 120);
+    const back = client.view().map;
+    if (!back) throw new Error('no map');
+    expect(new Set(back.chunks.map((c) => `${String(c.cx)},${String(c.cz)}`)).has(homeKey)).toBe(true);
   });
 });

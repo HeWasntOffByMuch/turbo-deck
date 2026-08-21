@@ -161,6 +161,28 @@ export const PROTOCOL_VERSION = 19;
 export const MAP_CHUNK_REQUEST_RADIUS = 2;
 
 /**
+ * How far a client keeps a chunk it has stopped asking for (spec 204).
+ *
+ * Derived from the request radius rather than chosen, because the one thing
+ * eviction must not do is fight the streamer. A chunk is requested inside
+ * `MAP_CHUNK_REQUEST_RADIUS` and dropped outside this, so the two chunks between
+ * them are held and not asked for: a player crosses 1,232 units past the edge of
+ * what they are streaming before anything goes, and the same distance back
+ * before it is asked for again. There is no position at which one pass drops
+ * what the next pass asks for, and `map-cache.test.ts` asserts that over every
+ * position in a chunk rather than over one.
+ *
+ * The cost is what is held: 9x9 rather than 5x5, 81 chunks against 25 -- against
+ * the 392 a circuit of the shipped map used to leave behind, and against a whole
+ * 12,960-chunk world at the size this is heading for.
+ *
+ * Two rather than one because one is not "comfortably wider": at +1 the band is
+ * a single chunk, and a player walking a diagonal crosses a corner in and out of
+ * it within a few hundred units.
+ */
+export const MAP_CHUNK_KEEP_RADIUS = MAP_CHUNK_REQUEST_RADIUS + 2;
+
+/**
  * How long a chunk request goes unanswered before the client asks again
  * (spec 147). Three seconds at 60Hz.
  *

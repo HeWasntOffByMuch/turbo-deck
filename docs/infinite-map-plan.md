@@ -1,7 +1,7 @@
 # A map that keeps growing — plan
 
-Status: **phases 0–6 are done — specs 197 through 203 are written and
-implemented.** The next action is phase 7 (spec 204), client-side eviction.
+Status: **phases 0–7 are done — specs 197 through 204 are written and
+implemented.** The next action is phase 8 (spec 205), growing without rewriting.
 Phase 5 was **split in two** after measuring, and phase 6's designed mechanism
 was **deferred** after measuring; see the phase table and each phase's notes.
 
@@ -627,6 +627,23 @@ bit-identically.
 
 ### Phase 7 — a client that forgets behind it (spec 204)
 
+**Done.** Measured by driving a real cache and a real `StreamedMap` around a
+circuit of the shipped map: **392 chunks held against a 25-chunk request
+window**, and it stopped at 392 only because a circuit revisits its own ground.
+The keep radius is `MAP_CHUNK_REQUEST_RADIUS + 2`, derived rather than chosen,
+so a chunk requested inside radius 2 and dropped outside radius 4 is held and
+unasked in between — a player crosses 1,232 units past the edge of what they are
+streaming before anything goes. That there is no position where one pass drops
+what the next pass asks for is asserted over every position in a chunk rather
+than argued.
+
+Wired at all four layers, because three of them existed already and had no
+caller on this path: `MapChunkCache.evictBeyond`, `StreamedMap.remove`,
+`TerrainMeshHandle.remove` (spec 085's, for the editor), and the worker's own
+`StreamedMap` — which without an `evict` message would have held every chunk of
+the session on the thread nobody is watching.
+
+
 `MapChunkCache.chunks` only grows, `StreamedMap` never removes, meshes are never
 disposed, and `MapChunkStore.removeChunk` has no caller on this path. Evict past
 a radius comfortably wider than `MAP_CHUNK_REQUEST_RADIUS` (2 after phase 1) so
@@ -662,7 +679,7 @@ payoff: a constant-height chunk form taking seabed from 6.9 KB to under 1 KB.
 | 4 | no `warmRouting` at boot; `pathfinding-ground.test.ts` green on tiled grids; boundary components never pockets |
 | 5 | `segmentClear` answers identically off the index; the tick's slope flat against a 16× world at fixed residency; replay bit-identical |
 | 6 | the server meshes nothing at boot, asserted by counting; the editor gets the same chunks it always did; `build` flat enough that the deferred `ChunkSource` stays deferred |
-| 7 | client residency bounded over a 30-minute walk; an evicted chunk re-requests and re-meshes cleanly |
+| 7 | held bounded by the keep window over a circuit; eviction and the streamer never fight, at every position in a chunk; an evicted chunk re-requests and re-meshes; the worker lets go too |
 | 8 | a grow reads and writes only the regions it touches; the editor opens without the whole world |
 | 9 | the perimeter test fails on a shore too close to undeclared space |
 

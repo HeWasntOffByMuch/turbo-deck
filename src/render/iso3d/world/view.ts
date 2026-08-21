@@ -625,6 +625,34 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       pendingInserts.set(`${held.layer}:${held.cx},${held.cz}`, held);
     }
 
+    // Ground the cache has let go of (spec 204).
+    //
+    // Reconciled against the cache's held list rather than being told, because
+    // the cache is what decides residency and a message saying "these went"
+    // would be a second description of the same fact -- one that can be dropped,
+    // leaving geometry drawn over ground nothing holds. Comparing is O(held),
+    // and held is bounded by exactly the thing this pass enforces.
+    const live = new Set<string>();
+    for (const held of map.chunks) live.add(`${String(held.layer)}:${String(held.cx)},${String(held.cz)}`);
+    const stale = streamed
+      .heldRefs()
+      .filter((ref) => !live.has(`${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`));
+    if (stale.length > 0) {
+      const { removed, restitch } = streamed.remove(stale);
+      for (const ref of removed) {
+        pendingInserts.delete(`${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`);
+        const layerId = streamed.meshLayers[ref.layer]?.id;
+        if (layerId !== undefined) scene.dropTerrainChunk(layerId, ref.cx, ref.cz);
+      }
+      // The neighbours are stitched to ground that has gone, so they are dirty
+      // in exactly the sense an arrival makes its neighbours dirty.
+      if (restitch.length > 0) ingest.offer(restitch, nowMs);
+      // The height memo held samples over ground this side no longer has
+      // (spec 153), the same reason an insert invalidates it.
+      scene.invalidateGroundSamples();
+      mapWorker.send({ kind: 'evict', refs: stale });
+    }
+
     const insertStart = performance.now();
     const spend = new FrameBudget(nowMs, INGEST_BUDGET_MS);
     for (const [key, held] of pendingInserts) {

@@ -1344,6 +1344,41 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  still costs 30.7s at 4x when it is called, and the editor calls
                  it, which is a different problem because the editor genuinely
                  wants the mesh.
+                 Since spec 204 a client **forgets** what it walked past. Nothing
+                 on the map path removed anything: `MapChunkCache` had `accept`
+                 and no counterpart, `StreamedMap` never called
+                 `MapChunkStore.removeChunk`, and terrain geometry is disposed by
+                 `TerrainMeshHandle.remove` -- which exists for spec 085's part
+                 removal and had no caller here. Driven around a circuit of the
+                 shipped map, a real cache held **392 chunks against a 25-chunk
+                 request window**, and stopped at 392 only because a circuit
+                 revisits its own ground. `MAP_CHUNK_KEEP_RADIUS` is
+                 `MAP_CHUNK_REQUEST_RADIUS + 2`, **derived rather than chosen**,
+                 because the one thing eviction must not do is fight the
+                 streamer: requested inside 2 and dropped outside 4, a chunk
+                 between them is held and unasked, so a player crosses 1,232
+                 units past the edge of what they are streaming before anything
+                 goes and the same distance back before it is asked for again.
+                 That there is no position where one pass drops what the next
+                 asks for is asserted over every position *in* a chunk rather
+                 than over the middle, since a boundary bug is a bug about where
+                 in the chunk you are standing. An evicted chunk returns to "not
+                 held, not in flight, not absent" -- the state `deny` already
+                 puts a temporarily-refused one in -- so `wanted` re-raises it
+                 with no new state and no new path; `absent` is deliberately
+                 *not* cleared, because ground the server says does not exist
+                 still does not and re-asking each lap is a request storm.
+                 Four layers let go, and the renderer finds out by
+                 **reconciling** against the cache's held list rather than by
+                 being told: a message saying "these went" is a second
+                 description of the same fact, and one that can be dropped,
+                 leaving geometry drawn over ground nothing holds. The worker
+                 keeps a `StreamedMap` of its own and gets an `evict` request,
+                 without which it would hold every chunk of the session on the
+                 thread nobody is watching -- half the memory the eviction was
+                 for. Dropping one chunk re-meshes the four beside it, because a
+                 chunk's apron is built from its neighbours: the mirror of what
+                 an arrival does, in the other direction.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,

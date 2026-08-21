@@ -30,6 +30,9 @@ self.onmessage = (event: MessageEvent<MapWorkerRequest>): void => {
     case 'chunk':
       for (const out of core.addChunk(request.held)) reply(out);
       return;
+    case 'evict':
+      for (const out of core.evict(request.refs)) reply(out);
+      return;
     case 'nav': {
       const out = core.navGrid(request.radius);
       if (out) reply(out);

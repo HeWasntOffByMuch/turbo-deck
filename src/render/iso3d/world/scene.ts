@@ -845,6 +845,18 @@ export class WorldScene {
   }
 
   /**
+   * Stop drawing a chunk, and dispose its geometry (spec 204).
+   *
+   * The counterpart to {@link adoptTerrainChunk}, through the same
+   * `TerrainMeshHandle.remove` the editor uses to take a map part away
+   * (spec 085) -- which has existed since then with no caller on the streaming
+   * path, so a session drew every chunk it had ever walked past.
+   */
+  dropTerrainChunk(layerId: string, cx: number, cz: number): boolean {
+    return this.terrainMesh?.remove(layerId, cx, cz) ?? false;
+  }
+
+  /**
    * Forget the sampled-ground memo, because the ground under it moved.
    *
    * Everything it holds near an arriving chunk was sampled over a hole

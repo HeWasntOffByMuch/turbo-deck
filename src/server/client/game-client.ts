@@ -42,7 +42,7 @@ import {
   ServerMessageType,
   TradeStageValue,
 } from '../net/protocol.js';
-import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
+import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
 
 /**
  * How many chunks one pass may ask for (spec 072).
@@ -1901,7 +1901,18 @@ export class GameClient {
   private requestChunks(): void {
     const cache = this.mapCache;
     const at = this.prediction?.drawn ?? this.selfAuthoritative();
-    if (!cache || !at || this.chunkBackoffTicks > 0) return;
+    if (!cache || !at) return;
+    // Forget before asking, and on the same cadence, because both questions are
+    // "where is the player" and asking them at different moments is two answers
+    // (spec 204). Before rather than after, so a chunk that has just gone out of
+    // keep range cannot be re-requested on the very pass that drops it -- the
+    // radii are two apart so it could not anyway, and doing it in the order that
+    // makes it impossible costs nothing.
+    //
+    // Ahead of the backoff check: a client that has stopped asking is exactly
+    // the one that should still be letting go.
+    cache.evictBeyond(at.x, at.y, MAP_CHUNK_KEEP_RADIUS);
+    if (this.chunkBackoffTicks > 0) return;
     for (const req of cache.wanted(
       at.x,
       at.y,
