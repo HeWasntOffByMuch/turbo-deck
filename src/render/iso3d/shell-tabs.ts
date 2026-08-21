@@ -18,6 +18,8 @@
  */
 
 /** As much of a tab as this decision needs to see. */
+import type { ViewHandle } from './view-handle.js';
+
 export interface ShellTab {
   readonly label: string;
   /** Whether this tab is the game. Absent means a workbench. */
@@ -69,11 +71,26 @@ export type TabPress =
   /** Never mounted: start one, and remember that it is in flight. */
   | 'mount';
 
+/**
+ * `held` is the handle itself rather than "is there one", and that is the fix
+ * for a bug this signature caused.
+ *
+ * It took a `boolean`, and the shell holds its views in a `(ViewHandle |
+ * null)[]` initialised with `null`. The call site asked `handles[i] !==
+ * undefined` -- true for `null` -- so **every tab reported itself already
+ * mounted**, took the `show` branch, found nothing there and returned. Nothing
+ * ever mounted, and nothing threw: the tab bar drew and the app behind it was
+ * empty.
+ *
+ * Every test here passed throughout, because the decision was right and the
+ * question was wrong. So the question moved inside: a caller cannot get
+ * emptiness wrong if it does not answer it.
+ */
 export function tabPress(
   index: number,
   active: number,
   mounting: ReadonlySet<number>,
-  held: boolean,
+  held: ViewHandle | null | undefined,
 ): TabPress {
   if (index === active || mounting.has(index)) return 'ignore';
   return held ? 'show' : 'mount';

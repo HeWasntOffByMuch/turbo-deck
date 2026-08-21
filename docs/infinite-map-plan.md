@@ -417,6 +417,24 @@ untouched, and the one failure was the store document gaining a field.
 
 ### Phase 2 — the map leaves the bundle (spec 199) — **done**
 
+**It also broke the whole app for six phases, and nothing here noticed.** Making
+`Tab.mount` async introduced `tabPress`, and the shell asked it
+`handles[i] !== undefined` — while `handles` is a `(ViewHandle | null)[]`
+initialised with `null`. `null !== undefined` is true, so **every tab reported
+itself already mounted**, took the `show` branch, found nothing there and
+returned. Nothing mounted and nothing threw: the tab bar drew over an empty app.
+
+Every test passed the entire time, including `shell-tabs.test.ts`, because the
+decision was right and the *question* was wrong — the unit was fine and its
+caller was not. `tabPress` takes the handle now, so a caller cannot get emptiness
+wrong.
+
+The process lesson is the one this repo already writes down everywhere: the
+browser probes exist because a green suite says nothing about whether any of it
+is wired up, and `probe-streaming.ts` found this in one run the moment it was
+pointed at the build. It should have been run at the end of every phase that
+touched the renderer, and was not.
+
 `?url` and a fetch behind one memoised promise. `index-*.js` went from
 **14,074 kB to 2,032 kB** (gzipped 3,434 → 619) and the build from 19.2 s to
 8.4 s; the map ships as a hashed JSON asset. `npm run build` and

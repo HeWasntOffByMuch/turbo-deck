@@ -119,7 +119,7 @@ function main(): void {
   const activate = (i: number): void => {
     const tab = tabs[i];
     if (!tab) return;
-    const press = tabPress(i, active, mounting, handles[i] !== undefined);
+    const press = tabPress(i, active, mounting, handles[i]);
     if (press === 'ignore') return;
     const prev = active >= 0 ? handles[active] : null;
     if (prev) {

@@ -6,6 +6,7 @@
  * added without a `game` flag should fail here rather than turn up on a phone.
  */
 
+import type { ViewHandle } from './view-handle.js';
 import { describe, expect, it } from 'vitest';
 import { mountLanded, showsTabButtons, tabPress, visibleTabs, type ShellTab } from './shell-tabs.js';
 
@@ -49,17 +50,39 @@ describe('the tabs a device is offered', () => {
 
 describe('what pressing a tab does while a mount is in flight (spec 199)', () => {
   const none = new Set<number>();
+  /** A stand-in for a mounted view: only its presence is ever read. */
+  const held: ViewHandle = {
+    element: null as unknown as HTMLElement,
+    start: () => undefined,
+    stop: () => undefined,
+  };
 
   it('mounts a tab that has never been mounted', () => {
-    expect(tabPress(1, 0, none, false)).toBe('mount');
+    expect(tabPress(1, 0, none, null)).toBe('mount');
+  });
+
+  it('mounts a tab whose slot holds null, not just one that holds undefined', () => {
+    // The bug this signature exists to prevent, and it took the whole app down.
+    // The shell keeps its views in a `(ViewHandle | null)[]` filled with `null`,
+    // and the call site asked `handles[i] !== undefined` -- true for `null` --
+    // so **every tab reported itself already mounted**, took the `show` branch,
+    // found nothing and returned. Nothing mounted and nothing threw: the tab bar
+    // drew over an empty app.
+    //
+    // Every test in this block passed throughout, because the decision was right
+    // and the question was wrong. `held` is the handle now, so a caller cannot
+    // get emptiness wrong.
+    const slots: (ViewHandle | null)[] = [null, null];
+    expect(tabPress(1, 0, none, slots[1])).toBe('mount');
+    expect(tabPress(1, 0, none, slots[5])).toBe('mount');
   });
 
   it('shows one that was mounted and put away', () => {
-    expect(tabPress(1, 0, none, true)).toBe('show');
+    expect(tabPress(1, 0, none, held)).toBe('show');
   });
 
   it('ignores a press on the tab already showing', () => {
-    expect(tabPress(0, 0, none, true)).toBe('ignore');
+    expect(tabPress(0, 0, none, held)).toBe('ignore');
   });
 
   it('ignores a second press while the first mount is still in flight', () => {
@@ -67,8 +90,8 @@ describe('what pressing a tab does while a mount is in flight (spec 199)', () =>
     // at once, so without the in-flight set a second press would see
     // `index !== active` only on the *first* press and `held` false on both --
     // two mounts, two in-tab servers, one of them orphaned.
-    expect(tabPress(1, 1, new Set([1]), false)).toBe('ignore');
-    expect(tabPress(1, 0, new Set([1]), false)).toBe('ignore');
+    expect(tabPress(1, 1, new Set([1]), null)).toBe('ignore');
+    expect(tabPress(1, 0, new Set([1]), null)).toBe('ignore');
   });
 
   it('shows a mount that lands on the tab still being looked at', () => {
