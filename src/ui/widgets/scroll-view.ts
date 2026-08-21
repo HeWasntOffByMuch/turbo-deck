@@ -138,12 +138,24 @@ export class ScrollView extends StyledWidget {
     return shrink(this.rect, uniformInsets(INNER_INSET));
   }
 
+  /**
+   * Spend wheel notches on this view. Whether anything moved.
+   *
+   * A method rather than four lines inside `onEvent`, because a wheel does not
+   * always arrive here: a screen that pins a band above its scroller (spec 198)
+   * is handed the notch instead, and one notch has to mean the same distance
+   * whichever of the two took it.
+   */
+  wheelBy(notches: number): boolean {
+    if (!this.scrollable) return false;
+    this.scrollBy(-notches * WHEEL_STEP);
+    return true;
+  }
+
   onEvent(context: EventContext): void {
     const event = context.event;
     if (event.kind === 'wheel') {
-      if (!this.scrollable) return;
-      this.scrollBy(-event.delta * WHEEL_STEP);
-      context.stopPropagation();
+      if (this.wheelBy(event.delta)) context.stopPropagation();
       return;
     }
     if (event.kind !== 'key' || event.phase !== 'down') return;

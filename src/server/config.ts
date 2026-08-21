@@ -204,6 +204,21 @@ export const RESUME_GRACE_TICKS = 1800;
 export const CONNECTION_TIMEOUT_TICKS = 600;
 
 /**
+ * Ms between the server's protocol-level pings (spec 197).
+ *
+ * The application heartbeat rides the client's timers, and Chrome throttles a
+ * page hidden for five minutes down to one timer firing a minute -- so the
+ * heartbeat that has to be relied on is the one the page is not holding. A
+ * WebSocket pong is answered in the peer's network stack; the tab's JavaScript
+ * never sees it and cannot be throttled out of it.
+ *
+ * Three chances inside {@link CONNECTION_TIMEOUT_TICKS}, so a single dropped
+ * pong is not a disconnection. `transport-ws.test.ts` asserts that relationship
+ * rather than trusting the two numbers to be edited together.
+ */
+export const SERVER_PING_MS = 3000;
+
+/**
  * Token bucket on chunk sends, per connection (spec 072).
  *
  * The radius check bounds *where* a client may read; this bounds how fast. They

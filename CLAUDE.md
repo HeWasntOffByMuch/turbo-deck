@@ -663,6 +663,77 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  order. The labels avoid every word `keyLabel` already makes:
                  `Right` alone is taken -- it is what `ArrowRight` comes back as
                  -- so the pointer says `Right Click`;
+                 Since spec 198 a `TabPanel` scrolls its **own body**: each
+                 tab's content is wrapped in a scroller when it is built, so the
+                 strip is that scroller's *sibling* and **a tab strip is never
+                 inside the thing it scrolls**. That is a fact about the widget
+                 tree rather than a rule a screen has to remember, and it exists
+                 because whether a tabbed screen scrolled used to be the mount's
+                 decision -- and neither answer it can give keeps the tabs
+                 reachable. Wrapped in one `ScrollView`, which is what the mount
+                 does to every screen, reading the bottom of the character
+                 sheet's skill tree scrolled the tab headers clean off the top of
+                 the window and there was no way back to Attributes without
+                 scrolling up first. *Un*wrapped, which is how the options window
+                 is registered, a keybinding category with more rows than the
+                 window is tall met `Linear.shareSpace`'s overflow branch instead
+                 -- every row shrunk toward nothing, no bar, and the rows at the
+                 bottom unreachable rather than merely off screen. It costs
+                 nothing where nobody wanted it: a `ScrollView` offered an
+                 unbounded height measures to its content, so a panel inside
+                 somebody else's scroller still scrolls nothing and behaves
+                 exactly as it did. One scroller **per tab** rather than one for
+                 the body, because spec 124's rule reaches the offset too -- the
+                 comment that rule is written under names "a scroll position" as
+                 one of the things nobody thinks of as state, and a shared
+                 scroller clamps a long tab's offset against a short tab's
+                 content the moment you switch. Two consequences worth knowing.
+                 A screen that pins a band *above* the strip has to hand the
+                 wheel down (`CharacterScreen.onEvent` into `wheelBody`), since a
+                 notch over the heading has nothing above it that scrolls and a
+                 window that scrolls everywhere except its own top inch reads as
+                 a broken wheel. And a hit test against a tab's rows has to be
+                 inside `bodyViewport()`: a row scrolled out of the body keeps
+                 the rectangle it was last arranged into, which is the same class
+                 of bug `showing()` was written for, one level out.
+                 Since spec 199 `combat.stop` is a control rather than a row.
+                 It had been listed under Combat, bound to `X`, rebindable and
+                 saved since spec 125 and reached **nothing** -- spec 183's
+                 finding one tab over, and for the same reason: every action that
+                 was not a move, a slot, a window or the cancel fell off the end
+                 of `decideControlDown`. It ships on `Space` now and drops
+                 everything a body is committed to in one press: the wind-up, the
+                 standing attack order, the walk over to a drop, a pending aim,
+                 a confirmed one, the click-to-move order and its route, and
+                 whatever is held. The id does not move, because a stored profile
+                 references it; the label does, because "Stop" beside "Cancel
+                 cast" does not say which is which. Three rules. It is
+                 **unconditional** -- Escape asks whether anything is committed to
+                 and reaches for the menu when nothing is (spec 135), and one
+                 control that sometimes opens a window is enough. **Nothing new
+                 crosses the wire**, because stopping is the *absence* of a
+                 request: `moveIntent` yields (0,0) and the server stops the body,
+                 and the one thing that does need saying is already
+                 `CancelCast`. And **a control still physically down is disarmed
+                 until it is let go**, which is the rule the feature does not work
+                 without and the one no test in this tree could have found: a held
+                 key repeats `keydown` at the platform's own rate and `onKeyDown`
+                 has never read `event.repeat`, so every repeat put `move.north`
+                 straight back in `held` and the walk somebody asked to stop
+                 resumed on its own half a second later. It catches the stop's own
+                 key first -- Space held down fires once rather than sending
+                 `cancelCast` thirty times a second. `npx tsx
+                 scripts/probe-stop.ts` is the half no headless test can see, and
+                 the measurement that makes it honest is that it checks the
+                 browser *marked* its synthesised presses as repeats before
+                 believing what it measured from them: a stop that "held" against
+                 events that were never repeats is evidence of nothing. It reads
+                 `data-orders` (what has been asked for, in a fixed vocabulary, so
+                 a missing word is a specific drop that did not happen) beside
+                 `data-self-at` (whether the body is actually still moving), and
+                 needs both -- a stop that cleared the bookkeeping and left the
+                 legs running is the failure worth catching, and the first
+                 attribute alone would report it as a pass;
                  render/ is the only impure part. Everything else runs in Node.
                  Since spec 131 all but the HUD are in the Play tab, over
                  the world -- mounted by src/render/iso3d/world/ui-screens.ts,
@@ -1266,6 +1337,44 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
+                 net/transport-ws.ts pings (spec 197), and the reason is the one
+                 thing spec 157 could not have known: it moved the heartbeat off
+                 `requestAnimationFrame` onto a wall-clock `setInterval` because
+                 "a browser clamps it to about a second when hidden but never
+                 stops", and that is true for five minutes. Chrome throttles a
+                 page hidden and silent past that to **one timer firing a
+                 minute**, and an open socket does not exempt it -- so a
+                 ten-second `CONNECTION_TIMEOUT_TICKS` dropped anybody who went
+                 to read their email. The heartbeat that survives is the one the
+                 page is not holding: RFC 6455 makes answering a ping the
+                 *endpoint's* job, so a browser pongs from its network stack with
+                 no JavaScript running at all. `Channel.onAlive` is how that
+                 reaches `lastSeenTick`, and it is **optional** on purpose --
+                 `transport.ts` is "the smallest thing both implementations can
+                 honestly provide", a loopback channel has no wire to prove
+                 anything about, and an absent member says so where a required
+                 one would make it lie. It is also *better* evidence than the
+                 application ping it backs up: that one proves the tab's
+                 JavaScript is running, this proves the socket is, and the case
+                 the timeout exists for -- a dead router, a suspended phone, no
+                 `close` -- answers neither.
+                 What that leaves the client's interval doing is the visible
+                 case and the reconnect ladder, and the ladder had the same bug
+                 in miniature (`render/iso3d/world/keepalive.ts`): it advanced by
+                 a *constant* 30 ticks per firing, which is 60 a second only if
+                 something is really firing twice a second. At the hidden tab's
+                 1s clamp the ladder took 79 seconds against a 30-second resume
+                 grace; under the intensive throttle its first rung landed a
+                 minute out, past the point where there was a body left to resume
+                 into. It converts the gap it actually got now, so the ladder is
+                 the same number of seconds however often the timer fires -- and
+                 a long gap delivered in one step is safe by construction, since
+                 `ReconnectingChannel.deliver` opens at most one attempt per call
+                 and its rung advances on a *failed attempt* rather than on the
+                 clock. The other half is that `visibilitychange` is finally
+                 listened to: coming back to the tab is the one moment the cause
+                 of an outage is known to be gone, and it was the one moment the
+                 client did nothing, waiting out the timer that was the problem.
                  sim/attack-timing.ts is how long an attack takes, in every sense
                  of the question (spec 144), and the only place any of it is
                  worked out. The idea it exists to hold is that the **attack

@@ -178,6 +178,16 @@ describe('conflicts', () => {
     expect(map.conflicts({ code: 'Escape' }, 'gameplay')).toEqual(['combat.cancel']);
     expect(map.conflicts({ code: 'Escape' }, 'ui')).toEqual(['ui.closeTopmost']);
   });
+
+  it('ships the stop on a chord nothing else wants (spec 199)', () => {
+    // Space activates a focused button, a checkbox, a tab and a skill slot --
+    // but each of those reads the code itself, inside the widget, and is never
+    // routed through this map. So the `ui` context is genuinely free, and the
+    // stop cannot fire from a keyboard-driven press of a button in the bag.
+    const map = new InputMap();
+    expect(map.conflicts({ code: 'Space' }, 'gameplay')).toEqual(['combat.stop']);
+    expect(map.conflicts({ code: 'Space' }, 'ui')).toEqual([]);
+  });
 });
 
 describe('rebinding', () => {
@@ -190,9 +200,13 @@ describe('rebinding', () => {
 
   it('unbinds to nothing, and says the action is unbound', () => {
     const map = new InputMap();
+    // Space rather than the KeyX this used to read: the row moved in spec 199,
+    // and a chord nothing was bound to in the first place resolves to nothing
+    // whether the unbind worked or not.
+    expect(map.resolve('Space', NONE, 'gameplay')).toEqual(['combat.stop']);
     map.bind('combat.stop', 'primary', null);
     expect(map.isUnbound('combat.stop')).toBe(true);
-    expect(map.resolve('KeyX', NONE, 'gameplay')).toEqual([]);
+    expect(map.resolve('Space', NONE, 'gameplay')).toEqual([]);
   });
 
   it('an action with only a secondary is not unbound', () => {
