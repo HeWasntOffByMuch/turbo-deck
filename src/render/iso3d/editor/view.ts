@@ -14,7 +14,10 @@ import {
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
 import type { ViewHandle } from '../view-handle.js';
 import { PALETTE } from '../palette.js';
-import { buildPropField, type PropFieldHandle } from '../props.js';
+import { buildPropField, buildRegionInstances, propRegionKeysIn, type PropFieldHandle } from '../props.js';
+import { propRegions, propRegionsOwed, propRegionsPending } from './prop-residency.js';
+import { FrameBudget } from '../world/frame-budget.js';
+import type { Prop } from '../../../terrain/vegetation.js';
 import { viewSeed } from '../seed.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
 import { advanceWind } from '../wind-uniforms.js';
@@ -138,6 +141,16 @@ const RECIPE_MODULES = import.meta.glob('../../../../maps/recipes/*.json', { eag
   { default: PartRecipe }
 >;
 
+/**
+ * How much of a frame the deferred prop fill may have (spec 211).
+ *
+ * The Play tab's `INGEST_BUDGET_MS`, because it is the same question -- how much
+ * of a frame a background job gets -- and a second number would be a second
+ * answer to it. See `EditorScene.pumpProps` for what it actually buys at the
+ * region size in force, which is less than it looks.
+ */
+const PROP_PUMP_BUDGET_MS = 6;
+
 const RECIPES: ReadonlyMap<string, PartRecipe> = new Map(
   Object.entries(RECIPE_MODULES)
     .map(([path, module]) => [path.replace(/^.*\//, '').replace(/\.json$/, ''), module.default] as const)
@@ -150,6 +163,10 @@ class EditorScene {
   private readonly camera: THREE.OrthographicCamera;
   private terrainMesh: TerrainMeshHandle;
   private propField: PropFieldHandle;
+  /** Props by the region they stand in, from the list the field was built from. */
+  private propBuckets: ReadonlyMap<string, readonly Prop[]> = new Map();
+  /** Regions composed so far. Everything in `propBuckets` and not in here is owed. */
+  private propsHeld = new Set<string>();
   private renderW = 0;
   private renderH = 0;
   private lastHalfWidth = -1;
@@ -218,16 +235,97 @@ class EditorScene {
   }
 
   private buildProps(): PropFieldHandle {
-    const layer = this.map.store.layerInfo(this.layerId);
+    const props = this.map.store.props(this.layerId);
     const field = buildPropField(
-      this.map.store.props(this.layerId),
+      props,
       (x, z) => this.map.world.heightAt(x, z),
-      // Resolved at build time, not stored: a prop that asked to lie on the
-      // ground re-settles whenever the ground under it is sculpted.
-      layer ? (x, z) => terrainNormalAt(this.map.store, layer, x, z) : undefined,
+      this.propNormalAt(),
+      undefined,
+      // Deferred (spec 211). Composing every region here is about half of
+      // everything opening the editor costs -- 4.5s on the map we ship -- and
+      // it is a cost with nobody waiting on it: the ground and the camera are
+      // ready, and what is missing is trees. `pumpProps` brings them in from
+      // the pivot outward while the tab is already usable.
+      { deferred: true },
     );
     this.scene.add(field.group);
+    this.propBuckets = propRegions(props);
+    this.propsHeld = new Set();
     return field;
+  }
+
+  /**
+   * The ground normals props lie along, or nothing if the layer has gone.
+   *
+   * Resolved at build time, not stored: a prop that asked to lie on the ground
+   * re-settles whenever the ground under it is sculpted.
+   */
+  private propNormalAt(): ((x: number, z: number) => readonly [number, number, number]) | undefined {
+    const layer = this.map.store.layerInfo(this.layerId);
+    if (!layer) return undefined;
+    return (x, z) => terrainNormalAt(this.map.store, layer, x, z);
+  }
+
+  /** Regions still owed. Counted, never subtracted -- see `propRegionsPending`. */
+  get propsPending(): number {
+    return propRegionsPending(this.propBuckets, this.propsHeld);
+  }
+
+  /**
+   * Prop instances actually hanging on the scene graph.
+   *
+   * Counted by walking what is attached rather than by totting up what was
+   * asked for, which is the rule `data-held-weapons` is published under: a
+   * region composed into batches that never reached the group has to read as
+   * absent, because that is the failure a deferred field can have and an eager
+   * one could not.
+   */
+  get drawnPropInstances(): number {
+    let n = 0;
+    this.propField.group.traverse((child) => {
+      if (child instanceof THREE.InstancedMesh) n += child.count;
+    });
+    return n;
+  }
+
+  /**
+   * Compose owed prop regions until the budget is gone (spec 211).
+   *
+   * Nearest the camera's pivot first, so the trees you are looking at arrive
+   * before the far corner of the map -- which is the whole of what makes a
+   * deferred field better than a slow one rather than merely later.
+   *
+   * The budget is the Play tab's own `INGEST_BUDGET_MS`, and it is worth being
+   * honest about what it buys here: one region is **55ms** on the shipped map
+   * (median over its 72 regions; 77ms at the worst), because a region is ~426
+   * props at 0.15ms each. `FrameBudget` is checked *after* a unit of work and
+   * nothing here can subdivide one, so in practice this composes exactly one
+   * region a frame. That is still the feature -- the first region lands in 55ms
+   * where the eager field took 4.5s to land anything, and the tab pans and
+   * paints throughout -- but it is a frame the budget cannot actually bound.
+   *
+   * What would make the budget mean what it says is a smaller region, and the
+   * switch already exists: spec 195 chose 2200 by measuring **draw calls on a
+   * real GPU for the Play tab**, said in as many words that it is one machine's
+   * answer, and left `?props=` to ask again. The editor is a different
+   * workload -- it re-composes regions on every stroke -- so it may well want a
+   * different number, and that is a measurement on a real GPU rather than
+   * something to guess at here.
+   */
+  pumpProps(budget: FrameBudget): number {
+    if (this.propsPending === 0) return 0;
+    const at = { x: this.camera3.target.x, z: this.camera3.target.z };
+    const owed = propRegionsOwed(this.propBuckets, at, this.propsHeld);
+    const heightAt = (x: number, z: number): number => this.map.world.heightAt(x, z);
+    const normalAt = this.propNormalAt();
+    let composed = 0;
+    for (const key of owed) {
+      this.propField.adoptRegion(key, buildRegionInstances(this.propBuckets.get(key) ?? [], heightAt, normalAt));
+      this.propsHeld.add(key);
+      composed++;
+      if (budget.spent()) break;
+    }
+    return composed;
   }
 
   /**
@@ -250,8 +348,15 @@ class EditorScene {
    * A prop's height is baked into its instance matrix, so sculpting under a
    * forest leaves the trees hanging in the air or buried to the crown. Rebuilt
    * whole rather than per-instance, and only when a stroke *ends*: the field is
-   * one pass over ~1150 props, which is far too much to do sixty times a second
-   * and unnoticeable once per mouse-up.
+   * one pass over every prop in the world, which is far too much to do sixty
+   * times a second.
+   *
+   * Since spec 211 this **drops and re-owes** rather than rebuilding: the field
+   * is deferred, so building it composes nothing and `pumpProps` puts the
+   * regions back from the pivot outward. That is the whole reason the
+   * whole-field path is affordable at all -- it used to be 4.5s of frozen
+   * editor at the end of a stroke that happened not to report a rectangle, on
+   * the map we ship today rather than one we grow into.
    */
   refreshProps(): void {
     this.scene.remove(this.propField.group);
@@ -269,7 +374,16 @@ class EditorScene {
    * prop standing on the ground it moved.
    */
   refreshPropsWithin(rect: { minX: number; minZ: number; maxX: number; maxZ: number }): void {
-    this.propField.rebuildWithin(this.map.store.props(this.layerId), rect);
+    const props = this.map.store.props(this.layerId);
+    this.propField.rebuildWithin(props, rect);
+    // An edit composes the regions it touched, so the ledger has to agree that
+    // they are composed -- otherwise the fill would compose them a second time,
+    // throwing away the very batches this call just built. Re-bucketed for the
+    // same reason: a stroke that scattered into empty ground made a region that
+    // did not exist when the field was built, and one that erased the last prop
+    // in a region removed one.
+    this.propBuckets = propRegions(props);
+    for (const key of propRegionKeysIn(rect)) this.propsHeld.add(key);
   }
 
   /**
@@ -1270,6 +1384,11 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
       scene.camera3 = trackEditorCamera(scene.camera3, track.dx, track.dy, canvas.clientWidth);
     }
 
+    // Trees the deferred field still owes, nearest the pivot first (spec 211).
+    // After the camera has moved and before anything is drawn, so a frame that
+    // panned composes toward where it panned to rather than where it came from.
+    scene.pumpProps(new FrameBudget(time, PROP_PUMP_BUDGET_MS));
+
     // The cursor goes where the ray lands, and the brush follows it. Both read
     // the same pick, so the ring always marks the ground that is about to move.
     const mouse = input.mouseCanvas();
@@ -1496,6 +1615,11 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     scene.render(dt);
 
     const c = scene.camera3;
+    // What the deferred prop fill has actually got on screen (spec 211).
+    // Published because there is no other way to see it: every rule about the
+    // ledger is asserted in Node, and none of them can say whether the frame
+    // loop calls any of it -- which is the shape of bug this tree keeps finding.
+    readout.dataset.props = `drawn:${String(scene.drawnPropInstances)} pending:${String(scene.propsPending)}`;
     readout.innerHTML =
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +

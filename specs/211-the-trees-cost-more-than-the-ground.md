@@ -69,7 +69,7 @@ export function buildPropField(
 export function propRegions(props: readonly Prop[]): ReadonlyMap<string, readonly Prop[]>;
 
 /**
- * Regions not yet composed, nearest the view centre first.
+ * Regions not yet composed, nearest the camera's pivot first.
  *
  * Ordered rather than merely returned, because the whole point is that what the
  * camera is pointed at arrives before the far corner of the map. Ties break on
@@ -77,10 +77,24 @@ export function propRegions(props: readonly Prop[]): ReadonlyMap<string, readonl
  */
 export function propRegionsOwed(
   regions: ReadonlyMap<string, readonly Prop[]>,
-  view: MapRect,
+  at: ResidencyPoint,
   held: ReadonlySet<string>,
 ): readonly string[];
+
+/** How many regions with props in them are not composed. Counted, never subtracted. */
+export function propRegionsPending(
+  regions: ReadonlyMap<string, readonly Prop[]>,
+  held: ReadonlySet<string>,
+): number;
 ```
+
+The grid itself moved to `prop-regions.ts`, which is `props.ts` minus three, because
+this is the first thing outside that file to need the keying without needing a
+mesh — and a second copy of `Math.floor(x / regionSize)` in the pure half would
+be two answers to which props are in the region being adopted. `props.ts`
+re-exports every name, so no existing caller moved. `propRegionKeysIn` went the
+same way and replaced the loop `rebuildWithin` had inline, since the editor's
+ledger has to mark exactly the regions an edit recomposed.
 
 The editor's frame drains that list under the existing `FrameBudget`, and
 `refreshProps()` stops meaning "dispose and rebuild now": it drops what is held
@@ -95,6 +109,43 @@ change under the tools — scatter, erase, part add and remove — so a worker's
 copy of the field's input would be **a second description of the document**, and
 keeping it in step is a larger question than the one being answered here. Paced
 rather than moved.
+
+## What it measured, and what it corrected
+
+On the shipped map (28,919 props, 72 regions), the field's own build:
+
+| | before | after |
+|---|---|---|
+| `buildPropField` at open | 4,153 ms | **1 ms** |
+| the ledger (`propRegions`) | — | 5 ms |
+
+Three things this spec got wrong, found by building it:
+
+- **The ordering wants a point, not a rectangle.** This spec asked for a
+  `MapRect`. The editor camera *orbits*, so its world footprint is not
+  axis-aligned and any rect standing in for it is an approximation — of a value
+  used only to sort. `EditorCameraState.target` is the pivot, is exact, and is
+  already what "what the camera is pointed at" means. Spec 212 still wants a real
+  rectangle, because its keep test is a decision rather than an ordering.
+- **The budget cannot bound this frame, and saying it does would be a lie.**
+  One region is **55 ms** to compose (median over the map's 72; 77 ms at the
+  worst), because a region is ~426 props at 0.15 ms each. `FrameBudget` is
+  checked after a unit of work and nothing here can subdivide a region, so the
+  pump composes exactly **one region per frame**. What that buys is real — the
+  first region lands in 55 ms where the eager field took 4.5 s to land anything,
+  and the tab pans and paints throughout — but it is not a bounded frame. The
+  fix if one is wanted is a smaller region, and spec 195 chose 2200 by measuring
+  draw calls on a real GPU *for the Play tab*, said in as many words that it is
+  one machine's answer, and left `?props=` to ask again. The editor recomposes
+  regions on every stroke, so it may well want a different number; that is a
+  measurement on a real GPU rather than a guess here.
+- **`held` is not a subset of `regions`.** An edit marks every region its
+  rectangle touched, including ones with no props in them, so
+  `held.size >= regions.size` can be true while regions are still owed. Written
+  as the size comparison it obviously wants to be, the fill stops dead after a
+  stroke near the edge of the map and the trees never arrive, with nothing
+  reporting an error. `propRegionsPending` exists to make that countable, and
+  the test for it pins the trap rather than the happy case.
 
 ## Invariants tested
 
@@ -115,8 +166,18 @@ rather than moved.
   set never exceeds the region count.
 - **A whole-field refresh re-owes rather than rebuilds.** After `refreshProps()`
   nothing is composed and exactly the regions that were held are owed again.
-- **`undrawn` still says so.** A prop kind with no geometry is reported once
-  across adopted regions, not silently drawn as nothing (spec 086).
+- **`undrawn` still says so**, and says so *before* anything is composed: it is
+  a fact about the prop list rather than about what has arrived, and answering
+  it late would leave a tool looking broken for as long as the region holding
+  the undrawn props had not landed (spec 086).
+- **The trees actually arrive**, which no test above can tell. `npx tsx
+  scripts/probe-editor-props.ts` drives the shipped build and reads
+  `data-props`, published from what is **attached to the scene graph** rather
+  than from what was asked for -- so a region composed into batches that never
+  reached the group reads as absent, which is the one failure a deferred field
+  can have and an eager one could not. It asserts the open owes regions rather
+  than holding them, that the fill drains to nothing owed, and that the instance
+  count lands at or above the map's own prop count.
 - **Boot is flat in world size**, asserted as a slope against a 16× world rather
   than as a value.
 
