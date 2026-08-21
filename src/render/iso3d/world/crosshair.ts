@@ -22,6 +22,19 @@
  * second is why every value here ends in a keyword fallback, so a browser that
  * drops the image still gets a crosshair rather than an arrow.
  *
+ * There are **two** marks and they are the same mark, which is the whole of the
+ * fix for the thing this shipped wrong first. A cursor image is placed by its
+ * *hotspot*, and an arrow's hotspot is its tip while a crosshair's is its
+ * centre -- so swapping the one for the other on a key press leaves the click
+ * point exactly where it was and moves everything the eye actually tracks, by
+ * about half the mark. Nothing about a hotspot value can fix that: centre is
+ * where a crosshair's hotspot has to be, or it stops marking the point. What
+ * fixes it is not handing over from the arrow at all -- so the canvas wears a
+ * mark of ours at rest too, the same crosshair with its arms retracted to four
+ * tips and a centre dot, in the same box with the same hotspot. Aiming extends
+ * the arms and moves nothing, and `sameHotspot` in the tests is that as an
+ * assertion rather than as a promise.
+ *
  * Pure: no DOM, no three.js, no clock. `view.ts` assigns what
  * {@link worldCursor} returns to `canvas.style.cursor` and decides nothing.
  */
@@ -48,14 +61,44 @@ const CROSSHAIR: readonly string[] = [
   '....#....',
 ];
 
+/**
+ * The same mark at rest: the four arm *tips*, and the centre dot.
+ *
+ * What the canvas wears when nothing is being aimed. It is not a second design
+ * -- it is this crosshair with its arms pulled in, on the same grid, so that
+ * arming a skill reads as the arms extending out of a mark that was already
+ * there rather than as the pointer jumping. Sparse on purpose: it has to say
+ * "the point is here" over grass, water and a body without competing with any
+ * of them, and everything a player is actually looking at is under it.
+ */
+const RESTING: readonly string[] = [
+  '....#....',
+  '.........',
+  '.........',
+  '.........',
+  '#...#...#',
+  '.........',
+  '.........',
+  '.........',
+  '....#....',
+];
+
 /** The art's side, in font pixels. Square, so one number covers both. */
 export const CROSSHAIR_SIDE = CROSSHAIR.length;
 
+/** Which of the two marks a caller wants. */
+export type CrosshairArt = 'aiming' | 'resting';
+
+function artFor(art: CrosshairArt): readonly string[] {
+  return art === 'aiming' ? CROSSHAIR : RESTING;
+}
+
 /** One rect per lit pixel, origin at the top left, in font-pixel coordinates. */
-export function crosshairRects(): readonly PixelRect[] {
+export function crosshairRects(art: CrosshairArt = 'aiming'): readonly PixelRect[] {
+  const rows = artFor(art);
   const rects: PixelRect[] = [];
-  for (let row = 0; row < CROSSHAIR.length; row++) {
-    const line = CROSSHAIR[row];
+  for (let row = 0; row < rows.length; row++) {
+    const line = rows[row];
     if (!line) continue;
     for (let column = 0; column < line.length; column++) {
       if (line[column] !== '#') continue;
@@ -66,13 +109,15 @@ export function crosshairRects(): readonly PixelRect[] {
 }
 
 /** One SVG path `d` covering every lit pixel. */
-export function crosshairPath(): string {
-  return crosshairRects()
+export function crosshairPath(art: CrosshairArt = 'aiming'): string {
+  return crosshairRects(art)
     .map((rect) => `M${rect.x} ${rect.y}h${rect.w}v${rect.h}h-${rect.w}z`)
     .join('');
 }
 
 export interface CrosshairOptions {
+  /** Which mark: the aimed crosshair, or the same one at rest. */
+  readonly art?: CrosshairArt;
   /** Screen pixels per font pixel. 2 gives the 22x22 the cursor is drawn at. */
   readonly scale?: number;
   readonly fill?: string;
@@ -115,7 +160,7 @@ export function crosshairSvg(options: CrosshairOptions = {}): string {
   const fill = options.fill ?? CROSSHAIR_FILL;
   const outline = options.outline ?? CROSSHAIR_OUTLINE;
 
-  const path = crosshairPath();
+  const path = crosshairPath(options.art ?? 'aiming');
   const box = CROSSHAIR_SIDE + MARGIN * 2;
 
   const offsets: readonly (readonly [number, number])[] = [
@@ -157,8 +202,9 @@ export function crosshairCursor(options: CrosshairOptions = {}): string {
   return `url("data:image/svg+xml,${svg}") ${CROSSHAIR_HOTSPOT} ${CROSSHAIR_HOTSPOT}, crosshair`;
 }
 
-/** Built once: the art is constant, and a data URI rebuilt per frame is churn. */
-const AIM_CURSOR = crosshairCursor();
+/** Built once each: the art is constant, and a data URI rebuilt per frame is churn. */
+const AIM_CURSOR = crosshairCursor({ art: 'aiming' });
+const REST_CURSOR = crosshairCursor({ art: 'resting' });
 
 export interface WorldCursorInput {
   /**
@@ -177,14 +223,26 @@ export interface WorldCursorInput {
 }
 
 /**
+ * Every cursor this file can return, for the test that asserts the two of ours
+ * name the same hotspot -- which is what makes the swap on a key press
+ * positionless.
+ */
+export const WORLD_CURSORS = { aiming: AIM_CURSOR, resting: REST_CURSOR } as const;
+
+/**
  * What the canvas's `cursor` should be, in one place rather than two.
  *
  * The aim wins over the drop, and it has to: while a skill is aimed a left
  * click places it, so a pointing hand would promise a pickup the click is not
- * going to perform. Empty string is "whatever the page says", which is what
- * this was before either rule existed.
+ * going to perform.
+ *
+ * The drop's hand is the one hand-over left, and it is kept deliberately: it is
+ * an *affordance* rather than an aim, saying that the thing under the pointer
+ * can be clicked at all, which is the whole of spec 158's argument for it. It
+ * costs the same few pixels of apparent movement the arrow used to, on a hover
+ * the player chose to make rather than on a key press in the middle of a fight.
  */
 export function worldCursor(input: WorldCursorInput): string {
   if (input.aiming) return AIM_CURSOR;
-  return input.overDrop ? 'pointer' : '';
+  return input.overDrop ? 'pointer' : REST_CURSOR;
 }

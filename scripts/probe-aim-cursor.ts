@@ -86,8 +86,10 @@ async function cursorSettles(
   return seen;
 }
 
-const isCrosshair = (value: string): boolean => value.startsWith('url("data:image/svg+xml');
+const isOurs = (value: string): boolean => value.startsWith('url("data:image/svg+xml');
 const isArrow = (value: string): boolean => value === 'auto' || value === 'default';
+/** The hotspot and fallback a value declares -- what actually places the image. */
+const anchorOf = (value: string): string => value.slice(value.indexOf('") ') + 3);
 
 async function main(): Promise<void> {
   const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
@@ -109,17 +111,28 @@ async function main(): Promise<void> {
     await waitForTick(page, 150);
     await page.mouse.move(640, 400);
 
-    const idle = await cursorSettles(page, isArrow);
-    console.log(`  idle:        ${idle.slice(0, 60)}`);
-    if (!isArrow(idle)) problems.push(`idle canvas wore ${idle}, not the page's own cursor`);
+    // At rest the canvas wears our own mark rather than the OS arrow, and that
+    // is the fix rather than a flourish: an arrow's hotspot is its tip and a
+    // crosshair's is its centre, so handing over between them moves the mark by
+    // half itself on the very key press the player is watching.
+    const idle = await cursorSettles(page, isOurs);
+    console.log(`  idle:        ${idle.slice(0, 60)}...`);
+    if (!isOurs(idle)) problems.push(`the idle canvas wore ${idle}, not the resting mark`);
 
     // Slot 3 is `ground.quake`: a point aim, so the press asks for a click.
     await page.keyboard.press('Digit3');
-    const aiming = await cursorSettles(page, isCrosshair);
+    const aiming = await cursorSettles(page, (value) => isOurs(value) && value !== idle);
     console.log(`  aiming:      ${aiming.slice(0, 60)}...`);
-    if (!isCrosshair(aiming)) {
+    if (aiming === idle) problems.push('arming a skill did not change the mark at all');
+    if (!isOurs(aiming)) {
       problems.push(`a pending ground aim wore ${aiming}, not the crosshair`);
     } else {
+      // The reason the pair exists: one box, one hotspot, so arming the aim
+      // extends the arms and moves nothing. Checked here as well as in Node
+      // because it is the browser that places the image.
+      if (anchorOf(aiming) !== anchorOf(idle)) {
+        problems.push(`the two marks name different hotspots: ${anchorOf(idle)} vs ${anchorOf(aiming)}`);
+      }
       // The engine parsed the image: a refused one falls through to the keyword
       // and would read as `crosshair` alone, which is a fallback rather than the
       // mark this spec is about.
@@ -135,41 +148,53 @@ async function main(): Promise<void> {
     // that would catch a malformed path, a bad encoding or a size the engine
     // refuses: the same URI, loaded as an image, has to come back at the box
     // the SVG declares.
-    const decoded = await page.evaluate(async (value: string) => {
-      const url = value.slice(value.indexOf('url("') + 5, value.indexOf('")'));
-      return await new Promise<{ ok: boolean; width: number; height: number }>((resolve) => {
-        const image = new Image();
-        image.onload = () => resolve({ ok: true, width: image.naturalWidth, height: image.naturalHeight });
-        image.onerror = () => resolve({ ok: false, width: 0, height: 0 });
-        image.src = url;
-      });
-    }, aiming);
-    console.log(`  decoded:     ${decoded.ok ? `${decoded.width}x${decoded.height}` : 'refused'}`);
-    if (!decoded.ok) problems.push('the browser could not decode the cursor image');
-    if (decoded.ok && (decoded.width !== 22 || decoded.height !== 22)) {
+    const decode = async (value: string) => {
+      if (!isOurs(value)) return { ok: false, width: 0, height: 0 };
+      return await page.evaluate(async (url: string) => {
+        return await new Promise<{ ok: boolean; width: number; height: number }>((resolve) => {
+          const image = new Image();
+          image.onload = () =>
+            resolve({ ok: true, width: image.naturalWidth, height: image.naturalHeight });
+          image.onerror = () => resolve({ ok: false, width: 0, height: 0 });
+          image.src = url;
+        });
+      }, value.slice(value.indexOf('url("') + 5, value.indexOf('")')));
+      return { ok: false, width: 0, height: 0 };
+    };
+    for (const [name, value] of [
+      ['resting', idle],
+      ['aiming', aiming],
+    ] as const) {
+      const decoded = await decode(value);
+      console.log(`  decoded ${name}: ${decoded.ok ? `${decoded.width}x${decoded.height}` : 'refused'}`);
+      if (!decoded.ok) problems.push(`the browser could not decode the ${name} cursor image`);
       // Over 32 and some engines drop the image; a different number here means
-      // the SVG is not the size `CROSSHAIR_BOX` says it is.
-      problems.push(`the cursor decoded at ${decoded.width}x${decoded.height}, not 22x22`);
+      // the SVG is not the size `CROSSHAIR_BOX` says it is. Both marks have to
+      // come back the same size, or the swap moves the drawn mark after all.
+      if (decoded.ok && (decoded.width !== 22 || decoded.height !== 22)) {
+        problems.push(`the ${name} cursor decoded at ${decoded.width}x${decoded.height}, not 22x22`);
+      }
     }
 
-    // Right-click calls the aim off (spec 080), and the cursor goes with it.
+    // Right-click calls the aim off (spec 080), and the arms retract with it.
     await page.mouse.click(640, 400, { button: 'right' });
-    const cancelled = await cursorSettles(page, isArrow);
-    console.log(`  cancelled:   ${cancelled.slice(0, 60)}`);
-    if (!isArrow(cancelled)) problems.push(`a cancelled aim left ${cancelled} behind`);
+    const cancelled = await cursorSettles(page, (value) => value === idle);
+    console.log(`  cancelled:   ${cancelled.slice(0, 60)}...`);
+    if (cancelled !== idle) problems.push(`a cancelled aim left ${cancelled} behind`);
+    if (isArrow(cancelled)) problems.push('a cancelled aim fell back to the OS arrow');
 
     // Slot 2 is `bolt.seek`: a *unit* aim, which is the other gesture and the
     // one whose click lands on a body rather than on the ground.
     await page.keyboard.press('Digit2');
-    const unit = await cursorSettles(page, isCrosshair);
+    const unit = await cursorSettles(page, (value) => value === aiming);
     console.log(`  unit aim:    ${unit.slice(0, 60)}...`);
-    if (!isCrosshair(unit)) problems.push(`a pending unit aim wore ${unit}, not the crosshair`);
+    if (!isOurs(unit)) problems.push(`a pending unit aim wore ${unit}, not the crosshair`);
     if (unit !== aiming) problems.push('the two gestures wore different crosshairs');
 
     await page.keyboard.press('Escape');
-    const escaped = await cursorSettles(page, isArrow);
-    console.log(`  escaped:     ${escaped.slice(0, 60)}`);
-    if (!isArrow(escaped)) problems.push(`Escape left ${escaped} behind`);
+    const escaped = await cursorSettles(page, (value) => value === idle);
+    console.log(`  escaped:     ${escaped.slice(0, 60)}...`);
+    if (escaped !== idle) problems.push(`Escape left ${escaped} behind`);
   } finally {
     await browser.close();
     server.kill();
@@ -180,7 +205,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log('  the aim cursor is the crosshair, and only while an aim is pending');
+  console.log('  the world wears our mark throughout, and arming a skill only extends it');
 }
 
 await main();
