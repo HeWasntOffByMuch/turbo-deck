@@ -467,11 +467,32 @@ and a grow moves it; a region declares its own extent now, and that is a test.
 
 ### Phase 4 — routes without a warmed world (spec 201)
 
-`warmRouting` stops being a boot step. Grids are built per chunk with the chunk,
-at the same `ROUTING_RADII`, and discarded with it, assembled into the resident
-envelope. Components are recomputed over the whole envelope on residency change;
-its edge reads as blocked; a component touching it is never a pocket. See
+`warmRouting` stops being a boot step. Nav is tiled, tiles are assembled into a
+window, and components are recomputed over the window on residency change; its
+edge reads as blocked; a component touching it is never a pocket. See
 *cross-tile nav connectivity* above — those three rules are the spec's core.
+
+Three corrections writing it turned up, each against something this plan said:
+
+- **"Per chunk" was not implementable.** A *map* chunk is 616 units and a nav
+  cell is 10, so a map chunk is **61.6 nav cells** and tiles of it do not tile a
+  lattice of whole cells. An *interest* chunk is 400 = exactly 40, and is already
+  the residency unit `activeChunks` and `isSimulated` read. A nav tile is an
+  interest chunk.
+- **The window needs padding, and the amount is derived.** `routeToward` is
+  given three goals and two reach past the active set — `walkHome` at
+  `LEASH_RADIUS` = 800 and `flee` at `FLEE_DISTANCE` = 900. Unpadded, a monster
+  led round a wall presses into it instead of coming back round, which is the
+  feature spec 076 states in as many words. `ceil(max(...) / CHUNK_SIZE)` = 3
+  tiles, so one player's window is 13 tiles = 520 × 520 cells.
+- **`HEIGHT_CACHE` never evicts.** Harmless today, because there is one grid
+  shape per ground and forever is one entry. The moment the window moves with
+  the players it is one entry per place anybody has ever stood — a leak that
+  arrives *with* the feature. Caching at the tile bounds it by residency.
+
+Measured: a window is 2.3 MB per radius against 3.08 M cells for the world, and
+the ratio is the point — **11× smaller today, 182× at the 4× target**, because
+the window does not grow with the world at all.
 
 `pathfinding-ground.test.ts` runs against tiled grids before and after. Most
 likely phase to change observable behaviour, so it wants that corpus green and a
