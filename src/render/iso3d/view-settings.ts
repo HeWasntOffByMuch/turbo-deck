@@ -102,6 +102,30 @@ export const DEFAULT_VIEW_HALF_WIDTH = 320;
  */
 export const MIN_VIEW_HALF_WIDTH = 200;
 export const MAX_VIEW_HALF_WIDTH = 1400;
+/**
+ * The widest zoom the *game* is sized for, as against the widest the slider will
+ * physically go to (spec 202).
+ *
+ * Three server constants answer one question -- what can the camera frame --
+ * and every one of them used to be sized against `MAX_VIEW_HALF_WIDTH`. Measured
+ * through `cameraFrustum` across every window shape a real monitor comes in,
+ * 1400 reaches 3107 world units and 420 reaches 932, so the interest window was
+ * 289 chunks where 49 covers it and the chunk request window 169 where 25 does.
+ * At the ~10ms a cold chunk costs (spec 201) that is the difference between a
+ * quarter-second of prefetch and two and a half seconds.
+ *
+ * Deliberately **not** the same number as the maximum. The viewport is not
+ * blocked: the slider still reaches 1400, and past this the Display page says it
+ * is a dev setting and what degrades. Capping for real later is making the two
+ * equal, and `interest.test.ts` and `map-radius.test.ts` -- which assert the
+ * relationship rather than the numbers -- then say which constants move with it.
+ *
+ * The server never imports this and never learns which zoom a player chose. It
+ * sizes off the *cap*, because `decideChunkRequest` validates against the
+ * server's own position precisely so a client cannot widen its read window by
+ * lying, and a client-reported zoom is exactly such a claim (spec 072).
+ */
+export const SUPPORTED_MAX_VIEW_HALF_WIDTH = 420;
 /** How long the follow camera takes to close most of the gap to the unit (spec 039). */
 export const DEFAULT_FOLLOW_LAG_MS = 130;
 
@@ -110,10 +134,46 @@ const ZOOM_PER_NOTCH = 1.1;
 /** Wheel delta that counts as one notch, by `WheelEvent.deltaMode` (px/lines/pages). */
 const DELTA_PER_NOTCH = [100, 3, 1] as const;
 
-/** Hold a view span inside the usable band; a non-finite span falls back to the default. */
-export function clampViewHalfWidth(halfWidth: number): number {
+/**
+ * Hold a view span inside the usable band; a non-finite span falls back to the
+ * default.
+ *
+ * `ceiling` is the player's own widest zoom (spec 202), which defaults to the
+ * band's maximum so every existing caller behaves exactly as it did. It is
+ * clamped into the band itself, so a stored preference from a build with a wider
+ * band cannot widen this one's.
+ */
+export function clampViewHalfWidth(halfWidth: number, ceiling = MAX_VIEW_HALF_WIDTH): number {
   if (!Number.isFinite(halfWidth)) return DEFAULT_VIEW_HALF_WIDTH;
-  return Math.min(MAX_VIEW_HALF_WIDTH, Math.max(MIN_VIEW_HALF_WIDTH, halfWidth));
+  const top = Math.min(MAX_VIEW_HALF_WIDTH, Math.max(MIN_VIEW_HALF_WIDTH, ceiling));
+  return Math.min(top, Math.max(MIN_VIEW_HALF_WIDTH, halfWidth));
+}
+
+/**
+ * The span the camera should frame, given a widest-zoom ceiling and how that
+ * ceiling arrived (spec 202, corrected).
+ *
+ * The two arrivals are genuinely different questions and the fix for the bug is
+ * that they stopped sharing an answer.
+ *
+ * **Restoring** a stored preference at mount must only *clamp*: a session that
+ * had been left framed at 320 with a ceiling of 420 has to come back at 320, and
+ * a restore that framed the ceiling would open every session zoomed all the way
+ * out.
+ *
+ * **Choosing** one on the slider has to frame it, because otherwise the control
+ * is silently one-way. `clampViewHalfWidth` is `min(ceiling, max(MIN, current))`
+ * -- so dragging the ceiling *down* past the current span pulls the camera in
+ * and is visible, while dragging it *up* leaves the span already under the new
+ * ceiling and does nothing at all. Perfectly asymmetric, which reads as
+ * half-broken rather than as a permission being raised; and the slider's own
+ * comment in `display.ts` says a player picking a framing wants to see it move.
+ *
+ * Both go through {@link clampViewHalfWidth}, so a ceiling outside the band
+ * cannot become a span outside it either.
+ */
+export function spanForMaxZoom(current: number, ceiling: number, chosen: boolean): number {
+  return clampViewHalfWidth(chosen ? ceiling : current, ceiling);
 }
 
 /**
@@ -125,8 +185,13 @@ export function clampViewHalfWidth(halfWidth: number): number {
  * deltas move it a correspondingly small amount instead of a fixed notch.
  * Always clamped.
  */
-export function zoomViewHalfWidth(current: number, deltaY: number, deltaMode = 0): number {
-  return zoomSpan(current, deltaY, deltaMode, MIN_VIEW_HALF_WIDTH, MAX_VIEW_HALF_WIDTH);
+export function zoomViewHalfWidth(
+  current: number,
+  deltaY: number,
+  deltaMode = 0,
+  ceiling = MAX_VIEW_HALF_WIDTH,
+): number {
+  return zoomSpan(current, deltaY, deltaMode, MIN_VIEW_HALF_WIDTH, clampViewHalfWidth(ceiling, ceiling));
 }
 
 /**
@@ -140,10 +205,14 @@ export function zoomViewHalfWidth(current: number, deltaY: number, deltaMode = 0
  * it. A ratio that is not a usable multiplier leaves the span alone -- the
  * recogniser already refuses a zero separation, and this is the second wall.
  */
-export function pinchViewHalfWidth(current: number, ratio: number): number {
-  const start = clampViewHalfWidth(current);
+export function pinchViewHalfWidth(
+  current: number,
+  ratio: number,
+  ceiling = MAX_VIEW_HALF_WIDTH,
+): number {
+  const start = clampViewHalfWidth(current, ceiling);
   if (!Number.isFinite(ratio) || ratio <= 0) return start;
-  return clampViewHalfWidth(start / ratio);
+  return clampViewHalfWidth(start / ratio, ceiling);
 }
 
 /**

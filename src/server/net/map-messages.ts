@@ -257,8 +257,9 @@ export function encodeMapChunk(msg: MapChunkMessage): Uint8Array {
   writeRuns(w, c.materials);
   writeRuns(w, c.tones);
 
-  w.bool(c.nav !== null);
-  if (c.nav !== null) writeRuns(w, c.nav);
+  // `nav` left this wire in spec 204. It was a run list per chunk carrying baked
+  // walkability to every client, and the only thing that ever read it was the
+  // *editor's* overlay -- which loads the map off disk and never streams.
 
   w.varuint(species.length);
   for (const s of species) w.str(s);
@@ -305,7 +306,6 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
   const solid = readRuns(r);
   const materials = readRuns(r);
   const tones = readRuns(r);
-  const nav = r.bool() ? readRuns(r) : null;
 
   const speciesCount = r.count();
   const species: string[] = new Array<string>(speciesCount);
@@ -354,7 +354,7 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
     type: ServerMessageType.MapChunk,
     mapId,
     layer,
-    chunk: { cx, cz, cols, rows, heights, solid, materials, tones, nav, props, markers },
+    chunk: { cx, cz, cols, rows, heights, solid, materials, tones, props, markers },
   };
 }
 

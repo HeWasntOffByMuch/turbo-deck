@@ -18,6 +18,8 @@
  */
 
 /** As much of a tab as this decision needs to see. */
+import type { ViewHandle } from './view-handle.js';
+
 export interface ShellTab {
   readonly label: string;
   /** Whether this tab is the game. Absent means a workbench. */
@@ -48,4 +50,65 @@ export function visibleTabs<T extends ShellTab>(tabs: readonly T[], compact: boo
  */
 export function showsTabButtons(visible: readonly ShellTab[]): boolean {
   return visible.length > 1;
+}
+
+/**
+ * What pressing a tab should do (spec 203).
+ *
+ * A mount can take a network round trip now -- the Play tab and the editor fetch
+ * the shipped map rather than carrying it in the bundle -- so a press is no
+ * longer answered by the time the next one arrives. Two things go wrong without
+ * an explicit answer, and both are worse than they look: mounting the Play tab
+ * twice makes **two in-tab servers**, one of them orphaned and still holding a
+ * transport, and the second mount overwrites the handle that could have stopped
+ * the first.
+ */
+export type TabPress =
+  /** Already there, or already on the way. Pressing again is not a second request. */
+  | 'ignore'
+  /** Mounted earlier and put away; show it again. */
+  | 'show'
+  /** Never mounted: start one, and remember that it is in flight. */
+  | 'mount';
+
+/**
+ * `held` is the handle itself rather than "is there one", and that is the fix
+ * for a bug this signature caused.
+ *
+ * It took a `boolean`, and the shell holds its views in a `(ViewHandle |
+ * null)[]` initialised with `null`. The call site asked `handles[i] !==
+ * undefined` -- true for `null` -- so **every tab reported itself already
+ * mounted**, took the `show` branch, found nothing there and returned. Nothing
+ * ever mounted, and nothing threw: the tab bar drew and the app behind it was
+ * empty.
+ *
+ * Every test here passed throughout, because the decision was right and the
+ * question was wrong. So the question moved inside: a caller cannot get
+ * emptiness wrong if it does not answer it.
+ */
+export function tabPress(
+  index: number,
+  active: number,
+  mounting: ReadonlySet<number>,
+  held: ViewHandle | null | undefined,
+): TabPress {
+  if (index === active || mounting.has(index)) return 'ignore';
+  return held ? 'show' : 'mount';
+}
+
+/**
+ * What to do with a handle whose mount has just finished.
+ *
+ * `active` moves when the press is *made* rather than when the mount lands, so
+ * that the button lights immediately -- a bar that does nothing for a second
+ * reads as a dropped click. Which means a slow mount can arrive after the player
+ * has moved on, and handing it to the screen then would put it over whatever
+ * they moved to.
+ *
+ * Shelved rather than discarded: an unstarted handle is exactly the state a
+ * backgrounded tab is in, so keeping it means coming back is instant instead of
+ * a second fetch.
+ */
+export function mountLanded(index: number, active: number): 'show' | 'shelve' {
+  return index === active ? 'show' : 'shelve';
 }

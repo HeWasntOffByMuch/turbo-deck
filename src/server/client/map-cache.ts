@@ -7,8 +7,14 @@
  * stream.
  *
  * The cache is per session and in memory. Persisting it would buy a warm reload
- * and cost a quota story and a staleness story; the whole map is under a
- * megabyte and a session asks for each chunk exactly once.
+ * and cost a quota story and a staleness story.
+ *
+ * Since spec 208 it also **forgets**. It used to have `accept` and no
+ * counterpart, so a session held every chunk it had ever walked past: a circuit
+ * of the shipped map left 392 held against a 25-chunk request window, and a map
+ * four times the size is four times that. `evictBeyond` is the other half, and
+ * the radius it is called with is derived from the request radius rather than
+ * chosen -- see {@link evictBeyond}.
  */
 
 import type { MapChunk } from '../../terrain/map.js';
@@ -181,4 +187,49 @@ export class MapChunkCache {
     this.inFlight.delete(k);
     if (reason === ChunkDeniedReason.Unknown) this.absent.add(k);
   }
+
+  /**
+   * Drop every held chunk further than `radius` chunks from `(x, z)`, and every
+   * request outstanding for one (spec 208).
+   *
+   * The radius is the caller's and is expected to be **wider than the request
+   * radius**, because the one thing eviction must not do is fight the streamer.
+   * Requested inside `MAP_CHUNK_REQUEST_RADIUS` and dropped outside
+   * `MAP_CHUNK_KEEP_RADIUS`, a chunk between the two is held and not asked for:
+   * a player crosses two whole chunks past the edge of what they are streaming
+   * before anything goes, and two back before it is asked for again. There is no
+   * position at which one pass drops what the next pass asks for.
+   *
+   * An evicted chunk returns to **not held, not in flight, not absent** -- the
+   * same state `deny` puts a temporarily-refused one in -- so `wanted` re-raises
+   * it on a later pass with no new state and no new path.
+   *
+   * `absent` is deliberately left alone. A chunk the server says does not exist
+   * still does not, and re-asking for it on every lap would be a request storm
+   * for ground that is never coming.
+   *
+   * Chebyshev distance, like `wanted`: interest is a square window, so eviction
+   * has to be square too or the corners of what is being streamed are dropped
+   * the moment they arrive.
+   */
+  evictBeyond(x: number, z: number, radius: number): readonly ChunkRequest[] {
+    const gone: ChunkRequest[] = [];
+    for (const [k, held] of this.chunks) {
+      const at = this.coordsAt(held.layer, x, z);
+      // A layer this point is not in cannot say how far away anything is, so
+      // nothing in it is dropped. Keeping is the safe direction.
+      if (!at) continue;
+      const distance = Math.max(Math.abs(held.cx - at.cx), Math.abs(held.cz - at.cz));
+      if (distance <= radius) continue;
+      this.chunks.delete(k);
+      this.inFlight.delete(k);
+      gone.push({ layer: held.layer, cx: held.cx, cz: held.cz });
+    }
+    // Deterministic, so two runs of the same walk evict in the same order and a
+    // caller may compare the lists.
+    gone.sort((a, b) => a.layer - b.layer || a.cz - b.cz || a.cx - b.cx);
+    if (gone.length > 0) this.revision++;
+    return gone;
+  }
+
 }

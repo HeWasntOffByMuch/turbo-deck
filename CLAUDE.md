@@ -65,6 +65,9 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
+| `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
+| `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
+| `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 209) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -162,10 +165,55 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  (`bake-map.ts` defaults to seed 1, and the arena was seed 1 with
                  no parts); spec 165 grew the map and the coincidence went with
                  it. Checked in so the world reviews as a diff.
+                 recipes/shore.json is the one a coastline is grown from
+                 (spec 210), and the number worth knowing is its **depth**: the
+                 shipped map has 212 walkable chunks within two of undeclared
+                 space and **not one chunk of sea**, so its whole perimeter is
+                 ground ending at nothing, with the sim's wall at exactly the
+                 same place. A strip `n` chunks deep gives `n - 1` rows of true
+                 sea, because `bakePart` eases the recipe in over a skirt where
+                 it meets existing ground -- so a shore is grown
+                 `MAP_CHUNK_REQUEST_RADIUS + 1` deep, measured: 3 clears an
+                 edge, 4 and 5 buy nothing.
                  recipes/ are the feature lists parts are grown from (spec 083) --
                  `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
                  --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
-                 rather than regenerating it. A recipe is the only place natural
+                 rather than regenerating it -- and since spec 209 it reads only
+                 the regions the bake reaches rather than the world. Spec 204 had
+                 made a grow *write* only what it touched and it still opened
+                 everything to get there: 6.9s on a 12,960-chunk map to change
+                 one region, of which 1,691ms was joining every region, 1,234ms
+                 `growMap` over the whole store and 3,990ms re-splitting all of
+                 it. **35ms now, and flat** -- the whole-world path is a function
+                 of how big the map is and this one of how big the *part* is.
+                 What made it possible is that the code already said how far a
+                 bake reaches: `bakePart`'s stitch walks out `SKIRT_CELLS`
+                 looking for a corner the store holds, which is 4 cells against
+                 28 per chunk, so the read is the rectangle plus one chunk and
+                 `bakeReadBorder` derives that rather than typing it. Everything
+                 else `growMap` wants is manifest-level.
+                 The merge rule is one sentence and is what makes it exact rather
+                 than approximately right: **the part's regions are authoritative
+                 for what is in them, the previous manifest for everywhere else.**
+                 That covers a chunk that moved between regions and one that
+                 stopped existing, not just the append case -- and it means the
+                 border regions a part only *read* come back byte-identical, so
+                 writing them again is a no-op rather than a special case. The
+                 one thing it cannot express is a region emptied *entirely*,
+                 since a part that produces no region for a coordinate is saying
+                 nothing about it rather than "it is gone"; that cannot arise
+                 from growing, and it is a test rather than a hope.
+                 Two things moved with it. `RegionEntry` gained a `cells` count,
+                 because the unfilled-rim warning needs each chunk's
+                 `cols x rows` -- a chunk on a flank can be short -- and
+                 coordinates without sizes could not answer it; it is not hashed
+                 into `mapId`, so adding it left every region file and the world's
+                 identity untouched. And `writeSplit` stopped deciding staleness
+                 by what it was handed to write, which was the same thing while
+                 every write was the whole world and **deletes the entire map**
+                 the first time it is handed the three regions a grow changed:
+                 the manifest is the only thing that makes a region reachable, so
+                 the manifest is the only thing that can say a file is not. A recipe is the only place natural
                  language enters: an agent writes one, it is reviewed as JSON,
                  and nothing at runtime reads a model.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
@@ -221,6 +269,63 @@ src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  so `crowd.ts` re-sorts by distance and breaks ties on entity id,
                  because the linear program's answer can depend on the order its
                  half-planes arrive in.
+                 nav-tiles.ts is nav that is not sized by the map (spec 205).
+                 `createNavGrid` allocates over `colliders.bounds` -- the whole
+                 world rectangle -- so route planning cost what the *map* was
+                 rather than what was near anybody: 3.08 M cells per body radius
+                 and five radii today, 246 M cells and 2.2 GB at the 4x target,
+                 and `warmRouting` spending it all at boot. Making terrain lazy
+                 does not help, because a lattice is a function of the rectangle
+                 alone. So the lattice is cut into **tiles**, built on demand and
+                 dropped when nothing is near them, and a **window** -- the
+                 rectangle a route is searched in -- is assembled by copying
+                 tiles into the flat arrays `findPath` already walks. Measured:
+                 `bench-map`'s `navWindow` column is flat while the world grows
+                 sixteenfold, where the `navWarm` it replaced tracked the world.
+                 A tile is an **interest chunk**, and that is the one number in
+                 it that had to be chosen rather than derived: `NAV_CELL_SIZE` is
+                 10 and a *map* chunk is 616 units, so 61.6 cells, and tiles of
+                 61.6 do not tile a lattice of whole cells -- while an interest
+                 chunk is 400, exactly 40, and is already what `activeChunks` and
+                 `isSimulated` count in. So a `ChunkKey` is already a tile key.
+                 A tile holds heights and one graded `cells` array per radius, and
+                 deliberately **no components**: ground sampling is 86% of what a
+                 grid costs and is radius-independent, so heights are shared by
+                 every radius, while connectivity is not a tile-local property at
+                 all and labelling happens over the assembled window or nowhere.
+                 Copied rather than looked up per cell, because A* reads
+                 neighbours in its innermost loop and that would be a tile lookup
+                 on every expansion of every route to save a memcpy that happens
+                 when residency changes. Cached at the *tile* rather than at the
+                 window because `HEIGHT_CACHE` never evicts -- harmless while
+                 there is one grid shape per ground, and one entry per place
+                 anybody has ever stood the moment the window moves.
+                 Two rules keep a window honest about being one, and the first
+                 was got backwards first. **A point outside is refused rather
+                 than clamped**: `cellOf` clamps, which is right for a world grid
+                 -- outside is a body that walked past the edge of the ground,
+                 and `bounds` is explicitly not the play area -- and silently
+                 turns "there is no way to my target" into "there is a way to
+                 this other spot" for a window, which is the failure
+                 `routeToward` already names when it refuses to hand a ring point
+                 to `findPath`. **A component touching the edge is never a
+                 pocket**, because its true size is unknown and judging it small
+                 makes `freeCellNear` refuse a corridor that merely enters at a
+                 corner. What the spec asked for and does *not* happen is
+                 blocking the window's rim: A* cannot leave a window whatever the
+                 rim says, a tile is graded knowing the colliders that reach into
+                 it so there is no unsampled ground inside one, and worse, a
+                 blocked outer ring is a ring no component can contain -- so the
+                 pocket rule could never have fired. The two rules cancelled, and
+                 the tests written for them are the only reason that is a
+                 correction rather than a bug.
+                 `gradeNavCells` came out of `createNavGrid` for this: a tile and
+                 a world grid go through **one description of what blocks a
+                 body**, which is what makes "a window is the grid the old
+                 builder would have made" a claim about one function rather than
+                 about two agreeing. It is asserted directly, while that builder
+                 is still there to compare against -- same cells, same heights
+                 exactly, same route for 49 pairs of points.
 src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
                  small document and explicitly none of the bind-pose, skinning,
                  retarget and family machinery src/units/ exists to manage for a
@@ -1332,6 +1437,66 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the generator, and terrain reaches clients as MapInfo plus the
                  MapChunks a player is standing near -- a seed cannot describe a
                  map somebody edited by hand.
+                 Boot **meshes nothing** (spec 207). `loadMap` used to build
+                 every chunk's mesh data eagerly -- a jittered world position and
+                 a normal per corner, 54 million height lookups over a 4x map --
+                 and `buildWorldFromDocument` reads `world` and `props` and never
+                 touches it: `TerrainChunk` is what something *draws*, and the
+                 only caller that wants it is the map editor. So the whole of a
+                 server boot went into arrays discarded on the next line: 32.4s
+                 of 34s at 12,960 chunks. `LoadedMap.chunks` is a memoized getter
+                 now -- the same snapshot, taken at first read instead of at load
+                 -- and `buildWorldFromMap` goes 32,402ms to 731ms at the 4x
+                 target and 1,810ms to 34ms at today's size. Asserted by
+                 **counting** rather than by timing, since a clock in the suite is
+                 a test about the container it runs in.
+                 That replaced a designed phase rather than completing one: the
+                 plan called for a `ChunkSource` with asynchronous budgeted
+                 acquisition and three residency states, and measuring said boot
+                 was a wasted eager computation rather than a residency problem --
+                 with heap at 0.26 GB rather than the 2.0 GB projected before spec
+                 204 took `nav` out of the format. It is deferred with the reading
+                 that would bring it back written down: `bench-map`'s `heap` past
+                 ~1 GB at the target size, or its `build` past ~2s. What the
+                 change does *not* fix is the **editor's** boot -- `buildChunks`
+                 still costs 30.7s at 4x when it is called, and the editor calls
+                 it, which is a different problem because the editor genuinely
+                 wants the mesh.
+                 Since spec 208 a client **forgets** what it walked past. Nothing
+                 on the map path removed anything: `MapChunkCache` had `accept`
+                 and no counterpart, `StreamedMap` never called
+                 `MapChunkStore.removeChunk`, and terrain geometry is disposed by
+                 `TerrainMeshHandle.remove` -- which exists for spec 085's part
+                 removal and had no caller here. Driven around a circuit of the
+                 shipped map, a real cache held **392 chunks against a 25-chunk
+                 request window**, and stopped at 392 only because a circuit
+                 revisits its own ground. `MAP_CHUNK_KEEP_RADIUS` is
+                 `MAP_CHUNK_REQUEST_RADIUS + 2`, **derived rather than chosen**,
+                 because the one thing eviction must not do is fight the
+                 streamer: requested inside 2 and dropped outside 4, a chunk
+                 between them is held and unasked, so a player crosses 1,232
+                 units past the edge of what they are streaming before anything
+                 goes and the same distance back before it is asked for again.
+                 That there is no position where one pass drops what the next
+                 asks for is asserted over every position *in* a chunk rather
+                 than over the middle, since a boundary bug is a bug about where
+                 in the chunk you are standing. An evicted chunk returns to "not
+                 held, not in flight, not absent" -- the state `deny` already
+                 puts a temporarily-refused one in -- so `wanted` re-raises it
+                 with no new state and no new path; `absent` is deliberately
+                 *not* cleared, because ground the server says does not exist
+                 still does not and re-asking each lap is a request storm.
+                 Four layers let go, and the renderer finds out by
+                 **reconciling** against the cache's held list rather than by
+                 being told: a message saying "these went" is a second
+                 description of the same fact, and one that can be dropped,
+                 leaving geometry drawn over ground nothing holds. The worker
+                 keeps a `StreamedMap` of its own and gets an `evict` request,
+                 without which it would hold every chunk of the session on the
+                 thread nobody is watching -- half the memory the eviction was
+                 for. Dropping one chunk re-meshes the four beside it, because a
+                 chunk's apron is built from its neighbours: the mirror of what
+                 an arrival does, in the other direction.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -1375,6 +1540,56 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  listened to: coming back to the tab is the one moment the cause
                  of an outage is known to be gone, and it was the one moment the
                  client did nothing, waiting out the timer that was the problem.
+                 world/nav.ts and world/nav-residency.ts are which window a body
+                 routes in (spec 205), over `src/sim/nav-tiles.ts`. The obvious
+                 answer -- one window over the bounding box of every active chunk
+                 -- is the bug in a different hat, because two players ten
+                 thousand units apart have a bounding box the size of the world;
+                 so the active set is cut into **connected clusters** and each
+                 gets its own window, with merging and splitting both being
+                 "recompute when the set changes". Affordable for the same reason
+                 the labelling is: the set changes when somebody crosses a chunk
+                 boundary, every few seconds at walking speed. Eight-connected,
+                 since chunks meeting at a corner are two paces apart and
+                 splitting them would put two windows over one fight.
+                 The padding is **derived, not chosen**: a window has to hold both
+                 ends of every route, and of the three goals `routeToward` is
+                 given two reach past the body asking -- `walkHome` at
+                 `LEASH_RADIUS` and `flee` at `FLEE_DISTANCE`. Unpadded,
+                 `walkHome`'s route is refused, and that is not graceful
+                 degradation but the loss of spec 076's stated feature: a monster
+                 led round a wall comes back round it rather than pressing into
+                 it. Padding rather than clamping the goal into the window, for
+                 the reason `routeToward` gives about ring points.
+                 `nav.ts` is a cache and one invalidation rule, and the rule is
+                 the whole file: **windows are dropped whenever the active set
+                 changes, tiles are kept while anything wants them.** Different
+                 questions -- a tile is expensive (its ground is sampled) and
+                 stays correct wherever the players go, while a window is cheap
+                 to reassemble and is only correct *as* a window, because its
+                 component labels describe a rectangle and the rectangle moved.
+                 The active set is compared by **content**, since
+                 `activeChunks()` hands back its live set and rebuilds it
+                 whenever any player changes chunk -- so neither identity nor
+                 size tells "unchanged" from "rebuilt", and getting that wrong
+                 throws away every window on a tick somebody crossed a boundary
+                 somewhere else entirely.
+                 Tiled nav is switched on by **measuring the world**, not by a
+                 flag: below one window the window is the world and the tiling is
+                 pure overhead, which is every sandbox, every headless test and
+                 the loopback tab -- so they keep routing exactly as they did,
+                 through `navGridFor`.
+                 The determinism argument is that a window is a pure function of
+                 its rectangle and its tiles and a tile of where it is, so the
+                 only way a cache could feed wall-clock into the sim is if what
+                 is *held* changed what is *answered*. Asserted both ways: byte
+                 for byte at the cache, and as a real walled-off fight replayed
+                 to bit-identical state on a fresh nav and on one already walked
+                 round the far side of the map. That test carries a **control**,
+                 and the control earned its place at once -- the first fixture
+                 put the monster 400 units from a 300-unit notice range, so
+                 nothing engaged, nav was never asked, and both replays passed as
+                 two identical recordings of nothing happening.
                  sim/attack-timing.ts is how long an attack takes, in every sense
                  of the question (spec 144), and the only place any of it is
                  worked out. The idea it exists to hold is that the **attack
@@ -2195,6 +2410,50 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  is still true. `magnitude` does not ride at all, on the same
                  argument that made poise a fraction: the picture says *that* a
                  body is Exposed, never by how much.
+                 Three things inside a tick used to be sized by **what the
+                 world contains** rather than by what is near anybody, and spec
+                 206 is all three. With one player and 49 chunks active on every
+                 row, a tick went from 102us to 7,492us as the world's spawn
+                 point count went from 14 to 12,800 -- residency identical
+                 throughout. It is flat now, and 32us at the far end.
+                 The biggest one had nothing to do with residency and was
+                 already expensive at today's size: **`segmentClear` walked
+                 every collider in the world**, all 28,919 of them, at 84us a
+                 call. Spec 192 built `ColliderIndex` precisely because
+                 "`pushOutOfObstacles` and `circleBlocked` used to test every
+                 circle in the world"; it indexed those two and left this one --
+                 which is what `pathClear` is and what aggro's line of sight is,
+                 so every routing monster paid for every tree on the map every
+                 tick. Off the index it is 1.27us, and the query is the
+                 segment's **bounding box** rather than a walk down the cells it
+                 crosses: a long diagonal over-fetches, and a few dozen circles
+                 against 28,919 is not worth a second query shape. Safe in the
+                 deterministic core because the answer is "did anything hit",
+                 which is order-independent -- exactly the property
+                 `pushOutOfObstacles` does *not* have, and why `circlesNear`
+                 promises ascending original order and `circlesInRect` does not.
+                 `nearestQuarry` is handed the **players**, gathered once by
+                 `playersOf` at the top of the tick, rather than walking the
+                 whole entity map once per noticing monster. The gathered list
+                 keeps the entity map's insertion order, because the tie rule is
+                 a strict `<` and reordering it is a different answer on a tie.
+                 And `runSpawners` visits only the spawn points in active
+                 chunks, through an index memoized on the point list -- built
+                 per tick it would be the walk it replaces. The resident points
+                 are then **sorted back into authored order**, which is not an
+                 optimisation: a spawn takes the next entity id, so visit order
+                 decides which body gets which id, and ids are replicated;
+                 sorting makes the result independent of the order
+                 `activeChunks` happens to iterate in, which is a `Set`'s
+                 insertion order and nobody's intended contract. Its population
+                 cap is counted **once per tick** from the live entity map
+                 rather than once per spawner. Not from
+                 `ChunkManager.populationOf`, which the plan proposed and which
+                 has no caller anywhere in the tree: that index is maintained by
+                 `chunks.track`/`remove`, which run *after* `step()` returns, so
+                 inside a tick it holds the previous tick's occupancy and would
+                 still be counting a body the sweep a few passes above
+                 `runSpawners` has already buried.
                  `sim/blow.ts` is one blow with all of it applied, in one
                  order, written once -- and the line in it that must not move is
                  that **crit is rolled before the weak point and always**: the Rng

@@ -9,20 +9,19 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
-import { parseMap } from './map.js';
 import { loadMap } from './map-world.js';
+import { loadMapFile } from '../server/world/map-file.js';
 
-const text = readFileSync('maps/arena.json', 'utf8');
+const shipped = loadMapFile();
 
 function fresh() {
-  return loadMap(parseMap(text));
+  return loadMap(shipped.doc);
 }
 
 /** Somewhere well inside the map, so the sample is over real ground. */
 function probePoint(): { x: number; z: number } {
-  const doc = parseMap(text);
+  const doc = shipped.doc;
   const layer = doc.layers[0];
   if (!layer) throw new Error('no layer');
   const cx = layer.chunks[Math.floor(layer.chunks.length / 2)];

@@ -42,7 +42,7 @@ import {
   ServerMessageType,
   TradeStageValue,
 } from '../net/protocol.js';
-import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
+import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
 
 /**
  * How many chunks one pass may ask for (spec 072).
@@ -51,17 +51,28 @@ import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
  * against a misbehaving client rather than something that shapes the stream in
  * normal play -- a cold start should be paced by this number, not by a refusal.
  *
- * 8 was that pace for a 56-chunk map. On the grown map the radius reaches 169,
+ * 8 was that pace for a 56-chunk map. On the grown map the radius reached 169,
  * and 8 per 50ms pump is twenty-one pumps of asking before the last one is even
- * requested (spec 165). 24 brings the ask down to about seven pumps and stays
- * well under the burst.
+ * requested (spec 165). 24 brought the ask down to about seven pumps.
+ *
+ * Since spec 202 narrowed the request radius to 2 the whole window is 25 chunks,
+ * so one pass now very nearly covers a cold start outright -- which is what this
+ * number was always trying to buy. It stays at 24 rather than shrinking with the
+ * window: the pass is a *ceiling* on one pump, and there is nothing to gain from
+ * lowering a ceiling the stream no longer reaches.
+ *
+ * It must stay at or under {@link MAP_CHUNK_BURST}, or the client's own pacing
+ * would outrun the server's bucket and the throttle would start shaping normal
+ * play. That was a sentence in this comment and is now asserted in
+ * `map-radius.test.ts`, because narrowing the radius moved the burst underneath
+ * it and nothing would have said so.
  *
  * Raising it is only safe because the *meshing* is budgeted separately now:
  * before spec 165 a bigger pass would have arrived as a bigger pile of geometry
  * rebuilds inside one frame, and asking faster would have traded a slow load for
  * a juddering one.
  */
-const CHUNK_REQUESTS_PER_PASS = 24;
+export const CHUNK_REQUESTS_PER_PASS = 24;
 
 /**
  * How often the backstop pump runs, in client ticks. One broadcast period: often
@@ -1890,7 +1901,18 @@ export class GameClient {
   private requestChunks(): void {
     const cache = this.mapCache;
     const at = this.prediction?.drawn ?? this.selfAuthoritative();
-    if (!cache || !at || this.chunkBackoffTicks > 0) return;
+    if (!cache || !at) return;
+    // Forget before asking, and on the same cadence, because both questions are
+    // "where is the player" and asking them at different moments is two answers
+    // (spec 208). Before rather than after, so a chunk that has just gone out of
+    // keep range cannot be re-requested on the very pass that drops it -- the
+    // radii are two apart so it could not anyway, and doing it in the order that
+    // makes it impossible costs nothing.
+    //
+    // Ahead of the backoff check: a client that has stopped asking is exactly
+    // the one that should still be letting go.
+    cache.evictBeyond(at.x, at.y, MAP_CHUNK_KEEP_RADIUS);
+    if (this.chunkBackoffTicks > 0) return;
     for (const req of cache.wanted(
       at.x,
       at.y,

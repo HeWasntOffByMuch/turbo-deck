@@ -249,3 +249,54 @@ function sortAscending(out: Int32Array, count: number): number {
   }
   return count;
 }
+
+/**
+ * Every circle that could reach a **rectangle**, appended to `out` (spec 205).
+ *
+ * `circlesNear` answers for a point and writes into a fixed `Int32Array`,
+ * because its caller is `pushOutOfObstacles` -- one body, a handful of
+ * neighbours, in a tick. A nav tile is 400 units square and gathers a couple of
+ * hundred, so this one grows an array instead of refusing past a cap: the two
+ * questions have different shapes and giving them one signature would mean
+ * either a cap the tile builder trips over or an allocation the movement pass
+ * cannot afford.
+ *
+ * "Could reach" rather than "does": this narrows the set the caller grades, and
+ * the caller still runs the same `circleHitsCircle` on the same circles. The
+ * order is the index's bucket order rather than the original array's, which is
+ * *not* what `circlesNear` promises -- and is fine here for a stated reason:
+ * grading raises a cell's value and never lowers it, so two circles covering one
+ * cell write the same answer whichever goes first. A caller whose result depends
+ * on order wants `circlesNear`.
+ */
+export function circlesInRect(
+  index: ColliderIndex,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  out: number[],
+): number[] {
+  if (index.items.length === 0) return out;
+
+  // A circle is filed by its centre, so the block has to reach out by the
+  // largest radius on every side -- the same correction `circlesNear` makes,
+  // for the same reason.
+  const reach = index.maxRadius;
+  const { cellSize, minX: ox, minY: oy, cols, rows } = index;
+  const firstCol = Math.min(cols - 1, Math.max(0, Math.floor((minX - reach - ox) / cellSize)));
+  const lastCol = Math.min(cols - 1, Math.max(0, Math.floor((maxX + reach - ox) / cellSize)));
+  const firstRow = Math.min(rows - 1, Math.max(0, Math.floor((minY - reach - oy) / cellSize)));
+  const lastRow = Math.min(rows - 1, Math.max(0, Math.floor((maxY + reach - oy) / cellSize)));
+
+  for (let row = firstRow; row <= lastRow; row += 1) {
+    const base = row * cols;
+    for (let col = firstCol; col <= lastCol; col += 1) {
+      const cell = base + col;
+      const from = index.starts[cell] ?? 0;
+      const to = index.starts[cell + 1] ?? 0;
+      for (let at = from; at < to; at += 1) out.push(index.items[at] ?? 0);
+    }
+  }
+  return out;
+}

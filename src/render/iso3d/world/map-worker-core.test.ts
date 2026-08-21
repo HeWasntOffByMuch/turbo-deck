@@ -47,7 +47,6 @@ function document(): MapDocument {
         tones: [0, CELLS * CELLS],
         props: [],
         markers: [],
-        nav: null,
       });
     }
   }

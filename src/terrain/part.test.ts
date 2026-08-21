@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
 import { MAP_VERSION, parseMap, serializeMap, type MapDocument, type PartRecipe } from './map.js';
 import { loadMap, MapChunkStore } from './map-world.js';
 import { bakePart, growMap, SKIRT_CELLS } from './part.js';
+import { loadMapFile } from '../server/world/map-file.js';
 
 /**
  * Growing the world by parts (spec 083).
@@ -52,7 +52,6 @@ function seedDoc(height: (col: number, row: number) => number = () => 0): MapDoc
             tones: [0, CHUNK_CELLS * CHUNK_CELLS],
             props: [],
             markers: [],
-            nav: null,
           },
         ],
       },
@@ -354,7 +353,7 @@ describe('growing the shipped map', () => {
    * land on a whole number of chunks) is exercised below with a small built
    * fixture instead of depending on the shipped map happening to have one.
    */
-  const shipped = (): MapDocument => parseMap(readFileSync('maps/arena.json', 'utf8'));
+  const shipped = (): MapDocument => loadMapFile().doc;
 
   /** The whole east flank grown outward by two chunks, rows and all. */
   function grownEast(): { doc: MapDocument; before: MapDocument; span: number } {
@@ -423,7 +422,6 @@ describe('growing the shipped map', () => {
               tones: [0, full * full],
               props: [],
               markers: [],
-              nav: null,
             },
             {
               cx: 1,
@@ -436,7 +434,6 @@ describe('growing the shipped map', () => {
               tones: [0, short * full],
               props: [],
               markers: [],
-              nav: null,
             },
           ],
         },

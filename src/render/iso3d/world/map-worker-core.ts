@@ -24,7 +24,7 @@
 
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { Prop } from '../../../terrain/vegetation.js';
-import type { HeldChunk } from '../../../server/client/map-cache.js';
+import type { ChunkRequest, HeldChunk } from '../../../server/client/map-cache.js';
 import type { MapInfoMessage } from '../../../server/net/map-messages.js';
 import {
   invalidateNavHeights,
@@ -61,6 +61,48 @@ export class MapWorkerCore {
   /** How many chunks are in hand -- what a nav reply answers *for*. */
   get generation(): number {
     return this.streamed?.size ?? 0;
+  }
+
+  /**
+   * Let go of ground the client has walked away from (spec 208).
+   *
+   * Returns the meshes for whatever is left drawing a seam against it: a
+   * chunk's apron is built from its neighbours, so dropping one leaves the four
+   * beside it stitched to ground that is gone. The mirror of {@link addChunk},
+   * which re-meshes its edge neighbours for the same reason in the other
+   * direction.
+   *
+   * What was dropped is *not* replied: the main thread is the side holding the
+   * geometry and is the side that decided, so it already knows.
+   */
+  evict(refs: readonly ChunkRequest[]): MapWorkerReply[] {
+    const streamed = this.streamed;
+    if (!streamed) return [];
+    const { removed, restitch } = streamed.remove(refs);
+    if (removed.length === 0) return [];
+
+    // The nav heights over ground that has gone are no longer answerable, so
+    // the next grid re-samples rather than trusting what it cached over it.
+    if (this.shape) {
+      for (const ref of removed) invalidateNavHeights(streamed.sampler(), this.shape, ref.rect);
+    }
+
+    const out: MapWorkerReply[] = [];
+    for (const ref of restitch) {
+      const layer = streamed.meshLayers[ref.layer];
+      if (!layer) continue;
+      const chunk = streamed.build(ref.layer, ref.cx, ref.cz);
+      if (!chunk) continue;
+      out.push({
+        kind: 'mesh',
+        layer: ref.layer,
+        cx: ref.cx,
+        cz: ref.cz,
+        footprint: footprintOf(chunk),
+        arrays: buildChunkArrays(layer, chunk),
+      });
+    }
+    return out;
   }
 
   /**
@@ -192,6 +234,7 @@ export class MapWorkerCore {
         heights: live.heights.slice(),
         components: live.components.slice(),
         componentSizes: live.componentSizes.slice(),
+        componentAtEdge: live.componentAtEdge.slice(),
       },
     };
   }
@@ -250,5 +293,6 @@ export function transfersOf(reply: MapWorkerReply): ArrayBuffer[] {
     reply.grid.heights.buffer as ArrayBuffer,
     reply.grid.components.buffer as ArrayBuffer,
     reply.grid.componentSizes.buffer as ArrayBuffer,
+    reply.grid.componentAtEdge.buffer as ArrayBuffer,
   ];
 }

@@ -29,7 +29,8 @@
  */
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { joinMap, MANIFEST_PATH, parseManifest } from '../src/terrain/regions.js';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,7 +51,22 @@ const CHROMIUM_ARGS = [
 ];
 
 /** The map the server boots from -- what the editor is supposed to be editing. */
-const SHIPPED_MAP = join(root, 'maps', 'arena.json');
+const SHIPPED_MAP_DIR = join(root, 'maps', 'arena');
+
+/**
+ * The whole shipped world as one string, for comparing before against after.
+ *
+ * The map is a manifest and a grid of regions since spec 204, so "did the file
+ * change" became "did any of 225 files change". The manifest carries a hash of
+ * ordered region hashes, which is exactly that question already answered -- so
+ * the identity is what this compares, and the joined document is what it counts
+ * markers in.
+ */
+function shippedMapNow(): { mapId: string; doc: MapFile } {
+  const manifest = parseManifest(readFileSync(join(SHIPPED_MAP_DIR, MANIFEST_PATH), 'utf8'));
+  const doc = joinMap(manifest, (region) => readFileSync(join(SHIPPED_MAP_DIR, region), 'utf8'));
+  return { mapId: manifest.mapId, doc: doc as unknown as MapFile };
+}
 
 interface Marker {
   readonly kind: string;
@@ -200,9 +216,12 @@ async function save(page: Page): Promise<{ name: string; doc: MapFile }> {
  * boots from -- there is no way to check that without changing it.
  */
 async function devHalf(browser: Browser, problems: string[]): Promise<void> {
-  const backup = `${SHIPPED_MAP}.probe-backup`;
-  copyFileSync(SHIPPED_MAP, backup);
-  const before = readFileSync(SHIPPED_MAP, 'utf8');
+  // A whole directory now, so the backup is a copy of the tree rather than of
+  // one file (spec 204).
+  const backup = `${SHIPPED_MAP_DIR}.probe-backup`;
+  rmSync(backup, { recursive: true, force: true });
+  cpSync(SHIPPED_MAP_DIR, backup, { recursive: true });
+  const before = shippedMapNow();
   // `node_modules/.bin/vite` rather than `npx vite`, and in its own process
   // group: `npx` is a wrapper, and a SIGTERM to it leaves the grandchild
   // holding the port -- the same trap `probe-admin-console.ts` documents, and
@@ -218,7 +237,7 @@ async function devHalf(browser: Browser, problems: string[]): Promise<void> {
     page.on('pageerror', (error) => problems.push(String(error)));
     await openEditor(page, '', DEV_PORT);
 
-    const shipped = markersIn(JSON.parse(before) as MapFile);
+    const shipped = markersIn(before.doc);
     await page.getByRole('button', { name: 'marker', exact: true }).click();
     await page.waitForTimeout(300);
     await page.getByRole('button', { name: 'campfire', exact: true }).click();
@@ -233,9 +252,13 @@ async function devHalf(browser: Browser, problems: string[]): Promise<void> {
     const said = await saveToDisk(page);
     check('the write button reports what it wrote', /wrote maps/.test(said), said);
 
-    const after = readFileSync(SHIPPED_MAP, 'utf8');
-    check('maps/arena.json actually changed on disk', after !== before, `${before.length} -> ${after.length} bytes`);
-    const now = markersIn(JSON.parse(after) as MapFile);
+    const after = shippedMapNow();
+    check(
+      'maps/arena/ actually changed on disk',
+      after.mapId !== before.mapId,
+      `mapId ${before.mapId} -> ${after.mapId}`,
+    );
+    const now = markersIn(after.doc);
     check(
       'the file on disk has the placed marker, and everything that was there',
       now.length === shipped.length + 1 && shipped.every((m) => now.some((s) => s.id === m.id)),
@@ -248,8 +271,9 @@ async function devHalf(browser: Browser, problems: string[]): Promise<void> {
     );
     await page.close();
   } finally {
-    copyFileSync(backup, SHIPPED_MAP);
-    rmSync(backup, { force: true });
+    rmSync(SHIPPED_MAP_DIR, { recursive: true, force: true });
+    cpSync(backup, SHIPPED_MAP_DIR, { recursive: true });
+    rmSync(backup, { recursive: true, force: true });
     // The whole group, so nothing is left listening on DEV_PORT.
     if (dev.pid !== undefined) {
       try {
@@ -262,8 +286,8 @@ async function devHalf(browser: Browser, problems: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const shipped = markersIn(JSON.parse(readFileSync(SHIPPED_MAP, 'utf8')) as MapFile);
-  console.log(`maps/arena.json holds ${shipped.length} markers`);
+  const shipped = markersIn(shippedMapNow().doc);
+  console.log(`maps/arena/ holds ${shipped.length} markers`);
 
   const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
     cwd: root,
@@ -299,7 +323,7 @@ async function main(): Promise<void> {
     check(
       'the editor opened the map the game plays',
       before === shipped.length,
-      `${before} markers on screen, ${shipped.length} in maps/arena.json`,
+      `${before} markers on screen, ${shipped.length} in maps/arena/`,
     );
 
     // Arm the marker tool. The monster kind is the default now, so this is what

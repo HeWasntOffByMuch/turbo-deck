@@ -424,6 +424,43 @@ export default tseslint.config(
     },
   },
   {
+    // The client session (spec 202). Transport-agnostic and drawn by the
+    // renderer, never the reverse -- so it may not reach back into it.
+    //
+    // The rule it exists to hold is narrow and load-bearing:
+    // `MAP_CHUNK_REQUEST_RADIUS` bounds *where* a client may read, and it is
+    // checked server-side against the server's own position for that player
+    // precisely so a client cannot widen its own read window by lying (spec
+    // 072). A request window derived from something the camera knows -- the
+    // zoom above all, which since spec 202 is a player setting that can be
+    // pushed past the supported band -- would be that same hole reopened from
+    // the inside. There is nothing in `src/render/` this half needs, so the
+    // cheapest way to keep it that way is to make it impossible.
+    //
+    // Tests are exempt: `loot-wire.test.ts` and `status-wire.test.ts` compare a
+    // wire value against what the renderer makes of it, which is the one thing
+    // that genuinely wants both sides, and is the same licence
+    // `interest.test.ts` takes from the other direction.
+    files: ['src/server/client/**/*.ts'],
+    ignores: ['src/server/client/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          ...NO_RENDERING_LIBRARIES,
+          patterns: [
+            ...NO_RENDERING_LIBRARIES.patterns,
+            {
+              group: ['**/render', '**/render/**'],
+              message:
+                'The client session never imports the renderer. A request window derived from what the camera knows is the read-window guard reopened from the inside (spec 202).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // src/shared/ is the bottom of the stack: PRNG, spatial hash, world extent.
     // It is imported by sim, cards and terrain, so it may not import them back.
     files: ['src/shared/**/*.ts'],

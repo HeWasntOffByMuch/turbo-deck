@@ -48,6 +48,7 @@ import {
   writeAutosave,
 } from './persistence.js';
 import { openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
+import { loadShippedMap } from '../map-asset.js';
 import { writeMapToDisk } from './map-write.js';
 import { buildEditorPanel, type EditorPanel } from './panel.js';
 import { createEditorSettings, cursorColor, cursorRadius, NEW_ROCK_TIER } from './tools.js';
@@ -78,7 +79,7 @@ import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
  *
  * The fourth view in the shell, and the only one that renders from a **map
  * document** rather than from the generator. The document is the one the game
- * plays -- `maps/arena.json`, see `map-source.ts` -- read once at mount, and
+ * plays -- `maps/arena/`, see `map-source.ts` -- read once at mount, and
  * everything below reads exclusively from the result: the terrain mesh from
  * `map.chunks`, the props from `map.props`, the ground height from
  * `map.world.heightAt`. That indirection is the whole point of the tab: from the
@@ -439,7 +440,7 @@ const OVERLAY_CSS =
  * time directly. That is not a determinism exception -- nothing in this view can
  * decide a game outcome.
  */
-export function mountEditor(container: HTMLElement): ViewHandle {
+export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#0b0b12;';
 
@@ -450,7 +451,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   help.style.cssText = `${OVERLAY_CSS}position:absolute;left:10px;bottom:10px;z-index:20;`;
   /**
    * Filled in once the map is open, because what the top line should say
-   * depends on which map that is: replacing `maps/arena.json` with a generated
+   * depends on which map that is: replacing `maps/arena/` with a generated
    * world is the mistake spec 176 exists to stop, and telling somebody to do it
    * would be this tab's own idea.
    */
@@ -487,9 +488,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     }
   })();
   const restored = storage ? readAutosave(storage) : null;
-  // What this session is editing: `maps/arena.json` unless `?map=generated`
+  // What this session is editing: `maps/arena/` unless `?map=generated`
   // asks for a world from a seed (spec 176).
-  const source = openEditorMap(globalThis.location?.search ?? '', viewSeed());
+  const source = await openEditorMap(globalThis.location?.search ?? '', viewSeed(), async () => (await loadShippedMap()).doc);
   const scene = new EditorScene(
     canvas,
     restored ? { document: restored, map: loadMap(restored) } : source,
@@ -603,14 +604,26 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
   const groundAt = (x: number, z: number): number => scene.map.world.heightAt(x, z);
 
-  // Baked once at mount, so the overlay has something to show the moment it is
-  // switched on and the document carries nav from the first save.
-  bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+  /**
+   * Whether this session has baked walkability yet (spec 204).
+   *
+   * It used to be baked once at mount, because the document carried `nav` and a
+   * save had to have something to write. The document does not carry it any
+   * more -- its only reader was this overlay -- so the bake moves to the first
+   * time the overlay is actually switched on, and a session that never opens it
+   * never pays for it.
+   */
+  let navBaked = false;
 
   /** Redraw the walkability overlay, but only while it is being looked at. */
   const refreshNav = (): void => {
     navView.setVisible(settings.showNav);
-    if (settings.showNav) navView.refresh(scene.map.store, layerId, groundAt);
+    if (!settings.showNav) return;
+    if (!navBaked) {
+      bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+      navBaked = true;
+    }
+    navView.refresh(scene.map.store, layerId, groundAt);
   };
 
   /** Redraw the markers and the arena box from whatever the store now holds. */
@@ -1011,7 +1024,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
   /** Everything derived from the map, rebuilt after a load or a restore. */
   const rebuildAll = (): void => {
-    bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+    // The ground under it is a different world now, so whatever was baked is
+    // stale. Invalidated rather than re-baked: `refreshNav` below does it if the
+    // overlay is on, and a session that never opens it never pays (spec 204).
+    navBaked = false;
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
@@ -1148,7 +1164,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     },
     onNavChange: refreshNav,
     onNavRebake: () => {
+      // The one place a bake is asked for outright: the panel's own button.
       bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+      navBaked = true;
       refreshNav();
     },
   });

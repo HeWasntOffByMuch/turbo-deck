@@ -194,7 +194,6 @@ function blankChunk(cx: number, cz: number, chunkCells: number, top: number, mat
     tones: encodeRuns(new Uint8Array(cells)),
     props: [],
     markers: [],
-    nav: null,
   };
 }
 
