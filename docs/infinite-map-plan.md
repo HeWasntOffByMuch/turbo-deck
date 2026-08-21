@@ -1,8 +1,8 @@
 # A map that keeps growing — plan
 
-Status: **phases 0 and 1 are done. Specs 197 and 198 are written and
+Status: **phases 0, 1 and 2 are done — specs 197, 198 and 199 are written and
 implemented.** The shape, the phase order and the numbers are settled; the next
-action is spec 199, taking the map out of the JavaScript bundle.
+action is spec 200, splitting the map into region files.
 
 Everything is measured against `maps/arena.json` at `43fd6b40` on this branch's
 container, and every projection says which measurement it scales. Where a claim
@@ -403,12 +403,26 @@ Three things it turned up that the plan had not predicted:
 Retuning the radii broke **no** behavioural test — 318 of 319 files passed
 untouched, and the one failure was the store document gaining a field.
 
-### Phase 2 — the map leaves the bundle (spec 199)
+### Phase 2 — the map leaves the bundle (spec 199) — **done**
 
-Replace the three `?raw` imports with a fetched static asset, and add
-`npm run build` to CI behind a **bundle size gate**. The gate is the durable
-half. Takes the shipped bundle from 14.07 MB to under 2 MB before the map grows
-at all.
+`?url` and a fetch behind one memoised promise. `index-*.js` went from
+**14,074 kB to 2,032 kB** (gzipped 3,434 → 619) and the build from 19.2 s to
+8.4 s; the map ships as a hashed JSON asset. `npm run build` and
+`npm run check:bundle` are in CI, which had never run the build at all.
+
+Two departures from the spec, both improvements:
+
+- **The editor's map reader is injected, not fetched.** `map-source.ts` is
+  tested headlessly in Node and a `fetch` would have ended that, so
+  `openEditorMap` takes a `ReadMapText` — the seam `StorageLike` already uses.
+- **A late mount is shelved, not binned.** `ViewHandle` has no `dispose`, and
+  an unstarted handle is exactly the state a backgrounded tab is in — so coming
+  back to it is instant rather than a second 11.5 MB fetch.
+
+The gate checks two things, because a ceiling alone is not enough: emitted JS
+under 3 MB **summed across chunks**, so code-splitting is not a way round it,
+and a map asset over 1 MB — a build that got small by losing the world boots
+into nothing and would pass a size check.
 
 ### Phase 3 — a map that is many files (spec 200)
 
