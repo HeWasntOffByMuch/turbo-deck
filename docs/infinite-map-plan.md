@@ -494,6 +494,21 @@ Measured: a window is 2.3 MB per radius against 3.08 M cells for the world, and
 the ratio is the point — **11× smaller today, 182× at the 4× target**, because
 the window does not grow with the world at all.
 
+**Done.** `bench-map`'s `navWindow` column reads x1.0 / x0.5 / x0.6 across worlds
+of 200 / 800 / 3200 chunks — flat while the world grows sixteenfold, where the
+`navWarm` column it replaced tracked the world. `warmRouting` is gone from the
+server boot, from the Play tab's loopback mount and from the tree.
+
+Two things the spec asked for turned out to be wrong, and the tests written for
+them caught both. A **blocked window rim** is unnecessary (A\* cannot leave a
+window whatever the rim says, and a tile is graded knowing the colliders that
+reach into it, so there is no unsampled ground inside a window) and
+self-defeating (a blocked outer ring is a ring no component can contain, so the
+never-a-pocket rule could never fire — the two rules cancelled). What was
+actually missing was at the **goal**: `cellOf` clamps a point into the grid,
+which is right for a world grid and silently turns "there is no way to my
+target" into "there is a way to this other spot" for a window.
+
 `pathfinding-ground.test.ts` runs against tiled grids before and after. Most
 likely phase to change observable behaviour, so it wants that corpus green and a
 route-equivalence test over the resident envelope.

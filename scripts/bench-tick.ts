@@ -28,7 +28,7 @@ import { Session } from 'node:inspector/promises';
 import { GameServer } from '../src/server/server.js';
 import { GameClient } from '../src/server/client/game-client.js';
 import { LoopbackTransport } from '../src/server/net/transport-loop.js';
-import { buildWorldFromMap, warmRouting } from '../src/server/world/build.js';
+import { buildWorldFromMap } from '../src/server/world/build.js';
 import { createWorldPredictor } from '../src/server/client/prediction.js';
 import { SERVER_PLAYER_RADIUS } from '../src/server/config.js';
 import { loadMapFile } from '../src/server/world/map-file.js';
@@ -50,7 +50,9 @@ function mean(values: readonly number[]): number {
 async function main(): Promise<void> {
   const shipped = loadMapFile();
   const world = buildWorldFromMap(shipped.doc, shipped.mapId);
-  warmRouting(world);
+  // No warm: since spec 201 nav is windows built on demand, so the first tick
+  // that routes pays for its own window and the rest are free. That is part of
+  // what this bench measures rather than something to arrange away.
   const transport = new LoopbackTransport();
   const server = new GameServer({ seed: world.seed, built: world, transport });
   transport.onConnection((channel) => server.accept(channel));

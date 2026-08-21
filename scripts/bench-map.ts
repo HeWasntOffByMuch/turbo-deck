@@ -29,7 +29,10 @@ import { createWorldColliders } from '../src/sim/collision.js';
 import { createNavGrid } from '../src/sim/pathfinding.js';
 import { NAV_CELL_SIZE } from '../src/sim/constants.js';
 import { mapIdOf } from '../src/server/world/map-index.js';
-import { buildWorldFromMap, warmRouting, ROUTING_RADII } from '../src/server/world/build.js';
+import { buildWorldFromMap, ROUTING_RADII } from '../src/server/world/build.js';
+import { NavField, tileOf } from '../src/sim/nav-tiles.js';
+import { NAV_WINDOW_PAD_TILES } from '../src/server/world/nav-residency.js';
+import { INTEREST_CHUNK_RADIUS } from '../src/server/config.js';
 import { encodeMapInfo, type MapInfoMessage } from '../src/server/net/map-messages.js';
 import { infoFromIndex, tiledMap } from '../src/server/world/tiled-map.js';
 import { createWorldState, step, type StepContext } from '../src/server/sim/world.js';
@@ -37,7 +40,7 @@ import { ZoneManager } from '../src/server/world/zone-manager.js';
 import { terrainSamplerFrom } from '../src/server/world/terrain.js';
 import { DEFAULT_LIVE_CONFIG, CHUNK_SIZE } from '../src/server/config.js';
 import { chunkKeyOf } from '../src/server/world/chunks.js';
-import { loadMapFile } from '../src/server/world/map-file.js';
+import { DEFAULT_MAP_PATH, loadMapFile } from '../src/server/world/map-file.js';
 
 const DEFAULT_SIZES = [200, 800, 3200];
 
@@ -142,8 +145,25 @@ function measure(source: MapDocument, chunksWanted: number): Row {
   const info = infoFromIndex(built.index);
   const infoBytes = encodeMapInfo(info as MapInfoMessage).byteLength;
 
+  // What one player's nav costs, cold: the tiles under a window, sampled and
+  // graded, and one flood over the assembled window (spec 201).
+  //
+  // This column used to be `warmRouting`, which built a grid over the whole
+  // world for every radius -- the boot step spec 201 deleted. The point of
+  // measuring a window instead is the **slope**: it is the same window whatever
+  // size the map is, so this column going flat is the claim, and a column that
+  // starts climbing again is the tiling having been undone.
   const t2 = now();
-  warmRouting(built);
+  const half = INTEREST_CHUNK_RADIUS + NAV_WINDOW_PAD_TILES;
+  const centre = tileOf(
+    (built.colliders.bounds.x + built.colliders.bounds.w / 2),
+    (built.colliders.bounds.y + built.colliders.bounds.h / 2),
+  );
+  const field = new NavField(built.colliders, built.sampler, ROUTING_RADII);
+  field.window(
+    { minTx: centre.tx - half, minTz: centre.tz - half, maxTx: centre.tx + half, maxTz: centre.tz + half },
+    ROUTING_RADII[0] ?? 16,
+  );
   const warmMs = now() - t2;
   // Absolute retained heap rather than a delta across the build. A delta reads
   // negative the moment the collector runs inside the window being measured,
@@ -186,7 +206,7 @@ function reportSizes(source: MapDocument, sizes: readonly number[]): void {
 
   console.log('\n=== what a world costs, by how big it is ===\n');
   console.log(
-    ['chunks', 'MB', 'parse', 'build', 'navWarm', 'heap', 'MapInfo', 'entities', 'tick']
+    ['chunks', 'MB', 'parse', 'build', 'navWindow', 'heap', 'MapInfo', 'entities', 'tick']
       .map((h, i) => h.padStart(i === 0 ? 7 : 9))
       .join(''),
   );
@@ -205,7 +225,7 @@ function reportSizes(source: MapDocument, sizes: readonly number[]): void {
   }
   console.log('\n--- slope, against the smallest world ---\n');
   console.log(
-    ['chunks', 'MB', 'parse', 'build', 'navWarm', 'heap', 'MapInfo', 'entities', 'tick']
+    ['chunks', 'MB', 'parse', 'build', 'navWindow', 'heap', 'MapInfo', 'entities', 'tick']
       .map((h, i) => h.padStart(i === 0 ? 7 : 9))
       .join(''),
   );
@@ -327,7 +347,7 @@ function main(): void {
   const { sizes, stages } = parseSizes(process.argv.slice(2));
   const source = loadMapFile().doc;
   console.log(
-    `source: maps/arena.json, ${source.layers[0]?.chunks.length ?? 0} chunks, ` +
+    `source: ${DEFAULT_MAP_PATH}, ${source.layers[0]?.chunks.length ?? 0} chunks, ` +
       `${source.grid.cellSize * source.grid.chunkCells}u per chunk`,
   );
   reportSizes(source, sizes);

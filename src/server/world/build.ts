@@ -20,7 +20,6 @@
 
 import { createWorldColliders } from '../../sim/collision.js';
 import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
-import { warmNavGrids } from '../../sim/pathfinding.js';
 import type { Rect, WorldColliders } from '../../sim/types.js';
 import { SERVER_PLAYER_RADIUS } from '../config.js';
 import { ALL_MONSTERS } from '../data/monsters.js';
@@ -36,30 +35,15 @@ import { spawnPointsFrom, type SpawnPoint } from './spawners.js';
  * Every body radius that will ask for a route: the player, and one per monster
  * in the table. Deduplicated, because three of the four monsters are within a
  * couple of units of each other and a grid is per radius.
+ *
+ * These are the radii a nav *tile* is graded for (spec 201). They stay named in
+ * one place for the reason they always were: two callers grading different sets
+ * would mean a body asking for a route the field cannot answer -- which
+ * `NavField` now refuses out loud rather than answering openly.
  */
 export const ROUTING_RADII: readonly number[] = Array.from(
   new Set<number>([SERVER_PLAYER_RADIUS, ...ALL_MONSTERS.map((m) => m.radius)]),
 );
-
-/**
- * Build the nav grids this world is going to need (spec 130).
- *
- * Called by whoever is *starting a game* -- `src/server/index.ts` and the Play
- * tab -- and not by the builds below, which is the part worth explaining.
- * Sampling the ground for a grid is around a second on a real map, and left to
- * the first caller that wants a route it lands inside a tick, the first time a
- * monster's line to a player is blocked. So it wants doing at boot. But it must
- * not be folded into `buildWorld`: a world gets built by tests, by the bake
- * scripts and by the balance harness, none of which route anything, and folding
- * it in took a generated build from ~390ms to ~860ms to warm caches none of
- * them were going to read.
- *
- * The radii live here rather than at the call sites so the two cannot warm
- * different sets.
- */
-export function warmRouting(world: BuiltWorld): void {
-  warmNavGrids(world.colliders, world.sampler, ROUTING_RADII);
-}
 
 export interface BuiltWorld {
   /** The number this was built from, and the number the welcome announces. */

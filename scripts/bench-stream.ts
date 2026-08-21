@@ -23,12 +23,10 @@ import { StreamedMap } from '../src/server/client/streamed-map.js';
 import { buildTerrainMeshFromChunks } from '../src/render/iso3d/terrain-mesh.js';
 import { MapWorkerCore } from '../src/render/iso3d/world/map-worker-core.js';
 import { buildPropField, buildRegionInstances, propRegionKey } from '../src/render/iso3d/props.js';
-import {
-  invalidateNavHeights,
-  pendingNavHeights,
-  stepNavHeights,
-  warmNavGrids,
-} from '../src/sim/pathfinding.js';
+import { invalidateNavHeights, pendingNavHeights, stepNavHeights } from '../src/sim/pathfinding.js';
+import { NavField, tileOf } from '../src/sim/nav-tiles.js';
+import { NAV_WINDOW_PAD_TILES } from '../src/server/world/nav-residency.js';
+import { INTEREST_CHUNK_RADIUS } from '../src/server/config.js';
 import { ROUTING_RADII } from '../src/server/world/build.js';
 import { buildMapIndex } from '../src/server/world/map-index.js';
 import { ServerMessageType } from '../src/server/net/protocol.js';
@@ -133,11 +131,20 @@ while (pendingNavHeights(sampler, colliders) > 0) {
 console.log(
   `nav heights, sliced: ${slices} slices, ${sliceTotal.toFixed(0)} ms total, worst slice ${worstSlice.toFixed(2)} ms`,
 );
-// Every radius the sim asks with, which is what the loading screen waits for.
+// Every radius the sim asks with. This used to be what the loading screen
+// waited for; since spec 201 nothing waits for it, because there is no
+// world-sized grid to build -- so what is timed is one player's window instead,
+// which is the same size whatever size the map is.
 console.log(`routing radii: ${ROUTING_RADII.join(', ')}`);
-time('warmNavGrids(all radii, heights in hand)', () =>
-  warmNavGrids(colliders, sampler, ROUTING_RADII),
-);
+time('one nav window, cold (spec 201)', () => {
+  const half = INTEREST_CHUNK_RADIUS + NAV_WINDOW_PAD_TILES;
+  const centre = tileOf(colliders.bounds.x + colliders.bounds.w / 2, colliders.bounds.y + colliders.bounds.h / 2);
+  const field = new NavField(colliders, sampler, ROUTING_RADII);
+  field.window(
+    { minTx: centre.tx - half, minTz: centre.tz - half, maxTx: centre.tx + half, maxTz: centre.tz + half },
+    ROUTING_RADII[0] ?? 16,
+  );
+});
 
 // --- what a chunk arriving while walking costs, split by thread (spec 180) ---
 //

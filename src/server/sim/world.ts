@@ -25,7 +25,7 @@
 import { Rng } from '../../shared/prng.js';
 import { pushOutOfObstacles } from '../../sim/collision.js';
 import type { AvoidanceParams } from '../../sim/avoidance.js';
-import { findPath, navGridFor, pathClear } from '../../sim/pathfinding.js';
+import { findPath, navGridFor, pathClear, type NavGrid } from '../../sim/pathfinding.js';
 import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
 import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
@@ -237,6 +237,24 @@ export interface StepContext {
    * with no spawn points simply has no monsters in it.
    */
   readonly spawnPoints: readonly SpawnPoint[];
+  /**
+   * Nav sized by where the players are (spec 201).
+   *
+   * Absent means "route against a world-sized grid", which is what every
+   * sandbox, every headless test and the loopback tab mean -- their worlds are
+   * a few hundred cells across and a window would be the whole thing. A real
+   * server passes one, and that is where the 182x at the 4x target lives.
+   */
+  readonly nav?: NavLookup;
+}
+
+/**
+ * What the sim asks for a route grid. An interface rather than the class, so
+ * `sim/` states what it needs and `world/nav.ts` supplies it -- and so a test
+ * can hand over a stub without standing up a field.
+ */
+export interface NavLookup {
+  gridAt(radius: number, x: number, y: number): NavGrid | null;
 }
 
 export function createWorldState(seed: number): ServerWorldState {
@@ -2261,7 +2279,12 @@ function routeToward(
   // The ground is part of "nothing is between us" (spec 130): a cliff face is
   // not a collider, so the collider test alone sent a monster striding at a
   // seventy-unit wall without ever asking for a route.
-  const grid = navGridFor(monster.radius, context.world, context.terrain);
+  // The window this body routes in, falling back to the world-sized grid for a
+  // context with no residency (spec 201). `routeToward` is the sim's only nav
+  // consumer, so this is the one place the two paths meet.
+  const grid =
+    context.nav?.gridAt(monster.radius, from.x, from.y) ??
+    navGridFor(monster.radius, context.world, context.terrain);
   if (pathClear(grid, from, to)) {
     // Open ground, so a place on the ring around the target is worth aiming at
     // rather than the target itself (spec 187) -- which is what fans a pack out

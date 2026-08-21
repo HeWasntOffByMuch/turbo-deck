@@ -34,7 +34,7 @@ import { createGroundPredictor, emptyGround, fillGround } from './prediction-gro
 import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
-import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
+import { buildWorldFromMap } from '../../../server/world/build.js';
 import { adoptNavGrid } from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
@@ -317,17 +317,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // streaming client's equivalent is on the settle in `ingestChunks`, which is
   // the earliest moment it could possibly be done.
   //
-  // Blocking, and deliberately back to blocking (spec 165 follow-up 3). Slicing
-  // this across frames was worse in every way that mattered: the sim reaches
-  // `navGridFor` on its own inside `routeToward`, so the grid has to exist
-  // before the first tick rather than eventually -- and a budget spent *per
-  // frame* makes the wall-clock cost of loading a function of the frame rate,
-  // which on a slow machine turned five seconds of work into thirty of waiting.
+  // There used to be a `warmRouting(local)` here, and spec 165's follow-up spent
+  // real effort making it blocking again: the sim reached `navGridFor` inside
+  // `routeToward`, so a world-sized grid had to exist before the first tick, and
+  // slicing the build across frames made the wall-clock cost of loading a
+  // function of the frame rate -- five seconds of work became thirty of waiting
+  // on a slow machine.
   //
-  // What made it affordable was never the slicing. It is the per-cell height
-  // cache below: this pass is the only one that pays for the whole map, and the
-  // chunk arrivals that used to re-pay for it now cost their own ground.
-  if (local) warmRouting(local);
+  // Spec 201 deleted the thing being warmed. Nav is windows now, and a window is
+  // built inside the tick that first wants one: ~140ms of sampling for one
+  // player's surroundings rather than 3.6s for the world, on a map where the
+  // window does not grow when the map does. There is nothing left to have ready.
 
   /**
    * What the predictor is allowed to collide against.

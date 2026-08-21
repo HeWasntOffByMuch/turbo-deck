@@ -150,6 +150,9 @@ import { spawnAround } from './world/spawn-around.js';
 import { circleBlocked } from '../sim/collision.js';
 import { WALKABLE_MIN_HEIGHT } from '../sim/constants.js';
 import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
+import { ROUTING_RADII } from './world/build.js';
+import { ServerNav } from './world/nav.js';
+import { NAV_WINDOW_PAD_TILES } from './world/nav-residency.js';
 import type { SpawnPoint } from './world/spawners.js';
 import type { MapIndex } from './world/map-index.js';
 import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
@@ -447,6 +450,11 @@ export class GameServer implements AdminHost {
    * only thing that puts one anywhere.
    */
   private readonly spawnPoints: readonly SpawnPoint[];
+  /**
+   * Nav sized by residency, or null for a world small enough not to need it
+   * (spec 201).
+   */
+  private readonly nav: ServerNav | null;
   private state: ServerWorldState;
 
   constructor(options: GameServerOptions = {}) {
@@ -460,6 +468,17 @@ export class GameServer implements AdminHost {
     this.store = options.store ?? new MemoryDataStore();
     this.assetManifestHash = options.assetManifestHash ?? '';
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
+    // Tiled nav only where it pays. Below one window the window *is* the world,
+    // so tiling is pure overhead -- and that is every sandbox, every headless
+    // test and the loopback tab, which is why they keep routing exactly as they
+    // did. Measured against the world rather than gated on a flag, because "is
+    // this world bigger than a window" is the actual question.
+    const windowSide = (2 * INTEREST_CHUNK_RADIUS + 1 + 2 * NAV_WINDOW_PAD_TILES) * CHUNK_SIZE;
+    const bounds = this.colliders.bounds;
+    this.nav =
+      bounds.w > windowSide || bounds.h > windowSide
+        ? new ServerNav(this.colliders, this.terrain, ROUTING_RADII)
+        : null;
     this.players = new PlayerManager(this.store, this.zones);
     this.audit = new AuditLog(this.store);
     this.transport = options.transport ?? new NullTransport();
@@ -2431,6 +2450,11 @@ export class GameServer implements AdminHost {
       }
     }
 
+    // Before the step, and off the same set the step is handed: `refreshActive`
+    // runs *after* `step` returns (spec 193), so this is the set the tick will
+    // use rather than one it is about to replace.
+    this.nav?.update(this.chunks.activeChunks());
+
     const result = step(this.state, inputs, {
       world: this.colliders,
       terrain: this.terrain,
@@ -2439,6 +2463,7 @@ export class GameServer implements AdminHost {
       activeChunks: this.chunks.activeChunks(),
       chunkSize: CHUNK_SIZE,
       spawnPoints: this.spawnPoints,
+      ...(this.nav === null ? {} : { nav: this.nav }),
       // Where bodies were, so a blow lands on what its attacker saw (spec 149).
       rewind: this.history,
     });

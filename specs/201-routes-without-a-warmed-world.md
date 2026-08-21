@@ -215,6 +215,27 @@ to warm. `ROUTING_RADII` stays — it is still the set of radii a tile marks for
 and it is still the one place the radii are named so two callers cannot warm
 different sets.
 
+## What it measured
+
+`npm run bench:map` reported, against worlds of 200 / 800 / 3200 chunks — the
+last being the 4× target:
+
+```
+ chunks       MB    parse    build navWindow     heap  MapInfo entities     tick
+   x1.0     x1.0     x1.0     x1.0      x1.0     x1.0     x1.0     x1.0     x1.0
+   x4.0     x4.0     x3.7     x3.4      x0.5     x1.6     x3.5    x14.0     x2.4
+  x16.0    x15.9    x13.4    x14.5      x0.6     x4.1    x13.5    x56.0     x5.3
+```
+
+**`navWindow` is flat while the world grows sixteenfold.** That column used to be
+`navWarm` and tracked the world — 3.6 s at 810 chunks, about a minute at the
+target. It is the same window whatever size the map is, which is the whole
+claim; a reading that starts climbing again is the tiling having been undone.
+
+(It reads slightly *under* 1.0 rather than exactly at it because the smallest
+world is measured first and carries the JIT warmup. The honest statement is
+"flat", not "improving with size".)
+
 ## Invariants tested
 
 - **A tile is a whole number of nav cells**, and equals an interest chunk:
@@ -254,12 +275,32 @@ different sets.
   residency, and walking a player in a circle and back leaves the same number of
   tiles held, not one per place they stood. This is the leak `HEIGHT_CACHE`
   would have grown the moment the window started moving.
-- **Determinism.** The same seed and inputs produce identical authoritative
-  state whether the bodies crossed a window boundary or not — the property
-  `presentation-only.test.ts` already asserts for animation, applied to the one
-  thing that could break it. A grid arriving because a worker happened to finish
-  is wall-clock input to a deterministic simulation (spec 180's rule), so window
-  construction stays synchronous and on the tick.
+- **Determinism, at the point where a cache could break it.** A window is a pure
+  function of its rectangle and the tiles under it, and a tile of where it is —
+  so the only way this could feed wall-clock into the sim is if what is *held*
+  changed what is *answered*. That is what is asserted: a nav walked around the
+  map and a nav just created give byte-identical `cells`, `heights`,
+  `components`, `componentSizes` and `componentAtEdge` for the same residency,
+  and route identically. Bit-identity rather than "the same route", because a
+  difference anywhere in those arrays can surface later on ground nothing
+  happens to be standing on today.
+
+  Window construction stays **synchronous and on the tick** for spec 180's
+  reason: a grid arriving because a worker happened to finish is wall-clock input
+  to a deterministic simulation.
+
+  And the consequence, at sim level: a real fight — a ferocious monster walled
+  off from a player, so `routeToward` actually reaches `findPath` — replayed
+  from the same seed and inputs to bit-identical state, both on a fresh nav and
+  on one that had already been walked around the far side of the map. The
+  existing replay tests (`abilities`, `active-skills`, `aggro`) drive `step`
+  with no `nav` and a 100-unit chunk grid, so they exercise the fallback; this
+  one uses `CHUNK_SIZE`, because that is what a tile is.
+
+  It carries a **control**, and the control earned its place immediately: the
+  first fixture put the monster 400 units away against a 300-unit notice range,
+  so nothing engaged, nav was never asked, and both replays passed as two
+  identical recordings of nothing happening.
 
 ## Out of scope
 

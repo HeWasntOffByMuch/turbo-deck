@@ -471,8 +471,7 @@ export function invalidateNavHeights(
  * This is the whole point of the per-cell cache: the renderer spends a slice of
  * each frame here instead of meeting the entire cost inside the one frame that
  * happens to ask for a route. It is the same work and the same result -- only
- * when it happens moves, exactly as `warmNavGrids` already argued for doing it
- * at boot rather than at the first move order.
+ * when it happens moves.
  */
 export function stepNavHeights(
   ground: NavGround,
@@ -1022,26 +1021,6 @@ export function adoptNavGrid(
   return grid;
 }
 
-/**
- * Build the grids a world is going to need, now, rather than when something
- * first asks for a route (spec 130).
- *
- * Sampling the ground is what costs: `heightAt` on a real map is a walk down
- * the layers, a jittered-corner search and a plane solve, and the grid wants one
- * per cell -- 180k of them over the arena, which is well over a second. Left
- * lazy that lands inside a tick, the first time a monster's line to a player is
- * blocked, and stalls the world for a second and a bit.
- *
- * It is the same work either way. This only decides *when* it happens, and boot
- * is a place where a second is already being spent on reading the map.
- */
-export function warmNavGrids(
-  world: WorldColliders,
-  ground: NavGround,
-  radii: readonly number[],
-): void {
-  for (const radius of radii) navGridFor(radius, world, ground);
-}
 
 function cellOf(grid: NavGrid, point: Vec2): number {
   const col = Math.min(grid.cols - 1, Math.max(0, Math.floor((point.x - grid.originX) / grid.cellSize)));

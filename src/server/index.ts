@@ -32,7 +32,7 @@ import { BROADCAST_RATE, SERVER_TICK_RATE } from './config.js';
 import { WebSocketTransport } from './net/transport-ws.js';
 import { GameServer } from './server.js';
 import { createStudio } from './studio/index.js';
-import { buildWorld, buildWorldFromMap, warmRouting } from './world/build.js';
+import { buildWorld, buildWorldFromMap } from './world/build.js';
 import { loadMapFile, mapPathFromEnv } from './world/map-file.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -72,11 +72,12 @@ const world =
         return buildWorldFromMap(file.doc, file.mapId);
       })();
 
-// Route planning wants the ground sampled into a grid, which is around a second
-// on a real map (spec 130). Doing it here means it lands in boot, beside reading
-// the map, rather than inside the first tick where a monster's line to a player
-// is blocked.
-warmRouting(world);
+// There used to be a `warmRouting(world)` here (spec 130): route planning wanted
+// the ground sampled into a grid, which was ~3.6s on today's map and about a
+// minute at the size this is heading for, so it was paid at boot rather than
+// inside the first tick a monster's line was blocked. Spec 201 deleted the thing
+// it was warming -- nav is windows now, sized by where the players are, so there
+// is no world-sized grid to have ready and boot does not sample any ground.
 
 /**
  * The unit authoring service (spec 108). Mounted unconditionally; it refuses to
