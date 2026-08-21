@@ -192,6 +192,7 @@ export class MapWorkerCore {
         heights: live.heights.slice(),
         components: live.components.slice(),
         componentSizes: live.componentSizes.slice(),
+        componentAtEdge: live.componentAtEdge.slice(),
       },
     };
   }
@@ -250,5 +251,6 @@ export function transfersOf(reply: MapWorkerReply): ArrayBuffer[] {
     reply.grid.heights.buffer as ArrayBuffer,
     reply.grid.components.buffer as ArrayBuffer,
     reply.grid.componentSizes.buffer as ArrayBuffer,
+    reply.grid.componentAtEdge.buffer as ArrayBuffer,
   ];
 }

@@ -152,12 +152,33 @@ it.
 
 ### The two boundary rules
 
-- **The window's edge reads as blocked.** Conservative: a route is not found
-  rather than routed through ground nobody has.
+- **A point outside the window is refused, not clamped.** `cellOf` clamps, which
+  is right for a world grid — outside is a body that has walked past the edge of
+  the ground that exists, and `bounds` is explicitly not the play area — and
+  wrong for a window, where it silently routes to the edge of whatever the search
+  could see. That is the same failure `routeToward` already names when it refuses
+  to hand a ring point to `findPath`: *there is no way to my target* becomes
+  *there is a way to this other spot*. A `windowed` flag is what tells the two
+  kinds of grid apart.
 - **A component touching the window edge is never a pocket.** Its true size is
   unknown, so `isPocket` must not judge it small — otherwise a corridor entering
   at a corner is mistaken for a nook and `freeCellNear` refuses to relocate a
   body into it. One flag per component, computed in the same flood fill.
+
+**Correction, from building it:** the first of these was originally *"the
+window's edge reads as blocked"*, and that is wrong twice over. It is not needed
+— A\* expands within `cols × rows`, so a route cannot leave a window whatever the
+rim says, and there is no unsampled ground *inside* a window to be conservative
+about, because a tile is graded knowing the colliders that reach into it from
+outside. And it defeats the rule below it: a blocked outer ring is a ring no
+component can contain, so `componentAtEdge` can never be 1 and the pocket rule
+silently never fires. Both were caught by the tests written for them, which is
+the only reason this is a correction rather than a bug. Blocking the rim would
+also refuse real ground at the window's edge that a route may legitimately need
+to cross.
+
+The refusal above is what actually delivers what the rim rule was reaching for,
+and it delivers it at the one place it matters — the goal.
 
 Both are safe because of a fact about the callers rather than a hope:
 `routeToward` is the only nav consumer on the server, its `from` is a simulated
@@ -210,8 +231,8 @@ different sets.
   86%, and a refactor that loses the sharing loses the feature.
 - **A tile is sampled once across windows.** Two overlapping windows share their
   tiles; the second pays nothing for the overlap.
-- **The window edge is blocked, and a route out of the window is refused** —
-  not routed through unsampled ground.
+- **A route out of the window is refused**, rather than clamped to its edge.
+  The window edge is deliberately *not* blocked; see the correction above.
 - **A component touching the window edge is never a pocket**, whatever its size
   inside the window. Tested with a corridor entering at a corner: fewer than
   `POCKET_CELLS` cells visible, and `freeCellNear` must still use it.
