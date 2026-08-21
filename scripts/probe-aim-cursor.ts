@@ -130,10 +130,47 @@ async function bodyBars(page: Page): Promise<{ id: string; x: number; y: number 
   );
 }
 
-const isOurs = (value: string): boolean => value.startsWith('url("data:image/svg+xml');
 const isArrow = (value: string): boolean => value === 'auto' || value === 'default';
-/** The hotspot and fallback a value declares -- what actually places the image. */
-const anchorOf = (value: string): string => value.slice(value.indexOf('") ') + 3);
+
+/**
+ * The mark on screen: which one, and the middle of the box it was drawn in.
+ *
+ * Measured off the element's own rectangle rather than off the transform we
+ * asked for, so what is checked is where the browser *put* it. This is the
+ * measurement the CSS cursor image made impossible -- a cursor is composited
+ * outside the page, and neither a screenshot nor OBS can see where it went.
+ */
+async function markOf(page: Page): Promise<{ art: string; x: number; y: number } | null> {
+  return page.evaluate(() => {
+    const node = document.querySelector<HTMLElement>('[data-crosshair]');
+    if (node === null || node.dataset['crosshair'] === 'none') return null;
+    const box = node.getBoundingClientRect();
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas:not([data-ui-canvas])');
+    const origin = canvas?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    return {
+      art: node.dataset['crosshair'] ?? '?',
+      // Back into the same pixels the pointer was given in.
+      x: box.left + box.width / 2 - origin.left,
+      y: box.top + box.height / 2 - origin.top,
+    };
+  });
+}
+
+/** A poll, for the same reason `cursorSettles` is one. */
+async function markSettles(
+  page: Page,
+  wanted: (mark: Awaited<ReturnType<typeof markOf>>) => boolean,
+  timeoutMs = 6000,
+): Promise<Awaited<ReturnType<typeof markOf>>> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = await markOf(page);
+  while (Date.now() < deadline) {
+    seen = await markOf(page);
+    if (wanted(seen)) return seen;
+    await page.waitForTimeout(100);
+  }
+  return seen;
+}
 
 async function main(): Promise<void> {
   const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
@@ -153,134 +190,123 @@ async function main(): Promise<void> {
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await waitForTick(page, 150);
 
-    // Over open ground: the page's own arrow, which is the ordinary case and
-    // the thing the two marks are only worth drawing against.
+    /** How far the drawn mark sits from the point the pointer was put at. */
+    const missBy = (mark: { x: number; y: number }, at: { x: number; y: number }): number =>
+      Math.hypot(mark.x - at.x, mark.y - at.y);
+
+    // Over open ground: the page's own arrow and no mark, which is the ordinary
+    // case and the thing the two marks are only worth drawing against.
     await page.mouse.move(640, 400);
     const idle = await cursorSettles(page, isArrow);
-    console.log(`  open ground: ${idle}`);
+    const idleMark = await markOf(page);
+    console.log(`  open ground: cursor=${idle} mark=${idleMark === null ? 'none' : idleMark.art}`);
     if (!isArrow(idle)) problems.push(`open ground wore ${idle}, not the page's own arrow`);
+    if (idleMark !== null) problems.push(`open ground drew a ${idleMark.art} mark`);
 
-    // Over a real body: the small mark. Found rather than assumed -- a bar is
-    // anchored over a head and a fixed drop below it could miss the body.
+    // Over a real body: the small mark, and -- the measurement this whole
+    // approach exists for -- *at the pointer*. Found rather than assumed, since
+    // a bar is anchored over a head and a fixed drop below it could miss.
     const bars = await bodyBars(page);
     console.log(`  bodies:      ${bars.length} on screen`);
     if (bars.length === 0) problems.push('no other body was on screen to point at');
-    let hovering = '';
-    let landedAt = -1;
-    let body = { x: 0, y: 0 };
+    let body: { x: number; y: number } | null = null;
     for (const bar of bars) {
       for (const drop of BODY_OFFSETS) {
-        await page.mouse.move(bar.x, bar.y + drop);
-        const seen = await cursorSettles(page, isOurs, 700);
-        if (isOurs(seen)) {
-          hovering = seen;
-          landedAt = drop;
-          body = { x: bar.x, y: bar.y + drop };
+        const at = { x: bar.x, y: bar.y + drop };
+        await page.mouse.move(at.x, at.y);
+        const mark = await markSettles(page, (m) => m?.art === 'small', 700);
+        if (mark?.art === 'small') {
+          body = at;
+          console.log(
+            `  over a body: small at (${mark.x.toFixed(1)},${mark.y.toFixed(1)}) for pointer ` +
+              `(${at.x.toFixed(1)},${at.y.toFixed(1)}) -- off by ${missBy(mark, at).toFixed(2)}px, +${drop}px below the bar`,
+          );
+          if (missBy(mark, at) > 1) {
+            problems.push(`the small mark missed the pointer by ${missBy(mark, at).toFixed(2)}px`);
+          }
+          if ((await cursorOf(page)) !== 'none') {
+            problems.push('a drawn mark did not hide the real cursor under it');
+          }
           break;
         }
       }
-      if (hovering !== '') break;
+      if (body !== null) break;
     }
-    console.log(`  over a body: ${hovering === '' ? '(never found one)' : `${hovering.slice(0, 46)}... at +${landedAt}px`}`);
-    if (hovering === '') problems.push('pointing at a body never produced the small mark');
+    if (body === null) problems.push('pointing at a body never produced the small mark');
 
-    // Armed by *clicking* a slot, with the mouse then left where it is: the
-    // path the cursor used to be drawn wrong on, because the change was made in
-    // an animation frame with no input event for the browser to re-place the
-    // image with. The slot is found rather than assumed -- the bar is drawn on
-    // the interface canvas and has no box in the DOM, so the candidates are
-    // stepped along from the pool block, which does.
+    // Armed over that same body: the full crosshair, in the same place. This is
+    // the pair's one invariant, and until the mark was drawn in the page there
+    // was no way to check it at all.
+    await page.keyboard.press('Digit3');
+    const armed = await markSettles(page, (m) => m?.art === 'full');
+    console.log(`  armed:       ${armed === null ? 'nothing' : `full at (${armed.x.toFixed(1)},${armed.y.toFixed(1)})`}`);
+    if (armed?.art !== 'full') problems.push('arming a skill did not extend the mark');
+    if (armed && body && missBy(armed, body) > 1) {
+      problems.push(`arming the aim moved the mark by ${missBy(armed, body).toFixed(2)}px`);
+    }
+    await page.keyboard.press('Escape');
+
+    // Armed by *clicking* a slot, with the mouse left where it is: the path
+    // this was reported wrong on. The slot is found rather than assumed -- the
+    // bar is drawn on the interface canvas and has no box in the DOM, so the
+    // candidates are stepped along from the pool block, which does.
     const pool = await page.$eval('[data-hud-bottom="pools"]', (node) => {
       const box = node.getBoundingClientRect();
       return { right: box.right, middle: box.top + box.height / 2 };
     });
-    let clickedAt = -1;
-    let clicked = '';
+    let armedByClick = false;
     for (let slot = 0; slot < 5; slot++) {
-      const x = pool.right + SLOT_STEP * slot + SLOT_STEP / 2;
-      await page.mouse.move(x, pool.middle);
+      const at = { x: pool.right + SLOT_STEP * slot + SLOT_STEP / 2, y: pool.middle };
+      await page.mouse.move(at.x, at.y);
       await page.mouse.down();
       await page.mouse.up();
-      // Deliberately no move between the click and the reading: that is the
-      // whole of what is being checked.
-      const seen = await cursorSettles(page, isOurs, 900);
-      if (isOurs(seen)) {
-        clicked = seen;
-        clickedAt = slot;
+      // Nothing is drawn while the pointer is over the interface -- a button is
+      // a button, and the mark is for the world. So the check is that the aim
+      // took, read the moment the pointer is back over the world, and that the
+      // mark arrives *at the pointer* rather than where the slot was.
+      const overBar = await markOf(page);
+      if (overBar !== null) problems.push(`a ${overBar.art} mark was drawn over the action bar`);
+      const back = { x: 700, y: 380 };
+      await page.mouse.move(back.x, back.y);
+      const mark = await markSettles(page, (m) => m?.art === 'full', 900);
+      if (mark?.art === 'full') {
+        armedByClick = true;
+        console.log(
+          `  clicked slot ${slot}: full at (${mark.x.toFixed(1)},${mark.y.toFixed(1)}) for pointer ` +
+            `(${back.x},${back.y}) -- off by ${missBy(mark, back).toFixed(2)}px`,
+        );
+        if (missBy(mark, back) > 1) {
+          problems.push(
+            `after clicking a slot the mark sat ${missBy(mark, back).toFixed(2)}px from the pointer`,
+          );
+        }
         break;
       }
     }
-    console.log(`  clicked slot: ${clicked === '' ? '(no slot armed an aim)' : `${clicked.slice(0, 40)}... slot ${clickedAt}`}`);
-    if (clicked === '') problems.push('clicking a skill slot never produced the crosshair');
-    await page.keyboard.press('Escape');
+    if (!armedByClick) problems.push('clicking a skill slot never armed the crosshair');
 
-    // ...and armed over a body: the full crosshair, at the same hotspot, which
-    // is the one invariant the pair exists for.
-    if (hovering !== '') await page.mouse.move(body.x, body.y);
-    await page.keyboard.press('Digit3');
-    const armed = await cursorSettles(page, (value) => isOurs(value) && value !== hovering);
-    console.log(`  armed:       ${armed.slice(0, 46)}...`);
-    if (!isOurs(armed)) problems.push(`a pending ground aim wore ${armed}, not the full crosshair`);
-    if (armed === hovering) problems.push('arming a skill over a body did not extend the mark');
-    if (isOurs(armed) && hovering !== '') {
-      if (anchorOf(armed) !== anchorOf(hovering)) {
-        problems.push(`the two marks name different hotspots: ${anchorOf(hovering)} vs ${anchorOf(armed)}`);
-      }
-      if (!/\d+ \d+, crosshair$/.test(armed)) {
-        problems.push(`the cursor names no hotspot or no fallback: ${armed.slice(-40)}`);
+    // ...and it tracks the pointer while it moves, which is the other half of
+    // being drawn rather than composited.
+    for (const at of [
+      { x: 500, y: 300 },
+      { x: 900, y: 520 },
+      { x: 300, y: 640 },
+    ]) {
+      await page.mouse.move(at.x, at.y);
+      const mark = await markSettles(page, (m) => m !== null && missBy(m, at) <= 1, 1500);
+      if (mark === null || missBy(mark, at) > 1) {
+        const where = mark === null ? 'nothing drawn' : `${missBy(mark, at).toFixed(2)}px away`;
+        problems.push(`the armed mark did not follow the pointer to (${at.x},${at.y}): ${where}`);
       }
     }
+    console.log('  tracking:    the armed mark follows the pointer within 1px');
 
-    // The computed style reports what was *declared*, image or no image -- so
-    // the values above prove the wiring and say nothing about whether this
-    // browser can draw them. Decoding is the other half, and the half that
-    // catches a malformed path, a bad encoding, or a size an engine refuses.
-    for (const [name, value] of [
-      ['small', hovering],
-      ['full', armed],
-    ] as const) {
-      if (!isOurs(value)) continue;
-      const decoded = await page.evaluate(
-        async (url: string) =>
-          await new Promise<{ ok: boolean; width: number; height: number }>((resolve) => {
-            const image = new Image();
-            image.onload = () =>
-              resolve({ ok: true, width: image.naturalWidth, height: image.naturalHeight });
-            image.onerror = () => resolve({ ok: false, width: 0, height: 0 });
-            image.src = url;
-          }),
-        value.slice(value.indexOf('url("') + 5, value.indexOf('")')),
-      );
-      console.log(`  decoded ${name}: ${decoded.ok ? `${decoded.width}x${decoded.height}` : 'refused'}`);
-      if (!decoded.ok) problems.push(`the browser could not decode the ${name} mark`);
-      // Both have to come back the same size, or the swap moves the drawn mark
-      // however well the hotspots agree. Over 32 and some engines drop it.
-      if (decoded.ok && (decoded.width !== 22 || decoded.height !== 22)) {
-        problems.push(`the ${name} mark decoded at ${decoded.width}x${decoded.height}, not 22x22`);
-      }
-    }
-
-    // Off the body with the aim still armed: still the full crosshair, because
-    // an armed skill outranks what happens to be under the pointer.
-    await page.mouse.move(640, 700);
-    const armedOffBody = await cursorSettles(page, (value) => value === armed);
-    if (armedOffBody !== armed) {
-      problems.push(`an armed aim over open ground wore ${armedOffBody}`);
-    }
-
-    // Escape puts it all back.
     await page.keyboard.press('Escape');
     const escaped = await cursorSettles(page, isArrow);
-    console.log(`  escaped:     ${escaped}`);
+    const gone = await markOf(page);
+    console.log(`  escaped:     cursor=${escaped} mark=${gone === null ? 'none' : gone.art}`);
     if (!isArrow(escaped)) problems.push(`Escape left ${escaped} behind`);
-
-    // ...and the body still wears the small mark afterwards, so cancelling an
-    // aim does not take the hover state with it.
-    if (hovering !== '') {
-      await page.mouse.move(body.x, body.y);
-      const again = await cursorSettles(page, (value) => value === hovering);
-      if (again !== hovering) problems.push(`after Escape, the body wore ${again}`);
-    }
+    if (gone !== null) problems.push(`Escape left a ${gone.art} mark behind`);
   } finally {
     await browser.close();
     server.kill();
@@ -291,7 +317,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log('  arrow on open ground, the small mark on a body, the full crosshair when armed');
+  console.log('  the mark is drawn where the pointer is, in every state, to within a pixel');
 }
 
 await main();

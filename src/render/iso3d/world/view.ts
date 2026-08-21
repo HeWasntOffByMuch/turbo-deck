@@ -108,7 +108,7 @@ import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
 import { windupLostItsMarkIn } from './withdraw.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
-import { worldCursor } from './crosshair.js';
+import { worldCursor, worldMark } from './crosshair.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
@@ -1923,27 +1923,28 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   /**
    * Say what the next click would do (specs 158, 197).
    *
-   * Three things change the cursor, and the arrow is what stands the rest of the
-   * time. A pending aim gets the full crosshair, because that is the one state
-   * in which the pointer is choosing a *point* rather than pointing at a thing.
-   * A body a click would act on gets the same mark with its arms pulled in. A
-   * drop keeps the pointing hand it has had since spec 158, being the one thing
-   * in the world the cursor does something to that has no affordance of its
-   * own: a monster lights up when hovered, a window has a border, and an item on
-   * the ground has neither. Which of the three wins is `worldCursor`'s to
-   * answer, in a module a test can reach; this only assigns what it says.
+   * Three things change the pointer, and the arrow is what stands the rest of
+   * the time. A pending aim gets the full crosshair, because that is the one
+   * state in which the pointer is choosing a *point* rather than pointing at a
+   * thing. A body a click would act on gets the same mark with its arms pulled
+   * in. A drop keeps the pointing hand it has had since spec 158, being the one
+   * thing in the world the cursor does something to that has no affordance of
+   * its own: a monster lights up when hovered, a window has a border, and an
+   * item on the ground has neither. Which of the three wins is `crosshair.ts`'s
+   * to answer, in a module a test can reach; this only carries it out.
+   *
+   * Our two marks are *drawn*, by the HUD, at the pointer position this file
+   * already tracks -- they were CSS cursor images for two cuts of spec 197, and
+   * on a real machine the image landed four to seven pixels up and left of the
+   * point it was marking, because a cursor is placed by a hotspot applied
+   * somewhere between the style and the glass. Nothing in a page can see where
+   * that put it; every pixel of this can be measured.
    *
    * Called from the frame **and from the end of every pointer and key event**,
    * which is the whole reason it is a function rather than four lines in the
-   * frame. A cursor change made in an animation frame is a style change with no
-   * input behind it, and the browser has no pointer event in hand to re-place
-   * the image with -- so arming a skill by *clicking* its slot drew the new mark
-   * at an offset and left it there until the mouse moved, which is when the next
-   * hit test finally ran. Assigning inside the event that caused the change puts
-   * it in the task the browser is already resolving the pointer in. The frame
-   * still calls it, because hovering a body is a fact about where the world has
-   * moved to rather than about where the pointer went, and no input event
-   * arrives when a monster walks under a resting cursor.
+   * frame: the events keep the mark with the pointer that moved it, in the same
+   * task, and the frame covers what the *world* changed -- a monster walking
+   * under a pointer that never moved raises no event at all.
    *
    * The hovered body is resolved once and asked both questions rather than found
    * twice -- a drop and an attackable body are two readings of the same id.
@@ -1954,11 +1955,19 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       scene.hoveredEntityId === null
         ? undefined
         : view.entities.find((entity) => entity.id === scene.hoveredEntityId);
-    canvas.style.cursor = worldCursor({
+    const pointer = {
       aiming: pendingAim !== null,
       overEnemy: hovered !== undefined && attackable(hovered, view.selfEntityId),
       overDrop: hovered !== undefined && collectable(hovered),
-    });
+    };
+    // The mark and the cursor under it are one decision read twice, so "we hid
+    // the pointer" and "we drew a mark" cannot come apart.
+    //
+    // `cursor` is null while the pointer is over a window or off the canvas
+    // (`onMove`, `onLeave`), and a mark with nowhere to go draws nothing --
+    // which is also what stops a hidden cursor being left over the interface.
+    canvas.style.cursor = cursor === null ? '' : worldCursor(pointer);
+    hud.setCrosshair(cursor === null ? null : worldMark(pointer), cursor);
   }
 
   const onPointerDown = (event: PointerEvent): void => {

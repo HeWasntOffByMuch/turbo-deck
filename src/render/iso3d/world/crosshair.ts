@@ -14,27 +14,28 @@
  * in a diff, and a table of `#` is the same register as the posterized world
  * behind it. Rendered as axis-aligned rects with
  * `shape-rendering: crispEdges`, so each is exact at whatever scale it is asked
- * for rather than something that has to be kept at 1x, and handed to CSS as a
- * data URI with the hotspot named -- the *middle pixel*, which is why the art
- * is odd-sided and has a centre to name at all.
+ * for rather than something that has to be kept at 1x.
  *
- * The one thing the pair guarantees is that **going from the small mark to the
- * full one moves nothing**: same box, same hotspot, and every pixel the small
- * one lights the full one lights too, so arming a skill over a body you were
- * already pointing at extends the arms and shifts not one pixel. A cursor image
- * is placed by its hotspot, so two marks that disagreed about theirs would jump
- * against each other -- which is exactly what the arrow does, its hotspot being
- * its tip where a crosshair's is its centre. That jump is accepted where the
- * arrow hands over, because that is a deliberate hover onto a body, and refused
- * between these two, because that is a key press in the middle of a fight.
+ * **They are drawn in the page, not handed to CSS as a cursor image.** The
+ * first two cuts of this were a `cursor: url(...) 11 11` data URI, and on a real
+ * machine the mark landed four to seven CSS pixels up and left of the point it
+ * was meant to be marking -- about half the hotspot -- with the pointer provably
+ * stationary. Measured off a phone recording of the screen, because neither a
+ * headless screenshot nor OBS captures what the compositor draws for a cursor:
+ * a hotspot is applied somewhere between the style and the glass, by a layer
+ * that also has a device scale and a page zoom to apply, and CSS has no way to
+ * ask what it did. Drawing the mark ourselves puts it in the one coordinate
+ * space this program can see the whole of -- the pointer position it already
+ * tracks -- so there is no hotspot to be right about, and, for the first time,
+ * a probe can *measure* where the mark went.
  *
- * Two of the browser's limits shape the size and both are stated rather than
- * discovered: a cursor image over 32px square is refused outright by some
- * engines, which is why the drawn box is 22, and an SVG cursor is not honoured
- * at all by others, which is why every value here ends in a keyword fallback.
+ * What that costs is a frame: an OS cursor is composited at pointer rate and a
+ * page element is not. It is placed from the pointer event rather than from the
+ * frame to keep that to the minimum a page can manage.
  *
- * Pure: no DOM, no three.js, no clock. `view.ts` assigns what
- * {@link worldCursor} returns to `canvas.style.cursor` and decides nothing.
+ * Pure: no DOM, no three.js, no clock. `view.ts` asks {@link worldMark} what to
+ * draw and {@link worldCursor} what the canvas should wear underneath it, and
+ * decides neither.
  */
 
 import type { PixelRect } from './pixel-font.js';
@@ -133,11 +134,12 @@ export const CROSSHAIR_BOX = (CROSSHAIR_SIDE + MARGIN * 2) * CROSSHAIR_SCALE;
 /**
  * Where the click lands, in the drawn image: the centre pixel's own middle.
  *
- * Floored rather than rounded, because CSS wants whole pixels and the middle
- * pixel of an odd-sided box straddles the half. Half a pixel of offset on a
- * 22px mark is invisible; being a whole pixel out on every cast is not.
+ * What a caller offsets the mark by to centre it on the pointer. Floored rather
+ * than rounded, because a whole pixel keeps the art on the device grid and the
+ * middle pixel of an odd-sided box straddles the half either way. Half a pixel
+ * of offset on a 22px mark is invisible; being a whole pixel out is not.
  */
-export const CROSSHAIR_HOTSPOT = Math.floor(CROSSHAIR_BOX / 2);
+export const CROSSHAIR_CENTRE = Math.floor(CROSSHAIR_BOX / 2);
 
 /** The aim's own colour, `scene.ts`'s AIM_COLOR, so the mark and the shape agree. */
 export const CROSSHAIR_FILL = '#7fd4ff';
@@ -179,32 +181,7 @@ export function crosshairSvg(options: CrosshairOptions = {}): string {
   );
 }
 
-/**
- * The whole CSS `cursor` value: the image, its hotspot, and a keyword behind it.
- *
- * `encodeURIComponent` rather than base64, so what ships is the same markup the
- * table above produces and a stylesheet somebody is reading in devtools still
- * says what it draws. The keyword is not decoration: an engine that refuses SVG
- * cursors, or a cursor image at all, falls through to it, and `crosshair` is the
- * one keyword that means what this means.
- */
-export function crosshairCursor(options: CrosshairOptions = {}): string {
-  const svg = encodeURIComponent(crosshairSvg(options))
-    // `encodeURIComponent` leaves the two brackets alone, and the markup is full
-    // of them -- every `translate(1 1)` in the outline. Inside a *quoted* url()
-    // that is legal and this is quoted, so the escape buys nothing today; it is
-    // here so that the value stays one token whoever pastes it where, which is
-    // the whole reason a data URI is preferable to a fetch in the first place.
-    .replaceAll('(', '%28')
-    .replaceAll(')', '%29');
-  return `url("data:image/svg+xml,${svg}") ${CROSSHAIR_HOTSPOT} ${CROSSHAIR_HOTSPOT}, crosshair`;
-}
-
-/** Built once each: the art is constant, and a data URI rebuilt per frame is churn. */
-const FULL_CURSOR = crosshairCursor({ art: 'full' });
-const SMALL_CURSOR = crosshairCursor({ art: 'small' });
-
-export interface WorldCursorInput {
+export interface WorldPointerInput {
   /**
    * True while a hotbar press is waiting for the click that places it -- the one
    * state in which the pointer is being used to *choose a point* (spec 080).
@@ -226,28 +203,36 @@ export interface WorldCursorInput {
 }
 
 /**
- * Every cursor this file can return, for the test that asserts the two marks
- * name the same hotspot -- which is what makes going from one to the other
- * positionless.
- */
-export const WORLD_CURSORS = { full: FULL_CURSOR, small: SMALL_CURSOR } as const;
-
-/**
- * What the canvas's `cursor` should be, in one place rather than three.
+ * Which mark to draw at the pointer, or null for none.
  *
  * The order is the order of commitment, and each step of it earns its mark. An
  * armed skill outranks everything, and it has to: while a skill is aimed a left
- * click *places* it, so a pointing hand -- or a mark that said "this body" --
- * would promise something the click is not going to perform. A body under the
- * pointer is next, because a click there does something to it. The drop's hand
- * is last of the three and is spec 158's, kept as it was.
- *
- * Everything else is the empty string: whatever the page says, which is the
- * arrow. A mark that is always on says nothing by being on, and these two are
- * only worth drawing because their absence is the ordinary case.
+ * click *places* it, so a mark that said "this body" would promise something
+ * the click is not going to perform. A body under the pointer is next, because
+ * a click there does something to it. Everything else is unmarked -- a mark
+ * that is always on says nothing by being on, and these two are only worth
+ * drawing because their absence is the ordinary case.
  */
-export function worldCursor(input: WorldCursorInput): string {
-  if (input.aiming) return FULL_CURSOR;
-  if (input.overEnemy) return SMALL_CURSOR;
+export function worldMark(input: WorldPointerInput): CrosshairArt | null {
+  if (input.aiming) return 'full';
+  if (input.overEnemy) return 'small';
+  return null;
+}
+
+/**
+ * What the canvas itself should wear underneath, in one place rather than two.
+ *
+ * `none` wherever we draw a mark of our own, since the point of drawing it is
+ * that it is the only thing there; the drop's pointing hand (spec 158) where
+ * there is no mark and something to pick up; and otherwise the empty string,
+ * which is whatever the page says -- the arrow.
+ *
+ * Derived from {@link worldMark} rather than deciding again, so "we hid the
+ * cursor" and "we drew a mark" cannot come apart. That pairing is the one way
+ * this can fail badly: a hidden cursor with nothing drawn is a pointer the
+ * player cannot find.
+ */
+export function worldCursor(input: WorldPointerInput): string {
+  if (worldMark(input) !== null) return 'none';
   return input.overDrop ? 'pointer' : '';
 }

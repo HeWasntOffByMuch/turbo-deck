@@ -33,6 +33,12 @@ import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
+import {
+  CROSSHAIR_BOX,
+  CROSSHAIR_CENTRE,
+  crosshairSvg,
+  type CrosshairArt,
+} from './crosshair.js';
 import { pixelTextSvg } from './pixel-font.js';
 import type { RarityId } from '../../../server/data/items.js';
 
@@ -409,6 +415,17 @@ export interface HudHandle {
    */
   setActionBar(box: ActionBarBox): void;
   /**
+   * The mark under the pointer, and where the pointer is (spec 197).
+   *
+   * `null` draws nothing and is the ordinary case. The point is in canvas
+   * pixels -- the same space `project` answers in -- and the mark is *centred*
+   * on it, which is the whole reason this is drawn here rather than handed to
+   * CSS as a cursor image: a cursor is placed by a hotspot applied somewhere
+   * between the style and the glass, and on a real machine that put the mark
+   * four to seven pixels up and left of the point it was marking.
+   */
+  setCrosshair(mark: CrosshairArt | null, at: { readonly x: number; readonly y: number } | null): void;
+  /**
    * How much of the frame's floor is spoken for, in CSS pixels (spec 196).
    *
    * The experience strip spans the whole width and is pinned to the bottom, so
@@ -589,6 +606,48 @@ export function createHud(project: Projector): HudHandle {
    * -- so it gets its own place above the hotbar rather than going with the
    * panel. Idle, it says nothing; the world is the hint.
    */
+  /**
+   * The mark drawn at the pointer (spec 197): the crosshair, or the same mark
+   * with its arms pulled in, or nothing.
+   *
+   * Drawn here rather than set as a CSS cursor image because a cursor is placed
+   * by a *hotspot*, and a hotspot is applied by a layer that also has a device
+   * scale and a page zoom to apply: measured on a real machine, the mark landed
+   * four to seven pixels up and left of the point it was marking, with the
+   * pointer provably still. Here it is placed from the pointer position the
+   * game already tracks, in the coordinate space everything else on this layer
+   * is placed in, and so it is where it says it is.
+   *
+   * Both marks are built once and swapped by `display`. They are the same box,
+   * so the swap moves nothing; the element itself never moves for a swap
+   * either, since only its `transform` places it.
+   */
+  const crosshairLayer = document.createElement('div');
+  crosshairLayer.dataset['crosshair'] = 'none';
+  // `top:0;left:0` plus a transform rather than `left/top` in pixels: a
+  // transform is composited, so following the pointer costs no layout.
+  //
+  // Sized, rather than left to its absolutely-positioned children: they are out
+  // of flow, so an unsized holder has a zero rectangle at its own origin -- and
+  // then the one thing worth measuring about this element, where the mark
+  // actually landed, reads eleven pixels up and left of the truth. Which is the
+  // very number this whole change exists to stop being wrong.
+  crosshairLayer.style.cssText =
+    `position:absolute;left:0;top:0;width:${CROSSHAIR_BOX}px;height:${CROSSHAIR_BOX}px;` +
+    'pointer-events:none;display:none;will-change:transform;';
+  const crosshairArt: Record<CrosshairArt, HTMLElement> = {
+    full: document.createElement('div'),
+    small: document.createElement('div'),
+  };
+  for (const art of ['full', 'small'] as const) {
+    const holder = crosshairArt[art];
+    holder.style.cssText = 'position:absolute;left:0;top:0;display:none;';
+    holder.innerHTML = crosshairSvg({ art });
+    crosshairLayer.append(holder);
+  }
+  root.append(crosshairLayer);
+  let crosshairShown: CrosshairArt | null = null;
+
   const aimHint = document.createElement('div');
   if (layout.compact) {
     aimHint.style.cssText =
@@ -1804,6 +1863,32 @@ export function createHud(project: Projector): HudHandle {
       if (box.width === actionBar.width && box.height === actionBar.height) return;
       actionBar = box;
       placeAgainstBar();
+    },
+    setCrosshair(mark, at) {
+      if (mark === null || at === null) {
+        if (crosshairShown === null) return;
+        crosshairArt[crosshairShown].style.display = 'none';
+        crosshairLayer.style.display = 'none';
+        crosshairLayer.dataset['crosshair'] = 'none';
+        crosshairShown = null;
+        return;
+      }
+      if (mark !== crosshairShown) {
+        if (crosshairShown !== null) crosshairArt[crosshairShown].style.display = 'none';
+        crosshairArt[mark].style.display = 'block';
+        crosshairLayer.style.display = 'block';
+        crosshairLayer.dataset['crosshair'] = mark;
+        crosshairShown = mark;
+      }
+      // Centred on the point, which is what a crosshair means. Rounded, so the
+      // art stays on the pixel grid it was authored for -- half a pixel of lag
+      // against a blurred mark is not a trade worth making.
+      const left = Math.round(at.x) - CROSSHAIR_CENTRE;
+      const top = Math.round(at.y) - CROSSHAIR_CENTRE;
+      crosshairLayer.style.transform = `translate(${left}px, ${top}px)`;
+      // For the probe: where the mark actually went, in the same pixels the
+      // pointer was reported in. Nothing in the game reads it.
+      crosshairLayer.dataset['crosshairAt'] = `${left + CROSSHAIR_CENTRE},${top + CROSSHAIR_CENTRE}`;
     },
     onOpen(handler) {
       openHandler = handler;

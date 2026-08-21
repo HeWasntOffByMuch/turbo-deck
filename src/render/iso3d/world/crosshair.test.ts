@@ -2,16 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CROSSHAIR_BOX,
+  CROSSHAIR_CENTRE,
   CROSSHAIR_FILL,
-  CROSSHAIR_HOTSPOT,
   CROSSHAIR_SCALE,
   CROSSHAIR_SIDE,
-  crosshairCursor,
   crosshairPath,
   crosshairRects,
   crosshairSvg,
-  WORLD_CURSORS,
   worldCursor,
+  worldMark,
   type CrosshairArt,
 } from './crosshair.js';
 
@@ -27,10 +26,11 @@ function lit(art: CrosshairArt = 'full'): boolean[][] {
   return grid;
 }
 
-/** The hotspot and size a cursor value declares, which is what places its image. */
-function anchorOf(cursor: string): string {
-  const tail = cursor.slice(cursor.indexOf('") ') + 3);
-  return tail;
+/** Where a mark's box lands when it is centred on `at`, as the HUD places it. */
+function boxFor(at: { x: number; y: number }): { left: number; top: number; centreX: number; centreY: number } {
+  const left = Math.round(at.x) - CROSSHAIR_CENTRE;
+  const top = Math.round(at.y) - CROSSHAIR_CENTRE;
+  return { left, top, centreX: left + CROSSHAIR_BOX / 2, centreY: top + CROSSHAIR_BOX / 2 };
 }
 
 describe('the crosshair art', () => {
@@ -120,20 +120,24 @@ describe('the small mark', () => {
   });
 });
 
-describe('the drawn cursor', () => {
-  it('fits inside the 32px a cursor image may be', () => {
-    // Some engines refuse a cursor image larger than 32px square outright, and a
-    // refused image is an arrow -- the exact thing this replaces.
+describe('the drawn mark', () => {
+  it('fits inside the 32px a small mark should be', () => {
     expect(CROSSHAIR_BOX).toBeLessThanOrEqual(32);
     expect(CROSSHAIR_BOX).toBe((CROSSHAIR_SIDE + 2) * CROSSHAIR_SCALE);
   });
 
-  it('puts the hotspot within half a pixel of the centre pixel s middle', () => {
-    // CSS wants a whole number, and the middle of an odd-sided box straddles the
-    // half. Half a pixel is invisible; a whole pixel out on every cast is not.
-    expect(Math.abs(CROSSHAIR_HOTSPOT - CROSSHAIR_BOX / 2)).toBeLessThanOrEqual(0.5);
-    expect(CROSSHAIR_HOTSPOT).toBeGreaterThan(0);
-    expect(CROSSHAIR_HOTSPOT).toBeLessThan(CROSSHAIR_BOX);
+  it('centres within half a pixel of the point it marks', () => {
+    // The whole reason the mark is drawn rather than handed to CSS as a cursor
+    // image: where it lands is arithmetic this program can see, instead of a
+    // hotspot applied by a layer that has a device scale and a page zoom of its
+    // own to apply. Half a pixel comes from the box being even and the art's
+    // middle pixel straddling it; four to seven, which is what the cursor image
+    // measured on a real machine, does not.
+    for (const at of [{ x: 0, y: 0 }, { x: 640, y: 400 }, { x: 12.4, y: 999.6 }]) {
+      const box = boxFor(at);
+      expect(Math.abs(box.centreX - Math.round(at.x))).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(box.centreY - Math.round(at.y))).toBeLessThanOrEqual(0.5);
+    }
   });
 
   it('draws at the size it declares, in crisp pixels', () => {
@@ -157,67 +161,60 @@ describe('the drawn cursor', () => {
   it('defaults to the aim colour the ground shape is drawn in', () => {
     expect(crosshairSvg()).toContain(`fill="${CROSSHAIR_FILL}"`);
   });
-
-  it('is a url with a hotspot and a keyword behind it', () => {
-    const cursor = crosshairCursor();
-    expect(cursor).toMatch(
-      new RegExp(`^url\\("data:image/svg\\+xml,.+"\\) ${CROSSHAIR_HOTSPOT} ${CROSSHAIR_HOTSPOT}, crosshair$`),
-    );
-    // An engine that refuses SVG cursors falls through to the keyword, so it
-    // still gets a crosshair rather than an arrow.
-    expect(cursor.endsWith(', crosshair')).toBe(true);
-  });
-
-  it('survives the round trip into a url(), markup and all', () => {
-    const cursor = crosshairCursor();
-    const encoded = cursor.slice(cursor.indexOf(',') + 1, cursor.indexOf('")'));
-    expect(decodeURIComponent(encoded)).toBe(crosshairSvg());
-    // The characters that would end the url() early, or the CSS declaration.
-    for (const hazard of ['"', '#', '<', '>', ';', ')']) {
-      expect(encoded).not.toContain(hazard);
-    }
-  });
 });
 
-describe('which cursor the world wears', () => {
+describe('which mark the world draws', () => {
   const NOTHING = { aiming: false, overEnemy: false, overDrop: false };
 
   it('is the full crosshair while an aim is pending', () => {
-    expect(worldCursor({ ...NOTHING, aiming: true })).toBe(crosshairCursor({ art: 'full' }));
+    expect(worldMark({ ...NOTHING, aiming: true })).toBe('full');
   });
 
   it('is the full crosshair over anything at all, once a skill is armed', () => {
     // A left click places the aim, so neither a pointing hand nor the small
     // mark may promise something the click is not going to perform.
-    const armed = crosshairCursor({ art: 'full' });
-    expect(worldCursor({ aiming: true, overEnemy: true, overDrop: false })).toBe(armed);
-    expect(worldCursor({ aiming: true, overEnemy: false, overDrop: true })).toBe(armed);
+    expect(worldMark({ aiming: true, overEnemy: true, overDrop: false })).toBe('full');
+    expect(worldMark({ aiming: true, overEnemy: false, overDrop: true })).toBe('full');
   });
 
   it('is the small mark over a body a click would act on', () => {
-    expect(worldCursor({ ...NOTHING, overEnemy: true })).toBe(crosshairCursor({ art: 'small' }));
+    expect(worldMark({ ...NOTHING, overEnemy: true })).toBe('small');
   });
 
-  it('is the pointer over a drop', () => {
+  it('is nothing over a drop, or over open ground', () => {
+    expect(worldMark({ ...NOTHING, overDrop: true })).toBeNull();
+    expect(worldMark(NOTHING)).toBeNull();
+  });
+
+  it('hides the real cursor exactly where it draws one of its own', () => {
+    // The one way this can fail badly is the pair coming apart: a hidden cursor
+    // with nothing drawn is a pointer the player cannot find.
+    for (const input of [
+      { ...NOTHING, aiming: true },
+      { ...NOTHING, overEnemy: true },
+      { aiming: true, overEnemy: true, overDrop: true },
+      NOTHING,
+      { ...NOTHING, overDrop: true },
+    ]) {
+      expect(worldCursor(input) === 'none').toBe(worldMark(input) !== null);
+    }
+  });
+
+  it('is the pointing hand over a drop, and the arrow over open ground', () => {
     expect(worldCursor({ ...NOTHING, overDrop: true })).toBe('pointer');
-  });
-
-  it('is the page s own arrow with nothing under the pointer', () => {
-    // A mark that is always on says nothing by being on: these two are worth
-    // drawing because their absence is the ordinary case.
     expect(worldCursor(NOTHING)).toBe('');
   });
 
   it('arms the aim over a body without moving anything', () => {
-    // The one invariant the pair exists for: two images, one box, one hotspot,
-    // so a skill armed over a body you were already pointing at extends the
-    // arms and shifts not a pixel.
-    const hovering = worldCursor({ ...NOTHING, overEnemy: true });
-    const armed = worldCursor({ aiming: true, overEnemy: true, overDrop: false });
-    expect(anchorOf(hovering)).toBe(anchorOf(armed));
-    expect(anchorOf(armed)).toBe(`${CROSSHAIR_HOTSPOT} ${CROSSHAIR_HOTSPOT}, crosshair`);
-    // ...and they are not the same picture, or there would be no aim to see.
-    expect(hovering).not.toBe(armed);
+    // Two marks, one box, one centre: a skill armed over a body already under
+    // the pointer extends the arms and shifts not a pixel.
+    const at = { x: 400, y: 300 };
+    const hovering = boxFor(at);
+    const armed = boxFor(at);
+    expect(armed).toEqual(hovering);
+    expect(worldMark({ ...NOTHING, overEnemy: true })).not.toBe(
+      worldMark({ aiming: true, overEnemy: true, overDrop: false }),
+    );
   });
 
   it('declares both marks at the same size', () => {
@@ -225,6 +222,5 @@ describe('which cursor the world wears', () => {
       expect(svg).toContain(`width="${CROSSHAIR_BOX}"`);
       expect(svg).toContain(`height="${CROSSHAIR_BOX}"`);
     }
-    expect(Object.values(WORLD_CURSORS).every((value) => value.endsWith(', crosshair'))).toBe(true);
   });
 });

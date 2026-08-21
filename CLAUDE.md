@@ -2376,61 +2376,52 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  of units on anything walkable),
                  crosshair.ts (what the pointer *is* over the world, spec 197:
                  two marks that are the same mark at two lengths, authored as a
-                 9x9 table of `#` in `pixel-font.ts`'s register, rendered as
-                 crisp rects and handed to CSS as data URIs with the hotspot
-                 named -- which is why the art is odd-sided, since the hotspot is
-                 the centre pixel and an even box has none. The **small** one --
-                 a centre dot and the four arm tips -- says a click would act on
-                 the body under the pointer; the **full** one says a skill is
-                 armed and the next click places it. Everywhere else the page's
-                 own arrow stands, because a mark that is always on says nothing
-                 by being on.
-                 The one thing the pair guarantees is that **going from one to
-                 the other moves nothing**: same box, same hotspot, and every
-                 pixel the small mark lights the full one lights too, so arming a
-                 skill over a body already under the pointer extends the arms and
-                 shifts not a pixel. That is not a nicety -- a cursor image is
-                 placed by its hotspot, and an arrow's is its *tip* where a
-                 crosshair's is its *centre*, so a hand-over between two marks
-                 that disagree moves everything the eye tracks while leaving the
-                 click point exactly where it was. The arrow's own hand-over
-                 still costs that, and is kept: it happens on a hover the player
-                 chose to make rather than on a key press mid-fight. Asserted in
-                 Node and again in the browser rather than promised.
-                 Two of the browser's limits shape the size and both are stated
-                 rather than discovered: an image over 32px square is refused
-                 outright by some engines, which is why the drawn box is 22, and
-                 an SVG cursor is not honoured at all by others, which is why
-                 every value ends in a `crosshair` keyword -- a refused image is
-                 an arrow. The four pixels around the full crosshair's centre are
-                 dark, because a crosshair whose arms meet is a plus sign and the
-                 gap is what lets the mark sit on what it points at.
-                 `worldCursor` is the one place the canvas's cursor is decided,
-                 and the order is the order of commitment: an armed skill beats a
+                 9x9 table of `#` in `pixel-font.ts`'s register and rendered as
+                 crisp rects -- which is why the art is odd-sided, since what a
+                 crosshair marks is its centre pixel and an even box has none.
+                 The **small** one -- a centre dot and the four arm tips -- says
+                 a click would act on the body under the pointer; the **full**
+                 one says a skill is armed and the next click places it.
+                 Everywhere else the page's own arrow stands, because a mark that
+                 is always on says nothing by being on.
+                 They are **drawn in the page** rather than handed to CSS as
+                 cursor images, and that is the whole lesson of this spec. The
+                 first two cuts were a `cursor: url(...) 11 11` data URI, and on
+                 a real machine the mark landed four to seven pixels up and left
+                 of the point it was marking -- about *half* the hotspot -- with
+                 the pointer provably still. It took a phone recording of the
+                 screen to see at all, because neither a headless screenshot nor
+                 OBS captures what the compositor draws for a cursor; and the
+                 first fix, assigning the style inside the input event rather
+                 than in the frame, changed nothing. A hotspot is applied between
+                 the style and the glass by a layer that also has a device scale
+                 and a page zoom to apply, and CSS cannot ask what it did.
+                 Drawn, the mark is placed from the pointer position the game
+                 already tracks, in the coordinate space everything else on that
+                 layer is placed in -- so there is no hotspot to be right about,
+                 and a probe can finally *measure* where the mark went, which is
+                 the check that matters and the one a cursor image made
+                 impossible. It costs a frame against a composited cursor, so it
+                 is placed from the pointer event as well as from the frame.
+                 `worldCursor` says `none` exactly where `worldMark` draws
+                 something, derived from it rather than deciding twice: a hidden
+                 cursor with nothing drawn is a pointer the player cannot find.
+                 The order is the order of commitment -- an armed skill beats a
                  body and beats the drop's pointer (spec 158), since its click
                  *places* the aim rather than doing anything to what is
-                 underneath. What counts as a body is `attackable`'s answer, the
-                 same predicate the right-click attack order reads, so the mark
-                 and what the button does cannot disagree.
-                 **Where it is assigned matters as much as what it says.** A
-                 cursor change made inside an animation frame is a style change
-                 with no input behind it and no pointer event for the browser to
-                 re-place the image with, so arming a skill by *clicking* its
-                 slot drew the new mark at an offset and left it there until the
-                 mouse moved and the next hit test ran. `applyCursor` is called
-                 from the end of every pointer event and every key press as well
-                 as from the frame -- the events cover a change the player
-                 caused, the frame covers the one they did not, since no input
-                 arrives when a monster walks under a resting pointer.
-                 `npx tsx scripts/probe-aim-cursor.ts` is the half no headless
-                 test can see, and two things in it are worth knowing: a computed
-                 `cursor` reports what was *declared* whether or not the engine
-                 could decode the image, so the probe loads both URIs as an
-                 `Image` and requires them back at 22x22; and the body it points
-                 at is *found* rather than assumed, walking a ladder of offsets
-                 below a floating health bar, because a bar is anchored over a
-                 head and a fixed drop that missed would report a working cursor
-                 as a broken one),
+                 underneath -- and what counts as a body is `attackable`'s
+                 answer, the same predicate the right-click attack order reads,
+                 so the mark and what the button does cannot disagree. Nothing is
+                 drawn while the pointer is over the interface or off the canvas,
+                 since `cursor` is already null there: a button keeps the arrow
+                 that says it is a button, and no hidden cursor is left over a
+                 window. `npx tsx scripts/probe-aim-cursor.ts` is the measurement
+                 -- the mark's own rectangle against the point the pointer was
+                 moved to, in every state -- and its first run caught two things
+                 at once: an unsized holder, whose absolutely-positioned children
+                 are out of flow and so reported a zero rectangle eleven pixels
+                 up and left of the truth, and the deliberate rule above about
+                 the interface),
                  action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
                  band, spec 164 -- everything the HUD grew along the edge of the
                  frame, each pure and each about one number). action-bar.ts is
