@@ -48,6 +48,14 @@ const SLOTS = 'melee.heavy,bolt.seek,ground.quake,self.mend';
  */
 const BODY_OFFSETS = [16, 24, 32, 40, 52, 64];
 
+/**
+ * How far apart the action bar's slots are, in CSS pixels, for the probe's walk
+ * along the row. `ACTION_SLOT_CSS` plus the gap either side of it -- an
+ * approximation on purpose, since what this is for is landing *somewhere* on
+ * each of five squares rather than on their centres.
+ */
+const SLOT_STEP = 52;
+
 async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -81,7 +89,14 @@ async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promi
  * pointer is actually over.
  */
 async function cursorOf(page: Page): Promise<string> {
-  return page.$eval('canvas', (node) => getComputedStyle(node).cursor);
+  // The *world* canvas, by name rather than by being first: the page holds three
+  // (the world, the interface layer over it, and an unsized one belonging to
+  // another tab), and reading whichever is first in the document is how a probe
+  // reports a cursor that belongs to something nobody is pointing at.
+  return page.evaluate(() => {
+    const world = document.querySelector<HTMLCanvasElement>('canvas:not([data-ui-canvas])');
+    return world === null ? '(no world canvas)' : getComputedStyle(world).cursor;
+  });
 }
 
 /** A poll, not a wait: this page paints a few frames a second under software GL. */
@@ -135,7 +150,6 @@ async function main(): Promise<void> {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     page.on('pageerror', (error) => problems.push(String(error)));
     await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=${SLOTS}`, { waitUntil: 'load' });
-    await page.waitForSelector('canvas');
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await waitForTick(page, 150);
 
@@ -170,8 +184,39 @@ async function main(): Promise<void> {
     console.log(`  over a body: ${hovering === '' ? '(never found one)' : `${hovering.slice(0, 46)}... at +${landedAt}px`}`);
     if (hovering === '') problems.push('pointing at a body never produced the small mark');
 
-    // ...and armed over that same body: the full crosshair, at the same hotspot,
-    // which is the one invariant the pair exists for.
+    // Armed by *clicking* a slot, with the mouse then left where it is: the
+    // path the cursor used to be drawn wrong on, because the change was made in
+    // an animation frame with no input event for the browser to re-place the
+    // image with. The slot is found rather than assumed -- the bar is drawn on
+    // the interface canvas and has no box in the DOM, so the candidates are
+    // stepped along from the pool block, which does.
+    const pool = await page.$eval('[data-hud-bottom="pools"]', (node) => {
+      const box = node.getBoundingClientRect();
+      return { right: box.right, middle: box.top + box.height / 2 };
+    });
+    let clickedAt = -1;
+    let clicked = '';
+    for (let slot = 0; slot < 5; slot++) {
+      const x = pool.right + SLOT_STEP * slot + SLOT_STEP / 2;
+      await page.mouse.move(x, pool.middle);
+      await page.mouse.down();
+      await page.mouse.up();
+      // Deliberately no move between the click and the reading: that is the
+      // whole of what is being checked.
+      const seen = await cursorSettles(page, isOurs, 900);
+      if (isOurs(seen)) {
+        clicked = seen;
+        clickedAt = slot;
+        break;
+      }
+    }
+    console.log(`  clicked slot: ${clicked === '' ? '(no slot armed an aim)' : `${clicked.slice(0, 40)}... slot ${clickedAt}`}`);
+    if (clicked === '') problems.push('clicking a skill slot never produced the crosshair');
+    await page.keyboard.press('Escape');
+
+    // ...and armed over a body: the full crosshair, at the same hotspot, which
+    // is the one invariant the pair exists for.
+    if (hovering !== '') await page.mouse.move(body.x, body.y);
     await page.keyboard.press('Digit3');
     const armed = await cursorSettles(page, (value) => isOurs(value) && value !== hovering);
     console.log(`  armed:       ${armed.slice(0, 46)}...`);

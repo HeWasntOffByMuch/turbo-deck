@@ -50,6 +50,15 @@ can reach rather than a chain of `if`s in the frame. What counts as a body is
 `attackable`'s answer -- the same predicate the right-click attack order uses --
 so the mark and what the button does cannot disagree.
 
+**Where it is assigned matters as much as what it says.** A cursor change made
+inside an animation frame is a style change with no input behind it, and the
+browser has no pointer event in hand to re-place the image with -- so arming a
+skill by clicking its slot drew the new mark at an offset and left it there
+until the mouse moved and the next hit test ran. So `applyCursor` is called from
+the end of every pointer event and every key press as well as from the frame:
+the events cover a change the player *caused*, and the frame covers the one they
+did not, since no input arrives when a monster walks under a resting pointer.
+
 ## Invariants tested
 
 - Both marks are square and symmetric about both axes, and the four pixels

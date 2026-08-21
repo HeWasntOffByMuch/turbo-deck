@@ -2412,6 +2412,16 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  underneath. What counts as a body is `attackable`'s answer, the
                  same predicate the right-click attack order reads, so the mark
                  and what the button does cannot disagree.
+                 **Where it is assigned matters as much as what it says.** A
+                 cursor change made inside an animation frame is a style change
+                 with no input behind it and no pointer event for the browser to
+                 re-place the image with, so arming a skill by *clicking* its
+                 slot drew the new mark at an offset and left it there until the
+                 mouse moved and the next hit test ran. `applyCursor` is called
+                 from the end of every pointer event and every key press as well
+                 as from the frame -- the events cover a change the player
+                 caused, the frame covers the one they did not, since no input
+                 arrives when a monster walks under a resting pointer.
                  `npx tsx scripts/probe-aim-cursor.ts` is the half no headless
                  test can see, and two things in it are worth knowing: a computed
                  `cursor` reports what was *declared* whether or not the engine
