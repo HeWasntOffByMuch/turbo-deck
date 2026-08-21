@@ -2374,6 +2374,32 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  at its uphill edge and floats over the downhill one by whatever
                  the ground fell across it, which for a mark this size is a couple
                  of units on anything walkable),
+                 crosshair.ts (what the pointer is while a skill is aimed, spec
+                 197: a 9x9 table of `#` in `pixel-font.ts`'s register, rendered
+                 as crisp rects and handed to CSS as a data URI with its hotspot
+                 named -- which is why the art is odd-sided, since the hotspot is
+                 the centre pixel and an even box has none. Two of the browser's
+                 limits shape it and both are stated rather than discovered: an
+                 image over 32px square is refused outright by some engines,
+                 which is why the drawn box is 22, and an SVG cursor is not
+                 honoured at all by others, which is why every value ends in a
+                 `crosshair` keyword -- a refused image is an arrow, and an arrow
+                 is exactly what this replaces. The four pixels around the centre
+                 are dark, because a crosshair whose arms meet is a plus sign and
+                 the gap is what lets the mark sit on what it points at.
+                 `worldCursor` is the one place the canvas's cursor is decided,
+                 and the aim beats the drop's pointer (spec 158): while a skill
+                 is aimed a left click *places* it, so a pointing hand would
+                 promise a pickup the click will not perform. A *confirmed* aim
+                 deliberately wears nothing -- the question has been answered and
+                 the body is walking into range, so the pointer goes back to
+                 being a pointer -- and there is no second variant for out of
+                 range, which the dimmed shape and the range ring already say on
+                 the ground. `npx tsx scripts/probe-aim-cursor.ts` is the half no
+                 headless test can see, and its second check is the one that
+                 matters: a computed `cursor` reports what was *declared*
+                 whether or not the engine could decode the image, so the probe
+                 loads the same URI as an `Image` and requires it back at 22x22),
                  action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
                  band, spec 164 -- everything the HUD grew along the edge of the
                  frame, each pure and each about one number). action-bar.ts is

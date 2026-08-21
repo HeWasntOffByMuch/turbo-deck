@@ -108,6 +108,7 @@ import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
 import { windupLostItsMarkIn } from './withdraw.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
+import { worldCursor } from './crosshair.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
@@ -2582,14 +2583,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       scene.hoveredEntityId,
       now,
     );
-    // The cursor says what the next click would do (spec 158).
+    // The cursor says what the next click would do (specs 158, 197).
     //
-    // Only a drop changes it, and only because a drop is the one thing in the
-    // world the cursor *does* something to that has no other affordance: a
-    // monster lights up when hovered, a window has a border, and an item on the
-    // ground has neither -- the pointer is what tells you it can be clicked at
-    // all. Presentation, and the only `if` in this file that touches a style.
-    canvas.style.cursor = hoveringDrop(client.view(), scene.hoveredEntityId) ? 'pointer' : '';
+    // Two things change it. A drop, because it is the one thing in the world the
+    // cursor *does* something to that has no other affordance: a monster lights
+    // up when hovered, a window has a border, and an item on the ground has
+    // neither. And a pending aim, because that is the one state in which the
+    // pointer is being used to choose a *point* rather than to point at a thing
+    // -- so it becomes the game's own crosshair, with its hotspot on the pixel
+    // the click will land under. Which of the two wins is `worldCursor`'s to
+    // answer, in a module a test can reach; this line assigns what it says.
+    canvas.style.cursor = worldCursor({
+      aiming: pendingAim !== null,
+      overDrop: hoveringDrop(client.view(), scene.hoveredEntityId),
+    });
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());
