@@ -615,7 +615,7 @@ button gives is the reason a refusal would have given.
 
 ---
 
-## ADR notes for spec 197
+## ADR notes for spec 198
 
 **ADR-125 — A `TabPanel` scrolls its own body, so the strip is never inside the
 thing it scrolls.**

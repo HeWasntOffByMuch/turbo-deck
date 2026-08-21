@@ -663,7 +663,7 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  order. The labels avoid every word `keyLabel` already makes:
                  `Right` alone is taken -- it is what `ArrowRight` comes back as
                  -- so the pointer says `Right Click`;
-                 Since spec 197 a `TabPanel` scrolls its **own body**: each
+                 Since spec 198 a `TabPanel` scrolls its **own body**: each
                  tab's content is wrapped in a scroller when it is built, so the
                  strip is that scroller's *sibling* and **a tab strip is never
                  inside the thing it scrolls**. That is a fact about the widget

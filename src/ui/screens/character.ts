@@ -297,7 +297,7 @@ export class CharacterScreen extends Column {
     this.respecButton.onPress = () => this.onRespec?.();
 
     // The tabs take whatever is left after the pinned band, and that is spec
-    // 197 undoing a note that had been copied into three screens: "no
+    // 198 undoing a note that had been copied into three screens: "no
     // `layoutGrow` on the tabs, a Linear squashes children it cannot fit".
     // True for as long as the panel could not scroll -- and the reason the
     // whole sheet had to live in the mount's ScrollView, which is what scrolled
@@ -389,7 +389,7 @@ export class CharacterScreen extends Column {
    */
   hintAt(at: Point): TooltipContent {
     // Every row this screen has lives inside a tab, and a tab's body is a
-    // viewport now (spec 197) -- so a row scrolled out of it keeps the rectangle
+    // viewport now (spec 198) -- so a row scrolled out of it keeps the rectangle
     // it was last arranged into, above the strip and under the pinned heading.
     // `showing` cannot see that: the row is visible, and so is every ancestor.
     // It is the same class of bug the ancestor walk was written for, one level

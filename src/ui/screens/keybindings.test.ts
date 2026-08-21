@@ -28,7 +28,7 @@ function key(code: string, mods: Modifiers = NONE): UiEvent {
 }
 
 /**
- * A category taller than the window scrolls rather than squashing (spec 197).
+ * A category taller than the window scrolls rather than squashing (spec 198).
  *
  * This window is registered unscrolled and the screen had no scroller in it, so
  * `Linear.shareSpace`'s overflow branch was what a long category met: every row

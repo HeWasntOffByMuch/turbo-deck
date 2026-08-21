@@ -409,7 +409,7 @@ describe('a tab built after the sheet has moved on', () => {
 
 
 /**
- * The sheet's own half of spec 197.
+ * The sheet's own half of spec 198.
  *
  * The screen is no longer wrapped in the mount's `ScrollView`: it pins its
  * heading, its meter, its points line and the tab strip, and the tab under them

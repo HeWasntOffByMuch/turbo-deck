@@ -316,7 +316,7 @@ function buildPlayScene(viewport: { width: number; height: number }): {
   sheet.setCharacter(demoCharacter([]));
   manager.register(
     // Not in a `ScrollView`: the sheet pins its heading and its tab strip and
-    // scrolls the tab's own body (spec 197), which needs the window's real
+    // scrolls the tab's own body (spec 198), which needs the window's real
     // height rather than a scroller's unbounded one.
     new UiWindow(sheet, {
       title: 'Character',

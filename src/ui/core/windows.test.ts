@@ -665,7 +665,7 @@ describe('tabs', () => {
 });
 
 /**
- * The strip is never inside the thing it scrolls (spec 197).
+ * The strip is never inside the thing it scrolls (spec 198).
  *
  * The whole feature is one sentence and it is a claim about *rectangles*: the
  * body may scroll as far as it likes and the tab headers do not move. What made

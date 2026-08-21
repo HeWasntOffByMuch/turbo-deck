@@ -142,7 +142,7 @@ export class ScrollView extends StyledWidget {
    * Spend wheel notches on this view. Whether anything moved.
    *
    * A method rather than four lines inside `onEvent`, because a wheel does not
-   * always arrive here: a screen that pins a band above its scroller (spec 197)
+   * always arrive here: a screen that pins a band above its scroller (spec 198)
    * is handed the notch instead, and one notch has to mean the same distance
    * whichever of the two took it.
    */

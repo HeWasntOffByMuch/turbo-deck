@@ -357,7 +357,7 @@ export const PLAY_GOLDEN_CASES: readonly PlayGoldenCase[] = [
   {
     name: 'play-scrolled',
     options: { tab: 'skills', scrollBody: 9999 },
-    covers: 'the skill tree scrolled to its end with the tab strip still above it (spec 197)',
+    covers: 'the skill tree scrolled to its end with the tab strip still above it (spec 198)',
   },
   {
     name: 'play-small',

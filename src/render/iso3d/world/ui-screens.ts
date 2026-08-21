@@ -212,7 +212,7 @@ export const WINDOW_CHROME = {
 };
 
 /**
- * The smallest the character window may be, in UI pixels (spec 197).
+ * The smallest the character window may be, in UI pixels (spec 198).
  *
  * Its heading, meter, points line and tab strip are *pinned* -- they are outside
  * the scroller now, so they cannot be scrolled past and a window shorter than
@@ -575,7 +575,7 @@ export class UiScreens {
     };
 
     this.registerWindow('inventory', this.inventory);
-    // Not scrolled by the mount, and that is the whole of spec 197 from this
+    // Not scrolled by the mount, and that is the whole of spec 198 from this
     // side: one scroller around the whole sheet is what scrolled its tab strip
     // off the top of the window. Unscrolled, the screen is handed the window's
     // real height, its `TabPanel` grows into it and scrolls its own body -- so
@@ -592,7 +592,7 @@ export class UiScreens {
     this.registerWindow('shop', this.shop);
     this.registerWindow('trade', this.trade);
     // Not scrolled by the mount: the options screen's tabs scroll their own
-    // bodies (spec 197), and the keybindings page inside it has a filter field
+    // bodies (spec 198), and the keybindings page inside it has a filter field
     // and tabs of its own (spec 125).
     this.registerWindow('options', this.optionsScreen, { scrolled: false });
   }
@@ -1493,7 +1493,7 @@ export class UiScreens {
     // clamps a size under the minimum on its way in, so an origin computed from
     // the smaller number puts a right-anchored window over the edge it was
     // measured to clear -- which is what a `minSize` bigger than an unfed
-    // screen's natural width does (spec 197).
+    // screen's natural width does (spec 198).
     const measured = this.sizeFor(id, max);
     const size = {
       width: Math.max(measured.width, window.minSize.width),
@@ -1513,7 +1513,7 @@ export class UiScreens {
     // off before handing the rest on. Measuring the screen and sizing the window
     // to that is a window exactly one scrollbar too narrow, which shows up as
     // the last column of the bag clipped and a horizontal offset nobody asked
-    // for. Since spec 197 the sheet is its own content -- unscrolled, so its tab
+    // for. Since spec 198 the sheet is its own content -- unscrolled, so its tab
     // strip stays put -- and the bar it has to make room for is the one inside
     // its `TabPanel`, which is already in what the screen measures to.
     //

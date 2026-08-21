@@ -1370,7 +1370,7 @@ describe('the chat', () => {
 
 
 /**
- * The character window, which is the one the mount does not scroll (spec 197).
+ * The character window, which is the one the mount does not scroll (spec 198).
  *
  * The sheet pins its heading and its tab strip and scrolls the tab under them,
  * which it can only do because it is handed the window's real height. What is

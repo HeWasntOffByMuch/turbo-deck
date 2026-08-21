@@ -44,7 +44,7 @@ export class OptionsScreen extends Column {
     this.tabs.addTab('keys', 'Keys', () => options.keys);
     this.tabs.addTab('display', 'Display', () => options.display);
 
-    // The tabs take the window, and the strip stays at the top of it (spec 197).
+    // The tabs take the window, and the strip stays at the top of it (spec 198).
     // This window is registered *unscrolled*, so before the panel scrolled its
     // own body the note that used to be here -- "no `layoutGrow`, a Linear
     // squashes children it cannot fit" -- was the whole bug: a keybinding

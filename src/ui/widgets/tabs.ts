@@ -10,7 +10,7 @@
  * Overflow is handled by scrolling the strip rather than by shrinking the tabs
  * until the labels are unreadable. A tab whose name you cannot read is not a tab.
  *
- * The second rule is spec 197's, and it is about the strip rather than about a
+ * The second rule is spec 198's, and it is about the strip rather than about a
  * tab: **a tab strip is never inside the thing it scrolls.** A tab's content is
  * wrapped in a scroller of its own when it is built, so the strip is that
  * scroller's *sibling* -- which makes "the tabs cannot scroll away" a fact about

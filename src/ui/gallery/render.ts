@@ -410,7 +410,7 @@ export interface PlayRenderOptions {
   /** Spend these first, so a locked branch and a filled row are in the frame. */
   readonly spend?: readonly string[];
   /**
-   * Scroll the open tab's body this far, in UI pixels (spec 197).
+   * Scroll the open tab's body this far, in UI pixels (spec 198).
    *
    * Clamped by the scroller, so a number past the end is "as far as it goes" --
    * which is the frame worth having, since the claim is about what is still on
@@ -590,7 +590,7 @@ export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
   const sheet = new CharacterScreen({ theme });
   sheet.setCharacter(demoCharacter(options.spend ?? []));
   // Not in a `ScrollView`: the sheet pins its heading and its tab strip and
-  // scrolls the tab's own body (spec 197), which it can only do when it is
+  // scrolls the tab's own body (spec 198), which it can only do when it is
   // handed the window's real height.
   const window = new UiWindow(sheet, {
     title: 'Character',
