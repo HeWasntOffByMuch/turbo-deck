@@ -452,7 +452,7 @@ export class GameServer implements AdminHost {
   private readonly spawnPoints: readonly SpawnPoint[];
   /**
    * Nav sized by residency, or null for a world small enough not to need it
-   * (spec 204).
+   * (spec 205).
    */
   private readonly nav: ServerNav | null;
   private state: ServerWorldState;

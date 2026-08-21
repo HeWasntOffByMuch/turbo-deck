@@ -1,4 +1,4 @@
-# 206 — A boot that does not mesh the world
+# 207 — A boot that does not mesh the world
 
 ## Problem
 
@@ -38,7 +38,7 @@ Two of the three things phase 6 was for are not what they were measured to be:
 
 - **Boot** is a wasted eager computation, not a residency problem.
 - **Heap** at 12,960 chunks measures **0.26 GB**, not the 2.0 GB the plan
-  projected. That projection was made before spec 203 took `nav` out of the map
+  projected. That projection was made before spec 204 took `nav` out of the map
   format — an array per chunk that was 10.5% of every region and had exactly one
   reader, a dev overlay that is off by default.
 
@@ -106,11 +106,11 @@ reasoning for not building that phase is worth more than the diff.
   mesh, so the answer there is to mesh what is on screen rather than to mesh
   lazily. Named here rather than fixed.
 - **Entity eviction, `SpawnerState`'s third state, and the "eviction is not
-  death" table.** Spec 205 stopped the tick *walking* what nobody is near;
+  death" table.** Spec 206 stopped the tick *walking* what nobody is near;
   nothing is unloaded, and non-resident bodies simply never spawn. Making
   existing bodies stop existing is a separate question with a replication
   contract attached, and there is no measurement asking for it.
 - **`parse`**, which is now the largest single boot cost at the target (~1.5 s)
-  and is spec 203's region files doing exactly what they were built to make
+  and is spec 204's region files doing exactly what they were built to make
   possible: reading only the regions somebody is near. That is a change to
   `loadMapFile`, not to this.

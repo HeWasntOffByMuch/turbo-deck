@@ -1,5 +1,5 @@
 /**
- * Nav as tiles, and a window assembled from them (spec 204).
+ * Nav as tiles, and a window assembled from them (spec 205).
  *
  * `createNavGrid` allocates over `colliders.bounds` -- the whole world
  * rectangle -- so nav is sized by the map rather than by where anybody is

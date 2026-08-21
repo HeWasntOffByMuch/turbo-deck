@@ -1,5 +1,5 @@
 /**
- * What a grow costs, whole-world against partial (spec 208).
+ * What a grow costs, whole-world against partial (spec 209).
  *
  *   npx tsx scripts/bench-grow.ts
  *

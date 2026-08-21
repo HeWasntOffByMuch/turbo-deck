@@ -110,7 +110,7 @@ export function readRecipe(path: string): PartRecipe {
  * The whole operation, as a function, so the test can run it without a shell.
  *
  * It used to re-bake the layer's walkability afterwards, because the document
- * carried a `nav` array per chunk. Spec 203 took that out of the format -- its
+ * carried a `nav` array per chunk. Spec 204 took that out of the format -- its
  * only reader was the editor's overlay, which bakes its own now -- so growing
  * the map is `growMap` and nothing else.
  */
@@ -141,7 +141,7 @@ export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapD
  * The fix is always the same: grow the rest of the rectangle. Short chunks on a
  * flank are completed rather than refused, so covering them is a grow away.
  *
- * Answered from the **manifest** since spec 208, because the partial path never
+ * Answered from the **manifest** since spec 209, because the partial path never
  * holds the world to count. Each region records how many cells its chunks hold,
  * which is exactly this sum one level up -- and it has to be recorded rather
  * than derived from the coordinate count, because a chunk on a flank can be
@@ -162,7 +162,7 @@ function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const recipe = readRecipe(args.recipe);
 
-  // The manifest, and only the regions the bake will read (spec 208). A grow
+  // The manifest, and only the regions the bake will read (spec 209). A grow
   // reaches one chunk past its own rectangle -- `bakePart`'s stitch walks out
   // `SKIRT_CELLS`, which is 4 against 28 per chunk -- so opening the world to
   // change a corner of it was the whole cost: 6.9s of it on a 12,960-chunk map,
@@ -211,7 +211,7 @@ function main(): void {
 
   // Only the regions the part touched change on disk; the rest keep their
   // bytes, which is what makes a grow a reviewable diff rather than another
-  // whole copy of the world in git history (spec 203). Since 205 they are also
+  // whole copy of the world in git history (spec 204). Since 205 they are also
   // the only ones read, and `writeSplit` decides staleness by what the manifest
   // names rather than by what it was handed.
   if (!args.dryRun) writeSplit(args.map, manifest, part.regions);

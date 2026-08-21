@@ -132,11 +132,11 @@ console.log(
   `nav heights, sliced: ${slices} slices, ${sliceTotal.toFixed(0)} ms total, worst slice ${worstSlice.toFixed(2)} ms`,
 );
 // Every radius the sim asks with. This used to be what the loading screen
-// waited for; since spec 204 nothing waits for it, because there is no
+// waited for; since spec 205 nothing waits for it, because there is no
 // world-sized grid to build -- so what is timed is one player's window instead,
 // which is the same size whatever size the map is.
 console.log(`routing radii: ${ROUTING_RADII.join(', ')}`);
-time('one nav window, cold (spec 204)', () => {
+time('one nav window, cold (spec 205)', () => {
   const half = INTEREST_CHUNK_RADIUS + NAV_WINDOW_PAD_TILES;
   const centre = tileOf(colliders.bounds.x + colliders.bounds.w / 2, colliders.bounds.y + colliders.bounds.h / 2);
   const field = new NavField(colliders, sampler, ROUTING_RADII);

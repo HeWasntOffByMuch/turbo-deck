@@ -193,7 +193,7 @@ export const WALKABLE_MIN_HEIGHT = SEA_LEVEL;
 export const NAV_CELL_SIZE = 10;
 
 /**
- * Cells per nav tile, per axis (spec 204).
+ * Cells per nav tile, per axis (spec 205).
  *
  * The lattice is cut into tiles so a nav grid is sized by where players are
  * rather than by how big the map is. The unit is the **interest chunk**:

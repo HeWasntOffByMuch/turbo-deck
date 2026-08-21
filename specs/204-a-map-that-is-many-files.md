@@ -1,4 +1,4 @@
-# 203 — A map that is many files
+# 204 — A map that is many files
 
 ## Problem
 
@@ -13,7 +13,7 @@ things break as it grows toward the 4× world:
 - **A hard ceiling.** V8 refuses a string past **512 MB**, so a single-file map
   cannot be read at all past roughly 8× current area. That is not far past the
   target and the stated intent is to keep going.
-- **Nothing can be loaded lazily**, which is what spec 205's bounded residency
+- **Nothing can be loaded lazily**, which is what spec 206's bounded residency
   needs underneath it.
 
 Spec 083 deferred exactly this: *"One `maps/arena.json`; if it ever needs
@@ -32,7 +32,7 @@ maps/arena/r/-1_2.json
 The residency unit is a **chunk**; a region is the unit of *storage*, and every
 chunk in a region is materialized whether or not it was wanted. So the number
 that decides R is **amplification**: how many chunks a 5×5 resident window
-(spec 201's `MAP_CHUNK_REQUEST_RADIUS` of 2) drags in at worst alignment.
+(spec 202's `MAP_CHUNK_REQUEST_RADIUS` of 2) drags in at worst alignment.
 
 Measured per-chunk cold cost, and the amplification each R implies:
 
@@ -84,7 +84,7 @@ interface MapManifest {
 ```
 
 **Anything a boot needs that is not in here becomes an O(world) scan.**
-`spawnPointsFrom` walks every chunk today, and spec 205 needs the spawner list
+`spawnPointsFrom` walks every chunk today, and spec 206 needs the spawner list
 eagerly — so spawners are hoisted into the manifest at bake time and the
 document walk goes away.
 
@@ -166,7 +166,7 @@ field on the region schema and disturbs none of this.
   parts, species, chunk presence and every spawner in world space — so that a
   boot which reads no region becomes possible. It does not become actual here:
   `loadMapFile` still joins the whole world and `buildWorldFromMap` still takes
-  a whole document, which is exactly what spec 205 changes. What is asserted now
+  a whole document, which is exactly what spec 206 changes. What is asserted now
   is the *contents*: the manifest's spawner list matches walking every chunk,
   and its `coords` list every chunk that exists. Counting region reads at boot
   is 202's test, not this one's.
@@ -174,7 +174,7 @@ field on the region schema and disturbs none of this.
   recombined document exactly — compared against that function rather than
   against a hand-walk of the chunks, because it is what the server actually
   calls and a boot reading the manifest instead gets whatever this list says.
-  One asymmetry to carry into spec 205: `spawnPointsFrom` also **validates** —
+  One asymmetry to carry into spec 206: `spawnPointsFrom` also **validates** —
   it throws on an unknown monster id and on two spawners sharing an id — and
   the manifest hoist does not. A lazy boot must still run that check over the
   manifest's list, or the two failures it catches today become a monster that
@@ -184,7 +184,7 @@ field on the region schema and disturbs none of this.
   region that is not there and loading fails loudly rather than silently
   serving a hole.
 - **`nav` is gone from the wire**, and a chunk decodes without it.
-- **The bundle gate still measures the world.** Spec 202's floor asked for the
+- **The bundle gate still measures the world.** Spec 203's floor asked for the
   largest single `.json` asset, which was right for one 11.5 MB file and fails
   a healthy build the moment the map is 224 files of 58 KB. It becomes a **sum**
   — and the sum is the sharper instrument anyway, because the failure this split
@@ -195,7 +195,7 @@ field on the region schema and disturbs none of this.
 ## Out of scope
 
 - Lazy loading itself. This spec makes the map *loadable* lazily and keeps
-  reading it whole; spec 205 is what stops reading it whole.
+  reading it whole; spec 206 is what stops reading it whole.
 - Per-region caching on the client. The client streams chunks over the wire and
   is untouched.
 - Compressing a region beyond the run-length and delta encodings the format

@@ -1,5 +1,5 @@
 /**
- * Where the world stops, and whether a player can see it (spec 209).
+ * Where the world stops, and whether a player can see it (spec 210).
  *
  *   npx tsx scripts/check-shore.ts [--map maps/arena] [--radius N] [--strict]
  *
@@ -55,7 +55,7 @@ function main(): void {
   }
   console.log(
     `\nThe radius is ${String(radius)} because that is what the client streams ` +
-      `(spec 201's\nsupported zoom), so this rule follows the zoom cap rather ` +
+      `(spec 202's\nsupported zoom), so this rule follows the zoom cap rather ` +
       `than having a number\nof its own. Grow sea beyond these with ` +
       `\`scripts/grow-map.ts\`; the shape of the\ncoast is a design decision and ` +
       `this deliberately does not guess at one.`,

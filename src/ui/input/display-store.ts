@@ -25,7 +25,7 @@ export const DEFAULT_SHOW_FPS = true;
 export type ScaleChoice = 'auto' | 1 | 2 | 3 | 4;
 
 /**
- * How far out the camera may be zoomed (spec 201).
+ * How far out the camera may be zoomed (spec 202).
  *
  * `'supported'` -- the default -- means "whatever this build is sized for", the
  * same shape `'auto'` has above and for the same reason: the number lives in
@@ -44,7 +44,7 @@ export const SCALE_CHOICES: readonly ScaleChoice[] = ['auto', 1, 2, 3, 4];
  * has no frame-rate preference in it, which is the same thing as not wanting one.
  * That is the whole reason the version is here rather than the reason to reject.
  *
- * 3 adds `maxZoom` (spec 201), and reads a 1 or a 2 the same way: absent means
+ * 3 adds `maxZoom` (spec 202), and reads a 1 or a 2 the same way: absent means
  * `'supported'`, which is what every profile written before the setting existed
  * meant by saying nothing.
  */

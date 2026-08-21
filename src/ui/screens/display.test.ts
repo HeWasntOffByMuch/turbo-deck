@@ -183,7 +183,7 @@ function labelTexts(display: DisplayScreen): string[] {
   return found;
 }
 
-describe('the widest-zoom row (spec 201)', () => {
+describe('the widest-zoom row (spec 202)', () => {
   /** Every label on the page, in the order it was built. */
   function labels(display: DisplayScreen): { text: string; visible: boolean }[] {
     const found: { text: string; visible: boolean }[] = [];

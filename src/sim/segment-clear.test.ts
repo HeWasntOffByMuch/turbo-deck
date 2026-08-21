@@ -1,5 +1,5 @@
 /**
- * `segmentClear` off the index, against the walk it replaces (spec 205).
+ * `segmentClear` off the index, against the walk it replaces (spec 206).
  *
  * The whole change is a claim that the same answer is reached by less work, so
  * the test is equality against the walk -- written out here, because the walk no

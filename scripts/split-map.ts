@@ -1,5 +1,5 @@
 /**
- * Write a map as a manifest and a grid of regions (spec 203).
+ * Write a map as a manifest and a grid of regions (spec 204).
  *
  *   npx tsx scripts/split-map.ts [--in maps/arena.json] [--out maps/arena]
  *
@@ -68,7 +68,7 @@ export function writeSplit(
   // lands, so at no point does a manifest name a file that is not there.
   //
   // Staleness is decided by **what the manifest names**, not by what this call
-  // was handed to write (spec 208). That was the same thing for as long as every
+  // was handed to write (spec 209). That was the same thing for as long as every
   // write was the whole world, and it deletes the entire map the first time it
   // is handed the three regions a grow actually changed. It is also the right
   // rule on its own terms: the manifest is the only thing that makes a region

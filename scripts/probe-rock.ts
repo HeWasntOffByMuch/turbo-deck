@@ -504,7 +504,7 @@ async function main(): Promise<void> {
 /**
  * Photograph it in the real renderer.
  *
- * The built page fetches the shipped map by name (spec 202), so there is no way
+ * The built page fetches the shipped map by name (spec 203), so there is no way
  * to point it at another one: the only honest way to see this one is to put it
  * in `maps/arena`, build, shoot, and put the original back. The
  * restore is in a `finally` because leaving somebody's checked-in world

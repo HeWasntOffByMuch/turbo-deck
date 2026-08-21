@@ -1,5 +1,5 @@
 /**
- * Fetching the map the browser's way, in Node (specs 202, 203).
+ * Fetching the map the browser's way, in Node (specs 203, 204).
  *
  * `import.meta.glob` resolves every region's URL at build time, and vitest runs
  * the same transform -- so the loader under test is the one that ships, and the

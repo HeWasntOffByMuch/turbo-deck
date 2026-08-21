@@ -1,5 +1,5 @@
 /**
- * The bundle gate's own arithmetic (specs 202, 203).
+ * The bundle gate's own arithmetic (specs 203, 204).
  *
  * The gate runs against a real `dist/`, which the suite has no business
  * producing -- so what is asserted here is the *decision*, over made-up file
@@ -14,7 +14,7 @@ const MB = 1024 * 1024;
 
 /**
  * What the build actually emits today: a 2 MB bundle beside a 10.3 MB map --
- * which since spec 203 is a manifest and 224 regions rather than one file, so
+ * which since spec 204 is a manifest and 224 regions rather than one file, so
  * no single asset is anywhere near the floor and the sum is the only honest
  * measure of whether the world shipped.
  */
@@ -69,7 +69,7 @@ describe('the bundle gate', () => {
   });
 
   it('fails a build that emitted the manifest and no regions', () => {
-    // The failure spec 203's split introduced, and the reason the floor is a
+    // The failure spec 204's split introduced, and the reason the floor is a
     // sum: `import.meta.glob` matching nothing leaves a manifest naming 224
     // regions that were never emitted. Everything else about the build is fine.
     const manifestOnly: Emitted[] = [
@@ -82,7 +82,7 @@ describe('the bundle gate', () => {
   });
 
   it('would have failed the world it is meant to pass, measured the old way', () => {
-    // Spec 202 asked for the largest single asset, which was right for one
+    // Spec 203 asked for the largest single asset, which was right for one
     // 11.5 MB file and wrong the moment the map became 224 of 58 KB. Stated as
     // a test because the shape of the check had to change with the format, and
     // the gate quietly inverting -- red on a healthy build -- is how a gate

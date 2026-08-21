@@ -605,7 +605,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   const groundAt = (x: number, z: number): number => scene.map.world.heightAt(x, z);
 
   /**
-   * Whether this session has baked walkability yet (spec 203).
+   * Whether this session has baked walkability yet (spec 204).
    *
    * It used to be baked once at mount, because the document carried `nav` and a
    * save had to have something to write. The document does not carry it any
@@ -1026,7 +1026,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   const rebuildAll = (): void => {
     // The ground under it is a different world now, so whatever was baked is
     // stale. Invalidated rather than re-baked: `refreshNav` below does it if the
-    // overlay is on, and a session that never opens it never pays (spec 203).
+    // overlay is on, and a session that never opens it never pays (spec 204).
     navBaked = false;
     scene.refreshProps();
     refreshMarkers();

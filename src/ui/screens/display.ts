@@ -33,7 +33,7 @@ import { Slider } from '../widgets/slider.js';
 export interface DisplayOptions {
   readonly theme: Theme;
   /**
-   * The camera's zoom band, in world units (spec 201).
+   * The camera's zoom band, in world units (spec 202).
    *
    * Handed in rather than imported: these live in `view-settings.ts` beside the
    * camera and `src/ui/` may not reach into the renderer. `supported` is the
@@ -49,7 +49,7 @@ export class DisplayScreen extends Column {
   /** Whether to draw the frame-time readout (spec 165). Answered by `setShowFps`. */
   onShowFpsChosen: ((show: boolean) => void) | null = null;
 
-  /** What the player dragged the widest-zoom control to (spec 201). */
+  /** What the player dragged the widest-zoom control to (spec 202). */
   onMaxZoomChosen: ((choice: MaxZoomChoice) => void) | null = null;
 
   private readonly boxes = new Map<ScaleChoice, Checkbox>();
@@ -110,7 +110,7 @@ export class DisplayScreen extends Column {
     };
     this.add(this.fpsBox);
 
-    // The widest the camera may be pulled back to (spec 201). A slider rather
+    // The widest the camera may be pulled back to (spec 202). A slider rather
     // than a row of exclusive boxes because this one is a *quantity* -- the band
     // is continuous and a player picking a framing wants to see it move, which
     // is the difference the header comment draws between a checkbox and a group.
@@ -161,7 +161,7 @@ export class DisplayScreen extends Column {
   }
 
   /**
-   * The widest-zoom preference as it actually stands (spec 201).
+   * The widest-zoom preference as it actually stands (spec 202).
    *
    * Same contract as the rows above: the control emits a wish, the mount decides
    * and writes, and this is the mount answering. The warning says **what

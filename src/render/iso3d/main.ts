@@ -31,7 +31,7 @@ import { mountLanded, showsTabButtons, tabPress, visibleTabs } from './shell-tab
 interface Tab {
   readonly label: string;
   /**
-   * Asynchronous since spec 202: the Play tab and the editor fetch the shipped
+   * Asynchronous since spec 203: the Play tab and the editor fetch the shipped
    * map rather than carrying it in the bundle, and the await belongs at this
    * boundary rather than threaded through a 1700-line view. A tab that needs
    * nothing may still return a handle directly.
@@ -106,7 +106,7 @@ function main(): void {
   };
 
   /**
-   * Which tabs are mid-mount (spec 202).
+   * Which tabs are mid-mount (spec 203).
    *
    * A mount can take a network round trip now, and two things go wrong without
    * this. Pressing a tab twice would mount it twice -- two views, two servers,

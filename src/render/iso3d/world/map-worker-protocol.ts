@@ -30,7 +30,7 @@ export type MapWorkerRequest =
   /** One arrival, to be inserted and meshed along with whatever it dirtied. */
   | { readonly kind: 'chunk'; readonly held: HeldChunk }
   /**
-   * Ground the client has walked away from (spec 207).
+   * Ground the client has walked away from (spec 208).
    *
    * The worker keeps a `StreamedMap` of its own, so without this it holds every
    * chunk of the session while the main thread lets go -- half the memory the

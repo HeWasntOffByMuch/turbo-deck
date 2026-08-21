@@ -1,4 +1,4 @@
-# 200 — A map you can measure
+# 201 — A map you can measure
 
 ## Problem
 
@@ -33,7 +33,7 @@ every player's window stays in `state.entities`, and `runSpawners` walks every
 spawn point in the world on every tick regardless of residency, sampling
 `terrain.heightAt` at each one — so the first tick populates the whole map and
 entity memory grows with the world from then on, wherever the players are. That
-is measured here and fixed in spec 205; the number belongs in the harness that
+is measured here and fixed in spec 206; the number belongs in the harness that
 the fix will be judged by.
 
 ## Shape
@@ -74,13 +74,13 @@ score:
 - **Region parse latency and peak parse memory**, over candidate region sizes
   from one chunk per file upward. JSON has no random access, so needing one
   chunk means parsing its whole region — the amplification around a region
-  corner is what decides the region size in spec 203, and it is a number rather
+  corner is what decides the region size in spec 204, and it is a number rather
   than a preference.
 - **Cold boundary crossing, p95 and p99.** How long the tick takes when a player
   steps into ground that is not resident. This is the constraint that decides
   whether region acquisition can be synchronous at all: the loop treats an
   overrunning tick as lag, and a tick is 16.7 ms.
-- **Nav grid construction, with and without `chunk.nav` as its input.** Spec 203
+- **Nav grid construction, with and without `chunk.nav` as its input.** Spec 204
   has to decide whether baked walkability stays in the durable region schema,
   and that decision should be a measurement rather than a guess — `chunk.nav`
   can save `createNavGrid` its ground sampling but not its collider queries, and
@@ -95,7 +95,7 @@ the suite stays fast:
   not.** Two worlds, one four times the other, identical content near the
   origin, one player at the origin: the set of entities the tick *simulates* is
   identical, and the set it *contains* is not. Counted, not timed. The first
-  half is the property specs 056/192/193 claim; the second is the hole spec 205
+  half is the property specs 056/192/193 claim; the second is the hole spec 206
   closes, pinned here so that closing it is visible.
 - **`MapInfo` is the size of the world.** Recorded as a ratio, so the phase that
   changes it has to come here and say so.
@@ -111,14 +111,14 @@ the suite stays fast:
 - Two worlds differing only in size, with one player at the origin, simulate the
   **same entity set** — the claim specs 056/192/193 make and nothing checks.
 - The same two worlds **contain** entity counts that scale with the world, which
-  is the claim they do *not* make and which spec 205 has to fix.
+  is the claim they do *not* make and which spec 206 has to fix.
 - `interestSet` and `activeChunks` for that player are identical between the
   two worlds.
 - `MapInfo` bytes grow with chunk count and are recorded against a baseline.
 
 ## Out of scope
 
-- Fixing anything. This spec only measures; specs 201 onward are the fixes.
+- Fixing anything. This spec only measures; specs 202 onward are the fixes.
 - Timing assertions in `npm test`. The script times; the suite counts.
 - Bundle size. That is phase 2's gate, and it belongs with the change that makes
   the bundle small.

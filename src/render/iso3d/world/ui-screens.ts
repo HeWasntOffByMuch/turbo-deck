@@ -159,7 +159,7 @@ export interface UiScreensOptions {
    */
   readonly onShowFpsChosen: (show: boolean) => void;
   /**
-   * The widest zoom the player wants to be able to reach (spec 201). Same
+   * The widest zoom the player wants to be able to reach (spec 202). Same
    * contract as the two above: the page emits and the mount decides.
    */
   readonly onMaxZoomChosen: (choice: MaxZoomChoice) => void;

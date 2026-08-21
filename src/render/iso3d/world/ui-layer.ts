@@ -244,7 +244,7 @@ export class UiLayer {
     this.screens.setShowFps(show);
   }
 
-  /** The widest-zoom preference (spec 201). Same pass-through as the two above. */
+  /** The widest-zoom preference (spec 202). Same pass-through as the two above. */
   setMaxZoom(choice: MaxZoomChoice): void {
     this.screens.setMaxZoom(choice);
   }

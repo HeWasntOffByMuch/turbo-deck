@@ -1,4 +1,4 @@
-# 201 — A zoom you choose, and a cap that means something
+# 202 — A zoom you choose, and a cap that means something
 
 ## Problem
 
@@ -21,7 +21,7 @@ already documents: `internalRenderSize` trades height rather than capping the
 aspect, so horizontal reach keeps growing with the window.
 
 Resident terrain per player drops from 169 map chunks to 25 — at the ~10 ms a
-cold chunk costs (spec 200), a cold window is a quarter-second of prefetch
+cold chunk costs (spec 201), a cold window is a quarter-second of prefetch
 rather than two and a half seconds. That is what makes `docs/infinite-map-plan.md`'s
 bounded residency affordable, which is why this comes first: it re-sizes the
 arithmetic every later phase is measured against, and it is a few lines.
@@ -112,7 +112,7 @@ a bandwidth surface:
   closed hole for 1.3×.
 - Moving `MIN_VIEW_HALF_WIDTH`. Going closer is outside all of this arithmetic.
 - The editor's own zoom band, which is separate and stays.
-- Anything about residency. This spec only re-sizes the windows; specs 203-205
+- Anything about residency. This spec only re-sizes the windows; specs 204-206
   are what make them bounded.
 
 ## Correction: the slider was one-way

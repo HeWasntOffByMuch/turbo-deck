@@ -1,4 +1,4 @@
-# 209 — The shore
+# 210 — The shore
 
 ## Problem
 
@@ -40,7 +40,7 @@ export function shoreProblems(doc: MapDocument, radius?: number): readonly Shore
 
 `radius` defaults to `MAP_CHUNK_REQUEST_RADIUS`, **derived rather than chosen**:
 the rule is "a player must not be able to *see* the end of the world", and what a
-player can see is what the client streams, which spec 201 tied to the supported
+player can see is what the client streams, which spec 202 tied to the supported
 zoom. Move the zoom cap and the content rule moves with it — a shore that was
 deep enough at one zoom is not a shore at another, and nothing else in the tree
 would notice.

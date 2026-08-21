@@ -112,7 +112,7 @@ renderer.shadowMap.type = THREE.BasicShadowMap;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PALETTE.sky);
 
-// Top-level await, which this page can afford and the tabs cannot (spec 202):
+// Top-level await, which this page can afford and the tabs cannot (spec 203):
 // this is a dev-server-only rig with no shell above it to keep responsive, so
 // the whole module simply waits for the map rather than restructuring around it.
 const map = loadMap((await loadShippedMap()).doc);

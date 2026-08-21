@@ -238,7 +238,7 @@ export interface StepContext {
    */
   readonly spawnPoints: readonly SpawnPoint[];
   /**
-   * Nav sized by where the players are (spec 204).
+   * Nav sized by where the players are (spec 205).
    *
    * Absent means "route against a world-sized grid", which is what every
    * sandbox, every headless test and the loopback tab mean -- their worlds are
@@ -761,7 +761,7 @@ export function step(
   // (spec 187).
   openSlotBoard(SLOTS, state.entities, isSimulated);
   // Gathered once for the whole tick rather than rediscovered per monster
-  // (spec 205). `notice` used to walk the entire entity map to find a handful of
+  // (spec 206). `notice` used to walk the entire entity map to find a handful of
   // players, once for every calm monster that could see anything -- so what it
   // cost was what the world held rather than who was in it.
   const players = playersOf(working);
@@ -2286,7 +2286,7 @@ function routeToward(
   // not a collider, so the collider test alone sent a monster striding at a
   // seventy-unit wall without ever asking for a route.
   // The window this body routes in, falling back to the world-sized grid for a
-  // context with no residency (spec 204). `routeToward` is the sim's only nav
+  // context with no residency (spec 205). `routeToward` is the sim's only nav
   // consumer, so this is the one place the two paths meet.
   const grid =
     context.nav?.gridAt(monster.radius, from.x, from.y) ??
@@ -2377,7 +2377,7 @@ interface SpawnerResult {
 }
 
 /**
- * How many bodies are in each chunk, counted once (spec 205).
+ * How many bodies are in each chunk, counted once (spec 206).
  *
  * From the **live** entity map rather than from `ChunkManager`, which is what
  * makes it this tick's answer: the manager is updated after `step()` returns, so
@@ -2474,7 +2474,7 @@ function runSpawners(
   if (interval === null) return { nextEntityId, spawners, events };
 
   // Only the spawn points near a player, in the order the map authored them
-  // (spec 205).
+  // (spec 206).
   //
   // It used to walk every point the map declares, every tick, resident or not --
   // so what a tick cost was a function of how big the world was rather than of
@@ -2495,7 +2495,7 @@ function runSpawners(
   }
   resident.sort((a, b) => a - b);
 
-  // Counted once for the tick rather than once per spawner (spec 205). It was
+  // Counted once for the tick rather than once per spawner (spec 206). It was
   // `for (const entity of entities.values())` *inside* the loop below, which
   // made the cap `O(spawn points x entities)`.
   //

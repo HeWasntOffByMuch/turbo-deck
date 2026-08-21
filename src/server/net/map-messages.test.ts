@@ -48,7 +48,7 @@ describe('the shipped map', () => {
   });
 
   it('carries no baked walkability, in the document or on the wire', () => {
-    // Spec 203. It was a run list per chunk sent to every client and read by
+    // Spec 204. It was a run list per chunk sent to every client and read by
     // exactly one thing -- the editor's overlay, which loads the map off disk
     // and has never streamed.
     expect(JSON.stringify(doc)).not.toContain('"nav"');
@@ -235,7 +235,7 @@ describe('the small messages', () => {
 });
 
 describe('mapId', () => {
-  // Still the text hash, because that is what `mapIdOf` is. Since spec 203 the
+  // Still the text hash, because that is what `mapIdOf` is. Since spec 204 the
   // *world's* identity comes off the manifest instead -- a hash of ordered
   // region hashes -- and this remains the primitive underneath both.
   const sample = 'a map, as text';

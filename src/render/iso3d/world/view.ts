@@ -245,7 +245,7 @@ const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
 export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   /**
-   * The shipped map, fetched rather than bundled (spec 202).
+   * The shipped map, fetched rather than bundled (spec 203).
    *
    * Awaited here and nowhere deeper: everything below is synchronous from
    * `buildWorldFromMap` through `warmRouting`, `fillGround` and the transport,
@@ -309,7 +309,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // function of the frame rate -- five seconds of work became thirty of waiting
   // on a slow machine.
   //
-  // Spec 204 deleted the thing being warmed. Nav is windows now, and a window is
+  // Spec 205 deleted the thing being warmed. Nav is windows now, and a window is
   // built inside the tick that first wants one: ~140ms of sampling for one
   // player's surroundings rather than 3.6s for the world, on a map where the
   // window does not grow when the map does. There is nothing left to have ready.
@@ -610,7 +610,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       pendingInserts.set(`${held.layer}:${held.cx},${held.cz}`, held);
     }
 
-    // Ground the cache has let go of (spec 207).
+    // Ground the cache has let go of (spec 208).
     //
     // Reconciled against the cache's held list rather than being told, because
     // the cache is what decides residency and a message saying "these went"
@@ -1319,7 +1319,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * Every callback below is a *request*: the screens emit intents and the server
    * decides. Nothing here writes to a container, a purse or a skill tree.
    */
-  // The widest zoom the player has asked for (spec 201), read once and applied
+  // The widest zoom the player has asked for (spec 202), read once and applied
   // to the camera before the first frame -- a ceiling honoured only on the next
   // change would leave a restored session framing wider than it was told to.
   const storedMaxZoom = loadMaxZoom(bindingStorage);
@@ -1370,7 +1370,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       ui.setShowFps(show);
       saveShowFps(bindingStorage, show);
     },
-    // The same three steps again (spec 201): honour it on the camera, tell the
+    // The same three steps again (spec 202): honour it on the camera, tell the
     // page so its slider matches what is drawn, and save it before the frame
     // that could lose it. The *choice* is stored rather than the number it
     // resolves to, so `'supported'` keeps tracking the cap when the cap moves.
@@ -2092,7 +2092,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
-   * Say what the next click would do (specs 158, 200).
+   * Say what the next click would do (specs 158, 201).
    *
    * Three things change the pointer, and the arrow is what stands the rest of
    * the time. A pending aim gets the full crosshair, because that is the one

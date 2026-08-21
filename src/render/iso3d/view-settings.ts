@@ -104,14 +104,14 @@ export const MIN_VIEW_HALF_WIDTH = 200;
 export const MAX_VIEW_HALF_WIDTH = 1400;
 /**
  * The widest zoom the *game* is sized for, as against the widest the slider will
- * physically go to (spec 201).
+ * physically go to (spec 202).
  *
  * Three server constants answer one question -- what can the camera frame --
  * and every one of them used to be sized against `MAX_VIEW_HALF_WIDTH`. Measured
  * through `cameraFrustum` across every window shape a real monitor comes in,
  * 1400 reaches 3107 world units and 420 reaches 932, so the interest window was
  * 289 chunks where 49 covers it and the chunk request window 169 where 25 does.
- * At the ~10ms a cold chunk costs (spec 200) that is the difference between a
+ * At the ~10ms a cold chunk costs (spec 201) that is the difference between a
  * quarter-second of prefetch and two and a half seconds.
  *
  * Deliberately **not** the same number as the maximum. The viewport is not
@@ -138,7 +138,7 @@ const DELTA_PER_NOTCH = [100, 3, 1] as const;
  * Hold a view span inside the usable band; a non-finite span falls back to the
  * default.
  *
- * `ceiling` is the player's own widest zoom (spec 201), which defaults to the
+ * `ceiling` is the player's own widest zoom (spec 202), which defaults to the
  * band's maximum so every existing caller behaves exactly as it did. It is
  * clamped into the band itself, so a stored preference from a build with a wider
  * band cannot widen this one's.
@@ -151,7 +151,7 @@ export function clampViewHalfWidth(halfWidth: number, ceiling = MAX_VIEW_HALF_WI
 
 /**
  * The span the camera should frame, given a widest-zoom ceiling and how that
- * ceiling arrived (spec 201, corrected).
+ * ceiling arrived (spec 202, corrected).
  *
  * The two arrivals are genuinely different questions and the fix for the bug is
  * that they stopped sharing an answer.

@@ -50,7 +50,7 @@ function mean(values: readonly number[]): number {
 async function main(): Promise<void> {
   const shipped = loadMapFile();
   const world = buildWorldFromMap(shipped.doc, shipped.mapId);
-  // No warm: since spec 204 nav is windows built on demand, so the first tick
+  // No warm: since spec 205 nav is windows built on demand, so the first tick
   // that routes pays for its own window and the rest are free. That is part of
   // what this bench measures rather than something to arrange away.
   const transport = new LoopbackTransport();

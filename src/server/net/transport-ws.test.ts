@@ -18,7 +18,7 @@ import { loadMapFile } from '../world/map-file.js';
 import { CONNECTION_TIMEOUT_TICKS, SERVER_PING_MS, SERVER_TICK_RATE } from '../config.js';
 
 // Read through `loadMapFile` rather than as one file: the shipped map is a
-// directory of regions since spec 203, and this test landed while it still
+// directory of regions since spec 204, and this test landed while it still
 // was not.
 const shippedMap = loadMapFile();
 

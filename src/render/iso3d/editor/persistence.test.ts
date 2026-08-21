@@ -249,7 +249,7 @@ describe('a round trip through the whole editor', () => {
     expect(restored.store.markers(LAYER).map((m) => m.id).sort()).toEqual(
       map.store.markers(LAYER).map((m) => m.id).sort(),
     );
-    // Baked walkability is *not* restored, and must not be: spec 203 took it
+    // Baked walkability is *not* restored, and must not be: spec 204 took it
     // out of the format because it is runtime state for a dev overlay that
     // bakes its own. What a save has to bring back is the ground, the props and
     // the markers -- all of which it does, above.

@@ -86,7 +86,7 @@ export function provoke(target: ServerEntity, attackerId: number, tick: number):
 /**
  * What standing near a player does to a calm monster's mind.
  *
- * A linear scan of the **players**, gathered once for the tick (spec 205). It
+ * A linear scan of the **players**, gathered once for the tick (spec 206). It
  * used to scan the whole entity map, which made deciding whether one body had
  * seen another cost what the world contained rather than who was in it: a
  * resident monster walked past every monster everywhere else, every tick.
@@ -224,7 +224,7 @@ export function rally(
 /**
  * Nearest living player within `range`, by id, or null.
  *
- * Handed the **players** rather than every entity in the world (spec 205). It
+ * Handed the **players** rather than every entity in the world (spec 206). It
  * used to walk the whole entity map to find a handful of them, once per
  * noticing monster per tick, so the cost of deciding whether one body had seen
  * another was proportional to how many bodies existed everywhere else. The list

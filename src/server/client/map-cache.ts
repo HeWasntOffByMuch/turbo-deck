@@ -9,7 +9,7 @@
  * The cache is per session and in memory. Persisting it would buy a warm reload
  * and cost a quota story and a staleness story.
  *
- * Since spec 207 it also **forgets**. It used to have `accept` and no
+ * Since spec 208 it also **forgets**. It used to have `accept` and no
  * counterpart, so a session held every chunk it had ever walked past: a circuit
  * of the shipped map left 392 held against a 25-chunk request window, and a map
  * four times the size is four times that. `evictBeyond` is the other half, and
@@ -190,7 +190,7 @@ export class MapChunkCache {
 
   /**
    * Drop every held chunk further than `radius` chunks from `(x, z)`, and every
-   * request outstanding for one (spec 207).
+   * request outstanding for one (spec 208).
    *
    * The radius is the caller's and is expected to be **wider than the request
    * radius**, because the one thing eviction must not do is fight the streamer.

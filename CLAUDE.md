@@ -65,9 +65,9 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
-| `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 205) |
-| `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 209). `--strict` for an exit code |
-| `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 208) |
+| `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
+| `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
+| `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 209) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -166,7 +166,7 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  no parts); spec 165 grew the map and the coincidence went with
                  it. Checked in so the world reviews as a diff.
                  recipes/shore.json is the one a coastline is grown from
-                 (spec 209), and the number worth knowing is its **depth**: the
+                 (spec 210), and the number worth knowing is its **depth**: the
                  shipped map has 212 walkable chunks within two of undeclared
                  space and **not one chunk of sea**, so its whole perimeter is
                  ground ending at nothing, with the sim's wall at exactly the
@@ -178,8 +178,8 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  recipes/ are the feature lists parts are grown from (spec 083) --
                  `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
                  --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
-                 rather than regenerating it -- and since spec 208 it reads only
-                 the regions the bake reaches rather than the world. Spec 203 had
+                 rather than regenerating it -- and since spec 209 it reads only
+                 the regions the bake reaches rather than the world. Spec 204 had
                  made a grow *write* only what it touched and it still opened
                  everything to get there: 6.9s on a 12,960-chunk map to change
                  one region, of which 1,691ms was joining every region, 1,234ms
@@ -269,7 +269,7 @@ src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  so `crowd.ts` re-sorts by distance and breaks ties on entity id,
                  because the linear program's answer can depend on the order its
                  half-planes arrive in.
-                 nav-tiles.ts is nav that is not sized by the map (spec 204).
+                 nav-tiles.ts is nav that is not sized by the map (spec 205).
                  `createNavGrid` allocates over `colliders.bounds` -- the whole
                  world rectangle -- so route planning cost what the *map* was
                  rather than what was near anybody: 3.08 M cells per body radius
@@ -1437,7 +1437,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the generator, and terrain reaches clients as MapInfo plus the
                  MapChunks a player is standing near -- a seed cannot describe a
                  map somebody edited by hand.
-                 Boot **meshes nothing** (spec 206). `loadMap` used to build
+                 Boot **meshes nothing** (spec 207). `loadMap` used to build
                  every chunk's mesh data eagerly -- a jittered world position and
                  a normal per corner, 54 million height lookups over a 4x map --
                  and `buildWorldFromDocument` reads `world` and `props` and never
@@ -1455,14 +1455,14 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  acquisition and three residency states, and measuring said boot
                  was a wasted eager computation rather than a residency problem --
                  with heap at 0.26 GB rather than the 2.0 GB projected before spec
-                 203 took `nav` out of the format. It is deferred with the reading
+                 204 took `nav` out of the format. It is deferred with the reading
                  that would bring it back written down: `bench-map`'s `heap` past
                  ~1 GB at the target size, or its `build` past ~2s. What the
                  change does *not* fix is the **editor's** boot -- `buildChunks`
                  still costs 30.7s at 4x when it is called, and the editor calls
                  it, which is a different problem because the editor genuinely
                  wants the mesh.
-                 Since spec 207 a client **forgets** what it walked past. Nothing
+                 Since spec 208 a client **forgets** what it walked past. Nothing
                  on the map path removed anything: `MapChunkCache` had `accept`
                  and no counterpart, `StreamedMap` never called
                  `MapChunkStore.removeChunk`, and terrain geometry is disposed by
@@ -1541,7 +1541,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  of an outage is known to be gone, and it was the one moment the
                  client did nothing, waiting out the timer that was the problem.
                  world/nav.ts and world/nav-residency.ts are which window a body
-                 routes in (spec 204), over `src/sim/nav-tiles.ts`. The obvious
+                 routes in (spec 205), over `src/sim/nav-tiles.ts`. The obvious
                  answer -- one window over the bounding box of every active chunk
                  -- is the bug in a different hat, because two players ten
                  thousand units apart have a bounding box the size of the world;
@@ -2412,7 +2412,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  body is Exposed, never by how much.
                  Three things inside a tick used to be sized by **what the
                  world contains** rather than by what is near anybody, and spec
-                 205 is all three. With one player and 49 chunks active on every
+                 206 is all three. With one player and 49 chunks active on every
                  row, a tick went from 102us to 7,492us as the world's spawn
                  point count went from 14 to 12,800 -- residency identical
                  throughout. It is flat now, and 32us at the far end.

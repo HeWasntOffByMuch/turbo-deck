@@ -1,4 +1,4 @@
-# 204 — Routes without a warmed world
+# 205 — Routes without a warmed world
 
 ## Problem
 
@@ -305,7 +305,7 @@ world is measured first and carries the JIT warmup. The honest statement is
 ## Out of scope
 
 - **Terrain residency.** This makes nav local to where players are; the *map*
-  is still loaded whole. Spec 205 is what stops that, and it consumes this.
+  is still loaded whole. Spec 206 is what stops that, and it consumes this.
 - **The client's nav.** `intent.ts` and `map-worker-core.ts` build grids for the
   local player's own prediction over the streamed extent, which is already
   bounded by what has arrived. They keep `navGridFor`.
@@ -318,4 +318,4 @@ world is measured first and carries the JIT warmup. The honest statement is
   is a 1.56× cell count or a coarser route, to solve a problem that goes away by
   tiling on the lattice that already divides.
 - **Eviction policy beyond residency.** A tile is dropped when no active chunk
-  needs it. Ageing an idle tile is spec 205's kind of question.
+  needs it. Ageing an idle tile is spec 206's kind of question.

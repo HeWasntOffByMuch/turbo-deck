@@ -845,7 +845,7 @@ export class WorldScene {
   }
 
   /**
-   * Stop drawing a chunk, and dispose its geometry (spec 207).
+   * Stop drawing a chunk, and dispose its geometry (spec 208).
    *
    * The counterpart to {@link adoptTerrainChunk}, through the same
    * `TerrainMeshHandle.remove` the editor uses to take a map part away

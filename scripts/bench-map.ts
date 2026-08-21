@@ -1,5 +1,5 @@
 /**
- * What the world costs, as a function of how big it is (spec 200).
+ * What the world costs, as a function of how big it is (spec 201).
  *
  * Four bench scripts already measure a frame or a tick, and every one of them
  * measures it against today's map. None varies the size of the world, which is
@@ -13,7 +13,7 @@
  *   npx tsx scripts/bench-map.ts [--sizes 200,800,3200] [--stages]
  *
  * `--stages` adds the cold-load pipeline broken down by stage over candidate
- * region sizes, which is what decides the region size in spec 203: JSON has no
+ * region sizes, which is what decides the region size in spec 204: JSON has no
  * random access, so needing one chunk means materialising its whole region.
  *
  * Timings live here rather than in `npm test` on purpose. A wall-clock
@@ -146,10 +146,10 @@ function measure(source: MapDocument, chunksWanted: number): Row {
   const infoBytes = encodeMapInfo(info as MapInfoMessage).byteLength;
 
   // What one player's nav costs, cold: the tiles under a window, sampled and
-  // graded, and one flood over the assembled window (spec 204).
+  // graded, and one flood over the assembled window (spec 205).
   //
   // This column used to be `warmRouting`, which built a grid over the whole
-  // world for every radius -- the boot step spec 204 deleted. The point of
+  // world for every radius -- the boot step spec 205 deleted. The point of
   // measuring a window instead is the **slope**: it is the same window whatever
   // size the map is, so this column going flat is the claim, and a column that
   // starts climbing again is the tiling having been undone.
@@ -245,10 +245,10 @@ function reportSizes(source: MapDocument, sizes: readonly number[]): void {
   console.log(
     '\nFlat is the goal for every column but the first two.\n\n' +
       '`entities` reads 0 on every row and that is the answer rather than a broken\n' +
-      'measurement: since spec 205 a spawner nobody is near does not fill, and this\n' +
+      'measurement: since spec 206 a spawner nobody is near does not fill, and this\n' +
       'bench has no player in it. `tick` and `navWindow` are flat for the same kind\n' +
       'of reason -- both are sized by what is resident, and nothing here is.\n\n' +
-      '`build` is the column spec 206 moved: it was 8,105ms at 3,200 chunks, all of\n' +
+      '`build` is the column spec 207 moved: it was 8,105ms at 3,200 chunks, all of\n' +
       'it meshing terrain the server discards on the next line.\n\n' +
       '`heap` is the reading that decides whether the deferred `ChunkSource` is ever\n' +
       'worth building -- past about 1GB at the target size, or `build` past ~2s.\n',

@@ -115,7 +115,7 @@ export interface ViewControls {
    */
   pinchZoom(ratio: number): void;
   /**
-   * A stored widest-zoom preference, put back at mount (spec 201).
+   * A stored widest-zoom preference, put back at mount (spec 202).
    *
    * Clamps the current span as well as future gestures, and does **not** frame
    * the ceiling: a session left at 320 under a ceiling of 420 has to come back
@@ -124,7 +124,7 @@ export interface ViewControls {
    */
   restoreMaxZoom(ceiling: number): void;
   /**
-   * A widest zoom the player has just chosen, framed (spec 201, corrected).
+   * A widest zoom the player has just chosen, framed (spec 202, corrected).
    *
    * The counterpart to {@link restoreMaxZoom}, and the two are separate methods
    * rather than one with a flag because the bug was exactly that they shared an
@@ -768,7 +768,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   if (lights) element.append(lights.element);
   element.append(filter.element, hikeMenu.element);
 
-  // The player's own widest zoom (spec 201). Starts at the band's maximum so a
+  // The player's own widest zoom (spec 202). Starts at the band's maximum so a
   // tab that never sets it behaves exactly as it did.
   let zoomCeiling = MAX_VIEW_HALF_WIDTH;
 
@@ -796,7 +796,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     },
     pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio, zoomCeiling)),
     /**
-     * The widest the player has asked to be able to zoom out to (spec 201).
+     * The widest the player has asked to be able to zoom out to (spec 202).
      *
      * Re-clamps the current span as well as future gestures, because a ceiling
      * lowered while the camera is already past it would otherwise leave the

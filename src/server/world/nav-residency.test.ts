@@ -1,5 +1,5 @@
 /**
- * Which window a body routes in (spec 204).
+ * Which window a body routes in (spec 205).
  *
  * The two things worth asserting here are that clusters do what "connected"
  * means -- including splitting, which is the case an incremental structure would

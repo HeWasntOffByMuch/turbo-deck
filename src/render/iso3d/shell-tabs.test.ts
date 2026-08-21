@@ -48,7 +48,7 @@ describe('the tabs a device is offered', () => {
   });
 });
 
-describe('what pressing a tab does while a mount is in flight (spec 202)', () => {
+describe('what pressing a tab does while a mount is in flight (spec 203)', () => {
   const none = new Set<number>();
   /** A stand-in for a mounted view: only its presence is ever read. */
   const held: ViewHandle = {

@@ -1,4 +1,4 @@
-# 202 — The map leaves the bundle
+# 203 — The map leaves the bundle
 
 ## Problem
 
@@ -93,7 +93,7 @@ so the message names the file rather than a number.
 
 ## Out of scope
 
-- Splitting the map into region files. That is spec 203; this spec moves one
+- Splitting the map into region files. That is spec 204; this spec moves one
   file out of the bundle and changes nothing about its shape.
 - Fetching per region, or any streaming change on the client. The Play tab's
   remote path already streams and is untouched.

@@ -16,7 +16,7 @@ import { buildTerrainMeshFromChunks } from '../terrain-mesh.js';
 import { bakeEditorMap, editorMapChoice, openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
 
 /**
- * The shipped map off disk (spec 202, a directory since 200).
+ * The shipped map off disk (spec 203, a directory since 200).
  *
  * The browser fetches a manifest and its regions; a test reads them. That the
  * two produce the same document is the point of the seam -- and it is what lets

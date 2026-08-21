@@ -1,5 +1,5 @@
 /**
- * Nav as tiles (spec 204).
+ * Nav as tiles (spec 205).
  *
  * The property everything rests on is **equivalence**: a window assembled from
  * tiles is the grid the old world-sized builder would have made over the same

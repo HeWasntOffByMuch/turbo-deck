@@ -31,7 +31,7 @@ jobs:
       # (`npm test` already compares against them; this catches a stale *commit*.)
       - run: npm run bake:ui-goldens
       - run: git diff --exit-code src/ui/gallery/goldens
-      # The build has never run here (spec 202), which is how `index-*.js`
+      # The build has never run here (spec 203), which is how `index-*.js`
       # reached 14 MB without anybody noticing: the map was `?raw`-imported, so
       # 11.5 MB of world was compiled in as a string literal. It is a fetched
       # asset now and the bundle is 2 MB, and this is what keeps it that way --

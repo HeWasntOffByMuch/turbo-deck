@@ -1,5 +1,5 @@
 /**
- * What costs more when the world gets bigger (spec 200).
+ * What costs more when the world gets bigger (spec 201).
  *
  * `scripts/bench-map.ts` times it; this asserts the half that is countable,
  * because a wall-clock assertion in the suite is a flake. Two claims are pinned
@@ -12,7 +12,7 @@
  *   stepping rather than existing, and `runSpawners` walks every spawn point in
  *   the world every tick with no residency gate at all -- so the first tick
  *   populates the whole map and entity memory grows with it wherever the
- *   players are. That is the hole spec 205 closes, and it is asserted here as
+ *   players are. That is the hole spec 206 closes, and it is asserted here as
  *   the *current* behaviour so that closing it is a visible diff rather than a
  *   claim.
  */
@@ -244,7 +244,7 @@ describe('what the tick simulates is bounded by where the players are', () => {
   });
 });
 
-describe('what the world holds is bounded by residency (spec 205)', () => {
+describe('what the world holds is bounded by residency (spec 206)', () => {
   /**
    * A document with `count` spawner-bearing chunks and nothing else in it.
    * Terrain is not what this is about, and a real bake would bury it -- the
@@ -305,7 +305,7 @@ describe('what the world holds is bounded by residency (spec 205)', () => {
   /**
    * These two are **inverted**, on purpose and as promised.
    *
-   * Written in spec 200 asserting the hole rather than the fix -- `runSpawners`
+   * Written in spec 201 asserting the hole rather than the fix -- `runSpawners`
    * walked every spawn point in the world with no residency gate, so a spawner
    * nobody was near filled on the first tick, and a bigger map was a bigger
    * population from tick one however small the window. The note on them said

@@ -291,7 +291,7 @@ export class StreamedMap {
   }
 
   /**
-   * Every chunk held, as references (spec 207).
+   * Every chunk held, as references (spec 208).
    *
    * For the renderer's reconcile: the cache is what decides residency, and this
    * side finds out by comparing rather than by being told. A message saying
@@ -313,7 +313,7 @@ export class StreamedMap {
   }
 
   /**
-   * Give up chunks the client has walked away from (spec 207).
+   * Give up chunks the client has walked away from (spec 208).
    *
    * The counterpart to {@link add}, and it returns the same two kinds of thing:
    * what stopped existing, and what has to be **re-meshed because its
