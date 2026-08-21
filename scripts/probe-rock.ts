@@ -181,7 +181,6 @@ function buildTier(
     tones: encodeRuns(new Uint8Array(cols * rows)),
     props: [],
     markers: [],
-    nav: null,
   };
 
   return {

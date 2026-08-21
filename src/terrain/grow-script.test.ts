@@ -35,7 +35,6 @@ function args(overrides: Partial<GrowArgs> = {}): GrowArgs {
     seed: 1,
     layer: null,
     note: null,
-    nav: false,
     dryRun: true,
     ...overrides,
   };
@@ -69,16 +68,20 @@ describe('parseArgs', () => {
 });
 
 describe('growing the shipped map through the script', () => {
-  it('bakes nav for the ground it grew', () => {
-    const grown = grow(shipped(), args({ nav: true }), RECIPE);
+  it('grows ground and writes no walkability with it', () => {
+    // It used to re-bake the whole layer's `nav` afterwards. Spec 200 took that
+    // field out of the format, so growing the map is `growMap` and nothing else
+    // -- which is also why this no longer has to assert that a re-bake left the
+    // parts list alone on the way past.
+    const grown = grow(shipped(), args({}), RECIPE);
     const fresh = grown.layers[0]?.chunks.find((c) => c.cx === SHIPPED_EAST_CX && c.cz === SHIPPED_NORTH_CZ);
-    expect(fresh?.nav).not.toBeNull();
-    expect(fresh?.nav?.length).toBe((fresh?.cols ?? 0) * (fresh?.rows ?? 0));
+    expect(fresh).toBeDefined();
+    expect(JSON.stringify(fresh)).not.toContain('"nav"');
   });
 
-  it('keeps the parts list through the nav re-bake', () => {
+  it('keeps the parts list', () => {
     const before = shipped();
-    const grown = grow(before, args({ nav: true }), RECIPE);
+    const grown = grow(before, args({}), RECIPE);
     expect(grown.parts?.map((p) => p.id)).toEqual([...(before.parts?.map((p) => p.id) ?? []), 'test-part']);
   });
 
@@ -112,7 +115,7 @@ describe('growing the shipped map through the script', () => {
   });
 
   it('produces a document the loader accepts unchanged', () => {
-    const grown = grow(shipped(), args({ nav: true }), RECIPE);
+    const grown = grow(shipped(), args({}), RECIPE);
     const text = serializeMap(grown);
     expect(serializeMap(parseMap(text))).toBe(text);
   });

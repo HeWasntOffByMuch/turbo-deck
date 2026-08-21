@@ -47,10 +47,11 @@ describe('the shipped map', () => {
     for (const species of index.species) expect(isKnownPropKind(species)).toBe(true);
   });
 
-  it('has nav baked, so no client has to re-derive it', () => {
-    for (const layer of doc.layers) {
-      for (const chunk of layer.chunks) expect(chunk.nav).not.toBeNull();
-    }
+  it('carries no baked walkability, in the document or on the wire', () => {
+    // Spec 200. It was a run list per chunk sent to every client and read by
+    // exactly one thing -- the editor's overlay, which loads the map off disk
+    // and has never streamed.
+    expect(JSON.stringify(doc)).not.toContain('"nav"');
   });
 });
 

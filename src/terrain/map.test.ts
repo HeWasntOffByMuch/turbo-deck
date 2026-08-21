@@ -146,8 +146,10 @@ describe('exportMap', () => {
     }
   });
 
-  it('reserves nav without baking it', () => {
-    for (const chunk of soleLayer(bake(testWorld())).chunks) expect(chunk.nav).toBeNull();
+  it('writes no walkability field at all', () => {
+    // Spec 200 took it out of the format: 10.5% of every map file, on the wire
+    // to every client, for a dev overlay that bakes its own.
+    expect(JSON.stringify(soleLayer(bake(testWorld())))).not.toContain('"nav"');
   });
 
   it('keeps the version and the grid it was baked at', () => {

@@ -436,7 +436,6 @@ function bakeChunk(cx: number, cz: number, ctx: BakeChunkContext): MapChunk {
     // is filed in afterwards.
     props: ctx.existing?.props ?? [],
     markers: ctx.existing?.markers ?? [],
-    nav: null,
   };
 }
 

@@ -104,6 +104,13 @@ interface StoredChunk {
   readonly tones: Uint8Array;
   readonly props: Prop[];
   readonly markers: MapMarker[];
+  /**
+   * Baked walkability, for the editor's overlay and for nothing else (spec 200).
+   *
+   * In memory only. It left the document and the wire because its one reader is
+   * a dev visualisation that is off by default, and because it is the wrong
+   * quantity at the wrong resolution to ever feed a nav grid.
+   */
   nav: Uint8Array | null;
 }
 
@@ -285,6 +292,10 @@ export class MapChunkStore {
       solid: decodeRuns(chunk.solid, cells),
       materials: decodeRuns(chunk.materials, cells),
       tones: decodeRuns(chunk.tones, cells),
+      // Baked walkability is runtime state now, not stored state (spec 200): a
+      // loaded chunk starts with none, and the editor bakes its overlay the
+      // first time the overlay is actually switched on.
+      nav: null,
       // Chunk-local back to world space: the one place the conversion happens.
       props: chunk.props.map((p) => ({
         kind: (p.species as PropKind),
@@ -300,7 +311,9 @@ export class MapChunkStore {
       // convention props use. Holding the two differently is how a world
       // coordinate ends up written into a local field and lands a chunk away.
       markers: chunk.markers.map((m) => ({ ...m, x: originX + m.x, z: originZ + m.z })),
-      nav: chunk.nav === null ? null : Uint8Array.from(chunk.nav),
+      // Baked walkability is runtime state now, not stored state (spec 200): a
+      // loaded chunk starts with none and the editor bakes its overlay when the
+      // overlay is asked for.
     };
   }
 
@@ -1133,7 +1146,6 @@ export class MapChunkStore {
         x: quantize(m.x - chunk.originX),
         z: quantize(m.z - chunk.originZ),
       })),
-      nav: chunk.nav === null ? null : Array.from(chunk.nav),
     };
   }
 

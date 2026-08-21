@@ -249,7 +249,11 @@ describe('a round trip through the whole editor', () => {
     expect(restored.store.markers(LAYER).map((m) => m.id).sort()).toEqual(
       map.store.markers(LAYER).map((m) => m.id).sort(),
     );
-    expect(restored.store.chunkNav(LAYER, 0, 0)).not.toBeNull();
+    // Baked walkability is *not* restored, and must not be: spec 200 took it
+    // out of the format because it is runtime state for a dev overlay that
+    // bakes its own. What a save has to bring back is the ground, the props and
+    // the markers -- all of which it does, above.
+    expect(restored.store.chunkNav(LAYER, 0, 0)).toBeNull();
     // ...and saving the restored map produces the identical file.
     expect(mapText(restored.store.toDocument())).toBe(text);
   });

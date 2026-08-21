@@ -94,7 +94,6 @@ describe('the world edge follows the map', () => {
     tones: [0, CHUNK_CELLS * CHUNK_CELLS],
     props: [],
     markers: [],
-    nav: null,
   });
 
   /** Four chunks declared, spanning `[-SPAN, SPAN]` on both axes. */

@@ -141,7 +141,6 @@ function chunkAt(cx: number, cz: number, cols: number, rows: number, height: num
     tones: [0, cols * rows],
     props: [],
     markers: [],
-    nav: null,
   };
 }
 

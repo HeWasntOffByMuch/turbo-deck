@@ -266,7 +266,6 @@ describe('what the world holds is not bounded by anything', () => {
         tones: [0, chunkCells * chunkCells],
         props: [],
         markers: [{ kind: 'spawner' as const, id: `spawner-${String(i)}`, x: 50, z: 50, label: 'grazer' }],
-        nav: null,
       });
     }
     return {

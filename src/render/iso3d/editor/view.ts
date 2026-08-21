@@ -604,14 +604,26 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
 
   const groundAt = (x: number, z: number): number => scene.map.world.heightAt(x, z);
 
-  // Baked once at mount, so the overlay has something to show the moment it is
-  // switched on and the document carries nav from the first save.
-  bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+  /**
+   * Whether this session has baked walkability yet (spec 200).
+   *
+   * It used to be baked once at mount, because the document carried `nav` and a
+   * save had to have something to write. The document does not carry it any
+   * more -- its only reader was this overlay -- so the bake moves to the first
+   * time the overlay is actually switched on, and a session that never opens it
+   * never pays for it.
+   */
+  let navBaked = false;
 
   /** Redraw the walkability overlay, but only while it is being looked at. */
   const refreshNav = (): void => {
     navView.setVisible(settings.showNav);
-    if (settings.showNav) navView.refresh(scene.map.store, layerId, groundAt);
+    if (!settings.showNav) return;
+    if (!navBaked) {
+      bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+      navBaked = true;
+    }
+    navView.refresh(scene.map.store, layerId, groundAt);
   };
 
   /** Redraw the markers and the arena box from whatever the store now holds. */
@@ -1012,7 +1024,10 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
 
   /** Everything derived from the map, rebuilt after a load or a restore. */
   const rebuildAll = (): void => {
-    bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+    // The ground under it is a different world now, so whatever was baked is
+    // stale. Invalidated rather than re-baked: `refreshNav` below does it if the
+    // overlay is on, and a session that never opens it never pays (spec 200).
+    navBaked = false;
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
@@ -1149,7 +1164,9 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     },
     onNavChange: refreshNav,
     onNavRebake: () => {
+      // The one place a bake is asked for outright: the panel's own button.
       bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+      navBaked = true;
       refreshNav();
     },
   });

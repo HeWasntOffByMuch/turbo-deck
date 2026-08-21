@@ -52,7 +52,6 @@ function seedDoc(height: (col: number, row: number) => number = () => 0): MapDoc
             tones: [0, CHUNK_CELLS * CHUNK_CELLS],
             props: [],
             markers: [],
-            nav: null,
           },
         ],
       },
@@ -423,7 +422,6 @@ describe('growing the shipped map', () => {
               tones: [0, full * full],
               props: [],
               markers: [],
-              nav: null,
             },
             {
               cx: 1,
@@ -436,7 +434,6 @@ describe('growing the shipped map', () => {
               tones: [0, short * full],
               props: [],
               markers: [],
-              nav: null,
             },
           ],
         },

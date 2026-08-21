@@ -22,8 +22,6 @@ import { resolve } from 'node:path';
 
 import { parseMap, serializeMap, type ChunkRect, type MapDocument, type PartRecipe } from '../src/terrain/index.js';
 import { growMap } from '../src/terrain/part.js';
-import { loadMap } from '../src/terrain/map-world.js';
-import { bakeLayerNav } from '../src/render/iso3d/editor/nav.js';
 
 export const DEFAULT_MAP_PATH = 'maps/arena.json';
 
@@ -35,7 +33,6 @@ export interface GrowArgs {
   readonly seed: number;
   readonly layer: string | null;
   readonly note: string | null;
-  readonly nav: boolean;
   readonly dryRun: boolean;
 }
 
@@ -58,7 +55,6 @@ export function parseArgs(argv: readonly string[]): GrowArgs {
   let seed: number | null = null;
   let layer: string | null = null;
   let note: string | null = null;
-  let nav = true;
   let dryRun = false;
 
   const need = (value: string | undefined, flag: string): string => {
@@ -78,8 +74,7 @@ export function parseArgs(argv: readonly string[]): GrowArgs {
       const value = Number(need(argv[++i], '--seed'));
       if (!Number.isFinite(value)) throw new Error('--seed needs a number');
       seed = Math.floor(value);
-    } else if (arg === '--no-nav') nav = false;
-    else if (arg === '--dry-run') dryRun = true;
+    } else if (arg === '--dry-run') dryRun = true;
     else throw new Error(`unknown argument: ${String(arg)}`);
   }
 
@@ -89,7 +84,7 @@ export function parseArgs(argv: readonly string[]): GrowArgs {
   // The id defaults to the recipe's filename, because a part named after what
   // grew it is the name somebody would have typed anyway.
   const fallbackId = recipe.replace(/^.*[/\\]/, '').replace(/\.json$/i, '');
-  return { map, recipe, rect, id: id ?? fallbackId, seed, layer, note, nav, dryRun };
+  return { map, recipe, rect, id: id ?? fallbackId, seed, layer, note, dryRun };
 }
 
 /** Read a recipe file. Its contents are validated by being baked, not here. */
@@ -104,9 +99,10 @@ export function readRecipe(path: string): PartRecipe {
 /**
  * The whole operation, as a function, so the test can run it without a shell.
  *
- * Nav is re-baked for the layer afterwards for the same reason `bake-map.ts`
- * bakes it at all: the server is about to serve these chunks, and a null `nav`
- * means every client either does without pathfinding or re-derives it.
+ * It used to re-bake the layer's walkability afterwards, because the document
+ * carried a `nav` array per chunk. Spec 200 took that out of the format -- its
+ * only reader was the editor's overlay, which bakes its own now -- so growing
+ * the map is `growMap` and nothing else.
  */
 export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapDocument {
   const layerId = args.layer ?? doc.layers[0]?.id;
@@ -120,13 +116,7 @@ export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapD
     seed: args.seed,
     ...(args.note === null ? {} : { note: args.note }),
   });
-  if (!args.nav) return grown;
-
-  const { store } = loadMap(grown);
-  for (const layer of grown.layers) bakeLayerNav(store, layer.id);
-  // `toDocument` is exact, and since spec 084 the store carries `parts` too, so
-  // the nav bake is the only thing this changes.
-  return store.toDocument();
+  return grown;
 }
 
 /**

@@ -120,8 +120,12 @@ export const INTEREST_CHUNK_RADIUS = 3;
  * Only the ids `data/status-visuals.ts` names ride, as a table index rather
  * than a string, and each carries an absolute expiry so the mark drawn from it
  * needs no client state.
+ * 19: a map chunk no longer carries baked walkability (spec 200). It was a run
+ * list per chunk sent to every client, and its only reader was the editor's nav
+ * overlay -- which loads the map off disk and has never streamed. Removed from
+ * the document in the same change, so there is nothing left to send.
  */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).

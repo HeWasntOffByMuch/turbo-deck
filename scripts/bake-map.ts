@@ -25,7 +25,6 @@ import {
   type MapDocument,
 } from '../src/terrain/index.js';
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../src/shared/world.js';
-import { bakeLayerNav } from '../src/render/iso3d/editor/nav.js';
 
 /** Matches `src/server/index.ts`'s `SEED` default, so the shipped map is the
  *  world the server already played before it had a document to read. */
@@ -53,7 +52,6 @@ export function bakeMap(seed: number, withNav = true): MapDocument {
   // Nav lives on the chunk arrays, so it is baked into a loaded store and the
   // store re-emitted -- `toDocument()` is exact, so nothing else changes.
   const { store } = loadMap(document);
-  for (const layer of document.layers) bakeLayerNav(store, layer.id);
   return store.toDocument();
 }
 
