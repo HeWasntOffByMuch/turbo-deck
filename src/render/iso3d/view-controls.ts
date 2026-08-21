@@ -49,7 +49,7 @@ import {
   offsetToOrbit,
   orbitToOffset,
   pinchViewHalfWidth,
-  clampViewHalfWidth,
+  spanForMaxZoom,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -115,10 +115,24 @@ export interface ViewControls {
    */
   pinchZoom(ratio: number): void;
   /**
-   * The widest the player has asked to be able to zoom out to, in world units
-   * (spec 198). Re-clamps the current span as well as future gestures.
+   * A stored widest-zoom preference, put back at mount (spec 198).
+   *
+   * Clamps the current span as well as future gestures, and does **not** frame
+   * the ceiling: a session left at 320 under a ceiling of 420 has to come back
+   * at 320, and a restore that framed the ceiling would open every session
+   * zoomed all the way out.
    */
-  setMaxZoom(ceiling: number): void;
+  restoreMaxZoom(ceiling: number): void;
+  /**
+   * A widest zoom the player has just chosen, framed (spec 198, corrected).
+   *
+   * The counterpart to {@link restoreMaxZoom}, and the two are separate methods
+   * rather than one with a flag because the bug was exactly that they shared an
+   * answer: clamping alone is one-way, so dragging the slider *down* moved the
+   * camera and dragging it *up* did nothing. Two intents, two names, and each
+   * call site says which it is.
+   */
+  chooseMaxZoom(ceiling: number): void;
   /** How long the camera takes to catch up to the unit it follows, ms (spec 039). */
   followLagMs(): number;
   /**
@@ -788,9 +802,13 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
      * lowered while the camera is already past it would otherwise leave the
      * frame outside the band until somebody happened to scroll.
      */
-    setMaxZoom: (ceiling: number) => {
+    restoreMaxZoom: (ceiling: number) => {
       zoomCeiling = ceiling;
-      zoom.setValue(clampViewHalfWidth(zoom.value(), zoomCeiling));
+      zoom.setValue(spanForMaxZoom(zoom.value(), zoomCeiling, false));
+    },
+    chooseMaxZoom: (ceiling: number) => {
+      zoomCeiling = ceiling;
+      zoom.setValue(spanForMaxZoom(zoom.value(), zoomCeiling, true));
     },
     orbitBy: (degrees: number) => camAz.setValue(wrapTurn(camAz.value() + degrees)),
     orbitDegrees: () => camAz.value(),

@@ -1282,7 +1282,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // to the camera before the first frame -- a ceiling honoured only on the next
   // change would leave a restored session framing wider than it was told to.
   const storedMaxZoom = loadMaxZoom(bindingStorage);
-  scene.controls.setMaxZoom(resolveMaxZoom(storedMaxZoom, SUPPORTED_MAX_VIEW_HALF_WIDTH));
+  scene.controls.restoreMaxZoom(resolveMaxZoom(storedMaxZoom, SUPPORTED_MAX_VIEW_HALF_WIDTH));
 
   const ui = new UiLayer(root, {
     map: inputMap,
@@ -1333,8 +1333,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // page so its slider matches what is drawn, and save it before the frame
     // that could lose it. The *choice* is stored rather than the number it
     // resolves to, so `'supported'` keeps tracking the cap when the cap moves.
+    //
+    // `chooseMaxZoom` rather than `restoreMaxZoom`, which is the whole fix: a
+    // player dragging the slider has to see the width they picked, and clamping
+    // alone only ever moves the camera *in*.
     onMaxZoomChosen: (choice) => {
-      scene.controls.setMaxZoom(resolveMaxZoom(choice, SUPPORTED_MAX_VIEW_HALF_WIDTH));
+      scene.controls.chooseMaxZoom(resolveMaxZoom(choice, SUPPORTED_MAX_VIEW_HALF_WIDTH));
       ui.setMaxZoom(choice);
       saveMaxZoom(bindingStorage, choice);
     },

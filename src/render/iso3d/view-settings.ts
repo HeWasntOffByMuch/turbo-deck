@@ -150,6 +150,33 @@ export function clampViewHalfWidth(halfWidth: number, ceiling = MAX_VIEW_HALF_WI
 }
 
 /**
+ * The span the camera should frame, given a widest-zoom ceiling and how that
+ * ceiling arrived (spec 198, corrected).
+ *
+ * The two arrivals are genuinely different questions and the fix for the bug is
+ * that they stopped sharing an answer.
+ *
+ * **Restoring** a stored preference at mount must only *clamp*: a session that
+ * had been left framed at 320 with a ceiling of 420 has to come back at 320, and
+ * a restore that framed the ceiling would open every session zoomed all the way
+ * out.
+ *
+ * **Choosing** one on the slider has to frame it, because otherwise the control
+ * is silently one-way. `clampViewHalfWidth` is `min(ceiling, max(MIN, current))`
+ * -- so dragging the ceiling *down* past the current span pulls the camera in
+ * and is visible, while dragging it *up* leaves the span already under the new
+ * ceiling and does nothing at all. Perfectly asymmetric, which reads as
+ * half-broken rather than as a permission being raised; and the slider's own
+ * comment in `display.ts` says a player picking a framing wants to see it move.
+ *
+ * Both go through {@link clampViewHalfWidth}, so a ceiling outside the band
+ * cannot become a span outside it either.
+ */
+export function spanForMaxZoom(current: number, ceiling: number, chosen: boolean): number {
+  return clampViewHalfWidth(chosen ? ceiling : current, ceiling);
+}
+
+/**
  * The view span a wheel gesture lands on, given the span it started at (spec
  * 042). Scrolling up (negative `deltaY`) narrows the span -- zooms in. The step
  * is multiplicative, so the same gesture changes the framing by the same

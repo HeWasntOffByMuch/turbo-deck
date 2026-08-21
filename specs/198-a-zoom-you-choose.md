@@ -114,3 +114,33 @@ a bandwidth surface:
 - The editor's own zoom band, which is separate and stays.
 - Anything about residency. This spec only re-sizes the windows; specs 200-202
   are what make them bounded.
+
+## Correction: the slider was one-way
+
+Reported after the fact — *"slider in options doesn't change viewport when moved
+right"* — and exactly right.
+
+`setMaxZoom` did `zoom.setValue(clampViewHalfWidth(zoom.value(), ceiling))`, and
+`clampViewHalfWidth` is `min(ceiling, max(MIN, current))`. Dragging the ceiling
+**down** past the current span pulls the camera in and is visible; dragging it
+**up** leaves the span already under the new ceiling and does nothing at all.
+Perfectly asymmetric, which reads as half-broken rather than as a permission
+being raised — and `display.ts`'s own comment beside the slider says a player
+picking a framing wants to see it move.
+
+The cause is that two different questions shared one answer:
+
+- **restoring** a stored preference at mount must only clamp, or every session
+  opens zoomed all the way out;
+- **choosing** one on the slider must frame it, or the control is silently
+  one-way.
+
+So they are two methods now — `restoreMaxZoom` and `chooseMaxZoom` — rather than
+one with a flag, because sharing an answer is what the bug *was*, and each call
+site now says which it is. Both go through one pure `spanForMaxZoom(current,
+ceiling, chosen)`, which is where the decision is tested; a ceiling outside the
+band still cannot become a span outside it.
+
+Verified in a browser for the half that regresses: with no stored preference the
+camera mounts at 320, with a stored ceiling of 600 it still mounts at 320, and
+with a stored ceiling of 250 it mounts at 250.
