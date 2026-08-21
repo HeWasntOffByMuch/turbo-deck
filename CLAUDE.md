@@ -1319,6 +1319,31 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the generator, and terrain reaches clients as MapInfo plus the
                  MapChunks a player is standing near -- a seed cannot describe a
                  map somebody edited by hand.
+                 Boot **meshes nothing** (spec 203). `loadMap` used to build
+                 every chunk's mesh data eagerly -- a jittered world position and
+                 a normal per corner, 54 million height lookups over a 4x map --
+                 and `buildWorldFromDocument` reads `world` and `props` and never
+                 touches it: `TerrainChunk` is what something *draws*, and the
+                 only caller that wants it is the map editor. So the whole of a
+                 server boot went into arrays discarded on the next line: 32.4s
+                 of 34s at 12,960 chunks. `LoadedMap.chunks` is a memoized getter
+                 now -- the same snapshot, taken at first read instead of at load
+                 -- and `buildWorldFromMap` goes 32,402ms to 731ms at the 4x
+                 target and 1,810ms to 34ms at today's size. Asserted by
+                 **counting** rather than by timing, since a clock in the suite is
+                 a test about the container it runs in.
+                 That replaced a designed phase rather than completing one: the
+                 plan called for a `ChunkSource` with asynchronous budgeted
+                 acquisition and three residency states, and measuring said boot
+                 was a wasted eager computation rather than a residency problem --
+                 with heap at 0.26 GB rather than the 2.0 GB projected before spec
+                 200 took `nav` out of the format. It is deferred with the reading
+                 that would bring it back written down: `bench-map`'s `heap` past
+                 ~1 GB at the target size, or its `build` past ~2s. What the
+                 change does *not* fix is the **editor's** boot -- `buildChunks`
+                 still costs 30.7s at 4x when it is called, and the editor calls
+                 it, which is a different problem because the editor genuinely
+                 wants the mesh.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,

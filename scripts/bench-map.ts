@@ -243,9 +243,15 @@ function reportSizes(source: MapDocument, sizes: readonly number[]): void {
     );
   }
   console.log(
-    '\nFlat is the goal for every column but the first two. `tick` and `entities`\n' +
-      'are the two the plan turns on: what a tick costs should already be flat, and\n' +
-      'what the world holds should become flat in spec 202.\n',
+    '\nFlat is the goal for every column but the first two.\n\n' +
+      '`entities` reads 0 on every row and that is the answer rather than a broken\n' +
+      'measurement: since spec 202 a spawner nobody is near does not fill, and this\n' +
+      'bench has no player in it. `tick` and `navWindow` are flat for the same kind\n' +
+      'of reason -- both are sized by what is resident, and nothing here is.\n\n' +
+      '`build` is the column spec 203 moved: it was 8,105ms at 3,200 chunks, all of\n' +
+      'it meshing terrain the server discards on the next line.\n\n' +
+      '`heap` is the reading that decides whether the deferred `ChunkSource` is ever\n' +
+      'worth building -- past about 1GB at the target size, or `build` past ~2s.\n',
   );
 }
 

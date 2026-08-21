@@ -1,8 +1,9 @@
 # A map that keeps growing — plan
 
-Status: **phases 0–4 are done — specs 197 through 201 are written and
-implemented.** The next action is spec 202. Phase 5 was **split in two** after
-measuring; see the phase table.
+Status: **phases 0–6 are done — specs 197 through 203 are written and
+implemented.** The next action is phase 7 (spec 204), client-side eviction.
+Phase 5 was **split in two** after measuring, and phase 6's designed mechanism
+was **deferred** after measuring; see the phase table and each phase's notes.
 
 Everything is measured against `maps/arena.json` at `43fd6b40` on this branch's
 container, and every projection says which measurement it scales. Where a claim
@@ -351,7 +352,7 @@ the game playable.
 | 3 | 200 — a map that is many files | 184 MB in git; the V8 ceiling | medium |
 | 4 | 201 — routes without a warmed world | 94 s nav warm, 246 M cells | **large** |
 | 5 | 202 — a tick that costs what is near you | per-tick work sized by the world | medium |
-| 6 | 203 — a world that is only where the players are | 48 s boot, 2.0 GB heap | **large** |
+| 6 | 203 — a boot that does not mesh the world | 32 s boot | **small** — the designed `ChunkSource` was deferred; see the phase |
 | 7 | 204 — a client that forgets behind it | unbounded client residency | medium |
 | 8 | 205 — growing without rewriting | slow grows, unreviewable diffs | small |
 | 9 | 206 — the shore | void at the frame edge; seabed cost | small |
@@ -556,7 +557,40 @@ fixture varying something other than the thing measured: a fixed area makes a
 bigger count a denser world, and a grid laid from a corner moves the player onto
 different ground on every row.
 
-### Phase 6 — a world that is only where the players are (spec 203)
+### Phase 6 — a boot that does not mesh the world (spec 203)
+
+**The designed phase was not built, because measuring said it was not the
+problem.** What follows is the phase as planned, kept because the reasoning for
+deferring it is only legible beside it.
+
+Standing up a 12,960-chunk world took 32.4 s, and the whole of it was one
+function: `store.buildChunks()`, which computes a jittered world position and a
+normal for every corner of every chunk — 54 million height lookups over a 4× map.
+The server never reads the result. `buildWorldFromDocument` takes `world` and
+`props`; `TerrainChunk` is **mesh** data, and the only caller that wants it is
+the map editor. The client does not either — `streamed-map.ts` loads an *empty*
+document and meshes chunks one at a time as they arrive.
+
+Made lazy, `buildWorldFromMap` goes **32,402 ms → 731 ms** at the 4× target and
+1,810 ms → 34 ms at today's size. On `bench-map`'s `build` column, 3,200 chunks
+goes 8,105 ms → 233 ms.
+
+And **heap measures 0.26 GB at 12,960 chunks, not the 2.0 GB projected here** —
+that projection predates spec 200 taking `nav` out of the format, an array per
+chunk that was 10.5% of every region with one reader, a dev overlay that is off
+by default.
+
+So the `ChunkSource` below is deferred, with the reading that would bring it
+back: `bench-map`'s `heap` past ~1 GB at the target size, or its `build` past
+~2 s. Both print on every run, so it is a reading rather than a judgement.
+
+What phase 6 leaves standing is the **editor's** boot: `buildChunks` still costs
+30.7 s at 4× when it is called, and the editor calls it. That is a different
+problem — the editor genuinely wants the mesh, so the answer is to mesh what is
+on screen rather than to mesh lazily.
+
+#### The phase as designed, deferred
+
 
 Bounded residency over **terrain, colliders, nav and entities as one
 invariant**.
@@ -627,7 +661,7 @@ payoff: a constant-height chunk form taking seabed from 6.9 KB to under 1 KB.
 | 3 | `maps/arena/` round-trips byte-identical; a one-chunk edit touches one region; a crash between writes leaves a loadable map |
 | 4 | no `warmRouting` at boot; `pathfinding-ground.test.ts` green on tiled grids; boundary components never pockets |
 | 5 | `segmentClear` answers identically off the index; the tick's slope flat against a 16× world at fixed residency; replay bit-identical |
-| 6 | boot slope at 4× within tolerance of 1×; resident memory bounded after a 100-chunk round trip; no observable body reset; replay bit-identical across an unload |
+| 6 | the server meshes nothing at boot, asserted by counting; the editor gets the same chunks it always did; `build` flat enough that the deferred `ChunkSource` stays deferred |
 | 7 | client residency bounded over a 30-minute walk; an evicted chunk re-requests and re-meshes cleanly |
 | 8 | a grow reads and writes only the regions it touches; the editor opens without the whole world |
 | 9 | the perimeter test fails on a shore too close to undeclared space |
