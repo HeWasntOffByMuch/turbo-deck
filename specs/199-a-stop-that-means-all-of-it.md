@@ -1,4 +1,4 @@
-# 198 — A stop that means all of it
+# 199 — A stop that means all of it
 
 ## Problem
 
@@ -52,7 +52,7 @@ never touched this row picks the new default up and one that did keeps its own.
 code, which is what makes it rebindable at all:
 
 ```ts
-/** The action id that calls everything off (spec 198). */
+/** The action id that calls everything off (spec 199). */
 export const STOP_ACTION = 'combat.stop';
 
 export interface ControlDecision {
@@ -79,7 +79,7 @@ become one function both call rather than two lists to keep in step:
 ```ts
 /** Call off the blow and the orders that aim it. What a stop shares with Escape. */
 function dropCommitments(): void;
-/** That, plus the legs and the route. What `combat.stop` means (spec 198). */
+/** That, plus the legs and the route. What `combat.stop` means (spec 199). */
 function stopEverything(): void;
 ```
 

@@ -867,7 +867,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * Mirrors what the body is committed to onto the root element (spec 198).
+   * Mirrors what the body is committed to onto the root element (spec 199).
    *
    * The same window `publishUnitReadout` opens, for the same reason and read by
    * nobody in the game: what a stop drops lives as half a dozen closure `let`s
@@ -1231,7 +1231,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   const heldKeys = new Set<string>();
   /**
-   * Key codes that were physically down when a stop fired (spec 198).
+   * Key codes that were physically down when a stop fired (spec 199).
    *
    * The rule without which the stop does not work at all, and one no unit test
    * in this tree could have found, because it is a fact about the browser rather
@@ -1553,7 +1553,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * Call off the blow, and the orders whose whole job is to aim one (spec 198).
+   * Call off the blow, and the orders whose whole job is to aim one (spec 199).
    *
    * What a stop shares with Escape, said once. Both used to write these three
    * lines out, and two lists of what "calling off a blow" drops is two answers
@@ -1572,7 +1572,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * Everything the body is committed to, dropped in one press (spec 198).
+   * Everything the body is committed to, dropped in one press (spec 199).
    *
    * `dropCommitments` plus the legs: the walk over to a drop, the standing move
    * order and the route planned for it, and whatever is held. Unconditional --
@@ -1681,7 +1681,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // does not know about (spec 140).
     heldKeys.add(event.code);
 
-    // A key the stop disarmed, still down and repeating (spec 198). Dropped
+    // A key the stop disarmed, still down and repeating (spec 199). Dropped
     // whole rather than filtered down to its non-move half: a repeat carries no
     // new intent by construction, since its own first press already did
     // everything this one would. The default is prevented anyway, because the
@@ -1788,7 +1788,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       if (!committed) ui.toggle('options');
     }
 
-    // And the control that means all of it (spec 198). It is Escape's three
+    // And the control that means all of it (spec 199). It is Escape's three
     // drops plus the legs and the route, with no condition on any of it: the
     // row has been in the keybindings window since spec 125 asserting that a key
     // does something, and until now the key did nothing at all.
@@ -1854,7 +1854,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Dropped whatever the interface said, for the reason below: a release the
     // UI swallowed is a key held forever, and here that is a view that spins.
     heldKeys.delete(event.code);
-    // Letting go is what re-arms a control the stop disarmed (spec 198).
+    // Letting go is what re-arms a control the stop disarmed (spec 199).
     disarmed.delete(event.code);
     // Released whatever the interface said, always. A release that the UI
     // swallowed is a held action with no way out, and the symptom is walking

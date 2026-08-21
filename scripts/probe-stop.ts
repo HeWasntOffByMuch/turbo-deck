@@ -1,9 +1,9 @@
 /**
- * The stop, in a real browser (spec 198).
+ * The stop, in a real browser (spec 199).
  *
  *   npm run build && npx tsx scripts/probe-stop.ts
  *
- * What spec 198 *decides* is pure and asserted in Node: that `Space` resolves to
+ * What spec 199 *decides* is pure and asserted in Node: that `Space` resolves to
  * `combat.stop`, that the decision carries `stop` and nothing else with it, that
  * a rebind follows it, that `moveIntent` with nothing held and nothing ordered
  * asks for `(0, 0)`. None of that can say whether the decision reaches anything

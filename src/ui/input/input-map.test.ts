@@ -179,7 +179,7 @@ describe('conflicts', () => {
     expect(map.conflicts({ code: 'Escape' }, 'ui')).toEqual(['ui.closeTopmost']);
   });
 
-  it('ships the stop on a chord nothing else wants (spec 198)', () => {
+  it('ships the stop on a chord nothing else wants (spec 199)', () => {
     // Space activates a focused button, a checkbox, a tab and a skill slot --
     // but each of those reads the code itself, inside the widget, and is never
     // routed through this map. So the `ui` context is genuinely free, and the
@@ -200,7 +200,7 @@ describe('rebinding', () => {
 
   it('unbinds to nothing, and says the action is unbound', () => {
     const map = new InputMap();
-    // Space rather than the KeyX this used to read: the row moved in spec 198,
+    // Space rather than the KeyX this used to read: the row moved in spec 199,
     // and a chord nothing was bound to in the first place resolves to nothing
     // whether the unbind worked or not.
     expect(map.resolve('Space', NONE, 'gameplay')).toEqual(['combat.stop']);

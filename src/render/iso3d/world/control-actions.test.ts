@@ -46,7 +46,7 @@ describe('what a control press means to the Play tab', () => {
   });
 
   /**
-   * The stop (spec 198). The row has been in `bindings.json` since spec 125 and
+   * The stop (spec 199). The row has been in `bindings.json` since spec 125 and
    * reached nothing, exactly as `debug.toggleStats` did until spec 183.
    */
   it('drops everything on the stop action, and nothing else with it', () => {
@@ -78,7 +78,7 @@ describe('what a control press means to the Play tab', () => {
   });
 
   it('no longer answers the key the stop used to ship on', () => {
-    // `KeyX` was the row's default until spec 198 moved it to Space. A stale
+    // `KeyX` was the row's default until spec 199 moved it to Space. A stale
     // default reaching the branch would pass every other assertion here.
     const map = new InputMap();
     expect(decideControlDown(map, 'KeyX', NONE)).toEqual(NO_DECISION);

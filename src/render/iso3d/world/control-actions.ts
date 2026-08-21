@@ -62,7 +62,7 @@ export interface ControlDecision {
   readonly cancel: boolean;
   /**
    * Whether every commitment should be dropped: the blow, the orders, the legs
-   * (spec 198).
+   * (spec 199).
    *
    * Beside {@link cancel} rather than folded into it, because the two are
    * different questions and one of them is conditional. Escape asks "is there
@@ -122,7 +122,7 @@ export const NO_DECISION: ControlDecision = {
 export const CANCEL_ACTION = 'combat.cancel';
 
 /**
- * The action id that calls *everything* off (spec 198).
+ * The action id that calls *everything* off (spec 199).
  *
  * The row has been in `bindings.json` since spec 125 -- listed under Combat,
  * rebindable, saved -- and reached nothing at all, for the reason

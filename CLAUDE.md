@@ -663,7 +663,40 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  order. The labels avoid every word `keyLabel` already makes:
                  `Right` alone is taken -- it is what `ArrowRight` comes back as
                  -- so the pointer says `Right Click`;
-                 Since spec 198 `combat.stop` is a control rather than a row.
+                 Since spec 198 a `TabPanel` scrolls its **own body**: each
+                 tab's content is wrapped in a scroller when it is built, so the
+                 strip is that scroller's *sibling* and **a tab strip is never
+                 inside the thing it scrolls**. That is a fact about the widget
+                 tree rather than a rule a screen has to remember, and it exists
+                 because whether a tabbed screen scrolled used to be the mount's
+                 decision -- and neither answer it can give keeps the tabs
+                 reachable. Wrapped in one `ScrollView`, which is what the mount
+                 does to every screen, reading the bottom of the character
+                 sheet's skill tree scrolled the tab headers clean off the top of
+                 the window and there was no way back to Attributes without
+                 scrolling up first. *Un*wrapped, which is how the options window
+                 is registered, a keybinding category with more rows than the
+                 window is tall met `Linear.shareSpace`'s overflow branch instead
+                 -- every row shrunk toward nothing, no bar, and the rows at the
+                 bottom unreachable rather than merely off screen. It costs
+                 nothing where nobody wanted it: a `ScrollView` offered an
+                 unbounded height measures to its content, so a panel inside
+                 somebody else's scroller still scrolls nothing and behaves
+                 exactly as it did. One scroller **per tab** rather than one for
+                 the body, because spec 124's rule reaches the offset too -- the
+                 comment that rule is written under names "a scroll position" as
+                 one of the things nobody thinks of as state, and a shared
+                 scroller clamps a long tab's offset against a short tab's
+                 content the moment you switch. Two consequences worth knowing.
+                 A screen that pins a band *above* the strip has to hand the
+                 wheel down (`CharacterScreen.onEvent` into `wheelBody`), since a
+                 notch over the heading has nothing above it that scrolls and a
+                 window that scrolls everywhere except its own top inch reads as
+                 a broken wheel. And a hit test against a tab's rows has to be
+                 inside `bodyViewport()`: a row scrolled out of the body keeps
+                 the rectangle it was last arranged into, which is the same class
+                 of bug `showing()` was written for, one level out.
+                 Since spec 199 `combat.stop` is a control rather than a row.
                  It had been listed under Combat, bound to `X`, rebindable and
                  saved since spec 125 and reached **nothing** -- spec 183's
                  finding one tab over, and for the same reason: every action that
