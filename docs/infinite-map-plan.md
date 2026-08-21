@@ -1,9 +1,10 @@
 # A map that keeps growing — plan
 
-Status: **phases 0–7 and 9 are done — specs 197 through 204 and 206 are written
-and implemented.** Phase 8 (spec 205, growing without rewriting) is the one left,
-and it is the smallest remaining win; see its notes for what measurement says
-about it.
+Status: **every phase is done — specs 197 through 206 are written and
+implemented.** Two of them did not turn out to be the phase that was planned:
+phase 5 **split in two** after measuring, and phase 6's designed `ChunkSource`
+was **deferred** in favour of the one line that was actually costing the boot.
+Each phase's notes carry what was measured and what the plan got wrong.
 Phase 5 was **split in two** after measuring, and phase 6's designed mechanism
 was **deferred** after measuring; see the phase table and each phase's notes.
 
@@ -656,6 +657,36 @@ quiet stream (spec 165) and go per-region here.
 
 ### Phase 8 — growing without rewriting (spec 205)
 
+**Done.** Spec 200 made a grow *write* only what it touched; it still opened the
+world to get there. Measured on a 12,960-chunk map, growing a 2×2 part: 9 ms to
+parse the manifest, 1,691 ms to join every region, 1,234 ms in `growMap`,
+3,990 ms to re-split — **6.9 s to change one region**.
+
+`bench-grow` now reads **453 ms → 28 ms**, **1,571 → 24**, **6,865 → 35**:
+196× at the 4× target, and flat, because the whole-world path is a function of
+how big the map is and this one of how big the *part* is. End to end on disk,
+growing off the east edge produces a byte-for-byte identical directory to the
+whole-world path, reading 6 of 224 regions.
+
+What made it possible was already written down: `bakePart`'s stitch walks out
+`SKIRT_CELLS` looking for a corner the store holds — 4 cells against 28 per
+chunk — so a bake reaches one chunk past its rectangle and no further, and
+`bakeReadBorder` derives that rather than typing it.
+
+The merge rule is one sentence: **the part's regions are authoritative for what
+is in them, the previous manifest for everywhere else.** That covers a chunk that
+moved between regions and one that stopped existing, and it makes the border
+regions a part only *read* come back byte-identical — so writing them is a no-op
+rather than a special case. It cannot express a region emptied *entirely*, which
+cannot arise from growing, and that is a test rather than a hope.
+
+Two things moved with it. `RegionEntry` gained a `cells` count, because the
+unfilled-rim warning needs each chunk's `cols × rows` — a chunk on a flank can be
+short — and it is not hashed into `mapId`, so adding it left every region file
+and the world's identity untouched. And **`writeSplit` was one commit away from
+deleting the entire map**: it decided staleness by what it was handed to write,
+which was the same thing while every write was the whole world.
+
 `grow-map.ts` and the editor's save read and write only the regions they touch,
 through phase 3's manifest-last commit. `bakePart` is unchanged — it still reads
 neighbouring chunks at a join, which is what makes the seam continuous, and the
@@ -706,7 +737,7 @@ payoff: a constant-height chunk form taking seabed from 6.9 KB to under 1 KB.
 | 5 | `segmentClear` answers identically off the index; the tick's slope flat against a 16× world at fixed residency; replay bit-identical |
 | 6 | the server meshes nothing at boot, asserted by counting; the editor gets the same chunks it always did; `build` flat enough that the deferred `ChunkSource` stays deferred |
 | 7 | held bounded by the keep window over a circuit; eviction and the streamer never fight, at every position in a chunk; an evicted chunk re-requests and re-meshes; the worker lets go too |
-| 8 | a grow reads and writes only the regions it touches; the editor opens without the whole world |
+| 8 | a grow reads and writes only the regions it touches, and produces a byte-identical map to the whole-world path |
 | 9 | the perimeter test fails on a shore too close to undeclared space |
 
 **Flat means asymptotically flat, not identical.** The manifest, the chunk

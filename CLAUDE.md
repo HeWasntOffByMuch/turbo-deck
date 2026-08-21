@@ -67,6 +67,7 @@ change a game outcome.
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 202) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 206). `--strict` for an exit code |
+| `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 205) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -177,7 +178,42 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  recipes/ are the feature lists parts are grown from (spec 083) --
                  `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
                  --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
-                 rather than regenerating it. A recipe is the only place natural
+                 rather than regenerating it -- and since spec 205 it reads only
+                 the regions the bake reaches rather than the world. Spec 200 had
+                 made a grow *write* only what it touched and it still opened
+                 everything to get there: 6.9s on a 12,960-chunk map to change
+                 one region, of which 1,691ms was joining every region, 1,234ms
+                 `growMap` over the whole store and 3,990ms re-splitting all of
+                 it. **35ms now, and flat** -- the whole-world path is a function
+                 of how big the map is and this one of how big the *part* is.
+                 What made it possible is that the code already said how far a
+                 bake reaches: `bakePart`'s stitch walks out `SKIRT_CELLS`
+                 looking for a corner the store holds, which is 4 cells against
+                 28 per chunk, so the read is the rectangle plus one chunk and
+                 `bakeReadBorder` derives that rather than typing it. Everything
+                 else `growMap` wants is manifest-level.
+                 The merge rule is one sentence and is what makes it exact rather
+                 than approximately right: **the part's regions are authoritative
+                 for what is in them, the previous manifest for everywhere else.**
+                 That covers a chunk that moved between regions and one that
+                 stopped existing, not just the append case -- and it means the
+                 border regions a part only *read* come back byte-identical, so
+                 writing them again is a no-op rather than a special case. The
+                 one thing it cannot express is a region emptied *entirely*,
+                 since a part that produces no region for a coordinate is saying
+                 nothing about it rather than "it is gone"; that cannot arise
+                 from growing, and it is a test rather than a hope.
+                 Two things moved with it. `RegionEntry` gained a `cells` count,
+                 because the unfilled-rim warning needs each chunk's
+                 `cols x rows` -- a chunk on a flank can be short -- and
+                 coordinates without sizes could not answer it; it is not hashed
+                 into `mapId`, so adding it left every region file and the world's
+                 identity untouched. And `writeSplit` stopped deciding staleness
+                 by what it was handed to write, which was the same thing while
+                 every write was the whole world and **deletes the entire map**
+                 the first time it is handed the three regions a grow changed:
+                 the manifest is the only thing that makes a region reachable, so
+                 the manifest is the only thing that can say a file is not. A recipe is the only place natural
                  language enters: an agent writes one, it is reviewed as JSON,
                  and nothing at runtime reads a model.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers

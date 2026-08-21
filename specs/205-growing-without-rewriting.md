@@ -100,6 +100,24 @@ first time it is handed three. Staleness is decided by **what the manifest
 names**, which is also the correct rule on its own terms: the manifest is the
 only thing that makes a region reachable.
 
+## What it measured
+
+`npx tsx scripts/bench-grow.ts` — the same part grown both ways, in memory so the
+measurement is the work rather than this container's disks:
+
+| chunks | regions | whole world | partial | read | wrote | same map |
+|---|---|---|---|---|---|---|
+| 810 | 224 | 453 ms | **28 ms** | 6 | 4 | yes |
+| 3,240 | 836 | 1,571 ms | **24 ms** | 6 | 3 | yes |
+| 12,960 (4×) | 3,249 | 6,865 ms | **35 ms** | 9 | 3 | yes |
+
+**196× at the target, and flat** — the whole-world column is a function of how
+big the map is and the partial column is a function of how big the *part* is.
+
+`same map` is the column that matters: a faster answer that is not the same
+answer is not a saving. End to end on disk, growing a part off the east edge both
+ways produces byte-for-byte identical directories.
+
 ## Invariants tested
 
 - **A partial grow produces the same map as a whole one.** Same manifest, same
@@ -113,6 +131,10 @@ only thing that makes a region reachable.
   diff.
 - **The merge is exact for a chunk that moved between regions**, and for one that
   stopped existing — the per-region rule, not just the append case.
+- **A region emptied entirely cannot be expressed**, and that is asserted rather
+  than left to be discovered: a part producing no region for a coordinate is
+  saying *nothing* about it, not "it is gone", and nothing in the part
+  distinguishes those. It cannot arise from growing, which only adds.
 - **`writeSplit` deletes only what the manifest stopped naming**, asserted by
   handing it a manifest naming 224 regions and a map of 3.
 - **The unfilled-cell warning still fires**, from the manifest alone, on a layer

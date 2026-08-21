@@ -78,6 +78,33 @@ export function loadMapFile(path: string = DEFAULT_MAP_PATH): LoadedMapFile {
   return { path: root, doc, manifest, mapId: manifest.mapId };
 }
 
+/**
+ * Just the manifest, and a way to read a region (spec 205).
+ *
+ * For an operation that is *local* -- a grow reaches one chunk past its own
+ * rectangle and no further -- so opening the world to change a corner of it is
+ * the whole cost. The manifest is 96 KB against 10 MB of regions today and
+ * carries everything that is not a chunk: the bounds, the parts, every chunk
+ * coordinate, every spawner and now how much ground each region holds.
+ */
+export function openMapFile(path: string = DEFAULT_MAP_PATH): {
+  root: string;
+  manifest: MapManifest;
+  readRegion: (region: string) => string;
+} {
+  const root = resolve(process.cwd(), path);
+  let manifest: MapManifest;
+  try {
+    manifest = parseManifest(readFileSync(join(root, MANIFEST_PATH), 'utf8'));
+  } catch (err) {
+    throw new Error(
+      `could not read the map at ${root}: ${err instanceof Error ? err.message : String(err)}. ` +
+        `Bake one with \`npx tsx scripts/bake-map.ts\`, or point TURBO_DECK_MAP elsewhere.`,
+    );
+  }
+  return { root, manifest, readRegion: (region) => readFileSync(join(root, region), 'utf8') };
+}
+
 /** One region's text, for a reader that wants a chunk rather than a world. */
 export function readRegionFile(root: string, rx: number, rz: number): string {
   return readFileSync(join(resolve(process.cwd(), root), regionPath(rx, rz)), 'utf8');

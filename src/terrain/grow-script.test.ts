@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseMap, serializeMap, type MapDocument } from './map.js';
 import { grow, parseArgs, parseRect, unfilledCells, type GrowArgs } from '../../scripts/grow-map.js';
 import { loadMapFile } from '../server/world/map-file.js';
+import { splitMap } from './regions.js';
 
 /**
  * The headless half of growing a map (spec 083).
@@ -86,10 +87,14 @@ describe('growing the shipped map through the script', () => {
   });
 
   it('reports a ragged layer, and a rectangular one as clean', () => {
+    // Asked of the **manifest** since spec 205, because the partial grow path
+    // never holds the world to count -- which also means this exercises the
+    // per-region cell count end to end rather than trusting it.
+    const unfilled = (d: MapDocument, id: string): number => unfilledCells(splitMap(d).manifest, id);
     const doc = shipped();
     const layerId = doc.layers[0]?.id ?? '';
     // The shipped map is exactly its own rectangle to begin with.
-    expect(unfilledCells(doc, layerId)).toBe(0);
+    expect(unfilled(doc, layerId)).toBe(0);
 
     const layer = doc.layers[0];
     if (!layer) throw new Error('no layer');
@@ -102,7 +107,7 @@ describe('growing the shipped map through the script', () => {
     // rectangle over the bottom half too -- bounds are one rectangle for the
     // whole layer -- so the layer is briefly declaring ground it has not got.
     const east = grow(doc, args({ rect: { minCx: hiCx + 1, minCz: loCz, maxCx: hiCx + 1, maxCz: midCz } }), RECIPE);
-    expect(unfilledCells(east, layerId)).toBeGreaterThan(0);
+    expect(unfilled(east, layerId)).toBeGreaterThan(0);
 
     // Completing the rest of that column closes it, which is what the warning
     // tells you to do.
@@ -111,7 +116,7 @@ describe('growing the shipped map through the script', () => {
       { ...args({ rect: { minCx: hiCx + 1, minCz: midCz + 1, maxCx: hiCx + 1, maxCz: hiCz } }), id: 'south' },
       RECIPE,
     );
-    expect(unfilledCells(both, layerId)).toBe(0);
+    expect(unfilled(both, layerId)).toBe(0);
   });
 
   it('produces a document the loader accepts unchanged', () => {

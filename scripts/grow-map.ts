@@ -20,10 +20,17 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { serializeMap, type ChunkRect, type MapDocument, type PartRecipe } from '../src/terrain/index.js';
+import { type ChunkRect, type MapDocument, type PartRecipe } from '../src/terrain/index.js';
 import { growMap } from '../src/terrain/part.js';
-import { loadMapFile } from '../src/server/world/map-file.js';
-import { splitMap } from '../src/terrain/regions.js';
+import { openMapFile } from '../src/server/world/map-file.js';
+import {
+  bakeReadBorder,
+  mergeSplit,
+  partialMap,
+  regionsAround,
+  splitMap,
+  type MapManifest,
+} from '../src/terrain/regions.js';
 import { writeSplit } from './split-map.js';
 
 export const DEFAULT_MAP_PATH = 'maps/arena';
@@ -133,40 +140,67 @@ export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapD
  *
  * The fix is always the same: grow the rest of the rectangle. Short chunks on a
  * flank are completed rather than refused, so covering them is a grow away.
+ *
+ * Answered from the **manifest** since spec 205, because the partial path never
+ * holds the world to count. Each region records how many cells its chunks hold,
+ * which is exactly this sum one level up -- and it has to be recorded rather
+ * than derived from the coordinate count, because a chunk on a flank can be
+ * short.
  */
-export function unfilledCells(doc: MapDocument, layerId: string): number {
-  const layer = doc.layers.find((l) => l.id === layerId);
+export function unfilledCells(manifest: MapManifest, layerId: string): number {
+  const layer = manifest.layers.find((l) => l.id === layerId);
   if (!layer) return 0;
-  const cell = doc.grid.cellSize;
+  const cell = manifest.grid.cellSize;
   const declared =
     Math.round((layer.bounds.maxX - layer.bounds.minX) / cell) *
     Math.round((layer.bounds.maxZ - layer.bounds.minZ) / cell);
-  const held = layer.chunks.reduce((n, c) => n + c.cols * c.rows, 0);
+  const held = layer.regions.reduce((n, r) => n + r.cells, 0);
   return Math.max(0, declared - held);
 }
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
-  const before = loadMapFile(args.map).doc;
   const recipe = readRecipe(args.recipe);
 
-  const after = grow(before, args, recipe);
-  const split = splitMap(after);
-  const text = serializeMap(after);
+  // The manifest, and only the regions the bake will read (spec 205). A grow
+  // reaches one chunk past its own rectangle -- `bakePart`'s stitch walks out
+  // `SKIRT_CELLS`, which is 4 against 28 per chunk -- so opening the world to
+  // change a corner of it was the whole cost: 6.9s of it on a 12,960-chunk map,
+  // to change one region.
+  const opened = openMapFile(args.map);
+  const layerId = args.layer ?? opened.manifest.layers[0]?.id;
+  if (!layerId) throw new Error('the map has no layers to grow');
+  const border = bakeReadBorder(opened.manifest.grid.chunkCells);
+  const want = regionsAround(args.rect, border, opened.manifest.regionChunks);
+  const before = partialMap(opened.manifest, want, opened.readRegion);
 
-  const was = before.layers.reduce((n, l) => n + l.chunks.length, 0);
-  const now = after.layers.reduce((n, l) => n + l.chunks.length, 0);
-  const bounds = after.layers[0]?.bounds;
+  const after = grow(before, { ...args, layer: layerId }, recipe);
+  const part = splitMap(after, opened.manifest.regionChunks);
+  const manifest = mergeSplit(opened.manifest, part);
+
+  const was = opened.manifest.layers.reduce((n, l) => n + l.coords.length, 0);
+  const now = manifest.layers.reduce((n, l) => n + l.coords.length, 0);
+  const bounds = manifest.layers[0]?.bounds;
+  const changed = [...part.regions].filter(([path, text]) => {
+    try {
+      return opened.readRegion(path) !== text;
+    } catch {
+      return true;
+    }
+  }).length;
+
   process.stdout.write(
     `${args.dryRun ? 'would grow' : 'grew'} ${args.map}: part "${args.id}" ` +
       `over chunks ${args.rect.minCx},${args.rect.minCz}..${args.rect.maxCx},${args.rect.maxCz} — ` +
       `${was} chunks becomes ${now}, bounds now ` +
-      `${bounds ? `${bounds.minX},${bounds.minZ}..${bounds.maxX},${bounds.maxZ}` : 'unknown'}, ` +
-      `${(text.length / 1e6).toFixed(2)} MB\n`,
+      `${bounds ? `${bounds.minX},${bounds.minZ}..${bounds.maxX},${bounds.maxZ}` : 'unknown'}\n`,
+  );
+  process.stdout.write(
+    `  read ${want.length} of ${opened.manifest.layers[0]?.regions.length ?? 0} regions, ` +
+      `wrote ${part.regions.size}, of which ${changed} actually differ\n`,
   );
 
-  const layerId = args.layer ?? after.layers[0]?.id ?? '';
-  const unfilled = unfilledCells(after, layerId);
+  const unfilled = unfilledCells(manifest, layerId);
   process.stdout.write(
     unfilled === 0
       ? '  the layer is a full rectangle: every cell it declares has ground under it\n'
@@ -176,9 +210,11 @@ function main(): void {
   );
 
   // Only the regions the part touched change on disk; the rest keep their
-  // bytes, which is what makes a grow a reviewable diff again rather than
-  // another whole copy of the world in git history (spec 200).
-  if (!args.dryRun) writeSplit(args.map, split.manifest, split.regions);
+  // bytes, which is what makes a grow a reviewable diff rather than another
+  // whole copy of the world in git history (spec 200). Since 205 they are also
+  // the only ones read, and `writeSplit` decides staleness by what the manifest
+  // names rather than by what it was handed.
+  if (!args.dryRun) writeSplit(args.map, manifest, part.regions);
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {

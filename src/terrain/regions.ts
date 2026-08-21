@@ -20,6 +20,7 @@
  */
 
 import { hashText } from '../shared/hash.js';
+import { SKIRT_CELLS } from './part.js';
 import {
   MAP_VERSION,
   parseMap,
@@ -29,6 +30,7 @@ import {
   type MapPart,
   type MapPoint,
   type MapRect,
+  type ChunkRect,
 } from './map.js';
 
 /**
@@ -85,6 +87,21 @@ export interface RegionEntry {
   readonly rz: number;
   /** Content address of the region's text. See {@link mapIdFromManifest}. */
   readonly hash: string;
+  /**
+   * Terrain cells the region's chunks hold, summed (spec 205).
+   *
+   * So the manifest can answer "how much ground is there" without opening
+   * anything, which is what a manifest is for -- and specifically so
+   * `grow-map.ts` can still warn about a layer declaring cells it has no chunk
+   * behind. That warning matters because an unfilled rim reads as *unknown*
+   * rather than as the world's edge (spec 078) and is not walled, and it needs
+   * each chunk's `cols * rows` because a chunk on a flank can be short.
+   *
+   * Per region rather than per chunk because that is the granularity
+   * {@link mergeSplit} works at, and because it is 3,249 numbers at the 4x
+   * target against 12,960.
+   */
+  readonly cells: number;
 }
 
 export interface ManifestSpawner {
@@ -281,7 +298,9 @@ export function splitMap(doc: MapDocument, size: number = REGION_CHUNKS): SplitM
       const first = ordered[0];
       if (!first) continue;
       const at = regionOf(first.cx, first.cz, size);
-      entries.push({ rx: at.rx, rz: at.rz, hash: hashText(text) });
+      let cells = 0;
+      for (const chunk of ordered) cells += chunk.cols * chunk.rows;
+      entries.push({ rx: at.rx, rz: at.rz, hash: hashText(text), cells });
     }
     entries.sort((a, b) => a.rz - b.rz || a.rx - b.rx);
 
@@ -418,5 +437,224 @@ export function parseManifest(text: string): MapManifest {
   if (recomputed !== mapId) {
     throw new Error(`invalid manifest: mapId is ${mapId} but its contents hash to ${recomputed}`);
   }
+  // `cells` joined the region entry in spec 205 and is not part of `mapId`, so a
+  // manifest written before it passes the check above and then answers
+  // `undefined` to every question about how much ground there is. Refused here
+  // instead, naming the fix -- a silently wrong cell count is how a layer stops
+  // warning that it declares ground it does not have.
+  for (const layer of manifest.layers) {
+    for (const region of layer.regions) {
+      if (typeof region.cells !== 'number') {
+        throw new Error(
+          `invalid manifest: region ${String(region.rx)},${String(region.rz)} has no cell count. ` +
+            'It was written before spec 205; re-bake with `npx tsx scripts/bake-map.ts`.',
+        );
+      }
+    }
+  }
   return manifest;
+}
+
+/** A region's place on the lattice. */
+export interface RegionCoord {
+  readonly rx: number;
+  readonly rz: number;
+}
+
+/**
+ * How far past a rectangle a bake reads, in chunks (spec 205).
+ *
+ * `bakePart` reaches into the existing world in exactly one place:
+ * `stitchedHeight` walks out along the four axes looking for a corner the store
+ * already holds, up to `SKIRT_CELLS`. Derived from that rather than typed, so a
+ * longer skirt widens the read instead of quietly reading ground that is not
+ * there -- which would not fail, it would stitch against nothing and leave a
+ * wall at the join.
+ *
+ * At the shipped 4 cells against 28 per chunk it is 1.
+ */
+export function bakeReadBorder(chunkCells: number, skirtCells: number = SKIRT_CELLS): number {
+  return Math.max(1, Math.ceil(skirtCells / Math.max(1, chunkCells)));
+}
+
+/** Every region a chunk rectangle touches, grown by `border` chunks. */
+export function regionsAround(
+  rect: ChunkRect,
+  border: number,
+  size: number = REGION_CHUNKS,
+): RegionCoord[] {
+  const low = regionOf(rect.minCx - border, rect.minCz - border, size);
+  const high = regionOf(rect.maxCx + border, rect.maxCz + border, size);
+  const out: RegionCoord[] = [];
+  for (let rz = low.rz; rz <= high.rz; rz++) {
+    for (let rx = low.rx; rx <= high.rx; rx++) out.push({ rx, rz });
+  }
+  return out;
+}
+
+/**
+ * A document holding only these regions, with the manifest's own scalars
+ * (spec 205).
+ *
+ * What a grow reads instead of the world. Everything `growMap` needs beyond the
+ * chunks it stitches against is manifest-level -- the layer's origin, seed,
+ * bounds, flood line and the map's parts list -- so the result is a document
+ * that is *true about a rectangle* and says nothing about anywhere else.
+ *
+ * A region the manifest does not name is skipped rather than refused: growing
+ * off the edge of the world is the ordinary case, and the border of the read is
+ * mostly outside it.
+ */
+export function partialMap(
+  manifest: MapManifest,
+  want: readonly RegionCoord[],
+  readRegion: (path: string) => string,
+): MapDocument {
+  const named = new Set<string>();
+  for (const layer of manifest.layers) {
+    for (const entry of layer.regions) named.add(`${String(entry.rx)},${String(entry.rz)}`);
+  }
+
+  const chunksByLayer = new Map<string, MapLayer['chunks'][number][]>();
+  for (const at of want) {
+    if (!named.has(`${String(at.rx)},${String(at.rz)}`)) continue;
+    const region = parseMap(readRegion(regionPath(at.rx, at.rz)));
+    for (const layer of region.layers) {
+      const held = chunksByLayer.get(layer.id);
+      if (held) held.push(...layer.chunks);
+      else chunksByLayer.set(layer.id, [...layer.chunks]);
+    }
+  }
+
+  return {
+    version: manifest.version,
+    seed: manifest.seed,
+    grid: manifest.grid,
+    arena: manifest.arena,
+    ...(manifest.parts.length === 0 ? {} : { parts: [...manifest.parts] }),
+    layers: manifest.layers.map((info) => ({
+      id: info.id,
+      seed: info.seed,
+      origin: info.origin,
+      bounds: info.bounds,
+      baseY: info.baseY,
+      waterLevel: info.waterLevel,
+      // Canonical order, which is what `MapChunkStore.toDocument` emits and so
+      // what a whole-world split lists -- see `mergeSplit`.
+      chunks: (chunksByLayer.get(info.id) ?? []).sort((a, b) => a.cz - b.cz || a.cx - b.cx),
+    })),
+  };
+}
+
+/**
+ * A previous manifest with a part's regions written over it (spec 205).
+ *
+ * One rule, and it is what makes the result exact rather than approximately
+ * right: **the part's regions are authoritative for what is in them, and the
+ * previous manifest is authoritative for everywhere else.** Stated per region
+ * rather than as "add the new things", so a chunk that moved between regions and
+ * one that stopped existing are the same case as one that arrived.
+ *
+ * It also means the border regions a part only *read* need no special handling:
+ * their text comes back byte-identical -- the layer scalars come from this same
+ * manifest and `regionBounds` is computed from the region's own chunks -- so
+ * writing them again is a no-op.
+ *
+ * The one thing the rule cannot express is a region **emptied entirely**: a part
+ * that produces no region for a coordinate is saying *nothing* about it rather
+ * than "it is gone", and there is no way to tell those apart from the part
+ * alone. It cannot arise from growing, which only adds, and the editor's part
+ * removal (spec 085) goes through the whole-world split with the world in hand.
+ * A caller that ever needs it should pass the covered set explicitly rather than
+ * have this guess.
+ *
+ * `species` is a union rather than a replacement, and that is the other place
+ * this is not exact: a species whose last prop was deleted somewhere else would
+ * linger in the table. A grow can only add props, so it cannot arise from
+ * growing; fixing it in general means recording species per region, which is not
+ * worth a format change for a case that cannot happen.
+ */
+export function mergeSplit(previous: MapManifest, part: SplitMap): MapManifest {
+  const from = part.manifest;
+  if (from.regionChunks !== previous.regionChunks) {
+    throw new Error(
+      `mergeSplit: part was split at ${String(from.regionChunks)} chunks per region, ` +
+        `the map at ${String(previous.regionChunks)}`,
+    );
+  }
+  if (from.seed !== previous.seed || from.grid.cellSize !== previous.grid.cellSize) {
+    throw new Error('mergeSplit: the part does not belong to this map');
+  }
+
+  const extent = previous.grid.cellSize * previous.grid.chunkCells;
+  const size = previous.regionChunks;
+  const species = new Set([...previous.species, ...from.species]);
+
+  const layers: ManifestLayer[] = previous.layers.map((was) => {
+    const now = from.layers.find((l) => l.id === was.id);
+    // A layer the part says nothing about is carried whole. That is not a
+    // shortcut: a partial document lists every layer the manifest names, so a
+    // layer with no chunks in the read window arrives with none in the part.
+    if (!now) return was;
+
+    // Which regions the part is speaking for. Its own list, rather than the
+    // rectangle that was grown -- the part is the authority on what it produced.
+    const covered = new Set(now.regions.map((r) => `${String(r.rx)},${String(r.rz)}`));
+
+    const regions = [
+      ...was.regions.filter((r) => !covered.has(`${String(r.rx)},${String(r.rz)}`)),
+      ...now.regions,
+    ].sort((a, b) => a.rz - b.rz || a.rx - b.rx);
+
+    const inCovered = (cx: number, cz: number): boolean => {
+      const at = regionOf(cx, cz, size);
+      return covered.has(`${String(at.rx)},${String(at.rz)}`);
+    };
+
+    const coords = [...was.coords.filter((c) => !inCovered(c.cx, c.cz)), ...now.coords].sort(
+      (a, b) => a.cz - b.cz || a.cx - b.cx,
+    );
+
+    // A spawner's world position was built as `origin + cx * extent + local`
+    // with the local part inside one chunk, so the chunk it is in comes back
+    // exactly. Reversed here rather than recorded, because a region that has to
+    // remember where its spawners came from is a second copy of the same fact.
+    const spawners = [
+      ...was.spawners.filter(
+        (s) =>
+          !inCovered(
+            Math.floor((s.x - was.origin.x) / extent),
+            Math.floor((s.z - was.origin.z) / extent),
+          ),
+      ),
+      ...now.spawners,
+    ];
+
+    return {
+      id: was.id,
+      seed: was.seed,
+      origin: was.origin,
+      // The part is authoritative: growing is the thing that moves a bound.
+      bounds: now.bounds,
+      baseY: was.baseY,
+      waterLevel: was.waterLevel,
+      coords,
+      spawners,
+      regions,
+    };
+  });
+
+  const withoutId = {
+    version: previous.version,
+    seed: previous.seed,
+    grid: previous.grid,
+    arena: previous.arena,
+    regionChunks: previous.regionChunks,
+    // The part carries the whole list: `growMap` appends its record to the one
+    // `partialMap` handed it, which came from here.
+    parts: [...from.parts],
+    species: [...species].sort(),
+    layers,
+  };
+  return { ...withoutId, mapId: mapIdFromManifest(withoutId) };
 }

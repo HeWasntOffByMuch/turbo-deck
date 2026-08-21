@@ -23,6 +23,7 @@ import { dirname, join, resolve } from 'node:path';
 import { parseMap } from '../src/terrain/map.js';
 import {
   MANIFEST_PATH,
+  regionPath,
   serializeManifest,
   splitMap,
   type MapManifest,
@@ -65,11 +66,21 @@ export function writeSplit(
   // A region that used to exist and does not any more would otherwise be left
   // behind for the next reader to trip over. Removed *before* the new manifest
   // lands, so at no point does a manifest name a file that is not there.
+  //
+  // Staleness is decided by **what the manifest names**, not by what this call
+  // was handed to write (spec 205). That was the same thing for as long as every
+  // write was the whole world, and it deletes the entire map the first time it
+  // is handed the three regions a grow actually changed. It is also the right
+  // rule on its own terms: the manifest is the only thing that makes a region
+  // reachable, so it is the only thing that can say a file is unreachable.
   const stale = new Set<string>();
   try {
     for (const name of readdirSync(join(root, 'r'))) stale.add(join('r', name));
   } catch {
     // No `r/` yet: nothing to clean up.
+  }
+  for (const layer of manifest.layers) {
+    for (const entry of layer.regions) stale.delete(regionPath(entry.rx, entry.rz));
   }
 
   for (const [path, text] of regions) {
