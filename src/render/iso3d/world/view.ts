@@ -110,6 +110,7 @@ import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
 import { windupLostItsMarkIn } from './withdraw.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
+import { worldCursor, worldMark } from './crosshair.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
@@ -1688,13 +1689,6 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     return entity.kind === EntityKind.Drop;
   }
 
-  /** Whether the cursor is over a drop this frame. Nothing else reads it. */
-  function hoveringDrop(view: ReturnType<typeof client.view>, hovered: number | null): boolean {
-    if (hovered === null) return false;
-    const entity = view.entities.find((candidate) => candidate.id === hovered);
-    return entity !== undefined && collectable(entity);
-  }
-
   /**
    * The only place in the game that turns a `KeyboardEvent` into a decision
    * (spec 125).
@@ -2095,6 +2089,56 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       return;
     }
     issueOrder();
+  }
+
+  /**
+   * Say what the next click would do (specs 158, 200).
+   *
+   * Three things change the pointer, and the arrow is what stands the rest of
+   * the time. A pending aim gets the full crosshair, because that is the one
+   * state in which the pointer is choosing a *point* rather than pointing at a
+   * thing. A body a click would act on gets the same mark with its arms pulled
+   * in. A drop keeps the pointing hand it has had since spec 158, being the one
+   * thing in the world the cursor does something to that has no affordance of
+   * its own: a monster lights up when hovered, a window has a border, and an
+   * item on the ground has neither. Which of the three wins is `crosshair.ts`'s
+   * to answer, in a module a test can reach; this only carries it out.
+   *
+   * Our two marks are *drawn*, by the HUD, at the pointer position this file
+   * already tracks -- they were CSS cursor images for two cuts of spec 200, and
+   * on a real machine the image landed four to seven pixels up and left of the
+   * point it was marking, because a cursor is placed by a hotspot applied
+   * somewhere between the style and the glass. Nothing in a page can see where
+   * that put it; every pixel of this can be measured.
+   *
+   * Called from the frame **and from the end of every pointer and key event**,
+   * which is the whole reason it is a function rather than four lines in the
+   * frame: the events keep the mark with the pointer that moved it, in the same
+   * task, and the frame covers what the *world* changed -- a monster walking
+   * under a pointer that never moved raises no event at all.
+   *
+   * The hovered body is resolved once and asked both questions rather than found
+   * twice -- a drop and an attackable body are two readings of the same id.
+   */
+  function applyCursor(): void {
+    const view = client.view();
+    const hovered =
+      scene.hoveredEntityId === null
+        ? undefined
+        : view.entities.find((entity) => entity.id === scene.hoveredEntityId);
+    const pointer = {
+      aiming: pendingAim !== null,
+      overEnemy: hovered !== undefined && attackable(hovered, view.selfEntityId),
+      overDrop: hovered !== undefined && collectable(hovered),
+    };
+    // The mark and the cursor under it are one decision read twice, so "we hid
+    // the pointer" and "we drew a mark" cannot come apart.
+    //
+    // `cursor` is null while the pointer is over a window or off the canvas
+    // (`onMove`, `onLeave`), and a mark with nowhere to go draws nothing --
+    // which is also what stops a hidden cursor being left over the interface.
+    canvas.style.cursor = cursor === null ? '' : worldCursor(pointer);
+    hud.setCrosshair(cursor === null ? null : worldMark(pointer), cursor);
   }
 
   const onPointerDown = (event: PointerEvent): void => {
@@ -2794,14 +2838,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       scene.hoveredEntityId,
       now,
     );
-    // The cursor says what the next click would do (spec 158).
-    //
-    // Only a drop changes it, and only because a drop is the one thing in the
-    // world the cursor *does* something to that has no other affordance: a
-    // monster lights up when hovered, a window has a border, and an item on the
-    // ground has neither -- the pointer is what tells you it can be clicked at
-    // all. Presentation, and the only `if` in this file that touches a style.
-    canvas.style.cursor = hoveringDrop(client.view(), scene.hoveredEntityId) ? 'pointer' : '';
+    applyCursor();
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());
@@ -2883,6 +2920,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       canvas.addEventListener('pointerup', onPointerUp);
       canvas.addEventListener('pointercancel', onPointerCancel);
       canvas.addEventListener('mouseleave', onLeave);
+      // Last on purpose: these run after the handlers above have decided
+      // whatever this event decides, in the same task, so the cursor the frame
+      // would have set a moment later is set while the browser still has the
+      // input in hand. See `applyCursor`.
+      for (const kind of ['pointermove', 'pointerdown', 'pointerup'] as const) {
+        canvas.addEventListener(kind, applyCursor);
+      }
+      window.addEventListener('keydown', applyCursor);
       root.addEventListener('wheel', onWheel, { capture: true, passive: false });
       document.documentElement.addEventListener('contextmenu', onContextMenu);
 
@@ -2930,6 +2975,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointerup', onPointerUp);
+      for (const kind of ['pointermove', 'pointerdown', 'pointerup'] as const) {
+        canvas.removeEventListener(kind, applyCursor);
+      }
+      window.removeEventListener('keydown', applyCursor);
       canvas.removeEventListener('pointercancel', onPointerCancel);
       canvas.removeEventListener('mouseleave', onLeave);
       root.removeEventListener('wheel', onWheel, { capture: true });
