@@ -40,6 +40,18 @@
  * cross-device claim as well as the rebind one, since a stop that turned out to
  * be a keyboard branch would pass every other check in this file.
  *
+ * What it deliberately does **not** reach is the wind-up, which is the headline
+ * of the feature -- catching a body mid-cast needs a monster found on screen and
+ * a fight timed against a 20Hz delta, in an arena where the last harness that
+ * tried it had to loop until it saw an impact at all. That half is not
+ * unmeasured, it is measured somewhere better: `cancelCast` is the same call
+ * spec 090's right-click and spec 155's lost mark already make, pinned over a
+ * loopback in `client/session.test.ts` and `sim/attack-cancel.test.ts` from both
+ * sides of the attack point, and `dropCommitments` is shared with Escape rather
+ * than being a second list. What could only be false here is whether the
+ * *control* reaches any of it, and a stop that never ran would fail every check
+ * below before it got near a cast.
+ *
  * Serves `dist/`, so what is probed is what ships. Prints a summary and exits
  * non-zero on any problem.
  *
