@@ -5,8 +5,6 @@ implemented.** Two of them did not turn out to be the phase that was planned:
 phase 5 **split in two** after measuring, and phase 6's designed `ChunkSource`
 was **deferred** in favour of the one line that was actually costing the boot.
 Each phase's notes carry what was measured and what the plan got wrong.
-Phase 5 was **split in two** after measuring, and phase 6's designed mechanism
-was **deferred** after measuring; see the phase table and each phase's notes.
 
 Everything is measured against `maps/arena.json` at `43fd6b40` on this branch's
 container, and every projection says which measurement it scales. Where a claim
