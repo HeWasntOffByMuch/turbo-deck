@@ -101,13 +101,24 @@ heading for and ranks by whichever of the two it is nearer:
 wanted(x, z, radius, budget, tick, lead?: { x: number; y: number }): ChunkRequest[]
 ```
 
-`distance = min(chebyshev(chunk, at), chebyshev(chunk, lead))`. With no lead —
-a standing player — that is `chebyshev(chunk, at)` and the order does not move
-at all. With one, the ground under the feet is still distance 0 and still first,
-the column ahead climbs to the front, and the column behind sinks to the back.
-The candidate set is untouched: this reorders a request stream, it does not
-widen it. `GameClient` builds the lead from the direction it last asked to move
-in and the speed it is actually walking at, over `CHUNK_LEAD_SECONDS`.
+The rank is a pair: **distance to the walk, then distance to the body**. A
+chunk is projected onto the segment from the body to the lead (clamped, so
+ground behind projects onto the body rather than onto an imaginary extension of
+the walk) and ranked first by how far off that line it sits — so the corridor
+the body is about to walk down comes forward whole — and then by how far it is
+from the body, so that corridor is served outward from the feet rather than from
+the horizon. The ground being stood on is the only chunk that scores zero on
+both, so it is still asked for first: a bias toward the horizon that starved the
+ground under the feet would be worse than no bias at all.
+
+With no lead the segment is a point, both keys collapse to
+`chebyshev(chunk, at)`, and the order is byte for byte what it always was. The
+candidate set is untouched either way: this reorders a request stream, it does
+not widen one. `GameClient` builds the lead from the direction it last *asked*
+to move in and the speed it is actually walking at, over `CHUNK_LEAD_SECONDS` —
+the request rather than a differenced velocity, because it is what the body is
+committed to, it is known on the tick it is made, and a correction easing in
+underneath does not smear it.
 
 **The ledger ages out what never came back.**
 
@@ -144,13 +155,17 @@ cannot silently diverge.
   still refused `OutOfRange`, and an undeclared chunk is still `Unknown`.
 - `wanted` with no lead returns exactly what it returns today, coordinate for
   coordinate.
-- `wanted` with a lead puts the chunk under the player first, and ranks a chunk
-  the lead is heading into ahead of one the same distance behind.
+- `wanted` with a lead puts the chunk under the player first, ranks a chunk the
+  lead is heading into ahead of one the same distance behind, and serves the
+  corridor outward from the feet rather than from the horizon.
 - `wanted` with a lead asks for no chunk it would not have asked for without
   one.
 - A chunk offered and never completed stops counting toward `pending` and stops
   holding its regions after `meshTimeoutMs`, and those regions are handed back.
-- A chunk completed inside the timeout behaves exactly as it does today.
+- A chunk completed inside the timeout behaves exactly as it does today, and one
+  re-offered because a neighbour landed restarts its own clock.
+- A late `complete` for a swept chunk is the no-op `complete` already is for a
+  key it does not hold.
 - A fast run over the shipped map holds full coverage of the request window and
   is never corrected: a real server, a real streaming client, the shipped map,
   at `MOVE_SPEED_HARD_MAX`.
