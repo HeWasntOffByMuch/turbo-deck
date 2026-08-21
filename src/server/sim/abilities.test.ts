@@ -1034,10 +1034,19 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
     state = player.state;
     const dummy = withDummy(state, 640, 450);
     state = dummy.state;
-    // One blow's worth of health, so the first slash finishes it.
+    // One blow's worth of health, so the first slash finishes it -- and one
+    // blow's worth of *max* health with it, or the body is a 100000-health
+    // dummy that has never been hit, which since spec 201 recovers 417 a tick
+    // and is back over twelve thousand before the wind-up lands. A real body at
+    // 1 health got there by being struck, which holds `InCombat` open and stops
+    // recovery for eight seconds; nothing had struck this one.
     const body = state.entities.get(dummy.id);
     if (!body) throw new Error('no dummy');
-    state = replaceEntity(state, { ...body, health: 1 });
+    state = replaceEntity(state, {
+      ...body,
+      health: 1,
+      stats: { ...body.stats, maxHealth: 1 },
+    });
 
     const result = run(state, SERVER_TICK_RATE * 2, {
       0: [input(player.id, { castAbilityId: 'melee.slash', castTargetX: 640, castTargetY: 450 })],

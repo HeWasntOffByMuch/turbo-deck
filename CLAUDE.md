@@ -1660,6 +1660,84 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  pause the player cannot act on is not a decision. Nothing of
                  this rides the wire: the tell is the body turning to face you
                  and standing still, and facing already replicates.
+                 Since spec 201 a flight also **commits to somewhere**.
+                 `fleeFrom` used to re-derive "directly away from my attacker"
+                 every tick from the attacker's *current* position, which is
+                 stable only while the attacker is slower than its quarry -- and
+                 no player is. A player at 155 closing on a grazer at 40
+                 overshoots *through* the fleeing body every frame, so the away
+                 vector flipped sign at 60Hz: measured off a real `step`, the
+                 velocity alternated +40, -40, +40, -40 and the body oscillated
+                 between two coordinates two thirds of a unit apart for the rest
+                 of its flight. It never dropped its target and never left
+                 `Fleeing` early -- the one temperament whose entire behaviour is
+                 *leaving* simply could not leave, which from outside is
+                 indistinguishable from having given up. `ServerEntity.fleeGoal`
+                 is that commitment: written by `provoke`, which is the one
+                 moment the attacker's position is the right one to measure from,
+                 cleared by `calm` and `engage`, and moved by exactly two events
+                 -- the goal is reached, or a fresh blow lands. "Hit it again and
+                 it bolts anew" is a rule a player reads off the screen; a
+                 heading re-derived every 16ms is not.
+                 `sim/idle.ts` is the other ninety-nine percent of a monster's
+                 life (spec 201), and before it there was no answer at all: a
+                 body with no target stood on the exact coordinate its spawner
+                 put it on forever, and `walkHome` returned one to its anchor
+                 carrying whatever damage had been done on the way out -- which
+                 is pull-and-reset, wide open, with the leash itself doing the
+                 work. One function and one call site, so coming home, milling
+                 about, walking a beat and recovering are one answer rather than
+                 four: home first if it has been dragged off its ground, then the
+                 plan its row authors, recovering throughout.
+                 A row authors that plan as a second union beside `Temperament`
+                 rather than a fifth member of it, because the two are
+                 independent questions -- a temperament is how a body meets a
+                 *player*, this is what it does when there is none, and the
+                 ravager ignores you and still grazes. Folding them together
+                 would be five temperaments becoming fifteen. Same authoring
+                 rule, which is why both are unions: **a row only names a number
+                 the behaviour it chose actually reads**, so a sentinel has no
+                 radius and a wanderer has no post count. Absent means
+                 `DEFAULT_IDLE`, filled in by `withTraits` exactly as `traits`
+                 is, so "all units wander" is a property of the default rather
+                 than of five rows each remembering to say so -- and the one row
+                 that declares `sentinel` is the training dummy, which would
+                 otherwise be a training dummy you had to chase.
+                 Three rules. **Nothing draws from the `Rng`**: a spot is a hash
+                 of `(entity id, epoch)` through `shared/hash.ts`, the precedent
+                 `crowd.ts`'s `symmetryBreak` set and for the reason stated
+                 there -- the sim's draw *count* is load-bearing, and a field of
+                 monsters sampling the PRNG sixty times a second would move every
+                 combat roll in the world. `idle.test.ts` asserts that as a
+                 property: the `Rng` state after twenty seconds with six
+                 wandering monsters equals the state after twenty seconds with
+                 none. **So there is no new entity state for any of it** -- where
+                 a body is headed is a pure function of its id and the tick, and
+                 a goal that is derived cannot be persisted wrong, expire wrong,
+                 or be forgotten to be cleared when a fight starts. The epoch is
+                 offset by a per-body hashed phase and a patrol's direction and
+                 start angle are hashed too, so a herd does not step off together
+                 and two sentries do not orbit as a formation. And **arriving is
+                 not marked anywhere**: the goal does not move until the plan's
+                 own clock turns it over, so a body that has reached it simply
+                 stands there -- *that standing is the dwell*, and "pick a spot,
+                 hang out on it, move on" needs nothing counting the hanging out.
+                 Recovery is the fourth thing and is deliberately **not** part of
+                 that order, because it is not a place: it is gated on
+                 `StatusId.InCombat` rather than on arriving home, so the rule
+                 stays one sentence -- *a monster nobody is fighting recovers* --
+                 instead of a special case bolted to the leash. Linear rather
+                 than a percentage of what is missing, since a curve that
+                 approaches full without reaching it leaves the exploit intact at
+                 the tail. It is also the one place in the sim that asks for
+                 *less* than a body's full speed: `IdleGoal.pace` is a magnitude
+                 on the intent vector, which `resolveMovement` already honours
+                 and `applyCrowd` already round-trips exactly, because a field of
+                 monsters sprinting between random points reads worse than a
+                 field of statues. Coming home is the exception at full pace --
+                 a body dawdling through the distance a leash just measured would
+                 be catchable for the whole return trip, which is the exploit
+                 arriving by the other door.
                  `loot.ts` and `sim/loot.ts` are what a kill leaves behind
                  (spec 158), and the two of them draw one line: **the item is
                  decided when the body falls and its presentation unfolds

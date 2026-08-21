@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORLD } from '../../sim/collision.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
-import { monsterById, noticeRangeOf } from '../data/monsters.js';
+import { idlePlanOf, monsterById, noticeRangeOf } from '../data/monsters.js';
 import { computeEffectiveStats } from '../player/stats.js';
 import {
   EMPTY_EQUIPMENT,
@@ -385,7 +385,13 @@ describe('skittish: it runs', () => {
       (state.entities.get(grazer.id)?.position.y ?? 0) - anchor.y,
     );
     expect(near).toBeLessThan(far);
-    expect(near).toBeLessThanOrEqual(monsterById('grazer')?.radius ?? 0);
+    // Back on its own ground rather than back on its exact spawn coordinate:
+    // since spec 201 a body that has come home mills about it, so what "home"
+    // means is the wander ring plus the body's own reach.
+    const plan = idlePlanOf('grazer');
+    expect(near).toBeLessThanOrEqual(
+      (plan.kind === 'sentinel' ? 0 : plan.radius) + (monsterById('grazer')?.radius ?? 0),
+    );
   });
 
   it('is not dropped by the leash while it is still running', () => {
