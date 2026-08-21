@@ -16,6 +16,13 @@ import type { ViewHandle } from '../view-handle.js';
 import { PALETTE } from '../palette.js';
 import { buildPropField, buildRegionInstances, propRegionKeysIn, type PropFieldHandle } from '../props.js';
 import { propRegions, propRegionsOwed, propRegionsPending } from './prop-residency.js';
+import {
+  EDITOR_KEEP_PAD_CHUNKS,
+  chunkKey,
+  chunksBeyond,
+  chunksOwed,
+  viewRect,
+} from './ground-residency.js';
 import { FrameBudget } from '../world/frame-budget.js';
 import type { Prop } from '../../../terrain/vegetation.js';
 import { viewSeed } from '../seed.js';
@@ -151,6 +158,16 @@ const RECIPE_MODULES = import.meta.glob('../../../../maps/recipes/*.json', { eag
  */
 const PROP_PUMP_BUDGET_MS = 6;
 
+/**
+ * How much of a frame the ground fill may have (spec 212).
+ *
+ * The same number, for the same reason -- and here it buys what a budget is
+ * supposed to buy, unlike the prop pump beside it. A chunk is ~5.7ms to build
+ * and mesh, so this is a handful of chunks a frame rather than the one region
+ * `PROP_PUMP_BUDGET_MS` works out to.
+ */
+const GROUND_PUMP_BUDGET_MS = 6;
+
 const RECIPES: ReadonlyMap<string, PartRecipe> = new Map(
   Object.entries(RECIPE_MODULES)
     .map(([path, module]) => [path.replace(/^.*\//, '').replace(/\.json$/, ''), module.default] as const)
@@ -163,6 +180,8 @@ class EditorScene {
   private readonly camera: THREE.OrthographicCamera;
   private terrainMesh: TerrainMeshHandle;
   private propField: PropFieldHandle;
+  /** Chunks meshed, per layer. Nothing else may be drawn (spec 212). */
+  private readonly groundHeld = new Map<string, Map<string, ChunkCoord>>();
   /** Props by the region they stand in, from the list the field was built from. */
   private propBuckets: ReadonlyMap<string, readonly Prop[]> = new Map();
   /** Regions composed so far. Everything in `propBuckets` and not in here is owed. */
@@ -229,7 +248,11 @@ class EditorScene {
     this.scene.add(sun);
     this.scene.add(new THREE.AmbientLight(FILL_COLOR, FILL_INTENSITY));
 
-    this.terrainMesh = buildTerrainMeshFromChunks(this.map.meshLayers, this.map.chunks);
+    // Nothing meshed (spec 212). `map.chunks` is the getter spec 207 made lazy
+    // and this was its one eager caller: 4.9s on the map we ship, and 73s of the
+    // ~148s projected at the 4x target. `pumpGround` meshes what the camera
+    // frames, from the pivot outward, and drops what it has panned away from.
+    this.terrainMesh = buildTerrainMeshFromChunks(this.map.meshLayers, []);
     this.scene.add(this.terrainMesh.group);
     this.propField = this.buildProps();
   }
@@ -398,7 +421,8 @@ class EditorScene {
     this.map = loadMap(document);
     this.scene.remove(this.terrainMesh.group);
     this.terrainMesh.dispose();
-    this.terrainMesh = buildTerrainMeshFromChunks(this.map.meshLayers, this.map.chunks);
+    this.groundHeld.clear();
+    this.terrainMesh = buildTerrainMeshFromChunks(this.map.meshLayers, []);
     this.scene.add(this.terrainMesh.group);
     this.scene.remove(this.propField.group);
     this.propField.dispose();
@@ -428,8 +452,103 @@ class EditorScene {
 
   /** Re-mesh one chunk after an edit -- the whole point of the patch rebuild. */
   rebuildChunk(layerId: string, cx: number, cz: number): void {
+    // Ground that is not meshed is not re-meshed (spec 212). A mesh is derived,
+    // and an edit to a chunk the camera has panned away from must not put it
+    // back on the scene graph -- `pumpGround` rebuilds it from the store if the
+    // camera ever comes back, and until then there is nothing to correct.
+    if (!this.heldGround(layerId).has(chunkKey(cx, cz))) return;
     const chunk = this.map.store.buildChunk(layerId, cx, cz);
     if (chunk) this.terrainMesh.rebuild(chunk);
+  }
+
+  /** What is meshed for one layer. Created on first ask. */
+  private heldGround(layerId: string): Map<string, ChunkCoord> {
+    const held = this.groundHeld.get(layerId);
+    if (held) return held;
+    const fresh = new Map<string, ChunkCoord>();
+    this.groundHeld.set(layerId, fresh);
+    return fresh;
+  }
+
+  /** The chunk the camera's pivot stands in, or null if it is off this layer. */
+  private pivotChunk(layerId: string): ChunkCoord | null {
+    const { x, z } = this.camera3.target;
+    return this.map.store.chunksInRect(layerId, { minX: x, minZ: z, maxX: x, maxZ: z })[0] ?? null;
+  }
+
+  /** Chunks the ledger believes are meshed, across every layer. */
+  get groundHeldCount(): number {
+    let n = 0;
+    for (const held of this.groundHeld.values()) n += held.size;
+    return n;
+  }
+
+  /**
+   * Chunk surfaces actually on the scene graph.
+   *
+   * Counted off the graph rather than off the ledger, the way
+   * `drawnPropInstances` is: the two agreeing is the claim, so a readout taken
+   * from the ledger alone could report a working fill that drew nothing.
+   * `pickTargets` is exactly the list of drawn surfaces, and is the same list
+   * the cursor raycasts against -- so this also answers "is there anything to
+   * click on", which is the consequence of a window this spec has to be right
+   * about.
+   */
+  get groundMeshedCount(): number {
+    return this.terrainMesh.pickTargets.length;
+  }
+
+  /**
+   * Mesh the ground the camera frames, and drop what it has panned away from
+   * (spec 212).
+   *
+   * Per layer, because the rock tiers are layers of their own with their own
+   * chunk grids -- one window over all of them would let the ground's view
+   * evict a tier's chunks, which is a different rectangle's business.
+   *
+   * The two halves cannot fight: everything `chunksOwed` returns is in view, the
+   * view is inside its own bounding box, and `chunksBeyond` keeps that box grown
+   * by `EDITOR_KEEP_PAD_CHUNKS`. Eviction therefore runs unbudgeted -- it is a
+   * `remove` per chunk against a `buildChunk` plus a mesh, and leaving dropped
+   * ground on the graph until a later frame is holding memory to save nothing.
+   *
+   * Unlike spec 208's client, nothing beside a dropped chunk needs re-meshing.
+   * There the store loses the chunk, so its neighbours' aprons and shore fields
+   * go stale; here the store is untouched and only what is *drawn* changes, so a
+   * chunk's mesh is a pure function of the store whichever of its neighbours
+   * happen to be on the graph. (`erase` re-bakes the neighbours' water anyway,
+   * which is right for the streaming case and simply lands on the same answer
+   * here, for the same reason.)
+   */
+  pumpGround(budget: FrameBudget): number {
+    const rect = viewRect(this.camera3, this.aspect());
+    let meshed = 0;
+    for (const layer of this.document.layers) {
+      const inView = this.map.store.chunksInRect(layer.id, rect);
+      const held = this.heldGround(layer.id);
+      const owed = chunksOwed(inView, this.pivotChunk(layer.id), new Set(held.keys()));
+      for (const c of owed) {
+        const chunk = this.map.store.buildChunk(layer.id, c.cx, c.cz);
+        if (chunk) {
+          this.terrainMesh.rebuild(chunk);
+          held.set(chunkKey(c.cx, c.cz), c);
+          meshed++;
+        }
+        if (budget.spent()) break;
+      }
+      for (const c of chunksBeyond(held, inView, EDITOR_KEEP_PAD_CHUNKS)) {
+        this.terrainMesh.remove(layer.id, c.cx, c.cz);
+        held.delete(chunkKey(c.cx, c.cz));
+      }
+    }
+    return meshed;
+  }
+
+  /** The canvas's aspect, from the box rather than from the last render. */
+  private aspect(): number {
+    const w = this.canvas.clientWidth || this.canvas.width || 1;
+    const h = this.canvas.clientHeight || this.canvas.height || 1;
+    return h === 0 ? 1 : w / h;
   }
 
   /** Stop drawing a chunk whose ground has gone (spec 085). */
@@ -1384,9 +1503,13 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
       scene.camera3 = trackEditorCamera(scene.camera3, track.dx, track.dy, canvas.clientWidth);
     }
 
-    // Trees the deferred field still owes, nearest the pivot first (spec 211).
-    // After the camera has moved and before anything is drawn, so a frame that
-    // panned composes toward where it panned to rather than where it came from.
+    // Ground the camera frames but has no mesh for (spec 212), then the trees
+    // the deferred field still owes (spec 211). After the camera has moved and
+    // before anything is drawn, so a frame that panned fills toward where it
+    // panned to rather than where it came from -- and ground before trees,
+    // because a tree standing over ground that has not arrived is the one
+    // ordering a person would notice.
+    scene.pumpGround(new FrameBudget(time, GROUND_PUMP_BUDGET_MS));
     scene.pumpProps(new FrameBudget(time, PROP_PUMP_BUDGET_MS));
 
     // The cursor goes where the ray lands, and the brush follows it. Both read
@@ -1620,6 +1743,11 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     // ledger is asserted in Node, and none of them can say whether the frame
     // loop calls any of it -- which is the shape of bug this tree keeps finding.
     readout.dataset.props = `drawn:${String(scene.drawnPropInstances)} pending:${String(scene.propsPending)}`;
+    // What the windowed ground fill is holding (spec 212), for the same reason:
+    // every rule about the window is asserted in Node and none of them can say
+    // whether the frame loop calls any of it. `meshed` is counted off the scene
+    // graph, so ground built and hung on nothing reads as absent.
+    readout.dataset.ground = `meshed:${String(scene.groundMeshedCount)} held:${String(scene.groundHeldCount)} of:${String(chunkCount())}`;
     readout.innerHTML =
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +

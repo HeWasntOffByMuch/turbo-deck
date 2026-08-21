@@ -68,6 +68,8 @@ change a game outcome.
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
 | `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 209) |
+| `npx tsx scripts/probe-editor-ground.ts` | Whether the editor's ground window really meshes and evicts, in a browser (spec 212) |
+| `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
@@ -1374,6 +1376,62 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  solidity and the water line, a prop's colour comes from its own
                  part rather than from what it stands on, and a marker sits at a
                  height.
+                 ground-residency.ts is which ground is meshed (spec 212), and
+                 it is the other half of the editor's boot: `map.chunks` plus
+                 `buildTerrainMeshFromChunks` was 4.9s on the shipped map and
+                 ~73s of the ~148s projected at the 4x target, and nothing was
+                 ever dropped -- `TerrainMeshHandle.remove` exists for spec 085's
+                 part removal and spec 208 borrowed it for the *client*, while
+                 the editor called it from nowhere on the boot path. The mesh
+                 opens **empty** now and `pumpGround` meshes what the camera
+                 frames from the pivot outward, dropping what it has panned away
+                 from: measured in a browser on the shipped map, 20 chunks of
+                 810 at the open, 39 zoomed out, 25 back in. The editor's whole
+                 open is 9.4s to ~197ms, and 84% of what is left is `parse` --
+                 which spec 207 named as the next thing and 204's split made
+                 possible.
+                 The keep window is **derived, not chosen**, the way spec 208
+                 derives keep from request: the one thing eviction must not do is
+                 fight the fill. It is the chunk-space **bounding box of what is
+                 in view grown by two chunks**, rather than the world-unit pad
+                 the spec asked for -- a chunk has no single world size, since
+                 flank chunks are short, and `store.chunksInRect` already owns
+                 the question. That also makes the no-oscillation rule hold by
+                 construction: owed is inside the view, the view is inside its
+                 own box, the box is inside the padded one. Asserted anyway over
+                 every camera position, because "by construction" is a claim
+                 about code somebody can edit.
+                 Three things differ from 208 and each was learned rather than
+                 assumed. **"A pan out and back holds what it started with" is
+                 false here and should be** -- that property holds on the client
+                 because its request radius fills the band inside the keep
+                 radius, where this fill meshes only what is *in view* and keeps
+                 wider, so held converges on (ever meshed within the keep box).
+                 What must not happen is that going round again adds more, and
+                 that is what is asserted. **Nothing beside a dropped chunk needs
+                 re-meshing**: there the store loses the chunk so its neighbours'
+                 aprons go stale, here the store is untouched and only what is
+                 *drawn* changes, so a chunk's mesh is a pure function of the
+                 store whichever neighbours happen to be on the graph. So
+                 eviction runs **unbudgeted** -- it can never drop what the same
+                 frame wants, and deferring it holds memory to save nothing. And
+                 residency is **per layer**, because the rock tiers are layers
+                 with their own chunk grids and one window over all of them would
+                 let the ground's view evict a tier.
+                 The consequence worth knowing is picking: `pickTargets` is the
+                 terrain meshes, so ground with no mesh cannot be raycast.
+                 Everything in view is meshed, so it only bites during fill-in,
+                 and `pickPlane` is the stated fallback -- a tool that refuses a
+                 null pick must go on refusing rather than acting at the flat
+                 plane's height, or a stroke over ground that has not arrived
+                 writes at the wrong altitude.
+                 `npx tsx scripts/probe-editor-ground.ts` reads `data-ground`,
+                 whose `meshed` is counted off `pickTargets` rather than off the
+                 ledger, so a window that meshed nothing and believed otherwise
+                 reads as broken. `probe-map-editor.ts` is the picking half and
+                 needed no change: it places a marker by clicking the ground and
+                 reads it back out of the saved file, which is exactly what fails
+                 if a window leaves a hole under the cursor.
                  prop-residency.ts is which trees arrive next (spec 211), and it
                  exists because `buildPropField` composed every region in the
                  world before the editor could draw a frame -- **half** of

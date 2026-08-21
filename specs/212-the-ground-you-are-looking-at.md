@@ -45,24 +45,24 @@ export function viewRect(camera: EditorCameraState, aspect: number): MapRect;
 export const EDITOR_KEEP_PAD_CHUNKS = 2;
 
 /**
- * Chunks in `view` that are not meshed, nearest the view centre first.
+ * Chunks in view that are not meshed, nearest the pivot's own chunk first.
  *
  * Ordered rather than merely returned: the point is that the ground under the
- * cursor arrives before the corner of the screen. Ties break on `cx,cz`, so two
- * runs of one frame agree.
+ * cursor arrives before the corner of the screen. Ordered in chunk space, since
+ * a chunk is the unit either way; `at` is null when the pivot is off the map,
+ * and the order falls back to `cx,cz`, so two runs of one frame agree.
  */
 export function chunksOwed(
-  in_: readonly ChunkCoord[],
-  view: MapRect,
+  inView: readonly ChunkCoord[],
+  at: ChunkCoord | null,
   held: ReadonlySet<string>,
 ): readonly ChunkCoord[];
 
-/** Held chunks further than the keep pad outside `view`. */
+/** Held chunks outside the chunk-space bounding box of `inView`, grown by `pad`. */
 export function chunksBeyond(
-  held: ReadonlySet<string>,
-  view: MapRect,
+  held: ReadonlyMap<string, ChunkCoord>,
+  inView: readonly ChunkCoord[],
   pad: number,
-  cellSize: number,
 ): readonly ChunkCoord[];
 ```
 
@@ -95,14 +95,61 @@ store. **The document is never evicted** — only GPU-side data — which is exa
 the boundary spec 208 keeps, and is what leaves save, autosave, undo and the
 part tools indifferent to any of this.
 
+## What it measured, and what it corrected
+
+The editor's open on the shipped map, with spec 211's field already deferred:
+
+| | before | after |
+|---|---|---|
+| `map.chunks` | 2,822 ms | **not called** |
+| `buildTerrainMeshFromChunks` | 2,075 ms | **1 ms** (empty) |
+| the whole open | 9.4 s | **~197 ms** |
+
+**84% of what is left is `parse`** — `loadMapFile` still reading every region,
+which spec 207 named as the next thing after this and spec 204's split made
+possible. It is out of scope below, and it is now the only thing in the column
+worth attacking.
+
+Measured in the browser, on the shipped 810-chunk map: the open meshes **20**
+chunks; widening the view meshes 39; narrowing it drops back to 25. Before this,
+every one of those numbers was 810.
+
+Four things this spec had wrong or unstated, found by building it:
+
+- **The keep window is chunk-space, not a world-unit pad.** This spec asked for
+  `chunksBeyond(held, view, pad, cellSize)`. A chunk has no single world size —
+  flank chunks are short (spec 083) — and which chunks a rectangle covers is
+  already `store.chunksInRect`'s answer, from the code that owns the layer's
+  grid. So the window is the **bounding box of what is in view, grown by `pad`
+  chunks**, which also makes the no-oscillation property hold *by construction*:
+  everything owed is in view, the view is inside its own bounding box, and the
+  box is inside the padded box.
+- **"A pan out and back holds what it started with" is false here, and should
+  be.** That is spec 208's property, and it holds there because the client's
+  request radius fills the band inside the keep radius. This fill meshes only
+  what is *in view* while the keep window is wider, so a pan leaves meshed
+  chunks behind that are correctly kept — held converges on (ever meshed ∩ keep
+  box) rather than on the view. The property that actually matters is that
+  **repeating a journey does not grow the set**, which is what a ratchet would
+  look like, and that is what is asserted.
+- **Nothing beside a dropped chunk needs re-meshing**, which is the other place
+  this parts company with 208. There the store loses the chunk, so its
+  neighbours' aprons and shore fields go stale; here the store is untouched, so
+  a chunk's mesh is a pure function of the store whichever of its neighbours
+  happen to be drawn. Eviction is therefore also **unbudgeted** — it is a
+  `remove` per chunk, it can never drop what the same frame wants, and deferring
+  it would hold memory to save nothing.
+- **Residency is per layer.** The rock tiers are layers of their own with their
+  own chunk grids, so one window over all of them would let the ground's view
+  evict a tier's chunks — a different rectangle's business.
+
 ## Invariants tested
 
 - **Held is bounded by the keep window.** Driven around a circuit of the shipped
   map, the meshed count never exceeds the keep rectangle's chunk count — against
   810 held from the first frame today.
-- **A pan out and back holds what it started with.** Not merely bounded: leaving
-  an area and returning leaves the same count, not a ratchet that grows a band
-  each lap.
+- **Repeating a journey does not grow what is held.** The anti-ratchet property,
+  in the form that is actually true here — see the correction above.
 - **Meshing and eviction cannot oscillate.** One eviction pass followed by one
   `chunksOwed` pass must not ask for anything the eviction just dropped —
   asserted over every camera position within a chunk, not one.
@@ -119,6 +166,16 @@ part tools indifferent to any of this.
   `buildChunk` calls, the way spec 207 asserts the server builds no mesh data.
 - **`rebuildChunk` on an unheld chunk does nothing**, and leaves the held set
   unchanged.
+- **The window is really on screen**, which no test above can tell. `npx tsx
+  scripts/probe-editor-ground.ts` drives the shipped build and reads
+  `data-ground`: `meshed` is counted off the scene graph (`pickTargets`, which
+  is also what the cursor raycasts against) rather than off the ledger, so a
+  window that meshed nothing and believed otherwise reads as broken. It asserts
+  the open is a window rather than the world, that the two counts agree, and
+  that widening then narrowing the view meshes more and then drops it.
+  `probe-map-editor.ts` is the picking half and needed no change: it places a
+  marker by clicking the ground and reads it back out of the saved file, which
+  is what fails if a window leaves a hole under the cursor.
 - **`open` is flat in world size**, as a slope against a 16× world rather than
   as a value.
 

@@ -281,6 +281,11 @@ const PURE_RENDER = [
   'src/render/iso3d/vfx/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
+  // Which ground the editor meshes and which it lets go of (spec 212). The keep
+  // rule's claim is that no camera position lets one pass drop what the next
+  // asks for, which is a statement about every position rather than the one
+  // somebody dragged to -- so it is asserted in Node.
+  'src/render/iso3d/editor/ground-residency.ts',
   // Which prop regions the editor still owes and in what order (spec 211). The
   // field is built deferred and drained a few regions a frame, so this is the
   // arithmetic that decides what a person sees next -- checkable in Node rather
