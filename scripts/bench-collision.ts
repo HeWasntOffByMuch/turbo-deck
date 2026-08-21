@@ -9,20 +9,14 @@
  *   npx tsx scripts/bench-collision.ts
  */
 
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-import { mapIdOf } from '../src/server/world/map-index.js';
 import { buildWorldFromMap } from '../src/server/world/build.js';
-import { parseMap } from '../src/terrain/map.js';
+import { loadMapFile } from '../src/server/world/map-file.js';
 import { pushOutOfObstacles, slideCircle } from '../src/sim/collision.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../src/server/config.js';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const mapText = readFileSync(join(root, 'maps', 'arena.json'), 'utf8');
+const shipped = loadMapFile();
 
-const world = buildWorldFromMap(parseMap(mapText), mapIdOf(mapText));
+const world = buildWorldFromMap(shipped.doc, shipped.mapId);
 const colliders = world.colliders;
 
 console.log(`colliders: ${colliders.rects.length} rects, ${colliders.circles.length} circles`);
