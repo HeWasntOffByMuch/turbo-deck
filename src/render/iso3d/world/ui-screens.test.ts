@@ -13,11 +13,16 @@ import { STARTER_EQUIPMENT, starterInventory } from '../../../server/player/play
 import { InputMap } from '../../../ui/input/input-map.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
-import { UiScreens, type UiScreensOptions } from './ui-screens.js';
+import { CHARACTER_MIN_SIZE, UiScreens, WINDOW_CHROME, type UiScreensOptions } from './ui-screens.js';
+import { CharacterScreen } from '../../../ui/screens/character.js';
 import { captureLayout, LAYOUT_VERSION, type StoredLayout } from '../../../ui/core/layout-store.js';
 import type { WindowId } from './control-actions.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import { startingBaseStats } from '../../../server/player/attributes.js';
+import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
+import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
+import type { EffectiveStats } from '../../../server/state/types.js';
 import { visualFor } from '../../../server/data/status-visuals.js';
 import { StatusId } from '../../../server/sim/statuses.js';
 
@@ -1360,5 +1365,120 @@ describe('the chat', () => {
     expect(screens.opened()).toEqual([]);
     expect(screens.root.contexts.ids()).toEqual(['gameplay', 'textEntry']);
     expect(saved.flatMap((layout) => layout.windows.map((entry) => entry.id))).not.toContain('chat');
+  });
+});
+
+
+/**
+ * The character window, which is the one the mount does not scroll (spec 197).
+ *
+ * The sheet pins its heading and its tab strip and scrolls the tab under them,
+ * which it can only do because it is handed the window's real height. What is
+ * asserted here is the complaint that started it: scrolling the skill tree used
+ * to take the tabs with it, so there was no way back to Attributes without
+ * scrolling to the top first.
+ */
+describe('the character window scrolls under its tabs', () => {
+  const STATS: EffectiveStats = {
+    maxHealth: 138,
+    moveSpeed: 150,
+    turnRate: 210,
+    attackDamage: 12,
+    attackRange: 56,
+    baseAttackTimeTicks: 30,
+    ...NO_ATTACK_SPEED,
+    armor: 0.12,
+    spellPower: 1.2,
+    critChance: 0.05,
+    maxResource: 40,
+    resourceRegen: 0.5,
+    basicAttackId: 'melee.slash',
+    skillAbilityIds: [],
+    traits: NEUTRAL_TRAITS,
+  };
+
+  /** The mounted sheet, found in the tree rather than reached through the mount. */
+  function sheetOf(screens: UiScreens): CharacterScreen {
+    const found = [...screens.root.content.walk()].find(
+      (widget): widget is CharacterScreen => widget instanceof CharacterScreen,
+    );
+    if (!found) throw new Error('no character screen is mounted');
+    return found;
+  }
+
+  /** Everything the sheet reads. `stats` alone is what gates the feed. */
+  function fed(): ClientView {
+    return viewFixture({
+      stats: STATS,
+      baseStats: startingBaseStats(),
+      attributes: startingBaseStats(),
+      unspentAttributePoints: 4,
+    });
+  }
+
+  /** The sheet open, fed, and looking at the tallest tab there is. */
+  function opened(): UiScreens {
+    const { screens } = harness();
+    screens.show('character');
+    screens.update(fed(), 0);
+    sheetOf(screens).tabs.select('skills');
+    screens.update(fed(), 16);
+    return screens;
+  }
+
+  it('is not wrapped in a scroller of its own', () => {
+    const { screens } = harness();
+    // The whole screen in one `ScrollView` is what put the tab strip inside the
+    // thing that scrolls it.
+    expect(screens.root.windows?.get('character')?.content).not.toBeInstanceOf(ScrollView);
+  });
+
+  it('leaves the tab headers where they are when the tree is scrolled', () => {
+    const screens = opened();
+    const tabs = sheetOf(screens).tabs;
+    const before = tabs.tabIds.map((id) => ({ id, rect: tabs.tabRect(id) }));
+    expect(tabs.bodyScroller?.scrollable).toBe(true);
+
+    tabs.bodyScroller?.scrollTo(9999);
+    screens.update(fed(), 32);
+
+    expect(tabs.bodyScroller?.scrollOffset).toBeGreaterThan(0);
+    expect(tabs.tabIds.map((id) => ({ id, rect: tabs.tabRect(id) }))).toEqual(before);
+    // ...and every one of them is still inside the window, which is the thing a
+    // player is actually complaining about.
+    const window = windowSize(screens, 'character');
+    for (const { rect } of before) {
+      expect(rect).not.toBeNull();
+      if (!rect) continue;
+      expect(rect.y).toBeGreaterThanOrEqual(window.y);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(window.y + window.height);
+    }
+  });
+
+  /**
+   * The floor under the pinned band, measured rather than trusted.
+   *
+   * `Linear.shareSpace` starves a grower to nothing when the fixed children
+   * alone overflow, so a window shorter than the band takes the tab panel with
+   * it -- strip and all. The minimum has to hold the band, one row of whatever
+   * the tab is showing, and the window's own chrome; a theme that grows the
+   * heading fails here rather than on somebody's screen.
+   */
+  it('will not be resized under its own pinned band', () => {
+    const screens = opened();
+    const sheet = sheetOf(screens);
+    const band = sheet.tabs.bodyViewport().y - sheet.rect.y;
+    const row = sheet.skillRows[0]?.rect.height ?? 0;
+    expect(band).toBeGreaterThan(0);
+    expect(row).toBeGreaterThan(0);
+    expect(CHARACTER_MIN_SIZE.height).toBeGreaterThanOrEqual(band + row + WINDOW_CHROME.height);
+
+    // And the window honours it: dragged to nothing, the strip is still there.
+    const window = screens.root.windows?.get('character');
+    window?.resize({ width: 10, height: 10 }, screens.root.layoutContext(), VIEWPORT);
+    screens.update(fed(), 48);
+    expect(windowSize(screens, 'character').height).toBe(CHARACTER_MIN_SIZE.height);
+    expect(sheet.tabs.headerStrip.rect.height).toBeGreaterThan(0);
+    expect(sheet.tabs.bodyViewport().height).toBeGreaterThan(0);
   });
 });

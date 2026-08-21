@@ -355,6 +355,11 @@ export const PLAY_GOLDEN_CASES: readonly PlayGoldenCase[] = [
     covers: 'a skill whose attribute gate is not met, greyed out beside one that is',
   },
   {
+    name: 'play-scrolled',
+    options: { tab: 'skills', scrollBody: 9999 },
+    covers: 'the skill tree scrolled to its end with the tab strip still above it (spec 197)',
+  },
+  {
     name: 'play-small',
     options: { viewport: { width: 300, height: 140 } },
     covers: 'the smallest supported viewport, HUD and window together',

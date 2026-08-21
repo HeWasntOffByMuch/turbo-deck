@@ -14,6 +14,7 @@
  */
 
 import { Column, Row } from '../core/containers.js';
+import type { EventContext } from '../core/events.js';
 import { uniformInsets, type Point, type Rect } from '../core/geom.js';
 import type { Widget } from '../core/widget.js';
 import type { Theme } from '../theme/theme.js';
@@ -295,10 +296,15 @@ export class CharacterScreen extends Column {
     this.nextLabel.wrap = true;
     this.respecButton.onPress = () => this.onRespec?.();
 
-    // No `layoutGrow` on the tabs: a Linear squashes children it cannot fit, so
-    // a growing tab panel inside a short window draws its rows on top of each
-    // other. Natural height plus the caller's ScrollView is the honest pairing,
-    // and it is the same answer the widget gallery reached.
+    // The tabs take whatever is left after the pinned band, and that is spec
+    // 197 undoing a note that had been copied into three screens: "no
+    // `layoutGrow` on the tabs, a Linear squashes children it cannot fit".
+    // True for as long as the panel could not scroll -- and the reason the
+    // whole sheet had to live in the mount's ScrollView, which is what scrolled
+    // the tab headers off the top of the window. A panel that can be squeezed
+    // *and* scrolls its own body is what a window wants; the four widgets above
+    // it stay put, which is the point.
+    this.tabs.layoutGrow = 1;
     this.addAll([this.heading, this.experience, this.pointsLabel, new Separator('row'), this.tabs]);
   }
 
@@ -382,6 +388,13 @@ export class CharacterScreen extends Column {
    * behind it. Only the ancestor chain knows which tab a row is in.
    */
   hintAt(at: Point): TooltipContent {
+    // Every row this screen has lives inside a tab, and a tab's body is a
+    // viewport now (spec 197) -- so a row scrolled out of it keeps the rectangle
+    // it was last arranged into, above the strip and under the pinned heading.
+    // `showing` cannot see that: the row is visible, and so is every ancestor.
+    // It is the same class of bug the ancestor walk was written for, one level
+    // out: a rect that is still correct for a widget nobody can see.
+    if (!contains(this.tabs.bodyViewport(), at)) return '';
     for (const row of this.attributeRows.values()) {
       if (this.showing(row) && contains(row.rect, at)) return row.tooltip();
     }
@@ -411,6 +424,20 @@ export class CharacterScreen extends Column {
     }
     // Detached: rebuilt out from under us, so it is not on screen either.
     return false;
+  }
+
+  /**
+   * A wheel over the pinned band scrolls the tab under it.
+   *
+   * The heading, the meter and the points line are outside the panel, so a notch
+   * over them bubbles straight past it to the window and dies there -- which is
+   * a window that scrolls everywhere except its own top inch, and reads as a
+   * broken wheel rather than as a pinned header. A notch over the rows or over
+   * the strip never gets this far: the tab's own scroller took it.
+   */
+  onEvent(context: EventContext): void {
+    if (context.event.kind !== 'wheel') return;
+    if (this.tabs.wheelBody(context.event.delta)) context.stopPropagation();
   }
 
   /** Point the tooltip at whatever is under the cursor. Driven by the mount. */

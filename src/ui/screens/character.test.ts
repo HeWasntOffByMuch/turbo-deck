@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ALL_SYNERGIES } from '../../server/data/synergies.js';
+import { NO_MODIFIERS } from '../core/events.js';
 import { UiRoot } from '../core/root.js';
 
 /** The fifteen names the sheet must never print. */
@@ -403,5 +404,88 @@ describe('a tab built after the sheet has moved on', () => {
     screen.tabs.select('skills');
     root.update(32);
     expect(screen.rowFor('wis.discipline')?.skill?.level).toBe(2);
+  });
+});
+
+
+/**
+ * The sheet's own half of spec 197.
+ *
+ * The screen is no longer wrapped in the mount's `ScrollView`: it pins its
+ * heading, its meter, its points line and the tab strip, and the tab under them
+ * scrolls. Two things follow that are worth asserting rather than assuming --
+ * the wheel still works over the band that no longer moves, and a row scrolled
+ * out from under it is not hovered.
+ */
+describe('a sheet that scrolls under its tabs', () => {
+  /** Mounted in a box too short for the tree, which is the interesting case. */
+  function shortened(): { screen: CharacterScreen; root: UiRoot } {
+    // Six attribute rows in a box a couple of them tall, which is the shape the
+    // shipped sheet is: the tree is the tallest content in the interface.
+    const view = viewOf({
+      attributes: ['strength', 'agility', 'intelligence', 'constitution', 'perception', 'wisdom'].map(
+        (key) => attributeRow(key),
+      ),
+    });
+    const screen = new CharacterScreen({ theme: THEME });
+    screen.setCharacter(view);
+    const root = new UiRoot(screen, {
+      theme: THEME,
+      atlas: bakeAtlas(THEME),
+      viewport: { width: 200, height: 120 },
+    });
+    for (const id of screen.tabs.tabIds) screen.tabs.select(id);
+    screen.setCharacter(view);
+    screen.tabs.select('attributes');
+    root.update(0);
+    return { screen, root };
+  }
+
+  it('keeps the tab headers on screen with the body scrolled to its end', () => {
+    const { screen, root } = shortened();
+    const strip = { ...screen.tabs.headerStrip.rect };
+    expect(screen.tabs.bodyScroller?.scrollable).toBe(true);
+
+    screen.tabs.bodyScroller?.scrollTo(9999);
+    root.update(16);
+
+    expect(screen.tabs.headerStrip.rect).toEqual(strip);
+    for (const rect of screen.tabs.tabRects()) {
+      expect(rect.y).toBeGreaterThanOrEqual(screen.rect.y);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(screen.rect.y + screen.rect.height);
+    }
+  });
+
+  it('says nothing about a row that has been scrolled out of the body', () => {
+    const { screen, root } = shortened();
+    const row = screen.attributeRowFor('strength');
+    expect(row).not.toBeNull();
+    if (!row) return;
+    const middle = { x: row.rect.x + row.rect.width / 2, y: row.rect.y + row.rect.height / 2 };
+    expect(screen.hintAt(middle)).not.toBe('');
+
+    // Far enough that the row is above the viewport, keeping the rectangle it
+    // was last arranged into -- which is now under the pinned band.
+    screen.tabs.bodyScroller?.scrollTo(9999);
+    root.update(16);
+    const moved = { x: row.rect.x + row.rect.width / 2, y: row.rect.y + row.rect.height / 2 };
+    expect(moved.y).toBeLessThan(screen.tabs.bodyViewport().y);
+    expect(screen.hintAt(moved)).toBe('');
+  });
+
+  it('spends a wheel over the pinned heading on the tab under it', () => {
+    // The heading is outside the panel, so the notch bubbles past it to the
+    // window and dies there unless the screen hands it down.
+    const { screen, root } = shortened();
+    expect(screen.tabs.bodyScroller?.scrollOffset).toBe(0);
+    root.handle({
+      kind: 'wheel',
+      pos: { x: screen.rect.x + 4, y: screen.rect.y + 2 },
+      delta: -2,
+      mods: NO_MODIFIERS,
+      time: 16,
+    });
+    root.update(16);
+    expect(screen.tabs.bodyScroller?.scrollOffset).toBeGreaterThan(0);
   });
 });

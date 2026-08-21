@@ -409,6 +409,14 @@ export interface PlayRenderOptions {
   readonly tab?: string;
   /** Spend these first, so a locked branch and a filled row are in the frame. */
   readonly spend?: readonly string[];
+  /**
+   * Scroll the open tab's body this far, in UI pixels (spec 197).
+   *
+   * Clamped by the scroller, so a number past the end is "as far as it goes" --
+   * which is the frame worth having, since the claim is about what is still on
+   * screen when there is nothing left to scroll.
+   */
+  readonly scrollBody?: number;
 }
 
 const DEMO_ABILITIES: readonly { readonly id: string; readonly icon: string; readonly cost: number }[] = [
@@ -581,7 +589,10 @@ export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
 
   const sheet = new CharacterScreen({ theme });
   sheet.setCharacter(demoCharacter(options.spend ?? []));
-  const window = new UiWindow(new ScrollView(sheet, 'sheetScroll'), {
+  // Not in a `ScrollView`: the sheet pins its heading and its tab strip and
+  // scrolls the tab's own body (spec 197), which it can only do when it is
+  // handed the window's real height.
+  const window = new UiWindow(sheet, {
     title: 'Character',
     at: { x: 150, y: 8 },
     size: {
@@ -599,6 +610,10 @@ export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
   // (spec 124), so its rows have never been told what is in them.
   sheet.setCharacter(demoCharacter(options.spend ?? []));
   root.update(0);
+  if (options.scrollBody !== undefined) {
+    sheet.tabs.bodyScroller?.scrollTo(options.scrollBody);
+    root.update(0);
+  }
 
   const surface = new RasterSurface(atlas, viewport.width, viewport.height);
   surface.clear(theme.color('ink'));

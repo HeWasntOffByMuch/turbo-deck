@@ -206,10 +206,25 @@ const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
  * size that fits its screen rather than one that clips it by four pixels. The
  * gallery works it out the same way, for the same reason.
  */
-const WINDOW_CHROME = {
+export const WINDOW_CHROME = {
   width: THEME.widget('window').padding * 2,
   height: BODY_FONT.height + THEME.widget('window').padding * 3,
 };
+
+/**
+ * The smallest the character window may be, in UI pixels (spec 197).
+ *
+ * Its heading, meter, points line and tab strip are *pinned* -- they are outside
+ * the scroller now, so they cannot be scrolled past and a window shorter than
+ * they are has nowhere to put them. `Linear.shareSpace` answers that by starving
+ * the grower, which is the tab panel, so at `UiWindow`'s default 40px floor the
+ * strip and the body would both vanish and the band would be squashed on top of
+ * itself. The height is the band plus one skill row plus the window's own
+ * chrome; `ui-screens.test.ts` measures all three and fails if a theme grows
+ * past it, because a number that decides a layout must not be one somebody
+ * typed once.
+ */
+export const CHARACTER_MIN_SIZE: Size = { width: 96, height: 120 };
 
 /** How far a window sits from the edge it opens against, in UI pixels. */
 const MARGIN = 8;
@@ -560,12 +575,26 @@ export class UiScreens {
     };
 
     this.registerWindow('inventory', this.inventory);
-    this.registerWindow('character', this.character);
+    // Not scrolled by the mount, and that is the whole of spec 197 from this
+    // side: one scroller around the whole sheet is what scrolled its tab strip
+    // off the top of the window. Unscrolled, the screen is handed the window's
+    // real height, its `TabPanel` grows into it and scrolls its own body -- so
+    // the heading, the meter and the tabs stay where they are.
+    this.registerWindow('character', this.character, {
+      scrolled: false,
+      // A pinned band is a band a window must not be resized under: `shareSpace`
+      // starves a grower to nothing when the fixed children alone overflow, so
+      // at the default 40px minimum the strip would go with the body. Asserted
+      // against the band's measured height in `ui-screens.test.ts` rather than
+      // trusted, since the number that decides it is the theme's.
+      minSize: CHARACTER_MIN_SIZE,
+    });
     this.registerWindow('shop', this.shop);
     this.registerWindow('trade', this.trade);
-    // Not scrolled by the mount: the keybindings page inside it has a filter
-    // field, tabs and a scroller of its own (spec 125).
-    this.registerWindow('options', this.optionsScreen, false);
+    // Not scrolled by the mount: the options screen's tabs scroll their own
+    // bodies (spec 197), and the keybindings page inside it has a filter field
+    // and tabs of its own (spec 125).
+    this.registerWindow('options', this.optionsScreen, { scrolled: false });
   }
 
   /**
@@ -580,9 +609,18 @@ export class UiScreens {
    * opened, which is a reasonable guess and nothing more. A bag that is one row
    * short is a bag you scroll for the rest of the install.
    */
-  private registerWindow(id: WindowId, screen: Widget, scrolled = true): void {
+  private registerWindow(
+    id: WindowId,
+    screen: Widget,
+    options: { readonly scrolled?: boolean; readonly minSize?: Size } = {},
+  ): void {
+    const scrolled = options.scrolled ?? true;
     const content = scrolled ? new ScrollView(screen, `${id}Scroll`) : screen;
-    const window = new UiWindow(content, { title: WINDOW_TITLES[id], resizable: true });
+    const window = new UiWindow(content, {
+      title: WINDOW_TITLES[id],
+      resizable: true,
+      ...(options.minSize ? { minSize: options.minSize } : {}),
+    });
     this.contents.set(id, content);
     this.windows.register(window, id);
     window.visible = false;
@@ -1451,7 +1489,16 @@ export class UiScreens {
       width: Math.max(64, viewport.width - MARGIN * 2),
       height: Math.max(48, viewport.height - top - MARGIN),
     };
-    const size = this.sizeFor(id, max);
+    // Raised to the window's own floor *before* a corner is chosen. `restore`
+    // clamps a size under the minimum on its way in, so an origin computed from
+    // the smaller number puts a right-anchored window over the edge it was
+    // measured to clear -- which is what a `minSize` bigger than an unfed
+    // screen's natural width does (spec 197).
+    const measured = this.sizeFor(id, max);
+    const size = {
+      width: Math.max(measured.width, window.minSize.width),
+      height: Math.max(measured.height, window.minSize.height),
+    };
     window.restore(this.originFor(id, size, viewport, top), size, viewport);
   }
 
@@ -1461,11 +1508,14 @@ export class UiScreens {
     // window and the options window that contains the same screen.
     if (id === 'options' || !content) return max;
 
-    // The window's *content* is measured, not the screen inside it: the content
-    // is a `ScrollView`, which takes its bar's width off before handing the rest
-    // on. Measuring the screen and sizing the window to that is a window exactly
-    // one scrollbar too narrow, which shows up as the last column of the bag
-    // clipped and a horizontal offset nobody asked for.
+    // The window's *content* is measured, not the screen inside it, and where
+    // the two differ the content is a `ScrollView` that takes its bar's width
+    // off before handing the rest on. Measuring the screen and sizing the window
+    // to that is a window exactly one scrollbar too narrow, which shows up as
+    // the last column of the bag clipped and a horizontal offset nobody asked
+    // for. Since spec 197 the sheet is its own content -- unscrolled, so its tab
+    // strip stays put -- and the bar it has to make room for is the one inside
+    // its `TabPanel`, which is already in what the screen measures to.
     //
     // No vertical ceiling, so the answer is the natural height rather than
     // whatever the content would compress to.

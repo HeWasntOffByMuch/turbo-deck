@@ -315,7 +315,10 @@ function buildPlayScene(viewport: { width: number; height: number }): {
   const sheet = new CharacterScreen({ theme: THEME });
   sheet.setCharacter(demoCharacter([]));
   manager.register(
-    new UiWindow(new ScrollView(sheet, 'sheetScroll'), {
+    // Not in a `ScrollView`: the sheet pins its heading and its tab strip and
+    // scrolls the tab's own body (spec 197), which needs the window's real
+    // height rather than a scroller's unbounded one.
+    new UiWindow(sheet, {
       title: 'Character',
       at: { x: Math.max(8, viewport.width - 210), y: 8 },
       size: { width: Math.min(200, viewport.width - 16), height: Math.min(220, viewport.height - 16) },

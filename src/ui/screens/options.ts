@@ -44,10 +44,14 @@ export class OptionsScreen extends Column {
     this.tabs.addTab('keys', 'Keys', () => options.keys);
     this.tabs.addTab('display', 'Display', () => options.display);
 
-    // No `layoutGrow`: a Linear squashes children it cannot fit, so a growing
-    // tab panel in a short window draws its rows on top of each other. Natural
-    // height plus the caller's ScrollView is the honest pairing, and it is the
-    // third screen to reach that answer.
+    // The tabs take the window, and the strip stays at the top of it (spec 197).
+    // This window is registered *unscrolled*, so before the panel scrolled its
+    // own body the note that used to be here -- "no `layoutGrow`, a Linear
+    // squashes children it cannot fit" -- was the whole bug: a keybinding
+    // category with more rows than the window is tall went through the overflow
+    // branch and every row was shrunk toward nothing, with no bar and no way to
+    // reach the ones at the bottom.
+    this.tabs.layoutGrow = 1;
     this.add(this.tabs);
   }
 }
