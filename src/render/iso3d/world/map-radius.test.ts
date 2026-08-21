@@ -12,7 +12,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
 import {
   MAP_CHUNK_BURST,
@@ -20,8 +19,8 @@ import {
   MAP_CHUNK_REQUEST_RADIUS,
 } from '../../../server/config.js';
 import { CHUNK_REQUESTS_PER_PASS } from '../../../server/client/game-client.js';
-import { parseMap } from '../../../terrain/map.js';
 import { cameraFrustum, internalRenderSize } from '../view-frame.js';
+import { loadMapFile } from '../../../server/world/map-file.js';
 import {
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_VIEW_HALF_WIDTH,
@@ -31,7 +30,7 @@ import {
 } from '../view-settings.js';
 
 /** The chunk edge the shipped map actually uses, rather than an assumed one. */
-const doc = parseMap(readFileSync('maps/arena.json', 'utf8'));
+const doc = loadMapFile().doc;
 const CHUNK_EXTENT = doc.grid.cellSize * doc.grid.chunkCells;
 
 /**

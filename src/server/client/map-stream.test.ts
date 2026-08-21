@@ -13,9 +13,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
-import { parseMap } from '../../terrain/map.js';
 import { loadMap } from '../../terrain/map-world.js';
 import { MAP_CHUNK_REQUEST_RADIUS } from '../config.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
@@ -23,9 +21,10 @@ import { GameServer } from '../server.js';
 import { buildWorldFromMap } from '../world/build.js';
 import { GameClient } from './game-client.js';
 import { chunksToDocument } from './map-rebuild.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const text = readFileSync('maps/arena.json', 'utf8');
-const doc = parseMap(text);
+const shipped = loadMapFile();
+const doc = shipped.doc;
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -36,7 +35,7 @@ interface Harness {
 }
 
 function harness(): Harness {
-  const built = buildWorldFromMap(doc, text);
+  const built = buildWorldFromMap(doc, shipped.mapId);
   const transport = new LoopbackTransport();
   const server = new GameServer({ transport, built });
   server.liveConfig.set('spawnRateMultiplier', 0);

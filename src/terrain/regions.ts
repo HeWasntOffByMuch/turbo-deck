@@ -164,17 +164,62 @@ export interface SplitMap {
 }
 
 /**
+ * The rectangle a region's own chunks cover, in world space.
+ *
+ * A chunk on a flank can be short -- `cols`/`rows` are per chunk, and growth
+ * completes a partial chunk rather than refusing it -- so this measures the
+ * chunks rather than assuming each is a full `extent` square.
+ *
+ * Every value is `origin` plus a whole number of cells, and `origin` is already
+ * quantized, so the numbers written are the integers the format wants.
+ */
+function regionBounds(
+  layer: MapLayer,
+  chunks: readonly MapLayer['chunks'][number][],
+  grid: MapDocument['grid'],
+): MapRect {
+  const extent = grid.cellSize * grid.chunkCells;
+  let minX = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxZ = -Infinity;
+  for (const chunk of chunks) {
+    const x = layer.origin.x + chunk.cx * extent;
+    const z = layer.origin.z + chunk.cz * extent;
+    minX = Math.min(minX, x);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x + chunk.cols * grid.cellSize);
+    maxZ = Math.max(maxZ, z + chunk.rows * grid.cellSize);
+  }
+  // An empty region is never written -- `byRegion` only gains a key when a chunk
+  // lands in it -- but a rect of infinities would serialize, so say so instead.
+  if (!Number.isFinite(minX)) throw new Error('regionBounds: a region with no chunks in it');
+  return { minX, minZ, maxX, maxZ };
+}
+
+/**
  * One document, as a manifest and a set of region files.
  *
- * A region file is itself a **valid `MapDocument`**, carrying its layer's real
+ * A region file is itself a **valid `MapDocument`**, carrying its layer's
  * scalars and only its own chunks. That is deliberate reuse: `serializeMap`
  * writes one terrain row per line and `parseMap` checks every field, and a
  * second format for the same data would be a second thing to keep right. It
  * also means a region file can be opened, diffed and validated on its own.
  *
- * The manifest is authoritative for everything a region file repeats. They
- * cannot disagree unless somebody hand-edits one, and `regionsAgreeWithManifest`
- * is what says so.
+ * The manifest is authoritative for everything a region file repeats -- `joinMap`
+ * reads every layer scalar out of the manifest and none out of the region -- and
+ * `regionsAgreeWithManifest` is what says the two have not been hand-edited apart.
+ *
+ * Which forces the rule that makes the whole split worth having: **a region's
+ * bytes are a function of its own chunks and of nothing else.** It was written
+ * with `{ ...layer }` first, which put the *layer's* `bounds` in all 224 files --
+ * a whole-world fact, and the one that moves every time the map grows. Growing
+ * two chunks off the east edge rewrote every region on disk, byte for byte
+ * identical but for `maxX`, which is the git-history problem this spec exists to
+ * fix arriving by a different door. So a region declares **its own** extent. The
+ * rest of the scalars are repeated as they are because they are fixed for the
+ * life of the map -- `origin` explicitly so, since spec 083, and the chunk
+ * indices inside the file are relative to it.
  */
 export function splitMap(doc: MapDocument, size: number = REGION_CHUNKS): SplitMap {
   const regions = new Map<string, string>();
@@ -222,7 +267,8 @@ export function splitMap(doc: MapDocument, size: number = REGION_CHUNKS): SplitM
         grid: doc.grid,
         arena: doc.arena,
         parts: [],
-        layers: [{ ...layer, chunks: ordered }],
+        // `bounds` is the region's own, never the layer's. See the note above.
+        layers: [{ ...layer, bounds: regionBounds(layer, ordered, doc.grid), chunks: ordered }],
       });
       const existing = regions.get(path);
       // Two layers sharing a region path would overwrite each other. One ground
@@ -316,6 +362,11 @@ export function joinMap(manifest: MapManifest, readRegion: (path: string) => str
  * the manifest is authoritative for all of them. This is the check that they
  * have not been hand-edited apart -- returned as a list of complaints rather
  * than thrown, because a tool wants to report all of them at once.
+ *
+ * `id` and `origin` are checked and `bounds` deliberately is not: those two are
+ * what make a region's chunk indices mean anything, and `bounds` is the region's
+ * own extent rather than the layer's, so a region disagreeing with the manifest
+ * about it is the normal state and not a fault. See `splitMap`.
  */
 export function regionsAgreeWithManifest(
   manifest: MapManifest,

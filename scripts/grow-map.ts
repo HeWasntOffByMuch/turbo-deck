@@ -17,13 +17,16 @@
  * editor's Grow tool and this script cannot produce different worlds.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { parseMap, serializeMap, type ChunkRect, type MapDocument, type PartRecipe } from '../src/terrain/index.js';
+import { serializeMap, type ChunkRect, type MapDocument, type PartRecipe } from '../src/terrain/index.js';
 import { growMap } from '../src/terrain/part.js';
+import { loadMapFile } from '../src/server/world/map-file.js';
+import { splitMap } from '../src/terrain/regions.js';
+import { writeSplit } from './split-map.js';
 
-export const DEFAULT_MAP_PATH = 'maps/arena.json';
+export const DEFAULT_MAP_PATH = 'maps/arena';
 
 export interface GrowArgs {
   readonly map: string;
@@ -144,11 +147,11 @@ export function unfilledCells(doc: MapDocument, layerId: string): number {
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
-  const path = resolve(process.cwd(), args.map);
-  const before = parseMap(readFileSync(path, 'utf8'));
+  const before = loadMapFile(args.map).doc;
   const recipe = readRecipe(args.recipe);
 
   const after = grow(before, args, recipe);
+  const split = splitMap(after);
   const text = serializeMap(after);
 
   const was = before.layers.reduce((n, l) => n + l.chunks.length, 0);
@@ -172,7 +175,10 @@ function main(): void {
         '  be walled. Grow the rest of the rectangle to close it.\n',
   );
 
-  if (!args.dryRun) writeFileSync(path, text, 'utf8');
+  // Only the regions the part touched change on disk; the rest keep their
+  // bytes, which is what makes a grow a reviewable diff again rather than
+  // another whole copy of the world in git history (spec 200).
+  if (!args.dryRun) writeSplit(args.map, split.manifest, split.regions);
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {

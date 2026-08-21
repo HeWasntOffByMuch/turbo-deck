@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
 import { parseMap, serializeMap, type MapDocument } from './map.js';
 import { grow, parseArgs, parseRect, unfilledCells, type GrowArgs } from '../../scripts/grow-map.js';
+import { loadMapFile } from '../server/world/map-file.js';
 
 /**
  * The headless half of growing a map (spec 083).
@@ -16,7 +16,7 @@ import { grow, parseArgs, parseRect, unfilledCells, type GrowArgs } from '../../
 const RECIPE = { features: [{ kind: 'rolling' as const, amplitude: 30 }] };
 
 function shipped(): MapDocument {
-  return parseMap(readFileSync('maps/arena.json', 'utf8'));
+  return loadMapFile().doc;
 }
 
 // A single chunk just past the map's own east edge -- free of every existing
@@ -28,7 +28,7 @@ const SHIPPED_NORTH_CZ = Math.min(...SHIPPED_CHUNKS.map((c) => c.cz));
 
 function args(overrides: Partial<GrowArgs> = {}): GrowArgs {
   return {
-    map: 'maps/arena.json',
+    map: 'maps/arena',
     recipe: 'maps/recipes/east-shelf.json',
     rect: { minCx: SHIPPED_EAST_CX, minCz: SHIPPED_NORTH_CZ, maxCx: SHIPPED_EAST_CX, maxCz: SHIPPED_NORTH_CZ },
     id: 'test-part',

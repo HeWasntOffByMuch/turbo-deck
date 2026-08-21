@@ -9,19 +9,18 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import {
   createFlatPredictor,
   createWorldPredictor,
   type PredictStep,
 } from '../../../server/client/prediction.js';
 import { buildWorldFromMap } from '../../../server/world/build.js';
-import { parseMap } from '../../../terrain/map.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../../../server/config.js';
 import { createGroundPredictor, emptyGround, fillGround, hasGround } from './prediction-ground.js';
+import { loadMapFile } from '../../../server/world/map-file.js';
 
-const mapText = readFileSync(new URL('../../../../maps/arena.json', import.meta.url), 'utf8');
-const world = buildWorldFromMap(parseMap(mapText), mapText);
+const shippedMap = loadMapFile();
+const world = buildWorldFromMap(shippedMap.doc, shippedMap.mapId);
 
 const SPEED = 220;
 

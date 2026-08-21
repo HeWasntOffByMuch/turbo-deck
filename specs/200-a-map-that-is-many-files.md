@@ -140,8 +140,21 @@ field on the region schema and disturbs none of this.
 - **The split round-trips.** `maps/arena/` recombined is **byte-identical** to
   today's `maps/arena.json` apart from the dropped `nav`, and loading either
   produces equal terrain: `heightAt` agrees exactly at sampled points.
+- **A region's bytes are a function of its own chunks and of nothing else.**
+  Extend the layer's `bounds` — the part of a grow that nothing outside the
+  grown rectangle should react to — re-split, and every region's text is
+  unchanged. This one is a regression test rather than a restatement: written
+  with `{ ...layer, chunks }`, each region carried the *layer's* `bounds`, so
+  growing two chunks off the east edge rewrote all 224 files, byte-identical
+  but for `maxX`. Every other test here passed. A region declares **its own**
+  extent; the manifest is authoritative for the layer's, and `joinMap` already
+  read it from there.
 - **A one-chunk edit touches one region file** and the manifest, and nothing
-  else.
+  else. Measured end to end by growing a real part off the east edge: 4 chunks
+  added, **223 of 224 regions untouched**, 173 KB rewritten of a 9.88 MB map
+  (1.7%), of which the manifest is 99 KB. That last number is the one that
+  improves with scale — the manifest grows with the region *count* and the map
+  grows with its area.
 - **Negative coordinates**, at `-1, 0, R-1, R, -R, -R-1`: the region a chunk
   belongs to, the file name it lands in, and the round trip back. `Math.floor`
   is correct and file-naming bugs around negative boundaries survive unit
@@ -149,16 +162,35 @@ field on the region schema and disturbs none of this.
 - **`mapId` is stable and local.** The same world hashes the same however its
   regions are ordered on disk; changing one region changes `mapId`; changing
   none leaves it alone.
-- **The manifest answers everything a boot asks.** Building a server world
-  reads the manifest and no region file until a chunk is wanted — asserted by
-  counting region reads, which is also what makes spec 202's claim checkable.
+- **The manifest *contains* everything a boot asks** — grid scalars, bounds,
+  parts, species, chunk presence and every spawner in world space — so that a
+  boot which reads no region becomes possible. It does not become actual here:
+  `loadMapFile` still joins the whole world and `buildWorldFromMap` still takes
+  a whole document, which is exactly what spec 202 changes. What is asserted now
+  is the *contents*: the manifest's spawner list matches walking every chunk,
+  and its `coords` list every chunk that exists. Counting region reads at boot
+  is 202's test, not this one's.
 - **Spawners come from the manifest** and match `spawnPointsFrom` over the
-  recombined document exactly.
+  recombined document exactly — compared against that function rather than
+  against a hand-walk of the chunks, because it is what the server actually
+  calls and a boot reading the manifest instead gets whatever this list says.
+  One asymmetry to carry into spec 202: `spawnPointsFrom` also **validates** —
+  it throws on an unknown monster id and on two spawners sharing an id — and
+  the manifest hoist does not. A lazy boot must still run that check over the
+  manifest's list, or the two failures it catches today become a monster that
+  silently never spawns.
 - **A crash between writes leaves a loadable map.** Write the regions, do not
   write the manifest, and the old map still loads; write a manifest naming a
   region that is not there and loading fails loudly rather than silently
   serving a hole.
 - **`nav` is gone from the wire**, and a chunk decodes without it.
+- **The bundle gate still measures the world.** Spec 199's floor asked for the
+  largest single `.json` asset, which was right for one 11.5 MB file and fails
+  a healthy build the moment the map is 224 files of 58 KB. It becomes a **sum**
+  — and the sum is the sharper instrument anyway, because the failure this split
+  introduces is `import.meta.glob` matching nothing, which emits the manifest
+  and no regions at all. Asserted both ways: the healthy build passes, and it
+  would not have under the old measure.
 
 ## Out of scope
 

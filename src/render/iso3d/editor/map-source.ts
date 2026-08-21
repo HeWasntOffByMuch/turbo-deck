@@ -2,7 +2,6 @@ import {
   createArenaWorld,
   exportMap,
   loadMap,
-  parseMap,
   worldVegetation,
   type LoadedMap,
   type MapDocument,
@@ -67,15 +66,19 @@ export function editorMapChoice(search: string): EditorMapChoice {
 }
 
 /**
- * Where the shipped map's text comes from (spec 199).
+ * Where the shipped map comes from (spec 199, a document since 200).
  *
  * Handed in rather than reached for, the way `StorageLike` is: in a browser it
- * is `map-asset.ts`'s fetch of a hashed JSON asset, and in a test it is
- * `readFileSync`. Without the seam this module could only be exercised where a
+ * is `map-asset.ts`'s fetch of a manifest and its regions, and in Node it is
+ * `loadMapFile`. Without the seam this module could only be exercised where a
  * `fetch` works, and the whole reason it was split out of the view was so the
  * editor's relationship with the terrain system could be asserted in Node.
+ *
+ * A *document* rather than text since the map became many files: there is no
+ * single string to hand over any more, and `parseMap` has already run by the
+ * time either reader has something to give.
  */
-export type ReadMapText = () => Promise<string>;
+export type ReadMapDocument = () => Promise<MapDocument>;
 
 export interface OpenedMap {
   readonly document: MapDocument;
@@ -106,8 +109,8 @@ export function bakeEditorMap(seed: number): { document: MapDocument; map: Loade
  * the text is what the server reads and what the Play tab hashes, and a map that
  * only the editor would accept is not the map being played.
  */
-export async function shippedEditorMap(readMapText: ReadMapText): Promise<{ document: MapDocument; map: LoadedMap }> {
-  const document = parseMap(await readMapText());
+export async function shippedEditorMap(read: ReadMapDocument): Promise<{ document: MapDocument; map: LoadedMap }> {
+  const document = await read();
   return { document, map: loadMap(document) };
 }
 
@@ -123,12 +126,12 @@ export async function shippedEditorMap(readMapText: ReadMapText): Promise<{ docu
 export async function openEditorMap(
   search: string,
   seed: number,
-  readMapText: ReadMapText,
+  read: ReadMapDocument,
 ): Promise<OpenedMap> {
   if (editorMapChoice(search) === 'generated') {
     const baked = bakeEditorMap(seed);
     return { ...baked, name: mapFilename(baked.document), from: `generated world, seed ${seed}` };
   }
-  const opened = await shippedEditorMap(readMapText);
+  const opened = await shippedEditorMap(read);
   return { ...opened, name: SHIPPED_MAP_NAME, from: SHIPPED_MAP_NAME };
 }

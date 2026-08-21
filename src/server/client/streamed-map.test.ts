@@ -8,16 +8,15 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
-import { parseMap } from '../../terrain/map.js';
 import { loadMap } from '../../terrain/map-world.js';
 import { ServerMessageType } from '../net/protocol.js';
 import type { MapInfoMessage } from '../net/map-messages.js';
 import type { HeldChunk } from './map-cache.js';
 import { StreamedMap } from './streamed-map.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const doc = parseMap(readFileSync('maps/arena.json', 'utf8'));
+const doc = loadMapFile().doc;
 
 const info: MapInfoMessage = {
   type: ServerMessageType.MapInfo,

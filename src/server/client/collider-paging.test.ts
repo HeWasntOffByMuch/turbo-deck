@@ -15,8 +15,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { parseMap } from '../../terrain/map.js';
 import { buildWorldFromMap } from '../world/build.js';
 import { StreamedMap } from './streamed-map.js';
 import { createFlatPredictor, createWorldPredictor, type PredictStep } from './prediction.js';
@@ -26,9 +24,10 @@ import type { MapInfoMessage } from '../net/map-messages.js';
 import { FLAT_GROUND, navGridFor, NAV_BLOCKED } from '../../sim/pathfinding.js';
 import { createWorldColliders } from '../../sim/collision.js';
 import type { HeldChunk } from './map-cache.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const mapText = readFileSync(new URL('../../../maps/arena.json', import.meta.url), 'utf8');
-const doc = parseMap(mapText);
+const shippedMap = loadMapFile();
+const doc = shippedMap.doc;
 const SPEED = 220;
 const CHUNK_EXTENT = doc.grid.cellSize * doc.grid.chunkCells;
 
@@ -186,7 +185,7 @@ describe('a map that has not all arrived', () => {
 describe('a map that has all arrived', () => {
   it('predicts exactly what a world built from the document predicts', () => {
     const full = streamed(allChunks());
-    const built = buildWorldFromMap(doc, mapText);
+    const built = buildWorldFromMap(doc, shippedMap.mapId);
     const mineStep = predictorFor(full);
     const theirsStep = createWorldPredictor({
       world: built.colliders,
@@ -211,7 +210,7 @@ describe('a map that has all arrived', () => {
 
   it('holds the same colliders the document does', () => {
     const full = streamed(allChunks());
-    const built = buildWorldFromMap(doc, mapText);
+    const built = buildWorldFromMap(doc, shippedMap.mapId);
     expect(full.snapshotColliders().circles.length).toBe(built.colliders.circles.length);
     expect(full.snapshotColliders().bounds).toEqual(built.colliders.bounds);
   });
@@ -285,7 +284,7 @@ describe('the collider snapshot', () => {
 
   it('declares the whole map from the first frame, before any chunk', () => {
     const empty = new StreamedMap(mapInfo());
-    const built = buildWorldFromMap(doc, mapText);
+    const built = buildWorldFromMap(doc, shippedMap.mapId);
     // The wall belongs to the world, not to what has loaded -- otherwise it
     // moves under the player as the map streams in.
     expect(empty.snapshotColliders().bounds).toEqual(built.colliders.bounds);

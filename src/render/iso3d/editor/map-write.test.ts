@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { serializeMap } from '../../../terrain/index.js';
 import { MAP_WRITE_ENDPOINT, writeMapToDisk, type FetchLike } from './map-write.js';
 import { resolveMapWrite, writeMapFile } from '../../../../scripts/dev-map-write.js';
+import { joinMap, MANIFEST_PATH, parseManifest, regionPath } from '../../../terrain/regions.js';
 import { bakeEditorMap } from './map-source.js';
 
 /**
@@ -117,22 +118,49 @@ describe('writing the file', () => {
     return { root, text: serializeMap(bakeEditorMap(1234).document) };
   };
 
-  it('writes a real map document', () => {
+  /** The world as it now stands on disk under `maps/arena/`. */
+  const readBack = (root: string): string =>
+    serializeMap(
+      joinMap(parseManifest(readFileSync(join(root, 'maps', 'arena', MANIFEST_PATH), 'utf8')), (region) =>
+        readFileSync(join(root, 'maps', 'arena', region), 'utf8'),
+      ),
+    );
+
+  it('writes a real map document, as a manifest and its regions', () => {
+    // The name on the wire is still `arena.json` -- it is what a download is
+    // called -- and what lands is `maps/arena/` (spec 200).
     const { root, text } = seeded();
     const result = writeMapFile('arena.json', text, root);
     expect(result.ok).toBe(true);
-    expect(readFileSync(join(root, 'maps', 'arena.json'), 'utf8')).toBe(text);
+    expect(readBack(root)).toBe(text);
+  });
+
+  it('commits the manifest last, so a region is only ever reachable once it is whole', () => {
+    const { root, text } = seeded();
+    writeMapFile('arena.json', text, root);
+    const manifest = parseManifest(readFileSync(join(root, 'maps', 'arena', MANIFEST_PATH), 'utf8'));
+    // Every region the manifest names is on disk. That is the invariant the
+    // ordering buys: the manifest is the only thing that makes a region
+    // reachable, so if it is there, they are.
+    for (const layer of manifest.layers) {
+      for (const entry of layer.regions) {
+        expect(() =>
+          readFileSync(join(root, 'maps', 'arena', regionPath(entry.rx, entry.rz)), 'utf8'),
+        ).not.toThrow();
+      }
+    }
   });
 
   it('refuses a body that is not a map, leaving what was there alone', () => {
     const { root, text } = seeded();
     writeMapFile('arena.json', text, root);
     // A truncated save is the realistic accident, and dropping it on top of the
-    // file the server boots from would take the world down with it.
+    // map the server boots from would take the world down with it. Refused
+    // before a single byte is written, since the parse happens first.
     const result = writeMapFile('arena.json', text.slice(0, text.length / 2), root);
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/not a map document/);
-    expect(readFileSync(join(root, 'maps', 'arena.json'), 'utf8')).toBe(text);
+    expect(readBack(root)).toBe(text);
   });
 
   it('refuses to write outside maps/, whatever is already there', () => {

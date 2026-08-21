@@ -21,7 +21,6 @@
  * is countable.
  */
 
-import { readFileSync } from 'node:fs';
 
 import { parseMap, serializeMap, type MapChunk, type MapDocument } from '../src/terrain/index.js';
 import { loadMap } from '../src/terrain/map-world.js';
@@ -29,6 +28,7 @@ import { vegetationColliders } from '../src/terrain/vegetation.js';
 import { createWorldColliders } from '../src/sim/collision.js';
 import { createNavGrid } from '../src/sim/pathfinding.js';
 import { NAV_CELL_SIZE } from '../src/sim/constants.js';
+import { mapIdOf } from '../src/server/world/map-index.js';
 import { buildWorldFromMap, warmRouting, ROUTING_RADII } from '../src/server/world/build.js';
 import { encodeMapInfo, type MapInfoMessage } from '../src/server/net/map-messages.js';
 import { infoFromIndex, tiledMap } from '../src/server/world/tiled-map.js';
@@ -37,6 +37,7 @@ import { ZoneManager } from '../src/server/world/zone-manager.js';
 import { terrainSamplerFrom } from '../src/server/world/terrain.js';
 import { DEFAULT_LIVE_CONFIG, CHUNK_SIZE } from '../src/server/config.js';
 import { chunkKeyOf } from '../src/server/world/chunks.js';
+import { loadMapFile } from '../src/server/world/map-file.js';
 
 const DEFAULT_SIZES = [200, 800, 3200];
 
@@ -87,7 +88,7 @@ interface Row {
  * two readings of one run rather than two runs.
  */
 function tickCostAndPopulation(doc: MapDocument, serialized: string): { us: number; entities: number } {
-  const built = buildWorldFromMap(doc, serialized);
+  const built = buildWorldFromMap(doc, mapIdOf(serialized));
   const context: StepContext = {
     world: built.colliders,
     terrain: terrainSamplerFrom(built.terrain),
@@ -135,7 +136,7 @@ function measure(source: MapDocument, chunksWanted: number): Row {
   const parseMs = now() - t0;
 
   const t1 = now();
-  const built = buildWorldFromMap(parsed, serialized);
+  const built = buildWorldFromMap(parsed, mapIdOf(serialized));
   const buildMs = now() - t1;
 
   const info = infoFromIndex(built.index);
@@ -324,7 +325,7 @@ function reportStages(source: MapDocument): void {
 
 function main(): void {
   const { sizes, stages } = parseSizes(process.argv.slice(2));
-  const source = parseMap(readFileSync('maps/arena.json', 'utf8'));
+  const source = loadMapFile().doc;
   console.log(
     `source: maps/arena.json, ${source.layers[0]?.chunks.length ?? 0} chunks, ` +
       `${source.grid.cellSize * source.grid.chunkCells}u per chunk`,

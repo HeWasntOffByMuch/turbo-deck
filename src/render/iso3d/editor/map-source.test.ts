@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import {
   DEFAULT_CHUNK_OPTIONS,
   MAP_VERSION,
@@ -8,6 +7,7 @@ import {
   serializeMap,
   createArenaWorld,
   loadMap,
+  type MapDocument,
   type MapMarker,
 } from '../../../terrain/index.js';
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
@@ -16,15 +16,15 @@ import { buildTerrainMeshFromChunks } from '../terrain-mesh.js';
 import { bakeEditorMap, editorMapChoice, openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
 
 /**
- * The shipped map off disk (spec 199).
+ * The shipped map off disk (spec 199, a directory since 200).
  *
- * The browser fetches a hashed JSON asset; a test reads the file. That the two
- * are the same bytes is the point of the seam -- and it is what lets this file
- * keep asserting the editor's relationship with the terrain system in Node,
- * which is why `map-source.ts` was split out of the view in the first place.
+ * The browser fetches a manifest and its regions; a test reads them. That the
+ * two produce the same document is the point of the seam -- and it is what lets
+ * this file keep asserting the editor's relationship with the terrain system in
+ * Node, which is why `map-source.ts` was split out of the view in the first
+ * place.
  */
-const readMapText = (): Promise<string> =>
-  Promise.resolve(readFileSync('maps/arena.json', 'utf8'));
+const readMapDocument = (): Promise<MapDocument> => Promise.resolve(loadMapFile().doc);
 import { placeMarker } from './markers.js';
 
 /**
@@ -133,17 +133,17 @@ describe('which map the editor opens (spec 176)', () => {
     // against another bake of the same seed: the shipped map has been grown and
     // hand-edited since it was baked, and re-baking its seed reproduces neither.
     const onDisk = loadMapFile().doc;
-    const opened = (await openEditorMap('', SEED, readMapText)).document;
+    const opened = (await openEditorMap('', SEED, readMapDocument)).document;
     expect(serializeMap(opened)).toBe(serializeMap(onDisk));
   });
 
   it('names a save after what was opened', async () => {
-    expect((await openEditorMap('', SEED, readMapText)).name).toBe(SHIPPED_MAP_NAME);
-    expect((await openEditorMap('?map=generated', SEED, readMapText)).name).toBe(`map-${SEED >>> 0}.json`);
+    expect((await openEditorMap('', SEED, readMapDocument)).name).toBe(SHIPPED_MAP_NAME);
+    expect((await openEditorMap('?map=generated', SEED, readMapDocument)).name).toBe(`map-${SEED >>> 0}.json`);
   });
 
   it('still bakes a generated world when asked', async () => {
-    const generated = await openEditorMap('?map=generated', SEED, readMapText);
+    const generated = await openEditorMap('?map=generated', SEED, readMapDocument);
     expect(generated.document.seed).toBe(SEED);
     expect(generated.map.chunks.length).toBeGreaterThan(0);
   });
@@ -153,11 +153,11 @@ describe('the shipped map survives the editor (spec 176)', () => {
   it('has markers to lose in the first place', async () => {
     // Without this the round-trip tests below would pass over an empty list,
     // which is exactly the state the bug produced.
-    expect(markersOf((await openEditorMap('', SEED, readMapText)).document).length).toBeGreaterThan(0);
+    expect(markersOf((await openEditorMap('', SEED, readMapDocument)).document).length).toBeGreaterThan(0);
   });
 
   it('keeps every marker through a save', async () => {
-    const opened = await openEditorMap('', SEED, readMapText);
+    const opened = await openEditorMap('', SEED, readMapDocument);
     const before = markersOf(opened.document);
     // The editor's own save: the live store re-emitted, serialized, read back.
     const after = markersOf(parseMap(serializeMap(opened.map.store.toDocument())));
@@ -165,7 +165,7 @@ describe('the shipped map survives the editor (spec 176)', () => {
   });
 
   it('keeps them when one more is placed on top', async () => {
-    const opened = await openEditorMap('', SEED, readMapText);
+    const opened = await openEditorMap('', SEED, readMapDocument);
     const layerId = opened.document.layers[0]?.id ?? 'ground';
     const before = markersOf(opened.document);
     const bounds = opened.map.store.layerInfo(layerId)?.bounds;

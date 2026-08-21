@@ -29,7 +29,7 @@ import { vegetationColliders, worldVegetation, type Prop } from '../../terrain/v
 import type { TerrainWorld } from '../../terrain/types.js';
 import { loadMap, type MapDocument } from '../../terrain/index.js';
 import { terrainSamplerFrom, type TerrainSampler } from './terrain.js';
-import { buildMapIndex, mapIdOf, type MapIndex } from './map-index.js';
+import { buildMapIndex, type MapIndex } from './map-index.js';
 import { spawnPointsFrom, type SpawnPoint } from './spawners.js';
 
 /**
@@ -113,15 +113,17 @@ export interface BuiltMapWorld extends BuiltWorld {
  * tell which of the two made it, which is the point -- the sim never learns
  * that the world became editable.
  *
- * `mapId` is computed from the *serialized* text rather than the parsed object
- * so that both ends hash the same bytes: the server hashes what it read from
- * disk, and a client is told the answer rather than recomputing it.
+ * `mapId` is handed in rather than derived here (spec 200). A map is a manifest
+ * and a grid of regions now, and its identity is a hash of ordered region
+ * hashes that the manifest already carries -- so re-deriving it would mean
+ * re-reading the world to learn a number that was written down. A caller that
+ * still has a whole document as text passes `mapIdOf(text)`.
  */
-export function buildWorldFromMap(doc: MapDocument, serialized: string): BuiltMapWorld {
+export function buildWorldFromMap(doc: MapDocument, mapId: string): BuiltMapWorld {
   return {
     ...buildWorldFromDocument(doc),
     doc,
-    index: buildMapIndex(doc, mapIdOf(serialized)),
+    index: buildMapIndex(doc, mapId),
     // Read here rather than in `buildWorldFromDocument`, because that path is
     // also a *client* assembling a partial world out of streamed chunks, and a
     // spawner that has not arrived yet is not an error there. On the server the

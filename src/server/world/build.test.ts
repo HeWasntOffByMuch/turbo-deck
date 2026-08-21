@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { buildWorld, buildWorldFromDocument, worldBoundsOf } from './build.js';
 import { footprintRadius } from '../../terrain/vegetation.js';
 import { circleBlocked } from '../../sim/collision.js';
 import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
-import { MAP_VERSION, parseMap, type MapChunk, type MapDocument } from '../../terrain/map.js';
+import { MAP_VERSION, type MapChunk, type MapDocument } from '../../terrain/map.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
 describe('buildWorld', () => {
   it('is deterministic: the same seed builds the same world', () => {
@@ -131,7 +131,7 @@ describe('the world edge follows the map', () => {
   });
 
   it('spans the shipped map rather than the old constant', () => {
-    const shipped = parseMap(readFileSync('maps/arena.json', 'utf8'));
+    const shipped = loadMapFile().doc;
     const bounds = worldBoundsOf(shipped);
     const declared = shipped.layers[0]?.bounds;
     expect(declared).toBeDefined();

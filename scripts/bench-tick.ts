@@ -22,16 +22,16 @@
  * says *which* function inside the tick is the bill.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector/promises';
 
 import { GameServer } from '../src/server/server.js';
 import { GameClient } from '../src/server/client/game-client.js';
 import { LoopbackTransport } from '../src/server/net/transport-loop.js';
 import { buildWorldFromMap, warmRouting } from '../src/server/world/build.js';
-import { parseMap } from '../src/terrain/map.js';
 import { createWorldPredictor } from '../src/server/client/prediction.js';
 import { SERVER_PLAYER_RADIUS } from '../src/server/config.js';
+import { loadMapFile } from '../src/server/world/map-file.js';
 
 const TICKS = Number(process.env['TICKS'] ?? 1800);
 /** Ticks discarded before measuring, so the number is not the JIT's. */
@@ -48,8 +48,8 @@ function mean(values: readonly number[]): number {
 }
 
 async function main(): Promise<void> {
-  const text = readFileSync('maps/arena.json', 'utf8');
-  const world = buildWorldFromMap(parseMap(text), text);
+  const shipped = loadMapFile();
+  const world = buildWorldFromMap(shipped.doc, shipped.mapId);
   warmRouting(world);
   const transport = new LoopbackTransport();
   const server = new GameServer({ seed: world.seed, built: world, transport });

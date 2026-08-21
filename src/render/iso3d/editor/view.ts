@@ -48,7 +48,7 @@ import {
   writeAutosave,
 } from './persistence.js';
 import { openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
-import { loadShippedMapText } from '../map-asset.js';
+import { loadShippedMap } from '../map-asset.js';
 import { writeMapToDisk } from './map-write.js';
 import { buildEditorPanel, type EditorPanel } from './panel.js';
 import { createEditorSettings, cursorColor, cursorRadius, NEW_ROCK_TIER } from './tools.js';
@@ -79,7 +79,7 @@ import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
  *
  * The fourth view in the shell, and the only one that renders from a **map
  * document** rather than from the generator. The document is the one the game
- * plays -- `maps/arena.json`, see `map-source.ts` -- read once at mount, and
+ * plays -- `maps/arena/`, see `map-source.ts` -- read once at mount, and
  * everything below reads exclusively from the result: the terrain mesh from
  * `map.chunks`, the props from `map.props`, the ground height from
  * `map.world.heightAt`. That indirection is the whole point of the tab: from the
@@ -451,7 +451,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   help.style.cssText = `${OVERLAY_CSS}position:absolute;left:10px;bottom:10px;z-index:20;`;
   /**
    * Filled in once the map is open, because what the top line should say
-   * depends on which map that is: replacing `maps/arena.json` with a generated
+   * depends on which map that is: replacing `maps/arena/` with a generated
    * world is the mistake spec 176 exists to stop, and telling somebody to do it
    * would be this tab's own idea.
    */
@@ -488,9 +488,9 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     }
   })();
   const restored = storage ? readAutosave(storage) : null;
-  // What this session is editing: `maps/arena.json` unless `?map=generated`
+  // What this session is editing: `maps/arena/` unless `?map=generated`
   // asks for a world from a seed (spec 176).
-  const source = await openEditorMap(globalThis.location?.search ?? '', viewSeed(), loadShippedMapText);
+  const source = await openEditorMap(globalThis.location?.search ?? '', viewSeed(), async () => (await loadShippedMap()).doc);
   const scene = new EditorScene(
     canvas,
     restored ? { document: restored, map: loadMap(restored) } : source,

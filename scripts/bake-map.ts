@@ -13,9 +13,8 @@
  * text. `scripts/bake-map.test.ts` asserts exactly that.
  */
 
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-
+import { splitMap } from '../src/terrain/regions.js';
+import { writeSplit } from './split-map.js';
 import {
   createArenaWorld,
   exportMap,
@@ -29,7 +28,7 @@ import { PLAY_HEIGHT, PLAY_WIDTH } from '../src/shared/world.js';
 /** Matches `src/server/index.ts`'s `SEED` default, so the shipped map is the
  *  world the server already played before it had a document to read. */
 export const DEFAULT_BAKE_SEED = 1;
-export const DEFAULT_MAP_OUT = 'maps/arena.json';
+export const DEFAULT_MAP_OUT = 'maps/arena';
 
 /**
  * The generated world for a seed, as a document, with nav baked.
@@ -87,10 +86,11 @@ export function parseArgs(argv: readonly string[]): Args {
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const doc = bakeMap(args.seed, args.nav);
+  // A manifest and a grid of regions, manifest last (spec 200). `writeSplit`
+  // owns the commit order so the three writers cannot each invent one.
+  const split = splitMap(doc);
+  writeSplit(args.out, split.manifest, split.regions);
   const text = serializeMap(doc);
-  const path = resolve(process.cwd(), args.out);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, text, 'utf8');
 
   const chunks = doc.layers.reduce((n, l) => n + l.chunks.length, 0);
   const props = doc.layers.reduce(

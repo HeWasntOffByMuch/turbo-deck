@@ -32,13 +32,28 @@
 export const MAX_JS_BYTES = 3 * 1024 * 1024;
 
 /**
- * The least the map asset may be, in bytes.
+ * The least the map may be, in bytes, summed across every asset.
  *
  * The other half of the question. A bundle that got small because the map
  * stopped shipping *at all* is not a pass -- it is a build that boots into an
  * empty world, and it would sail through a size ceiling.
+ *
+ * A **sum** rather than the largest single asset, which is what spec 199 could
+ * measure when the map was one 11.5 MB file. Spec 200 split it into a manifest
+ * and 224 regions of about 58 KB, so the largest asset is 0.09 MB and a
+ * largest-asset check fails a build that shipped the entire world.
+ *
+ * The sum is also the sharper instrument for the failure this split introduced:
+ * `import.meta.glob` matching nothing -- somebody moves `maps/arena/`, or edits
+ * the pattern -- emits the manifest and no regions at all. That is 0.09 MB
+ * against 10.3 MB, and it is the one shape of broken build that still boots far
+ * enough to look fine until the world does not arrive.
+ *
+ * 1 MB against the 10.3 MB the build produces, and far above the handful of
+ * incidental `.json` assets (the unit manifest, the UI theme) that the sum also
+ * picks up.
  */
-export const MIN_MAP_ASSET_BYTES = 1024 * 1024;
+export const MIN_MAP_BYTES = 1024 * 1024;
 
 export interface Emitted {
   readonly name: string;
@@ -47,7 +62,8 @@ export interface Emitted {
 
 export interface BundleReport {
   readonly jsBytes: number;
-  readonly largestMapAsset: number;
+  /** Every `.json` asset the build emitted, summed. */
+  readonly mapBytes: number;
   readonly failures: readonly string[];
 }
 
@@ -55,9 +71,9 @@ export interface BundleReport {
 export function checkBundle(files: readonly Emitted[]): BundleReport {
   const js = files.filter((f) => f.name.endsWith('.js'));
   const jsBytes = js.reduce((sum, f) => sum + f.bytes, 0);
-  const largestMapAsset = files
+  const mapBytes = files
     .filter((f) => f.name.endsWith('.json'))
-    .reduce((most, f) => Math.max(most, f.bytes), 0);
+    .reduce((sum, f) => sum + f.bytes, 0);
 
   const failures: string[] = [];
   if (jsBytes > MAX_JS_BYTES) {
@@ -72,12 +88,14 @@ export function checkBundle(files: readonly Emitted[]): BundleReport {
         `Something large is being imported as code rather than fetched as an asset (spec 199).`,
     );
   }
-  if (largestMapAsset < MIN_MAP_ASSET_BYTES) {
+  if (mapBytes < MIN_MAP_BYTES) {
     failures.push(
-      `no map asset over ${(MIN_MAP_ASSET_BYTES / 1048576).toFixed(2)} MB was emitted. ` +
-        `The bundle is small because the world is missing, which is not the same as passing.`,
+      `the build emitted ${(mapBytes / 1048576).toFixed(2)} MB of map, under the ` +
+        `${(MIN_MAP_BYTES / 1048576).toFixed(2)} MB floor. The bundle is small because the ` +
+        `world is missing, which is not the same as passing. The likely cause is ` +
+        `\`import.meta.glob\` in map-asset.ts matching no region files (spec 200).`,
     );
   }
-  return { jsBytes, largestMapAsset, failures };
+  return { jsBytes, mapBytes, failures };
 }
 

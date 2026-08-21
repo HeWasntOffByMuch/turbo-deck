@@ -17,8 +17,7 @@ import { WebSocketTransport } from './transport-ws.js';
 import { GameServer } from '../server.js';
 import { GameClient } from '../client/game-client.js';
 import { buildWorldFromMap } from '../world/build.js';
-import { parseMap } from '../../terrain/map.js';
-import { readFileSync } from 'node:fs';
+import { loadMapFile } from '../../server/world/map-file.js';
 
 // --- half one: the seam, over a fake socket ------------------------------
 
@@ -167,7 +166,7 @@ describe('the browser channel, once it is open', () => {
 
 // --- half two: a real client, over a real socket -------------------------
 
-const mapText = readFileSync(new URL('../../../maps/arena.json', import.meta.url), 'utf8');
+const shippedMap = loadMapFile();
 
 describe('a real client over a real socket', () => {
   const running: { server: GameServer; transport: WebSocketTransport }[] = [];
@@ -192,7 +191,7 @@ describe('a real client over a real socket', () => {
 
   async function standUpServer(): Promise<number> {
     const port = nextPort++;
-    const built = buildWorldFromMap(parseMap(mapText), mapText);
+    const built = buildWorldFromMap(shippedMap.doc, shippedMap.mapId);
     const failures: Error[] = [];
     const transport = new WebSocketTransport({
       port,

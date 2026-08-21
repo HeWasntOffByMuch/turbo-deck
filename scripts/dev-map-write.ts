@@ -20,12 +20,14 @@
  * that neither the server nor the editor can read.
  */
 
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
 
 import { parseMap } from '../src/terrain/map.js';
+import { splitMap } from '../src/terrain/regions.js';
+import { writeSplit } from './split-map.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -68,30 +70,50 @@ export function resolveMapWrite(name: string, root = repoRoot): MapWriteTarget |
   return { path };
 }
 
-/** Write a map document over `maps/<name>`, atomically. Returns what to say. */
+/**
+ * Where a posted map lands, as a directory.
+ *
+ * The name on the wire is still `arena.json` -- it is what a download is called
+ * and what `resolveMapWrite` validates -- but a map is a manifest and a grid of
+ * regions now (spec 200), so it is written to `maps/arena/`. Deriving the
+ * directory from the validated path rather than from the raw name means the
+ * traversal guards above still cover it.
+ */
+export function mapDirFor(target: MapWriteTarget): string {
+  return target.path.replace(/\.json$/i, '');
+}
+
+/** Write a posted map into `maps/<name minus .json>/`, manifest last. */
 export function writeMapFile(name: string, text: string, root = repoRoot): { ok: boolean; detail: string } {
   const target = resolveMapWrite(name, root);
   if ('refusal' in target) return { ok: false, detail: target.refusal };
   if (text.length > MAX_MAP_BYTES) return { ok: false, detail: `map is ${text.length} bytes, over the limit` };
 
-  // Parsed before it is written: the map the server boots from must never be
-  // replaced by something that will not load. This is the same validation a
+  // Parsed before anything is written: the map the server boots from must never
+  // be replaced by something that will not load. This is the same validation a
   // dropped file gets in the editor, run again on the side that owns the file.
+  let split: ReturnType<typeof splitMap>;
   try {
-    parseMap(text);
+    split = splitMap(parseMap(text));
   } catch (error) {
     return { ok: false, detail: `not a map document: ${error instanceof Error ? error.message : String(error)}` };
   }
 
-  const temp = `${target.path}.tmp`;
+  const dir = mapDirFor(target);
   try {
-    mkdirSync(dirname(target.path), { recursive: true });
-    writeFileSync(temp, text, 'utf8');
-    renameSync(temp, target.path);
+    // Regions first, manifest last: the manifest is the only thing that makes a
+    // region reachable, so a crash between them leaves the old map whole rather
+    // than a new one with holes.
+    writeSplit(dir, split.manifest, split.regions);
   } catch (error) {
     return { ok: false, detail: `could not write: ${error instanceof Error ? error.message : String(error)}` };
   }
-  return { ok: true, detail: `wrote ${MAPS_DIR}${sep}${name} (${text.length} bytes) -- restart the server to load it` };
+  return {
+    ok: true,
+    detail:
+      `wrote ${MAPS_DIR}${sep}${basename(dir)}${sep} (${String(split.regions.size)} regions, ` +
+      `${String(text.length)} bytes) -- restart the server to load it`,
+  };
 }
 
 /** Read a whole request body as text, up to the cap. */
@@ -123,7 +145,7 @@ export function mapWritePlugin(root = repoRoot): Plugin {
    * changed by `grow-map.ts` or by a checkout still reloads, which is the
    * behaviour that was there before this endpoint existed.
    */
-  const justWrote = new Map<string, number>();
+  let justWroteUnder: { dir: string; at: number } | null = null;
   /** How long a write stays "ours". Long enough for the watcher, short enough not to swallow a real edit. */
   const OURS_FOR_MS = 5000;
 
@@ -131,9 +153,9 @@ export function mapWritePlugin(root = repoRoot): Plugin {
     name: 'turbo-deck-map-write',
     apply: 'serve',
     handleHotUpdate(ctx) {
-      const at = justWrote.get(ctx.file);
-      if (at === undefined || ctx.timestamp - at > OURS_FOR_MS) return undefined;
-      justWrote.delete(ctx.file);
+      if (justWroteUnder === null) return undefined;
+      if (!ctx.file.startsWith(justWroteUnder.dir)) return undefined;
+      if (ctx.timestamp - justWroteUnder.at > OURS_FOR_MS) return undefined;
       // Invalidated but not announced: the next *full* load has to read the new
       // bytes, or saving the map and then reloading by hand would serve the old
       // one. What is skipped is only the reload message.
@@ -151,7 +173,10 @@ export function mapWritePlugin(root = repoRoot): Plugin {
           .then((text) => {
             const target = resolveMapWrite(name, root);
             // Stamped *before* the write, so the watcher cannot beat us to it.
-            if (!('refusal' in target)) justWrote.set(target.path, Date.now());
+            // A directory rather than a file since spec 200: one save touches a
+            // manifest and however many regions changed, and every one of them
+            // would otherwise reload the tab that made it.
+            if (!('refusal' in target)) justWroteUnder = { dir: mapDirFor(target), at: Date.now() };
             const result = writeMapFile(name, text, root);
             response.statusCode = result.ok ? 200 : 400;
             response.setHeader('content-type', 'text/plain; charset=utf-8');

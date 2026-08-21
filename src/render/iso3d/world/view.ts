@@ -31,7 +31,6 @@ import { planConnection, rememberSession } from './connection.js';
 import { ReconnectingChannel } from '../../../server/net/reconnecting.js';
 import { createConnectionBanner } from './connection-banner.js';
 import { createGroundPredictor, emptyGround, fillGround } from './prediction-ground.js';
-import { mapIdOf } from '../../../server/world/map-index.js';
 import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
@@ -49,8 +48,7 @@ import type { BaseStatKey } from '../../../server/state/types.js';
 import { viewSeed } from '../seed.js';
 import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
 import { ASSET_MANIFEST_HASH } from './unit-assets.js';
-import { loadShippedMapText } from '../map-asset.js';
-import { parseMap } from '../../../terrain/map.js';
+import { loadShippedMap } from '../map-asset.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { HeldChunk } from '../../../server/client/map-cache.js';
 import type { ViewHandle } from '../view-handle.js';
@@ -270,11 +268,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * The mount boundary is the one place a wait costs nothing but a frame.
    *
    * Fetched on the remote path too, even though only a loopback tab builds a
-   * world from it: `mapIdOf(mapText)` is how this tab tells the server it is on
-   * the same document, and a client that skipped the fetch could not make that
-   * comparison at all.
+   * world from it: the manifest's `mapId` is how this tab tells the server it
+   * is on the same document, and a client that skipped the fetch could not make
+   * that comparison at all.
    */
-  const mapText = await loadShippedMapText();
+  const shippedMap = await loadShippedMap();
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#0b0b12;';
 
@@ -312,7 +310,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * that path is ever exercised: used whenever the two happened to agree, it
    * would be a path that only runs in the case it is broken in.
    */
-  const local = plan.mode === 'loopback' ? buildWorldFromMap(parseMap(mapText), mapText) : null;
+  const local = plan.mode === 'loopback' ? buildWorldFromMap(shippedMap.doc, shippedMap.mapId) : null;
   // Same reason as the server (spec 130): sampling the ground into a nav grid is
   // around a second on a real map, and it belongs beside the rest of the page's
   // start-up rather than in the frame where the first move order is given. The
@@ -613,7 +611,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // prediction off, because the alternative was colliding against a forest
       // the server did not have; now the colliders come from the stream either
       // way and this is just a useful thing to see in a screenshot.
-      if (plan.mode === 'remote' && map.info.mapId !== mapIdOf(mapText)) {
+      if (plan.mode === 'remote' && map.info.mapId !== shippedMap.mapId) {
         banner.note(`server map ${map.info.mapId.slice(0, 8)}`);
       }
     }

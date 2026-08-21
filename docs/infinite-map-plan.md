@@ -1,8 +1,8 @@
 # A map that keeps growing — plan
 
-Status: **phases 0, 1 and 2 are done — specs 197, 198 and 199 are written and
+Status: **phases 0–3 are done — specs 197, 198, 199 and 200 are written and
 implemented.** The shape, the phase order and the numbers are settled; the next
-action is spec 200, splitting the map into region files.
+action is spec 201, tiled navigation.
 
 Everything is measured against `maps/arena.json` at `43fd6b40` on this branch's
 container, and every projection says which measurement it scales. Where a claim
@@ -458,6 +458,12 @@ measurement, because this is when the long-lived format is set and migrating
 
 Migration: `maps/arena.json` splits into `maps/arena/` in one commit, with a
 round-trip test asserting the recombined document is byte-identical to today's.
+
+**Done.** 224 regions, 58 KB median, a 96.5 KB manifest, 1.5% total overhead.
+Measured against a real grow — a part off the east edge, 4 chunks added: **223
+of 224 regions untouched**, 173 KB rewritten of a 9.88 MB map. The first cut of
+`splitMap` rewrote *all* of them, because a region carried the layer's `bounds`
+and a grow moves it; a region declares its own extent now, and that is a test.
 
 ### Phase 4 — routes without a warmed world (spec 201)
 

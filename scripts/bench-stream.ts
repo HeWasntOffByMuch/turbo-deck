@@ -18,9 +18,7 @@
  *   npx tsx scripts/bench-stream.ts
  */
 
-import { readFileSync } from 'node:fs';
 
-import { parseMap } from '../src/terrain/map.js';
 import { StreamedMap } from '../src/server/client/streamed-map.js';
 import { buildTerrainMeshFromChunks } from '../src/render/iso3d/terrain-mesh.js';
 import { MapWorkerCore } from '../src/render/iso3d/world/map-worker-core.js';
@@ -32,12 +30,13 @@ import {
   warmNavGrids,
 } from '../src/sim/pathfinding.js';
 import { ROUTING_RADII } from '../src/server/world/build.js';
-import { buildMapIndex, mapIdOf } from '../src/server/world/map-index.js';
+import { buildMapIndex } from '../src/server/world/map-index.js';
 import { ServerMessageType } from '../src/server/net/protocol.js';
+import { loadMapFile } from '../src/server/world/map-file.js';
 
-const text = readFileSync('maps/arena.json', 'utf8');
-const doc = parseMap(text);
-const index = buildMapIndex(doc, mapIdOf(text));
+const shipped = loadMapFile();
+const doc = shipped.doc;
+const index = buildMapIndex(doc, shipped.mapId);
 const info = {
   type: ServerMessageType.MapInfo,
   mapId: index.mapId,

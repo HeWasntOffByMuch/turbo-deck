@@ -9,7 +9,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
 import { parseMap, serializeMap, type MapChunk, type MapDocument } from './map.js';
 import {
@@ -25,8 +24,10 @@ import {
   splitMap,
 } from './regions.js';
 import { loadMap } from './map-world.js';
+import { loadMapFile } from '../server/world/map-file.js';
+import { spawnPointsFrom } from '../server/world/spawners.js';
 
-const SHIPPED = parseMap(readFileSync('maps/arena.json', 'utf8'));
+const SHIPPED = loadMapFile().doc;
 
 /** A reader over a split, so a test can join without touching a disk. */
 function readerFor(regions: ReadonlyMap<string, string>): (path: string) => string {
@@ -143,6 +144,20 @@ describe('splitting the shipped map', () => {
     expect(fromManifest).toHaveLength(counted);
   });
 
+  it('hoists the spawners the server would have computed, not a lookalike list', () => {
+    // The test above walks the chunks by hand, which proves the arithmetic and
+    // not the agreement: `spawnPointsFrom` is what the server actually calls,
+    // and a boot that reads the manifest instead (spec 202) gets whatever this
+    // list says. If the two ever drift, the world gets different monsters.
+    const fromChunks = spawnPointsFrom(SHIPPED);
+    const fromManifest = [...split.manifest.layers.flatMap((l) => l.spawners)].sort((a, b) =>
+      a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+    );
+    expect(fromManifest.map((s) => ({ id: s.id, monsterId: s.monsterId, x: s.x, y: s.z }))).toEqual(
+      fromChunks.map((p) => ({ id: p.id, monsterId: p.monsterId, x: p.x, y: p.y })),
+    );
+  });
+
   it('lists every chunk that exists, so nothing asks for one that never will', () => {
     const coords = split.manifest.layers[0]?.coords ?? [];
     expect(coords).toHaveLength(SHIPPED.layers[0]?.chunks.length ?? -1);
@@ -151,6 +166,68 @@ describe('splitting the shipped map', () => {
   it('carries the species table the wire needs', () => {
     expect(split.manifest.species.length).toBeGreaterThan(0);
     expect([...split.manifest.species].sort()).toEqual([...split.manifest.species]);
+  });
+
+  it('declares its own extent, so growing the layer rewrites nobody else', () => {
+    // The property the whole split is worth having for, and the one it did not
+    // have when it was written: a region's bytes are a function of its own
+    // chunks and of nothing else. Spreading the layer into each region put the
+    // *layer's* `bounds` in all 224 files, so growing two chunks off the east
+    // edge rewrote every region on disk -- identical byte for byte but for
+    // `maxX`, which is the git-history problem this spec exists to fix arriving
+    // by a different door.
+    //
+    // Extending the layer's rectangle is exactly what `growMap` does, so this
+    // is that grow with the new chunks left out: the part nothing should react
+    // to, on its own.
+    const layer = SHIPPED.layers[0];
+    if (!layer) throw new Error('no layer');
+    const wider: MapDocument = {
+      ...SHIPPED,
+      layers: [{ ...layer, bounds: { ...layer.bounds, maxX: layer.bounds.maxX + 12_320 } }],
+    };
+    const after = splitMap(wider);
+    expect([...after.regions.keys()].sort()).toEqual([...split.regions.keys()].sort());
+    for (const [path, text] of split.regions) expect(after.regions.get(path)).toBe(text);
+  });
+
+  it('declares an extent that holds the chunks it carries', () => {
+    // Which is what makes a region file meaningful opened on its own -- the
+    // reuse of `MapDocument` is only worth having if the document is true.
+    const extent = SHIPPED.grid.cellSize * SHIPPED.grid.chunkCells;
+    for (const text of split.regions.values()) {
+      const doc = parseMap(text);
+      const layer = doc.layers[0];
+      if (!layer) throw new Error('no layer');
+      for (const chunk of layer.chunks) {
+        const x = layer.origin.x + chunk.cx * extent;
+        const z = layer.origin.z + chunk.cz * extent;
+        expect(x).toBeGreaterThanOrEqual(layer.bounds.minX);
+        expect(z).toBeGreaterThanOrEqual(layer.bounds.minZ);
+        expect(x + chunk.cols * doc.grid.cellSize).toBeLessThanOrEqual(layer.bounds.maxX);
+        expect(z + chunk.rows * doc.grid.cellSize).toBeLessThanOrEqual(layer.bounds.maxZ);
+      }
+    }
+  });
+
+  it('keeps the layer scalars that do not move, so a region reads on its own', () => {
+    // `origin` above all: chunk indices inside the file are relative to it, and
+    // spec 083 fixed it for the life of the map precisely so a grow leaves every
+    // existing index meaning what it meant.
+    const layer = SHIPPED.layers[0];
+    if (!layer) throw new Error('no layer');
+    for (const text of split.regions.values()) {
+      const doc = parseMap(text);
+      const region = doc.layers[0];
+      if (!region) throw new Error('no layer');
+      expect(region.origin).toEqual(layer.origin);
+      expect(region.id).toBe(layer.id);
+      expect(region.seed).toBe(layer.seed);
+      expect(region.baseY).toBe(layer.baseY);
+      expect(region.waterLevel).toBe(layer.waterLevel);
+      expect(doc.seed).toBe(SHIPPED.seed);
+      expect(doc.grid).toEqual(SHIPPED.grid);
+    }
   });
 });
 

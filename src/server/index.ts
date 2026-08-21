@@ -10,8 +10,8 @@
  * Environment:
  *   PORT             listen port (default 8787)
  *   SEED             fallback world seed, used only with TURBO_DECK_MAP=none
- *   TURBO_DECK_MAP   map document to serve (default maps/arena.json; `none`
- *                    falls back to the generator, for a bare load test)
+ *   TURBO_DECK_MAP   map directory to serve (default maps/arena; `none` falls
+ *                    back to the generator, for a bare load test)
  *   ADMIN_SECRET     HMAC secret for admin tokens (default: random per boot)
  *
  * The unit authoring service reads its own (spec 108); see `studio/config.ts`.
@@ -69,7 +69,7 @@ const world =
     : (() => {
         const file = loadMapFile(mapPath);
         console.log(`[server] map ${file.path} (seed ${file.doc.seed})`);
-        return buildWorldFromMap(file.doc, file.text);
+        return buildWorldFromMap(file.doc, file.mapId);
       })();
 
 // Route planning wants the ground sampled into a grid, which is around a second

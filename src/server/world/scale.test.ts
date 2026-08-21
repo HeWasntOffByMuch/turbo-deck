@@ -18,7 +18,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
 import { MAP_VERSION, parseMap, serializeMap, type MapDocument } from '../../terrain/map.js';
 import { loadMap } from '../../terrain/map-world.js';
@@ -37,8 +36,9 @@ import { monsterById } from '../data/monsters.js';
 import { spawnPointsFrom } from './spawners.js';
 import { computeEffectiveStats } from '../player/stats.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../state/types.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const SOURCE = parseMap(readFileSync('maps/arena.json', 'utf8'));
+const SOURCE = loadMapFile().doc;
 
 /** Small enough that the suite stays fast, far enough apart that a slope shows. */
 const SMALL = 64;
