@@ -2028,7 +2028,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * Say what the next click would do (specs 158, 197).
+   * Say what the next click would do (specs 158, 200).
    *
    * Three things change the pointer, and the arrow is what stands the rest of
    * the time. A pending aim gets the full crosshair, because that is the one
@@ -2041,7 +2041,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * to answer, in a module a test can reach; this only carries it out.
    *
    * Our two marks are *drawn*, by the HUD, at the pointer position this file
-   * already tracks -- they were CSS cursor images for two cuts of spec 197, and
+   * already tracks -- they were CSS cursor images for two cuts of spec 200, and
    * on a real machine the image landed four to seven pixels up and left of the
    * point it was marking, because a cursor is placed by a hotspot applied
    * somewhere between the style and the glass. Nothing in a page can see where

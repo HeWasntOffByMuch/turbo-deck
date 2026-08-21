@@ -415,7 +415,7 @@ export interface HudHandle {
    */
   setActionBar(box: ActionBarBox): void;
   /**
-   * The mark under the pointer, and where the pointer is (spec 197).
+   * The mark under the pointer, and where the pointer is (spec 200).
    *
    * `null` draws nothing and is the ordinary case. The point is in canvas
    * pixels -- the same space `project` answers in -- and the mark is *centred*
@@ -607,7 +607,7 @@ export function createHud(project: Projector): HudHandle {
    * panel. Idle, it says nothing; the world is the hint.
    */
   /**
-   * The mark drawn at the pointer (spec 197): the crosshair, or the same mark
+   * The mark drawn at the pointer (spec 200): the crosshair, or the same mark
    * with its arms pulled in, or nothing.
    *
    * Drawn here rather than set as a CSS cursor image because a cursor is placed

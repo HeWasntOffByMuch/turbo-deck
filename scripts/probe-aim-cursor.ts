@@ -1,5 +1,5 @@
 /**
- * What the pointer actually is, in a real page (spec 197).
+ * What the pointer actually is, in a real page (spec 200).
  *
  * Everything the two marks *are* -- the art, their symmetry, the gap at the
  * crosshair's centre, the shared hotspot, the encoding, and which of the three

@@ -2483,7 +2483,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  at its uphill edge and floats over the downhill one by whatever
                  the ground fell across it, which for a mark this size is a couple
                  of units on anything walkable),
-                 crosshair.ts (what the pointer *is* over the world, spec 197:
+                 crosshair.ts (what the pointer *is* over the world, spec 200:
                  two marks that are the same mark at two lengths, authored as a
                  9x9 table of `#` in `pixel-font.ts`'s register and rendered as
                  crisp rects -- which is why the art is odd-sided, since what a

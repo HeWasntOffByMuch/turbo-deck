@@ -1,5 +1,5 @@
 /**
- * The mark the world puts under the pointer (spec 197).
+ * The mark the world puts under the pointer (spec 200).
  *
  * Two of them, and they are the same mark at two lengths. The **small** one --
  * a centre dot and the four arm tips -- says there is a body under the pointer
