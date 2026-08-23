@@ -216,6 +216,24 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
     },
   ],
   [
+    // The one guaranteed table, and the one that is not a reward (spec 158's
+    // ceremony is untouched by it). A sheep drops wool because that is what a
+    // sheep is *for*: the drop is the animal's whole purpose rather than a
+    // prize for beating it, and a 25% chance would make three quarters of the
+    // flock a waste of the walk over.
+    //
+    // Which is affordable precisely because wool is common: a common drop has
+    // `revealTicks: 0` and no cue at all, so a certainty here costs no beat,
+    // competes with no rare, and cannot make the reveal ordinary -- there is no
+    // reveal. A guaranteed *rare* would be the thing the philosophy doc warns
+    // about, and no row here is one.
+    'sheep',
+    {
+      chance: 1,
+      entries: [{ defId: 'wool', count: 2, weight: 1 }],
+    },
+  ],
+  [
     'small_spider',
     {
       chance: 0.25,

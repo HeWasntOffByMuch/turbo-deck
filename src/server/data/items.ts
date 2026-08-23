@@ -402,6 +402,23 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     modifiers: {},
     maxStack: 10,
   },
+  // What a sheep leaves. Nothing spins it yet -- crafting is its own spec -- and
+  // it is deliberately here anyway, because it is the first row in this table
+  // that is *only* a material: no slot, no modifiers, no skill, and a price that
+  // is the whole of what it does today. `sword.worn` is worth three of these.
+  //
+  // Stacks high. A material a player picks up in ones and twos over an
+  // afternoon and cannot use yet is the exact shape that fills a bag, and a bag
+  // full of wool is a worse first impression than no wool at all.
+  {
+    id: 'wool',
+    value: 4,
+    name: 'Wool',
+    slot: null,
+    levelRequirement: 1,
+    modifiers: {},
+    maxStack: 20,
+  },
 ];
 
 export const ITEMS: ReadonlyMap<string, ItemDefinition> = new Map(

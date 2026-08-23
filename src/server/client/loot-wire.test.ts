@@ -91,17 +91,17 @@ function drops(r: Rig): { id: number; defId: string; count: number; owner: strin
 }
 
 /**
- * Kill one grazer next to `client` and return the drop it left.
+ * Kill one body next to `client` and return the drop it left.
  *
  * The drop rate is turned all the way up rather than the seed being hunted for:
  * what is under test is the path, and a test that only passes on a lucky roll
  * is a test that will start failing when somebody retunes a table.
  */
-async function killSomethingNearby(r: Rig, client: GameClient): Promise<number> {
+async function killSomethingNearby(r: Rig, client: GameClient, typeId = 'grazer'): Promise<number> {
   r.server.liveConfig.set('dropRateMultiplier', 100);
   const self = client.view().selfEntityId;
   const at = positionOf(r, self);
-  r.server.spawnEntities('grazer', at.x + 40, at.y, 1);
+  r.server.spawnEntities(typeId, at.x + 40, at.y, 1);
   await r.tick(2);
 
   for (let swing = 0; swing < 40 && drops(r).length === 0; swing++) {
@@ -128,6 +128,32 @@ describe('a kill leaves something the server decided', () => {
     // The grazer's table has one row in it, so this is the server's decision
     // rather than a coincidence worth asserting loosely.
     expect(drop?.defId).toBe('potion.minor');
+    expect(rarityOf(drop?.defId ?? '')).toBe('common');
+  });
+
+  /**
+   * The sheep, end to end and through the real wire: a body that was walking
+   * about on its own when the player found it, and wool on the ground once it
+   * was not.
+   *
+   * Worth a case of its own rather than trusting `rollLoot`, because everything
+   * between those two facts is code this feature did not write -- the kill
+   * attribution, the throw, the ownership -- and "a sheep drops wool" is a claim
+   * about all of it. It is also the only table in the game with no chance in it,
+   * so this is the one kill in the suite that would fail on a table lookup going
+   * wrong rather than on a roll going the wrong way.
+   */
+  it('leaves wool on a dead sheep, every time', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    await r.tick(2);
+
+    const id = await killSomethingNearby(r, ana, 'sheep');
+    const drop = drops(r).find((d) => d.id === id);
+    expect(drop?.defId).toBe('wool');
+    expect(drop?.count).toBe(2);
+    expect(drop?.owner).toBe('ana');
+    // Common, so it lands already revealed and spends no beat on itself.
     expect(rarityOf(drop?.defId ?? '')).toBe('common');
   });
 

@@ -343,6 +343,39 @@ describe('the roll', () => {
   });
 
   /**
+   * The one table that is a certainty, and the three things that make that
+   * affordable: it always pays out, what it pays is common, and a common drop
+   * has no ceremony to wear out. A guaranteed *rare* would be the failure
+   * `docs/reward-philosophy.md` §3 describes; this is the opposite of one.
+   */
+  it('always leaves wool on a sheep, and never anything else', () => {
+    let rng = Rng.fromSeed(404);
+    for (let i = 0; i < 500; i++) {
+      const [stack, next] = rollLoot(rng, 'sheep', 1);
+      rng = next;
+      expect(stack, `roll ${i}`).not.toBeNull();
+      expect(stack?.defId).toBe('wool');
+      expect(stack?.count).toBe(2);
+    }
+  });
+
+  it('makes that certainty a quiet one', () => {
+    // Guaranteed *and* loud is the combination that would cheapen the reveal, so
+    // the tier is asserted here rather than left to the row: wool is common, and
+    // a common drop lands already revealed with no cue at all.
+    expect(rarityOf('wool')).toBe('common');
+    expect(rarityRow(rarityOf('wool')).revealTicks).toBe(0);
+    expect(rarityRow(rarityOf('wool')).cues.reveal).toBe('');
+  });
+
+  it('still answers the drop-rate knob, certainty or not', () => {
+    // A balance harness turning drops off has to turn *every* table off,
+    // including the one whose chance is 1.
+    const [stack] = rollLoot(Rng.fromSeed(7), 'sheep', 0);
+    expect(stack).toBeNull();
+  });
+
+  /**
    * Ordinary drops have to outnumber the noteworthy ones by a lot, or the beat
    * stops meaning anything -- the contrast argument, measured rather than
    * asserted in a comment.
