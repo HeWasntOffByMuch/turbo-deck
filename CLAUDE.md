@@ -1606,6 +1606,56 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  for. Dropping one chunk re-meshes the four beside it, because a
                  chunk's apron is built from its neighbours: the mirror of what
                  an arrival does, in the other direction.
+                 Since spec 215 the client also forgets the **trees** on that
+                 ground. Spec 208 evicted terrain at four layers and said prop
+                 regions were the same question one level up; one level up had
+                 no answer at all, because `PropFieldHandle` could adopt a
+                 region or dispose the whole field and nothing in between. A
+                 lawnmower over the shipped map left **72 regions and 1,124
+                 shadow-casting meshes drawn over 4 regions' worth of ground**.
+                 The rule is derived rather than chosen: **a region is drawn
+                 because a chunk under it is held, so it is dropped when none
+                 is** -- which is what makes it unable to fight the streamer by
+                 construction, where terrain had to derive a keep radius to buy
+                 the same guarantee. One predicate, two callers
+                 (`world/prop-residency.ts`): the drop pass, and the adopt path,
+                 where a region asked for on one frame and evicted on the next
+                 would otherwise be hung on the graph *behind* the drop pass
+                 with nothing left to take it down.
+                 What that exposed is the half worth knowing about, because
+                 shipping the drop alone made the game worse and the report was
+                 "went south, then north again and chunks didn't re-appear".
+                 **Dropping a region is only half a cache**, and the thing that
+                 puts it back was already broken:
+                 `ChunkIngest.takePropRects` hands a region back once its ground
+                 has been quiet for `settleMs` and either its ground is complete
+                 or it has waited `incompleteHoldMs`, and both halves had
+                 failed. The completeness rule fires **zero** times -- a
+                 2200-unit region needs a 4x4 block of 616-unit chunks and the
+                 request window has been 5x5 and unaligned since spec 202
+                 narrowed the radius, so what spec 180 wrote as "the common
+                 case" now never happens -- which leaves the backstop deciding
+                 everything, and it was measured from the region's *last* touch,
+                 so every arrival pushed its own deadline out and a body that
+                 kept moving never reached it. Invisible before eviction,
+                 because a region drawn once was drawn forever; with eviction it
+                 is a world that strips itself as you walk and takes fourteen
+                 seconds of standing perfectly still to fill back in. So **the
+                 incomplete-hold clock is a deadline, not a quiet period**: a
+                 region keeps two stamps, the last touch for the settle and the
+                 first for the backstop, and nothing restarts the second until
+                 the region is handed back. That the completeness rule is dead
+                 is written down in spec 215 with its measurement rather than
+                 repaired, because repairing it means asking "is every chunk of
+                 this region *inside the request window* held", which changes a
+                 rule spec 180 stated.
+                 `npx tsx scripts/probe-walk-back.ts` is the half no headless
+                 test could see -- the shipped page, a real worker, a real scene
+                 graph, the body moved by admin teleport because the keep radius
+                 is a minute of walking -- and it reads `data-prop-regions`
+                 against `data-chunks-held`: the ground was bounded and complete
+                 the whole way while the trees went to **zero** and came back to
+                 three.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,

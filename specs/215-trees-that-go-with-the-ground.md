@@ -128,9 +128,72 @@ same question the drop pass asks, at the moment it would draw.
   requested, composed and drawn again.
 - **Nothing is owed for ground that has gone.** After a drop, `ChunkIngest` has
   no dirty entry for the region, so it is not handed back on the settle.
+- **The incomplete-hold clock cannot be postponed.** Ground landing in a region
+  every 500 ms for longer than the hold does not stop it being handed back: it
+  is overdue at the first quiet moment, rather than starting a fresh four
+  seconds. Handing it back starts the next deadline; so does dropping it.
+- **The same spot draws what it drew before.** Walk eight chunks out and back
+  and the region count returns to what it left with, with nothing still owed —
+  asserted in a real browser, because the failure this closes was invisible to
+  every headless test in the tree.
 - **The editor is untouched.** `rebuildWithin` still rebuilds a rectangle's
   regions from a full prop list, which is the only thing the brush and the part
   tools use.
+
+## The half that made it a regression
+
+Shipped as above, this made the game **worse**, and the report was "went south,
+then north again and chunks didn't re-appear". It was the trees rather than the
+ground: `probe-walk-back.ts` reads `data-prop-regions` against
+`data-chunks-held`, and over a walk south and back it read
+
+```
+  at home:  held 25, drawn 25, regions 4
+  south 4:  held 35, drawn 35, regions 2, dirty 6
+  south 8:  held 35, drawn 35, regions 0, dirty 6
+  home again: held 35, drawn 35, regions 3
+```
+
+The ground is bounded and complete the whole way. The trees go to **zero** and
+come back to three, and six regions sit owed a compose that never happens.
+
+Dropping a region is only half a cache: something has to put it back, and the
+thing that would have was already broken. `ChunkIngest.takePropRects` hands a
+region back once its own ground has been quiet for `settleMs` **and** either its
+ground is complete or it has waited `incompleteHoldMs`. Both halves had failed:
+
+- **The completeness rule fires zero times.** Measured over a walk on the
+  shipped map: `rectCovered` never once returned true. A 2200-unit region needs
+  a 4x4 block of 616-unit chunks and the request window has been 5x5 and
+  unaligned since spec 202 narrowed the radius from 6 to 2 — so a region is
+  essentially never complete, and what spec 180 wrote as "the common case" now
+  never happens at all. `PROP_INCOMPLETE_HOLD_MS`'s comment still describes it
+  as the rule that "wins every race it can win".
+- **So the backstop decides everything — and it could be postponed forever.**
+  It was measured from the region's *last* touch, and every arrival and every
+  re-stitch touches it. A body that keeps moving keeps pushing its own deadline
+  out: four regions asked for over ten chunk crossings, against eight sitting
+  dirty at the end and the oldest at 4,016 ms of a 4,000 ms hold.
+
+Before eviction this was invisible, which is why it lasted: a region drawn once
+was drawn forever, so a settle that never fired only ever delayed trees
+appearing. Evicting them turns the same fault into a world that strips itself as
+you walk and does not fill back in — measured, fourteen seconds of standing
+perfectly still.
+
+The fix is one sentence: **the incomplete-hold clock is a deadline, not a quiet
+period.** A region keeps two stamps — when it last moved, which the settle
+reads and every touch restarts, and when it *first* went dirty, which the
+backstop reads and nothing restarts until the region is handed back. The settle
+still protects against rebuilding over ground about to be re-meshed; the
+backstop now bounds the total wait at what it says on the tin.
+
+What this deliberately does **not** do is repair the completeness rule. That it
+fires zero times is a finding rather than a fix here: making it honest means
+asking "is every chunk of this region that is *inside the request window* held",
+which needs the player's position at the call site and is a change to a rule
+spec 180 stated and measured. Written down with its measurement so it is a
+decision rather than something inherited by accident.
 
 ## Two things found on the way
 
@@ -165,8 +228,14 @@ is what a reconcile reading the wrong grid would produce.
   smaller unit, and it disposes everything by construction.
 - **The map worker's own bookkeeping.** It holds props, not meshes, and
   `StreamedMap.remove` already takes those with the chunk.
-- **The browser half of the eviction itself.** A keep radius of four chunks is
-  2,464 units, which is a minute of walking, and this container paints a real
-  page at a handful of frames a second — so what a probe can honestly check here
-  is the readout and the region count, not a region going. The rules are
-  asserted over the real map, the real cache and the real store in Node.
+- **Repairing the completeness rule.** See above: measured, written down, and
+  left, because it changes a rule spec 180 stated rather than restoring one.
+- **The four-for-one compose.** `propRegionKeysIn` is inclusive of its far edge,
+  so a *region-aligned* rectangle names four regions rather than one and the
+  worker composes three neighbours nobody asked for. Pre-existing, and visible
+  now only because `propsRefused` counts the ones with no ground left. Cheap and
+  wrong rather than expensive and wrong; not widened into here.
+- **Walking the keep radius in a browser.** 2,464 units is a minute of walking
+  and this container paints a handful of frames a second, so `probe-walk-back.ts`
+  moves the body by admin teleport. What it measures is real: the shipped page,
+  a real worker, a real scene graph.

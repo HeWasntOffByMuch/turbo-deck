@@ -78,7 +78,8 @@ interface Counts {
   drawn: number;
   pending: number;
   regions: number;
-  diag: string;
+  dirty: number;
+  refused: number;
   x: number;
   z: number;
 }
@@ -93,7 +94,8 @@ async function counts(page: Page): Promise<Counts> {
       drawn: Number(root?.dataset['chunksDrawn'] ?? 0),
       pending: Number(root?.dataset['chunksPending'] ?? 0),
       regions: Number(root?.dataset['propRegions'] ?? 0),
-      diag: String(root?.dataset['propDiag'] ?? ''),
+      dirty: Number(root?.dataset['propDirty'] ?? 0),
+      refused: Number(root?.dataset['propRefused'] ?? 0),
       x: Number(parts[0] ?? 0),
       z: Number(parts[1] ?? 0),
     };
@@ -110,6 +112,25 @@ async function quiet(page: Page, ms = 20_000): Promise<Counts> {
     last = now;
   }
   return last;
+}
+
+/**
+ * Wait for the *whole* pipeline, trees included.
+ *
+ * `quiet` watches the ground, and the ground settles first: a region is owed a
+ * compose for up to `PROP_INCOMPLETE_HOLD_MS` after its chunks land, so a
+ * reading taken when the chunks stop moving catches the trees mid-flight and
+ * reports a number that depends on how fast this container happened to paint.
+ * `data-prop-dirty` is what says nothing is still owed.
+ */
+async function caughtUp(page: Page, ms = 30_000): Promise<Counts> {
+  await quiet(page, ms);
+  for (let i = 0; i < ms / 500; i++) {
+    const now = await counts(page);
+    if (now.pending === 0 && now.dirty === 0) return now;
+    await sleep(500);
+  }
+  return counts(page);
 }
 
 async function main(): Promise<void> {
@@ -153,7 +174,7 @@ async function main(): Promise<void> {
     await game.waitForSelector('[data-world-ready]', { timeout: 120_000 });
     console.log('  world ready');
 
-    const home = await quiet(game);
+    const home = await caughtUp(game);
     console.log(`  at home: held ${home.held}, drawn ${home.drawn}, regions ${home.regions}, at ${home.x},${home.z}`);
 
     // The admin console, for the one thing a keyboard cannot do here.
@@ -180,7 +201,7 @@ async function main(): Promise<void> {
       legs.push(now);
       console.log(
         `  south ${step}: held ${now.held}, drawn ${now.drawn}, pending ${now.pending},` +
-          ` regions ${now.regions} [${now.diag}]`,
+          ` regions ${now.regions}, dirty ${now.dirty}, refused ${now.refused}`,
       );
     }
 
@@ -191,29 +212,38 @@ async function main(): Promise<void> {
       legs.push(now);
       console.log(
         `  north ${step}: held ${now.held}, drawn ${now.drawn}, pending ${now.pending},` +
-          ` regions ${now.regions} [${now.diag}]`,
+          ` regions ${now.regions}, dirty ${now.dirty}, refused ${now.refused}`,
       );
     }
 
-    // Stand perfectly still for a good while: does anything the walk dropped
-    // ever come back on its own?
-    for (const wait of [2000, 4000, 8000]) {
-      await sleep(wait);
-      const now = await counts(game);
-      console.log(`  after standing still ${wait}ms: regions ${now.regions} [${now.diag}]`);
-    }
-
-    const back = await counts(game);
-    if (!back) throw new Error('no legs');
+    // The reading that matters, taken once nothing is still owed.
+    const back = await caughtUp(game);
+    console.log(
+      `  home again: held ${back.held}, drawn ${back.drawn}, regions ${back.regions},` +
+        ` dirty ${back.dirty}, refused ${back.refused}`,
+    );
     check(
       'the ground came back: every chunk held is drawn',
       back.held > 0 && back.drawn >= back.held,
       `held ${back.held}, drawn ${back.drawn}`,
     );
+    // The assertion the whole probe exists for, and the one the report was
+    // about: the same spot, the same ground, so the same trees. Before spec
+    // 215's settle fix this came back at half what it left with and took
+    // fourteen seconds of standing perfectly still to fill in -- which is what
+    // "chunks didn't re-appear" looks like from the outside.
     check(
-      'the trees came back with it',
-      back.regions > 0,
-      `regions ${back.regions}`,
+      'the trees came back with it: the same spot draws what it drew before',
+      back.regions >= home.regions,
+      `left with ${home.regions}, came back to ${back.regions}`,
+    );
+    // ...and it did not go bare on the way, which is the same failure spread
+    // over the walk rather than at the end of it.
+    const leanest = Math.min(...legs.map((l) => l.regions));
+    check(
+      'and the world kept its trees while the body was moving',
+      leanest > 0,
+      `leanest leg drew ${leanest} regions`,
     );
     check(
       'nothing is still owed',

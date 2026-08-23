@@ -548,6 +548,19 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * See the readout in {@link updateLoading} for why that comparison matters.
    */
   const drawnChunks = new Set<string>();
+  /**
+   * Prop regions composed and then not drawn, because their ground had gone
+   * (spec 215).
+   *
+   * A readout rather than an input -- nothing branches on it -- kept for the
+   * reason `ChunkIngest.abandonedCount` is kept: a compose thrown away is work
+   * this client paid for and a picture nobody saw, and a number is what makes
+   * that visible rather than something to be inferred from a bare field. It
+   * counts the in-flight race the guard exists for *and* the neighbour regions
+   * `propRegionKeysIn` hands the worker on a region-aligned rectangle, which is
+   * why it is not expected to be zero.
+   */
+  let propsRefused = 0;
 
   /**
    * The frame-time meter and its overlay (spec 165).
@@ -796,7 +809,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // take it down again -- the drop is driven by eviction, and this ground
       // has already been evicted. The same predicate the drop pass reads,
       // asked at the moment it would be drawn.
-      if (!propRegionHasGround(reply.region, (rect) => held.holdsAnyIn(rect))) continue;
+      if (!propRegionHasGround(reply.region, (rect) => held.holdsAnyIn(rect))) { propsRefused++; continue; }
       scene.adoptPropRegion(reply.region, reply.instances);
     }
     stage('props', performance.now() - propStart);
@@ -947,13 +960,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // nothing should read as absent, which is the failure this number exists to
     // make visible (spec 215).
     const regionsDrawn = scene.heldPropRegions().length;
-    const meshState = `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}`;
+    const meshState =
+      `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}` +
+      `:${ingest.dirtyRegionCount}:${propsRefused}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
       root.dataset['chunksDrawn'] = String(drawnChunks.size);
       root.dataset['chunksPending'] = String(ingest.pending);
       root.dataset['propRegions'] = String(regionsDrawn);
+      root.dataset['propDirty'] = String(ingest.dirtyRegionCount);
+      root.dataset['propRefused'] = String(propsRefused);
     }
 
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;
