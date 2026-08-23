@@ -1699,53 +1699,52 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  put the monster 400 units from a 300-unit notice range, so
                  nothing engaged, nav was never asked, and both replays passed as
                  two identical recordings of nothing happening.
-                 What a *fast* body does to all of that is spec 201, and the
-                 four things it found are one shape: every rule about what the
-                 client knows of the ground was keyed on something that stops
-                 being true when a body moves fast or its speed changes. **A
-                 `PredictStep` follows the stats it was built from.**
-                 `startPredictingIfReady` opens with `if (this.prediction)
-                 return`, which is right for a body that is placed once and was
-                 also, silently, true of the *step*: a later `Stats` updated
-                 `this.stats` and reached nothing, so a player who equipped
+                 What a *fast* body does to all of that is spec 213, and the
+                 three things it found are one shape: every rule about which
+                 ground the client gets, and when, was keyed on something that
+                 quietly stops being true when a body moves fast. (The fourth
+                 thing the same report turned up -- a `PredictStep` built from
+                 the first `Stats` and never rebuilt, so a player who equipped
                  anything carrying `moveSpeed` kept predicting the speed they had
-                 before it -- a per-tick gap that never settles, so the server
-                 corrects on essentially every tick and the drawn body is dragged
-                 back toward a position it has already left. That is what
-                 "rubberbanding" was, and `legs.traveller` is in `STARTING_KIT`
-                 with `moveSpeed: 6`, so it was not exotic. `PredictionBuffer`
-                 keeps its position and its pending inputs across the swap:
-                 what was wrong was the rule for reaching the next position, not
-                 the current one. **The serve window is one chunk wider than the
-                 ask window.** `MAP_CHUNK_SERVE_RADIUS` is derived rather than
-                 judged -- the client asks from `prediction.drawn`, which the sim
-                 keeps within `correctionThreshold` of the server's position plus
-                 at most `MAX_EASED_OFFSET` of undecayed visual offset, under a
-                 hundred units against 616-unit chunks, and a disagreement
-                 smaller than a chunk moves an index by at most one. Measured at
-                 the *same* radius the whole leading-edge column came back
-                 `OutOfRange` whenever the two straddled a boundary: 52 refusals
-                 on a sixty-second run at `MOVE_SPEED_HARD_MAX`, every one on the
-                 edge the body was running toward and every one legal a tick
-                 later. Nothing a client *claims* enters that arithmetic, so the
-                 guard is unchanged. **The request order follows the body.**
-                 `wanted` ranked by how far away ground is, which is right for a
-                 standing player and wrong for a running one -- the chunk directly
-                 ahead at the edge of the window sat in the same ring as the
-                 forty-seven behind and beside it. It ranks by distance to the
-                 *walk* now (the segment from the body to where it will be in
-                 `CHUNK_LEAD_SECONDS`, clamped so ground behind projects onto the
-                 body) and then by distance to the body, so the corridor comes
-                 forward whole and is served outward from the feet rather than
-                 from the horizon; the ground being stood on is the only chunk
-                 that scores zero on both. With no lead the segment is a point,
-                 both keys collapse to the old one, and a standing player's
-                 stream is byte for byte what it was -- and the candidates still
-                 come from the window around the body, so this reorders a request
-                 stream and cannot widen one. The lead is the direction the last
-                 input *asked* for rather than a differenced velocity: it is what
-                 the body is committed to, it is known on the tick it is made,
-                 and a correction easing in underneath does not smear it.
+                 before it -- is `PredictionBuffer.setStep` and
+                 `gear-speed.test.ts`, and was not about chunks at all.)
+                 **The serve window is one chunk wider than the ask window.**
+                 `MAP_CHUNK_SERVE_RADIUS` is derived rather than judged -- the
+                 client asks from `prediction.drawn`, which the sim keeps within
+                 `correctionThreshold` of the server's position plus at most
+                 `MAX_EASED_OFFSET` of undecayed visual offset, under a hundred
+                 units against 616-unit chunks, and a disagreement smaller than a
+                 chunk moves an index by at most one. Measured at the *same*
+                 radius the whole leading-edge column came back `OutOfRange`
+                 whenever the two straddled a boundary, and spec 208 made that
+                 cost more rather than less: at radius 2 a refused column is a
+                 fifth of everything the client holds, where at 6 it was a
+                 thirteenth. It sits between the two radii 208 derived and
+                 disturbs neither. Nothing a client *claims* enters that
+                 arithmetic, so the guard is unchanged.
+                 **The request order follows the body.** `wanted` ranked by how
+                 far away ground is, which is right for a standing player and
+                 wrong for a running one -- the chunk directly ahead at the edge
+                 of the window sat in the same ring as the ones behind and beside
+                 it. It ranks by distance to the *walk* now (the segment from the
+                 body to where it will be in `CHUNK_LEAD_SECONDS`, clamped so
+                 ground behind projects onto the body) and then by distance to
+                 the body, so the corridor comes forward whole and is served
+                 outward from the feet rather than from the horizon; the ground
+                 being stood on is the only chunk that scores zero on both. With
+                 no lead the segment is a point, both keys collapse to the old
+                 one, and a standing player's stream is byte for byte what it was
+                 -- and the candidates still come from the window around the
+                 body, so this reorders a request stream and cannot widen one.
+                 The lead is a *duration* rather than a distance, so it scales
+                 with the body: half a chunk at walking speed, most of the window
+                 at `MOVE_SPEED_HARD_MAX`, which is the rule working rather than
+                 overreaching -- a body that crosses the window in two seconds
+                 should be asking for its far edge. It comes from the direction
+                 the last input *asked* for rather than a differenced velocity:
+                 it is what the body is committed to, it is known on the tick it
+                 is made, and a correction easing in underneath does not smear
+                 it.
                  And **one lost message may not wedge the load**, which is the
                  half that matches "no loaded trees, and navigation broken from
                  that point on". `ChunkIngest` is a promise in two halves --

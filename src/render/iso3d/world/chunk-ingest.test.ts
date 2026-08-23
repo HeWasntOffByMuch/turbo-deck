@@ -48,7 +48,7 @@ function completeAll(queue: ChunkIngest, offered: readonly ChunkRef[], nowMs: nu
 }
 
 /**
- * A promise in two halves, and until spec 201 nothing ever failed the second
+ * A promise in two halves, and until spec 213 nothing ever failed the second
  * one.
  *
  * `offer` when the ground lands, `complete` when its triangles come back -- and

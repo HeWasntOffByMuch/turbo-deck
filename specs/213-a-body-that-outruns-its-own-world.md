@@ -1,44 +1,41 @@
-# 201 — A body that outruns its own world
+# 213 — A body that outruns its own world
 
 ## Problem
 
 A player put `{ moveSpeed: 200 }` on a pair of boots and ran in a straight line.
 They reached ground with no trees on it, navigation stopped working from that
 point on, and the body was pulled backwards out of regions that had, by then,
-finished loading. Four separate things are wrong, and each of them is a rule
-that quietly stops being true when a body is fast or when its speed changes.
+finished loading.
 
-**The client predicts at a speed it was told once.** `startPredictingIfReady`
-opens with `if (this.prediction) return`, so the `PredictStep` is built from the
-first `Stats` message and never rebuilt. A later `Stats` updates `this.stats`
-and reaches nothing: the closure still holds the old `moveSpeed`. Equipping the
-boots makes the server walk the body at 355 units a second while the client
-keeps predicting 155, and the gap is not a one-off — it is 3.3 units *every
-tick*, forever, so the server corrects on essentially every tick and the drawn
-body is dragged back toward a position it has already left. That is the
-rubberbanding, and it is not about chunks at all. It is not exotic either:
-`legs.traveller` is in `STARTING_KIT` and carries `moveSpeed: 6`. Measured over
-the wire — a real server, a real client, the real equip — a walk is corrected
-**0 times in 60 ticks** before those greaves go on and **40 times in 120 ticks**
-after, settling at a steady 4.6 units of drift that nothing ever pays off.
+The rubberbanding half of that turned out not to be about chunks at all: the
+`PredictStep` was built from the first `Stats` and never rebuilt, so the client
+kept predicting the speed it started with while the server walked the body at
+the new one. That is fixed on `main` already — `PredictionBuffer.setStep`, and
+`gear-speed.test.ts` beside it — and this spec does not touch it.
+
+What is left is three things about the *stream*, and they are one shape: every
+rule about which ground the client gets, and when, was keyed on something that
+quietly stops being true when a body moves fast.
 
 **The window a client may ask from and the window the server will serve are the
-same size.** `requestChunks` asks from `prediction.drawn` at
-`MAP_CHUNK_REQUEST_RADIUS`; `handleChunkRequest` measures from the *entity's*
-position at the same radius, correctly refusing to trust the client's claim. But
-those two positions are never identical — a predicting client leads the server
-by its own latency — so whenever the pair straddle a chunk boundary the whole
-leading-edge column is refused `OutOfRange`. Measured on a 60-second run at the
-`MOVE_SPEED_HARD_MAX` of 550: **52 refusals**, every one of them a chunk the
-server would happily have served a tick later, and every one of them on the edge
-the body is running toward.
+same size.** `requestChunks` asks from `prediction.drawn`; `handleChunkRequest`
+measures from the *entity's* position at the same radius, correctly refusing to
+trust the client's claim. But those two positions are never identical — a
+predicting client leads the server by its own latency — so whenever the pair
+straddle a chunk boundary the whole leading-edge column is refused
+`OutOfRange`. Measured on a fourteen-second run at the `MOVE_SPEED_HARD_MAX` of
+550: **5 refusals**, one whole column of the 5-wide window, every one of them a
+chunk the server would happily have served a tick later and every one of them on
+the edge the body is running toward. Spec 208 made that cost more rather than
+less: at `MAP_CHUNK_REQUEST_RADIUS` 2 a refused column is a fifth of everything
+the client holds, where at 6 it was a thirteenth.
 
 **The stream is ordered by how far away ground is, not by when it will be stood
 on.** `wanted` sorts nearest-first, which is exactly right for a standing player
 and exactly wrong for a running one: the chunk directly ahead at the edge of the
-window is asked for in the same ring as the 47 chunks behind and beside it. With
-the server's bucket refilling at 32 chunks a second, the ground a body is about
-to walk onto arrives after ground it has already left.
+window is asked for in the same ring as the ones behind and beside it. With the
+server's bucket refilling at `2 * (2R + 1)` chunks a second, the ground a body is
+about to walk onto arrives after ground it has already left.
 
 **A single lost mesh reply wedges the load for the session.** `ChunkIngest`
 holds a chunk in `queue` from `offer` until `complete`, and `complete` is only
@@ -60,28 +57,12 @@ appear, and navigation that never starts, from one dropped message.
 
 ## Shape
 
-**Prediction follows the stats it was built from.** `PredictionBuffer` gains one
-setter, and `GameClient` uses it when a `Stats` message moves the speed:
-
-```ts
-class PredictionBuffer {
-  /** Swap the step, keeping the position and the pending inputs (spec 201). */
-  setStep(step: PredictStep): void;
-}
-```
-
-`moveSpeed` is the field compared because a `PredictStep` is a movement
-function: both shipped builders (`createFlatPredictor`, `createWorldPredictor`,
-and `createGroundPredictor` over them) read `speed` off the stats and nothing
-else. The position is *not* reset — only the function that advances it — so a
-speed change costs nothing and is invisible when it agrees.
-
 **The serve window is the ask window plus the slack a client is allowed.**
 
 ```ts
-/** What a client may ask for. Sized off the camera (spec 072). */
-export const MAP_CHUNK_REQUEST_RADIUS = 6;
-/** What the server will serve, from its own position (spec 201). */
+/** What a client may ask for. Sized off the camera (specs 072, 201). */
+export const MAP_CHUNK_REQUEST_RADIUS = 2;
+/** What the server will serve, from its own position (spec 213). */
 export const MAP_CHUNK_SERVE_RADIUS = MAP_CHUNK_REQUEST_RADIUS + 1;
 ```
 
@@ -91,40 +72,48 @@ One chunk, and it is derived rather than judged: the client asks from
 visual offset. Under 100 units of honest disagreement cannot move a chunk index
 by more than one on any grid whose chunks are wider than that, and the shipped
 map's are 616. The guard keeps doing its job — a client claiming to stand across
-the map is still refused, and `MAP_CHUNK_BURST` still prices a cold start off
-the *request* radius — it simply stops refusing clients for being right.
+the map is still refused, because the claim never enters this arithmetic — it
+simply stops refusing clients for being right.
+
+It sits between the two radii spec 208 derived and does not disturb either:
+`MAP_CHUNK_KEEP_RADIUS` is `R + 2`, so the band a client holds without asking is
+still two chunks wide, and `MAP_CHUNK_BURST` still prices a cold start off the
+*request* radius, which is what a client actually asks for.
 
 **The order follows the body.** `wanted` takes an optional point the body is
-heading for and ranks by whichever of the two it is nearer:
+heading for:
 
 ```ts
-wanted(x, z, radius, budget, tick, lead?: { x: number; y: number }): ChunkRequest[]
+wanted(x, z, radius, budget, tick = 0, lead?: { x: number; y: number } | null): ChunkRequest[]
 ```
 
-The rank is a pair: **distance to the walk, then distance to the body**. A
-chunk is projected onto the segment from the body to the lead (clamped, so
-ground behind projects onto the body rather than onto an imaginary extension of
-the walk) and ranked first by how far off that line it sits — so the corridor
-the body is about to walk down comes forward whole — and then by how far it is
-from the body, so that corridor is served outward from the feet rather than from
-the horizon. The ground being stood on is the only chunk that scores zero on
-both, so it is still asked for first: a bias toward the horizon that starved the
-ground under the feet would be worse than no bias at all.
+The rank is a pair: **distance to the walk, then distance to the body**. A chunk
+is projected onto the segment from the body to the lead — clamped, so ground
+behind projects onto the body rather than onto an imaginary extension of the
+walk — and ranked first by how far off that line it sits, so the corridor the
+body is about to walk down comes forward whole; ties then go to whatever is
+nearest the body, so that corridor is served outward from the feet rather than
+from the horizon. The ground being stood on is the only chunk that scores zero
+on both, so it is still asked for first: a bias toward the horizon that starved
+the ground under the feet would be worse than no bias at all.
 
 With no lead the segment is a point, both keys collapse to
 `chebyshev(chunk, at)`, and the order is byte for byte what it always was. The
-candidate set is untouched either way: this reorders a request stream, it does
-not widen one. `GameClient` builds the lead from the direction it last *asked*
-to move in and the speed it is actually walking at, over `CHUNK_LEAD_SECONDS` —
-the request rather than a differenced velocity, because it is what the body is
-committed to, it is known on the tick it is made, and a correction easing in
-underneath does not smear it.
+candidate set is untouched either way — the candidates still come from the window
+around the body, so a lead outside it asks for nothing new. This reorders a
+request stream; it does not widen one.
+
+`GameClient` builds the lead from the direction it last *asked* to move in and
+the speed it is actually walking at, over `CHUNK_LEAD_SECONDS`: the request
+rather than a differenced velocity, because it is what the body is committed to,
+it is known on the tick it is made, and a correction easing in underneath does
+not smear it.
 
 **The ledger ages out what never came back.**
 
 ```ts
 interface IngestOptions {
-  /** How long an offered chunk may stay unmeshed before it stops counting (spec 201). */
+  /** How long an offered chunk may stay unmeshed before it stops counting (spec 213). */
   readonly meshTimeoutMs: number;
 }
 ```
@@ -143,16 +132,15 @@ cannot silently diverge.
 
 ## Invariants tested
 
-- Equipping an item that changes `moveSpeed` produces no sustained corrections:
-  a walk after the equip is corrected no more than a walk before it, over a real
-  server, a real client and real encoded frames.
-- A predictor built before a speed change steps at the new speed after it, and
-  keeps its position and its pending inputs across the swap.
 - A client standing anywhere within `correctionThreshold + MAX_EASED_OFFSET` of
   the server's position, asking at `MAP_CHUNK_REQUEST_RADIUS`, is never refused
-  for range — asserted as that relationship, not as the number 7.
+  for range — asserted as that relationship, not as the number 3, and over the
+  edges and corners of a chunk rather than its middle, since that is the only
+  place the slack can carry an index over a boundary at all.
 - A chunk further from the server's position than `MAP_CHUNK_SERVE_RADIUS` is
   still refused `OutOfRange`, and an undeclared chunk is still `Unknown`.
+- The honest disagreement is smaller than a chunk, so one chunk of slack is
+  enough — a map baked with narrower chunks fails here rather than in the world.
 - `wanted` with no lead returns exactly what it returns today, coordinate for
   coordinate.
 - `wanted` with a lead puts the chunk under the player first, ranks a chunk the
@@ -168,22 +156,21 @@ cannot silently diverge.
   key it does not hold.
 - A fast run over the shipped map holds full coverage of the request window and
   is never corrected: a real server, a real streaming client, the shipped map,
-  at `MOVE_SPEED_HARD_MAX`.
+  at `MOVE_SPEED_HARD_MAX`, through the renderer's own `RoutePlanner`.
 
 ## Out of scope
 
+**The predictor's speed.** Already fixed on `main`. This spec assumes it.
+
 **The predictor's colliders still follow the nav grid.** `fillGround` runs on a
 nav reply, so what the client collides against is as old as the last grid. That
-was measured before being left alone: on the shipped map an incremental grid is
-460–730ms (a first one is 3.7s, and one after 590 chunks land at once is 2.6s),
-the rebuild is triggered every 8 chunks, and at 550 units a second that is under
-400 units of staleness against a request window that reaches 3696 units ahead.
-The body is always deep inside ground the snapshot has. Refreshing the
-predictor's colliders on their own cadence would cost a 1.55–4.98ms
-`snapshotColliders` pass on the frame and buy nothing that can currently be
-measured; if a bigger map or a slower worker moves those numbers, this is the
-thing to change and `snapshotColliders` is already cheap enough to move to the
-worker.
+was measured before being left alone: an incremental grid is a few hundred
+milliseconds, the rebuild is triggered every 8 chunks, and the body is always
+deep inside ground the snapshot has. Refreshing the predictor's colliders on
+their own cadence would cost a `snapshotColliders` pass on the frame and buy
+nothing that can currently be measured; if a bigger map or a slower worker moves
+those numbers, this is the thing to change, and `snapshotColliders` is already
+cheap enough to move to the worker.
 
 **Nothing about what the server simulates.** `INTEREST_CHUNK_RADIUS` and the
 active set are untouched; this is about what a client is *told*, not about what
@@ -194,5 +181,6 @@ is stepped.
 above is about the *mesh* reply inside the client, which has no wire.
 
 **No speed cap on the stream.** `MOVE_SPEED_HARD_MAX` stays 550 and the request
-radius stays sized off the camera. A body that could outrun a 3696-unit lead
-would need the radius to grow, and nothing in the shipped table can.
+radius stays sized off the camera by spec 201's residency argument. A body that
+could outrun a two-chunk lead would need that radius to grow, and moving it is
+that spec's business rather than this one's.

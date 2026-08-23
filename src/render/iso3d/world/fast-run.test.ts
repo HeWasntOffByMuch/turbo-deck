@@ -1,5 +1,5 @@
 /**
- * A body at the top of the speed table, over the shipped map (spec 201).
+ * A body at the top of the speed table, over the shipped map (spec 213).
  *
  * The report this exists for was a player who put `{ moveSpeed: 200 }` on a
  * pair of boots and ran: ground with no trees on it, navigation broken from
@@ -9,7 +9,7 @@
  * ledger that ages out -- and none of them can say whether the stream as a whole
  * keeps up with a body moving as fast as the table allows.
  *
- * So: a real `GameServer` over `maps/arena.json`, a real `GameClient` asking for
+ * So: a real `GameServer` over the shipped map, a real `GameClient` asking for
  * chunks the way the tab does, a real `StreamedMap`, and a walk at
  * `MOVE_SPEED_HARD_MAX`. It lives under `src/render/` for `map-radius.test.ts`'s
  * reason -- this is the only side of the fence where the renderer's own
@@ -24,9 +24,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-
-import { parseMap } from '../../../terrain/map.js';
 import { MOVE_SPEED_HARD_MAX } from '../../../sim/constants.js';
 import {
   MAP_CHUNK_REQUEST_RADIUS,
@@ -38,6 +35,7 @@ import { ChunkDeniedReason, ServerMessageType } from '../../../server/net/protoc
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
 import { buildWorldFromMap } from '../../../server/world/build.js';
+import { loadMapFile } from '../../../server/world/map-file.js';
 import { GameClient } from '../../../server/client/game-client.js';
 import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
@@ -52,9 +50,8 @@ const SETTLE_TICKS = 300;
 
 describe('a body at the top of the speed table', () => {
   it('never outruns the ground it is standing on', async () => {
-    const text = readFileSync('maps/arena.json', 'utf8');
-    const doc = parseMap(text);
-    const built = buildWorldFromMap(doc, text);
+    const shipped = loadMapFile();
+    const built = buildWorldFromMap(shipped.doc, shipped.mapId);
     const transport = new LoopbackTransport();
     const server = new GameServer({ transport, built });
     // Nothing should wander into the run and change what gets requested.
@@ -153,10 +150,10 @@ describe('a body at the top of the speed table', () => {
     // that never left its own chunk. One request window's worth of ground is the
     // bar: past that, every chunk the body is standing on was streamed *during*
     // the walk rather than during the load.
-    const chunkExtent = doc.grid.cellSize * doc.grid.chunkCells;
+    const chunkExtent = shipped.doc.grid.cellSize * shipped.doc.grid.chunkCells;
     expect(travelled).toBeGreaterThan(MAP_CHUNK_REQUEST_RADIUS * chunkExtent);
     expect(ticksOnUnsentGround).toBe(0);
-    // Nothing refused on the edge the body is running toward (spec 201): the
+    // Nothing refused on the edge the body is running toward (spec 213): the
     // serve window covers the ask window, so a correct client is never told no.
     expect(denials.get(ChunkDeniedReason.OutOfRange) ?? 0).toBe(0);
     // ...and the prediction never disagreed with the server over any of it.
