@@ -9,9 +9,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
-import { MAP_VERSION, isKnownPropKind, parseMap, type MapChunk } from '../../terrain/map.js';
+import { MAP_VERSION, isKnownPropKind, type MapChunk } from '../../terrain/map.js';
 import { BufferReader } from './codec.js';
 import {
   decodeChunkDenied,
@@ -24,10 +23,11 @@ import {
 import { decodeClientMessage, decodeServerMessage, encodeClientMessage, encodeServerMessage } from './messages.js';
 import { ChunkDeniedReason, ClientMessageType, ServerMessageType } from './protocol.js';
 import { buildMapIndex, mapIdOf } from '../world/map-index.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const text = readFileSync('maps/arena.json', 'utf8');
-const doc = parseMap(text);
-const index = buildMapIndex(doc, mapIdOf(text));
+const shipped = loadMapFile();
+const doc = shipped.doc;
+const index = buildMapIndex(doc, shipped.mapId);
 
 /** Skip the type byte the encoders write, so a reader starts on the payload. */
 function payload(bytes: Uint8Array): BufferReader {
@@ -47,10 +47,11 @@ describe('the shipped map', () => {
     for (const species of index.species) expect(isKnownPropKind(species)).toBe(true);
   });
 
-  it('has nav baked, so no client has to re-derive it', () => {
-    for (const layer of doc.layers) {
-      for (const chunk of layer.chunks) expect(chunk.nav).not.toBeNull();
-    }
+  it('carries no baked walkability, in the document or on the wire', () => {
+    // Spec 204. It was a run list per chunk sent to every client and read by
+    // exactly one thing -- the editor's overlay, which loads the map off disk
+    // and has never streamed.
+    expect(JSON.stringify(doc)).not.toContain('"nav"');
   });
 });
 
@@ -234,11 +235,21 @@ describe('the small messages', () => {
 });
 
 describe('mapId', () => {
+  // Still the text hash, because that is what `mapIdOf` is. Since spec 204 the
+  // *world's* identity comes off the manifest instead -- a hash of ordered
+  // region hashes -- and this remains the primitive underneath both.
+  const sample = 'a map, as text';
+
   it('is stable for the same text', () => {
-    expect(mapIdOf(text)).toBe(mapIdOf(text));
+    expect(mapIdOf(sample)).toBe(mapIdOf(sample));
   });
 
   it('changes when the document does', () => {
-    expect(mapIdOf(text)).not.toBe(mapIdOf(`${text} `));
+    expect(mapIdOf(sample)).not.toBe(mapIdOf(`${sample} `));
+  });
+
+  it('is what the shipped map is served under', () => {
+    expect(shipped.mapId).toHaveLength(8);
+    expect(index.mapId).toBe(shipped.mapId);
   });
 });

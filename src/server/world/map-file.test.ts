@@ -35,7 +35,10 @@ describe('the shipped map', () => {
     // and does not owe `bake-map.ts`'s own default seed anything. What
     // matters here is that the field survived parsing as a real number.
     expect(Number.isFinite(file.doc.seed)).toBe(true);
-    expect(file.text.length).toBeGreaterThan(0);
+    // The identity comes off the manifest now rather than from hashing the
+    // whole world (spec 204), so it is 8 hex digits rather than a document.
+    expect(file.mapId).toHaveLength(8);
+    expect(file.manifest.layers.length).toBeGreaterThan(0);
   });
 
   it('loads into a world with ground under the arena', () => {
@@ -47,7 +50,7 @@ describe('the shipped map', () => {
   });
 
   it('builds a server world with colliders for its props', () => {
-    const built = buildWorldFromMap(file.doc, file.text);
+    const built = buildWorldFromMap(file.doc, file.mapId);
     expect(built.props.length).toBeGreaterThan(0);
     // The bug spec 063 was written about: terrain built here and an empty
     // vegetation list passed to collision, so the server walked through trees.

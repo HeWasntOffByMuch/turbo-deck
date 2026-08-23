@@ -104,6 +104,13 @@ interface StoredChunk {
   readonly tones: Uint8Array;
   readonly props: Prop[];
   readonly markers: MapMarker[];
+  /**
+   * Baked walkability, for the editor's overlay and for nothing else (spec 204).
+   *
+   * In memory only. It left the document and the wire because its one reader is
+   * a dev visualisation that is off by default, and because it is the wrong
+   * quantity at the wrong resolution to ever feed a nav grid.
+   */
   nav: Uint8Array | null;
 }
 
@@ -285,6 +292,10 @@ export class MapChunkStore {
       solid: decodeRuns(chunk.solid, cells),
       materials: decodeRuns(chunk.materials, cells),
       tones: decodeRuns(chunk.tones, cells),
+      // Baked walkability is runtime state now, not stored state (spec 204): a
+      // loaded chunk starts with none, and the editor bakes its overlay the
+      // first time the overlay is actually switched on.
+      nav: null,
       // Chunk-local back to world space: the one place the conversion happens.
       props: chunk.props.map((p) => ({
         kind: (p.species as PropKind),
@@ -300,7 +311,9 @@ export class MapChunkStore {
       // convention props use. Holding the two differently is how a world
       // coordinate ends up written into a local field and lands a chunk away.
       markers: chunk.markers.map((m) => ({ ...m, x: originX + m.x, z: originZ + m.z })),
-      nav: chunk.nav === null ? null : Uint8Array.from(chunk.nav),
+      // Baked walkability is runtime state now, not stored state (spec 204): a
+      // loaded chunk starts with none and the editor bakes its overlay when the
+      // overlay is asked for.
     };
   }
 
@@ -1133,7 +1146,6 @@ export class MapChunkStore {
         x: quantize(m.x - chunk.originX),
         z: quantize(m.z - chunk.originZ),
       })),
-      nav: chunk.nav === null ? null : Array.from(chunk.nav),
     };
   }
 
@@ -1431,7 +1443,12 @@ export interface LoadedMap {
   readonly store: MapChunkStore;
   /** Implements `TerrainWorld`, so existing consumers work unchanged. */
   readonly world: TerrainWorld;
-  /** Ready-to-mesh chunks, identical in shape to `sampleChunk`'s output. */
+  /**
+   * Ready-to-mesh chunks, identical in shape to `sampleChunk`'s output.
+   *
+   * **Built on first read.** It is the most expensive thing a map can produce
+   * and the server never wants it -- see `loadMap`.
+   */
   readonly chunks: readonly TerrainChunk[];
   readonly meshLayers: readonly MeshLayer[];
   /** Props back in world space, in document order. */
@@ -1514,11 +1531,28 @@ export function meshLayerFor(store: MapChunkStore, layerId: string): MeshLayer |
  */
 export function loadMap(doc: MapDocument): LoadedMap {
   const store = new MapChunkStore(doc);
+  // Built on first read rather than at load (spec 207).
+  //
+  // `chunks` is *mesh* data -- a jittered world position and a normal per corner
+  // -- and building it is the whole of a server boot: 32.6s of the 34s it takes
+  // to stand up a 12,960-chunk world, against 202ms to construct the store. The
+  // server then never looks at it. `buildWorldFromDocument` reads `world` and
+  // `props` and nothing else, so every one of those seconds went into arrays
+  // discarded on the next line.
+  //
+  // Memoized, so the semantics are exactly what they were: a snapshot, taken
+  // once. The only difference is *when* -- at first read instead of at load --
+  // and the only caller that reads it is the editor, which reads it immediately
+  // after loading in order to mesh the world it is about to draw.
+  let chunks: readonly TerrainChunk[] | null = null;
   return {
     doc,
     store,
     world: worldFor(store),
-    chunks: store.buildChunks(),
+    get chunks(): readonly TerrainChunk[] {
+      chunks ??= store.buildChunks();
+      return chunks;
+    },
     meshLayers: doc.layers.map((l) => meshLayerFor(store, l.id)).filter((l): l is MeshLayer => l !== null),
     props: doc.layers.flatMap((l) => store.props(l.id)),
     markers: doc.layers.flatMap((l) => store.markers(l.id)),

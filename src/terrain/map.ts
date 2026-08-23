@@ -41,7 +41,21 @@ import { FENCE_KINDS, type Prop, type PropKind } from './vegetation.js';
  * `classify`, and in a baked map the materials are authoritative.
  */
 
-export const MAP_VERSION = 2;
+/**
+ * 3 drops `chunk.nav` (spec 204).
+ *
+ * It was baked walkability at the document's own cell size, 10.5% of every map
+ * file, and it rode the wire to every client. Its only reader was the editor's
+ * nav overlay -- a dev visualisation, off by default -- and it could not become
+ * the thing that would have earned its place: a nav grid needs *heights* at
+ * `NAV_CELL_SIZE` and a separate answer per body radius, where this is
+ * walkability at 22 units from a single slope with no clearance term. The
+ * editor bakes it on demand instead.
+ *
+ * A version 1 or 2 document still loads; its `nav` is read and dropped, which is
+ * what makes this a migration rather than a wall.
+ */
+export const MAP_VERSION = 3;
 
 /** The oldest document `parseMap` will read. Anything older has no migration. */
 export const MIN_MAP_VERSION = 1;
@@ -129,8 +143,6 @@ export interface MapChunk {
   readonly tones: readonly number[];
   readonly props: readonly MapProp[];
   readonly markers: readonly MapMarker[];
-  /** Baked walkability, one flag per cell. Null until the nav bake exists. */
-  readonly nav: readonly number[] | null;
 }
 
 export interface MapLayer {
@@ -403,7 +415,6 @@ export function exportMap(input: ExportMapInput): MapDocument {
           z: quantize(m.z - chunk.originZ),
           ...(m.label === undefined ? {} : { label: m.label }),
         })),
-        nav: null,
       };
     });
 
@@ -521,7 +532,6 @@ function writeChunk(chunk: MapChunk, indent: string): string {
       ['tones', writeInline(chunk.tones)],
       ['props', writeList(chunk.props.map(writeProp), inner)],
       ['markers', writeList(chunk.markers.map(writeMarker), inner)],
-      ['nav', chunk.nav === null ? 'null' : writeInline(chunk.nav)],
     ],
     indent,
   );
@@ -729,7 +739,6 @@ function parseChunk(value: unknown, what: string): MapChunk {
     fail(`${what}.heights has ${heights.length} entries, expected ${corners} for ${cols}x${rows}`);
   }
   const cells = cols * rows;
-  const nav = r['nav'];
   const chunk: MapChunk = {
     cx: asNumber(r['cx'], `${what}.cx`),
     cz: asNumber(r['cz'], `${what}.cz`),
@@ -745,16 +754,15 @@ function parseChunk(value: unknown, what: string): MapChunk {
     markers: (Array.isArray(r['markers']) ? r['markers'] : fail(`${what}.markers must be an array`)).map((m, i) =>
       parseMarker(m, `${what}.markers[${i}]`),
     ),
-    nav: nav === null || nav === undefined ? null : asNumbers(nav, `${what}.nav`),
   };
+  // `nav` is read off a version 1 or 2 document and dropped (spec 204). Not
+  // refused: an older map is still a map, and the field it carries is one the
+  // editor now bakes for itself.
   // Decoding is the length check: a run list that does not cover exactly the
   // cell count throws here rather than producing a silently short chunk.
   decodeRuns(chunk.solid, cells);
   decodeRuns(chunk.materials, cells);
   decodeRuns(chunk.tones, cells);
-  if (chunk.nav !== null && chunk.nav.length !== cells) {
-    fail(`${what}.nav has ${chunk.nav.length} entries, expected ${cells}`);
-  }
   return chunk;
 }
 

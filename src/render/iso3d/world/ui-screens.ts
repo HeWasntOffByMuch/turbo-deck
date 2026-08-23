@@ -59,6 +59,12 @@ import { ShopScreen } from '../../../ui/screens/shop.js';
 import { TradeScreen, type TradeOfferView, type TradeUiView } from '../../../ui/screens/trade.js';
 import { OptionsScreen } from '../../../ui/screens/options.js';
 import { DisplayScreen } from '../../../ui/screens/display.js';
+import type { MaxZoomChoice } from '../../../ui/input/display-store.js';
+import {
+  MAX_VIEW_HALF_WIDTH,
+  MIN_VIEW_HALF_WIDTH,
+  SUPPORTED_MAX_VIEW_HALF_WIDTH,
+} from '../view-settings.js';
 import type { ScaleChoice } from '../../../ui/input/display-store.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
 import { UiWindow } from '../../../ui/widgets/window.js';
@@ -152,6 +158,13 @@ export interface UiScreensOptions {
    * (spec 165). Same contract as `onScaleChosen` for the same reason.
    */
   readonly onShowFpsChosen: (show: boolean) => void;
+  /**
+   * The widest zoom the player wants to be able to reach (spec 202). Same
+   * contract as the two above: the page emits and the mount decides.
+   */
+  readonly onMaxZoomChosen: (choice: MaxZoomChoice) => void;
+  /** The stored widest-zoom preference, so the page opens showing it. */
+  readonly maxZoom?: MaxZoomChoice;
   /**
    * The layout to restore, read at the DOM edge. Null when there is none.
    *
@@ -493,13 +506,27 @@ export class UiScreens {
     // window of its own as well, which looked like a free convenience and was
     // not: a widget has one parent, so the second window emptied the first the
     // moment its tab was built. `K` opens this one, on this tab.
-    this.display = new DisplayScreen({ theme: THEME });
+    this.display = new DisplayScreen({
+      theme: THEME,
+      // The one place the camera's band and the interface meet. `src/ui/` may
+      // not import `view-settings.ts`, and this mount is where a screen is
+      // allowed to know about the world it is drawn over (spec 198).
+      zoom: {
+        min: MIN_VIEW_HALF_WIDTH,
+        max: MAX_VIEW_HALF_WIDTH,
+        supported: SUPPORTED_MAX_VIEW_HALF_WIDTH,
+      },
+    });
     this.display.onScaleChosen = (choice) => {
       options.onScaleChosen(choice);
     };
     this.display.onShowFpsChosen = (show) => {
       options.onShowFpsChosen(show);
     };
+    this.display.onMaxZoomChosen = (choice) => {
+      options.onMaxZoomChosen(choice);
+    };
+    this.display.setMaxZoom(options.maxZoom ?? 'supported');
 
     this.optionsScreen = new OptionsScreen({
       theme: THEME,
@@ -1188,6 +1215,11 @@ export class UiScreens {
   /** Told whether the frame-time readout is being drawn (spec 165). */
   setShowFps(show: boolean): void {
     this.display.setShowFps(show);
+  }
+
+  /** Keeps the Display page's widest-zoom row in step with what the camera got. */
+  setMaxZoom(choice: MaxZoomChoice): void {
+    this.display.setMaxZoom(choice);
   }
 
   /** Told whether the player has asked for less motion (spec 133). */

@@ -31,11 +31,10 @@ import { planConnection, rememberSession } from './connection.js';
 import { ReconnectingChannel } from '../../../server/net/reconnecting.js';
 import { createConnectionBanner } from './connection-banner.js';
 import { createGroundPredictor, emptyGround, fillGround } from './prediction-ground.js';
-import { mapIdOf } from '../../../server/world/map-index.js';
 import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
-import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
+import { buildWorldFromMap } from '../../../server/world/build.js';
 import { adoptNavGrid } from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
@@ -49,8 +48,7 @@ import type { BaseStatKey } from '../../../server/state/types.js';
 import { viewSeed } from '../seed.js';
 import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
 import { ASSET_MANIFEST_HASH } from './unit-assets.js';
-import mapText from '../../../../maps/arena.json?raw';
-import { parseMap } from '../../../terrain/map.js';
+import { loadShippedMap } from '../map-asset.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { HeldChunk } from '../../../server/client/map-cache.js';
 import type { ViewHandle } from '../view-handle.js';
@@ -98,10 +96,14 @@ import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import {
   DEFAULT_SHOW_FPS,
   loadScale,
+  loadMaxZoom,
   loadShowFps,
+  resolveMaxZoom,
   saveScale,
+  saveMaxZoom,
   saveShowFps,
 } from '../../../ui/input/display-store.js';
+import { SUPPORTED_MAX_VIEW_HALF_WIDTH } from '../view-settings.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
@@ -272,7 +274,21 @@ const MAX_CATCH_UP_TICKS = 10;
 /** Ms between deltas -- the interval the renderer interpolates across. */
 const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
-export function mountWorld(container: HTMLElement): ViewHandle {
+export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
+  /**
+   * The shipped map, fetched rather than bundled (spec 203).
+   *
+   * Awaited here and nowhere deeper: everything below is synchronous from
+   * `buildWorldFromMap` through `warmRouting`, `fillGround` and the transport,
+   * and threading a promise into that would be a rewrite of the whole function.
+   * The mount boundary is the one place a wait costs nothing but a frame.
+   *
+   * Fetched on the remote path too, even though only a loopback tab builds a
+   * world from it: the manifest's `mapId` is how this tab tells the server it
+   * is on the same document, and a client that skipped the fetch could not make
+   * that comparison at all.
+   */
+  const shippedMap = await loadShippedMap();
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#0b0b12;';
 
@@ -310,24 +326,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * that path is ever exercised: used whenever the two happened to agree, it
    * would be a path that only runs in the case it is broken in.
    */
-  const local = plan.mode === 'loopback' ? buildWorldFromMap(parseMap(mapText), mapText) : null;
+  const local = plan.mode === 'loopback' ? buildWorldFromMap(shippedMap.doc, shippedMap.mapId) : null;
   // Same reason as the server (spec 130): sampling the ground into a nav grid is
   // around a second on a real map, and it belongs beside the rest of the page's
   // start-up rather than in the frame where the first move order is given. The
   // streaming client's equivalent is on the settle in `ingestChunks`, which is
   // the earliest moment it could possibly be done.
   //
-  // Blocking, and deliberately back to blocking (spec 165 follow-up 3). Slicing
-  // this across frames was worse in every way that mattered: the sim reaches
-  // `navGridFor` on its own inside `routeToward`, so the grid has to exist
-  // before the first tick rather than eventually -- and a budget spent *per
-  // frame* makes the wall-clock cost of loading a function of the frame rate,
-  // which on a slow machine turned five seconds of work into thirty of waiting.
+  // There used to be a `warmRouting(local)` here, and spec 165's follow-up spent
+  // real effort making it blocking again: the sim reached `navGridFor` inside
+  // `routeToward`, so a world-sized grid had to exist before the first tick, and
+  // slicing the build across frames made the wall-clock cost of loading a
+  // function of the frame rate -- five seconds of work became thirty of waiting
+  // on a slow machine.
   //
-  // What made it affordable was never the slicing. It is the per-cell height
-  // cache below: this pass is the only one that pays for the whole map, and the
-  // chunk arrivals that used to re-pay for it now cost their own ground.
-  if (local) warmRouting(local);
+  // Spec 205 deleted the thing being warmed. Nav is windows now, and a window is
+  // built inside the tick that first wants one: ~140ms of sampling for one
+  // player's surroundings rather than 3.6s for the world, on a map where the
+  // window does not grow when the map does. There is nothing left to have ready.
 
   /**
    * What the predictor is allowed to collide against.
@@ -614,7 +630,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // prediction off, because the alternative was colliding against a forest
       // the server did not have; now the colliders come from the stream either
       // way and this is just a useful thing to see in a screenshot.
-      if (plan.mode === 'remote' && map.info.mapId !== mapIdOf(mapText)) {
+      if (plan.mode === 'remote' && map.info.mapId !== shippedMap.mapId) {
         banner.note(`server map ${map.info.mapId.slice(0, 8)}`);
       }
     }
@@ -626,6 +642,34 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     for (const held of map.chunks) {
       if (streamed.has(held.layer, held.cx, held.cz)) continue;
       pendingInserts.set(`${held.layer}:${held.cx},${held.cz}`, held);
+    }
+
+    // Ground the cache has let go of (spec 208).
+    //
+    // Reconciled against the cache's held list rather than being told, because
+    // the cache is what decides residency and a message saying "these went"
+    // would be a second description of the same fact -- one that can be dropped,
+    // leaving geometry drawn over ground nothing holds. Comparing is O(held),
+    // and held is bounded by exactly the thing this pass enforces.
+    const live = new Set<string>();
+    for (const held of map.chunks) live.add(`${String(held.layer)}:${String(held.cx)},${String(held.cz)}`);
+    const stale = streamed
+      .heldRefs()
+      .filter((ref) => !live.has(`${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`));
+    if (stale.length > 0) {
+      const { removed, restitch } = streamed.remove(stale);
+      for (const ref of removed) {
+        pendingInserts.delete(`${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`);
+        const layerId = streamed.meshLayers[ref.layer]?.id;
+        if (layerId !== undefined) scene.dropTerrainChunk(layerId, ref.cx, ref.cz);
+      }
+      // The neighbours are stitched to ground that has gone, so they are dirty
+      // in exactly the sense an arrival makes its neighbours dirty.
+      if (restitch.length > 0) ingest.offer(restitch, nowMs);
+      // The height memo held samples over ground this side no longer has
+      // (spec 153), the same reason an insert invalidates it.
+      scene.invalidateGroundSamples();
+      mapWorker.send({ kind: 'evict', refs: stale });
     }
 
     const insertStart = performance.now();
@@ -1327,6 +1371,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * Every callback below is a *request*: the screens emit intents and the server
    * decides. Nothing here writes to a container, a purse or a skill tree.
    */
+  // The widest zoom the player has asked for (spec 202), read once and applied
+  // to the camera before the first frame -- a ceiling honoured only on the next
+  // change would leave a restored session framing wider than it was told to.
+  const storedMaxZoom = loadMaxZoom(bindingStorage);
+  scene.controls.restoreMaxZoom(resolveMaxZoom(storedMaxZoom, SUPPORTED_MAX_VIEW_HALF_WIDTH));
+
   const ui = new UiLayer(root, {
     map: inputMap,
     onMove: (from, to, count) => client.moveItem(from, to, count),
@@ -1372,9 +1422,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       ui.setShowFps(show);
       saveShowFps(bindingStorage, show);
     },
+    // The same three steps again (spec 202): honour it on the camera, tell the
+    // page so its slider matches what is drawn, and save it before the frame
+    // that could lose it. The *choice* is stored rather than the number it
+    // resolves to, so `'supported'` keeps tracking the cap when the cap moves.
+    //
+    // `chooseMaxZoom` rather than `restoreMaxZoom`, which is the whole fix: a
+    // player dragging the slider has to see the width they picked, and clamping
+    // alone only ever moves the camera *in*.
+    onMaxZoomChosen: (choice) => {
+      scene.controls.chooseMaxZoom(resolveMaxZoom(choice, SUPPORTED_MAX_VIEW_HALF_WIDTH));
+      ui.setMaxZoom(choice);
+      saveMaxZoom(bindingStorage, choice);
+    },
     // The one place the platform is asked, beside the media queries.
     scale: loadScale(bindingStorage),
     showFps: loadShowFps(bindingStorage),
+    maxZoom: storedMaxZoom,
     // Where the windows were (spec 147). Read here and written back here, for
     // the third time and the third reason: the mount is pure, so the document
     // arrives as a value and leaves as a callback. `saveLayout` cannot throw --
@@ -2080,7 +2144,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
-   * Say what the next click would do (specs 158, 200).
+   * Say what the next click would do (specs 158, 201).
    *
    * Three things change the pointer, and the arrow is what stands the rest of
    * the time. A pending aim gets the full crosshair, because that is the one

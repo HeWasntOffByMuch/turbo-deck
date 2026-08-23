@@ -49,6 +49,7 @@ import {
   offsetToOrbit,
   orbitToOffset,
   pinchViewHalfWidth,
+  spanForMaxZoom,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -113,6 +114,25 @@ export interface ViewControls {
    * `world/view.ts`; this is only the way in.
    */
   pinchZoom(ratio: number): void;
+  /**
+   * A stored widest-zoom preference, put back at mount (spec 202).
+   *
+   * Clamps the current span as well as future gestures, and does **not** frame
+   * the ceiling: a session left at 320 under a ceiling of 420 has to come back
+   * at 320, and a restore that framed the ceiling would open every session
+   * zoomed all the way out.
+   */
+  restoreMaxZoom(ceiling: number): void;
+  /**
+   * A widest zoom the player has just chosen, framed (spec 202, corrected).
+   *
+   * The counterpart to {@link restoreMaxZoom}, and the two are separate methods
+   * rather than one with a flag because the bug was exactly that they shared an
+   * answer: clamping alone is one-way, so dragging the slider *down* moved the
+   * camera and dragging it *up* did nothing. Two intents, two names, and each
+   * call site says which it is.
+   */
+  chooseMaxZoom(ceiling: number): void;
   /** How long the camera takes to catch up to the unit it follows, ms (spec 039). */
   followLagMs(): number;
   /**
@@ -748,6 +768,10 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   if (lights) element.append(lights.element);
   element.append(filter.element, hikeMenu.element);
 
+  // The player's own widest zoom (spec 202). Starts at the band's maximum so a
+  // tab that never sets it behaves exactly as it did.
+  let zoomCeiling = MAX_VIEW_HALF_WIDTH;
+
   return {
     element,
     menus,
@@ -757,7 +781,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         'wheel',
         (e: WheelEvent) => {
           e.preventDefault();
-          zoom.setValue(zoomViewHalfWidth(zoom.value(), e.deltaY, e.deltaMode));
+          zoom.setValue(zoomViewHalfWidth(zoom.value(), e.deltaY, e.deltaMode, zoomCeiling));
         },
         { passive: false },
       );
@@ -768,9 +792,24 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       // stripped of it. Rebuilding the delta rather than adding a second zoom
       // path keeps one curve, and the curve is what a session's muscle memory is
       // built on.
-      zoom.setValue(zoomViewHalfWidth(zoom.value(), -direction * Math.abs(magnitude), deltaMode));
+      zoom.setValue(zoomViewHalfWidth(zoom.value(), -direction * Math.abs(magnitude), deltaMode, zoomCeiling));
     },
-    pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
+    pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio, zoomCeiling)),
+    /**
+     * The widest the player has asked to be able to zoom out to (spec 202).
+     *
+     * Re-clamps the current span as well as future gestures, because a ceiling
+     * lowered while the camera is already past it would otherwise leave the
+     * frame outside the band until somebody happened to scroll.
+     */
+    restoreMaxZoom: (ceiling: number) => {
+      zoomCeiling = ceiling;
+      zoom.setValue(spanForMaxZoom(zoom.value(), zoomCeiling, false));
+    },
+    chooseMaxZoom: (ceiling: number) => {
+      zoomCeiling = ceiling;
+      zoom.setValue(spanForMaxZoom(zoom.value(), zoomCeiling, true));
+    },
     orbitBy: (degrees: number) => camAz.setValue(wrapTurn(camAz.value() + degrees)),
     orbitDegrees: () => camAz.value(),
     cameraOffset: () =>

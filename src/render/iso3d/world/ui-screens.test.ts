@@ -100,6 +100,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
       onShowFpsChosen: (show) => requests.push(`showFps:${String(show)}`),
+      onMaxZoomChosen: (choice) => requests.push(`maxZoom:${String(choice)}`),
       onLayoutChanged: (layout) => {
         saved.push(layout);
         requests.push('layout');

@@ -22,7 +22,7 @@
 // placed on the heightfield or all pinned to the height under its centre. Both
 // go through `projectDecal`, so the "before" column is the old bug expressed as
 // a flat height function rather than as a second copy of the old code.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PNG } from 'pngjs';
@@ -37,8 +37,8 @@ import {
   type DecalTemplate,
   type HeightAt,
 } from '../src/render/iso3d/world/ground-decal.js';
-import { parseMap } from '../src/terrain/map.js';
 import { loadMap } from '../src/terrain/map-world.js';
+import { loadMapFile } from '../src/server/world/map-file.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
@@ -265,7 +265,7 @@ function draw(
 
 // --- The picture ----------------------------------------------------------
 
-const map = loadMap(parseMap(readFileSync(join(root, 'maps', 'arena.json'), 'utf8')));
+const map = loadMap(loadMapFile().doc);
 /** How many times the real heightfield was asked, so the memo can be priced. */
 let heightCalls = 0;
 const rawHeight: HeightAt = (x, z) => {
@@ -283,7 +283,7 @@ const heightAt = sampled.at;
  */
 function findSlope(): { x: number; z: number; fall: number } {
   const bounds = map.doc.layers[0]?.bounds;
-  if (!bounds) throw new Error('arena.json has no layers');
+  if (!bounds) throw new Error('the shipped map has no layers');
   let best = { x: 0, z: 0, fall: -1 };
   for (let x = bounds.minX + 300; x < bounds.maxX - 300; x += 60) {
     for (let z = bounds.minZ + 300; z < bounds.maxZ - 300; z += 60) {

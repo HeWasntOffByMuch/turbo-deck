@@ -134,6 +134,9 @@ const PURE_RENDER = [
   'src/render/iso3d/detail-texture.test.ts',
   'src/render/iso3d/surface-detail.ts',
   'src/render/iso3d/surface-detail.test.ts',
+  // The grid the prop field batches by (spec 195), out of `props.ts` in spec 211
+  // so the editor's pure half can ask where a region is without importing three.
+  'src/render/iso3d/prop-regions.ts',
   'src/render/iso3d/world/appearance.ts',
   // What a monster's rig is built with (spec 152) -- the drawn half of an enemy,
   // beside the file that says which rig draws it. Pure for the reason the rest
@@ -278,6 +281,16 @@ const PURE_RENDER = [
   'src/render/iso3d/vfx/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
+  // Which ground the editor meshes and which it lets go of (spec 212). The keep
+  // rule's claim is that no camera position lets one pass drop what the next
+  // asks for, which is a statement about every position rather than the one
+  // somebody dragged to -- so it is asserted in Node.
+  'src/render/iso3d/editor/ground-residency.ts',
+  // Which prop regions the editor still owes and in what order (spec 211). The
+  // field is built deferred and drained a few regions a frame, so this is the
+  // arithmetic that decides what a person sees next -- checkable in Node rather
+  // than by opening the tab and watching the trees arrive.
+  'src/render/iso3d/editor/prop-residency.ts',
   'src/render/iso3d/editor/history.ts',
   'src/render/iso3d/editor/markers.ts',
   'src/render/iso3d/editor/paint.ts',
@@ -417,6 +430,43 @@ export default tseslint.config(
               // acquiring a rendering dependency by the back door.
               group: ['**/render', '**/render/**'],
               message: 'The sim never imports the renderer. src/render/ reads sim state, not the other way round.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The client session (spec 202). Transport-agnostic and drawn by the
+    // renderer, never the reverse -- so it may not reach back into it.
+    //
+    // The rule it exists to hold is narrow and load-bearing:
+    // `MAP_CHUNK_REQUEST_RADIUS` bounds *where* a client may read, and it is
+    // checked server-side against the server's own position for that player
+    // precisely so a client cannot widen its own read window by lying (spec
+    // 072). A request window derived from something the camera knows -- the
+    // zoom above all, which since spec 202 is a player setting that can be
+    // pushed past the supported band -- would be that same hole reopened from
+    // the inside. There is nothing in `src/render/` this half needs, so the
+    // cheapest way to keep it that way is to make it impossible.
+    //
+    // Tests are exempt: `loot-wire.test.ts` and `status-wire.test.ts` compare a
+    // wire value against what the renderer makes of it, which is the one thing
+    // that genuinely wants both sides, and is the same licence
+    // `interest.test.ts` takes from the other direction.
+    files: ['src/server/client/**/*.ts'],
+    ignores: ['src/server/client/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          ...NO_RENDERING_LIBRARIES,
+          patterns: [
+            ...NO_RENDERING_LIBRARIES.patterns,
+            {
+              group: ['**/render', '**/render/**'],
+              message:
+                'The client session never imports the renderer. A request window derived from what the camera knows is the read-window guard reopened from the inside (spec 202).',
             },
           ],
         },

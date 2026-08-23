@@ -26,11 +26,10 @@ import { PLAYER_BODY_RADIUS } from '../sim/world.js';
 import type { ServerEntity } from '../sim/types.js';
 import type { ReplicatedEntity } from './replica.js';
 import { buildWorldFromMap } from '../world/build.js';
-import { parseMap } from '../../terrain/map.js';
-import { readFileSync } from 'node:fs';
+import { loadMapFile } from '../../server/world/map-file.js';
 
 /** The real arena, for the one test that needs the map's spawn points. */
-const mapText = readFileSync(new URL('../../../maps/arena.json', import.meta.url), 'utf8');
+const shippedMap = loadMapFile();
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -55,7 +54,7 @@ async function harness(
   const transport = new LoopbackTransport();
   // The real map only when monsters are wanted: it is what carries the spawn
   // points, and building it is a second of work no other test here needs.
-  const built = options.monsters === true ? buildWorldFromMap(parseMap(mapText), mapText) : undefined;
+  const built = options.monsters === true ? buildWorldFromMap(shippedMap.doc, shippedMap.mapId) : undefined;
   const server = new GameServer({
     seed: 5,
     transport,

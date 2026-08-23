@@ -15,6 +15,8 @@ import {
   TREE_SPECIES,
   type TreeSpecies,
 } from './props.js';
+import { buildRegionInstances } from './props.js';
+import { propRegions, propRegionsOwed } from './editor/prop-residency.js';
 import { LOBED, slabLayout, trunkProfile } from './lobe.js';
 import { PALETTE } from './palette.js';
 import { fenceRotation } from './editor/fence.js';
@@ -1199,6 +1201,93 @@ describe('rebuildWithin', () => {
     field.rebuildWithin([], { minX: 0, minZ: 0, maxX: R * 2.9, maxZ: R * 0.9 });
     expect(all).toBeGreaterThan(0);
     expect(meshCount(field.group)).toBe(0);
+    field.dispose();
+  });
+});
+
+describe('a deferred prop field (spec 211)', () => {
+  const heightAt = (x: number, z: number): number => Math.sin(x / 300) * 40 + Math.cos(z / 210) * 25;
+  const normalAt = (x: number, z: number): readonly [number, number, number] => {
+    const n = new THREE.Vector3(Math.sin(x / 500) * 0.2, 1, Math.cos(z / 500) * 0.2).normalize();
+    return [n.x, n.y, n.z];
+  };
+
+  /** Props spread over several regions, and a few kinds, deliberately small. */
+  const props: Prop[] = [];
+  for (const [rx, rz] of [[0, 0], [1, 0], [0, 1], [-1, 2]] as const) {
+    for (let i = 0; i < 6; i++) {
+      const x = rx * PROP_REGION_SIZE + 100 + i * 90;
+      const y = rz * PROP_REGION_SIZE + 140 + i * 70;
+      props.push({ kind: 'tree', x, y, scale: 0.9 + i * 0.05, rotation: i * 0.4, tint: i * 0.1 });
+      props.push({ kind: 'bush', x: x + 40, y: y + 30, scale: 1, rotation: i, tint: 0 });
+    }
+  }
+
+  /**
+   * Every instanced batch a field holds, as comparable data.
+   *
+   * Sorted, because the two fields hang their regions in different orders on
+   * purpose: the eager one builds in sorted key order and the deferred one
+   * composes nearest the camera first. What has to match is the *content* --
+   * every batch, every matrix, every colour -- not the order of the children.
+   */
+  const batchesOf = (group: THREE.Object3D): string[] => {
+    const out: string[] = [];
+    group.traverse((child) => {
+      if (!(child instanceof THREE.InstancedMesh)) return;
+      out.push(
+        JSON.stringify({
+          count: child.count,
+          matrices: Array.from(child.instanceMatrix.array).map((v) => Number(v.toFixed(5))),
+          colors: child.instanceColor ? Array.from(child.instanceColor.array).map((v) => Number(v.toFixed(5))) : null,
+        }),
+      );
+    });
+    return out.sort();
+  };
+
+  it('composes nothing at build time', () => {
+    const field = buildPropField(props, heightAt, normalAt, undefined, { deferred: true });
+    expect(batchesOf(field.group)).toEqual([]);
+    field.dispose();
+  });
+
+  it('still counts what it cannot draw, before anything is composed', () => {
+    // `undrawn` is a fact about the prop list, not about what has arrived, or a
+    // tool looks broken for as long as the region holding them has not landed.
+    const withUnknown = [...props, { kind: 'gazebo', x: 10, y: 10, scale: 1, rotation: 0, tint: 0 } as unknown as Prop];
+    const field = buildPropField(withUnknown, heightAt, normalAt, undefined, { deferred: true });
+    expect(field.undrawn).toBe(1);
+    field.dispose();
+  });
+
+  it('drained of everything it owes, is the field the eager build returns', () => {
+    const eager = buildPropField(props, heightAt, normalAt);
+    const deferred = buildPropField(props, heightAt, normalAt, undefined, { deferred: true });
+
+    // Composed in pivot order -- deliberately not the eager build's sorted key
+    // order, so the assertion is about content rather than about luck.
+    const buckets = propRegions(props);
+    for (const key of propRegionsOwed(buckets, { x: -PROP_REGION_SIZE, z: 2 * PROP_REGION_SIZE }, new Set())) {
+      deferred.adoptRegion(key, buildRegionInstances(buckets.get(key) ?? [], heightAt, normalAt));
+    }
+
+    expect(batchesOf(deferred.group)).toEqual(batchesOf(eager.group));
+    expect(batchesOf(eager.group).length).toBeGreaterThan(0);
+    eager.dispose();
+    deferred.dispose();
+  });
+
+  it('composing a region twice leaves one copy of it', () => {
+    // `adoptRegion` frees what was there first, which is what lets an edit and
+    // the fill both reach the same region without doubling its trees.
+    const buckets = propRegions(props);
+    const key = [...buckets.keys()].sort()[0] ?? '';
+    const field = buildPropField(props, heightAt, normalAt, undefined, { deferred: true });
+    field.adoptRegion(key, buildRegionInstances(buckets.get(key) ?? [], heightAt, normalAt));
+    const once = batchesOf(field.group);
+    field.adoptRegion(key, buildRegionInstances(buckets.get(key) ?? [], heightAt, normalAt));
+    expect(batchesOf(field.group)).toEqual(once);
     field.dispose();
   });
 });

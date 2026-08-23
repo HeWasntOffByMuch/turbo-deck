@@ -5,6 +5,7 @@ import {
   CAMERA_FAR,
   CAMERA_NEAR,
   clampViewHalfWidth,
+  spanForMaxZoom,
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_FOLLOW_LAG_MS,
   DEFAULT_LIGHT_OFFSET,
@@ -16,6 +17,7 @@ import {
   offsetToOrbit,
   orbitToOffset,
   pinchViewHalfWidth,
+  SUPPORTED_MAX_VIEW_HALF_WIDTH,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -113,6 +115,52 @@ describe('clampViewHalfWidth', () => {
   it('keeps the opening framing reachable', () => {
     expect(DEFAULT_VIEW_HALF_WIDTH).toBeGreaterThanOrEqual(MIN_VIEW_HALF_WIDTH);
     expect(DEFAULT_VIEW_HALF_WIDTH).toBeLessThanOrEqual(MAX_VIEW_HALF_WIDTH);
+  });
+});
+
+describe('spanForMaxZoom (spec 202, corrected)', () => {
+  const CEILING = 420;
+
+  it('frames a ceiling the player just chose, in both directions', () => {
+    // The bug. `clampViewHalfWidth` is `min(ceiling, max(MIN, current))`, so
+    // dragging the ceiling *down* past the current span pulls the camera in and
+    // dragging it *up* does nothing at all -- perfectly asymmetric, which reads
+    // as half-broken rather than as a permission being raised.
+    expect(spanForMaxZoom(320, 600, true)).toBe(600);
+    expect(spanForMaxZoom(600, 320, true)).toBe(320);
+  });
+
+  it('only clamps a stored ceiling being put back', () => {
+    // A session left framed at 320 under a ceiling of 420 has to come back at
+    // 320. A restore that framed the ceiling would open every session zoomed
+    // all the way out, which is nobody's preference.
+    expect(spanForMaxZoom(320, CEILING, false)).toBe(320);
+    expect(spanForMaxZoom(600, CEILING, false)).toBe(CEILING);
+  });
+
+  it('is the one that moved: restoring and choosing used to be the same call', () => {
+    // Stated as a difference rather than as two values, because the fix is that
+    // these stopped sharing an answer.
+    const under = 320;
+    expect(spanForMaxZoom(under, 600, false)).not.toBe(spanForMaxZoom(under, 600, true));
+    // And they agree wherever clamping would have moved the camera anyway, which
+    // is why the old behaviour looked right from one side.
+    const over = 900;
+    expect(spanForMaxZoom(over, CEILING, false)).toBe(spanForMaxZoom(over, CEILING, true));
+  });
+
+  it('cannot frame a span outside the band, whatever ceiling it is given', () => {
+    for (const ceiling of [-100, 0, MIN_VIEW_HALF_WIDTH - 50, MAX_VIEW_HALF_WIDTH + 5000, NaN]) {
+      const span = spanForMaxZoom(320, ceiling, true);
+      expect(span).toBeGreaterThanOrEqual(MIN_VIEW_HALF_WIDTH);
+      expect(span).toBeLessThanOrEqual(MAX_VIEW_HALF_WIDTH);
+    }
+  });
+
+  it('leaves a chosen ceiling inside the band exactly where it was asked for', () => {
+    for (const ceiling of [MIN_VIEW_HALF_WIDTH, 320, CEILING, 800, MAX_VIEW_HALF_WIDTH]) {
+      expect(spanForMaxZoom(320, ceiling, true)).toBe(ceiling);
+    }
   });
 });
 
@@ -278,5 +326,43 @@ describe('the defaults the view opens at (spec 044)', () => {
       expect(nearest).toBeGreaterThan(CAMERA_NEAR);
       expect(furthest).toBeLessThan(CAMERA_FAR);
     }
+  });
+});
+
+describe('the widest zoom a player chose (spec 202)', () => {
+  it('holds the span under the ceiling rather than the band maximum', () => {
+    expect(clampViewHalfWidth(1400, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(SUPPORTED_MAX_VIEW_HALF_WIDTH);
+    expect(clampViewHalfWidth(300, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(300);
+  });
+
+  it('leaves every existing caller alone, because the ceiling defaults to the maximum', () => {
+    expect(clampViewHalfWidth(1400)).toBe(MAX_VIEW_HALF_WIDTH);
+    expect(clampViewHalfWidth(99_999)).toBe(MAX_VIEW_HALF_WIDTH);
+  });
+
+  it('cannot be widened past the band by a stored preference', () => {
+    // A profile written by a build with a wider band must not widen this one's.
+    // The band is the wall; the ceiling only ever lowers it.
+    expect(clampViewHalfWidth(99_999, 99_999)).toBe(MAX_VIEW_HALF_WIDTH);
+  });
+
+  it('never stops the camera getting closer', () => {
+    // Going closer is outside all of this arithmetic: a narrower view never
+    // needs data a wider one did not.
+    expect(clampViewHalfWidth(MIN_VIEW_HALF_WIDTH, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(MIN_VIEW_HALF_WIDTH);
+    expect(clampViewHalfWidth(1, SUPPORTED_MAX_VIEW_HALF_WIDTH)).toBe(MIN_VIEW_HALF_WIDTH);
+  });
+
+  it('holds a wheel gesture to the ceiling', () => {
+    // Scrolling out from the ceiling stays at it, however hard.
+    let span = SUPPORTED_MAX_VIEW_HALF_WIDTH;
+    for (let i = 0; i < 20; i++) span = zoomViewHalfWidth(span, 100, 0, SUPPORTED_MAX_VIEW_HALF_WIDTH);
+    expect(span).toBe(SUPPORTED_MAX_VIEW_HALF_WIDTH);
+  });
+
+  it('holds a pinch to the ceiling too, so no gesture frames outside it', () => {
+    let span = SUPPORTED_MAX_VIEW_HALF_WIDTH;
+    for (let i = 0; i < 20; i++) span = pinchViewHalfWidth(span, 0.5, SUPPORTED_MAX_VIEW_HALF_WIDTH);
+    expect(span).toBe(SUPPORTED_MAX_VIEW_HALF_WIDTH);
   });
 });

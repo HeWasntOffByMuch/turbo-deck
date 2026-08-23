@@ -42,7 +42,7 @@ import {
   ServerMessageType,
   TradeStageValue,
 } from '../net/protocol.js';
-import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
+import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
 
 /**
  * How many chunks one pass may ask for (spec 072).
@@ -51,17 +51,28 @@ import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
  * against a misbehaving client rather than something that shapes the stream in
  * normal play -- a cold start should be paced by this number, not by a refusal.
  *
- * 8 was that pace for a 56-chunk map. On the grown map the radius reaches 169,
+ * 8 was that pace for a 56-chunk map. On the grown map the radius reached 169,
  * and 8 per 50ms pump is twenty-one pumps of asking before the last one is even
- * requested (spec 165). 24 brings the ask down to about seven pumps and stays
- * well under the burst.
+ * requested (spec 165). 24 brought the ask down to about seven pumps.
+ *
+ * Since spec 202 narrowed the request radius to 2 the whole window is 25 chunks,
+ * so one pass now very nearly covers a cold start outright -- which is what this
+ * number was always trying to buy. It stays at 24 rather than shrinking with the
+ * window: the pass is a *ceiling* on one pump, and there is nothing to gain from
+ * lowering a ceiling the stream no longer reaches.
+ *
+ * It must stay at or under {@link MAP_CHUNK_BURST}, or the client's own pacing
+ * would outrun the server's bucket and the throttle would start shaping normal
+ * play. That was a sentence in this comment and is now asserted in
+ * `map-radius.test.ts`, because narrowing the radius moved the burst underneath
+ * it and nothing would have said so.
  *
  * Raising it is only safe because the *meshing* is budgeted separately now:
  * before spec 165 a bigger pass would have arrived as a bigger pile of geometry
  * rebuilds inside one frame, and asking faster would have traded a slow load for
  * a juddering one.
  */
-const CHUNK_REQUESTS_PER_PASS = 24;
+export const CHUNK_REQUESTS_PER_PASS = 24;
 
 /**
  * How often the backstop pump runs, in client ticks. One broadcast period: often
@@ -655,14 +666,6 @@ export class GameClient {
    * {@link chunkLead}. Zero means "standing", which is its own answer.
    */
   private lastMoveRequest: { x: number; y: number } = { x: 0, y: 0 };
-  /**
-   * The `moveSpeed` the current `PredictStep` was built from (spec 201).
-   *
-   * Held rather than re-read off `this.stats`, because the two are only the same
-   * number while nothing has changed -- and the whole bug was that a change in
-   * one never reached the other. Null until prediction starts.
-   */
-  private predictedSpeed: number | null = null;
   /** The spawner readout, when it has been asked for (spec 076). */
   private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
@@ -1923,7 +1926,18 @@ export class GameClient {
   private requestChunks(): void {
     const cache = this.mapCache;
     const at = this.prediction?.drawn ?? this.selfAuthoritative();
-    if (!cache || !at || this.chunkBackoffTicks > 0) return;
+    if (!cache || !at) return;
+    // Forget before asking, and on the same cadence, because both questions are
+    // "where is the player" and asking them at different moments is two answers
+    // (spec 208). Before rather than after, so a chunk that has just gone out of
+    // keep range cannot be re-requested on the very pass that drops it -- the
+    // radii are two apart so it could not anyway, and doing it in the order that
+    // makes it impossible costs nothing.
+    //
+    // Ahead of the backoff check: a client that has stopped asking is exactly
+    // the one that should still be letting go.
+    cache.evictBeyond(at.x, at.y, MAP_CHUNK_KEEP_RADIUS);
+    if (this.chunkBackoffTicks > 0) return;
     for (const req of cache.wanted(
       at.x,
       at.y,
@@ -2233,10 +2247,6 @@ export class GameClient {
 
       case ServerMessageType.Stats:
         this.stats = message.stats;
-        // Before anything reads it: a speed that changed has to reach the
-        // closure that walks the body, or the client predicts at the speed it
-        // used to have for the rest of the session (spec 201).
-        this.refreshPredictorSpeed();
         this.level = message.level;
         this.experience = message.experience;
         this.unspentSkillPoints = message.unspentSkillPoints;
@@ -2244,6 +2254,22 @@ export class GameClient {
         this.baseStats = message.baseStats;
         this.attributes = message.attributes;
         this.unspentAttributePoints = message.unspentAttributePoints;
+        // The recalculation reaching the *prediction* rather than only the
+        // sheet. The step closes over the derived speed, so a client told it
+        // now walks at 155 rather than 161 has to be walked at 155 -- otherwise
+        // taking a pair of greaves off leaves the local body running at the
+        // speed it wore, and the server disagrees with it on every tick of
+        // every step from then on.
+        //
+        // Every stats message rather than only the ones whose speed moved,
+        // because `options.predictor` is handed the whole `EffectiveStats` and
+        // is free to close over any of it. A rebuild is one closure. `welcome`
+        // is non-null wherever `prediction` is -- the buffer is built from its
+        // tick rate -- but it is that tick rate that is wanted here, so it is
+        // asked for rather than asserted.
+        if (this.prediction && this.welcome) {
+          this.prediction.setStep(this.predictStepFor(message.stats, this.welcome.tickRate));
+        }
         break;
 
       case ServerMessageType.Delta: {
@@ -2455,40 +2481,23 @@ export class GameClient {
       this.wantedFacing = self.facing;
       this.facingSeeded = true;
     }
-    this.predictedSpeed = this.stats.moveSpeed;
     this.prediction = new PredictionBuffer(
       { x: self.x, y: self.y },
-      this.buildPredictor(this.stats, this.welcome.tickRate),
+      this.predictStepFor(this.stats, this.welcome.tickRate),
     );
   }
 
   /**
-   * Rebuild the step when the speed it was built from moves (spec 201).
+   * The local step for the stats this client currently has.
    *
-   * `startPredictingIfReady` opens with `if (this.prediction) return`, which is
-   * right -- a body is placed once -- and used to mean the *step* was built once
-   * too. A `Stats` message updated `this.stats` and reached nothing, so a player
-   * who equipped a pair of boots was predicted at the speed they had before
-   * them: 3.3 units of divergence per tick on +200, forever, which the server
-   * answers with a correction on essentially every tick.
-   *
-   * Keyed on `moveSpeed` because a `PredictStep` is a movement function and that
-   * is the only field either shipped builder reads off the stats. A predictor
-   * that came to depend on another one would have to be rebuilt here too, which
-   * is why this compares a named field rather than the object -- a new `Stats`
-   * arrives on every accepted action, and rebuilding on identity would discard
-   * `createGroundPredictor`'s memo of the world it collides against several
-   * times a fight for nothing.
+   * A method rather than the expression it used to be inside
+   * {@link startPredictingIfReady}, because the step is built more than once.
+   * It closes over how fast this body walks, and that number is derived: a
+   * level, an attribute allocation and every piece of gear carrying a
+   * `moveSpeed` modifier change it mid-session. See
+   * {@link PredictionBuffer.setStep}.
    */
-  private refreshPredictorSpeed(): void {
-    const stats = this.stats;
-    const welcome = this.welcome;
-    if (!this.prediction || !stats || !welcome || stats.moveSpeed === this.predictedSpeed) return;
-    this.predictedSpeed = stats.moveSpeed;
-    this.prediction.setStep(this.buildPredictor(stats, welcome.tickRate));
-  }
-
-  private buildPredictor(stats: EffectiveStats, tickRate: number): PredictStep {
+  private predictStepFor(stats: EffectiveStats, tickRate: number): PredictStep {
     const build = this.options.predictor ?? ((s, rate) => createFlatPredictor(s.moveSpeed, rate));
     return build(stats, tickRate);
   }

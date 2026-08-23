@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { hashUnit2 } from '../../shared/hash.js';
 import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
+import { propRegionKey, propRegionKeysIn } from './prop-regions.js';
 import { applySwayBuffers, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
 import { DEFAULT_CREASE_ANGLE, weldedNormals } from './shading.js';
 import { stiffness } from './wind.js';
@@ -39,86 +40,20 @@ import {
  */
 
 /**
- * Edge of one batching region, in world units.
+ * The batching grid (spec 195), which lives in `prop-regions.ts` since spec 211
+ * so the editor's pure half can ask where a region is without importing three.
  *
- * 2200 since spec 195, measured rather than reasoned. It was 1100, on the
- * argument that a region should be "small enough to be a meaningful fraction of
- * what is on screen, so culling actually bites" -- and culling does bite, and it
- * turns out not to matter. The frame is bound by **draw calls**, not by
- * triangles, so cutting geometry by submitting more batches trades the cheap
- * resource for the expensive one.
- *
- * Read off a real GPU at one spot, one session, one variable (`?props=`):
- *
- * ```
- *  region   draws     tris    prep    draw    work     fps
- *     400     701     321k     5.7    17.5    23.5      35
- *     550     604     406k     5.2    14.2    19.6      43
- *    1100     358     639k     3.9     7.0    11.1      60
- *    2200     287    1594k     3.1     5.3     8.6      60
- *    3000     291    2863k     3.2     4.4     7.8      60
- * ```
- *
- * Every step *down* from 1100 cost about 30us per added draw call and bought
- * nothing for the triangles it saved. Every step up paid. 2200 is where it
- * stops: draws bottom out there (287 against 3000's 291), so the mechanism
- * producing the win is spent, and 3000 buys 0.8ms that the draw count does not
- * explain while costing 1.8x the triangles and 1.9x the worker latency below.
- *
- * Walking agrees, which was the half standing still could not show. A region
- * costs the frame ~1ms to adopt *whatever its size* -- the per-instance work is
- * on the worker since spec 181 -- so what size changes is how often one is
- * rebuilt: over a 40-second walk, 95 rebuilds at 1100, 32 at 2200, 18 at 3000.
- *
- * What it costs is worker *latency*: composing one region is 33ms at 1100 and
- * 81ms at 2200, and while that runs the chunk meshes behind it wait. Throughput
- * is no worse -- there are a quarter as many regions -- but a single arrival
- * hogs the thread for longer.
- *
- * The caveat worth keeping: this is one machine's answer. A GPU short of
- * triangle throughput rather than draw calls would want the opposite, and
- * `?props=` is how to ask it again rather than re-deriving this from scratch.
+ * Re-exported rather than merely imported: every existing caller asks this
+ * module for a region key, and moving the file it happens to be declared in is
+ * not a reason to touch them.
  */
-export const PROP_REGION_SIZE = 2200;
-
-/**
- * The size in force, which is {@link PROP_REGION_SIZE} unless a measurement
- * asked for another (spec 195).
- *
- * Module state, deliberately, and set exactly once before any prop is bucketed:
- * `propRegionKey` is a free function called from both threads and from the
- * editor, and threading a size through every one of them would be a refactor in
- * service of a switch that exists to be thrown twice and read off a meter.
- *
- * The rule that keeps it safe is that **both threads must agree**, so the size
- * rides the worker's `map` message rather than being read from the URL twice --
- * a worker bucketing props at 1100 while the main thread asks for regions at 550
- * is a field with holes in it.
- */
-let regionSize = PROP_REGION_SIZE;
-
-/** What the field is batching by right now. */
-export function propRegionSize(): number {
-  return regionSize;
-}
-
-/**
- * Change it, before anything has been bucketed.
- *
- * Refuses anything that is not a positive finite number, because the failure it
- * would otherwise produce -- `Math.floor(x / 0)` is `Infinity`, and every prop
- * lands in one region called "Infinity,Infinity" -- is a blank world with no
- * error anywhere.
- */
-export function setPropRegionSize(size: number): void {
-  if (!Number.isFinite(size) || size <= 0) return;
-  regionSize = size;
-}
-
-/** Which batching region a world point falls in. */
-export function propRegionKey(x: number, z: number): string {
-  return `${Math.floor(x / regionSize)},${Math.floor(z / regionSize)}`;
-}
+export {
+  PROP_REGION_SIZE,
+  propRegionKey,
+  propRegionKeysIn,
+  propRegionSize,
+  setPropRegionSize,
+} from './prop-regions.js';
 
 /** Seeds for the per-instance variation hashes, so the draws stay independent. */
 const HASH_SPECIES = 0x5eed01;
@@ -2082,6 +2017,31 @@ export function buildRegionInstances(
   return { batches: out, undrawnKinds: [...undrawnKinds] };
 }
 
+/** How a field is built, as opposed to what it is built from. */
+export interface PropFieldOptions {
+  /**
+   * Compose nothing now. The handle comes back with its group attached and no
+   * batches in it, and regions arrive later through `adoptRegion` (spec 211).
+   *
+   * For the editor, which pays this whole function in its constructor before it
+   * can draw a frame: 4.5s on the map we ship and about half of everything
+   * opening the editor costs, at every world size `bench-editor.ts` measures.
+   * Deferred, the same regions are composed a few per frame, nearest what the
+   * camera is pointed at first.
+   *
+   * It changes *when* and never *what*: a deferred field drained of everything
+   * it owes is the field this would have returned, batch for batch, and there
+   * is a test that says so.
+   *
+   * `undrawn` is deliberately still counted up front. It answers "does this map
+   * hold props this build cannot draw", which is a fact about the list rather
+   * than about what has been composed so far -- and answering it late would
+   * mean a tool looked broken for as long as the region holding the undrawn
+   * props had not arrived yet, which is the failure the count exists to prevent.
+   */
+  readonly deferred?: boolean;
+}
+
 /**
  * Build the instanced meshes for a list of scattered props, standing each one on
  * the terrain via `heightAt`. Static: instance matrices are written once, since
@@ -2097,6 +2057,7 @@ export function buildPropField(
   heightAt: (x: number, z: number) => number,
   normalAt?: NormalAt,
   shading?: PropShading,
+  options?: PropFieldOptions,
 ): PropFieldHandle {
   const group = new THREE.Group();
   const shade = shading ?? FLAT_SHADING;
@@ -2236,9 +2197,11 @@ export function buildPropField(
     return missing.length;
   };
 
-  const buckets = bucketize(props);
-  // Sorted, so the scene graph is built in the same order for the same input.
-  for (const key of [...buckets.keys()].sort()) buildRegion(key, buckets.get(key) ?? []);
+  if (!options?.deferred) {
+    const buckets = bucketize(props);
+    // Sorted, so the scene graph is built in the same order for the same input.
+    for (const key of [...buckets.keys()].sort()) buildRegion(key, buckets.get(key) ?? []);
+  }
 
   const handle: PropFieldHandle = {
     group,
@@ -2248,11 +2211,7 @@ export function buildPropField(
       const rects = Array.isArray(rect) ? (rect as readonly PropRect[]) : [rect as PropRect];
       const wanted = new Set<string>();
       for (const one of rects) {
-        const lo = propRegionKey(one.minX, one.minZ).split(',').map(Number) as [number, number];
-        const hi = propRegionKey(one.maxX, one.maxZ).split(',').map(Number) as [number, number];
-        for (let rz = lo[1]; rz <= hi[1]; rz++) {
-          for (let rx = lo[0]; rx <= hi[0]; rx++) wanted.add(`${rx},${rz}`);
-        }
+        for (const key of propRegionKeysIn(one)) wanted.add(key);
       }
       if (wanted.size === 0) return;
 

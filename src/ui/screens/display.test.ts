@@ -15,8 +15,10 @@ import { DEFAULT_SHOW_FPS, SCALE_CHOICES, type ScaleChoice } from '../input/disp
 import { THEME } from '../theme/theme.js';
 import { Checkbox } from '../widgets/checkbox.js';
 
+const ZOOM = { min: 200, max: 1400, supported: 420 };
+
 function screen(): DisplayScreen {
-  return new DisplayScreen({ theme: THEME });
+  return new DisplayScreen({ theme: THEME, zoom: ZOOM });
 }
 
 /** Every checkbox on the page, in the order it was built. */
@@ -180,3 +182,60 @@ function labelTexts(display: DisplayScreen): string[] {
   walk(display);
   return found;
 }
+
+describe('the widest-zoom row (spec 202)', () => {
+  /** Every label on the page, in the order it was built. */
+  function labels(display: DisplayScreen): { text: string; visible: boolean }[] {
+    const found: { text: string; visible: boolean }[] = [];
+    const walk = (widget: { children: readonly unknown[] }): void => {
+      for (const child of widget.children) {
+        const w = child as { text?: string; visible: boolean; children: readonly unknown[] };
+        if (typeof w.text === 'string') found.push({ text: w.text, visible: w.visible });
+        walk(w);
+      }
+    };
+    walk(display as unknown as { children: readonly unknown[] });
+    return found;
+  }
+
+  const shown = (display: DisplayScreen): string[] =>
+    labels(display)
+      .filter((l) => l.visible && l.text !== '')
+      .map((l) => l.text);
+
+  it('opens on the supported cap and says nothing about dev settings', () => {
+    const display = screen();
+    expect(display.maxZoomChoice).toBe('supported');
+    expect(shown(display)).toContain(`Widest zoom: ${String(ZOOM.supported)}`);
+    expect(shown(display).some((t) => t.includes('Dev setting'))).toBe(false);
+  });
+
+  it('warns, and says what degrades, once past the supported view', () => {
+    const display = screen();
+    display.setMaxZoom(900);
+    const text = shown(display).join(' ');
+    expect(text).toContain('Widest zoom: 900');
+    // The symptom by name. A warning that only says "unsupported" leaves the
+    // holes looking like a bug.
+    expect(text).toContain('Dev setting');
+    expect(text).toContain('terrain and units may not load');
+  });
+
+  it('takes the warning away again on the way back into the band', () => {
+    const display = screen();
+    display.setMaxZoom(900);
+    display.setMaxZoom('supported');
+    expect(shown(display).some((t) => t.includes('Dev setting'))).toBe(false);
+  });
+
+  it('does not decide anything: the row moves only when the mount answers', () => {
+    // The contract every screen since phase 4 holds, and the reason this page
+    // has no state that can disagree with the frame being drawn.
+    const display = screen();
+    const asked: unknown[] = [];
+    display.onMaxZoomChosen = (choice) => asked.push(choice);
+    display.setMaxZoom(700);
+    expect(display.maxZoomChoice).toBe(700);
+    expect(asked).toEqual([]);
+  });
+});

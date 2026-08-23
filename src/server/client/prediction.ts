@@ -189,24 +189,26 @@ export class PredictionBuffer {
   }
 
   /**
-   * Swap the function that advances the body, keeping everything else
-   * (spec 201).
+   * Swaps the local step, keeping everything else.
    *
-   * A `PredictStep` is built from stats, and stats move: an item is equipped, a
-   * level lands, a point goes into Agility. Until this existed the closure was
-   * built once and never again, so a body that gained move speed was predicted
-   * at the speed it used to have -- 3.3 units of divergence *every tick* on a
-   * pair of +200 boots, which is a correction on essentially every tick and a
-   * drawn body permanently dragged back toward a position it has already left.
-   * The starting greaves alone were enough to make it visible: 0 corrections in
-   * 60 ticks before, 40 in 120 after.
+   * The step closes over how fast this body walks, and that is not a constant
+   * of a session: a level, an attribute and every piece of gear carrying a
+   * `moveSpeed` modifier move it. A step built once and kept walks at whatever
+   * the player happened to be wearing when prediction started, which the server
+   * then corrects on every tick for as long as they keep moving -- which is
+   * exactly what spec 067's drift nudges are not for.
    *
-   * The position is deliberately **not** reset. What was wrong was the rule for
-   * getting to the next position, not the current one, and throwing the local
-   * position away would turn a stat change into a visible jump. The pending
-   * inputs stay too, and the one imprecision this leaves is that a replay after
-   * a correction walks inputs made at the old speed at the new one -- bounded by
-   * a round trip, against an error that was previously unbounded in time.
+   * Only the step, never the buffer: the unacknowledged inputs are the state a
+   * correction replays from, so building a second `PredictionBuffer` around the
+   * new speed would throw away the very thing that makes a correction smooth.
+   *
+   * The inputs still in flight are replayed at the *new* speed rather than at
+   * the one that applied when each was made -- which is the opposite of what
+   * {@link PredictedInput.moveScale} does, and deliberately so. A slow is a
+   * timed state the client is told about a broadcast interval late, so its
+   * buffered inputs were genuinely walked at the old scale; a stat change is
+   * settled on the tick the server derives it and sends the stats, so the
+   * inputs it has not consumed yet are the ones it will walk at the new speed.
    */
   setStep(step: PredictStep): void {
     this.step = step;
