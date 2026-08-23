@@ -114,7 +114,7 @@ describe('the range check', () => {
 
   /**
    * The window the server serves against its own position has to cover the
-   * window a *correct* client asks for against its predicted one (spec 213).
+   * window a *correct* client asks for against its predicted one (spec 214).
    *
    * The relationship rather than the number: widening the correction threshold
    * or the eased offset past a chunk edge fails here rather than in somebody's

@@ -1,5 +1,5 @@
 /**
- * A body at the top of the speed table, over the shipped map (spec 213).
+ * A body at the top of the speed table, over the shipped map (spec 214).
  *
  * The report this exists for was a player who put `{ moveSpeed: 200 }` on a
  * pair of boots and ran: ground with no trees on it, navigation broken from
@@ -153,7 +153,7 @@ describe('a body at the top of the speed table', () => {
     const chunkExtent = shipped.doc.grid.cellSize * shipped.doc.grid.chunkCells;
     expect(travelled).toBeGreaterThan(MAP_CHUNK_REQUEST_RADIUS * chunkExtent);
     expect(ticksOnUnsentGround).toBe(0);
-    // Nothing refused on the edge the body is running toward (spec 213): the
+    // Nothing refused on the edge the body is running toward (spec 214): the
     // serve window covers the ask window, so a correct client is never told no.
     expect(denials.get(ChunkDeniedReason.OutOfRange) ?? 0).toBe(0);
     // ...and the prediction never disagreed with the server over any of it.

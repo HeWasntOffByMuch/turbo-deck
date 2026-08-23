@@ -241,7 +241,7 @@ const GROUND_REFRESH_MIN_CHUNKS = 8;
 
 /**
  * How long a chunk offered to the mesher may go unanswered before the ledger
- * gives up on it (spec 213).
+ * gives up on it (spec 214).
  *
  * Ten seconds, which is far longer than a mesh has ever taken and is meant to
  * be: this is a backstop for a reply that is never coming, not a schedule for
@@ -256,7 +256,7 @@ const GROUND_REFRESH_MIN_CHUNKS = 8;
 const MESH_TIMEOUT_MS = 10_000;
 
 /**
- * How long a nav grid may be outstanding before another is allowed (spec 213).
+ * How long a nav grid may be outstanding before another is allowed (spec 214).
  *
  * `navRequested` is a one-in-flight latch, and a latch with no way out is a
  * wedge: a reply that never arrives -- a worker that died, a message dropped on
@@ -683,7 +683,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // to keep the ledger and the prop regions, which is 0.1ms against the
       // 3.4ms a build is (spec 180).
       const dirty = streamed.add(held);
-      // Forwarded whether or not it dirtied anything here (spec 213). The two
+      // Forwarded whether or not it dirtied anything here (spec 214). The two
       // stores are only the same world because they are fed the same chunks:
       // skipping the send for a chunk this side declined to insert -- an unknown
       // layer, a refused `insertChunk` -- leaves the worker's store short of
@@ -780,7 +780,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // queued behind the last, so the grid that matters arrives last.
     //
     // `navRequested` is a one-in-flight latch, and a latch is a wedge when the
-    // reply can fail to arrive (spec 213). A worker that died, or a message
+    // reply can fail to arrive (spec 214). A worker that died, or a message
     // dropped on a page backgrounded mid-build, used to leave this client
     // routing and predicting against the last grid it managed to adopt for the
     // rest of the session. Re-arming costs at worst one extra build, and

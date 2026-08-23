@@ -115,7 +115,7 @@ export class MapChunkCache {
    * own feet before the ground at the edge of the frame, and with a budget per
    * broadcast the difference is several seconds of standing on nothing.
    *
-   * `lead` is where the body is *going* (spec 213), and it changes the
+   * `lead` is where the body is *going* (spec 214), and it changes the
    * question from "how far away is this ground" to "how soon will I be standing
    * on it". Nearest-first is exactly right for a player who is not moving and
    * exactly wrong for one who is: the chunk directly ahead at the edge of the

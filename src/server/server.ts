@@ -1211,7 +1211,7 @@ export class GameServer implements AdminHost {
    * map by claiming to stand anywhere.
    *
    * Which is exactly why the radius is {@link MAP_CHUNK_SERVE_RADIUS} rather
-   * than the one the client asks at (spec 213). The two positions are never
+   * than the one the client asks at (spec 214). The two positions are never
    * identical -- a predicting client leads its own server by its latency -- so
    * measured at the same radius the leading-edge column is refused whenever the
    * pair straddle a chunk boundary, on the exact edge a running body needs.

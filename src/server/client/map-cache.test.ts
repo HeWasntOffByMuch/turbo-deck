@@ -109,7 +109,7 @@ describe('what it wants', () => {
 });
 
 /**
- * The order follows the body, not just the distance (spec 213).
+ * The order follows the body, not just the distance (spec 214).
  *
  * Nearest-first is right for a standing player and wrong for a running one:
  * the ground a body is about to walk onto ranked in the same ring as the ground
