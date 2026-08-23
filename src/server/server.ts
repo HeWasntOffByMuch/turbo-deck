@@ -36,7 +36,7 @@ import {
   INTEREST_CHUNK_RADIUS,
   MAP_CHUNK_BURST,
   MAP_CHUNK_REFILL_PER_SECOND,
-  MAP_CHUNK_REQUEST_RADIUS,
+  MAP_CHUNK_SERVE_RADIUS,
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
@@ -1209,6 +1209,14 @@ export class GameServer implements AdminHost {
    * A client's own `predictedX/Y` never reaches here: it is a hint the sim
    * measures for corrections, and trusting it would let a client read the whole
    * map by claiming to stand anywhere.
+   *
+   * Which is exactly why the radius is {@link MAP_CHUNK_SERVE_RADIUS} rather
+   * than the one the client asks at (spec 213). The two positions are never
+   * identical -- a predicting client leads its own server by its latency -- so
+   * measured at the same radius the leading-edge column is refused whenever the
+   * pair straddle a chunk boundary, on the exact edge a running body needs.
+   * Serving one chunk wider costs nothing a claim could exploit, because the
+   * claim still never enters this arithmetic.
    */
   private handleChunkRequest(connection: Connection, req: RequestChunkMessage): void {
     const index = this.mapIndex;
@@ -1235,7 +1243,7 @@ export class GameServer implements AdminHost {
       req,
       entity.position.x,
       entity.position.y,
-      MAP_CHUNK_REQUEST_RADIUS,
+      MAP_CHUNK_SERVE_RADIUS,
       connection.chunkBudget,
       this.state.tick,
     );
