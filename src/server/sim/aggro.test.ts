@@ -248,7 +248,7 @@ describe('skittish: it runs', () => {
   });
 
   it('keeps its heading while a faster pursuer runs straight through it', () => {
-    // The bug spec 201 exists for. The heading used to be re-derived every tick
+    // The bug spec 213 exists for. The heading used to be re-derived every tick
     // from where the attacker was *now*, which is stable only while the attacker
     // is slower than its quarry -- and no player is. A player at 155 closing on
     // a grazer at 40 overshoots through it every frame, so the away vector
@@ -351,7 +351,7 @@ describe('skittish: it runs', () => {
 
   it('stops running when its clock runs out, and turns for home', () => {
     // Struck a long way from where it lives, which is what makes the homecoming
-    // half of this observable at all: since spec 201 widened the roam, a body
+    // half of this observable at all: since spec 213 widened the roam, a body
     // startled *on its own ground* is still on its own ground when the clock
     // runs out -- its 200-unit ring is twice the ~100 units a 2.5s flight at 40
     // covers -- so there would be nothing to walk back from.
@@ -391,7 +391,7 @@ describe('skittish: it runs', () => {
     );
     expect(near).toBeLessThan(far);
     // Back on its own ground rather than back on its exact spawn coordinate:
-    // since spec 201 a body that has come home mills about it, so what "home"
+    // since spec 213 a body that has come home mills about it, so what "home"
     // means is the wander ring plus the body's own reach.
     const plan = idlePlanOf('grazer');
     expect(near).toBeLessThanOrEqual(

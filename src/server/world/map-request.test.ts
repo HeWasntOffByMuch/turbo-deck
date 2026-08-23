@@ -7,16 +7,15 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
-import { parseMap } from '../../terrain/map.js';
 import { MAP_CHUNK_BURST, MAP_CHUNK_REFILL_PER_SECOND, MAP_CHUNK_REQUEST_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { ChunkDeniedReason } from '../net/protocol.js';
-import { buildMapIndex, mapIdOf } from './map-index.js';
+import { buildMapIndex } from './map-index.js';
 import { ChunkBudget, chunkCoordsAt, chunkDistanceFrom, decideChunkRequest } from './map-request.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const text = readFileSync('maps/arena.json', 'utf8');
-const index = buildMapIndex(parseMap(text), mapIdOf(text));
+const shipped = loadMapFile();
+const index = buildMapIndex(shipped.doc, shipped.mapId);
 
 function freshBudget(): ChunkBudget {
   return new ChunkBudget(MAP_CHUNK_BURST, MAP_CHUNK_REFILL_PER_SECOND, SERVER_TICK_RATE);

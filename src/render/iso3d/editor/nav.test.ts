@@ -133,28 +133,54 @@ describe('what is walkable', () => {
   });
 });
 
-describe('the document', () => {
-  it('has no nav before it is baked, and nav on every chunk after', () => {
+describe('the bake', () => {
+  it('fills the store, and leaves the document alone', () => {
+    // Spec 204: baked walkability is runtime state for the editor's overlay and
+    // is not part of the format. It used to ride in every chunk of every map
+    // file and on the wire to every client, for a dev visualisation that is off
+    // by default.
     const map = loaded([{ kind: 'rolling', amplitude: 20 }]);
-    for (const chunk of must(map.doc.layers[0], 'the layer').chunks) expect(chunk.nav).toBeNull();
-
     const layer = must(map.store.layerInfo(LAYER), 'the layer');
-    expect(bakeLayerNav(map.store, LAYER)).toBe(layer.grid.chunksX * layer.grid.chunksZ);
-    for (const chunk of must(map.store.toDocument().layers[0], 'the layer').chunks) {
-      expect(chunk.nav).not.toBeNull();
-      expect(chunk.nav).toHaveLength(chunk.cols * chunk.rows);
+    for (let cz = layer.grid.minCz; cz <= layer.grid.maxCz; cz++) {
+      for (let cx = layer.grid.minCx; cx <= layer.grid.maxCx; cx++) {
+        expect(map.store.chunkNav(LAYER, cx, cz)).toBeNull();
+      }
     }
+
+    expect(bakeLayerNav(map.store, LAYER)).toBe(layer.grid.chunksX * layer.grid.chunksZ);
+    for (let cz = layer.grid.minCz; cz <= layer.grid.maxCz; cz++) {
+      for (let cx = layer.grid.minCx; cx <= layer.grid.maxCx; cx++) {
+        const nav = map.store.chunkNav(LAYER, cx, cz);
+        expect(nav).not.toBeNull();
+        const shape = must(map.store.chunkShape(LAYER, cx, cz), 'the shape');
+        expect(nav).toHaveLength(shape.cols * shape.rows);
+      }
+    }
+
+    // And none of it reaches the document, however much was baked.
+    const text = JSON.stringify(map.store.toDocument());
+    expect(text).not.toContain('"nav"');
   });
 
-  it('round-trips the baked flags exactly', () => {
+  it('does not survive a document round trip, and does not need to', () => {
+    // The bake is a pure function of the ground it was baked from, which is the
+    // whole argument for spec 204 dropping it from the format: a reloaded map
+    // has none, and baking again reproduces it exactly. Storing it was paying
+    // 10.5% of every map file to avoid work that costs a function call.
     const map = loaded([{ kind: 'hill', x: 0, z: 0, radius: 100, edge: 30, height: 180 }]);
     bakeLayerNav(map.store, LAYER);
     const before = countWalkable(map);
     expect(before).toBeGreaterThan(0);
 
     const reloaded = loadMap(parseMap(serializeMap(map.store.toDocument())));
+    expect(countWalkable(reloaded)).toBe(0);
+    bakeLayerNav(reloaded.store, LAYER);
     expect(countWalkable(reloaded)).toBe(before);
-    // ...and re-exporting is still a fixed point with nav present.
+  });
+
+  it('leaves the serializer a fixed point either way', () => {
+    const map = loaded([{ kind: 'hill', x: 0, z: 0, radius: 100, edge: 30, height: 180 }]);
+    bakeLayerNav(map.store, LAYER);
     const text = serializeMap(map.store.toDocument());
     expect(serializeMap(loadMap(parseMap(text)).store.toDocument())).toBe(text);
   });

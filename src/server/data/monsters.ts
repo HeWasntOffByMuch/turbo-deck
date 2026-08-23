@@ -25,7 +25,7 @@
  * read cannot be authored beside it. `src/server/sim/aggro.ts` is the only thing
  * that interprets one.
  *
- * Since spec 201 there is a second union beside it, {@link Idle}, for the other
+ * Since spec 213 there is a second union beside it, {@link Idle}, for the other
  * ninety-nine percent of a body's life. A temperament answers "what happens when
  * a player turns up"; an idle answers "and what is it doing until then", which
  * before 201 had no answer at all -- every monster stood on the exact coordinate
@@ -77,7 +77,7 @@ export type Temperament =
   | { readonly kind: 'ferocious'; readonly noticeRange: number; readonly assistRange: number };
 
 /**
- * What a body does with its own time (spec 201).
+ * What a body does with its own time (spec 213).
  *
  * A second union beside {@link Temperament} rather than a fifth member of it,
  * because the two are independent questions with independent answers: a
@@ -128,7 +128,7 @@ export interface MonsterDefinition {
   /** What it does about a player, and what being hit does to it (spec 163). */
   readonly temperament: Temperament;
   /**
-   * What it does when there is no player (spec 201). Filled in by
+   * What it does when there is no player (spec 213). Filled in by
    * {@link withTraits} from {@link DEFAULT_IDLE}, so a row that says nothing
    * mills about -- which is what "all units wander" means in practice, and what
    * a row added later gets for free.

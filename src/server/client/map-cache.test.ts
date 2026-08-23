@@ -54,7 +54,6 @@ function chunkMessage(mapId: string, cx: number, cz: number): MapChunkMessage {
     solid: [],
     materials: [],
     tones: [],
-    nav: null,
     props: [],
     markers: [],
   };

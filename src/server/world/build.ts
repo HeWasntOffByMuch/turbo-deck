@@ -20,7 +20,6 @@
 
 import { createWorldColliders } from '../../sim/collision.js';
 import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
-import { warmNavGrids } from '../../sim/pathfinding.js';
 import type { Rect, WorldColliders } from '../../sim/types.js';
 import { SERVER_PLAYER_RADIUS } from '../config.js';
 import { ALL_MONSTERS } from '../data/monsters.js';
@@ -29,37 +28,22 @@ import { vegetationColliders, worldVegetation, type Prop } from '../../terrain/v
 import type { TerrainWorld } from '../../terrain/types.js';
 import { loadMap, type MapDocument } from '../../terrain/index.js';
 import { terrainSamplerFrom, type TerrainSampler } from './terrain.js';
-import { buildMapIndex, mapIdOf, type MapIndex } from './map-index.js';
+import { buildMapIndex, type MapIndex } from './map-index.js';
 import { spawnPointsFrom, type SpawnPoint } from './spawners.js';
 
 /**
  * Every body radius that will ask for a route: the player, and one per monster
  * in the table. Deduplicated, because three of the four monsters are within a
  * couple of units of each other and a grid is per radius.
+ *
+ * These are the radii a nav *tile* is graded for (spec 205). They stay named in
+ * one place for the reason they always were: two callers grading different sets
+ * would mean a body asking for a route the field cannot answer -- which
+ * `NavField` now refuses out loud rather than answering openly.
  */
 export const ROUTING_RADII: readonly number[] = Array.from(
   new Set<number>([SERVER_PLAYER_RADIUS, ...ALL_MONSTERS.map((m) => m.radius)]),
 );
-
-/**
- * Build the nav grids this world is going to need (spec 130).
- *
- * Called by whoever is *starting a game* -- `src/server/index.ts` and the Play
- * tab -- and not by the builds below, which is the part worth explaining.
- * Sampling the ground for a grid is around a second on a real map, and left to
- * the first caller that wants a route it lands inside a tick, the first time a
- * monster's line to a player is blocked. So it wants doing at boot. But it must
- * not be folded into `buildWorld`: a world gets built by tests, by the bake
- * scripts and by the balance harness, none of which route anything, and folding
- * it in took a generated build from ~390ms to ~860ms to warm caches none of
- * them were going to read.
- *
- * The radii live here rather than at the call sites so the two cannot warm
- * different sets.
- */
-export function warmRouting(world: BuiltWorld): void {
-  warmNavGrids(world.colliders, world.sampler, ROUTING_RADII);
-}
 
 export interface BuiltWorld {
   /** The number this was built from, and the number the welcome announces. */
@@ -113,15 +97,17 @@ export interface BuiltMapWorld extends BuiltWorld {
  * tell which of the two made it, which is the point -- the sim never learns
  * that the world became editable.
  *
- * `mapId` is computed from the *serialized* text rather than the parsed object
- * so that both ends hash the same bytes: the server hashes what it read from
- * disk, and a client is told the answer rather than recomputing it.
+ * `mapId` is handed in rather than derived here (spec 204). A map is a manifest
+ * and a grid of regions now, and its identity is a hash of ordered region
+ * hashes that the manifest already carries -- so re-deriving it would mean
+ * re-reading the world to learn a number that was written down. A caller that
+ * still has a whole document as text passes `mapIdOf(text)`.
  */
-export function buildWorldFromMap(doc: MapDocument, serialized: string): BuiltMapWorld {
+export function buildWorldFromMap(doc: MapDocument, mapId: string): BuiltMapWorld {
   return {
     ...buildWorldFromDocument(doc),
     doc,
-    index: buildMapIndex(doc, mapIdOf(serialized)),
+    index: buildMapIndex(doc, mapId),
     // Read here rather than in `buildWorldFromDocument`, because that path is
     // also a *client* assembling a partial world out of streamed chunks, and a
     // spawner that has not arrived yet is not an error there. On the server the

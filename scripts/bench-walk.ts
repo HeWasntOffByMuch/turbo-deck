@@ -22,7 +22,6 @@
  *   npx tsx scripts/bench-walk.ts
  */
 
-import { readFileSync } from 'node:fs';
 
 import { GameServer } from '../src/server/server.js';
 import { GameClient } from '../src/server/client/game-client.js';
@@ -31,10 +30,10 @@ import { StreamedMap } from '../src/server/client/streamed-map.js';
 import { ChunkIngest, type WorldRect } from '../src/render/iso3d/world/chunk-ingest.js';
 import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize } from '../src/render/iso3d/props.js';
 import { buildWorldFromMap } from '../src/server/world/build.js';
-import { parseMap } from '../src/terrain/map.js';
 import { createWorldPredictor } from '../src/server/client/prediction.js';
 import { moveIntent, RoutePlanner } from '../src/render/iso3d/world/intent.js';
 import { MAP_CHUNK_REQUEST_RADIUS, SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../src/server/config.js';
+import { loadMapFile } from '../src/server/world/map-file.js';
 
 /** `view.ts`'s own numbers, so this measures the shipped pacing. */
 const PROP_SETTLE_MS = 120;
@@ -84,8 +83,8 @@ async function main(): Promise<void> {
   // frame's bill per region is flat, so what changes with size is how *often* a
   // region is rebuilt -- which is the half standing still cannot show.
   setPropRegionSize(Number(process.env['PROPS'] ?? PROP_REGION_SIZE));
-  const text = readFileSync('maps/arena.json', 'utf8');
-  const world = buildWorldFromMap(parseMap(text), text);
+  const shipped = loadMapFile();
+  const world = buildWorldFromMap(shipped.doc, shipped.mapId);
   const transport = new LoopbackTransport();
   const server = new GameServer({ seed: world.seed, built: world, transport });
   transport.onConnection((channel) => server.accept(channel));

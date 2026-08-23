@@ -17,15 +17,23 @@
  * editor's Grow tool and this script cannot produce different worlds.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { parseMap, serializeMap, type ChunkRect, type MapDocument, type PartRecipe } from '../src/terrain/index.js';
+import { type ChunkRect, type MapDocument, type PartRecipe } from '../src/terrain/index.js';
 import { growMap } from '../src/terrain/part.js';
-import { loadMap } from '../src/terrain/map-world.js';
-import { bakeLayerNav } from '../src/render/iso3d/editor/nav.js';
+import { openMapFile } from '../src/server/world/map-file.js';
+import {
+  bakeReadBorder,
+  mergeSplit,
+  partialMap,
+  regionsAround,
+  splitMap,
+  type MapManifest,
+} from '../src/terrain/regions.js';
+import { writeSplit } from './split-map.js';
 
-export const DEFAULT_MAP_PATH = 'maps/arena.json';
+export const DEFAULT_MAP_PATH = 'maps/arena';
 
 export interface GrowArgs {
   readonly map: string;
@@ -35,7 +43,6 @@ export interface GrowArgs {
   readonly seed: number;
   readonly layer: string | null;
   readonly note: string | null;
-  readonly nav: boolean;
   readonly dryRun: boolean;
 }
 
@@ -58,7 +65,6 @@ export function parseArgs(argv: readonly string[]): GrowArgs {
   let seed: number | null = null;
   let layer: string | null = null;
   let note: string | null = null;
-  let nav = true;
   let dryRun = false;
 
   const need = (value: string | undefined, flag: string): string => {
@@ -78,8 +84,7 @@ export function parseArgs(argv: readonly string[]): GrowArgs {
       const value = Number(need(argv[++i], '--seed'));
       if (!Number.isFinite(value)) throw new Error('--seed needs a number');
       seed = Math.floor(value);
-    } else if (arg === '--no-nav') nav = false;
-    else if (arg === '--dry-run') dryRun = true;
+    } else if (arg === '--dry-run') dryRun = true;
     else throw new Error(`unknown argument: ${String(arg)}`);
   }
 
@@ -89,7 +94,7 @@ export function parseArgs(argv: readonly string[]): GrowArgs {
   // The id defaults to the recipe's filename, because a part named after what
   // grew it is the name somebody would have typed anyway.
   const fallbackId = recipe.replace(/^.*[/\\]/, '').replace(/\.json$/i, '');
-  return { map, recipe, rect, id: id ?? fallbackId, seed, layer, note, nav, dryRun };
+  return { map, recipe, rect, id: id ?? fallbackId, seed, layer, note, dryRun };
 }
 
 /** Read a recipe file. Its contents are validated by being baked, not here. */
@@ -104,9 +109,10 @@ export function readRecipe(path: string): PartRecipe {
 /**
  * The whole operation, as a function, so the test can run it without a shell.
  *
- * Nav is re-baked for the layer afterwards for the same reason `bake-map.ts`
- * bakes it at all: the server is about to serve these chunks, and a null `nav`
- * means every client either does without pathfinding or re-derives it.
+ * It used to re-bake the layer's walkability afterwards, because the document
+ * carried a `nav` array per chunk. Spec 204 took that out of the format -- its
+ * only reader was the editor's overlay, which bakes its own now -- so growing
+ * the map is `growMap` and nothing else.
  */
 export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapDocument {
   const layerId = args.layer ?? doc.layers[0]?.id;
@@ -120,13 +126,7 @@ export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapD
     seed: args.seed,
     ...(args.note === null ? {} : { note: args.note }),
   });
-  if (!args.nav) return grown;
-
-  const { store } = loadMap(grown);
-  for (const layer of grown.layers) bakeLayerNav(store, layer.id);
-  // `toDocument` is exact, and since spec 084 the store carries `parts` too, so
-  // the nav bake is the only thing this changes.
-  return store.toDocument();
+  return grown;
 }
 
 /**
@@ -140,40 +140,67 @@ export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapD
  *
  * The fix is always the same: grow the rest of the rectangle. Short chunks on a
  * flank are completed rather than refused, so covering them is a grow away.
+ *
+ * Answered from the **manifest** since spec 209, because the partial path never
+ * holds the world to count. Each region records how many cells its chunks hold,
+ * which is exactly this sum one level up -- and it has to be recorded rather
+ * than derived from the coordinate count, because a chunk on a flank can be
+ * short.
  */
-export function unfilledCells(doc: MapDocument, layerId: string): number {
-  const layer = doc.layers.find((l) => l.id === layerId);
+export function unfilledCells(manifest: MapManifest, layerId: string): number {
+  const layer = manifest.layers.find((l) => l.id === layerId);
   if (!layer) return 0;
-  const cell = doc.grid.cellSize;
+  const cell = manifest.grid.cellSize;
   const declared =
     Math.round((layer.bounds.maxX - layer.bounds.minX) / cell) *
     Math.round((layer.bounds.maxZ - layer.bounds.minZ) / cell);
-  const held = layer.chunks.reduce((n, c) => n + c.cols * c.rows, 0);
+  const held = layer.regions.reduce((n, r) => n + r.cells, 0);
   return Math.max(0, declared - held);
 }
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
-  const path = resolve(process.cwd(), args.map);
-  const before = parseMap(readFileSync(path, 'utf8'));
   const recipe = readRecipe(args.recipe);
 
-  const after = grow(before, args, recipe);
-  const text = serializeMap(after);
+  // The manifest, and only the regions the bake will read (spec 209). A grow
+  // reaches one chunk past its own rectangle -- `bakePart`'s stitch walks out
+  // `SKIRT_CELLS`, which is 4 against 28 per chunk -- so opening the world to
+  // change a corner of it was the whole cost: 6.9s of it on a 12,960-chunk map,
+  // to change one region.
+  const opened = openMapFile(args.map);
+  const layerId = args.layer ?? opened.manifest.layers[0]?.id;
+  if (!layerId) throw new Error('the map has no layers to grow');
+  const border = bakeReadBorder(opened.manifest.grid.chunkCells);
+  const want = regionsAround(args.rect, border, opened.manifest.regionChunks);
+  const before = partialMap(opened.manifest, want, opened.readRegion);
 
-  const was = before.layers.reduce((n, l) => n + l.chunks.length, 0);
-  const now = after.layers.reduce((n, l) => n + l.chunks.length, 0);
-  const bounds = after.layers[0]?.bounds;
+  const after = grow(before, { ...args, layer: layerId }, recipe);
+  const part = splitMap(after, opened.manifest.regionChunks);
+  const manifest = mergeSplit(opened.manifest, part);
+
+  const was = opened.manifest.layers.reduce((n, l) => n + l.coords.length, 0);
+  const now = manifest.layers.reduce((n, l) => n + l.coords.length, 0);
+  const bounds = manifest.layers[0]?.bounds;
+  const changed = [...part.regions].filter(([path, text]) => {
+    try {
+      return opened.readRegion(path) !== text;
+    } catch {
+      return true;
+    }
+  }).length;
+
   process.stdout.write(
     `${args.dryRun ? 'would grow' : 'grew'} ${args.map}: part "${args.id}" ` +
       `over chunks ${args.rect.minCx},${args.rect.minCz}..${args.rect.maxCx},${args.rect.maxCz} — ` +
       `${was} chunks becomes ${now}, bounds now ` +
-      `${bounds ? `${bounds.minX},${bounds.minZ}..${bounds.maxX},${bounds.maxZ}` : 'unknown'}, ` +
-      `${(text.length / 1e6).toFixed(2)} MB\n`,
+      `${bounds ? `${bounds.minX},${bounds.minZ}..${bounds.maxX},${bounds.maxZ}` : 'unknown'}\n`,
+  );
+  process.stdout.write(
+    `  read ${want.length} of ${opened.manifest.layers[0]?.regions.length ?? 0} regions, ` +
+      `wrote ${part.regions.size}, of which ${changed} actually differ\n`,
   );
 
-  const layerId = args.layer ?? after.layers[0]?.id ?? '';
-  const unfilled = unfilledCells(after, layerId);
+  const unfilled = unfilledCells(manifest, layerId);
   process.stdout.write(
     unfilled === 0
       ? '  the layer is a full rectangle: every cell it declares has ground under it\n'
@@ -182,7 +209,12 @@ function main(): void {
         '  be walled. Grow the rest of the rectangle to close it.\n',
   );
 
-  if (!args.dryRun) writeFileSync(path, text, 'utf8');
+  // Only the regions the part touched change on disk; the rest keep their
+  // bytes, which is what makes a grow a reviewable diff rather than another
+  // whole copy of the world in git history (spec 204). Since 205 they are also
+  // the only ones read, and `writeSplit` decides staleness by what the manifest
+  // names rather than by what it was handed.
+  if (!args.dryRun) writeSplit(args.map, manifest, part.regions);
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {

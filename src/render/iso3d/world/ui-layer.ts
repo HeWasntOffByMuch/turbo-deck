@@ -33,6 +33,7 @@ import { Canvas2dSurface } from '../../../ui/render/canvas2d.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import type { WindowId } from './control-actions.js';
+import type { MaxZoomChoice } from '../../../ui/input/display-store.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
 import type { ActionSlot } from './action-bar.js';
 import { NO_ACTION_BAR, type ActionBarBox } from './hud-layout.js';
@@ -241,6 +242,11 @@ export class UiLayer {
    */
   setShowFps(show: boolean): void {
     this.screens.setShowFps(show);
+  }
+
+  /** The widest-zoom preference (spec 202). Same pass-through as the two above. */
+  setMaxZoom(choice: MaxZoomChoice): void {
+    this.screens.setMaxZoom(choice);
   }
 
   get scale(): number {

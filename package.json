@@ -20,7 +20,8 @@
     "server": "tsx src/server/index.ts",
     "server:bots": "tsx scripts/server-bot.ts",
     "bake:ui-goldens": "tsx scripts/bake-ui-goldens.ts",
-    "balance": "tsx scripts/balance-builds.ts"
+    "balance": "tsx scripts/balance-builds.ts",
+    "check:bundle": "tsx scripts/check-bundle.ts"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",

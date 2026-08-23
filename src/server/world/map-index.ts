@@ -11,6 +11,7 @@
  * a clock, a file or a global.
  */
 
+import { hashText } from '../../shared/hash.js';
 import type { MapChunk, MapDocument, MapPoint, MapRect } from '../../terrain/map.js';
 
 export interface MapLayerInfo {
@@ -54,13 +55,7 @@ export interface MapIndex {
  * bits is ample for that, and it stays one cheap pass over the text.
  */
 export function mapIdOf(serialized: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < serialized.length; i++) {
-    hash ^= serialized.charCodeAt(i);
-    // The classic 16777619 multiply, in 32-bit pieces so it stays exact.
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, '0');
+  return hashText(serialized);
 }
 
 function chunkKey(layer: number, cx: number, cz: number): string {

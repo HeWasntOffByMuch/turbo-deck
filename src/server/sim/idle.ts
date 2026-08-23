@@ -1,5 +1,5 @@
 /**
- * What a monster does when nobody is fighting it (spec 201).
+ * What a monster does when nobody is fighting it (spec 213).
  *
  * `aggro.ts` owns acquiring, holding and dropping a target; `world.ts` owns
  * walking to one. This is the third of those and the one that was missing: what

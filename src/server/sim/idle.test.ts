@@ -1,5 +1,5 @@
 /**
- * Spec 201. What a monster does when nobody is fighting it.
+ * Spec 213. What a monster does when nobody is fighting it.
  *
  * Split the way the feature is: the derivation is exercised directly, because
  * where a body is headed is a pure function of `(its id, the tick)` and driving

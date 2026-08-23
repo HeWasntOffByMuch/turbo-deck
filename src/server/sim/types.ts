@@ -401,7 +401,7 @@ export interface ServerEntity {
   readonly aggroUntilTick: number;
   /**
    * Where a startled body bolted toward, and null for anything that is not
-   * `Fleeing` (spec 201).
+   * `Fleeing` (spec 213).
    *
    * A flight has to *commit* to somewhere, and this is the whole of why. The
    * heading used to be re-derived from the attacker's current position on every

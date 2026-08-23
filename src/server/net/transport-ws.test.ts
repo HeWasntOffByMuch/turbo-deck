@@ -14,11 +14,13 @@ import { LoopbackTransport } from './transport-loop.js';
 import type { Channel } from './transport.js';
 import { GameServer } from '../server.js';
 import { buildWorldFromMap } from '../world/build.js';
-import { parseMap } from '../../terrain/map.js';
-import { readFileSync } from 'node:fs';
+import { loadMapFile } from '../world/map-file.js';
 import { CONNECTION_TIMEOUT_TICKS, SERVER_PING_MS, SERVER_TICK_RATE } from '../config.js';
 
-const mapText = readFileSync(new URL('../../../maps/arena.json', import.meta.url), 'utf8');
+// Read through `loadMapFile` rather than as one file: the shipped map is a
+// directory of regions since spec 204, and this test landed while it still
+// was not.
+const shippedMap = loadMapFile();
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -143,7 +145,7 @@ describe('what the server does with it', () => {
   }
 
   function built(): ReturnType<typeof buildWorldFromMap> {
-    return buildWorldFromMap(parseMap(mapText), mapText);
+    return buildWorldFromMap(shippedMap.doc, shippedMap.mapId);
   }
 
   it('counts a pong as a heartbeat, so a silent tab is not swept', () => {

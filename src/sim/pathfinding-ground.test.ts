@@ -283,7 +283,6 @@ function flatChunk(cx: number, cz: number): MapChunk {
     tones: [0, cells],
     props: [],
     markers: [],
-    nav: null,
   };
 }
 

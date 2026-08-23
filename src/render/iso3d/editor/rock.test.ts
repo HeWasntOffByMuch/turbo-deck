@@ -61,7 +61,6 @@ function groundChunk(cx: number, cz: number): MapChunk {
       { species: 'tree', x: 35, z: 35, rotation: 0, scale: 1, tint: 0 },
     ],
     markers: [],
-    nav: null,
   };
 }
 

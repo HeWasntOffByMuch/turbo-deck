@@ -155,7 +155,6 @@ function onlyChunk(
             tones: [tone, cols * rows],
             props: [],
             markers: [],
-            nav: null,
           },
         ],
       },

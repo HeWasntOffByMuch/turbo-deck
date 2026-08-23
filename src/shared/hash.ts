@@ -31,3 +31,25 @@ export function hash2i(x: number, y: number, seed: number): number {
 export function hashUnit2(x: number, y: number, seed: number): number {
   return hash2i(x, y, seed) / 0x100000000;
 }
+
+/**
+ * FNV-1a over a string, as 8 hex digits (spec 204).
+ *
+ * Not a security hash and does not need to be: it answers "is this the same
+ * text I was told about", where the adversary is a stale tab rather than an
+ * attacker. 32 bits is ample for that and it stays one cheap pass.
+ *
+ * Here rather than in `map-index.ts`, where it started life as `mapIdOf`'s
+ * body, because a map is hashed in two places now -- per region and over the
+ * manifest -- and two implementations of one hash is a way for a world to have
+ * two identities.
+ */
+export function hashText(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    // The classic 16777619 multiply, in 32-bit pieces so it stays exact.
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}

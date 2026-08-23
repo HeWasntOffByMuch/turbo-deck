@@ -1036,7 +1036,7 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
     state = dummy.state;
     // One blow's worth of health, so the first slash finishes it -- and one
     // blow's worth of *max* health with it, or the body is a 100000-health
-    // dummy that has never been hit, which since spec 201 recovers 417 a tick
+    // dummy that has never been hit, which since spec 213 recovers 417 a tick
     // and is back over twelve thousand before the wind-up lands. A real body at
     // 1 health got there by being struck, which holds `InCombat` open and stops
     // recovery for eight seconds; nothing had struck this one.
