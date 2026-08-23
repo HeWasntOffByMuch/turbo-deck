@@ -1699,7 +1699,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  put the monster 400 units from a 300-unit notice range, so
                  nothing engaged, nav was never asked, and both replays passed as
                  two identical recordings of nothing happening.
-                 What a *fast* body does to all of that is spec 213, and the
+                 What a *fast* body does to all of that is spec 214, and the
                  three things it found are one shape: every rule about which
                  ground the client gets, and when, was keyed on something that
                  quietly stops being true when a body moves fast. (The fourth

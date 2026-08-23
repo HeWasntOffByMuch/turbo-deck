@@ -70,7 +70,7 @@ export interface IngestOptions {
   readonly regionsPerFlush: number;
   /**
    * How long an offered chunk may go unmeshed before it stops counting
-   * (spec 213).
+   * (spec 214).
    *
    * The ledger is a promise in two halves -- `offer` when the ground lands and
    * `complete` when its triangles come back -- and until this existed nothing
@@ -225,7 +225,7 @@ export class ChunkIngest {
   }
 
   /**
-   * Chunks given up on for never being meshed (spec 213).
+   * Chunks given up on for never being meshed (spec 214).
    *
    * A readout rather than an input -- nothing branches on it. It is here because
    * a wedge that is quietly worked around is a wedge nobody ever fixes, and this
@@ -236,7 +236,7 @@ export class ChunkIngest {
   }
 
   /**
-   * Give up on chunks whose mesh never came back (spec 213).
+   * Give up on chunks whose mesh never came back (spec 214).
    *
    * Dropping one from the queue is the whole repair, and it is the *right*
    * repair rather than a shrug: what a settled region needs is that the store

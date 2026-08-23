@@ -145,7 +145,7 @@ export const PROTOCOL_VERSION = 19;
  *
  * Was 6, sized against the 3107 units the slider's own maximum frames: a 13x13
  * window of 169 chunks against the 5x5 and 25 this is. At the ~10ms a cold chunk
- * costs to bring resident (spec 213) that is a quarter-second of prefetch rather
+ * costs to bring resident (spec 201) that is a quarter-second of prefetch rather
  * than two and a half seconds, which is what makes bounded residency affordable
  * at all.
  *
@@ -184,7 +184,7 @@ export const MAP_CHUNK_KEEP_RADIUS = MAP_CHUNK_REQUEST_RADIUS + 2;
 
 /**
  * How far a chunk may be from the *server's* own position and still be served
- * (spec 213).
+ * (spec 214).
  *
  * The pair of guards in `map-request.ts` have always been described as bounding
  * different things -- range bounds *where* a client may read, the bucket bounds
