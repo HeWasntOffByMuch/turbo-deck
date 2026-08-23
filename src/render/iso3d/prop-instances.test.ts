@@ -203,7 +203,7 @@ describe('the geometry is shared and the instanced attributes are not', () => {
 });
 
 /**
- * The takedown reachable without composing a region first (spec 211).
+ * The takedown reachable without composing a region first (spec 215).
  *
  * `adoptRegion` has freed the held region on the way past since spec 086, so an
  * empty reply was always a clean removal -- but the reason to take a region down

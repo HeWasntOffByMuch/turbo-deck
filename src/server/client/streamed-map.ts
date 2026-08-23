@@ -196,7 +196,7 @@ export class StreamedMap {
    * the caller's timer is what covers it.
    */
   /**
-   * Whether *any* chunk overlapping this rectangle is held (spec 211).
+   * Whether *any* chunk overlapping this rectangle is held (spec 215).
    *
    * The other question about the same rectangle. {@link rectCovered} asks
    * whether everything declared over it has arrived, which is what decides when

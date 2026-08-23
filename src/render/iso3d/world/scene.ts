@@ -920,7 +920,7 @@ export class WorldScene {
   }
 
   /**
-   * Stop drawing one region's props, and dispose them (spec 211).
+   * Stop drawing one region's props, and dispose them (spec 215).
    *
    * The counterpart to {@link adoptPropRegion}, as `dropTerrainChunk` is to
    * `adoptTerrainChunk` -- and the same story: the takedown existed inside

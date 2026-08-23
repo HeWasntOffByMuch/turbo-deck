@@ -68,12 +68,36 @@ export interface IngestOptions {
    * order their ground did, just a frame apart.
    */
   readonly regionsPerFlush: number;
+  /**
+   * How long an offered chunk may go unmeshed before it stops counting
+   * (spec 214).
+   *
+   * The ledger is a promise in two halves -- `offer` when the ground lands and
+   * `complete` when its triangles come back -- and until this existed nothing
+   * ever failed the second half. A mesh reply can simply not arrive: the worker
+   * drops one for a layer it cannot mesh or a chunk that will not build, and the
+   * renderer skips `complete` when the scene refuses the adopt. Nothing re-offers
+   * and nothing aged the queue out, so one lost reply held its regions `inFlight`
+   * **for the session** -- their trees never drawn -- and left `pending` above
+   * zero forever, which is the count the load gate and the first ground build
+   * both wait on.
+   *
+   * Generous rather than tight, because this is a backstop and not a schedule:
+   * a chunk swept while its mesh was merely slow costs one extra prop rebuild,
+   * and a chunk swept too late costs nothing at all, so the only mistake worth
+   * avoiding is sweeping a live one.
+   */
+  readonly meshTimeoutMs: number;
 }
 
 export class ChunkIngest {
   private readonly options: IngestOptions;
   /** Queued in arrival order, one entry per `(layer, cx, cz)`. */
   private readonly queue = new Map<string, ChunkRef>();
+  /** When each queued chunk was offered, so one that never came back ages out. */
+  private readonly offeredAt = new Map<string, number>();
+  /** Chunks swept for never being meshed. A readout, so a wedge is visible. */
+  private abandoned = 0;
   /**
    * Region keys whose props are stale, against when their ground last moved.
    *
@@ -107,7 +131,11 @@ export class ChunkIngest {
     if (chunks.length === 0) return;
     this.lastOfferMs = nowMs;
     for (const chunk of chunks) {
-      this.queue.set(`${chunk.layer}:${chunk.cx},${chunk.cz}`, chunk);
+      const key = `${chunk.layer}:${chunk.cx},${chunk.cz}`;
+      this.queue.set(key, chunk);
+      // Re-offered means re-promised: the clock restarts, so a chunk redrawn
+      // because a neighbour landed is not swept for the first offer's age.
+      this.offeredAt.set(key, nowMs);
       // Touched on arrival as well as on meshing, so a region with ground still
       // in flight cannot settle just because the queue reached it slowly.
       this.touch(chunk.rect, nowMs);
@@ -135,6 +163,7 @@ export class ChunkIngest {
     const chunk = this.queue.get(key);
     if (!chunk) return false;
     this.queue.delete(key);
+    this.offeredAt.delete(key);
     this.meshedTotal++;
     this.touch(chunk.rect, nowMs);
     return true;
@@ -158,6 +187,7 @@ export class ChunkIngest {
     budget = this.options.regionsPerFlush,
     covered: (rect: WorldRect) => boolean = () => true,
   ): readonly WorldRect[] {
+    this.sweep(nowMs);
     if (this.dirtyRegions.size === 0) return [];
 
     // Regions any queued chunk still touches are not settled, whatever their
@@ -190,7 +220,7 @@ export class ChunkIngest {
   }
 
   /**
-   * Drop what is owed for regions whose ground has gone (spec 211).
+   * Drop what is owed for regions whose ground has gone (spec 215).
    *
    * A region is dirtied when its ground moves and cleared when its trees are
    * handed out. Eviction is the third way it can end: the ground it was dirtied
@@ -219,6 +249,44 @@ export class ChunkIngest {
   /** Chunks queued and not yet meshed. */
   get pending(): number {
     return this.queue.size;
+  }
+
+  /**
+   * Chunks given up on for never being meshed (spec 214).
+   *
+   * A readout rather than an input -- nothing branches on it. It is here because
+   * a wedge that is quietly worked around is a wedge nobody ever fixes, and this
+   * is the number that says one happened.
+   */
+  get abandonedCount(): number {
+    return this.abandoned;
+  }
+
+  /**
+   * Give up on chunks whose mesh never came back (spec 214).
+   *
+   * Dropping one from the queue is the whole repair, and it is the *right*
+   * repair rather than a shrug: what a settled region needs is that the store
+   * has its ground, and the store had it at insert -- the mesh is the picture,
+   * not the data the trees stand on. So the region stays dirty and rebuilds from
+   * the store on the next flush, which is exactly what would have happened if
+   * the reply had arrived.
+   *
+   * The region is deliberately **not** touched here. Touching restarts its
+   * settle clock, and a chunk being swept is the one case where the ground has
+   * demonstrably stopped moving -- restarting the clock would hold the trees
+   * back for another settle for the sake of an event that is the absence of one.
+   *
+   * A late reply for a swept chunk finds no key and returns false, which is what
+   * `complete` already does for anything it does not hold.
+   */
+  private sweep(nowMs: number): void {
+    if (this.queue.size === 0) return;
+    for (const [key, offered] of this.offeredAt) {
+      if (nowMs - offered < this.options.meshTimeoutMs) continue;
+      this.offeredAt.delete(key);
+      if (this.queue.delete(key)) this.abandoned++;
+    }
   }
 
   /**

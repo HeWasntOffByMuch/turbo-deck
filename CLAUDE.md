@@ -68,6 +68,9 @@ change a game outcome.
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
 | `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 209) |
+| `npx tsx scripts/probe-editor-ground.ts` | Whether the editor's ground window really meshes and evicts, in a browser (spec 212) |
+| `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
+| `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -1373,6 +1376,112 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  solidity and the water line, a prop's colour comes from its own
                  part rather than from what it stands on, and a marker sits at a
                  height.
+                 ground-residency.ts is which ground is meshed (spec 212), and
+                 it is the other half of the editor's boot: `map.chunks` plus
+                 `buildTerrainMeshFromChunks` was 4.9s on the shipped map and
+                 ~73s of the ~148s projected at the 4x target, and nothing was
+                 ever dropped -- `TerrainMeshHandle.remove` exists for spec 085's
+                 part removal and spec 208 borrowed it for the *client*, while
+                 the editor called it from nowhere on the boot path. The mesh
+                 opens **empty** now and `pumpGround` meshes what the camera
+                 frames from the pivot outward, dropping what it has panned away
+                 from: measured in a browser on the shipped map, 20 chunks of
+                 810 at the open, 39 zoomed out, 25 back in. The editor's whole
+                 open is 9.4s to ~197ms, and 84% of what is left is `parse` --
+                 which spec 207 named as the next thing and 204's split made
+                 possible.
+                 The keep window is **derived, not chosen**, the way spec 208
+                 derives keep from request: the one thing eviction must not do is
+                 fight the fill. It is the chunk-space **bounding box of what is
+                 in view grown by two chunks**, rather than the world-unit pad
+                 the spec asked for -- a chunk has no single world size, since
+                 flank chunks are short, and `store.chunksInRect` already owns
+                 the question. That also makes the no-oscillation rule hold by
+                 construction: owed is inside the view, the view is inside its
+                 own box, the box is inside the padded one. Asserted anyway over
+                 every camera position, because "by construction" is a claim
+                 about code somebody can edit.
+                 Three things differ from 208 and each was learned rather than
+                 assumed. **"A pan out and back holds what it started with" is
+                 false here and should be** -- that property holds on the client
+                 because its request radius fills the band inside the keep
+                 radius, where this fill meshes only what is *in view* and keeps
+                 wider, so held converges on (ever meshed within the keep box).
+                 What must not happen is that going round again adds more, and
+                 that is what is asserted. **Nothing beside a dropped chunk needs
+                 re-meshing**: there the store loses the chunk so its neighbours'
+                 aprons go stale, here the store is untouched and only what is
+                 *drawn* changes, so a chunk's mesh is a pure function of the
+                 store whichever neighbours happen to be on the graph. So
+                 eviction runs **unbudgeted** -- it can never drop what the same
+                 frame wants, and deferring it holds memory to save nothing. And
+                 residency is **per layer**, because the rock tiers are layers
+                 with their own chunk grids and one window over all of them would
+                 let the ground's view evict a tier.
+                 The consequence worth knowing is picking: `pickTargets` is the
+                 terrain meshes, so ground with no mesh cannot be raycast.
+                 Everything in view is meshed, so it only bites during fill-in,
+                 and `pickPlane` is the stated fallback -- a tool that refuses a
+                 null pick must go on refusing rather than acting at the flat
+                 plane's height, or a stroke over ground that has not arrived
+                 writes at the wrong altitude.
+                 `npx tsx scripts/probe-editor-ground.ts` reads `data-ground`,
+                 whose `meshed` is counted off `pickTargets` rather than off the
+                 ledger, so a window that meshed nothing and believed otherwise
+                 reads as broken. `probe-map-editor.ts` is the picking half and
+                 needed no change: it places a marker by clicking the ground and
+                 reads it back out of the saved file, which is exactly what fails
+                 if a window leaves a hole under the cursor.
+                 prop-residency.ts is which trees arrive next (spec 211), and it
+                 exists because `buildPropField` composed every region in the
+                 world before the editor could draw a frame -- **half** of
+                 everything opening the editor costs, at every world size
+                 `bench-editor.ts` measures, and 4.5s on the map we ship. Spec
+                 207 named `buildChunks` as the editor's next problem and it is
+                 under a third; nothing had measured the rest. The field is
+                 built `deferred` now and `pumpProps` composes regions nearest
+                 the camera's **pivot** first, so the trees you are looking at
+                 arrive before the far corner of the map -- 4,153ms to 1ms at
+                 the open. It is the pivot rather than the rectangle the camera
+                 frames because this camera *orbits*: its footprint is not
+                 axis-aligned, and a rect standing in for it would be an
+                 approximation of a value used only to sort. The seam was
+                 already there and unused from here -- `adoptRegion` and
+                 `buildRegionInstances` are spec 181's, built for the Play tab.
+                 What does **not** move with them is the composition itself: the
+                 Play tab's props are immutable once streamed, so a worker can
+                 hold a copy, and the editor's change under every tool, so a
+                 worker's copy of them would be a second description of the
+                 document. Paced rather than moved.
+                 Two things in it were learned by getting them wrong. **The
+                 budget cannot bound the frame**, and pretending otherwise would
+                 be the comment lying: one region is 55ms to compose (median
+                 over the shipped map's 72, 77ms at the worst), `FrameBudget` is
+                 checked *after* a unit of work and nothing here can subdivide a
+                 region, so the pump does exactly one region a frame. What that
+                 buys is still the feature -- the first region lands in 55ms
+                 where the eager field took 4.5s to land anything, and the tab
+                 pans and paints throughout -- and the fix if a bounded frame is
+                 ever wanted is a smaller region, which spec 195 chose for the
+                 *Play tab* on a real GPU and left `?props=` to re-ask. And
+                 **`held` is not a subset of the regions that exist**: an edit
+                 marks every region its rectangle touched, empty ones included,
+                 so `held.size >= regions.size` can be true with regions still
+                 owed -- written as the size comparison it obviously wants to
+                 be, the fill stops dead after a stroke near the edge of the map
+                 and the trees never arrive, silently. `propRegionsPending`
+                 counts instead, and the test pins the trap rather than the
+                 happy case. The grid itself moved to `prop-regions.ts`, which
+                 is `props.ts` minus three, so the pure half can key a region
+                 without a second copy of the arithmetic.
+                 `npx tsx scripts/probe-editor-props.ts` is the half no headless
+                 test can see, and the reason it exists is that every rule above
+                 is green in Node beside a frame loop that might call none of
+                 them -- an editor that opens instantly and draws no trees ever
+                 passes all of them. It reads `data-props`, published from what
+                 is **attached to the scene graph** rather than from what was
+                 asked for, so a region composed into batches that never reached
+                 the group reads as absent.
                  `npx tsx scripts/preview-parts.ts` drives the tools in a real
                  browser, since the drag and the commit live in view.ts, and
                  `npx tsx scripts/probe-map-editor.ts` is the one that asks
@@ -1590,6 +1699,85 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  put the monster 400 units from a 300-unit notice range, so
                  nothing engaged, nav was never asked, and both replays passed as
                  two identical recordings of nothing happening.
+                 What a *fast* body does to all of that is spec 214, and the
+                 three things it found are one shape: every rule about which
+                 ground the client gets, and when, was keyed on something that
+                 quietly stops being true when a body moves fast. (The fourth
+                 thing the same report turned up -- a `PredictStep` built from
+                 the first `Stats` and never rebuilt, so a player who equipped
+                 anything carrying `moveSpeed` kept predicting the speed they had
+                 before it -- is `PredictionBuffer.setStep` and
+                 `gear-speed.test.ts`, and was not about chunks at all.)
+                 **The serve window is one chunk wider than the ask window.**
+                 `MAP_CHUNK_SERVE_RADIUS` is derived rather than judged -- the
+                 client asks from `prediction.drawn`, which the sim keeps within
+                 `correctionThreshold` of the server's position plus at most
+                 `MAX_EASED_OFFSET` of undecayed visual offset, under a hundred
+                 units against 616-unit chunks, and a disagreement smaller than a
+                 chunk moves an index by at most one. Measured at the *same*
+                 radius the whole leading-edge column came back `OutOfRange`
+                 whenever the two straddled a boundary, and spec 208 made that
+                 cost more rather than less: at radius 2 a refused column is a
+                 fifth of everything the client holds, where at 6 it was a
+                 thirteenth. It sits between the two radii 208 derived and
+                 disturbs neither. Nothing a client *claims* enters that
+                 arithmetic, so the guard is unchanged.
+                 **The request order follows the body.** `wanted` ranked by how
+                 far away ground is, which is right for a standing player and
+                 wrong for a running one -- the chunk directly ahead at the edge
+                 of the window sat in the same ring as the ones behind and beside
+                 it. It ranks by distance to the *walk* now (the segment from the
+                 body to where it will be in `CHUNK_LEAD_SECONDS`, clamped so
+                 ground behind projects onto the body) and then by distance to
+                 the body, so the corridor comes forward whole and is served
+                 outward from the feet rather than from the horizon; the ground
+                 being stood on is the only chunk that scores zero on both. With
+                 no lead the segment is a point, both keys collapse to the old
+                 one, and a standing player's stream is byte for byte what it was
+                 -- and the candidates still come from the window around the
+                 body, so this reorders a request stream and cannot widen one.
+                 The lead is a *duration* rather than a distance, so it scales
+                 with the body: half a chunk at walking speed, most of the window
+                 at `MOVE_SPEED_HARD_MAX`, which is the rule working rather than
+                 overreaching -- a body that crosses the window in two seconds
+                 should be asking for its far edge. It comes from the direction
+                 the last input *asked* for rather than a differenced velocity:
+                 it is what the body is committed to, it is known on the tick it
+                 is made, and a correction easing in underneath does not smear
+                 it.
+                 And **one lost message may not wedge the load**, which is the
+                 half that matches "no loaded trees, and navigation broken from
+                 that point on". `ChunkIngest` is a promise in two halves --
+                 `offer` when ground lands, `complete` when its triangles come
+                 back -- and nothing ever failed the second: `map-worker-core`
+                 drops a reply for a layer it cannot mesh or a chunk that will not
+                 build, `view.ts` skips `complete` when the scene refuses the
+                 adopt, nothing re-offers, and nothing aged the queue out. Offer
+                 two chunks, complete one, wait sixty seconds of total quiet, and
+                 the other's prop regions are *still* `inFlight` -- their trees
+                 never drawn for the session -- with `pending` still above zero,
+                 which is the count the load gate and the first nav grid both
+                 wait on. `meshTimeoutMs` sweeps it, and sweeping is the right
+                 repair rather than a shrug: what a settled region needs is that
+                 the **store** has its ground, and the store had it at insert --
+                 the mesh is the picture, not the data the trees stand on. So the
+                 region stays dirty and rebuilds from the store, which is exactly
+                 what an arriving reply would have caused, and the region is
+                 deliberately *not* touched, since a sweep is the one moment the
+                 ground has demonstrably stopped moving. Two more of the same
+                 kind in `view.ts`: `navRequested` is a one-in-flight latch and a
+                 latch with no way out is a wedge, so it re-arms after
+                 `NAV_REPLY_TIMEOUT_MS` (`navGeneration` already refuses a stale
+                 grid that lands late); and every chunk taken out of
+                 `pendingInserts` is forwarded to the worker rather than only
+                 those that dirtied something here, because the two stores are
+                 the same world only for as long as they are fed the same chunks.
+                 `src/render/iso3d/world/fast-run.test.ts` is the end-to-end half
+                 -- a real server over the shipped map, a real client, a real
+                 `RoutePlanner`, at `MOVE_SPEED_HARD_MAX` -- and it asserts the
+                 two things that would show the reported symptoms: a tick spent
+                 standing on ground the map declares and the client has not been
+                 sent, and a refusal on the edge the body is running toward.
                  sim/attack-timing.ts is how long an attack takes, in every sense
                  of the question (spec 144), and the only place any of it is
                  worked out. The idea it exists to hold is that the **attack
@@ -1875,6 +2063,84 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  pause the player cannot act on is not a decision. Nothing of
                  this rides the wire: the tell is the body turning to face you
                  and standing still, and facing already replicates.
+                 Since spec 213 a flight also **commits to somewhere**.
+                 `fleeFrom` used to re-derive "directly away from my attacker"
+                 every tick from the attacker's *current* position, which is
+                 stable only while the attacker is slower than its quarry -- and
+                 no player is. A player at 155 closing on a grazer at 40
+                 overshoots *through* the fleeing body every frame, so the away
+                 vector flipped sign at 60Hz: measured off a real `step`, the
+                 velocity alternated +40, -40, +40, -40 and the body oscillated
+                 between two coordinates two thirds of a unit apart for the rest
+                 of its flight. It never dropped its target and never left
+                 `Fleeing` early -- the one temperament whose entire behaviour is
+                 *leaving* simply could not leave, which from outside is
+                 indistinguishable from having given up. `ServerEntity.fleeGoal`
+                 is that commitment: written by `provoke`, which is the one
+                 moment the attacker's position is the right one to measure from,
+                 cleared by `calm` and `engage`, and moved by exactly two events
+                 -- the goal is reached, or a fresh blow lands. "Hit it again and
+                 it bolts anew" is a rule a player reads off the screen; a
+                 heading re-derived every 16ms is not.
+                 `sim/idle.ts` is the other ninety-nine percent of a monster's
+                 life (spec 213), and before it there was no answer at all: a
+                 body with no target stood on the exact coordinate its spawner
+                 put it on forever, and `walkHome` returned one to its anchor
+                 carrying whatever damage had been done on the way out -- which
+                 is pull-and-reset, wide open, with the leash itself doing the
+                 work. One function and one call site, so coming home, milling
+                 about, walking a beat and recovering are one answer rather than
+                 four: home first if it has been dragged off its ground, then the
+                 plan its row authors, recovering throughout.
+                 A row authors that plan as a second union beside `Temperament`
+                 rather than a fifth member of it, because the two are
+                 independent questions -- a temperament is how a body meets a
+                 *player*, this is what it does when there is none, and the
+                 ravager ignores you and still grazes. Folding them together
+                 would be five temperaments becoming fifteen. Same authoring
+                 rule, which is why both are unions: **a row only names a number
+                 the behaviour it chose actually reads**, so a sentinel has no
+                 radius and a wanderer has no post count. Absent means
+                 `DEFAULT_IDLE`, filled in by `withTraits` exactly as `traits`
+                 is, so "all units wander" is a property of the default rather
+                 than of five rows each remembering to say so -- and the one row
+                 that declares `sentinel` is the training dummy, which would
+                 otherwise be a training dummy you had to chase.
+                 Three rules. **Nothing draws from the `Rng`**: a spot is a hash
+                 of `(entity id, epoch)` through `shared/hash.ts`, the precedent
+                 `crowd.ts`'s `symmetryBreak` set and for the reason stated
+                 there -- the sim's draw *count* is load-bearing, and a field of
+                 monsters sampling the PRNG sixty times a second would move every
+                 combat roll in the world. `idle.test.ts` asserts that as a
+                 property: the `Rng` state after twenty seconds with six
+                 wandering monsters equals the state after twenty seconds with
+                 none. **So there is no new entity state for any of it** -- where
+                 a body is headed is a pure function of its id and the tick, and
+                 a goal that is derived cannot be persisted wrong, expire wrong,
+                 or be forgotten to be cleared when a fight starts. The epoch is
+                 offset by a per-body hashed phase and a patrol's direction and
+                 start angle are hashed too, so a herd does not step off together
+                 and two sentries do not orbit as a formation. And **arriving is
+                 not marked anywhere**: the goal does not move until the plan's
+                 own clock turns it over, so a body that has reached it simply
+                 stands there -- *that standing is the dwell*, and "pick a spot,
+                 hang out on it, move on" needs nothing counting the hanging out.
+                 Recovery is the fourth thing and is deliberately **not** part of
+                 that order, because it is not a place: it is gated on
+                 `StatusId.InCombat` rather than on arriving home, so the rule
+                 stays one sentence -- *a monster nobody is fighting recovers* --
+                 instead of a special case bolted to the leash. Linear rather
+                 than a percentage of what is missing, since a curve that
+                 approaches full without reaching it leaves the exploit intact at
+                 the tail. It is also the one place in the sim that asks for
+                 *less* than a body's full speed: `IdleGoal.pace` is a magnitude
+                 on the intent vector, which `resolveMovement` already honours
+                 and `applyCrowd` already round-trips exactly, because a field of
+                 monsters sprinting between random points reads worse than a
+                 field of statues. Coming home is the exception at full pace --
+                 a body dawdling through the distance a leash just measured would
+                 be catchable for the whole return trip, which is the exploit
+                 arriving by the other door.
                  `loot.ts` and `sim/loot.ts` are what a kill leaves behind
                  (spec 158), and the two of them draw one line: **the item is
                  decided when the body falls and its presentation unfolds

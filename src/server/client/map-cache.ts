@@ -114,12 +114,50 @@ export class MapChunkCache {
    * set: a player dropping into a cold cache should get the ground under their
    * own feet before the ground at the edge of the frame, and with a budget per
    * broadcast the difference is several seconds of standing on nothing.
+   *
+   * `lead` is where the body is *going* (spec 214), and it changes the
+   * question from "how far away is this ground" to "how soon will I be standing
+   * on it". Nearest-first is exactly right for a player who is not moving and
+   * exactly wrong for one who is: the chunk directly ahead at the edge of the
+   * window ranks in the same ring as the forty-seven behind and beside it, so
+   * with the server's bucket refilling at a bounded rate the ground a body is
+   * about to walk onto arrives after ground it has already left.
+   *
+   * The rank is **distance to the walk, then distance to the body**, and the
+   * pair is what makes it a tilt rather than a lurch. A chunk is projected onto
+   * the segment from the body to the lead and ranked first by how far off that
+   * line it sits, so the corridor the body is about to walk down comes forward
+   * whole; ties then go to whatever is nearest the body, so the corridor is
+   * served outward from the feet rather than from the horizon. The ground being
+   * stood on is the only chunk that scores zero on both, so it is still asked
+   * for first -- a bias toward the horizon that starved the ground under the
+   * feet would be worse than no bias at all.
+   *
+   * With no lead the segment is a point, both keys are `chebyshev(chunk, at)`,
+   * and the order is byte for byte what it always was.
+   *
+   * What this deliberately does not do is widen anything: the candidates are
+   * still generated from the window around `(x, z)` and a lead outside it asks
+   * for nothing new. This reorders a request stream; it does not extend one.
    */
-  wanted(x: number, z: number, radius: number, budget: number, tick = 0): ChunkRequest[] {
-    const out: { req: ChunkRequest; distance: number }[] = [];
+  wanted(
+    x: number,
+    z: number,
+    radius: number,
+    budget: number,
+    tick = 0,
+    lead: { readonly x: number; readonly y: number } | null = null,
+  ): ChunkRequest[] {
+    const out: { req: ChunkRequest; offLine: number; distance: number }[] = [];
     for (let layer = 0; layer < this.info.layers.length; layer++) {
       const at = this.coordsAt(layer, x, z);
       if (!at) continue;
+      const toward = lead ? this.coordsAt(layer, lead.x, lead.y) : null;
+      // The walk, in chunk indices. A zero-length one is a standing player and
+      // collapses every projection below onto the body's own chunk.
+      const vx = toward ? toward.cx - at.cx : 0;
+      const vz = toward ? toward.cz - at.cz : 0;
+      const along = vx * vx + vz * vz;
       for (let cz = at.cz - radius; cz <= at.cz + radius; cz++) {
         for (let cx = at.cx - radius; cx <= at.cx + radius; cx++) {
           const k = key(layer, cx, cz);
@@ -128,9 +166,15 @@ export class MapChunkCache {
           // Still in flight, unless it has been in flight too long to believe.
           const asked = this.inFlight.get(k);
           if (asked !== undefined && tick - asked < CHUNK_RETRY_TICKS) continue;
+          const dx = cx - at.cx;
+          const dz = cz - at.cz;
+          // Clamped, so ground *behind* projects onto the body rather than onto
+          // an imaginary extension of the walk going the wrong way.
+          const t = along > 0 ? Math.min(1, Math.max(0, (dx * vx + dz * vz) / along)) : 0;
           out.push({
             req: { layer, cx, cz },
-            distance: Math.max(Math.abs(cx - at.cx), Math.abs(cz - at.cz)),
+            offLine: Math.max(Math.abs(dx - t * vx), Math.abs(dz - t * vz)),
+            distance: Math.max(Math.abs(dx), Math.abs(dz)),
           });
         }
       }
@@ -139,6 +183,7 @@ export class MapChunkCache {
     // runs of the same path ask for the same chunks in the same order.
     out.sort(
       (a, b) =>
+        a.offLine - b.offLine ||
         a.distance - b.distance ||
         a.req.layer - b.req.layer ||
         a.req.cz - b.req.cz ||

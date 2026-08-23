@@ -32,7 +32,7 @@ import {
   navGridFor,
 } from '../../../sim/pathfinding.js';
 import { buildChunkArrays, footprintOf } from '../terrain-arrays.js';
-import { buildRegionInstances, propRegionKey, propRegionsIn, setPropRegionSize } from '../props.js';
+import { buildRegionInstances, propRegionKey, propRegionKeysIn, setPropRegionSize } from '../props.js';
 import type { WorldRect } from './chunk-ingest.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 
@@ -172,7 +172,7 @@ export class MapWorkerCore {
 
     const wanted = new Set<string>();
     for (const rect of rects) {
-      for (const key of propRegionsIn(rect)) wanted.add(key);
+      for (const key of propRegionKeysIn(rect)) wanted.add(key);
     }
     if (wanted.size === 0) return [];
 

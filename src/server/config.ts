@@ -183,6 +183,43 @@ export const MAP_CHUNK_REQUEST_RADIUS = 2;
 export const MAP_CHUNK_KEEP_RADIUS = MAP_CHUNK_REQUEST_RADIUS + 2;
 
 /**
+ * How far a chunk may be from the *server's* own position and still be served
+ * (spec 214).
+ *
+ * The pair of guards in `map-request.ts` have always been described as bounding
+ * different things -- range bounds *where* a client may read, the bucket bounds
+ * how fast -- and this is the third thing neither of them was bounding: the two
+ * positions the range is measured between are not the same position.
+ * `requestChunks` asks from `prediction.drawn` and `handleChunkRequest`
+ * measures from the entity, correctly refusing to trust the client's claim. A
+ * predicting client leads the server by its own latency, so whenever the two
+ * straddle a chunk boundary the entire leading-edge column comes back
+ * `OutOfRange` -- a whole 5-wide column on a measured fourteen-second run at
+ * `MOVE_SPEED_HARD_MAX`, every one on the edge the body was running toward, and
+ * every one legal a tick later. Spec 208 made that cost more rather than less:
+ * at radius 2 a refused column is a fifth of everything the client holds, where
+ * at 6 it was a thirteenth.
+ *
+ * One chunk of slack, and it is **derived rather than judged**. The sim already
+ * keeps a client's claim within `correctionThreshold` of the server's position,
+ * and `drawn` adds at most `MAX_EASED_OFFSET` of visual offset that has not
+ * decayed yet -- under a hundred units of honest disagreement, on a grid whose
+ * chunks are 616 units wide. A disagreement smaller than a chunk cannot move a
+ * chunk index by more than one, so this is exactly the slack a correct client
+ * needs and no more. `map-request.test.ts` asserts that relationship rather than
+ * the number 3.
+ *
+ * It sits between the two radii spec 208 derived and disturbs neither:
+ * {@link MAP_CHUNK_KEEP_RADIUS} is `R + 2`, so the band a client holds without
+ * asking is still two chunks wide, and {@link MAP_CHUNK_BURST} still prices a
+ * cold start off the *request* radius, which is what a client actually asks for.
+ *
+ * What it does not widen: a client claiming to stand across the map is still
+ * refused, because the claim never enters this arithmetic at all.
+ */
+export const MAP_CHUNK_SERVE_RADIUS = MAP_CHUNK_REQUEST_RADIUS + 1;
+
+/**
  * How long a chunk request goes unanswered before the client asks again
  * (spec 147). Three seconds at 60Hz.
  *

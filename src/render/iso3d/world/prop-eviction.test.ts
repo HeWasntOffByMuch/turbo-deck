@@ -1,5 +1,5 @@
 /**
- * The trees a client stops drawing (spec 211).
+ * The trees a client stops drawing (spec 215).
  *
  * The measurement this exists for: driving the real cache, the real
  * `StreamedMap` and the real `ChunkIngest` around the shipped map with spec
@@ -25,7 +25,7 @@ import { ChunkDeniedReason } from '../../../server/net/protocol.js';
 import type { MapChunkMessage, MapInfoMessage } from '../../../server/net/map-messages.js';
 import { MapChunkCache } from '../../../server/client/map-cache.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
-import { propRegionBounds, propRegionKey, propRegionsIn, propRegionSize } from '../props.js';
+import { propRegionBounds, propRegionKey, propRegionKeysIn, propRegionSize } from '../props.js';
 import { ChunkIngest } from './chunk-ingest.js';
 import { orphanedPropRegions, propRegionHasGround } from './prop-residency.js';
 
@@ -66,6 +66,7 @@ function client(options: { dropping: boolean }) {
     regionSize: propRegionSize(),
     incompleteHoldMs: 1500,
     regionsPerFlush: 64,
+    meshTimeoutMs: 30_000,
   });
   /** Regions with batches on the scene graph. What `heldRegions()` answers. */
   const drawn = new Set<string>();
@@ -198,7 +199,7 @@ function client(options: { dropping: boolean }) {
 function regionsWithGround(c: ReturnType<typeof client>): Set<string> {
   const live = new Set<string>();
   for (const ref of c.streamed.heldRefs()) {
-    for (const key of propRegionsIn(rectOf(ref.cx, ref.cz))) live.add(key);
+    for (const key of propRegionKeysIn(rectOf(ref.cx, ref.cz))) live.add(key);
   }
   return live;
 }
@@ -412,7 +413,7 @@ describe('what counts as ground under a region', () => {
       );
       const bounds = propRegionBounds(key);
       const inside = LAYER.chunks.filter((c) =>
-        propRegionsIn(rectOf(c.cx, c.cz)).includes(key),
+        propRegionKeysIn(rectOf(c.cx, c.cz)).includes(key),
       );
       if (inside.length > 1 && bounds.maxX > bounds.minX) return { chunk, key };
     }
@@ -422,7 +423,7 @@ describe('what counts as ground under a region', () => {
   it('is ground held, never ground the map merely declares', () => {
     // The one sentence that separates it from `rectCovered`, which reads
     // `declared`. A rule reading `declared` would keep every region of the map
-    // forever -- which is the bug spec 211 exists to close, written the other
+    // forever -- which is the bug spec 215 exists to close, written the other
     // way round.
     const { chunk, key } = sharedRegion();
     const streamed = new StreamedMap(INFO);
@@ -450,7 +451,7 @@ describe('what counts as ground under a region', () => {
     const { chunk, key } = sharedRegion();
     const streamed = new StreamedMap(INFO);
     const bounds = propRegionBounds(key);
-    const under = LAYER.chunks.filter((c) => propRegionsIn(rectOf(c.cx, c.cz)).includes(key));
+    const under = LAYER.chunks.filter((c) => propRegionKeysIn(rectOf(c.cx, c.cz)).includes(key));
     for (const c of under) streamed.add({ layer: 0, cx: c.cx, cz: c.cz, chunk: c });
     expect(streamed.holdsAnyIn(bounds)).toBe(true);
 

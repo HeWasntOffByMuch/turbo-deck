@@ -108,6 +108,7 @@ export function asEntity(mirror: Mirror): ServerEntity {
     targetId: null,
     aggro: AggroValue.Calm,
     aggroUntilTick: 0,
+    fleeGoal: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,

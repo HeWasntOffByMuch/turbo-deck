@@ -92,7 +92,7 @@ interface Counts {
   held: number;
   drawn: number;
   pending: number;
-  /** Prop batching regions on the scene graph (spec 211). */
+  /** Prop batching regions on the scene graph (spec 215). */
   regions: number;
   ready: boolean;
 }
@@ -279,7 +279,7 @@ async function main(): Promise<void> {
     );
     check('every chunk held has been drawn', final.held > 0 && final.drawn >= final.held,
       `held ${final.held}, drawn ${final.drawn}`);
-    // The trees, in a real browser (spec 211). Not the eviction itself -- this
+    // The trees, in a real browser (spec 215). Not the eviction itself -- this
     // walk is a few seconds and the keep radius is four chunks, so nothing has
     // gone yet -- but that the field is drawing regions at all *and* that the
     // count is a small one rather than a region per chunk, which is what a

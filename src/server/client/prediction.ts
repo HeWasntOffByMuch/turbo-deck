@@ -164,7 +164,7 @@ const OFFSET_EPSILON = 0.02;
  * has been teleported, killed and respawned, or is cheating, and all three
  * should look like what they are.
  */
-const MAX_EASED_OFFSET = 48;
+export const MAX_EASED_OFFSET = 48;
 
 export class PredictionBuffer {
   private pendingInputs: PredictedInput[] = [];

@@ -134,6 +134,9 @@ const PURE_RENDER = [
   'src/render/iso3d/detail-texture.test.ts',
   'src/render/iso3d/surface-detail.ts',
   'src/render/iso3d/surface-detail.test.ts',
+  // The grid the prop field batches by (spec 195), out of `props.ts` in spec 211
+  // so the editor's pure half can ask where a region is without importing three.
+  'src/render/iso3d/prop-regions.ts',
   'src/render/iso3d/world/appearance.ts',
   // What a monster's rig is built with (spec 152) -- the drawn half of an enemy,
   // beside the file that says which rig draws it. Pure for the reason the rest
@@ -278,6 +281,16 @@ const PURE_RENDER = [
   'src/render/iso3d/vfx/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
+  // Which ground the editor meshes and which it lets go of (spec 212). The keep
+  // rule's claim is that no camera position lets one pass drop what the next
+  // asks for, which is a statement about every position rather than the one
+  // somebody dragged to -- so it is asserted in Node.
+  'src/render/iso3d/editor/ground-residency.ts',
+  // Which prop regions the editor still owes and in what order (spec 211). The
+  // field is built deferred and drained a few regions a frame, so this is the
+  // arithmetic that decides what a person sees next -- checkable in Node rather
+  // than by opening the tab and watching the trees arrive.
+  'src/render/iso3d/editor/prop-residency.ts',
   'src/render/iso3d/editor/history.ts',
   'src/render/iso3d/editor/markers.ts',
   'src/render/iso3d/editor/paint.ts',

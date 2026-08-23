@@ -1,5 +1,5 @@
 /**
- * Which prop regions the ground still justifies (spec 211).
+ * Which prop regions the ground still justifies (spec 215).
  *
  * Spec 208 made the client forget the ground behind it and said the trees
  * standing on that ground were the same question one level up. This is the

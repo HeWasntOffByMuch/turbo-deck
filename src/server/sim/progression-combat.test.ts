@@ -105,6 +105,7 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
     pardon: null,
     spawnerId: null,
     anchor: null,
+    fleeGoal: null,
     resource: stats.maxResource,
     cast: null,
     cooldowns: {},
