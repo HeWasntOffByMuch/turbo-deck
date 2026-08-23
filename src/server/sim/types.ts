@@ -400,6 +400,26 @@ export interface ServerEntity {
    */
   readonly aggroUntilTick: number;
   /**
+   * Where a startled body bolted toward, and null for anything that is not
+   * `Fleeing` (spec 213).
+   *
+   * A flight has to *commit* to somewhere, and this is the whole of why. The
+   * heading used to be re-derived from the attacker's current position on every
+   * tick, which is stable only while the attacker is slower than its quarry --
+   * and no player is. A pursuer at 155 against a grazer's 40 overshoots through
+   * the body every frame, the away vector flips sign at 60Hz, and the one
+   * temperament whose entire behaviour is leaving oscillates between two
+   * coordinates two thirds of a unit apart.
+   *
+   * Written by `provoke`, which is the one moment the attacker's position is the
+   * right one to measure from, and cleared by `calm` and `engage`. Read only by
+   * `fleeFrom`, which runs at it and does not second-guess it: the flight is
+   * re-aimed when the goal is reached or when a fresh blow lands, and on nothing
+   * else. "Hit it again and it bolts anew" is a rule a player reads off the
+   * screen; a heading re-derived every 16ms is not.
+   */
+  readonly fleeGoal: Vec2 | null;
+  /**
    * The route this body is following, when the straight line to its target is
    * blocked (spec 065). Plain data on an immutable entity like everything else,
    * so a replay walks the same way round the same tree.

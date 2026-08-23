@@ -24,6 +24,12 @@
  * says that instead, and says it as a union, so the numbers a behaviour does not
  * read cannot be authored beside it. `src/server/sim/aggro.ts` is the only thing
  * that interprets one.
+ *
+ * Since spec 213 there is a second union beside it, {@link Idle}, for the other
+ * ninety-nine percent of a body's life. A temperament answers "what happens when
+ * a player turns up"; an idle answers "and what is it doing until then", which
+ * before 201 had no answer at all -- every monster stood on the exact coordinate
+ * its spawner put it on, forever.
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
@@ -70,6 +76,48 @@ export type Temperament =
    */
   | { readonly kind: 'ferocious'; readonly noticeRange: number; readonly assistRange: number };
 
+/**
+ * What a body does with its own time (spec 213).
+ *
+ * A second union beside {@link Temperament} rather than a fifth member of it,
+ * because the two are independent questions with independent answers: a
+ * temperament is how a body meets a *player*, and this is what it does when
+ * there is no player. The ravager ignores you and still grazes; the stalker
+ * alerts on sight and also walks a beat. Folding them together would be five
+ * temperaments becoming fifteen.
+ *
+ * Same authoring rule, and it is the reason both are unions: **a row only names
+ * a number the behaviour it chose actually reads.** A sentinel has no radius, a
+ * wanderer has no post count, and neither can be given one by accident.
+ *
+ * `src/server/sim/idle.ts` is the only thing that interprets one.
+ */
+export type Idle =
+  /** Stands exactly where it was put. */
+  | { readonly kind: 'sentinel' }
+  /**
+   * Picks a spot within `radius` of its anchor every `cycleTicks`, walks there
+   * and waits out the rest of the cycle. The waiting is what is left over, so a
+   * near spot is a long rest and a far one a short one -- variety with nothing
+   * authored for it.
+   */
+  | { readonly kind: 'wander'; readonly radius: number; readonly cycleTicks: number }
+  /**
+   * Walks a circuit of `points` posts evenly spaced on a ring of `radius`, one
+   * post per `legTicks`. Which way round and where the circuit starts are hashed
+   * off the body's id, so two sentries of the same row do not orbit in step.
+   *
+   * `legTicks` wants to be comfortably longer than the walk between two posts,
+   * because the difference is the pause at each one -- and a sentry that never
+   * stops is a thing on rails rather than a thing on watch.
+   */
+  | {
+      readonly kind: 'patrol';
+      readonly radius: number;
+      readonly points: number;
+      readonly legTicks: number;
+    };
+
 export interface MonsterDefinition {
   readonly id: string;
   readonly name: string;
@@ -79,7 +127,32 @@ export interface MonsterDefinition {
   readonly stats: EffectiveStats;
   /** What it does about a player, and what being hit does to it (spec 163). */
   readonly temperament: Temperament;
+  /**
+   * What it does when there is no player (spec 213). Filled in by
+   * {@link withTraits} from {@link DEFAULT_IDLE}, so a row that says nothing
+   * mills about -- which is what "all units wander" means in practice, and what
+   * a row added later gets for free.
+   */
+  readonly idle: Idle;
 }
+
+/**
+ * What a row that does not say gets: a ramble around its own spawn.
+ *
+ * The radius and the cycle are one decision rather than two, and that is the
+ * only thing to know before changing either. A cycle has to cover the walk *and*
+ * leave something over, because what is left over is the dwell -- so raising the
+ * radius alone buys a body permanently in transit rather than a body that roams
+ * further. At `IDLE_PACE` the ravager crosses 150 units in about three and a
+ * half seconds of the twelve, which leaves the pause. `idle.test.ts` measures
+ * that off the real tick for every row, since the product of a radius, a cycle,
+ * a pace and a move speed is exactly the arithmetic nobody re-does after
+ * changing one of them.
+ */
+export const DEFAULT_IDLE: Idle = { kind: 'wander', radius: 150, cycleTicks: seconds(12) };
+
+/** Stands still. What anything with no row at all gets. */
+const SENTINEL: Idle = { kind: 'sentinel' };
 
 /**
  * How far a body notices a player, or 0 for one that never initiates.
@@ -93,8 +166,23 @@ export function noticeRangeOf(temperament: Temperament): number {
     : 0;
 }
 
-interface AuthoredMonster extends Omit<MonsterDefinition, 'stats'> {
+/**
+ * What a body of this type does with its own time.
+ *
+ * A body whose row has gone missing stands rather than wandering, which is the
+ * opposite default from a row that simply did not say. The distinction is worth
+ * the line: not saying is an author leaving a sensible thing alone, and having
+ * no row at all is a body the table cannot describe -- and a thing nobody can
+ * name should not also be walking about.
+ */
+export function idlePlanOf(typeId: string): Idle {
+  return monsterById(typeId)?.idle ?? SENTINEL;
+}
+
+interface AuthoredMonster extends Omit<MonsterDefinition, 'stats' | 'idle'> {
   readonly stats: AuthoredStats;
+  /** Absent means {@link DEFAULT_IDLE}. */
+  readonly idle?: Idle;
 }
 
 /**
@@ -110,6 +198,10 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
   const power = monster.stats.attackDamage * 0.5 + SCALING.strength.staggerBase * 0.5;
   return {
     ...monster,
+    // Defaulted here rather than at each reader, for the reason `traits` is:
+    // one place that decides, so a row added later cannot be a body that
+    // silently stands still forever.
+    idle: monster.idle ?? DEFAULT_IDLE,
     stats: {
       ...monster.stats,
       // Empty, and not authorable (spec 188). Active skills are carried in the
@@ -138,6 +230,11 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // and a fleeing body never swings. `melee.slash` below is what it would do
     // if something ever made it stand, which nothing does.
     temperament: { kind: 'skittish', fleeTicks: seconds(2.5) },
+    // The one animal on the map that literally grazes, so it gets the widest
+    // ramble in the table. It initiates nothing, so nothing bounds this but the
+    // leash: measured, it spends about half its life walking and gets 161 units
+    // from its spawner, which is a herd animal rather than a decoration.
+    idle: { kind: 'wander', radius: 200, cycleTicks: seconds(16) },
     stats: {
       maxHealth: 24,
       moveSpeed: 40,
@@ -162,6 +259,18 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // A second of being looked at before it comes, which at 105 move speed is
     // about 105 units of retreat somebody gets for reading it.
     temperament: { kind: 'territorial', noticeRange: 320, alertTicks: seconds(1) },
+    // A sentry that alerts is only interesting if the sentry goes somewhere: an
+    // alert from the same square every time is a tripwire, and one off a body
+    // walking a beat is a thing the player has to time. Four posts at 150 is a
+    // 212-unit walk between them, about four and a half seconds of the seven, so
+    // it stops and looks at each corner.
+    //
+    // What caps the radius is *not* the leash, and this is the trap in the whole
+    // idle table: what a territorial body can reach is its notice range plus how
+    // far it has walked from its post, so a patrol radius spends the budget spec
+    // 163 tuned the notice range against. 320 + 150 is 470, inside the ceiling
+    // `idle.test.ts` states.
+    idle: { kind: 'patrol', radius: 150, points: 4, legTicks: seconds(7) },
     stats: {
       maxHealth: 40,
       moveSpeed: 105,
@@ -187,6 +296,9 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // and a 2.25s swing are a warning in themselves, and a body that ignores you
     // until you commit to it is a decision the player gets to make.
     temperament: { kind: 'defensive' },
+    // Nothing authored: the heaviest thing on the map rambles like everything
+    // else, because {@link DEFAULT_IDLE} is what a row that has no opinion gets
+    // and this row has no opinion.
     stats: {
       maxHealth: 140,
       moveSpeed: 95,
@@ -226,6 +338,11 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // is what makes that fair -- being rushed by four of these is a fight you
     // win by swinging, not one you were never going to survive.
     temperament: { kind: 'ferocious', noticeRange: 300, assistRange: 260 },
+    // Nest-bound, and much tighter than the default for it: a nest is a *place*,
+    // and the whole shape of the encounter is walking into one. Four spiders
+    // each rambling the default 150 is a nest smeared across the field with no
+    // middle. 300 + 90 leaves its reach well inside the ceiling as well.
+    idle: { kind: 'wander', radius: 90, cycleTicks: seconds(7) },
     stats: {
       maxHealth: 22,
       moveSpeed: 115,
@@ -262,6 +379,17 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // past the 300 the star reaches, which is the whole of what the range was
     // ever for.
     temperament: { kind: 'territorial', noticeRange: 380, alertTicks: seconds(1.4) },
+    // A shorter beat than the stalker's and one fewer post, because a picket
+    // that throws does not need to cover ground to be dangerous -- what it wants
+    // is to keep its own standoff, and a tight triangle at 100 never gives much
+    // of it away.
+    //
+    // It is also the row the reach ceiling actually binds. This one already
+    // watches furthest in the table, so 380 + 100 is 480 and a radius of 140
+    // would put it at exactly 520 -- the number spec 163 rejected, arrived at
+    // from the other end without touching the field 163 changed. `idle.test.ts`
+    // fails on it rather than leaving it to be re-discovered.
+    idle: { kind: 'patrol', radius: 100, points: 3, legTicks: seconds(6) },
     stats: {
       maxHealth: 34,
       moveSpeed: 90,
@@ -290,6 +418,12 @@ const DUMMY: AuthoredMonster = {
   // Scenery with a health bar. Defensive is the temperament that initiates
   // nothing, and it has no attack to fight back with either.
   temperament: { kind: 'defensive' },
+  // The one row that declares `sentinel`, and the reason the member exists: a
+  // training dummy that ambled off would be a training dummy you had to chase.
+  // Its move speed is 0 as well, so this is belt and braces -- but the speed is
+  // a fact about the body and this is a statement about the intent, and the
+  // intent is the one a reader of this table is looking for.
+  idle: { kind: 'sentinel' },
   stats: {
     maxHealth: 100000,
     moveSpeed: 0,

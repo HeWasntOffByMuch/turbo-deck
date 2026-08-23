@@ -35,7 +35,8 @@ import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
-import { FLEE_DISTANCE, notice, playersOf, rally, settle } from './aggro.js';
+import { bolt, notice, playersOf, rally, settle } from './aggro.js';
+import { idle } from './idle.js';
 import { SlotBoard, slotAngle, slotNearest } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import {
@@ -154,6 +155,7 @@ function blankEntity(id: number): ServerEntity {
     targetId: null,
     aggro: AggroValue.Calm,
     aggroUntilTick: 0,
+    fleeGoal: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -324,6 +326,7 @@ export function spawnEntity(
     // attacker means. Without a target it is calm, which is the same state.
     aggro: spec.targetId === undefined ? AggroValue.Calm : AggroValue.Engaged,
     aggroUntilTick: 0,
+    fleeGoal: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -1856,8 +1859,11 @@ function collectMote(
  * Whether this intent asks the body to walk (spec 079).
  *
  * The threshold is float slack, not a dead zone: every producer of a move vector
- * -- `moveIntent`, `monsterIntent`, the bots -- emits either a unit vector or an
- * exact zero, so anything with length at all is somebody asking to go somewhere.
+ * -- `moveIntent`, `monsterIntent`, the bots -- emits either an exact zero or a
+ * vector somebody meant, so anything with length at all is somebody asking to go
+ * somewhere. Not necessarily a *unit* vector since spec 213: a body ambling
+ * about its own business asks for a fraction of its speed, and asking to amble
+ * is still asking.
  */
 /**
  * Two inputs for one body in one tick, as one input (spec 090).
@@ -2027,11 +2033,11 @@ function monsterIntent(
     if (monster.targetId === null) target = null;
   }
 
-  if (!target) {
-    const home = walkHome(monster, tick, context);
-    if (home) return home;
-    return { input: null, entity: forgetPath(monster), charging: null };
-  }
+  // Nobody to fight, so it goes about its own business (spec 213): home if it
+  // has been dragged off its ground, and milling about or walking its beat once
+  // it is back on it -- recovering throughout, which is what closes
+  // pull-and-reset.
+  if (!target) return idleDecision(monster, tick, context);
 
   // Running away, and swinging at nothing whatever it ends up standing next to.
   // Routed with the same A* a chase uses, so a fleeing grazer goes round a rock
@@ -2127,12 +2133,28 @@ function monsterIntent(
 /**
  * The other way out of a fight (spec 163): away, as fast as this body goes.
  *
- * Aimed at a point {@link FLEE_DISTANCE} directly opposite whatever it is
- * running from, and routed with the same `routeToward` a chase uses -- so the
- * common case is a straight line that touches no grid at all, and a cornered
- * body goes round the corner instead of grinding along it. Recomputed every
- * tick, so a grazer that gets outflanked mid-flight turns rather than committing
- * to the direction it set off in.
+ * Aimed at the point the body bolted for when the blow landed, and routed with
+ * the same `routeToward` a chase uses -- so the common case is a straight line
+ * that touches no grid at all, and a cornered body goes round the corner instead
+ * of grinding along it.
+ *
+ * **The goal is not recomputed while the flight runs** (spec 213), and that is
+ * the whole of this function's correctness. It used to be re-derived every tick
+ * as "directly away from wherever my attacker is now", which is stable only
+ * while the attacker is slower than its quarry -- and no player is. A pursuer at
+ * 155 against the grazer's 40 overshoots *through* the fleeing body every frame,
+ * so the away vector flipped sign at 60Hz: measured off a real `step`, the
+ * velocity alternated +40, -40, +40, -40 and the body oscillated between two
+ * coordinates two thirds of a unit apart for the rest of its flight. It never
+ * dropped its target and never left `Fleeing` early -- it simply stopped
+ * getting anywhere, which from outside is indistinguishable from having given
+ * up.
+ *
+ * So it re-aims on two events and no others: the goal is reached, or a fresh
+ * blow lands -- which is `provoke`'s business, not this function's. The fallback
+ * when the router has nothing to say runs *at the committed goal* rather than
+ * away from the attacker, for the same reason: the goal holds still and the
+ * attacker does not.
  *
  * The intent it returns carries no `castAbilityId` at all, which is the rule
  * stated once rather than checked at each caller: a fleeing body never swings,
@@ -2144,18 +2166,28 @@ function fleeFrom(
   tick: number,
   context: StepContext,
 ): MonsterDecision {
-  const away = unit(monster.position.x - from.position.x, monster.position.y - from.position.y);
-  // Standing exactly on top of its attacker leaves no direction to run in, so it
-  // keeps the one it is already facing rather than dividing by zero.
-  const heading = away ?? { x: Math.cos(monster.facing), y: Math.sin(monster.facing) };
-  const goal: Vec3 = {
-    x: monster.position.x + heading.x * FLEE_DISTANCE,
-    y: monster.position.y + heading.y * FLEE_DISTANCE,
-    z: monster.position.z,
-  };
+  // A goal is normally already there -- `provoke` writes one on the blow that
+  // starts the flight. It is picked here only for a body put into `Fleeing` by
+  // some other route (a test seeding one, an admin), and re-picked when the
+  // committed goal has been reached, which at 900 units is a body that has
+  // genuinely got away.
+  const committed = monster.fleeGoal;
+  const arrived =
+    committed !== null &&
+    Math.hypot(committed.x - monster.position.x, committed.y - monster.position.y) <= monster.radius;
+  const aim = committed !== null && !arrived ? committed : bolt(monster, from);
+  const aiming = aim === committed ? monster : { ...monster, fleeGoal: aim };
 
-  const steer = routeToward(monster, goal, tick, context);
-  const direction = steer.direction ?? heading;
+  const goal: Vec3 = { x: aim.x, y: aim.y, z: monster.position.z };
+  const steer = routeToward(aiming, goal, tick, context);
+  const direction =
+    steer.direction ??
+    unit(aim.x - monster.position.x, aim.y - monster.position.y) ??
+    // Only reachable for a body standing exactly on its own goal, which the
+    // re-aim above has already ruled out -- `bolt` always answers a full
+    // {@link FLEE_DISTANCE} away. Kept because a fallback that cannot be reached
+    // is cheaper than a direction that could be zero.
+    { x: Math.cos(monster.facing), y: Math.sin(monster.facing) };
   return {
     entity: steer.entity,
     // Still the one body it does not dodge, and for the same reason as a chase
@@ -2193,27 +2225,46 @@ function beyondLeash(monster: ServerEntity): boolean {
 }
 
 /**
- * The walk back to the spawn point, for a body with no target and no business
- * being where it is (spec 076).
+ * One tick of a monster with nobody to fight (specs 076, 201).
  *
- * Routed with the same A* a chase uses, so a monster led round a wall comes
- * back round it rather than pressing into it. It walks until it is within its
- * own radius of home and then simply stands: it does not snap to the marker,
- * because an inch of drift costs nothing and a teleport is visible.
+ * What this used to be was `walkHome`: a walk back to the anchor, and nothing
+ * else in the world. A body already home returned null and stood on its spawn
+ * coordinate forever, and a body walking home arrived carrying whatever damage
+ * had been done on the way out -- which is pull-and-reset, wide open, with the
+ * leash itself doing the work.
  *
- * Nothing here stops it being hit on the way. Being hit re-targets it, exactly
- * as it always did -- and the leash check runs before the target is read, so the
- * next tick takes that target straight back off it. "Cannot be pulled again
- * until it is home" falls out of the rule rather than being a second flag.
+ * The decision now comes from `sim/idle.ts`, which answers all of it in one
+ * call: where to go, how fast, and the body with this tick's recovery already
+ * applied. Everything here is the steering, which is what this file owns --
+ * routed with the same `routeToward` a chase uses, so a monster ambling toward a
+ * spot goes round a rock exactly as a charging one does, and a spot it cannot
+ * reach at all costs it a rest rather than a body pressed into a tree.
+ *
+ * Arriving is not marked anywhere and does not need to be: the goal does not
+ * move until the plan's own clock turns it over, so a body that has reached it
+ * simply stands there. **That standing is the dwell** -- "pick a spot, hang out
+ * on it, move on" with nothing counting the hanging out.
  */
-function walkHome(monster: ServerEntity, tick: number, context: StepContext): MonsterDecision | null {
-  const anchor = monster.anchor;
-  if (!anchor) return null;
-  const dx = anchor.x - monster.position.x;
-  const dy = anchor.y - monster.position.y;
-  if (Math.hypot(dx, dy) <= monster.radius) return null;
+function idleDecision(monster: ServerEntity, tick: number, context: StepContext): MonsterDecision {
+  const step = idle(monster, tick);
+  const rested = step.entity;
+  const goal = step.goal;
+  if (!goal) return { input: null, entity: forgetPath(rested), charging: null };
 
-  const steer = routeToward(monster, { x: anchor.x, y: anchor.y, z: monster.position.z }, tick, context);
+  const dx = goal.at.x - rested.position.x;
+  const dy = goal.at.y - rested.position.y;
+  // Within its own body of the spot is arrived. It does not snap to it, because
+  // an inch of drift costs nothing and a teleport is visible.
+  if (Math.hypot(dx, dy) <= rested.radius) {
+    return { input: null, entity: forgetPath(rested), charging: null };
+  }
+
+  const steer = routeToward(
+    rested,
+    { x: goal.at.x, y: goal.at.y, z: rested.position.z },
+    tick,
+    context,
+  );
   if (!steer.direction) return { input: null, entity: forgetPath(steer.entity), charging: null };
 
   return {
@@ -2222,8 +2273,14 @@ function walkHome(monster: ServerEntity, tick: number, context: StepContext): Mo
     input: {
       entityId: monster.id,
       seq: 0,
-      moveX: steer.direction.x,
-      moveY: steer.direction.y,
+      // The one place in the sim that asks for *less* than a body's full speed
+      // (spec 213). `resolveMovement` reads a direction of length at most one and
+      // multiplies by the body's own speed, so a short vector is how "slower than
+      // I can go" is said -- the same conversion `applyCrowd` already round-trips
+      // exactly. An amble is not a charge, and a field of monsters sprinting
+      // between random points reads worse than a field of statues.
+      moveX: steer.direction.x * goal.pace,
+      moveY: steer.direction.y * goal.pace,
       facing: Math.atan2(steer.direction.y, steer.direction.x),
       buttons: 0,
       predictedX: monster.position.x,
