@@ -23,6 +23,12 @@ import {
   type TraitStats,
   type Vec3,
 } from '../state/types.js';
+import {
+  MAX_GRADE,
+  MIN_GRADE,
+  ScalingGrade,
+  type WeaponScaling,
+} from '../data/weapon-scaling.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
 import { ClientMessageType, ServerMessageType } from './protocol.js';
 import {
@@ -1433,6 +1439,22 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
   // its own copy from equipment on every recalculation.
   writer.varuint(stats.skillAbilityIds.length);
   for (const id of stats.skillAbilityIds) writer.str(id);
+  // Weapon scaling (spec 216): the three resolved grades, then the three steps
+  // that produced them. Both, because they answer different questions -- the
+  // grades are what the held weapon scales with, and the steps are what the bag
+  // needs to resolve a weapon it is only hovering over.
+  //
+  // `u8` for a grade, which is `0..6`; `i16` for a step, which is small but
+  // signed and has no narrower signed writer here. Owner-only and sent on login
+  // and on equipment changes rather than per tick, like the rest of this block.
+  writeScaling(writer, stats.weaponScaling);
+  // The resolved range a basic attack rolls between (spec 217). `f32`, like
+  // every other quantity in this block: both ends carry the attribute term and
+  // the percentage, so neither is an integer once anything has been spent.
+  writer.f32(stats.weaponDamageMin).f32(stats.weaponDamageMax);
+  writer.i16(clampStep(stats.scalingModifiers.strength));
+  writer.i16(clampStep(stats.scalingModifiers.agility));
+  writer.i16(clampStep(stats.scalingModifiers.intelligence));
   writeTraits(writer, stats.traits);
 }
 
@@ -1450,6 +1472,44 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
  * uniform block is one loop rather than a schema, and the message is sent on
  * login and on allocation rather than per tick, so the width is free.
  */
+/**
+ * A grade triple, one byte each (spec 216).
+ *
+ * Clamped on the way out as well as on the way in, because a grade that came
+ * off a hand-edited row outside `0..6` would otherwise be written as a wrapped
+ * byte and read back as a *different, valid* grade -- which is worse than the
+ * refusal, since nothing downstream could tell it had happened.
+ */
+function writeScaling(writer: BufferWriter, scaling: WeaponScaling): void {
+  writer.u8(clampGrade(scaling.strength)).u8(clampGrade(scaling.agility)).u8(clampGrade(scaling.intelligence));
+}
+
+function readScaling(reader: BufferReader): WeaponScaling {
+  return {
+    strength: clampGrade(reader.u8()),
+    agility: clampGrade(reader.u8()),
+    intelligence: clampGrade(reader.u8()),
+  };
+}
+
+function clampGrade(value: number): ScalingGrade {
+  if (!Number.isFinite(value)) return ScalingGrade.None;
+  return Math.min(MAX_GRADE, Math.max(MIN_GRADE, Math.round(value))) as ScalingGrade;
+}
+
+/**
+ * A step, held inside the signed short it is written as.
+ *
+ * Whole, because the ladder has no half grades and `scaleModifier` multiplies
+ * every numeric field by a skill's level -- so a passive granting half a step
+ * per level is a thing somebody can author. Rounded here as well as in
+ * `shiftGrade`, so what crosses the wire is what was resolved from.
+ */
+function clampStep(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(32767, Math.max(-32768, Math.round(value)));
+}
+
 function writeTraits(writer: BufferWriter, traits: TraitStats): void {
   for (const key of TRAIT_WIRE_ORDER) writer.f32(traits[key]);
 }
@@ -1478,6 +1538,14 @@ function readStats(reader: BufferReader): EffectiveStats {
     resourceRegen: reader.f32(),
     basicAttackId: reader.str(),
     skillAbilityIds: readStringList(reader),
+    weaponScaling: readScaling(reader),
+    weaponDamageMin: reader.f32(),
+    weaponDamageMax: reader.f32(),
+    scalingModifiers: {
+      strength: reader.i16(),
+      agility: reader.i16(),
+      intelligence: reader.i16(),
+    },
     traits: readTraits(reader),
   };
 }

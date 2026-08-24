@@ -8,6 +8,7 @@
 
 import type { EquipTarget } from '../state/types.js';
 import type { StatModifier } from './modifiers.js';
+import { ScalingGrade, type WeaponDamage, type WeaponScaling } from './weapon-scaling.js';
 
 /**
  * The rarity tiers, in ascending order (spec 158). **Three, and on purpose.**
@@ -57,6 +58,36 @@ export interface ItemDefinition {
   /** Character level required to equip; below it the equip is rejected. */
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
+  /**
+   * Which attributes swinging this scales with, as a letter each (spec 216).
+   *
+   * The row's **base** scaling and only that: whatever the player is wearing is
+   * applied on top by `effectiveScaling`, which never writes back here. A row is
+   * a constant, and taking an amulet off restores the effective grades because
+   * nothing ever moved them.
+   *
+   * Absent is {@link NO_SCALING} -- correct for everything that is not a weapon,
+   * and correct for a main hand nobody has configured yet, which then deals its
+   * base damage with no attribute term rather than crashing or silently
+   * inheriting somebody else's letters. An empty hand is the one case that is
+   * *not* this: see `UNARMED_SCALING`.
+   *
+   * Only ever read for the main hand. Scaling on a helmet is inert, the same
+   * nothing a `basicAttackId` on one already is.
+   */
+  readonly scaling?: WeaponScaling;
+  /**
+   * What swinging this hits for, before any attribute touches it (spec 217).
+   *
+   * The weapon's **own** damage, and since spec 217 the thing that actually
+   * decides a basic attack: before it, a swing was `melee.slash.damage` times a
+   * multiplier, so the number that set how hard every sword in the game hit was
+   * a field on an ability row shared with every monster.
+   *
+   * Absent is {@link NO_WEAPON_DAMAGE} for anything that is not a weapon, and
+   * an empty hand is {@link UNARMED_DAMAGE}. Only ever read for the main hand.
+   */
+  readonly damage?: WeaponDamage;
   /**
    * The auto-attack this weapon swings with (spec 079), or absent for one that
    * changes numbers but not the motion.
@@ -119,7 +150,15 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Worn Sword',
     slot: 'mainHand',
     levelRequirement: 1,
-    modifiers: { attackDamage: 3 },
+    modifiers: {},
+    // The plain blade, and the one row migrated to scale exactly as it did
+    // before spec 216: `A` is the grade `damagePerPoint` was chosen against, so
+    // its Strength term is the pre-spec 0.6 a point to the last decimal.
+    scaling: { strength: ScalingGrade.A, agility: ScalingGrade.D, intelligence: ScalingGrade.None },
+    // The reference the rest of the table is priced against (spec 217): a fresh
+    // character has spent nothing, so `above()` gives them no attribute term at
+    // all and this range is exactly what they hit for.
+    damage: { min: 1, max: 3 },
   },
   {
     id: 'sword.keen',
@@ -130,7 +169,16 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 5,
     // Keen: the speed is the point of it (spec 070), so it says so as a
     // percentage rather than by shaving a tick off the base interval.
-    modifiers: { attackDamage: 8, attackRange: 6, attackSpeedPct: 0.15 },
+    modifiers: { attackRange: 6, attackSpeedPct: 0.15 },
+    // The versatile blade: good in either hand, best in neither. `B`/`B` is 1.40
+    // of coefficient against the maul's single `S` at 1.15, which is the shape
+    // the balance rule wants -- a two-attribute weapon out-scales a
+    // one-attribute weapon only for somebody who actually paid for both, and
+    // pays for the breadth by taking a lower letter in each.
+    scaling: { strength: ScalingGrade.B, agility: ScalingGrade.B, intelligence: ScalingGrade.None },
+    // Rare and level 5, so above the starters; a narrow range, because a keen
+    // blade landing consistently is what the row already says about it.
+    damage: { min: 3, max: 6 },
   },
   {
     id: 'maul.iron',
@@ -139,7 +187,15 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Iron Maul',
     slot: 'mainHand',
     levelRequirement: 5,
-    modifiers: { attackDamage: 14, attackSpeedPct: -0.2, attackRange: 10, strength: 2 },
+    modifiers: { attackSpeedPct: -0.2, attackRange: 10, strength: 2 },
+    // +2 Strength, the slowest swing and the biggest number: nothing about this
+    // row was ever ambiguous. The single-attribute `S` the balance rule is
+    // written about -- it has to be able to compete with a three-letter hybrid.
+    scaling: { strength: ScalingGrade.S, agility: ScalingGrade.None, intelligence: ScalingGrade.None },
+    // The widest spread in the table, and the highest ceiling. A maul is the
+    // weapon whose blows differ from each other, which is what pays for the
+    // -20% swing rate beside it.
+    damage: { min: 4, max: 11 },
   },
   {
     id: 'staff.emberwood',
@@ -148,7 +204,16 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Emberwood Staff',
     slot: 'mainHand',
     levelRequirement: 4,
-    modifiers: { attackDamage: 2, spellPower: 0.2, intelligence: 3, attackRange: 20 },
+    modifiers: { spellPower: 0.2, intelligence: 3, attackRange: 20 },
+    // The headline fix. +3 Intelligence, spell power, and two points of weapon
+    // damage -- and before spec 216 swinging it scaled off Strength, because
+    // every weapon did. `E` in Strength rather than `None` so that hitting
+    // something with a stick is still worth marginally more to a strong body.
+    scaling: { strength: ScalingGrade.E, agility: ScalingGrade.None, intelligence: ScalingGrade.A },
+    // Barely a weapon, and meant to be: what this row is for is the +3
+    // Intelligence and the spell power, and hitting somebody with it is the
+    // fallback rather than the plan.
+    damage: { min: 1, max: 2 },
   },
   {
     id: 'bow.hunting',
@@ -160,7 +225,11 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 1,
     // The range is the weapon; the shot it names carries its own (spec 079), so
     // `attackRange` here only nudges what a melee swing would have reached.
-    modifiers: { attackDamage: 5, attackSpeedPct: -0.1 },
+    modifiers: { attackSpeedPct: -0.1 },
+    // A drawn bow is a Strength act and an aimed one is not, which is why this
+    // is the one row with two live letters and neither of them top of the ladder.
+    scaling: { strength: ScalingGrade.D, agility: ScalingGrade.A, intelligence: ScalingGrade.None },
+    damage: { min: 2, max: 4 },
     basicAttackId: 'ranged.shot',
   },
   {
@@ -169,7 +238,14 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Weighted Stars',
     slot: 'mainHand',
     levelRequirement: 1,
-    modifiers: { attackDamage: 2, attackSpeedPct: 0.2, agility: 1 },
+    modifiers: { attackSpeedPct: 0.2, agility: 1 },
+    // +1 Agility, the fastest thing in the table and two points of damage: the
+    // pure-Agility counterpart to the maul, and priced the same way.
+    scaling: { strength: ScalingGrade.None, agility: ScalingGrade.S, intelligence: ScalingGrade.None },
+    // Light, and thrown fast: the same range as the Worn Sword against a +20%
+    // rate and an `S` in Agility, which is where its damage is meant to come
+    // from rather than from the star itself.
+    damage: { min: 1, max: 3 },
     basicAttackId: 'ranged.star',
   },
   // --- off hand ---
@@ -251,6 +327,36 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     slot: 'trinket',
     levelRequirement: 8,
     modifiers: { maxHealthPct: 0.12, attackDamagePct: 0.05 },
+  },
+  // Two trinkets that move a *letter* rather than a number (spec 216).
+  //
+  // They exist to make the grade-modifier path reachable content rather than a
+  // mechanism with no caller, and they are the shape every future one takes:
+  // a generic step on a named attribute, consumed by `effectiveScaling`, with
+  // nothing in combat code knowing either of these rows exists. A third is
+  // another entry in this table and no code at all.
+  //
+  // A step is worth far more than a stat point, because it re-prices every
+  // point of that attribute the holder has -- so both are priced high and gated
+  // late, and the Runic Pendant *pays* for its two steps with one off Strength
+  // rather than being strictly better than the amulet beside it.
+  {
+    id: 'trinket.precision',
+    rarity: 'rare',
+    value: 160,
+    name: 'Amulet of Precision',
+    slot: 'trinket',
+    levelRequirement: 6,
+    modifiers: { agilityScalingGrade: 1 },
+  },
+  {
+    id: 'trinket.runic',
+    rarity: 'exceptional',
+    value: 240,
+    name: 'Runic Pendant',
+    slot: 'trinket',
+    levelRequirement: 9,
+    modifiers: { intelligenceScalingGrade: 2, strengthScalingGrade: -1 },
   },
   // --- active skills (spec 188) ---
   //

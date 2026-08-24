@@ -46,7 +46,13 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     name: 'Strength',
     abbrev: 'STR',
     verb: 'Overpower',
-    owns: ['poise damage', 'stagger duration', 'hyper-armour', 'attack damage'],
+    // Three attributes name a weapon-damage claim since spec 216 and they are
+    // three different claims, not one shared three ways: a maul pays Strength,
+    // the Weighted Stars pay Agility, the Emberwood Staff pays Intelligence, and
+    // which of them a swing pays is the *weapon's* letter rather than a rule
+    // about the attribute. Nobody is forced into another attribute to be paid
+    // for their own, which is what the no-shared-mechanic rule is protecting.
+    owns: ['poise damage', 'stagger duration', 'hyper-armour', 'weapon damage on a Strength-scaling weapon'],
     sustain: 'Ends the fight. A staggered enemy is not attacking, and force converts into resource on the kill.',
     notOwned: ['health pools (Constitution)', 'attack rate (nothing)', 'armour (Constitution)'],
   },
@@ -55,7 +61,15 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     name: 'Agility',
     abbrev: 'AGI',
     verb: 'Outmaneuver',
-    owns: ['wind-up length', 'backswing length', 'weapon handling', 'move speed', 'turn rate', 'flow'],
+    owns: [
+      'wind-up length',
+      'backswing length',
+      'weapon handling',
+      'move speed',
+      'turn rate',
+      'flow',
+      'weapon damage on an Agility-scaling weapon',
+    ],
     sustain: 'Is not there. The rooted fraction of every attack shrinks; the interval never does.',
     notOwned: ['weak points (Perception)', 'crit (Perception)', 'attack speed (nothing)'],
   },
@@ -64,7 +78,15 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     name: 'Intelligence',
     abbrev: 'INT',
     verb: 'Manipulate',
-    owns: ['spell power', 'spell geometry', 'prepared casting', 'catalysis', 'arcane overflow', 'resource pool'],
+    owns: [
+      'spell power',
+      'spell geometry',
+      'prepared casting',
+      'catalysis',
+      'arcane overflow',
+      'resource pool',
+      'weapon damage on an Intelligence-scaling weapon',
+    ],
     sustain: 'Changes the encounter. Reach and radius mean fewer things arrive; sundering means fights are shorter without more damage.',
     notOwned: ['resource efficiency (Wisdom)', 'cooldowns (Wisdom)', 'healing (Wisdom)'],
   },
@@ -75,7 +97,7 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     verb: 'Endure',
     owns: ['max health', 'poise pool', 'poise regen', 'shields', 'low-health behaviour', 'armour'],
     sustain: 'Absorbs. The only route that is literally taking the hit.',
-    notOwned: ['healing efficiency (Wisdom)', 'damage (Strength)', 'stagger power (Strength)'],
+    notOwned: ['healing efficiency (Wisdom)', 'weapon damage (the weapon decides)', 'stagger power (Strength)'],
   },
   {
     key: 'perception',
@@ -84,7 +106,7 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     verb: 'Exploit',
     owns: ['weak points', 'exposure', 'opening reads', 'crit', 'precision recovery'],
     sustain: 'Acts first. A committed enemy cannot answer, and landing precisely is what pays for the next attempt.',
-    notOwned: ['how fast you act (Agility)', 'movement (Agility)', 'damage scaling (Strength)'],
+    notOwned: ['how fast you act (Agility)', 'movement (Agility)', 'weapon damage (the weapon decides)'],
   },
   {
     key: 'wisdom',
@@ -93,7 +115,7 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     verb: 'Sustain',
     owns: ['ability cost', 'cooldown length', 'healing received', 'attunement', 'adaptation', 'conversion', 'mastery'],
     sustain: 'Stretches what it has. The same pool goes further and the same enemy hurts less the third time.',
-    notOwned: ['pool size (Intelligence)', 'health (Constitution)', 'damage (Strength)'],
+    notOwned: ['pool size (Intelligence)', 'health (Constitution)', 'weapon damage (the weapon decides)'],
   },
 ];
 

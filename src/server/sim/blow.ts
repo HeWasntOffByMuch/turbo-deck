@@ -80,6 +80,25 @@ export interface BlowResult {
   readonly rng: Rng;
 }
 
+/**
+ * An integer in `[min, max]`, and the Rng that has spent the draw.
+ *
+ * Integral on purpose: at spec 217's magnitudes a fractional roll is a number
+ * nobody can read off a damage popup, and what the attribute term adds on top
+ * is fractional anyway. The ends are rounded rather than truncated so that a
+ * range widened by a modifier keeps both of its ends reachable.
+ *
+ * Degenerate ranges are the common case rather than an edge one -- every
+ * monster's is `min === max` -- so the draw is still taken and still spends the
+ * same one value, which is what keeps a blow's draw count uniform.
+ */
+export function rollBetween(rng: Rng, min: number, max: number): [number, Rng] {
+  const lo = Number.isFinite(min) ? Math.max(0, Math.round(min)) : 0;
+  const hi = Number.isFinite(max) ? Math.max(lo, Math.round(max)) : lo;
+  const [roll, next] = rng.nextInt(0, hi - lo);
+  return [lo + roll, next];
+}
+
 function healthFraction(entity: ServerEntity): number {
   return entity.stats.maxHealth > 0 ? entity.health / entity.stats.maxHealth : 1;
 }
@@ -115,9 +134,28 @@ export function resolveBlow(
   const D = target.stats.traits;
   const isBasicAttack = ability.basicAttack === true;
 
-  // --- 1 + 2: eligibility, then the two rolls, crit first ------------------
-  const [critRoll, afterCrit] = rngIn.nextInt(0, 9999);
-  let rng = afterCrit;
+  // --- 1 + 2: eligibility, then the rolls, the weapon's own first ----------
+  //
+  // The damage roll leads (spec 217), and it is drawn **only for a basic
+  // attack**. Conditioning on the ability's own `basicAttack` flag is safe
+  // where conditioning on a *chance* would not be: it is a property of the row,
+  // fixed for a given ability id, so two replays of the same inputs always draw
+  // the same count. `weakPointChance > 0` below is the shape to be careful of,
+  // and it is already there.
+  //
+  // The Rng draw count is protocol, so adding this moved every seeded combat
+  // sequence in the tree once. That is the cost of a weapon having damage of
+  // its own, and it is paid here rather than smeared over a special case.
+  let rng = rngIn;
+  let weaponRoll = 0;
+  if (isBasicAttack) {
+    const [roll, afterRoll] = rollBetween(rng, attacker.stats.weaponDamageMin, attacker.stats.weaponDamageMax);
+    weaponRoll = roll;
+    rng = afterRoll;
+  }
+
+  const [critRoll, afterCrit] = rng.nextInt(0, 9999);
+  rng = afterCrit;
   const critical = critRoll / 10000 < attacker.stats.critChance;
 
   const mayWeakPoint = isBasicAttack || A.abilityWeakPoints > 0;
@@ -138,14 +176,17 @@ export function resolveBlow(
   }
 
   // --- 3: amplify ---------------------------------------------------------
-  // Two multipliers, and which one applies is the ability's own `basicAttack`
-  // flag (spec 147). A swing scales with what you are swinging -- Strength, and
-  // whatever the weapon adds -- and a spell scales with Intelligence. Before
-  // this, every blow in the game scaled with `spellPower` and nothing scaled
-  // with `attackDamage` at all, so a Strength build's damage stat was a number
-  // on a sheet that reached nothing.
-  const power = isBasicAttack ? A.weaponPower : attacker.stats.spellPower;
-  let damage = ability.damage * power * (critical ? 1.75 : 1);
+  // Where a blow's base number comes from, and which of the two it is is the
+  // ability's own `basicAttack` flag (specs 147, 217).
+  //
+  // A swing is **the weapon's own damage**: the range rolled above, which
+  // already carries spec 216's attribute term, the flat bonuses and the
+  // percentage. An ability is `ability.damage` against Intelligence's spell
+  // power, unchanged. Before spec 217 a swing was `ability.damage` times a
+  // multiplier too, which meant the number deciding how hard every sword in the
+  // game hit lived on `melee.slash` -- shared with every monster on the map.
+  const base = isBasicAttack ? weaponRoll : ability.damage * attacker.stats.spellPower;
+  let damage = base * (critical ? 1.75 : 1);
 
   if (weakPoint) {
     const still = tick - attacker.stillSinceTick >= A.steadyAimTicks ? A.steadyAimPct : 0;

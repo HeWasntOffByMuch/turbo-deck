@@ -39,11 +39,38 @@ import { StyledWidget } from './base.js';
  *
  * `rarity` is the item's own tier colour -- the name and the tier line, and the
  * only two places the colour on the ground is repeated in words.
+ *
+ * The three attribute tones are spec 216's, and they are attribute *identity*
+ * rather than judgement: `strength` is not `bad` and `agility` is not `good`.
+ * They exist so a scaling line can say which letter belongs to which attribute
+ * by colour, on a line with no room for three labels beside it.
  */
-export type DetailTone = 'rarity' | 'good' | 'bad' | 'dim' | 'normal';
+export type DetailTone =
+  | 'rarity'
+  | 'good'
+  | 'bad'
+  | 'dim'
+  | 'normal'
+  | 'strength'
+  | 'agility'
+  | 'intelligence';
 
 /** One line of what an item says about itself (spec 185). */
 export interface ItemDetail {
+  readonly text: string;
+  readonly tone: DetailTone;
+  /**
+   * The line as coloured runs, when one tone will not do (spec 216).
+   *
+   * {@link text} stays the whole line either way -- it is what a test, a probe
+   * and the plain-text readout read -- and the runs are what gets drawn. Absent
+   * on every line but the weapon scaling one.
+   */
+  readonly spans?: readonly ItemDetailSpan[];
+}
+
+/** One run of a spanned {@link ItemDetail}. */
+export interface ItemDetailSpan {
   readonly text: string;
   readonly tone: DetailTone;
 }

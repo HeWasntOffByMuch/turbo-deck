@@ -18,6 +18,7 @@ import { EntityKindValue, type ServerEntity, type ServerInput, type ServerWorldS
 import { DEFAULT_LIVE_CONFIG } from '../config.js';
 import { abilityById } from '../data/abilities.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import type { Vec3 } from '../state/types.js';
 
@@ -101,6 +102,7 @@ const STATS = {
   resourceRegen: 0,
   basicAttackId: ATTACK,
   skillAbilityIds: [],
+  ...NO_WEAPON,
   traits: NEUTRAL_TRAITS,
 };
 

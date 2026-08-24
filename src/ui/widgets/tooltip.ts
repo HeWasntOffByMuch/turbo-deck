@@ -52,6 +52,28 @@ const MAX_WIDTH = 140;
 export interface TooltipLine {
   readonly text: string;
   readonly colorToken?: string;
+  /**
+   * The line drawn as coloured runs instead of one colour (spec 216).
+   *
+   * The weapon scaling line is `S / D / -` with the three letters in the three
+   * attribute colours and the separators in the tooltip's own, which one
+   * `colorToken` cannot say. A span carries its own token and falls back to the
+   * line's, so a run that wants the ordinary text colour simply omits one.
+   *
+   * A spanned line is **never wrapped**: its runs are positioned by measuring
+   * the ones before them, and a fold would put half a run at the start of the
+   * next line with no way to say which half. Every spanned line this widget is
+   * given is a handful of characters wide, which is why that is a rule rather
+   * than a limitation -- {@link text} must still be the concatenation, because
+   * it is what {@link contentKey} and the plain-text readout are built from.
+   */
+  readonly spans?: readonly TooltipSpan[];
+}
+
+/** One coloured run of a spanned line. */
+export interface TooltipSpan {
+  readonly text: string;
+  readonly colorToken?: string;
 }
 
 /** Prose, or lines. A string is the single unstyled line it always was. */
@@ -59,7 +81,12 @@ export type TooltipContent = string | readonly TooltipLine[];
 
 /** The identity a repeat hover is judged by: the text *and* the colour. */
 function contentKey(lines: readonly TooltipLine[]): string {
-  return lines.map((line) => `${line.colorToken ?? ''}|${line.text}`).join('\n');
+  return lines
+    .map((line) => {
+      const runs = line.spans?.map((span) => `${span.colorToken ?? ''}:${span.text}`).join(',') ?? '';
+      return `${line.colorToken ?? ''}|${runs}|${line.text}`;
+    })
+    .join('\n');
 }
 
 function asLines(content: TooltipContent): readonly TooltipLine[] {
@@ -173,6 +200,13 @@ export class Tooltip extends StyledWidget {
     // long for the box folds without swallowing the stat under it.
     const wrapped: TooltipLine[] = [];
     for (const line of this.source) {
+      // A spanned line goes through whole: its runs are placed by measuring the
+      // ones before them, so folding it would strand half a run on the next line
+      // with nothing to say which colour that half was.
+      if (line.spans !== undefined) {
+        wrapped.push(line);
+        continue;
+      }
       for (const part of wrapText(font, line.text, MAX_WIDTH)) {
         wrapped.push(line.colorToken === undefined ? { text: part } : { text: part, colorToken: line.colorToken });
       }
@@ -210,7 +244,20 @@ export class Tooltip extends StyledWidget {
     let y = this.rect.y + inner.top;
     for (const line of this.lines) {
       const tint = line.colorToken === undefined ? state.text : context.theme.color(line.colorToken);
-      drawText(out, context.atlas, font, line.text, this.rect.x + inner.left, y, tint);
+      if (line.spans === undefined) {
+        drawText(out, context.atlas, font, line.text, this.rect.x + inner.left, y, tint);
+      } else {
+        // Laid out by measuring what came before, which is what keeps the runs
+        // in one line and in the order they were handed over. A span with no
+        // token of its own takes the line's, so the separators in `S / D / -`
+        // are the tooltip's ordinary text without naming a token for them.
+        let x = this.rect.x + inner.left;
+        for (const span of line.spans) {
+          const runTint = span.colorToken === undefined ? tint : context.theme.color(span.colorToken);
+          drawText(out, context.atlas, font, span.text, x, y, runTint);
+          x += measureText(font, span.text);
+        }
+      }
       y += font.height;
     }
   }
