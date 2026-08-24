@@ -293,8 +293,10 @@ describe('what a marker says', () => {
     // An empty caption is what puts a marker back on the plain billboard, so
     // this is the case that keeps every unlabelled marker on the map the size
     // it has always been.
+    // No `{ label: undefined }` case: `exactOptionalPropertyTypes` is on, so an
+    // explicit undefined is not a value this type can hold. Absent is the only
+    // way to not have one, and `{}` is it.
     expect(markerCaption({})).toBe('');
-    expect(markerCaption({ label: undefined })).toBe('');
     expect(markerCaption({ label: '' })).toBe('');
     // Whitespace is not a name. It would otherwise buy a marker a wider sprite
     // and an empty black pill, which reads as a bug rather than as a blank.
