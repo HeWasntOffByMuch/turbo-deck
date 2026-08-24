@@ -230,6 +230,13 @@ const LOOKS: { id: string; look: ProjectileLook }[] = [
   { id: 'ranged.star', look: 'shuriken' },
   { id: 'bolt.arcane', look: 'orb' },
   { id: 'bolt.lob', look: 'orb' },
+  // Spec 216, and the one cell on this sheet that is deliberately *incomplete*:
+  // what a `ShotRig` builds for an ember is only the core, and the rest of the
+  // silhouette is `shot_ember`'s paint, which this rasteriser has no particle
+  // system to draw. So this column answers one question and one only -- is the
+  // mesh the right size against the shot, or is it a marble the paint will
+  // never hide. The whole picture is `preview-brush-vfx.ts`'s.
+  { id: 'ranged.ember', look: 'ember' },
 ];
 LOOKS.forEach((entry, column) => {
   cells.push({
