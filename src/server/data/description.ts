@@ -549,7 +549,7 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'moveSpeedPct', where: 'stat', name: 'Move Speed', form: 'percent' },
   { key: 'turnRate', where: 'stat', name: 'Turn Rate', form: 'flat' },
 
-  // --- weapon scaling grades (spec 215) ------------------------------------
+  // --- weapon scaling grades (spec 216) ------------------------------------
   //
   // Named here as well as in `inventory-model.ts` for the reason this table
   // exists: an item and a passive skill granting the same field must call it the

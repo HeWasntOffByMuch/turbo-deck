@@ -53,7 +53,7 @@ export interface TooltipLine {
   readonly text: string;
   readonly colorToken?: string;
   /**
-   * The line drawn as coloured runs instead of one colour (spec 215).
+   * The line drawn as coloured runs instead of one colour (spec 216).
    *
    * The weapon scaling line is `S / D / -` with the three letters in the three
    * attribute colours and the separators in the tooltip's own, which one

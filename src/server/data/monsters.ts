@@ -215,7 +215,7 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
       // a row in `data/abilities.ts` without `skill: true`, which is what every
       // ability in the table already is.
       skillAbilityIds: [],
-      // Not authorable either, and for the same shape of reason (spec 215): a
+      // Not authorable either, and for the same shape of reason (spec 216): a
       // weapon's scaling is a property of the row a *player* picks up, and a
       // monster's damage comes off its own table. Filled in as "scales with
       // nothing" so every body in the world answers the question.

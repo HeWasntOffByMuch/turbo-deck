@@ -59,7 +59,7 @@ export interface ItemDefinition {
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
   /**
-   * Which attributes swinging this scales with, as a letter each (spec 215).
+   * Which attributes swinging this scales with, as a letter each (spec 216).
    *
    * The row's **base** scaling and only that: whatever the player is wearing is
    * applied on top by `effectiveScaling`, which never writes back here. A row is
@@ -140,7 +140,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 1,
     modifiers: { attackDamage: 3 },
     // The plain blade, and the one row migrated to scale exactly as it did
-    // before spec 215: `A` is the grade `damagePerPoint` was chosen against, so
+    // before spec 216: `A` is the grade `damagePerPoint` was chosen against, so
     // its Strength term is the pre-spec 0.6 a point to the last decimal.
     scaling: { strength: ScalingGrade.A, agility: ScalingGrade.D, intelligence: ScalingGrade.None },
   },
@@ -183,7 +183,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 4,
     modifiers: { attackDamage: 2, spellPower: 0.2, intelligence: 3, attackRange: 20 },
     // The headline fix. +3 Intelligence, spell power, and two points of weapon
-    // damage -- and before spec 215 swinging it scaled off Strength, because
+    // damage -- and before spec 216 swinging it scaled off Strength, because
     // every weapon did. `E` in Strength rather than `None` so that hitting
     // something with a stick is still worth marginally more to a strong body.
     scaling: { strength: ScalingGrade.E, agility: ScalingGrade.None, intelligence: ScalingGrade.A },
@@ -296,7 +296,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 8,
     modifiers: { maxHealthPct: 0.12, attackDamagePct: 0.05 },
   },
-  // Two trinkets that move a *letter* rather than a number (spec 215).
+  // Two trinkets that move a *letter* rather than a number (spec 216).
   //
   // They exist to make the grade-modifier path reachable content rather than a
   // mechanism with no caller, and they are the shape every future one takes:

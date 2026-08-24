@@ -1,5 +1,5 @@
 /**
- * What a weapon scales with (spec 215).
+ * What a weapon scales with (spec 216).
  *
  * The ladder, the resolver and the contribution. What is deliberately *not*
  * here is anything about a real weapon's damage reaching a real body -- that is

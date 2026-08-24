@@ -62,7 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
-| `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 215's migration moved at five builds |
+| `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
@@ -1950,7 +1950,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `data/weapon-scaling.ts` is **what a weapon scales with**
-                 (spec 215), and it exists because until it did, every weapon in
+                 (spec 216), and it exists because until it did, every weapon in
                  the game scaled the same way and the way was Strength: the two
                  attribute terms were written into `attackDamage` in
                  `player/stats.ts`, so the maul, the Hunting Bow and the

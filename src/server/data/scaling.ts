@@ -240,7 +240,7 @@ export const SCALING = {
   },
 
   /**
-   * What a weapon's scaling letters are worth (spec 215).
+   * What a weapon's scaling letters are worth (spec 216).
    *
    * **The one place a grade becomes a number.** Nothing else in the tree may
    * spell a coefficient: `coefficientOf` in `data/weapon-scaling.ts` is the only

@@ -612,7 +612,7 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
  * never written to the store.
  */
 /**
- * A weapon's scaling letter, as an ordinal (spec 215).
+ * A weapon's scaling letter, as an ordinal (spec 216).
  *
  * The *type* lives here rather than beside its behaviour because this file is
  * the shared vocabulary the wire, persistence and the sim all agree on, and it
@@ -709,7 +709,7 @@ export interface EffectiveStats {
    */
   readonly skillAbilityIds: readonly string[];
   /**
-   * The main hand's effective scaling, base plus this body's modifiers (spec 215).
+   * The main hand's effective scaling, base plus this body's modifiers (spec 216).
    *
    * Resolved once here, through `effectiveScaling`, so the Damage row above and
    * anything that wants to know *why* it is that number read the same three
@@ -719,7 +719,7 @@ export interface EffectiveStats {
   readonly weaponScaling: WeaponScaling;
   /**
    * The grade steps this body's equipment, milestones and synergies contribute
-   * (spec 215).
+   * (spec 216).
    *
    * Replicated beside the resolved grades above, and *not* redundant with them:
    * those answer "what does the weapon I am holding scale with", and this is

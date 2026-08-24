@@ -637,7 +637,7 @@ describe('spell geometry', () => {
 });
 
 /**
- * A weapon's letters reaching a real blow (spec 215).
+ * A weapon's letters reaching a real blow (spec 216).
  *
  * `resolveBlow` was not touched by that spec -- what changed is what
  * `weaponPower` is built from -- so what is asserted here is exactly that: the

@@ -1439,7 +1439,7 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
   // its own copy from equipment on every recalculation.
   writer.varuint(stats.skillAbilityIds.length);
   for (const id of stats.skillAbilityIds) writer.str(id);
-  // Weapon scaling (spec 215): the three resolved grades, then the three steps
+  // Weapon scaling (spec 216): the three resolved grades, then the three steps
   // that produced them. Both, because they answer different questions -- the
   // grades are what the held weapon scales with, and the steps are what the bag
   // needs to resolve a weapon it is only hovering over.
@@ -1469,7 +1469,7 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
  * login and on allocation rather than per tick, so the width is free.
  */
 /**
- * A grade triple, one byte each (spec 215).
+ * A grade triple, one byte each (spec 216).
  *
  * Clamped on the way out as well as on the way in, because a grade that came
  * off a hand-edited row outside `0..6` would otherwise be written as a wrapped

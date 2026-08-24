@@ -1,5 +1,5 @@
 /**
- * What a weapon scales with, as a letter per attribute (spec 215).
+ * What a weapon scales with, as a letter per attribute (spec 216).
  *
  * Before this, every weapon in the game scaled the same way and the way was
  * Strength: the two attribute terms were written into `attackDamage` in
@@ -100,7 +100,7 @@ export const NO_SCALING: WeaponScaling = {
 };
 
 /**
- * An empty hand (spec 215).
+ * An empty hand (spec 216).
  *
  * A fist is not a weapon and has no row to author, so it needs a stated default
  * rather than falling through to {@link NO_SCALING} -- which would make an
@@ -183,7 +183,7 @@ export function shiftGrade(grade: ScalingGrade, steps: number): ScalingGrade {
 }
 
 /**
- * Base scaling plus the player's active grade modifiers (spec 215).
+ * Base scaling plus the player's active grade modifiers (spec 216).
  *
  * **The single resolver.** Combat reads this and so does the tooltip, which is
  * what makes "what the number does" and "what the player is told" the same
@@ -301,7 +301,7 @@ export interface ScalingBreakdown {
 }
 
 /**
- * The damage, taken apart (spec 215).
+ * The damage, taken apart (spec 216).
  *
  * Not on any hot path and not read by the sim: this exists so that "why did that
  * hit for 70" is a question with an answer during development, which a chain of

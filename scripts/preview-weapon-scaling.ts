@@ -1,5 +1,5 @@
 /**
- * What each weapon scales with, and what that is worth (spec 215).
+ * What each weapon scales with, and what that is worth (spec 216).
  *
  * Two tables. The first is the roster: every weapon in `data/items.ts`, its
  * letters, and the coefficient budget those letters add up to -- which is the
@@ -31,7 +31,7 @@ import {
 } from '../src/server/data/weapon-scaling.js';
 import { SCALING } from '../src/server/data/scaling.js';
 
-/** The two rates the attribute term used before spec 215, for the comparison. */
+/** The two rates the attribute term used before spec 216, for the comparison. */
 const WAS = { strength: 0.6, agility: 0.15, intelligence: 0 };
 
 const BUILDS = [

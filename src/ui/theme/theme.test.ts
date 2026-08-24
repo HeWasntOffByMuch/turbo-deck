@@ -26,7 +26,7 @@ describe('theme.json against its schema', () => {
   });
 
   // Sixteen until spec 185, which added the three rarity tiers, and
-  // twenty-two since spec 215's three attribute colours. The cap is against
+  // twenty-two since spec 216's three attribute colours. The cap is against
   // *invented* colour rather than against colour: the tiers are the world's own,
   // already drawn on every drop in the grass, and these three are the identity
   // of Strength, Agility and Intelligence -- one hue each, in the fixed order a

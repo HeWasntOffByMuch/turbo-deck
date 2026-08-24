@@ -50,7 +50,7 @@ const TONE_TOKENS: Readonly<Record<Exclude<DetailTone, 'rarity'>, string>> = {
   bad: 'danger',
   dim: 'textDim',
   normal: 'text',
-  // Attribute identity (spec 215), and deliberately not `danger`/`success`:
+  // Attribute identity (spec 216), and deliberately not `danger`/`success`:
   // those two mean bad and good, and an `S` -- the best grade on the ladder --
   // drawn in the drawback colour would read as a warning. One hue each, so the
   // three positions of a scaling line say which attribute they are without

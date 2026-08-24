@@ -193,7 +193,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const turnRate = Math.max(30, BASE_TURN_RATE + SCALING.agility.turnPer * agility + bonus.turnRate);
 
-  // The Damage row (spec 215).
+  // The Damage row (spec 216).
   //
   // What replaced two hard-coded attribute terms is one call through the
   // resolver: the weapon says which attributes it scales with as a letter each,

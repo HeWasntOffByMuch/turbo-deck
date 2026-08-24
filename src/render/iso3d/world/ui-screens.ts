@@ -399,7 +399,7 @@ export class UiScreens {
   private lastInventory: ClientView['inventory'] | null = null;
   private lastEquipment: ClientView['equipment'] | null = null;
   private lastLevel = -1;
-  /** The grade steps the bag was last built against (spec 215). */
+  /** The grade steps the bag was last built against (spec 216). */
   private lastScaling: ScalingGradeModifiers = NO_GRADE_MODIFIERS;
   /** The change in flight last frame, so the frame it ends on is noticed. */
   private lastSwap: SwapProgress | null = null;
@@ -772,7 +772,7 @@ export class UiScreens {
           inventory: view.inventory,
           equipment: view.equipment,
           level: view.level,
-          // The server's own summed grade steps (spec 215), so the scaling line
+          // The server's own summed grade steps (spec 216), so the scaling line
           // on every tooltip in the bag is resolved from the same modifiers the
           // damage was. Absent before the first `Stats` arrives, which is the
           // frame or two where a bag can be open and nothing has been sent yet.
@@ -981,7 +981,7 @@ export class UiScreens {
     // marked, and comparing the two nulls is how that frame is noticed.
     const swapping = swap !== null || this.lastSwap !== null;
     this.lastSwap = swap;
-    // Compared by value rather than by identity (spec 215): a fresh `Stats`
+    // Compared by value rather than by identity (spec 216): a fresh `Stats`
     // arrives as a new object on every recalculation, so an identity check would
     // rebuild the bag whenever anything at all about the character moved. And it
     // has to be checked *somewhere* -- a buff that raises a scaling grade without

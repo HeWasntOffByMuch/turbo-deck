@@ -185,7 +185,7 @@ describe('detailsFor', () => {
 });
 
 /**
- * The compact scaling line (spec 215).
+ * The compact scaling line (spec 216).
  *
  * Everything here is about the *line*, not about the numbers: that it exists on
  * weapons and nowhere else, that its three positions never move, and that the
@@ -308,7 +308,7 @@ describe('the weapon scaling line', () => {
   });
 });
 
-/** The two rows that make the modifier path reachable content (spec 215). */
+/** The two rows that make the modifier path reachable content (spec 216). */
 describe('an item that moves a grade', () => {
   it('says what it does in words a player can read', () => {
     const lines = detailsFor('trinket.precision').map((line) => line.text);

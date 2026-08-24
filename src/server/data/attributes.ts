@@ -46,7 +46,7 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     name: 'Strength',
     abbrev: 'STR',
     verb: 'Overpower',
-    // Three attributes name a weapon-damage claim since spec 215 and they are
+    // Three attributes name a weapon-damage claim since spec 216 and they are
     // three different claims, not one shared three ways: a maul pays Strength,
     // the Weighted Stars pay Agility, the Emberwood Staff pays Intelligence, and
     // which of them a swing pays is the *weapon's* letter rather than a rule

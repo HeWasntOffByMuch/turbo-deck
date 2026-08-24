@@ -941,7 +941,7 @@ describe('the tooltip, over the world (spec 136)', () => {
     expect(screens.tooltipText.split('\n')).toEqual([
       'Keen Longsword',
       'Rare  Main Hand',
-      // The compact scaling line (spec 215), drawn as three coloured runs and
+      // The compact scaling line (spec 216), drawn as three coloured runs and
       // read back here as the whole line it also carries as text.
       'B / B / -',
       '+8 Damage',

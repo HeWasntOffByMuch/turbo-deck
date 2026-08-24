@@ -142,7 +142,7 @@ export interface StatModifier {
   readonly constitution?: number;
   readonly perception?: number;
   readonly wisdom?: number;
-  // --- weapon scaling grade steps (spec 215) ---
+  // --- weapon scaling grade steps (spec 216) ---
   /**
    * Steps along the `None -> E -> D -> C -> B -> A -> S` ladder, applied to
    * whatever weapon is held.

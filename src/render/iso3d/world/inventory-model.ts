@@ -165,7 +165,7 @@ const STAT_LABELS: readonly StatLabel[] = [
   { key: 'constitution', name: 'Constitution', percent: false },
   { key: 'perception', name: 'Perception', percent: false },
   { key: 'wisdom', name: 'Wisdom', percent: false },
-  // Then the grade steps (spec 215), beside the attributes because they are the
+  // Then the grade steps (spec 216), beside the attributes because they are the
   // same kind of claim -- a thing about the character rather than about a
   // number -- and above the stat lines for the same reason a weapon's own
   // scaling line is. `writeAmount` already writes a signed integer, so
@@ -220,7 +220,7 @@ function statDetails(modifiers: StatModifier): ItemDetail[] {
 }
 
 /**
- * What a weapon scales with, as one compact line (spec 215).
+ * What a weapon scales with, as one compact line (spec 216).
  *
  * Three positions, always `Strength / Agility / Intelligence` in that fixed
  * order, one character each, `-` for `None`. Never reordered by strongest --
@@ -374,7 +374,7 @@ export interface ContainerSource {
   readonly equipment: Equipment;
   readonly level: number;
   /**
-   * The body's weapon-scaling grade steps, from its replicated `Stats` (spec 215).
+   * The body's weapon-scaling grade steps, from its replicated `Stats` (spec 216).
    *
    * Handed in rather than derived from `equipment` above, because the server's
    * summation is the one that counts -- it includes the milestones and synergies

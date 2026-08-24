@@ -620,7 +620,7 @@ describe('persistence never carries a derived stat', () => {
 });
 
 /**
- * Weapon scaling reaching the Damage row (spec 215).
+ * Weapon scaling reaching the Damage row (spec 216).
  *
  * The end of the pipeline `data/weapon-scaling.test.ts` starts: real rows out of
  * `data/items.ts`, through `computeEffectiveStats`, against the number a blow is
