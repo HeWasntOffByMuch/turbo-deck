@@ -10,18 +10,20 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { parseMap, serializeMap, type MapChunk, type MapDocument } from './map.js';
+import { parseMap, serializeMap, type MapChunk, type MapDocument, type MapLayer } from './map.js';
 import {
   joinMap,
   mapIdFromManifest,
   MANIFEST_PATH,
   parseManifest,
   REGION_CHUNKS,
+  REGION_DIR,
   regionOf,
   regionPath,
   regionsAgreeWithManifest,
   serializeManifest,
   splitMap,
+  staleRegionFiles,
 } from './regions.js';
 import { loadMap } from './map-world.js';
 import { loadMapFile } from '../server/world/map-file.js';
@@ -315,5 +317,152 @@ describe('the manifest on disk', () => {
 
   it('is named where every reader looks', () => {
     expect(MANIFEST_PATH).toBe('manifest.json');
+  });
+});
+
+/**
+ * The shipped ground with a second layer over it -- the shape a rock tier is
+ * (spec 219).
+ *
+ * Two chunks on purpose: one sharing a region with the ground, which is the
+ * case that used to throw, and one far outside every region the ground
+ * occupies, which is the case that never did. Both have to work, and only
+ * testing the first would leave the disjoint path asserted by nothing.
+ */
+function withTier(doc: MapDocument): MapDocument {
+  const ground = doc.layers[0];
+  const first = ground?.chunks[0];
+  if (!ground || !first) throw new Error('no ground');
+  const like = (cx: number, cz: number): MapChunk => ({ ...first, cx, cz, props: [], markers: [] });
+  const tier: MapLayer = {
+    id: 'rock/1',
+    seed: ground.seed + 1,
+    // A tier shares the ground's origin so the two grids align -- `addRock`
+    // passes it in for exactly that reason.
+    origin: ground.origin,
+    bounds: ground.bounds,
+    baseY: ground.baseY + 100,
+    waterLevel: null,
+    chunks: [like(first.cx, first.cz), like(500, 500)],
+  };
+  return { ...doc, layers: [...doc.layers, tier] };
+}
+
+describe('a map with more than one layer', () => {
+  const TIERED = withTier(SHIPPED);
+  const split = splitMap(TIERED);
+
+  it('rejoins into the document it came from', () => {
+    // The same property a one-layer map has, and the one the format promised
+    // and could not keep: `splitMap` refused every map with two layers over the
+    // same ground, which is every map the editor's Rock tool makes.
+    const rejoined = joinMap(split.manifest, readerFor(split.regions));
+    expect(serializeMap(rejoined)).toBe(serializeMap(TIERED));
+  });
+
+  it('puts both layers in the one file when they share a region', () => {
+    const shared = regionPath(...(() => {
+      const at = regionOf(SHIPPED.layers[0]?.chunks[0]?.cx ?? 0, SHIPPED.layers[0]?.chunks[0]?.cz ?? 0);
+      return [at.rx, at.rz] as const;
+    })());
+    const doc = parseMap(split.regions.get(shared) ?? '');
+    // In document order, so a region's bytes do not depend on which layer was
+    // walked first.
+    expect(doc.layers.map((l) => l.id)).toEqual(['ground', 'rock/1']);
+  });
+
+  it('gives a layer its own file where the other one is not', () => {
+    const alone = regionPath(regionOf(500, 500).rx, regionOf(500, 500).rz);
+    const doc = parseMap(split.regions.get(alone) ?? '');
+    expect(doc.layers.map((l) => l.id)).toEqual(['rock/1']);
+  });
+
+  it('counts only its own chunks as a layer\'s cells, and hashes the whole file', () => {
+    const at = regionOf(SHIPPED.layers[0]?.chunks[0]?.cx ?? 0, SHIPPED.layers[0]?.chunks[0]?.cz ?? 0);
+    const path = regionPath(at.rx, at.rz);
+    const same = (id: string): { hash: string; cells: number } => {
+      const entry = split.manifest.layers
+        .find((l) => l.id === id)
+        ?.regions.find((r) => r.rx === at.rx && r.rz === at.rz);
+      if (!entry) throw new Error(`no entry for ${id}`);
+      return { hash: entry.hash, cells: entry.cells };
+    };
+    // One file, so one hash: it is what says the bytes on disk are the bytes
+    // this wrote, which is a fact about the file rather than about a share of it.
+    expect(same('ground').hash).toBe(same('rock/1').hash);
+    // `cells` is each layer's own, because that is what a layer's unfilled rim
+    // is measured against.
+    const doc = parseMap(split.regions.get(path) ?? '');
+    for (const layer of doc.layers) {
+      const counted = layer.chunks.reduce((n, c) => n + c.cols * c.rows, 0);
+      expect(same(layer.id).cells).toBe(counted);
+    }
+  });
+
+  it('agrees with its own manifest', () => {
+    expect(regionsAgreeWithManifest(split.manifest, readerFor(split.regions))).toEqual([]);
+  });
+
+  it('refuses a region file that does not carry the layer it is named for', () => {
+    // The failure `layers[0]` used to hide: a region holding two layers would
+    // have handed one of them the other's chunks, and chunks are chunks.
+    const at = regionOf(500, 500);
+    const path = regionPath(at.rx, at.rz);
+    const doc = parseMap(split.regions.get(path) ?? '');
+    const layer = doc.layers[0];
+    if (!layer) throw new Error('no layer');
+    const renamed = new Map(split.regions);
+    renamed.set(path, serializeMap({ ...doc, layers: [{ ...layer, id: 'ground' }] }));
+    expect(() => joinMap(split.manifest, readerFor(renamed))).toThrow(/does not carry layer rock\/1/);
+    // And as a complaint rather than a throw, for a tool that wants all of them.
+    const problems = regionsAgreeWithManifest(split.manifest, readerFor(renamed));
+    expect(problems.some((p) => p.includes('does not carry layer rock/1'))).toBe(true);
+  });
+
+  it('leaves a one-layer map byte for byte where it was', () => {
+    // The change must not move a single committed map file. `maps/arena/` is
+    // 224 files in git, and rewriting them all to store a case it does not have
+    // would be the git-history problem spec 204 exists to fix, by a new door.
+    const plain = splitMap(SHIPPED);
+    expect([...plain.regions.keys()]).toEqual([...splitMap(SHIPPED).regions.keys()]);
+    const onDisk = splitMap(loadMapFile().doc);
+    expect(onDisk.manifest.mapId).toBe(loadMapFile().manifest.mapId);
+    for (const [path, text] of onDisk.regions) {
+      expect(text).toBe(plain.regions.get(path));
+    }
+  });
+});
+
+describe('which region files the manifest still reaches', () => {
+  const split = splitMap(SHIPPED);
+  const names = split.manifest.layers.flatMap((l) => l.regions.map((r) => `${String(r.rx)}_${String(r.rz)}.json`));
+
+  it('keeps every file the manifest names', () => {
+    expect(staleRegionFiles(names, split.manifest)).toEqual([]);
+  });
+
+  it('returns the ones it does not, spelled the way the manifest spells them', () => {
+    const stale = staleRegionFiles([...names, '99_99.json', '0_0.json.tmp'], split.manifest);
+    // A `.tmp` from an interrupted write is unreachable too, and sweeping it is
+    // the same rule rather than a special case.
+    expect(stale).toEqual([`${REGION_DIR}/99_99.json`, `${REGION_DIR}/0_0.json.tmp`]);
+  });
+
+  it('decides on the manifest\'s own spelling, not the platform\'s', () => {
+    // The bug this function exists for: `writeSplit` compared `path.join('r',
+    // name)` against `regionPath`'s forward slash. They agree on POSIX and not
+    // on Windows, where nothing matched, every region went into the stale set
+    // and every save deleted the whole map. Asserted as the property rather
+    // than by running on another platform: what comes back is `regionPath`'s
+    // string, and a file the manifest names is never in it.
+    for (const layer of split.manifest.layers) {
+      for (const entry of layer.regions) {
+        const name = `${String(entry.rx)}_${String(entry.rz)}.json`;
+        expect(staleRegionFiles([name], split.manifest)).toEqual([]);
+        expect(staleRegionFiles([`${name}.bak`], split.manifest)).toEqual([
+          regionPath(entry.rx, entry.rz) + '.bak',
+        ]);
+      }
+    }
   });
 });

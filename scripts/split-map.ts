@@ -23,9 +23,10 @@ import { dirname, join, resolve } from 'node:path';
 import { parseMap } from '../src/terrain/map.js';
 import {
   MANIFEST_PATH,
-  regionPath,
+  REGION_DIR,
   serializeManifest,
   splitMap,
+  staleRegionFiles,
   type MapManifest,
 } from '../src/terrain/regions.js';
 
@@ -64,7 +65,7 @@ export function writeSplit(
   mkdirSync(root, { recursive: true });
 
   // A region that used to exist and does not any more would otherwise be left
-  // behind for the next reader to trip over. Removed *before* the new manifest
+  // behind for the next reader to trip over. Removed *after* the new manifest
   // lands, so at no point does a manifest name a file that is not there.
   //
   // Staleness is decided by **what the manifest names**, not by what this call
@@ -72,19 +73,22 @@ export function writeSplit(
   // write was the whole world, and it deletes the entire map the first time it
   // is handed the three regions a grow actually changed. It is also the right
   // rule on its own terms: the manifest is the only thing that makes a region
-  // reachable, so it is the only thing that can say a file is unreachable.
-  const stale = new Set<string>();
+  // reachable, so it is the only thing that can say a file is unreachable --
+  // which is why nothing here exempts a file because it was just written. One
+  // authority, or the two disagree and the loser is a file nobody can reach.
+  //
+  // The decision itself lives in `regions.ts` beside the manifest (spec 219),
+  // because it is a decision about a document: made here, it was `path.join`
+  // against `regionPath`'s forward slash, which agrees on POSIX and on Windows
+  // deletes every region file in the map at the end of every save.
+  let stale: readonly string[] = [];
   try {
-    for (const name of readdirSync(join(root, 'r'))) stale.add(join('r', name));
+    stale = staleRegionFiles(readdirSync(join(root, REGION_DIR)), manifest);
   } catch {
     // No `r/` yet: nothing to clean up.
   }
-  for (const layer of manifest.layers) {
-    for (const entry of layer.regions) stale.delete(regionPath(entry.rx, entry.rz));
-  }
 
   for (const [path, text] of regions) {
-    stale.delete(path);
     const full = join(root, path);
     mkdirSync(dirname(full), { recursive: true });
     // Temp-then-rename per file, so a region is never half-written even though
