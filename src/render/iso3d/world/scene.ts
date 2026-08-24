@@ -60,6 +60,7 @@ import {
 } from './loot-drop.js';
 import { DROP_LIFETIME_TICKS } from '../../../server/data/loot.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
+import { monsterCritterFor } from './monster-critter.js';
 import { CRITTERS } from '../../critters/index.js';
 import { attachHighlight, type HighlightHandle } from '../highlight.js';
 import { pickHoveredUnit, type HoverTarget } from '../hover.js';
@@ -338,7 +339,15 @@ const DROP_PICK_HEIGHT = 26;
 interface Body {
   readonly group: THREE.Group;
   readonly kind: 'player' | 'monster' | 'projectile';
-  readonly player?: CritterRig;
+  /**
+   * The critter rig drawing this body, for a player or for a monster that is an
+   * animal (see `monster-critter.ts`).
+   *
+   * One field rather than one per kind: what the update loop needs to know is
+   * *which rig to drive*, and a second field of the same type for the same job
+   * would be a second thing every frame had to remember to tick.
+   */
+  readonly critter?: CritterRig;
   readonly mech?: MechRig;
   readonly unit?: DrivenUnit;
   readonly shot?: ShotRig;
@@ -1689,7 +1698,7 @@ export class WorldScene {
 
       // Both rigs read their own gait out of the positions they are handed, so
       // neither needs the scene to remember where it drew them last frame.
-      body.player?.update(dt, { x, y }, -facing);
+      body.critter?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
       if (body.unit) this.driveAuthoredUnit(body.unit, entity, { x, y }, frame);
       // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
@@ -2336,7 +2345,7 @@ export class WorldScene {
       body = {
         group: player.group,
         kind: 'player',
-        player,
+        critter: player,
         highlight: attachHighlight(player.group),
         // Read off the species rather than measured: the metrics are what the
         // skeleton is built from, so a taller animal moves its own bar.
@@ -2361,19 +2370,44 @@ export class WorldScene {
       // the chassis body and `enemyColor`'s answer. The tuning is merged here
       // rather than in the table because `defaultMechTuning` lives in the rig
       // module, and the pure half of this directory does not import three.
-      const look = monsterLookFor(typeId);
-      const mech = new MechRig(typeId, undefined, {
-        tuning: { ...defaultMechTuning(), ...look?.tuning },
-        ...(look === null ? {} : { appearance: look.appearance }),
-      });
-      body = {
-        group: mech.group,
-        kind: 'monster',
-        mech,
-        highlight: attachHighlight(mech.group),
-        headroom: DEFAULT_HEADROOM,
-        radius,
-      };
+      // Some monsters are animals rather than machines, and no tuning of the
+      // mech rig makes one into the other -- so they are built by the same
+      // critter rig that draws the player, off a row in `monster-critter.ts`.
+      // A type with no row there falls through to the mech below, unchanged.
+      const animal = monsterCritterFor(typeId);
+      if (animal) {
+        const species = CRITTERS[animal.species];
+        const critter = new CritterRig(species, {
+          tuning: { ...defaultCritterTuning(), ...animal.figure },
+        });
+        body = {
+          group: critter.group,
+          kind: 'monster',
+          critter,
+          highlight: attachHighlight(critter.group),
+          // Off the species' own metrics and its own scale, the way the player's
+          // is -- `DEFAULT_HEADROOM` is a number tuned for the mech chassis and
+          // hangs the bar through a taller animal's head.
+          headroom:
+            (species.metrics.headY + species.metrics.headRadius) * animal.figure.bodyScale +
+            HEADROOM_GAP,
+          radius,
+        };
+      } else {
+        const look = monsterLookFor(typeId);
+        const mech = new MechRig(typeId, undefined, {
+          tuning: { ...defaultMechTuning(), ...look?.tuning },
+          ...(look === null ? {} : { appearance: look.appearance }),
+        });
+        body = {
+          group: mech.group,
+          kind: 'monster',
+          mech,
+          highlight: attachHighlight(mech.group),
+          headroom: DEFAULT_HEADROOM,
+          radius,
+        };
+      }
     }
 
     this.scene.add(body.group);

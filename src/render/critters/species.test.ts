@@ -91,6 +91,18 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s: structure', (_name,
     // is not obvious in a still render, only in a walk.
     const m = species.metrics;
     expect(m.ankleY + m.shinLen + m.thighLen).toBeCloseTo(m.hipY, 6);
+    // A quadruped stands on its forelegs too, and until there was one nothing
+    // here had any reason to look at the arm chain: it has to bring the same
+    // three lengths to the same floor, or the animal stands with its front end
+    // sunk into the ground or up on tiptoe.
+    if ((species.stance ?? 'biped') === 'quadruped') {
+      expect(m.ankleY + m.forearmLen + m.upperArmLen).toBeCloseTo(m.shoulderY, 6);
+    }
+    // And the *drawn* feet have to reach it. Everything above is the skeleton's
+    // promise; this is whether the geometry hung off it keeps one. A body whose
+    // lowest point is a couple of units up hovers, and it is invisible in a
+    // still render because nothing in the frame says where the floor is.
+    expect(speciesBounds(species).minY, 'lowest point of the body').toBeLessThan(1);
   });
 });
 
@@ -129,11 +141,18 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s: legibility at 64px'
   });
 
   it('stands at unit scale, feet on the floor', () => {
-    // Between the robed figure (82) and the scene's trees (86): tall enough to
-    // read as a character, short enough not to dwarf the world.
+    // How tall a body should be depends on what it is. A biped here is a body a
+    // *player* is drawn as, and lives between the robed figure (82) and the
+    // scene's trees (86): tall enough to read as a character, short enough not
+    // to dwarf the world. A quadruped is livestock standing beside one, and
+    // holding it to the same band would be asking for a sheep the size of a
+    // person -- so it gets its own, checked just as tightly at the bottom end,
+    // because the failure that actually happens is an animal drawn so low it
+    // reads as a rock.
     const b = speciesBounds(species);
-    expect(b.maxY).toBeGreaterThan(70);
-    expect(b.maxY).toBeLessThan(95);
+    const upright = (species.stance ?? 'biped') === 'biped';
+    expect(b.maxY).toBeGreaterThan(upright ? 70 : 30);
+    expect(b.maxY).toBeLessThan(upright ? 95 : 60);
     // Nothing may hang more than a hair below the ground plane the sim puts the
     // unit on, or the character reads as sunk into the terrain.
     expect(b.minY).toBeGreaterThan(-2);
@@ -194,9 +213,17 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s: joins', (_name, spe
 
   it('overlaps the head and torso rather than butting them together', () => {
     // The rigid joins are masked the other way round: neither end cap may sit on
-    // the silhouette, so the torso runs up inside the skull and the head starts
-    // back down inside the torso. Two surfaces meeting at a shared plane show
-    // the seam as a ledge however well their radii match.
+    // the silhouette, so the torso runs on inside the skull and the head starts
+    // back inside the torso. Two surfaces meeting at a shared plane show the
+    // seam as a ledge however well their radii match.
+    //
+    // *Which way* they run into each other is the stance. An upright animal
+    // stacks its head above its chest, so the overlap is in height and both
+    // hulls loft along y; a quadruped hangs its head off the front, so the
+    // overlap is along the body and both loft along x. Same rule, measured on
+    // the axis the two hulls actually meet on -- which is read off the parts
+    // rather than assumed, so a species that lofts one of them the other way
+    // fails here rather than passing on an axis nobody compared.
     const parts = resolveParts(species);
     const torso = parts.find((p) => p.name === 'torso');
     const head = parts.find((p) => p.name === 'head');
@@ -204,11 +231,20 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s: joins', (_name, spe
     expect(head?.rings, 'no head hull').toBeDefined();
     if (!torso?.rings || !head?.rings) return;
 
-    // Both are attached to different bones, so compare in world height at rest.
+    const along = (species.stance ?? 'biped') === 'biped' ? 'y' : 'x';
+    expect(torso.axis ?? 'y', 'torso lofts along the stance axis').toBe(along);
+    expect(head.axis ?? 'y', 'head lofts along the stance axis').toBe(along);
+
+    // Both hang off different bones, so they are compared where they end up: in
+    // world height for an upright body, and in world *reach* for one on all
+    // fours, which is what `chestForward`/`headForward` put on the x axis.
     const bones = boneOrigins(species.metrics);
-    const torsoTop = Math.max(...torso.rings.map((r) => r.along)) + (bones[BONE.chest]?.y ?? 0);
-    const headBottom = Math.min(...head.rings.map((r) => r.along)) + (bones[BONE.head]?.y ?? 0);
-    expect(torsoTop, 'torso stops before the head starts').toBeGreaterThan(headBottom + 2);
+    const chest = bones[BONE.chest];
+    const skull = bones[BONE.head];
+    const base = (node: typeof chest): number => (along === 'y' ? (node?.y ?? 0) : (node?.x ?? 0));
+    const torsoEnd = Math.max(...torso.rings.map((r) => r.along)) + base(chest);
+    const headStart = Math.min(...head.rings.map((r) => r.along)) + base(skull);
+    expect(torsoEnd, 'torso stops before the head starts').toBeGreaterThan(headStart + 2);
   });
 });
 

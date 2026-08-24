@@ -4732,6 +4732,30 @@
           "z": 260.165
         },
         {
+          "id": "spawner-sheep-1",
+          "monsterId": "sheep",
+          "x": 520,
+          "z": 500
+        },
+        {
+          "id": "spawner-sheep-2",
+          "monsterId": "sheep",
+          "x": 590,
+          "z": 520
+        },
+        {
+          "id": "spawner-sheep-3",
+          "monsterId": "sheep",
+          "x": 545,
+          "z": 575
+        },
+        {
+          "id": "spawner-sheep-4",
+          "monsterId": "sheep",
+          "x": 615,
+          "z": 575
+        },
+        {
           "id": "spawner-4",
           "monsterId": "grazer",
           "x": 934,
@@ -5486,7 +5510,7 @@
         {
           "rx": 1,
           "rz": 1,
-          "hash": "e1da5724",
+          "hash": "932a8552",
           "cells": 3136
         },
         {
@@ -6116,5 +6140,5 @@
       ]
     }
   ],
-  "mapId": "58b2624d"
+  "mapId": "5354d27b"
 }
