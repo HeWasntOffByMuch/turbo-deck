@@ -147,7 +147,7 @@ export const WAVE_MAX_ENEMIES = 40;
 export const MAX_DAMAGE_REDUCTION = 0.85;
 
 // --- Arena obstacles ---
-// There are none, and that is the point (spec 220). Spec 037 compiled six
+// There are none, and that is the point (spec 221). Spec 037 compiled six
 // hand-authored rects in here -- barricades around a spawn at the centre of a
 // flat 1200x900 arena -- and they outlived both halves of their premise: spec
 // 072 made the map document the world, and spec 165 grew it to 18,480x16,632,

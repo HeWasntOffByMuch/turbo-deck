@@ -21,7 +21,7 @@ import type { Circle, Rect, Vec2, WorldColliders } from './types.js';
 /**
  * A single barricade, and the grid over a world holding just it.
  *
- * Stated here rather than borrowed from the sim's constants: spec 220 removed
+ * Stated here rather than borrowed from the sim's constants: spec 221 removed
  * the hand-authored arena layout, and these tests are about the *rect* half of
  * the grader -- that a wall blocks cells, that the grade eases away from one,
  * that a body inside one can still route out. They need a rectangle, not that

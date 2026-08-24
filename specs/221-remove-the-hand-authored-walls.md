@@ -1,4 +1,4 @@
-# 220 — Remove the hand-authored walls
+# 221 — Remove the hand-authored walls
 
 ## Problem
 
