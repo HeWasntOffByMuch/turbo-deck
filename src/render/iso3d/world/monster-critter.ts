@@ -40,27 +40,28 @@ export interface MonsterCritter {
 }
 
 /**
- * The sheep, at very close to its authored size.
+ * The sheep, drawn at half the size it is authored.
  *
- * It is a quadruped, so the number to check it against is not the player's
- * height: the species stands 42 units at the shoulder and is 26 across the
- * barrel, against a sim radius of 22, so `0.95` puts the drawn fleece just
- * inside the ring the cursor picks it by. That matters more here than on an
- * upright body, because a sheep's whole read is its mass -- scaled down it
- * stops being the heavy thing in the field, and scaled up it overhangs the ring
- * the player is aiming at.
+ * The species stands 42 units at the shoulder and is 57 nose to tail, which is
+ * a full-grown ewe next to a player; `0.475` makes it a small one, about a
+ * third of the player's drawn height. That is a look rather than a constraint,
+ * and the constraint it has to stay inside is the sim's: `radius` in the
+ * monster table halves with it, because the ring is what the cursor picks the
+ * body by and a body drawn at half its collider is a target with a gap around
+ * it.
  *
- * It also lands the animal at about 70% of the player's drawn height, which is
- * roughly a real sheep against a real person, and is the check worth making:
- * a quadruped is easy to author at a size that looks right alone and reads as a
- * dog or a cow the moment somebody stands next to it.
- *
- * `strideScale` is barely over 1 because almost nothing has been taken off the
- * leg -- there is little to give back.
+ * `strideScale` is the other half of the same change, and the one that is easy
+ * to forget. The gait is driven by how fast the body is actually travelling, so
+ * a leg scaled to half its length at an unchanged 62 move speed takes the same
+ * number of steps to cover twice its own length -- which is a skate, not a
+ * walk. Roughly `1 / bodyScale` gives the ground back, and
+ * `monster-critter.test.ts` holds the pair to it -- 2.15 rather than the 2.105
+ * that is exactly `1 / 0.475`, so the legs are covering fractionally more than
+ * the body needs rather than fractionally less.
  */
 const SHEEP: MonsterCritter = {
   species: 'sheep',
-  figure: { bodyScale: 0.95, strideScale: 1.1 },
+  figure: { bodyScale: 0.475, strideScale: 2.15 },
 };
 
 // A Map rather than a record, for the reason `monsterLookFor` is one: a type id

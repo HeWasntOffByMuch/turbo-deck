@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { monsterCritterFor, monsterCritterIds } from './monster-critter.js';
 import { ALL_MONSTERS, monsterById } from '../../../server/data/monsters.js';
-import { CRITTERS, isCritterId } from '../../critters/index.js';
+import { CRITTERS, isCritterId, speciesBounds } from '../../critters/index.js';
 
 /**
  * The table that says which monsters are animals rather than machines, and the
@@ -60,15 +60,23 @@ describe('the sheep', () => {
 
   it('is drawn at about the size the server collides it at', () => {
     // The species is authored at its own scale and the sim's radius is the one
-    // that has to be matched -- a body drawn much smaller than its selection
-    // ring is a cursor target with a gap in the middle of it, and one drawn
-    // larger overhangs the ring the player is aiming at.
+    // that has to be matched. What "matched" means is not one number, though,
+    // and a quadruped is where that stops being a detail: this body is 57 long
+    // and 26 across, so comparing the ring to either dimension alone declares it
+    // wrong. The ring has to **cover the girth** -- otherwise there is ground
+    // inside the model that is outside the target -- and must not be **longer
+    // than the animal**, or a player aiming at empty grass hits a sheep.
+    //
+    // Measured off the resolved bounds rather than off one part, because the
+    // longest thing on this species is the body and the furthest forward is the
+    // nose, and nose-to-tail is the number that matters.
     const scale = row?.figure.bodyScale ?? 0;
-    const species = CRITTERS['sheep'];
+    const bounds = speciesBounds(CRITTERS['sheep']);
     const radius = monsterById('sheep')?.radius ?? 0;
-    const halfWidth = Math.max(...species.parts.map((p) => p.size[2])) * 0.5 * scale;
-    expect(halfWidth).toBeGreaterThan(radius * 0.5);
-    expect(halfWidth).toBeLessThanOrEqual(radius);
+    const halfGirth = (bounds.maxZ - bounds.minZ) * 0.5 * scale;
+    const halfLength = (bounds.maxX - bounds.minX) * 0.5 * scale;
+    expect(radius, 'ring covers the body it is drawn round').toBeGreaterThanOrEqual(halfGirth);
+    expect(radius, 'ring is not bigger than the animal').toBeLessThanOrEqual(halfLength);
   });
 
   it('gives back the ground a scaled-down leg stopped covering', () => {

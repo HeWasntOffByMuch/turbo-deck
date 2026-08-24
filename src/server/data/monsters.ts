@@ -258,13 +258,17 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // point: it is the cheapest kill in the arena, it grants the least
     // experience, and it is the only row whose drop is a certainty.
     //
-    // `radius` is 22 rather than a number picked for a sheep, deliberately:
+    // `radius` is 12 rather than a number picked for a sheep, deliberately:
     // `ROUTING_RADII` builds one nav grid per *distinct* radius at boot, so a
     // body that fits an existing one is free and a body half a unit off costs a
-    // whole grid. 22 is the grazer's, and a sheep is about a grazer's size.
+    // whole grid. 12 is the small spider's, and it happens to be right here --
+    // the sheep is drawn small, and a 24-unit ring sits between the girth of
+    // the body and its nose-to-tail length, which is the band a quadruped's
+    // collider wants to be in. Halving the drawn size without halving this
+    // would leave a lamb standing in the middle of a grazer-sized target.
     id: 'sheep',
     name: 'Sheep',
-    radius: 22,
+    radius: 12,
     // Less than the grazer's 8. It runs, it does not fight, and killing one is
     // worth doing for the wool rather than for the level.
     experience: 5,
