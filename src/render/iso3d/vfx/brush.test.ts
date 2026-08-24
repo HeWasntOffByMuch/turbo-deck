@@ -17,8 +17,10 @@ import {
   brushExplosionRequest,
   BRUSH_EFFECTS,
   brushCross,
+  BLOOD_HIT_SCALE,
   BRUSH_EXPLOSION_RADIUS,
   CROSS_YAWS,
+  HEAVY_HIT_SCALE,
   EXPLOSION_PALETTE,
   HEAVY_HIT_INTENSITY,
   NORMAL_LIFT,
@@ -275,6 +277,39 @@ describe('the blood hit', () => {
     expect(count(heavy)).toBeGreaterThan(count(light));
     // The same shapes, in the same order: louder, never different.
     expect(heavy.emitters.map((e) => e.mesh?.shape)).toEqual(light.emitters.map((e) => e.mesh?.shape));
+  });
+
+  it('is a mark on a body rather than one laid across it (spec 218)', () => {
+    // A stroke's authored size *is* its length in world units (`stroke.ts`
+    // builds the spine over a unit span), and a body is about ten units of
+    // radius -- `vfx-wire.ts`'s `CONTACT_RADIUS`, which is "about the radius of
+    // a body", is 12. Spec 159 authored `scale: 26`, which puts the dominant
+    // mark at `26 * 3.1` = 80 units: four body-widths of paint out of every
+    // ordinary swing, laid across the target and out the far side.
+    const primary = (id: string): number => {
+      const emitter = byId(id).emitters.find((entry) => entry.id === 'primary');
+      return Math.max(...(emitter?.size.keys.map(([, value]) => value) ?? [0]));
+    };
+    expect(primary('blood_hit_brush')).toBeLessThan(60);
+    // And still a *gesture*: smaller than the body it comes off is a fleck.
+    expect(primary('blood_hit_brush')).toBeGreaterThan(24);
+  });
+
+  it('sizes the loud variant off the ordinary one rather than beside it', () => {
+    // Two independently authored numbers are how a family drifts apart: shrink
+    // one and the other stops being the same language read louder and becomes a
+    // different effect. The heavy mark is the light one times a stated ratio.
+    const primary = (id: string): number => {
+      const emitter = byId(id).emitters.find((entry) => entry.id === 'primary');
+      return Math.max(...(emitter?.size.keys.map(([, value]) => value) ?? [0]));
+    };
+    // `strokeLength` is 1.15 on the heavy variant, so the marks differ by the
+    // scale ratio *and* that -- the ratio is asserted where it is authored.
+    expect(Math.round(BLOOD_HIT_SCALE * HEAVY_HIT_SCALE) / BLOOD_HIT_SCALE).toBeCloseTo(
+      HEAVY_HIT_SCALE,
+      1,
+    );
+    expect(primary('blood_hit_brush_heavy')).toBeGreaterThan(primary('blood_hit_brush'));
   });
 
   it('mists: nothing falls, and it thins away instead of landing', () => {

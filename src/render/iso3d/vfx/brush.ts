@@ -1179,11 +1179,53 @@ export const BRUSH_EXPLOSION_RADIUS = 60;
 /** Below this intensity a hit plays the light mark, above it the loud one. */
 export const HEAVY_HIT_INTENSITY = 1.35;
 
+/**
+ * How long the dominant mark of an ordinary hit is, in world units (spec 218).
+ *
+ * A stroke's authored size *is* its length (`stroke.ts` builds the spine over a
+ * unit span), and `bloodHit` gives the primary `scale * 3.1` -- so this number
+ * times three is the whole gesture, and every other length in the effect is a
+ * fraction of it. That is what makes it the one knob worth naming: `velocity` is
+ * `scale * 7`, the fan radii are fractions of `scale`, and the medium marks and
+ * the dabs are `1.62` and `0.42` of it.
+ *
+ * Spec 159 authored it at 26, which puts an ordinary swing's mark at **80 units**
+ * against a body of ten units' radius -- four body-widths of paint, laid across
+ * the target and out the far side, for every blow anybody lands. At 17 the
+ * gesture is 53 units: a mark *on* the target rather than one draped over it,
+ * and 40% of the painted area.
+ *
+ * The floor under it was **measured rather than judged**, and it is the one
+ * thing about this number that is not taste. `preview-brush-vfx.ts`
+ * photographs the same hit from six camera bearings and requires the thinnest
+ * to keep 40% of the fattest one's ink -- a mark seen edge-on narrows, and one
+ * that disappears from a seat is a blow the player in that seat cannot read.
+ * That ratio is scale-dependent in a way the *composition* is not: a pixel
+ * counts as ink only once it differs from the ground by a fixed amount, so
+ * shrinking the mark does not thin the edge-on view proportionally, it deletes
+ * the part of it that was already marginal. Measured: 26 keeps 57%, 20 keeps
+ * 53%, 17 keeps 46%, and 15 keeps **36%** and fails -- taking the
+ * seed-variation check with it, for the same reason one level down. So this is
+ * as small as the mark goes while still reading from every angle, and the run
+ * that says so is the sheet beside it.
+ */
+export const BLOOD_HIT_SCALE = 17;
+
+/**
+ * How much bigger a killing blow's mark is (spec 159's 36 against 26).
+ *
+ * Derived rather than authored a second time, because *"the same language read
+ * louder"* is the rule the whole hit vocabulary is built on and two independent
+ * numbers are how a family drifts apart: shrink one and the other silently
+ * becomes a different effect rather than a louder one.
+ */
+export const HEAVY_HIT_SCALE = 1.4;
+
 export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // The blow that lands, and the blow that finishes. The same language read
   // louder -- more marks, thrown further, held a little longer -- never a
   // different one, which is the rule the whole hit vocabulary is authored to.
-  bloodHit({ id: 'blood_hit_brush', scale: 26 }),
+  bloodHit({ id: 'blood_hit_brush', scale: BLOOD_HIT_SCALE }),
   /**
    * The one that never lands: a spatter that hangs and thins away.
    *
@@ -1241,7 +1283,7 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
 
   bloodHit({
     id: 'blood_hit_brush_heavy',
-    scale: 36,
+    scale: Math.round(BLOOD_HIT_SCALE * HEAVY_HIT_SCALE),
     // Still ONE dominant mark. A killing blow is a bigger gesture, not two
     // gestures -- the loud variant grows the primary and adds company to it.
     strokes: 1,
