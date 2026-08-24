@@ -71,7 +71,8 @@ import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { CostMeter, FrameMeter } from './fps-meter.js';
 import { createFpsOverlay } from './fps-overlay.js';
-import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize } from '../props.js';
+import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize, type PropRect } from '../props.js';
+import { orphanedPropRegions, propRegionHasGround } from './prop-residency.js';
 import {
   abilityForSlot,
   actionBarFor,
@@ -225,7 +226,14 @@ const INGEST_DECAY = 0.92;
 const PROP_INCOMPLETE_HOLD_MS = 4000;
 
 /**
- * How much new ground it takes to be worth asking for a fresh nav grid.
+ * How much ground has to move before a fresh nav grid is worth building.
+ *
+ * Counted as **churn** since spec 215 -- chunks arrived plus chunks let go --
+ * rather than as growth in the held set. Growth stopped being able to answer
+ * the question the day spec 208 taught the client to forget: held bounded at 35
+ * on the shipped map, this trigger fired *once* over a walk across it, and the
+ * grid the client went on routing against was the one built over its spawn
+ * point.
  *
  * A grid is ~190ms of obstacle passes and component flood whatever has changed,
  * so the question is not "has anything changed" but "has enough changed to be
@@ -524,7 +532,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   let lastLoadLabel = '';
   /** Whether the remote path has built its collision ground and nav grid once. */
   let firstGroundBuilt = false;
-  /** Chunks held when a nav grid was last asked for. */
+  /**
+   * The store's churn when a nav grid was last asked for (spec 215).
+   *
+   * Churn rather than the held count, because the held count is bounded now and
+   * a bounded number cannot say how much has changed. Measured on a walk over
+   * the shipped map: with the count pinned at 35 this trigger fired **once** in
+   * a session, and the grid the client kept describes the ground it spawned on.
+   */
   let chunksAtGroundRefresh = -1;
   /** Whether a grid is being built right now, so only one is ever in flight. */
   let navRequested = false;
@@ -538,6 +553,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * top of a newer one and the client routes against ground that has changed.
    */
   let navGeneration = -1;
+  let navAsked = 0;
+  let navAdopted = 0;
+  let navStale = 0;
   /** The last published mesh readout, so the DOM is written only on change. */
   let lastMeshState = '';
   /**
@@ -547,6 +565,19 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * See the readout in {@link updateLoading} for why that comparison matters.
    */
   const drawnChunks = new Set<string>();
+  /**
+   * Prop regions composed and then not drawn, because their ground had gone
+   * (spec 215).
+   *
+   * A readout rather than an input -- nothing branches on it -- kept for the
+   * reason `ChunkIngest.abandonedCount` is kept: a compose thrown away is work
+   * this client paid for and a picture nobody saw, and a number is what makes
+   * that visible rather than something to be inferred from a bare field. It
+   * counts the in-flight race the guard exists for *and* the neighbour regions
+   * `propRegionKeysIn` hands the worker on a region-aligned rectangle, which is
+   * why it is not expected to be zero.
+   */
+  let propsRefused = 0;
 
   /**
    * The frame-time meter and its overlay (spec 165).
@@ -659,7 +690,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     if (stale.length > 0) {
       const { removed, restitch } = streamed.remove(stale);
       for (const ref of removed) {
-        pendingInserts.delete(`${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`);
+        const key = `${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`;
+        pendingInserts.delete(key);
+        // The ledger too (spec 215). `drawnChunks` is what `data-chunks-drawn`
+        // publishes, and spec 208 left it growing for the session -- so it
+        // counted chunks *ever* drawn against chunks *now* held, and
+        // `probe-streaming.ts`'s one invariant, `drawn >= held`, quietly became
+        // satisfiable by anything. Pruned here it means "drawn and still held"
+        // and the check has its teeth back.
+        drawnChunks.delete(key);
         const layerId = streamed.meshLayers[ref.layer]?.id;
         if (layerId !== undefined) scene.dropTerrainChunk(layerId, ref.cx, ref.cz);
       }
@@ -670,6 +709,32 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // (spec 153), the same reason an insert invalidates it.
       scene.invalidateGroundSamples();
       mapWorker.send({ kind: 'evict', refs: stale });
+
+      // The trees standing on it (spec 215).
+      //
+      // Reconciled against the *field's own* region list rather than derived
+      // from the chunks that just went, for the reason the terrain reconcile
+      // above is written the same way: a region only loses its last ground when
+      // a chunk in it is removed, so the two are the same set today -- and
+      // reading what is actually on the scene graph is the version that stays
+      // right if a region ever arrives by some other path. It is O(regions
+      // held), and regions held is bounded by exactly the thing this enforces.
+      //
+      // Ground rather than a radius of its own: a region is drawn because
+      // something under it is held, so it is dropped when nothing is. That is
+      // what makes this unable to fight the streamer without deriving a second
+      // keep distance -- the trees cannot go while their ground is there, and
+      // cannot be asked for before it arrives, because both read one held set.
+      const ground = streamed;
+      const holds = (rect: PropRect): boolean => ground.holdsAnyIn(rect);
+      for (const key of orphanedPropRegions(scene.heldPropRegions(), holds)) {
+        scene.dropPropRegion(key);
+      }
+      // ...and nothing is owed for ground that has gone. Over the ingest's own
+      // ledger rather than over what was just dropped, because a region whose
+      // ground arrived and went inside one settle period was never drawn and so
+      // was never dropped -- and it is the one still waiting to be composed.
+      ingest.forgetRegions((key) => !propRegionHasGround(key, holds));
     }
 
     const insertStart = performance.now();
@@ -755,6 +820,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       if (!reply || reply.kind !== 'props') continue;
       adoptedRegions++;
       propsInFlight = Math.max(0, propsInFlight - 1);
+      // Ground that went while this was being composed (spec 215). A region
+      // asked for on one frame, evicted on the next and delivered on the one
+      // after would be hung up *behind* the drop pass, and nothing would ever
+      // take it down again -- the drop is driven by eviction, and this ground
+      // has already been evicted. The same predicate the drop pass reads,
+      // asked at the moment it would be drawn.
+      if (!propRegionHasGround(reply.region, (rect) => held.holdsAnyIn(rect))) { propsRefused++; continue; }
       scene.adoptPropRegion(reply.region, reply.instances);
     }
     stage('props', performance.now() - propStart);
@@ -790,11 +862,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       plan.mode === 'remote' &&
       firstGroundBuilt &&
       !navRequested &&
-      streamed.size - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS
+      streamed.revision - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS
     ) {
       navRequested = true;
       navRequestedAtMs = nowMs;
-      chunksAtGroundRefresh = streamed.size;
+      chunksAtGroundRefresh = streamed.revision;
+      navAsked++;
       mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
     }
 
@@ -809,8 +882,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // improvement, it is a worse world: it would route around trees that have
       // since been joined by others and over ground that has since turned into a
       // hill.
-      if (reply.generation <= navGeneration) continue;
+      if (reply.generation <= navGeneration) { navStale++; continue; }
       navGeneration = reply.generation;
+      navAdopted++;
       // The worker's colliders, not a fresh snapshot of our own: `navGridFor`
       // memoizes on identity, so the set the grid was graded against and the set
       // it is filed under have to be the same object. The *sampler* stays ours,
@@ -869,7 +943,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       ingest.pending === 0
     ) {
       firstGroundBuilt = true;
-      chunksAtGroundRefresh = streamed.size;
+      chunksAtGroundRefresh = streamed.revision;
       navRequested = true;
       navRequestedAtMs = performance.now();
       mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
@@ -900,12 +974,25 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     //
     // A readout, not an input: nothing in the game reads these.
     const streamedCount = streamed?.size ?? 0;
-    const meshState = `${streamedCount}:${drawnChunks.size}:${ingest.pending}`;
+    // Published from what is *attached* rather than from what was asked for, the
+    // same rule `data-held-weapons` follows: a region composed and hung on
+    // nothing should read as absent, which is the failure this number exists to
+    // make visible (spec 215).
+    const regionsDrawn = scene.heldPropRegions().length;
+    const meshState =
+      `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}` +
+      `:${ingest.dirtyRegionCount}:${propsRefused}:${navGeneration}:${navAdopted}:${navStale}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
       root.dataset['chunksDrawn'] = String(drawnChunks.size);
       root.dataset['chunksPending'] = String(ingest.pending);
+      root.dataset['propRegions'] = String(regionsDrawn);
+      root.dataset['propDirty'] = String(ingest.dirtyRegionCount);
+      root.dataset['propRefused'] = String(propsRefused);
+      root.dataset['nav'] =
+        `gen=${String(navGeneration)} asked=${String(navAsked)}` +
+        ` adopted=${String(navAdopted)} refused=${String(navStale)}`;
     }
 
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;

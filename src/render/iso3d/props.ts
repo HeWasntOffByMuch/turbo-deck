@@ -49,6 +49,7 @@ import {
  */
 export {
   PROP_REGION_SIZE,
+  propRegionBounds,
   propRegionKey,
   propRegionKeysIn,
   propRegionSize,
@@ -1570,6 +1571,24 @@ export interface PropFieldHandle {
    * by two implementations agreeing.
    */
   adoptRegion(key: string, instances: RegionInstances): void;
+  /**
+   * Stop drawing one region, and free everything only it owned (spec 211).
+   *
+   * The counterpart to {@link adoptRegion}, and the takedown that function has
+   * always performed on the way past: it frees the held region before hanging
+   * up the new one, so an empty reply was already a clean removal. What this
+   * adds is a way to reach it without composing an empty region on another
+   * thread first -- which matters because the reason to take a region down is
+   * that its ground has gone, and there is nothing left over there to compose
+   * it from.
+   *
+   * Answers whether anything was there, since disposal is a call rather than a
+   * value and a caller reconciling against held ground has no other way to
+   * count what it dropped.
+   */
+  dropRegion(key: string): boolean;
+  /** Region keys with batches on the scene graph. For the drop pass. */
+  heldRegions(): readonly string[];
   dispose(): void;
 }
 
@@ -2207,6 +2226,16 @@ export function buildPropField(
     group,
     undrawn: countUndrawn(props),
     adoptRegion,
+    dropRegion(key): boolean {
+      const held = regions.get(key);
+      if (!held) return false;
+      disposeRegion(held);
+      regions.delete(key);
+      return true;
+    },
+    heldRegions(): readonly string[] {
+      return [...regions.keys()];
+    },
     rebuildWithin(next, rect): void {
       const rects = Array.isArray(rect) ? (rect as readonly PropRect[]) : [rect as PropRect];
       const wanted = new Set<string>();

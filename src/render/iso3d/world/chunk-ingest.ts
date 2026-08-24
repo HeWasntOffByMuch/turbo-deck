@@ -110,6 +110,29 @@ export class ChunkIngest {
    * whether its trees can be drawn.
    */
   private readonly dirtyRegions = new Map<string, number>();
+  /**
+   * When each region *first* went dirty, against when it last moved (spec 215).
+   *
+   * Two clocks because the two gates ask different questions, and running both
+   * off the same number is what left a moving player in a half-bare field. The
+   * settle asks "has this region's ground stopped moving", which is a question
+   * about the *last* arrival and is right to restart on every touch. The
+   * incomplete-hold backstop asks "has this region waited long enough for ground
+   * that is never coming", which is a question about the *first* one -- and
+   * measured from the last touch it is not a backstop at all: every arrival and
+   * every re-stitch pushes the deadline out, so a body that keeps moving keeps
+   * resetting it and its trees are never drawn at all.
+   *
+   * Measured on the shipped map, walking a chunk at a time with spec 208's
+   * eviction running: `rectCovered` fired **zero** times over the whole walk --
+   * a 2200-unit region needs a 4x4 block of 616-unit chunks and the request
+   * window is 5x5 and unaligned, so completeness is not "the common case" it was
+   * written as since spec 202 narrowed the radius -- which leaves this backstop
+   * deciding every region, and it was the one gate that could be postponed
+   * forever. Four regions asked for over ten chunk crossings, against eight
+   * sitting dirty at the end.
+   */
+  private readonly dirtySince = new Map<string, number>();
   /** Chunks drawn over the session. */
   private meshedTotal = 0;
   /** When a chunk was last offered. See {@link quietForMs}. */
@@ -206,17 +229,49 @@ export class ChunkIngest {
       const touched = this.dirtyRegions.get(key) ?? 0;
       const since = nowMs - touched;
       if (since < this.options.settleMs) continue;
+      // How long it has been waiting, rather than how long since it last moved.
+      const waited = nowMs - (this.dirtySince.get(key) ?? touched);
       const [rx, rz] = key.split(',').map(Number) as [number, number];
       const rect = { minX: rx * size, minZ: rz * size, maxX: (rx + 1) * size, maxZ: (rz + 1) * size };
       // Quiet is not the same as finished (spec 180). A region whose ground is
       // still arriving is rebuilt again the moment it does, so it waits -- but
       // only until the longer clock, because ground outside the request radius
       // is declared, absent, and not on its way.
-      if (!covered(rect) && since < this.options.incompleteHoldMs) continue;
+      if (!covered(rect) && waited < this.options.incompleteHoldMs) continue;
       this.dirtyRegions.delete(key);
+      this.dirtySince.delete(key);
       out.push(rect);
     }
     return out;
+  }
+
+  /**
+   * Drop what is owed for regions whose ground has gone (spec 215).
+   *
+   * A region is dirtied when its ground moves and cleared when its trees are
+   * handed out. Eviction is the third way it can end: the ground it was dirtied
+   * for is not coming back until the player does, and `takePropRects` would
+   * otherwise hand it out anyway once `incompleteHoldMs` expired -- a region
+   * composed on the far thread out of props that thread has also evicted, to
+   * take down batches this side took down already.
+   *
+   * A predicate over this ledger rather than a list of what was dropped, and
+   * that is the whole of it: the regions *drawn* are not the regions *owed*. A
+   * region whose ground arrived and was evicted again inside one settle period
+   * was never drawn, so it appears in no drop list -- and it is precisely the
+   * one still sitting here waiting for its clock to run out.
+   *
+   * Answers how many entries went, because "nothing is owed for ground we do
+   * not have" is otherwise a claim with nothing to read it off.
+   */
+  forgetRegions(lost: (key: string) => boolean): number {
+    let gone = 0;
+    for (const key of [...this.dirtyRegions.keys()]) {
+      if (!lost(key)) continue;
+      this.dirtySince.delete(key);
+      if (this.dirtyRegions.delete(key)) gone++;
+    }
+    return gone;
   }
 
   /** Chunks queued and not yet meshed. */
@@ -298,7 +353,12 @@ export class ChunkIngest {
 
   /** Mark every region the rectangle touches as moved at `nowMs`. */
   private touch(rect: WorldRect, nowMs: number): void {
-    for (const key of this.regionsOf(rect)) this.dirtyRegions.set(key, nowMs);
+    for (const key of this.regionsOf(rect)) {
+      this.dirtyRegions.set(key, nowMs);
+      // Only when the entry is created: this is the clock the backstop reads,
+      // and a touch restarting it is exactly the bug (spec 215).
+      if (!this.dirtySince.has(key)) this.dirtySince.set(key, nowMs);
+    }
   }
 
   /** Every region key the rectangle touches, inclusive of the far edge. */
