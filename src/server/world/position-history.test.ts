@@ -179,13 +179,17 @@ function healthOf(fight: Fight): number {
 }
 
 /**
- * Swing at the target, walking it out to `awayAt` `movedTicksAgo` ticks before
- * the blow lands. Returns how much damage was dealt.
+ * Swing at the target, having walked it out to `awayAt` `awayForTicks` ticks
+ * before the wind-up begins. Returns how much damage was dealt.
+ *
+ * Timed against the **wind-up's start** rather than the release, because that
+ * is the tick reach is decided on since spec 221. `melee.slash` needs no turn
+ * at this rig's 3600 turn rate, so the wind-up begins on the commit tick.
  */
 function swing(options: {
   readonly lag: number;
   readonly awayAt: number;
-  readonly movedTicksAgo: number;
+  readonly awayForTicks: number;
   readonly compensate: boolean;
 }): number {
   const fight = setUp();
@@ -196,23 +200,22 @@ function swing(options: {
 
   // Warm the ring, so there is a past to reach into.
   for (let i = 0; i < MAX_REWIND_TICKS + 2; i++) tickWith(fight, [], 40, rewind);
+  // Then step out, and stay out, for however long this case is about.
+  for (let i = 0; i < options.awayForTicks; i++) tickWith(fight, [], options.awayAt, rewind);
 
   const before = healthOf(fight);
-  // Commit, then let the wind-up run. The target steps out `movedTicksAgo`
-  // ticks before the release.
+  // Commit with the target already away. The client still names where it *saw*
+  // the body, which is what a real one would send.
   const commit = input(fight.attackerId, 1, {
     castAbilityId: ATTACK,
     castTargetX: 40,
     castTargetY: 0,
     castTargetEntityId: fight.targetId,
   });
-  tickWith(fight, [commit], 40, rewind);
+  tickWith(fight, [commit], options.awayAt, rewind);
 
-  const windup = ability.windupTicks;
-  for (let i = 1; i <= windup + 1; i++) {
-    const ticksToRelease = windup - i;
-    const at = ticksToRelease < options.movedTicksAgo ? options.awayAt : 40;
-    tickWith(fight, [], at, rewind);
+  for (let i = 1; i <= ability.windupTicks + 1; i++) {
+    tickWith(fight, [], options.awayAt, rewind);
     if (healthOf(fight) < before) break;
   }
   return before - healthOf(fight);
@@ -220,9 +223,9 @@ function swing(options: {
 
 describe('a blow lands on what its attacker saw', () => {
   it('connects on a target that has only just left, and misses without compensation', () => {
-    // Out of reach at the release, but where the attacker was looking 6 ticks
-    // ago it was still inside it.
-    const settings = { lag: 6, awayAt: 200, movedTicksAgo: 4 } as const;
+    // Out of reach when the wind-up begins, but where the attacker was looking
+    // 6 ticks ago it was still inside it.
+    const settings = { lag: 6, awayAt: 200, awayForTicks: 4 } as const;
     expect(swing({ ...settings, compensate: false })).toBe(0);
     expect(swing({ ...settings, compensate: true })).toBeGreaterThan(0);
   });
@@ -230,12 +233,56 @@ describe('a blow lands on what its attacker saw', () => {
   it('still misses a target that left before the window', () => {
     // Gone for longer than the cap, so there is no past in which it was in
     // reach. This is the dodge the wind-up exists for, and it survives.
-    const settings = { awayAt: 200, movedTicksAgo: MAX_REWIND_TICKS + 6 } as const;
+    const settings = { awayAt: 200, awayForTicks: MAX_REWIND_TICKS + 6 } as const;
     expect(swing({ ...settings, lag: MAX_REWIND_TICKS, compensate: true })).toBe(0);
   });
 
+  /**
+   * The rewind's whole job moved with spec 221, and this is what it moved to.
+   *
+   * Reach used to be measured at the release, so the compensation was about
+   * where the target was *then*. It is measured when the wind-up begins now, so
+   * leaving during the wind-up is no longer a dodge at all -- with or without a
+   * rewind. What the rewind still decides is the tick above: whether the swing
+   * was allowed to begin as one that had hold of its target.
+   */
+  it('lands on a target that leaves during the wind-up, compensated or not', () => {
+    const leaving = (compensate: boolean): number => {
+      const fight = setUp();
+      const ability = abilityById(ATTACK);
+      if (!ability) throw new Error('no ability');
+      const rewind = compensate ? fight.history : undefined;
+      fight.history.noteLag(fight.attackerId, 6);
+      for (let i = 0; i < MAX_REWIND_TICKS + 2; i++) tickWith(fight, [], 40, rewind);
+
+      const before = healthOf(fight);
+      // In reach on the tick the wind-up begins, and gone one tick later.
+      tickWith(
+        fight,
+        [
+          input(fight.attackerId, 1, {
+            castAbilityId: ATTACK,
+            castTargetX: 40,
+            castTargetY: 0,
+            castTargetEntityId: fight.targetId,
+          }),
+        ],
+        40,
+        rewind,
+      );
+      for (let i = 1; i <= ability.windupTicks + 1; i++) {
+        tickWith(fight, [], 200, rewind);
+        if (healthOf(fight) < before) break;
+      }
+      return before - healthOf(fight);
+    };
+
+    expect(leaving(true)).toBeGreaterThan(0);
+    expect(leaving(false)).toBeGreaterThan(0);
+  });
+
   it('gives a client that claims a huge lag exactly what an honest one gets', () => {
-    const settings = { awayAt: 200, movedTicksAgo: 4, compensate: true } as const;
+    const settings = { awayAt: 200, awayForTicks: 4, compensate: true } as const;
     const honest = swing({ ...settings, lag: MAX_REWIND_TICKS });
     const liar = swing({ ...settings, lag: 100_000 });
     expect(liar).toBe(honest);

@@ -235,6 +235,32 @@ export interface CastState {
    * what the body turns into and what the client draws.
    */
   readonly targetEntityId: number;
+  /**
+   * Was the named target within `range + radius` when the wind-up *began*
+   * (spec 221)?
+   *
+   * The whole of "a swing that was in range lands". `landOnTarget` reads this
+   * instead of measuring the distance again at the release, so a target that
+   * walked out of reach during a wind-up nobody withdrew from is still hit.
+   *
+   * Stamped by `advanceCast` at the two places `phase` becomes
+   * {@link CastPhase.Windup} and nowhere else -- on the commit tick itself for
+   * a cast that needs no turn, and at alignment for one that does. At the
+   * wind-up rather than at the commit because a body turns first (spec 065)
+   * and the turn is not the swing: `windupStartTick` is re-stamped there for
+   * exactly this reason and the reach belongs beside it.
+   *
+   * `startCast` leaves it false rather than working it out, though it could:
+   * what is to hand there is the position the *client* claimed, and with the
+   * release no longer measuring anything that would be a reach a client could
+   * assert. `advanceCast` is handed the server's own view, rewound to what the
+   * attacker was looking at (spec 149).
+   *
+   * False for a cast that names no target, where it means nothing: an
+   * untargeted cone is measured by its own geometry at the release and always
+   * has been.
+   */
+  readonly targetInReach: boolean;
   /** Channels only: the next tick a pulse is due. */
   readonly nextPulseTick: number;
 }
