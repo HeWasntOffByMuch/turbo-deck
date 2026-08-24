@@ -12,14 +12,47 @@ import { ALL_ITEMS, STARTING_KIT } from '../../../server/data/items.js';
 import { WEAPON_SWITCH } from './hud.js';
 
 describe('the weapon switch', () => {
-  it('offers every distinct auto-attack a main hand can name, exactly once', () => {
-    const attacks = new Set(
+  /** Every main hand a fresh character is handed and may actually equip. */
+  const reachable = ALL_ITEMS.filter(
+    (item) =>
+      item.slot === 'mainHand' &&
+      item.levelRequirement <= 1 &&
+      STARTING_KIT.some((entry) => entry.defId === item.id),
+  );
+
+  it('offers every distinct auto-attack a fresh character can reach, exactly once', () => {
+    const attacks = new Set(reachable.map((item) => item.basicAttackId ?? BASIC_ATTACK_ID));
+    expect(new Set(WEAPON_SWITCH.map((entry) => entry.abilityId))).toEqual(attacks);
+    expect(WEAPON_SWITCH).toHaveLength(attacks.size);
+  });
+
+  /**
+   * The narrowing spec 216 made, stated as the thing it prevents.
+   *
+   * Until then this table was every distinct attack the item table could name,
+   * and the two rules below held by coincidence: the only weapons that named a
+   * shot were level-1 commons in the starting kit. The Emberwood Staff is a
+   * rare level-4 one, and derived the old way it added a fourth button that
+   * equips nothing, refuses silently and has no icon.
+   */
+  it('leaves out an attack whose only weapon a fresh character cannot reach', () => {
+    const offered = new Set(WEAPON_SWITCH.map((entry) => entry.abilityId));
+    const nameable = new Set(
       ALL_ITEMS.filter((item) => item.slot === 'mainHand').map(
         (item) => item.basicAttackId ?? BASIC_ATTACK_ID,
       ),
     );
-    expect(new Set(WEAPON_SWITCH.map((entry) => entry.abilityId))).toEqual(attacks);
-    expect(WEAPON_SWITCH).toHaveLength(attacks.size);
+    // The set the old derivation produced is strictly larger, and every attack
+    // in the difference is one no starting character can throw.
+    for (const abilityId of nameable) {
+      if (offered.has(abilityId)) continue;
+      expect(reachable.some((item) => (item.basicAttackId ?? BASIC_ATTACK_ID) === abilityId)).toBe(
+        false,
+      );
+    }
+    // And it really is doing something, or this passes on an empty difference
+    // the day somebody puts every weapon in the kit.
+    expect(offered.size).toBeLessThan(nameable.size);
   });
 
   it('offers a melee swing and both shots', () => {

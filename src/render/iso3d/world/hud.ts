@@ -27,7 +27,7 @@ import {
   BASIC_ATTACK_ID,
   type AbilityDefinition,
 } from '../../../server/data/abilities.js';
-import { ALL_ITEMS } from '../../../server/data/items.js';
+import { ALL_ITEMS, STARTING_KIT } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { castBar } from './cast.js';
@@ -116,21 +116,45 @@ const ERROR_RED = '#ff3b3b';
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
 /**
- * One main-hand weapon per distinct auto-attack (spec 079).
+ * One main-hand weapon per distinct auto-attack a fresh character can reach
+ * (spec 079, narrowed by spec 216).
  *
  * Derived from the item table rather than listed, so a crossbow added there
  * turns up here without this file being told. The *attack* is what the switch
  * is really choosing -- two swords that both slash are one entry, because
  * picking between them would change numbers and not the motion.
+ *
+ * ## Why the starting kit is a filter and not a coincidence
+ *
+ * Two rules have been asserted about this table since spec 126 and neither was
+ * enforced by anything: every entry has to be level 1, because the server
+ * refuses to equip above your level, and every entry has to be **in the
+ * player's bag**, because the server refuses to equip what you are not
+ * carrying. Both held only because the two weapons that named a shot happened
+ * to be level-1 commons in the starting kit.
+ *
+ * Spec 216 gave a rare level-4 staff a shot of its own and the promise in the
+ * paragraph above came due: the new attack "turned up here without this file
+ * being told", as a fourth button that equips nothing, refuses silently, and
+ * has no icon. So the derivation reads the kit -- which makes both rules true
+ * *by construction* rather than by luck, and means the next weapon that names
+ * an attack a starting character cannot hold adds no button at all instead of
+ * a dead one.
+ *
+ * What is lost is nothing: a player who buys the staff equips it out of the bag
+ * like every other item, and the switch has never been the way anything but the
+ * three starting weapons is reached.
  */
 export const WEAPON_SWITCH: readonly {
   readonly itemId: string;
   readonly name: string;
   readonly abilityId: string;
 }[] = (() => {
+  const carried = new Set(STARTING_KIT.map((entry) => entry.defId));
   const byAttack = new Map<string, { itemId: string; name: string; abilityId: string }>();
   for (const item of ALL_ITEMS) {
     if (item.slot !== 'mainHand') continue;
+    if (!carried.has(item.id) || item.levelRequirement > 1) continue;
     const abilityId = item.basicAttackId ?? BASIC_ATTACK_ID;
     if (byAttack.has(abilityId)) continue;
     byAttack.set(abilityId, { itemId: item.id, name: item.name, abilityId });

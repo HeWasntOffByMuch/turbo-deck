@@ -148,7 +148,13 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Emberwood Staff',
     slot: 'mainHand',
     levelRequirement: 4,
-    modifiers: { attackDamage: 2, spellPower: 0.2, intelligence: 3, attackRange: 20 },
+    // No `attackRange` (spec 216). The 20 this used to carry described what a
+    // melee swing would have reached, and a weapon that names a shot never
+    // melees -- the same reason the bow below carries none. What it reaches is
+    // `ranged.ember`'s own 330, which is what `autoAttack` chases to and what
+    // `startCast` gates on.
+    modifiers: { attackDamage: 2, spellPower: 0.2, intelligence: 3 },
+    basicAttackId: 'ranged.ember',
   },
   {
     id: 'bow.hunting',
