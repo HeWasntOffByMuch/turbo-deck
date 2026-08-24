@@ -3,11 +3,13 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { serializeMap } from '../../../terrain/index.js';
+import { loadMap, serializeMap } from '../../../terrain/index.js';
 import { MAP_WRITE_ENDPOINT, writeMapToDisk, type FetchLike } from './map-write.js';
 import { resolveMapWrite, writeMapFile } from '../../../../scripts/dev-map-write.js';
 import { joinMap, MANIFEST_PATH, parseManifest, regionPath } from '../../../terrain/regions.js';
 import { bakeEditorMap } from './map-source.js';
+import { addRock, nextRockLayerId } from './rock.js';
+import { EditHistory } from './history.js';
 
 /**
  * Spec 177. Two halves of one loop, tested from both ends.
@@ -169,5 +171,84 @@ describe('writing the file', () => {
     const result = writeMapFile('../package.json', text, root);
     expect(result.ok).toBe(false);
     expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe('{"name":"real"}');
+  });
+});
+
+describe('a map the editor made, over a map that is already there', () => {
+  /** A repo root with a written map already in it, and the text that made it. */
+  const already = (): { root: string; text: string } => {
+    const root = mkdtempSync(join(tmpdir(), 'map-write-tier-'));
+    mkdirSync(join(root, 'maps'), { recursive: true });
+    const text = serializeMap(bakeEditorMap(1234).document);
+    expect(writeMapFile('arena.json', text, root).ok).toBe(true);
+    return { root, text };
+  };
+
+  const readBack = (root: string): ReturnType<typeof joinMap> =>
+    joinMap(parseManifest(readFileSync(join(root, 'maps', 'arena', MANIFEST_PATH), 'utf8')), (region) =>
+      readFileSync(join(root, 'maps', 'arena', region), 'utf8'),
+    );
+
+  it('writes a rock tier, and reads it back as two layers (spec 220)', () => {
+    // The editor's own tool, not a hand-built document: `addRock` adds a layer,
+    // and until spec 220 the split refused every map that had one. From the
+    // panel that was "Save to maps/" answering `not a map document`, with the
+    // map unsaveable until the tier was undone.
+    const { root } = already();
+    const store = loadMap(bakeEditorMap(1234).document).store;
+    const ground = store.layerInfo('ground') ?? store.layerInfo(store.layerIds[0] ?? '');
+    if (!ground) throw new Error('no ground layer');
+    const cx = (ground.bounds.minX + ground.bounds.maxX) / 2;
+    const cz = (ground.bounds.minZ + ground.bounds.maxZ) / 2;
+    const tierId = nextRockLayerId(store);
+    const baked = addRock(store, new EditHistory(), {
+      layerId: tierId,
+      seed: 7,
+      origin: ground.origin,
+      baseY: ground.baseY,
+      top: ground.baseY + 300,
+      footprint: { minX: cx - 300, minZ: cz - 300, maxX: cx + 300, maxZ: cz + 300 },
+      propLayerId: ground.id,
+    });
+    expect(baked.ok).toBe(true);
+    expect(store.layerIds).toContain(tierId);
+
+    const result = writeMapFile('arena.json', serializeMap(store.toDocument()), root);
+    expect(result.ok).toBe(true);
+
+    const back = readBack(root);
+    expect(back.layers.map((l) => l.id)).toEqual(store.layerIds);
+    const tier = back.layers.find((l) => l.id === tierId);
+    expect(tier?.chunks.length).toBeGreaterThan(0);
+    // The whole document, not merely both layer names: a region shared by the
+    // ground and the tier has to hand each of them its own chunks back.
+    expect(serializeMap(back)).toBe(serializeMap(store.toDocument()));
+  });
+
+  it('leaves every region the manifest names on disk, and sweeps the rest', () => {
+    // `writeSplit`'s sweep, over a map that already exists -- the case the
+    // seeded tests above never reach, and the one where getting staleness
+    // wrong costs the whole map rather than a stray file.
+    const { root } = already();
+    const dir = join(root, 'maps', 'arena');
+    // A file nothing reaches, of the shape an interrupted write leaves.
+    writeFileSync(join(dir, 'r', '999_999.json.tmp'), 'not a region', 'utf8');
+
+    const store = loadMap(bakeEditorMap(1234).document).store;
+    const layerId = store.layerIds[0] ?? 'ground';
+    const info = store.layerInfo(layerId);
+    if (!info) throw new Error('no layer');
+    store.setCornerHeight(layerId, 4, 4, (store.cornerHeight(layerId, 4, 4) ?? 0) + 40);
+    expect(writeMapFile('arena.json', serializeMap(store.toDocument()), root).ok).toBe(true);
+
+    const manifest = parseManifest(readFileSync(join(dir, MANIFEST_PATH), 'utf8'));
+    for (const layer of manifest.layers) {
+      for (const entry of layer.regions) {
+        expect(() => readFileSync(join(dir, regionPath(entry.rx, entry.rz)), 'utf8')).not.toThrow();
+      }
+    }
+    expect(() => readFileSync(join(dir, 'r', '999_999.json.tmp'), 'utf8')).toThrow();
+    // And the map still loads, which is the thing a wrong sweep takes away.
+    expect(readBack(root).layers[0]?.chunks.length).toBeGreaterThan(0);
   });
 });
