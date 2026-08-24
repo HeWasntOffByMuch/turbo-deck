@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { circleBlocked, createWorldColliders, DEFAULT_WORLD } from '../../sim/collision.js';
 import { PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../sim/constants.js';
-import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
+import { CHUNK_SIZE, DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
 import { abilityById } from '../data/abilities.js';
 import { monsterById } from '../data/monsters.js';
 import { CorrectionReason } from '../net/protocol.js';
@@ -12,6 +12,8 @@ import {
 } from '../player/stats.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
+import { NAV_WINDOW_PAD_TILES } from '../world/nav-residency.js';
+import type { SpawnPoint } from '../world/spawners.js';
 import { FLAT_TERRAIN, type TerrainSampler } from '../world/terrain.js';
 import { SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { ZoneManager } from '../world/zone-manager.js';
@@ -573,8 +575,8 @@ describe('chunk activation gates simulation', () => {
 /** Spec 073. Every enemy in the world stands where the map document put it. */
 describe("the map's spawners", () => {
   const POINTS = [
-    { id: 'spawner-1', monsterId: 'grazer', x: 620, y: 470 },
-    { id: 'spawner-2', monsterId: 'stalker', x: 660, y: 430 },
+    { id: 'spawner-1', monsterId: 'grazer', x: 620, y: 470, respawnTicks: null, leashRadius: null },
+    { id: 'spawner-2', monsterId: 'stalker', x: 660, y: 430, respawnTicks: null, leashRadius: null },
   ];
 
   function spawnerContext(overrides: Partial<StepContext> = {}): StepContext {
@@ -694,6 +696,171 @@ describe("the map's spawners", () => {
     expect(monsters(b).map((m) => [m.id, m.spawnerId, m.position.x, m.position.y])).toEqual(
       monsters(a).map((m) => [m.id, m.spawnerId, m.position.x, m.position.y]),
     );
+  });
+});
+
+/**
+ * Spec 222. The two numbers a spawner may now author, and the one rule about
+ * them that is a *derivation* rather than a preference: a document may make a
+ * monster tighter on its leash and may not make it looser than the nav window
+ * was sized for.
+ */
+describe("a spawner's own numbers", () => {
+  const point = (
+    id: string,
+    monsterId: string,
+    x: number,
+    y: number,
+    settings: { respawnTicks?: number | null; leashRadius?: number | null } = {},
+  ): SpawnPoint => ({
+    id,
+    monsterId,
+    x,
+    y,
+    respawnTicks: settings.respawnTicks ?? null,
+    leashRadius: settings.leashRadius ?? null,
+  });
+
+  const ctxFor = (points: readonly SpawnPoint[], config?: Partial<LiveConfig>): StepContext =>
+    context({
+      spawnPoints: points,
+      activeChunks: activeAround({ x: 600, y: 450 }),
+      ...(config === undefined ? {} : { config: { ...DEFAULT_LIVE_CONFIG, ...config } }),
+    });
+
+  const monsters = (state: ServerWorldState): ServerEntity[] =>
+    [...state.entities.values()].filter((e) => e.kind === EntityKindValue.Monster);
+
+  /** Fill the world, then kill whatever this spawner put there. */
+  function killAt(ctx: StepContext, id: string): ServerWorldState {
+    let state = step(createWorldState(3), [], ctx).state;
+    const victim = monsters(state).find((m) => m.spawnerId === id);
+    if (!victim) throw new Error(`nothing spawned at ${id}`);
+    state = replaceEntity(state, { ...victim, health: 0 });
+    return step(state, [], ctx).state;
+  }
+
+  it('waits its own clock rather than the map-wide one', () => {
+    const own = 90;
+    const points = [point('spawner-1', 'grazer', 620, 470, { respawnTicks: own })];
+    // A global interval far longer than the spawner's, so a refill on schedule
+    // could only have come from the marker.
+    const ctx = ctxFor(points, { spawnIntervalTicks: 3000, spawnRateMultiplier: 1 });
+    let state = killAt(ctx, 'spawner-1');
+    expect(state.spawners.get('spawner-1')?.readyAtTick).toBe(state.tick + own);
+
+    for (let tick = 0; tick < own - 1; tick++) state = step(state, [], ctx).state;
+    expect(monsters(state)).toHaveLength(0);
+    state = step(state, [], ctx).state;
+    expect(monsters(state)).toHaveLength(1);
+  });
+
+  it('leaves a spawner that authors nothing on the config\'s own clock', () => {
+    const interval = 200;
+    const points = [point('spawner-1', 'grazer', 620, 470)];
+    const ctx = ctxFor(points, { spawnIntervalTicks: interval, spawnRateMultiplier: 1 });
+    const state = killAt(ctx, 'spawner-1');
+    expect(state.spawners.get('spawner-1')?.readyAtTick).toBe(state.tick + interval);
+  });
+
+  /**
+   * A marker's clock is a *base*, not an escape from the live control: the admin
+   * console's multiplier is how a running server is slowed down or stopped, and
+   * a spawner that could opt out of it would make that button a lie.
+   */
+  it('is still scaled by the live rate multiplier', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470, { respawnTicks: 600 })];
+    const ctx = ctxFor(points, { spawnRateMultiplier: 4 });
+    const state = killAt(ctx, 'spawner-1');
+    expect(state.spawners.get('spawner-1')?.readyAtTick).toBe(state.tick + 150);
+  });
+
+  it('is still stopped dead by a multiplier of zero', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470, { respawnTicks: 1 })];
+    let state = createWorldState(3);
+    const off = ctxFor(points, { spawnRateMultiplier: 0 });
+    for (let tick = 0; tick < 120; tick++) state = step(state, [], off).state;
+    expect(monsters(state)).toHaveLength(0);
+  });
+
+  it('hands the body its marker\'s leash', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470, { leashRadius: 250 })];
+    const state = step(createWorldState(3), [], ctxFor(points)).state;
+    expect(monsters(state)[0]?.leashRadius).toBe(250);
+  });
+
+  it('leaves a body whose marker says nothing on the default', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470)];
+    const state = step(createWorldState(3), [], ctxFor(points)).state;
+    expect(monsters(state)[0]?.leashRadius).toBe(LEASH_RADIUS);
+  });
+
+  /**
+   * The cap, asserted against the thing that *causes* it rather than against
+   * 800: `NAV_WINDOW_PAD_TILES` is derived from `LEASH_RADIUS`, so a window is
+   * assembled exactly wide enough for a route home from the global reach. A
+   * body leashed past it would be asking `findPath` for a goal outside its own
+   * window. Raising the constant must move both, and this fails if only one of
+   * them moves.
+   */
+  it('caps a marker that asks for more than the nav window was sized for', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470, { leashRadius: LEASH_RADIUS * 10 })];
+    const state = step(createWorldState(3), [], ctxFor(points)).state;
+    const body = monsters(state)[0];
+    expect(body?.leashRadius).toBe(LEASH_RADIUS);
+    expect(NAV_WINDOW_PAD_TILES * CHUNK_SIZE).toBeGreaterThanOrEqual(body?.leashRadius ?? 0);
+  });
+
+  it('drops a target at the marker\'s distance rather than the default', () => {
+    const anchor = { x: 600, y: 450 };
+    const tight = 300;
+    const points = [point('spawner-1', 'stalker', anchor.x, anchor.y, { leashRadius: tight })];
+    // Every chunk between home and the player, so nothing is skipped as
+    // unloaded while the body walks out and back.
+    const along: { x: number; y: number }[] = [];
+    for (let x = anchor.x - 200; x <= anchor.x + LEASH_RADIUS + 600; x += 100) {
+      along.push({ x, y: anchor.y });
+    }
+    const ctx = context({ spawnPoints: points, activeChunks: activeAround(...along) });
+
+    let state = step(createWorldState(1), [], ctx).state;
+    const player = withPlayer(state, anchor.x + LEASH_RADIUS + 400, anchor.y);
+    state = player.state;
+    const body = monsters(state)[0];
+    if (!body) throw new Error('nothing spawned');
+    state = replaceEntity(state, { ...body, targetId: player.id });
+
+    let furthest = 0;
+    let broke = false;
+    for (let tick = 0; tick < SERVER_TICK_RATE * 30 && !broke; tick++) {
+      state = step(state, [], ctx).state;
+      const at = state.entities.get(body.id);
+      if (!at) break;
+      furthest = Math.max(furthest, Math.hypot(at.position.x - anchor.x, at.position.y - anchor.y));
+      broke = at.targetId === null;
+    }
+    expect(broke).toBe(true);
+    // It gave up at its own distance, and nowhere near the global one -- the
+    // claim that would hold either way is that it gave up at all.
+    expect(furthest).toBeGreaterThan(tight);
+    expect(furthest).toBeLessThan(LEASH_RADIUS);
+  });
+
+  /**
+   * The property the whole feature is subject to: a document clock changes
+   * *when* a body arrives and must not change how many values the sim has drawn
+   * by the time it does, or every combat roll after a respawn moves.
+   */
+  it('draws no randomness, whatever the marker authors', () => {
+    const points = [
+      point('spawner-1', 'grazer', 620, 470, { respawnTicks: 30, leashRadius: 200 }),
+      point('spawner-2', 'stalker', 660, 430),
+    ];
+    const ctx = ctxFor(points);
+    let state = createWorldState(3);
+    const before = state.rng;
+    for (let tick = 0; tick < 400; tick++) state = step(state, [], ctx).state;
+    expect(state.rng).toBe(before);
   });
 });
 

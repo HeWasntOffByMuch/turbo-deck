@@ -170,6 +170,9 @@ function blankEntity(id: number): ServerEntity {
     pardon: null,
     spawnerId: null,
     anchor: null,
+    // Only ever read where there is an anchor, so this is what a body with no
+    // spawner behind it carries rather than a value anything acts on (spec 222).
+    leashRadius: LEASH_RADIUS,
     resource: 0,
     cast: null,
     cooldowns: {},
@@ -341,6 +344,9 @@ export function spawnEntity(
     pardon: null,
     spawnerId: null,
     anchor: spec.anchor ?? null,
+    // Nothing an admin conjures is leashed: `spec.anchor` is what decides that,
+    // and a body with no anchor never reaches this number (spec 222).
+    leashRadius: LEASH_RADIUS,
     resource: spec.stats.maxResource,
     cast: null,
     cooldowns: {},
@@ -2219,13 +2225,21 @@ function fleeFrom(
   };
 }
 
-/** Whether this body has been dragged further from its spawn point than it will go. */
+/**
+ * Whether this body has been dragged further from its spawn point than it will
+ * go.
+ *
+ * Off the body's own radius rather than the constant since spec 222, because a
+ * spawner may author a tighter one. Still gated by `anchor`, so a player and a
+ * monster an admin conjured are untouched -- they have no home to be dragged
+ * away from, and `leashRadius` on either is a number nothing reads.
+ */
 function beyondLeash(monster: ServerEntity): boolean {
   const anchor = monster.anchor;
   if (!anchor) return false;
   const dx = monster.position.x - anchor.x;
   const dy = monster.position.y - anchor.y;
-  return dx * dx + dy * dy > LEASH_RADIUS * LEASH_RADIUS;
+  return dx * dx + dy * dy > monster.leashRadius * monster.leashRadius;
 }
 
 /**
@@ -2458,6 +2472,45 @@ function populationByChunk(
 }
 
 /**
+ * Every spawn point by id, memoized on the point list (spec 222).
+ *
+ * A second index beside `SPAWN_INDEX` and for the same reason -- the points are
+ * fixed for the life of the server, so building this per tick would be a walk
+ * over the whole map to answer a question about one id. Separate rather than
+ * folded into that one because they are asked at different moments: which
+ * points are *near* somebody is a per-tick question about residency, and which
+ * point owns *this id* is asked of a body that has just died, wherever it was.
+ */
+const SPAWN_BY_ID = new WeakMap<readonly SpawnPoint[], ReadonlyMap<string, SpawnPoint>>();
+
+function spawnPointsById(points: readonly SpawnPoint[]): ReadonlyMap<string, SpawnPoint> {
+  const cached = SPAWN_BY_ID.get(points);
+  if (cached) return cached;
+  const byId = new Map<string, SpawnPoint>();
+  // First wins, matching `spawnPointsFrom`'s own duplicate rule -- which refuses
+  // the document outright, so this can only differ for a list built by hand.
+  for (const point of points) if (!byId.has(point.id)) byId.set(point.id, point);
+  SPAWN_BY_ID.set(points, byId);
+  return byId;
+}
+
+/**
+ * How far a body from this point may be dragged before it gives up (spec 222).
+ *
+ * **Capped at `LEASH_RADIUS`, and that is derived rather than chosen.**
+ * `NAV_WINDOW_PAD_TILES` is `ceil(max(LEASH_RADIUS, FLEE_DISTANCE) / CHUNK_SIZE)`,
+ * so a nav window is assembled exactly wide enough to hold both ends of a route
+ * home from the global reach -- a spawner allowed past it would hand
+ * `routeToward` a goal outside its own window, which `nav-tiles.ts` refuses
+ * rather than clamping. So the document may make a monster *tighter* on its
+ * leash and may not make it looser than the routing was sized for. Raising the
+ * ceiling is one constant, and the padding follows it for free.
+ */
+function leashOf(point: SpawnPoint): number {
+  return point.leashRadius === null ? LEASH_RADIUS : Math.min(point.leashRadius, LEASH_RADIUS);
+}
+
+/**
  * Which spawn points are in which chunk, by their **authored index**.
  *
  * Memoized on the point list itself, because a map's spawn points are fixed for
@@ -2522,17 +2575,33 @@ function runSpawners(
   const events: ServerSimEvent[] = [];
   let nextEntityId = startingEntityId;
 
-  const interval = respawnInterval(config);
+  // Null exactly when spawning is off, which is a property of the config alone.
+  // So this one call still decides both whether anything waits and whether
+  // anything spawns, and the per-spawner clocks below only ever change *how
+  // long*.
+  const globalInterval = respawnInterval(config);
+  const byId = spawnPointsById(spawnPoints);
+  /** This point's own wait, or the config's for a point that authors none. */
+  const waitOf = (point: SpawnPoint | undefined): number => respawnInterval(config, point) ?? 0;
   const spawners = new Map(previous);
 
   // The bodies that left the world this tick start their spawner's clock. Done
   // before the refill pass so a monster killed on tick T waits the full
   // interval, rather than being replaced on T by the same pass that buried it.
+  //
+  // Looked up by id rather than taken from the resident list, because a body can
+  // die anywhere -- including in a chunk nobody is standing in any more by the
+  // time the sweep runs. An id no point claims falls back to the config's own
+  // number, which is what a spawner deleted from the document under a live
+  // server comes to.
   for (const id of emptied) {
-    spawners.set(id, { entityId: null, readyAtTick: interval === null ? 0 : tick + interval });
+    spawners.set(id, {
+      entityId: null,
+      readyAtTick: globalInterval === null ? 0 : tick + waitOf(byId.get(id)),
+    });
   }
 
-  if (interval === null) return { nextEntityId, spawners, events };
+  if (globalInterval === null) return { nextEntityId, spawners, events };
 
   // Only the spawn points near a player, in the order the map authored them
   // (spec 206).
@@ -2577,7 +2646,7 @@ function runSpawners(
     // same delay, which is the behaviour you would have asked for anyway.
     if (current.entityId !== null) {
       if (entities.has(current.entityId)) continue;
-      spawners.set(point.id, { entityId: null, readyAtTick: tick + interval });
+      spawners.set(point.id, { entityId: null, readyAtTick: tick + waitOf(point) });
       continue;
     }
     if (tick < current.readyAtTick) continue;
@@ -2616,6 +2685,7 @@ function runSpawners(
       poise: definition.stats.traits.maxPoise,
       spawnerId: point.id,
       anchor: { x: point.x, y: point.y },
+      leashRadius: leashOf(point),
     };
     entities.set(entity.id, entity);
     spawners.set(point.id, { entityId: entity.id, readyAtTick: 0 });
@@ -2636,9 +2706,14 @@ const EMPTY_SPAWNER: SpawnerState = { entityId: null, readyAtTick: 0 };
  * scales it -- including to 0, which is how the admin console stops the world
  * repopulating without a restart.
  */
-function respawnInterval(config: LiveConfig): number | null {
+function respawnInterval(config: LiveConfig, point?: SpawnPoint): number | null {
   if (config.spawnRateMultiplier <= 0) return null;
-  return Math.max(1, Math.round(config.spawnIntervalTicks / config.spawnRateMultiplier));
+  // The point's own clock is a *base*, not an escape from the live control
+  // (spec 222): `spawnRateMultiplier` still scales it, and still stops it at 0,
+  // which is how the admin console halts repopulation without a restart. A
+  // spawner that authors nothing is the config's own number, exactly as before.
+  const base = point?.respawnTicks ?? config.spawnIntervalTicks;
+  return Math.max(1, Math.round(base / config.spawnRateMultiplier));
 }
 
 /** Body radius for a player entity; monsters carry their own. */

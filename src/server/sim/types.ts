@@ -530,6 +530,18 @@ export interface ServerEntity {
    * has no home to be dragged away from.
    */
   readonly anchor: Vec2 | null;
+  /**
+   * How far from that anchor this body may be dragged before it gives up
+   * (spec 222).
+   *
+   * A number rather than a nullable, because `anchor` already answers "is this
+   * body leashed at all" and two fields that can each say no is one more state
+   * than the question has. Written at spawn from the marker's own
+   * `leashRadius`, capped at `LEASH_RADIUS`, and left at that default for every
+   * body that has no spawner behind it -- where it is a number nothing reads,
+   * since `beyondLeash` gives up on a null anchor first.
+   */
+  readonly leashRadius: number;
 
   // --- progression state (spec 147) --------------------------------------
   /**
