@@ -28,8 +28,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { PALETTE } from '../palette.js';
-import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
-import { ARENA_OBSTACLES } from '../../../sim/constants.js';
+import { castsShadows, makeUnwalkableField } from '../meshes.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
 import type { ChunkFootprint, ChunkMeshArrays } from '../terrain-arrays.js';
@@ -688,7 +687,6 @@ export class WorldScene {
     // (spec 072), and nothing has been sent until `MapInfo` lands -- which is a
     // frame or two after this, even over a loopback. `setMap` builds them.
     this.scene.add(this.unwalkable);
-    this.addWalls();
 
     this.torchFlame = this.buildTorch();
     this.orbMesh = this.buildOrb();
@@ -1530,29 +1528,6 @@ export class WorldScene {
   };
 
   // --- world ------------------------------------------------------------
-
-  private addWalls(): void {
-    for (const rect of ARENA_OBSTACLES) {
-      const wall = makeWall(rect.w, rect.h);
-      wall.position.set(rect.x, this.lowestGroundIn(rect.x, rect.y, rect.w, rect.h), rect.y);
-      castsShadows(wall);
-      this.scene.add(wall);
-    }
-  }
-
-  private lowestGroundIn(x: number, z: number, w: number, d: number): number {
-    let low = Infinity;
-    for (const [sx, sz] of [
-      [x, z],
-      [x + w, z],
-      [x, z + d],
-      [x + w, z + d],
-      [x + w / 2, z + d / 2],
-    ] as const) {
-      low = Math.min(low, this.ground(sx, sz));
-    }
-    return low;
-  }
 
   private buildTorch(): THREE.Mesh {
     this.torch.castShadow = true;

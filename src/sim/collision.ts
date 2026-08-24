@@ -1,4 +1,4 @@
-import { ARENA_OBSTACLES, SEPARATION_ITERATIONS, WORLD_BOUNDS } from './constants.js';
+import { SEPARATION_ITERATIONS, WORLD_BOUNDS } from './constants.js';
 import { MAX_NEAR_COLLIDERS, buildColliderIndex, circlesInRect, circlesNear } from './collider-index.js';
 import type { Circle, Rect, Vec2, WorldColliders } from './types.js';
 
@@ -23,16 +23,25 @@ export interface Collider {
 }
 
 /**
- * The world a caller gets when it does not name one: the arena's walls inside
- * the world's bounds, with no vegetation. Headless callers (tests, the balance
- * harness) fight in an empty world; the iso views build the real one from the
- * terrain and hand it to `initCombat`.
+ * The world a caller gets when it does not name one: the world's bounds and
+ * nothing in them. Headless callers (tests, the balance harness) fight in an
+ * empty world; the iso views build the real one from the terrain and hand it to
+ * `initCombat`.
+ *
+ * Empty of rects as well as circles since spec 219 -- it used to carry the
+ * hand-authored arena walls, which is why a headless caller that named no world
+ * still got six barricades it never asked for.
  */
-export const DEFAULT_WORLD: WorldColliders = createWorldColliders(ARENA_OBSTACLES, [], WORLD_BOUNDS);
+export const DEFAULT_WORLD: WorldColliders = createWorldColliders([], [], WORLD_BOUNDS);
 
-/** A world of walls and vegetation; bounds default to the whole world. */
+/**
+ * A world of walls and vegetation; bounds default to the whole world.
+ *
+ * Both collider lists default to empty: a caller that names none gets none.
+ * Walls come from the map document like everything else (spec 219).
+ */
 export function createWorldColliders(
-  rects: readonly Rect[] = ARENA_OBSTACLES,
+  rects: readonly Rect[] = [],
   circles: readonly Circle[] = [],
   bounds: Rect = WORLD_BOUNDS,
 ): WorldColliders {

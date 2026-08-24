@@ -49,9 +49,9 @@ const adminSecret = configuredSecret ?? randomBytes(32).toString('hex');
 
 /**
  * Terrain, trees and colliders in one build (spec 063). This used to be terrain
- * here and `createWorldColliders(ARENA_OBSTACLES, [], WORLD_BOUNDS)` at the call
- * below -- real ground, and an empty vegetation list next to it, so the server
- * walked through every tree in the world it had just generated.
+ * here and a bare `createWorldColliders(...)` at the call below -- real ground,
+ * and an empty vegetation list next to it, so the server walked through every
+ * tree in the world it had just generated.
  *
  * Since spec 072 that build reads a **map document**: the world is the file the
  * editor writes, not the feature list the generator evaluates. A map that will

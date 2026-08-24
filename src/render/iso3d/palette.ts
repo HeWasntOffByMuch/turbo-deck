@@ -83,8 +83,6 @@ export const PALETTE = {
   // Warning red marking an unwalkable terrain footprint (toggleable overlay).
   blocked: 0xd6483f,
   // The arena's walls (spec 037): grey stone, with a lighter lit cap on top.
-  wall: 0x6b6b78,
-  wallTop: 0x84848f,
   // Fences (spec 058). Sawn timber sits a shade lighter and greyer than a living
   // trunk, so a paddock rail reads as built rather than grown; the drystone
   // courses borrow the terrain's warm limestone so a wall belongs to its ground.
