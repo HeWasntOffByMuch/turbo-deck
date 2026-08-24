@@ -19,7 +19,10 @@
     "overlay": "#0f0d14",
     "rarityCommon": "#b9c2cc",
     "rarityRare": "#6fb4ff",
-    "rarityExceptional": "#ffc861"
+    "rarityExceptional": "#ffc861",
+    "attrStrength": "#e0705f",
+    "attrAgility": "#7cc45a",
+    "attrIntelligence": "#6fa8ff"
   },
   "spacing": {
     "unit": 4,

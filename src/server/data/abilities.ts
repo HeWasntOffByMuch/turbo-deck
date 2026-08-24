@@ -42,7 +42,7 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
  * projectile entity's `typeId` is already its ability id, and this table is
  * shared code the client imports, so the look is a lookup rather than a field.
  *
- * `ember` is the one of the four that is mostly *paint* (spec 216): the mesh
+ * `ember` is the one of the four that is mostly *paint* (spec 218): the mesh
  * `ShotRig` builds for it is half the collision radius, because the silhouette
  * of a ball of fire is the marks around it and a bead drawn at the full radius
  * would have flames stuck to the outside of it.
@@ -270,7 +270,11 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(0.6),
     cost: 0,
     range: 70,
-    damage: 14,
+    // Nothing, since spec 217: a basic attack's damage is the weapon's own
+    // range, rolled in `resolveBlow`. Left as a field rather than removed
+    // because `attackTimingFor` still reads it against `HEAVY_ABILITY_DAMAGE`,
+    // and a swing is not heavy at any weapon's numbers.
+    damage: 0,
     arcCosSq: 0.5,
     basicAttack: true,
     description: 'A quick forward cut, more habit than decision.',
@@ -284,7 +288,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(3),
     cost: 2,
     range: 90,
-    damage: 42,
+    damage: 6,
     arcCosSq: 0.65,
     description: 'Both hands, and everything you weigh, put behind one swing.',
   },
@@ -300,7 +304,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(1),
     cost: 0,
     range: 420,
-    damage: 12,
+    damage: 0,
     // Lobbed, which is what makes it unblockable: an arcing shot flies over
     // whatever is between the archer and the body it named (spec 079). A full
     // arc, so a shot at the edge of its range leaves at 45 degrees and one at a
@@ -319,7 +323,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(0.7),
     cost: 0,
     range: 300,
-    damage: 8,
+    damage: 0,
     // Flat, and therefore stoppable by anything that steps into the line.
     projectile: { speed: 1150, arc: 0, radius: 6, lifetimeTicks: seconds(1.5), look: 'shuriken' },
     basicAttack: true,
@@ -339,18 +343,18 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     backswingTicks: seconds(0.3),
     cooldownTicks: seconds(1),
     cost: 0,
-    // Shorter than the bow's 420 and longer than the star's 300 (spec 216).
+    // Shorter than the bow's 420 and longer than the star's 300 (spec 218).
     // Shorter than the bow is the design; longer than the star is the rarity --
     // this is the level-4 rare against two level-1 commons. It is the reach
     // `autoAttack` chases to and `startCast` refuses past, which is why the row
     // carries it and the item does not.
     range: 330,
-    // A point over the bow's 12. A basic attack is multiplied by
-    // `traits.weaponPower`, which is the *weapon's* damage row against the
-    // unarmed reference, so the staff's `attackDamage: 2` against the bow's 5
-    // already prices the difference in: the two land within a point of each
-    // other per hit, and the staff gives up ninety units of reach for it.
-    damage: 14,
+    // Nothing, since spec 217: a basic attack's damage is the weapon's own
+    // range, rolled in `resolveBlow`. What an Ember Shot hits for is
+    // `staff.emberwood`'s `{2, 5}` and the Intelligence term on top of it, so
+    // the number that decides how hard this lands is on the weapon a player
+    // picked up rather than on a row shared with whatever else throws one.
+    damage: 0,
     // The slowest thing anybody throws here -- the arrow leaves at 900 and the
     // star at 1150. That is the whole of what makes a fireball a shot you can
     // see coming and step out of, which is spec 094's argument about wind-ups
@@ -373,7 +377,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(0.8),
     cost: 3,
     range: 700,
-    damage: 18,
+    damage: 3,
     projectile: { speed: 620, arc: 0, radius: 8, lifetimeTicks: seconds(2) },
     description: 'Raw force, shaped just enough to travel.',
   },
@@ -386,7 +390,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(4),
     cost: 5,
     range: 520,
-    damage: 30,
+    damage: 4,
     radius: 90,
     // A full arc: at its 520-unit range that peaks at 130, which is exactly the
     // constant it replaces -- the tell that the constant was always a 45-degree
@@ -406,7 +410,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(2.5),
     cost: 4,
     range: 480,
-    damage: 26,
+    damage: 4,
     // A third of the optimal arc: it skims rather than lobs, peaking at 42 over
     // its full 480 rather than the 120 a full arc would give it.
     projectile: { speed: 700, arc: 0.35, radius: 9, lifetimeTicks: seconds(3) },
@@ -421,7 +425,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(8),
     cost: 7,
     range: 420,
-    damage: 46,
+    damage: 7,
     radius: 140,
     description: 'The ground remembers being struck, and answers.',
   },
@@ -435,7 +439,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 6,
     range: 0,
     damage: 0,
-    healing: 60,
+    healing: 9,
     description: 'Knitting yourself back together is not a quick thing.',
   },
   {
@@ -488,15 +492,15 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Refunded whole by a withdrawal like every other cost, and refused rather
     // than clamped when you have not got it -- a body that could pay guard it
     // does not have would stagger itself.
-    costs: { poise: 15 },
+    costs: { poise: 4 },
     range: 85,
-    damage: 12,
+    damage: 2,
     // Order is the skill. The guard comes off first, so the poise damage that
     // follows lands on a pool that is already down -- which is what makes this
     // a *setup* for somebody else's stagger rather than a stagger of its own.
     effects: [
       { kind: 'poise', amount: -50 },
-      { kind: 'poiseDamage', amount: 25 },
+      { kind: 'poiseDamage', amount: 6 },
       { kind: 'damage' },
     ],
     description: 'You do not get inside a guard politely.',
@@ -514,13 +518,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(14),
     cost: 6,
     range: 75,
-    damage: 24,
+    damage: 3,
     effects: [
       { kind: 'damage' },
       // Guard damage as well as the stun, so it is worth throwing at a body
       // whose immunity window is still up: the pool it takes is real even when
       // the stun is refused.
-      { kind: 'poiseDamage', amount: 30 },
+      { kind: 'poiseDamage', amount: 8 },
       { kind: 'stun', ticks: seconds(1.4) },
     ],
     description: 'Wound up from the shoulder, and telegraphed the whole way.',
@@ -541,7 +545,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // worth more than one body.
     cost: 9,
     range: 0,
-    damage: 28,
+    damage: 4,
     area: { shape: 'circle', origin: 'caster', radius: 160, maxTargets: 6 },
     // Damage and nothing else. A status here would be complexity bought with
     // nothing -- the skill's whole statement is "everything near you, at once".
@@ -563,7 +567,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(8),
     cost: 4,
     // Reduced damage, deliberately: what you are buying is the Slow.
-    damage: 9,
+    damage: 1,
     range: 80,
     effects: [
       { kind: 'damage' },
@@ -610,7 +614,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 3,
     range: 380,
     // Almost nothing on impact. What you are paying for is the tenth pulse.
-    damage: 6,
+    damage: 1,
     projectile: { speed: 1000, arc: 0.2, radius: 6, lifetimeTicks: seconds(1.5), look: 'arrow' },
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Poison }],
     description: 'A dart with something on it. Little on the way in, and it stacks.',
@@ -625,7 +629,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(8),
     cost: 5,
     range: 420,
-    damage: 14,
+    damage: 2,
     // A burst, so the fire starts on everything in the splash rather than on
     // one body -- and then goes looking for the rest of them.
     radius: 70,
@@ -644,7 +648,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(7),
     cost: 3,
     range: 80,
-    damage: 16,
+    damage: 2,
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Bleed }],
     description: 'A cut that will not close while they keep using the arm it is in.',
   },
@@ -662,7 +666,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(10),
     cost: 6,
     range: 150,
-    damage: 10,
+    damage: 1,
     arcCosSq: 0.5,
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Corrosion }],
     description: 'It goes through the guard and the armour first. Set up a break with it.',
@@ -677,7 +681,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(9),
     cost: 6,
     range: 300,
-    damage: 12,
+    damage: 2,
     // The one lane in the table. Shock arcs on its own afterwards, so what this
     // has to do is start it on a line rather than finish anything.
     area: { shape: 'line', width: 60, range: 300, maxTargets: 4 },
@@ -695,7 +699,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(11),
     cost: 5,
     range: 0,
-    damage: 8,
+    damage: 1,
     area: { shape: 'circle', origin: 'caster', radius: 140, maxTargets: 5 },
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Frostbite }],
     description: 'Cold off the ground. Nothing much, until it has been on a while.',
@@ -712,7 +716,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(12),
     cost: 6,
     range: 380,
-    damage: 10,
+    damage: 1,
     radius: 110,
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Decay }],
     description: 'A patch of rot. Little damage, and nothing they do about it works properly.',
@@ -855,7 +859,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cooldownTicks: seconds(6),
     cost: 4,
     range: 220,
-    damage: 7,
+    damage: 1,
     arcCosSq: 0.75,
     channelTicks: seconds(2),
     pulseIntervalTicks: seconds(0.25),

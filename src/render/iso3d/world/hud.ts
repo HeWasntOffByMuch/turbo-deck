@@ -117,7 +117,7 @@ const TICK_MS = 1000 / SERVER_TICK_RATE;
 
 /**
  * One main-hand weapon per distinct auto-attack a fresh character can reach
- * (spec 079, narrowed by spec 216).
+ * (spec 079, narrowed by spec 218).
  *
  * Derived from the item table rather than listed, so a crossbow added there
  * turns up here without this file being told. The *attack* is what the switch

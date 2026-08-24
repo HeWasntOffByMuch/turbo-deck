@@ -952,7 +952,7 @@ describe('puff and fire builders', () => {
 });
 
 /**
- * The shot the staff throws, and where it lands (spec 216).
+ * The shot the staff throws, and where it lands (spec 218).
  *
  * Two effects, and the properties worth pinning are the ones a still frame
  * cannot show. `worldSpace` is the whole of the flight look and is a boolean
@@ -960,7 +960,7 @@ describe('puff and fire builders', () => {
  * shared builder; and "a very short trail" is an adjective until it is a number
  * of world units.
  */
-describe('the ember shot (spec 216)', () => {
+describe('the ember shot (spec 218)', () => {
   const byId = new Map(EFFECTS.map((effect) => [effect.id, effect]));
   const flight = byId.get('shot_ember');
   const burst = byId.get('ranged.ember.impact');
@@ -1028,7 +1028,7 @@ describe('the ember shot (spec 216)', () => {
   });
 
   it('is authored at the radius it is drawn at', () => {
-    // Since spec 216 those are the same statement: `scene.addEffect` plays an
+    // Since spec 218 those are the same statement: `scene.addEffect` plays an
     // authored effect at scale 1. Small against a body -- a player's radius is
     // 16 -- which is the request, and the same number `explosion_brush_small` is
     // authored at, so this is the vocabulary's own small blast rather than a

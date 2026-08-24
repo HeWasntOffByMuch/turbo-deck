@@ -1,5 +1,5 @@
 /**
- * The paint a shot flies with, started and stopped (spec 216).
+ * The paint a shot flies with, started and stopped (spec 218).
  *
  * Pure -- no three.js, no DOM, no `GameClient`. It is handed replicated facts
  * and answers what to play, which is the discipline `vfx-wire.ts`,

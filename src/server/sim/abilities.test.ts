@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORLD } from '../../sim/collision.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
 import { abilityById, ALL_ABILITIES, totalCastTicks } from '../data/abilities.js';
+import { itemById } from '../data/items.js';
 import { monsterById } from '../data/monsters.js';
 import { BASE_ATTACK_TIME_TICKS, computeEffectiveStats } from '../player/stats.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
@@ -176,7 +177,7 @@ describe('the ability table', () => {
 });
 
 /**
- * The shot the Emberwood Staff throws (spec 216).
+ * The shot the Emberwood Staff throws (spec 218).
  *
  * Every assertion here is an *ordering* rather than a number, because what the
  * spec was asked for is an ordering: a shot shorter than the bow's, on the
@@ -187,7 +188,7 @@ describe('the ability table', () => {
  * point -- a test that pinned 330 would fail the day somebody rebalanced the
  * bow and would say nothing about whether the relationship still held.
  */
-describe('the ember shot (spec 216)', () => {
+describe('the ember shot (spec 218)', () => {
   const ember = abilityById('ranged.ember');
   const shot = abilityById('ranged.shot');
   const star = abilityById('ranged.star');
@@ -224,6 +225,27 @@ describe('the ember shot (spec 216)', () => {
   it('commits for longer than a thrown star and less than a drawn bow', () => {
     expect(ember?.windupTicks ?? 0).toBeGreaterThan(star?.windupTicks ?? 0);
     expect(ember?.windupTicks ?? 0).toBeLessThan(shot?.windupTicks ?? 0);
+  });
+
+  it('leaves what it hits for to the weapon that throws it', () => {
+    // Since spec 217 a basic attack's damage is the weapon's own range, so a
+    // number here would be a number nothing reads -- the whole table carries a
+    // zero for the same reason.
+    expect(ember?.damage).toBe(0);
+    expect(shot?.damage).toBe(0);
+  });
+
+  it('is thrown by a weapon that out-rolls the bow and not the melee rares', () => {
+    // The ordering rather than the numbers, so a retune of any of the four
+    // moves them together. `{1, 2}` was the staff's range before this spec and
+    // was the weakest in the table, chosen when hitting somebody with the staff
+    // was explicitly the fallback rather than the plan.
+    const rangeOf = (id: string): { min: number; max: number } =>
+      itemById(id)?.damage ?? { min: 0, max: 0 };
+    const mean = (id: string): number => (rangeOf(id).min + rangeOf(id).max) / 2;
+    expect(mean('staff.emberwood')).toBeGreaterThan(mean('bow.hunting'));
+    expect(mean('staff.emberwood')).toBeLessThan(mean('sword.keen'));
+    expect(mean('staff.emberwood')).toBeLessThan(mean('maul.iron'));
   });
 
   it('is single-target: the explosion is a picture and not an area', () => {
@@ -1123,8 +1145,9 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
   it('still drops the cast when the hit is a killing one, and says so', () => {
     let state = createWorldState(1);
     // A caster frail enough that the stalker's first blow finishes it; it spawns
-    // on full health, so its maximum is all it has.
-    const player = withPlayer(state, 600, 450, { ...STATS, maxHealth: 6, armor: 0 });
+    // on full health, so its maximum is all it has. Two rather than six since
+    // spec 217 -- a stalker hits for what its row authors now, which is three.
+    const player = withPlayer(state, 600, 450, { ...STATS, maxHealth: 2, armor: 0 });
     state = player.state;
 
     const definition = monsterById('stalker');

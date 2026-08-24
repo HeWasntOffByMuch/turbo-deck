@@ -1,4 +1,4 @@
-# 216 — the shot the staff throws
+# 218 — the shot the staff throws
 
 ## Problem
 
@@ -56,7 +56,7 @@ and `data/abilities.ts` a row:
   cooldownTicks: seconds(1),
   cost: 0,
   range: 330,
-  damage: 14,
+  damage: 0,
   projectile: { speed: 700, arc: 0.25, radius: 9, lifetimeTicks: seconds(1.5), look: 'ember' },
   basicAttack: true,
   description: 'A knot of fire, shaken off the charred head of the staff.',
@@ -109,13 +109,39 @@ otherwise, on this very table). A quarter arc peaks 21 units over a full-range
 throw, which is enough that the ball clears the grass and the smoke behind it
 bends.
 
-`damage: 14` against the bow's 12. A basic attack is multiplied by
-`traits.weaponPower`, which is `attackDamage / PLAYER_ATTACK_DAMAGE` and
-therefore the *weapon's* damage row -- so the staff's `attackDamage: 2` against
-the bow's `5` already prices the difference in, and 14 puts the two within a
-point of each other per hit while the staff gives up 90 units of reach. What the
-staff's `spellPower: 0.2` and `intelligence: 3` buy is skills, which is the
-weapon's identity and is deliberately not touched here.
+`damage: 0`, which is the whole table's convention since spec 217: a basic
+attack's damage is **the weapon's own range**, rolled in `resolveBlow`, and
+`melee.slash`, `ranged.shot` and `ranged.star` all carry a zero here for the
+same reason. What an Ember Shot hits for lives on the staff.
+
+### The staff's damage range moves, and the row says why it has to
+
+Spec 216 gave `staff.emberwood` `scaling: { strength: E, agility: -,
+intelligence: A }` and spec 217 gave it `damage: { min: 1, max: 2 }` -- the
+weakest range in the table, chosen under a premise this spec removes:
+
+> Barely a weapon, and meant to be: what this row is for is the +3 Intelligence
+> and the spell power, and hitting somebody with it is the fallback rather than
+> the plan.
+
+Hitting somebody with it *is* the plan now, so the range becomes **`{2, 5}`**:
+above the bow's `{2, 4}` because this is a level-4 rare against a level-1
+common, and short of the level-5 melee rares (`{3, 6}` and `{4, 11}`) because it
+out-ranges every one of them by three hundred units. Three wide, which is the
+keen blade's spread rather than the maul's seven: a thrown ball of fire carries
+a fixed payload, so what varies is where it catches you and not how hard it was
+swung.
+
+The **scaling letters do not move**, and that is deliberate rather than
+overlooked. `intelligence: A` was chosen for a stick swung by a magus and this
+makes it literal: the thing the staff throws is fire, and the attribute that
+decides how much of it is the one the row already named. The `E` in Strength was
+justified as *"hitting something with a stick is still worth marginally more to
+a strong body"*, which is now a sentence about an attack this weapon no longer
+makes -- but it is the bottom of the ladder, the arm still swings the staff to
+throw, and re-lettering another spec's row for a coefficient nobody can feel is
+churn rather than a fix. `spellPower: 0.2` and `intelligence: 3` are untouched:
+what they buy is skills, which is the weapon's identity.
 
 ### What it draws as: a mesh core and paint over it
 
@@ -325,6 +351,9 @@ throwing fire keeps the swing it already plays.
 - `ranged.ember`'s range is strictly between `ranged.star`'s and
   `ranged.shot`'s. Written as a comparison rather than as `330`, because what
   the spec was asked for is an ordering.
+- The staff's damage range out-rolls the bow's and is out-rolled by both level-5
+  melee rares -- again an ordering, so a retune of any of the four moves them
+  together.
 - `windupTicks + backswingTicks < BASE_ATTACK_TIME_TICKS`, so the cadence stays
   the stat's.
 - The weapon switch offers only attacks a fresh character can reach, and the

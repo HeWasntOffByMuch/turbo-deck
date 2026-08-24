@@ -217,7 +217,10 @@ export function attackTimingFor(
 }
 
 /** Abilities this heavy count as heavy, for Strength's Heavy Handling. */
-export const HEAVY_ABILITY_DAMAGE = 40;
+// Divided by seven with the ability damage it measures (spec 217). Left at 40 it
+// would be a threshold no ability in the table could reach, so Strength's Heavy
+// Handling would silently stop applying to anything.
+export const HEAVY_ABILITY_DAMAGE = 6;
 
 /**
  * Everything that shortens a wind-up, multiplied together.

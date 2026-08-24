@@ -2,10 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { MemoryDataStore } from '../state/memory-store.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { abilityById, ALL_ABILITIES } from '../data/abilities.js';
-import { ALL_ITEMS } from '../data/items.js';
+import { ALL_ITEMS, itemById } from '../data/items.js';
+import {
+  attributeScalingBonus,
+  NO_GRADE_MODIFIERS,
+  NO_SCALING,
+  ScalingGrade,
+  UNARMED_DAMAGE,
+  UNARMED_SCALING,
+} from '../data/weapon-scaling.js';
 import {
   EMPTY_EQUIPMENT,
   emptyInventory,
+  type BaseStats,
   type EffectiveStats,
   type PersistedPlayer,
 } from '../state/types.js';
@@ -513,7 +522,7 @@ describe('the attack the main hand names', () => {
     );
   });
 
-  it("is the staff's ember shot for the staff (spec 216)", () => {
+  it("is the staff's ember shot for the staff (spec 218)", () => {
     const stats = computeEffectiveStats(
       player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'staff.emberwood' } }),
     );
@@ -525,7 +534,7 @@ describe('the attack the main hand names', () => {
     );
   });
 
-  it('leaves no weapon carrying a melee reach it can never use (spec 216)', () => {
+  it('leaves no weapon carrying a melee reach it can never use (spec 218)', () => {
     // `attackRange` describes what a *swing* would have reached, and a weapon
     // that names a shot never swings: the reach `autoAttack` chases to and
     // `startCast` gates on is `abilityById(basicAttackId).range`. The staff
@@ -634,3 +643,158 @@ describe('persistence never carries a derived stat', () => {
     expect(after?.stats.maxHealth).toBeGreaterThan(before.stats.maxHealth);
   });
 });
+
+/**
+ * Weapon scaling reaching the Damage row (spec 216).
+ *
+ * The end of the pipeline `data/weapon-scaling.test.ts` starts: real rows out of
+ * `data/items.ts`, through `computeEffectiveStats`, against the number a blow is
+ * actually multiplied by. The unit file owns the ladder's arithmetic; this owns
+ * the claim that a weapon's letters decide which attribute a *character* gets
+ * paid for.
+ */
+describe('what the weapon scales with', () => {
+  const holding = (mainHand: string, attributes: Partial<BaseStats> = {}): EffectiveStats =>
+    computeEffectiveStats(
+      player({
+        equipment: { ...EMPTY_EQUIPMENT, mainHand },
+        baseStats: {
+          strength: 5,
+          agility: 5,
+          intelligence: 5,
+          constitution: 5,
+          perception: 5,
+          wisdom: 5,
+          ...attributes,
+        },
+        // High enough that no row's level gate refuses, since an equip this test
+        // never performs is not what is being asked about.
+        level: 20,
+      }),
+    );
+
+  it('pays a Strength build for the maul and an Agility build for the stars', () => {
+    const brawn = { strength: 40 };
+    const speed = { agility: 40 };
+    expect(holding('maul.iron', brawn).attackDamage).toBeGreaterThan(holding('maul.iron', speed).attackDamage);
+    expect(holding('stars.weighted', speed).attackDamage).toBeGreaterThan(
+      holding('stars.weighted', brawn).attackDamage,
+    );
+  });
+
+  it('pays an Intelligence build for swinging the staff -- which it never did before', () => {
+    expect(holding('staff.emberwood', { intelligence: 40 }).attackDamage).toBeGreaterThan(
+      holding('staff.emberwood', { strength: 40 }).attackDamage,
+    );
+  });
+
+  it('gives a weapon that does not scale with Strength no Strength damage at all', () => {
+    // The stars are `- / S / -`, so Strength moves nothing about them.
+    const lean = holding('stars.weighted', { strength: 5 }).attackDamage;
+    const brawny = holding('stars.weighted', { strength: 55 }).attackDamage;
+    expect(brawny).toBeCloseTo(lean, 9);
+  });
+
+  it('takes a contribution from both letters of a two-attribute weapon', () => {
+    const flat = holding('sword.keen').attackDamage;
+    expect(holding('sword.keen', { strength: 30 }).attackDamage).toBeGreaterThan(flat);
+    expect(holding('sword.keen', { agility: 30 }).attackDamage).toBeGreaterThan(flat);
+  });
+
+  it('leaves Constitution, Wisdom and Perception out of it entirely', () => {
+    const plain = holding('sword.keen').attackDamage;
+    expect(holding('sword.keen', { constitution: 55 }).attackDamage).toBeCloseTo(plain, 9);
+    expect(holding('sword.keen', { wisdom: 55 }).attackDamage).toBeCloseTo(plain, 9);
+    expect(holding('sword.keen', { perception: 55 }).attackDamage).toBeCloseTo(plain, 9);
+  });
+
+  it('still deals its weapon\'s damage when the weapon scales with nothing', () => {
+    // No shipped row scales with nothing, so the rule is asked of the arithmetic
+    // directly: with every grade at None the attribute term is zero and what is
+    // left is the weapon's own range.
+    expect(
+      attributeScalingBonus({ strength: 60, agility: 60, intelligence: 60 }, NO_SCALING),
+    ).toBe(0);
+  });
+
+  it('scales an empty hand with the unarmed default rather than with nothing', () => {
+    const stats = computeEffectiveStats(player({ baseStats: { ...HIGH_STRENGTH } }));
+    expect(stats.weaponScaling).toEqual(UNARMED_SCALING);
+    // Above the bare range, because Strength was spent and the unarmed default
+    // scales with it. Fists are still worse than anything in the table.
+    expect(stats.weaponDamageMax).toBeGreaterThan(UNARMED_DAMAGE.max);
+    expect(stats.weaponDamageMax).toBeLessThan(holding('maul.iron', { strength: 40 }).weaponDamageMax);
+  });
+
+  it('resolves the held weapon\'s grades onto the stats, once', () => {
+    expect(holding('maul.iron').weaponScaling).toEqual(itemById('maul.iron')?.scaling);
+    expect(holding('bow.hunting').weaponScaling).toEqual(itemById('bow.hunting')?.scaling);
+  });
+
+  it('re-resolves when the weapon is swapped, against the same modifiers', () => {
+    const wearing = (mainHand: string): EffectiveStats =>
+      computeEffectiveStats(
+        player({
+          equipment: { ...EMPTY_EQUIPMENT, mainHand, trinket: 'trinket.precision' },
+          level: 20,
+        }),
+      );
+    // `+1 Agility Scaling` lands on whatever is held, and on nothing else.
+    expect(wearing('sword.worn').weaponScaling.agility).toBe(ScalingGrade.C);
+    expect(wearing('maul.iron').weaponScaling.agility).toBe(ScalingGrade.E);
+    expect(wearing('maul.iron').weaponScaling.strength).toBe(ScalingGrade.S);
+  });
+
+  // The property the tooltip depends on: an amulet may not write into the row.
+  it('leaves the weapon definition untouched by a modifier', () => {
+    const before = { ...(itemById('sword.worn')?.scaling ?? NO_SCALING) };
+    computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'sword.worn', trinket: 'trinket.runic' }, level: 20 }),
+    );
+    expect(itemById('sword.worn')?.scaling).toEqual(before);
+  });
+
+  it('publishes the summed grade steps, so the bag can resolve what it is hovering', () => {
+    const wearing = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, trinket: 'trinket.runic' }, level: 20 }),
+    );
+    expect(wearing.scalingModifiers).toEqual({ strength: -1, agility: 0, intelligence: 2 });
+    expect(computeEffectiveStats(player()).scalingModifiers).toEqual(NO_GRADE_MODIFIERS);
+  });
+
+  it('raises the damage when a modifier raises the grade, and not otherwise', () => {
+    const magus = { strength: 5, agility: 5, intelligence: 40, constitution: 5, perception: 5, wisdom: 5 };
+    const plain = computeEffectiveStats(
+      player({ baseStats: magus, equipment: { ...EMPTY_EQUIPMENT, mainHand: 'staff.emberwood' }, level: 20 }),
+    );
+    const pendant = computeEffectiveStats(
+      player({
+        baseStats: magus,
+        equipment: { ...EMPTY_EQUIPMENT, mainHand: 'staff.emberwood', trinket: 'trinket.runic' },
+        level: 20,
+      }),
+    );
+    // The staff's Intelligence is already `A`, so `+2` clamps at `S` -- one step
+    // of real movement, which is what the damage has to show.
+    expect(pendant.weaponScaling.intelligence).toBe(ScalingGrade.S);
+    expect(pendant.attackDamage).toBeGreaterThan(plain.attackDamage);
+  });
+
+  it('every weapon in the table says what it scales with', () => {
+    // The migration, as a gate: a weapon row added later without scaling is a
+    // weapon that quietly gets none, and this is where that is noticed.
+    for (const item of ALL_ITEMS) {
+      if (item.slot !== 'mainHand') continue;
+      expect(item.scaling, item.id).toBeDefined();
+    }
+  });
+});
+
+const HIGH_STRENGTH: BaseStats = {
+  strength: 40,
+  agility: 5,
+  intelligence: 5,
+  constitution: 5,
+  perception: 5,
+  wisdom: 5,
+};

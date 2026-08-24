@@ -513,7 +513,7 @@ export class WorldScene {
    */
   private readonly afflictions: AfflictionVfx;
   /**
-   * The paint a shot flies with (spec 216). A second driver rather than a
+   * The paint a shot flies with (spec 218). A second driver rather than a
    * branch in the one above, because the two answer different questions from
    * different facts -- one reads a body's replicated statuses, the other reads
    * what a projectile *is*.
@@ -772,7 +772,7 @@ export class WorldScene {
       // lets the driver put it back afterwards (spec 215).
       isLive: (handle) => this.vfx.system.isLive(handle),
     });
-    // The paint a shot flies with (spec 216), on the same four calls and for the
+    // The paint a shot flies with (spec 218), on the same four calls and for the
     // same reasons -- a persistent attached effect needs a handle it can find
     // out has been evicted, and it needs somebody to owe it a stop.
     this.shots = new ShotVfx({
@@ -1247,7 +1247,7 @@ export class WorldScene {
         y: this.ground(x, y) + 2,
         z: y,
         // One, and an authored effect is therefore drawn at the size it was
-        // authored at (spec 216).
+        // authored at (spec 218).
         //
         // The `max(0.25, radius / 40)` this replaces could not have worked, and
         // not by a little. `scale` multiplies the shape's local coordinates and
@@ -1264,7 +1264,7 @@ export class WorldScene {
         //
         // Changing it is free because this branch had never run: the server can
         // send 46 effect ids (`${ability.id}.impact` and `.self` over
-        // `ALL_ABILITIES`) and until spec 216 the registry held none of them, so
+        // `ALL_ABILITIES`) and until spec 218 the registry held none of them, so
         // every ability in this game had drawn the ring below since spec 062.
         //
         // The day a *burst* wants its picture sized by its blast, the honest way
@@ -1695,7 +1695,7 @@ export class WorldScene {
       // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
       // following rather than the one the deltas describe (spec 087).
       body.shot?.update(dt, x, y, ground);
-      // And the paint that flies with it (spec 216), off the same drawn pose.
+      // And the paint that flies with it (spec 218), off the same drawn pose.
       // Only the initial position is passed -- after that the attach hook
       // resolves `body.group.position` every tick, which the line above has
       // already set -- but passing it means the first frame's marks are born on
@@ -1781,7 +1781,7 @@ export class WorldScene {
       this.afflictions.forget(id);
       // The same obligation for a shot's paint, and it bites harder: a shot
       // lives a second and a half, so an unstopped one is a leak that runs at
-      // the rate of the shooting (spec 216).
+      // the rate of the shooting (spec 218).
       this.shots.forget(id);
       this.bodies.delete(id);
     }

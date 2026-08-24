@@ -76,7 +76,7 @@ const DUMMY_RADIUS = 14;
 const DUMMY_HEIGHT_RADII = 5;
 
 /**
- * The shot's own entity id, and where it flies (spec 216).
+ * The shot's own entity id, and where it flies (spec 218).
  *
  * A **second** body in this scene, and the reason it has to exist rather than
  * reusing the dummy's id is the whole of what a shot's paint is: an affliction
@@ -174,7 +174,7 @@ declare global {
        */
       affliction: (id: string, input: AfflictionTrigger) => number;
       /**
-       * Play any registry effect on a body that is **flying** (spec 216).
+       * Play any registry effect on a body that is **flying** (spec 218).
        *
        * The counterpart to {@link affliction}, and the difference is the point:
        * that one attaches to something standing still, and a shot's trail only
@@ -354,7 +354,7 @@ class BrushScene {
         // despawns mid-effect: the instance is left where it last resolved
         // rather than teleported to the origin.
         attach: (entityId, _socket, out, at) => {
-          // The shot, if one is in the air (spec 216). Asked every tick, and
+          // The shot, if one is in the air (spec 218). Asked every tick, and
           // the answer *changes* between them, which is the one thing this rig
           // could not do before and the only way a trail can be photographed.
           if (entityId === SHOT_ENTITY) {
@@ -467,7 +467,7 @@ class BrushScene {
   }
 
   /**
-   * The shot in the air, or null (spec 216).
+   * The shot in the air, or null (spec 218).
    *
    * Held rather than derived because the attach hook is asked for a *position*
    * every tick and there is nothing else in this rig that knows one.
@@ -598,7 +598,7 @@ class BrushScene {
     const whole = Math.max(0, Math.round(ticks));
     if (whole > 0) {
       if (this.flight) {
-        // One tick at a time while a shot is up (spec 216), and that is the
+        // One tick at a time while a shot is up (spec 218), and that is the
         // whole of the addition. `update(n)` runs n ticks against one emission
         // origin, so a trail advanced in a single call is laid down as a heap
         // at the far end of the flight -- which is not a shorter trail, it is
@@ -737,7 +737,7 @@ function main(): void {
     }),
     // The one trigger here that only means anything while time is running: a
     // shot's trail is laid down between ticks, so a paused rig shows the ball
-    // and nothing behind it (spec 216). Hold the scrubber or leave it playing.
+    // and nothing behind it (spec 218). Hold the scrubber or leave it playing.
     button('Ember shot', () => {
       scene.clear();
       scene.shot('shot_ember', { seed: roll(), radius: 9, from: 200 });

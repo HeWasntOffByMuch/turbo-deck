@@ -27,7 +27,7 @@ describe('the weapon switch', () => {
   });
 
   /**
-   * The narrowing spec 216 made, stated as the thing it prevents.
+   * The narrowing spec 218 made, stated as the thing it prevents.
    *
    * Until then this table was every distinct attack the item table could name,
    * and the two rules below held by coincidence: the only weapons that named a

@@ -52,7 +52,7 @@ const TRACE_LIFT = 2.5;
 const OUTLINE_SCALE = 1.4;
 
 /**
- * How round the ember's core is drawn (spec 216).
+ * How round the ember's core is drawn (spec 218).
  *
  * One subdivision, the mote's rather than the bolt's. A faceted die is right for
  * a conjured shot that is on screen for a moment and *supposed* to look cut from
@@ -141,7 +141,7 @@ export class ShotRig {
         break;
       case 'ember':
         this.spinner = null;
-        // The orb geometry, at half the size and in fire (spec 216). Reusing it
+        // The orb geometry, at half the size and in fire (spec 218). Reusing it
         // is not a shortcut: a core behind a brighter rim is exactly the pair
         // `buildOrb` already draws, and a second sphere builder would be a
         // second thing to keep looking right. What is authored here is the two
@@ -162,7 +162,7 @@ export class ShotRig {
 
     // Only the star traces. An arrow is long enough to show its own direction,
     // and a conjured orb streaking would read as a second spell. The ember
-    // leaves a trail and deliberately not this one (spec 216): a `Trail` is a
+    // leaves a trail and deliberately not this one (spec 218): a `Trail` is a
     // flat strip of geometry laid across the ground plane, and smoke is not a
     // ribbon -- what is behind an ember is `shot_ember`'s own world-space marks,
     // laid down by the paint and left where they fall.

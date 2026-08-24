@@ -7,7 +7,7 @@
 //   .claude/screenshots/brush-blood.png       the hit: lifecycle, bearings, seeds
 //   .claude/screenshots/brush-explosion.png   the blast: lifecycle, bearings, seeds
 //   .claude/screenshots/brush-shot.png        the ember shot in flight, and where
-//                                             it lands (spec 216)
+//                                             it lands (spec 218)
 //
 // ## Why the shot is on this sheet rather than one of its own
 //
@@ -508,7 +508,7 @@ async function main(): Promise<void> {
       ]),
     });
 
-    // --- the ember shot (spec 216) ----------------------------------------
+    // --- the ember shot (spec 218) ----------------------------------------
     //
     // The ball's own radius is 9 and it travels 273 units a second, so a tick is
     // half a radius: by tick 20 it has crossed ten shot-lengths and everything
@@ -593,7 +593,7 @@ async function main(): Promise<void> {
         // through the rig's `explosion()` helper: that one goes via
         // `brushExplosionRequest`, which picks a preset by size and would hand
         // back `explosion_brush_small` -- a different effect, with smoke in it,
-        // photographed under this one's label. `scale: 1` because since spec 216
+        // photographed under this one's label. `scale: 1` because since spec 218
         // `scene.addEffect` plays an authored effect at its authored size, and
         // this sheet has to show what the game shows.
         {

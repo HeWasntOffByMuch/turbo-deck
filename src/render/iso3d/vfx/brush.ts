@@ -1174,7 +1174,7 @@ export function brushAfflictionPulse(params: BrushPulseParams): EffectDefinition
 // --- the paint a shot carries with it ----------------------------------------
 
 /**
- * The marks a projectile wears and the ones it leaves behind (spec 216).
+ * The marks a projectile wears and the ones it leaves behind (spec 218).
  *
  * A **state**, in exactly the register {@link brushAffliction} is one: played
  * once when the shot comes into view, attached to a body that is moving fast,
@@ -1418,9 +1418,9 @@ export function brushShot(params: BrushShotParams): EffectDefinition {
 export const BRUSH_EXPLOSION_RADIUS = 60;
 
 /**
- * How wide the ember shot's impact burst is, in world units (spec 216).
+ * How wide the ember shot's impact burst is, in world units (spec 218).
  *
- * The radius it is **authored at and drawn at**, which since spec 216 are the
+ * The radius it is **authored at and drawn at**, which since spec 218 are the
  * same statement: `scene.addEffect` plays an authored effect at scale 1, so a
  * number here is a length on screen rather than an input to a conversion. That
  * matters more than it sounds -- `scale` multiplies a mark's size and *not* its
@@ -1543,7 +1543,7 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   }),
   brushExplosion({ id: 'explosion_brush', radius: BRUSH_EXPLOSION_RADIUS, light: true }),
   /**
-   * The ember shot's landing (spec 216), and the painted explosion's first
+   * The ember shot's landing (spec 218), and the painted explosion's first
    * caller in the game.
    *
    * Reached by the seam the server has had since spec 062 and no other: a
@@ -1578,7 +1578,7 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   }),
 
   /**
-   * The ember shot in flight (spec 216).
+   * The ember shot in flight (spec 218).
    *
    * Named for the *look* rather than for the ability, because `SHOT_ART` keys on
    * `ProjectileLook` -- two rows throwing the same-looking shot are one picture,

@@ -69,7 +69,7 @@ export const PALETTE = {
   arrowHead: 0xd3d9df,
   arrowFletch: 0xbc4a3c,
   shurikenSteel: 0xb4bfca,
-  // The ember shot's core (spec 216), and the one shot in the table that is
+  // The ember shot's core (spec 218), and the one shot in the table that is
   // mostly paint: the mesh is half the collision radius and everything around
   // it is `shot_ember`'s marks, so these two only have to be the hot middle.
   // Near-white against a hot orange rim -- the same core-and-rim pair a mote

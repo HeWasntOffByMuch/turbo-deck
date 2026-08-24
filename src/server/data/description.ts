@@ -312,7 +312,13 @@ function effectLines(ability: AbilityDefinition): readonly string[] {
   // No effect list is "the damage, as before", which is what every row written
   // before spec 188 means.
   const out: string[] = [];
-  if (ability.damage > 0) out.push(`Deals ${amount(ability.damage)} damage.`);
+  // A basic attack's damage is the **weapon's**, since spec 217, so there is no
+  // number on this row to state -- and stating the row's anyway is exactly the
+  // second copy of a rule the vocabulary standard exists to forbid. What the
+  // weapon rolls between is on the weapon's own tooltip, where the player is
+  // choosing between weapons.
+  if (ability.basicAttack === true) out.push('Deals your weapon damage.');
+  else if (ability.damage > 0) out.push(`Deals ${amount(ability.damage)} damage.`);
   const healing = healLine(ability.healing ?? 0, ability.healingFraction ?? 0, true);
   if (healing) out.push(healing);
   return out;
@@ -548,6 +554,16 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'moveSpeed', where: 'stat', name: 'Move Speed', form: 'flat' },
   { key: 'moveSpeedPct', where: 'stat', name: 'Move Speed', form: 'percent' },
   { key: 'turnRate', where: 'stat', name: 'Turn Rate', form: 'flat' },
+
+  // --- weapon scaling grades (spec 216) ------------------------------------
+  //
+  // Named here as well as in `inventory-model.ts` for the reason this table
+  // exists: an item and a passive skill granting the same field must call it the
+  // same thing. `flat`, because a step is a whole signed count and not a
+  // percentage of anything -- `+1 Agility Scaling` says exactly what it does.
+  { key: 'strengthScalingGrade', where: 'stat', name: 'Strength Scaling', form: 'flat' },
+  { key: 'agilityScalingGrade', where: 'stat', name: 'Agility Scaling', form: 'flat' },
+  { key: 'intelligenceScalingGrade', where: 'stat', name: 'Intelligence Scaling', form: 'flat' },
 
   // --- the trait half ------------------------------------------------------
   //

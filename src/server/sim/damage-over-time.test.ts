@@ -399,7 +399,10 @@ describe('how it arrives', () => {
 
   it('names its source as the killer when it finishes somebody', () => {
     const poison = row(StatusId.Poison);
-    const dying = applyDot(body(1, 600, 450, 1), StatusId.Poison, 0, source(9));
+    // A sliver rather than 1 health: spec 217 divided the affliction rates by
+    // seven, so one pulse is a fraction of a point and a body on 1 survives it.
+    // What this test is about is who gets the credit, not how hard a tick hits.
+    const dying = applyDot(body(1, 600, 450, 0.01), StatusId.Poison, 0, source(9));
     const world = new Map([[dying.id, dying]]);
     const ran = pulse(world, dying.id, 0, poison.intervalTicks + 1);
 
@@ -437,7 +440,10 @@ describe('what a lethal pulse leaves behind', () => {
     // they had aimed at before dying.
     const poison = row(StatusId.Poison);
     const casting: ServerEntity = {
-      ...applyDot(body(1, 600, 450, 1), StatusId.Poison, 0, source(9)),
+      // A sliver, for the reason the test above gives: one pulse is a fraction
+      // of a point since spec 217, and what is being asked here is what a
+      // *lethal* pulse does to the cast the body was holding.
+      ...applyDot(body(1, 600, 450, 0.01), StatusId.Poison, 0, source(9)),
       cast: {
         abilityId: 'ground.quake',
         phase: CastPhase.Windup,

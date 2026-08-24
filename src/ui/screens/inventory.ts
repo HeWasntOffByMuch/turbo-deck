@@ -36,7 +36,7 @@ import {
 } from '../widgets/item-slot.js';
 import { Label } from '../widgets/label.js';
 
-export type { ItemDetail, ItemView, SlotRef } from '../widgets/item-slot.js';
+export type { ItemDetail, ItemDetailSpan, ItemView, SlotRef } from '../widgets/item-slot.js';
 
 /**
  * What a tone is drawn in (spec 185).
@@ -50,6 +50,14 @@ const TONE_TOKENS: Readonly<Record<Exclude<DetailTone, 'rarity'>, string>> = {
   bad: 'danger',
   dim: 'textDim',
   normal: 'text',
+  // Attribute identity (spec 216), and deliberately not `danger`/`success`:
+  // those two mean bad and good, and an `S` -- the best grade on the ladder --
+  // drawn in the drawback colour would read as a warning. One hue each, so the
+  // three positions of a scaling line say which attribute they are without
+  // three labels that would not fit beside them.
+  strength: 'attrStrength',
+  agility: 'attrAgility',
+  intelligence: 'attrIntelligence',
 };
 
 /**
@@ -357,10 +365,24 @@ export class InventoryScreen extends Row {
     const lines: TooltipLine[] = [{ text: item.name, colorToken: tier }];
     if (item.count > 1) lines.push({ text: `x${item.count}`, colorToken: TONE_TOKENS.dim });
     for (const detail of item.details) {
-      lines.push({
-        text: detail.text,
-        colorToken: detail.tone === 'rarity' ? tier : TONE_TOKENS[detail.tone],
-      });
+      const colorToken = detail.tone === 'rarity' ? tier : TONE_TOKENS[detail.tone];
+      // A spanned line carries its runs through with each one's tone resolved
+      // here, which is the same hop the line's own tone makes: the view-model
+      // says what kind of thing each run is and this file says what that looks
+      // like. `text` rides along as the whole line, because the readout and the
+      // repeat-hover key are built from it.
+      lines.push(
+        detail.spans === undefined
+          ? { text: detail.text, colorToken }
+          : {
+              text: detail.text,
+              colorToken,
+              spans: detail.spans.map((span) => ({
+                text: span.text,
+                colorToken: span.tone === 'rarity' ? tier : TONE_TOKENS[span.tone],
+              })),
+            },
+      );
     }
     if (item.levelRequirement > this.level) {
       lines.push({ text: `Requires level ${item.levelRequirement}`, colorToken: TONE_TOKENS.bad });

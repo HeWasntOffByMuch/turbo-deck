@@ -158,7 +158,7 @@ export const SHURIKEN_SPIN_TURNS_PER_SECOND = 7.5;
 
 /**
  * How large the ember's drawn core is against the shot's collision radius
- * (spec 216).
+ * (spec 218).
  *
  * **Less than one, and that is the whole of the look.** An arrow and a star are
  * *objects*: their mesh is the entire silhouette, which is why `ARROW_DRAW_SCALE`

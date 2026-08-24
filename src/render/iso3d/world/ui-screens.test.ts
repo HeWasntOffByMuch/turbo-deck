@@ -22,6 +22,7 @@ import { EntityKind } from '../../../server/net/protocol.js';
 import { startingBaseStats } from '../../../server/player/attributes.js';
 import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
 import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
+import { NO_WEAPON } from '../../../server/data/weapon-scaling.js';
 import type { EffectiveStats } from '../../../server/state/types.js';
 import { visualFor } from '../../../server/data/status-visuals.js';
 import { StatusId } from '../../../server/sim/statuses.js';
@@ -940,7 +941,11 @@ describe('the tooltip, over the world (spec 136)', () => {
     expect(screens.tooltipText.split('\n')).toEqual([
       'Keen Longsword',
       'Rare  Main Hand',
-      '+8 Damage',
+      // What it hits for and what that grows with (specs 216, 217): the range
+      // is the row's own, and the scaling line is drawn as three coloured runs
+      // and read back here as the whole line it also carries as text.
+      '3-6 Damage',
+      'B / B / -',
       '+6 Range',
       '+15% Attack Speed',
       'Worth 90 coins',
@@ -1395,6 +1400,7 @@ describe('the character window scrolls under its tabs', () => {
     resourceRegen: 0.5,
     basicAttackId: 'melee.slash',
     skillAbilityIds: [],
+  ...NO_WEAPON,
     traits: NEUTRAL_TRAITS,
   };
 

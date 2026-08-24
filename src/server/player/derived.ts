@@ -23,7 +23,7 @@
  * Pure. No clock, no randomness, no entity.
  */
 
-import { MAX_DAMAGE_REDUCTION, PLAYER_ATTACK_DAMAGE } from '../../sim/constants.js';
+import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
 import { above, linear, reciprocal, SCALING, softCap } from '../data/scaling.js';
 import { desperationSurge, maxFallbackCharges, RESTORATION } from '../data/restoration.js';
 import { emptyTraitTotals, type ModifierTotals } from '../data/modifiers.js';
@@ -67,7 +67,6 @@ export const NEUTRAL_TRAITS: TraitStats = {
   executeBonus: 0,
   executeBelow: 0,
   overkillResource: 0,
-  weaponPower: 1,
   momentumTicks: 0,
   momentumWindupScale: 0,
   heavyWindupScale: 1,
@@ -321,9 +320,6 @@ export function deriveTraits(
     executeBonus: Math.max(0, t.executeBonus),
     executeBelow: clamp(t.executeBelow, 0, 1),
     overkillResource: Math.max(0, t.overkillResource),
-    // The Damage row, expressed as a multiplier a blow can be multiplied by.
-    // A body with the reference damage hits for exactly what the ability says.
-    weaponPower: Math.max(0, context.attackDamage / PLAYER_ATTACK_DAMAGE),
     momentumTicks: Math.max(0, Math.round(t.momentumTicks)),
     momentumWindupScale: clamp(t.momentumWindupScale, 0, 0.9),
     heavyWindupScale: reduction(t.heavyWindupReduction),

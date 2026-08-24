@@ -134,7 +134,7 @@ describe('shurikenOutline', () => {
   });
 });
 
-describe('emberCoreRadius (spec 216)', () => {
+describe('emberCoreRadius (spec 218)', () => {
   it('draws smaller than it collides, because the paint is the silhouette', () => {
     // The opposite of the star, and on purpose. An arrow and a shuriken are
     // objects and their mesh is the whole of them; a ball of fire is not, so the

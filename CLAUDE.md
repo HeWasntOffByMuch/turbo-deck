@@ -62,6 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
@@ -1948,6 +1949,150 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 `data/weapon-scaling.ts` is **what a weapon scales with**
+                 (spec 216), and it exists because until it did, every weapon in
+                 the game scaled the same way and the way was Strength: the two
+                 attribute terms were written into `attackDamage` in
+                 `player/stats.ts`, so the maul, the Hunting Bow and the
+                 Emberwood Staff all bought damage from the same stat and nothing
+                 a designer could write in `data/items.ts` changed it. Swinging
+                 the staff -- a row granting +3 Intelligence and spell power --
+                 was a Strength act.
+                 A weapon now authors one letter per attribute,
+                 `None -> E -> D -> C -> B -> A -> S`, over Strength, Agility and
+                 Intelligence and those three only. `ScalingGrade` is *ordinal*
+                 rather than a letter union, the `StatusId` const-object pattern,
+                 because every operation a grade has is step arithmetic and
+                 clamping; the letters are `GRADE_LETTERS` and are a display
+                 concern.
+                 Four rules, and the first is the one the feature does not work
+                 without. **One rate for all three attributes.** Strength used to
+                 buy 0.6 damage a point and Agility 0.15, a four-to-one gap
+                 sitting *underneath* the grades -- an `A` in Agility would have
+                 been worth less than an `E` in Strength, and no letter anybody
+                 could write would have balanced the two. So
+                 `SCALING.weaponScaling.damagePerPoint` is shared and the
+                 **grade** is the whole differentiation. It is `2/3` because
+                 `2/3 * 0.9` is exactly `0.6`: grade `A` reproduces the Strength
+                 rate this replaced, so migrating a weapon to `A` moved a
+                 Strength build's damage by nothing at all. An independent
+                 constant rather than one derived from `A`, or retuning `A` would
+                 be silently cancelled by the rate it was chosen against.
+                 **The coefficients live in `SCALING` and nowhere else.**
+                 `data/scaling.ts` already states its reason to exist -- a
+                 balance pass is a diff of that file and nothing else -- so
+                 deciding `S` is worth 1.30 is one edit that reaches every `S`
+                 weapon in the game. A weapon row stores the *letter*, and the
+                 tooltip draws the letter it was authored with rather than
+                 inferring one back out of a number. `coefficientOf` is the only
+                 reader, and it switches on the ordinal so a corrupt row answers
+                 `none` rather than `undefined`.
+                 **`effectiveScaling` is the single resolver**, and both the
+                 damage and the tooltip go through it -- which is what makes "what
+                 the number does" and "what the player is told" the same sentence
+                 rather than two implementations that agree until one is edited.
+                 It returns a new object and never touches the base, which is the
+                 property the modifier design rests on: an amulet raising Agility
+                 a grade must not write into `data/items.ts`, because taking it
+                 off would need the row restored from somewhere and there is
+                 nowhere. Removing a modifier restores the effective scaling
+                 because the base was never moved.
+                 And **a modifier is a step, generic and summed**: three flat
+                 fields on `StatModifier` beside the six attribute grants, added
+                 by `sumModifiers` with everything else, so a ring at +1, an
+                 amulet at +2 and a debuff at -1 are a net +2 clamped **once** --
+                 rather than three clamps in a row, which answer differently near
+                 the ends of the ladder. `S + 1` is `S`, `None - 1` is `None`, and
+                 there is no `S+` and no `F`. A step also *lifts* a `None`, which
+                 is deliberate: a modifier that could not create scaling would
+                 make "raise a grade" mean two different things.
+                 What did **not** move is spec 147's split: `resolveBlow` still
+                 chooses between `weaponPower` and `spellPower` on
+                 `ability.basicAttack`, so a weapon's letters reach a swing and an
+                 ability still scales with Intelligence's spell power. And
+                 monsters have no weapon row, so `AuthoredStats` cannot author
+                 scaling at all and `withTraits` fills in `NO_WEAPON_SCALING`.
+                 The two resolved fields ride `EffectiveStats` and the `Stats`
+                 message, and both are needed rather than one: the grades answer
+                 "what does the weapon I am holding scale with", and the steps are
+                 what the bag needs to answer the same question about a weapon it
+                 is only *hovering*. Re-deriving those steps from the client's own
+                 copy of the equipment would be the second modifier
+                 implementation the whole spec exists to prevent -- and would miss
+                 the milestones and synergies that side cannot see.
+                 `npx tsx scripts/preview-weapon-scaling.ts` is the balance
+                 instrument: the roster, the coefficient budget each weapon's
+                 letters add up to (which is the number a balance pass actually
+                 reads, because breadth has to be paid for or a three-letter
+                 weapon is simply better than a one-letter one), and what the
+                 migration moved at five builds. `explainScaling` is the same
+                 arithmetic taken apart term by term, for answering "why did that
+                 hit for 70" during development; nothing in production reads it.
+                 `data/weapon-scaling.ts` also holds **what a weapon hits
+                 for** (spec 217), because a weapon having damage of its own is
+                 the other half of it having scaling of its own. A row authors a
+                 `{ min, max }` and that *is* the basic attack: before it, a
+                 swing was `ability.damage * weaponPower`, so the number setting
+                 how hard every sword in the game hit was a field on
+                 `melee.slash` -- shared with every monster on the map.
+                 Three findings, and they were one finding. **A weapon had no
+                 damage of its own**, so "this sword hits for 1 to 3" was not
+                 expressible. **Every melee monster hit for exactly 14**:
+                 `monsterTraits` spreads `NEUTRAL_TRAITS`, whose `weaponPower` is
+                 1, so a monster's blow was `melee.slash.damage` and the
+                 `attackDamage` its row authored reached nothing but its stagger
+                 power -- the Ravager's 24 and the Grazer's 6 landed identically,
+                 and the Training Dummy authored 0 and hit for 14. And **the
+                 numbers were an order of magnitude too big to read**: a fresh
+                 character hit a 24-health Grazer for 26.3 and deleted it.
+                 `EffectiveStats.weaponDamageMin`/`Max` is the resolved range,
+                 with the attribute term, the flat bonuses and the percentage
+                 already folded into **both ends** -- so a wide weapon stays wide
+                 and `resolveBlow` rolls and is done. `attackDamage` survives as
+                 the **midpoint**, which is what the character sheet shows and
+                 what a stagger's power is sized off; `TraitStats.weaponPower` is
+                 gone, its one production reader having stopped reading it.
+                 A monster's range is `min = max =` its authored `attackDamage`,
+                 filled in by `withTraits`, which is the whole of the second bug.
+                 **The draw is one `nextInt`, before the crit roll, and only for
+                 a basic attack.** Conditioning on the ability's own
+                 `basicAttack` flag is safe where conditioning on a *chance*
+                 would not be: it is a property of the row, fixed for an id, so
+                 two replays of the same inputs draw the same count. The Rng draw
+                 count is protocol, so this moved every seeded combat sequence in
+                 the tree once, deliberately.
+                 The scaling baseline moved with it: spec 216's attribute term is
+                 measured through `above()` now, the rule `data/scaling.ts`
+                 already applies to every other scale, so a character who has
+                 spent nothing gets nothing from scaling and the Worn Sword's
+                 `1-3` is exactly what a fresh character hits for.
+                 What the rescale reached, and why each: health and monster
+                 damage **divide by four**; ability damage, DoT rates and
+                 `HEAVY_ABILITY_DAMAGE` divide by **seven**, measured against
+                 `npm run balance` rather than chosen -- at a quarter,
+                 Intelligence sat at 13 kills against Strength's 5 where main had
+                 9 against 8, because abilities had kept their power against
+                 health while weapons lost a third of theirs. The **poise**
+                 economy divides by four alongside health and had to: a monster's
+                 guard is `maxHealth * monsterPoiseFraction` floored at
+                 `minPoise`, so quartering health alone put every monster in the
+                 game on the floor. `data/restoration.ts` needed no change at
+                 all, because every number in it is a fraction of a pool.
+                 Two things in the **harness** were measuring a character nobody
+                 plays, and both were invisible until the table went strange.
+                 `bestReady` compares each ability against the basic attack's
+                 damage, read off the ability row -- which is 0 now -- so every
+                 build stopped swinging and the weak-point column went to zero
+                 across all twelve; it reads `stats.attackDamage`. And the
+                 presets fought in `EMPTY_EQUIPMENT`, which used to be worth 14 a
+                 swing and is now a 1-2 punch, so they wear `STARTER_EQUIPMENT`
+                 -- the same worn sword for all twelve, a control rather than a
+                 variable.
+                 The one row that did **not** divide by four is the Grazer, which
+                 divided by eight: being hit sends it running for two and a half
+                 seconds, it used to die to the first blow that landed, and at a
+                 quarter it took three hits, fled three times and could not be
+                 caught. Prey that cannot be caught is scenery with a loot table.
                  `data/description.ts` is what those tables *say* (spec 191) --
                  the one writer for every player-facing Technical Description,
                  composing a row into a target, its effects in the row's own
@@ -3003,7 +3148,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
-                 shot-vfx.ts (the paint a shot flies with, spec 216: `SHOT_ART`
+                 shot-vfx.ts (the paint a shot flies with, spec 218: `SHOT_ART`
                  says which effect each `ProjectileLook` carries, and the driver
                  beside it starts one when a projectile comes into view and stops
                  it when it leaves. Built to `affliction-vfx.ts`'s three rules
@@ -3036,7 +3181,12 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  starting kit: two tests had asserted since spec 126 that every
                  entry is level 1 and in the player's bag, and both held by
                  coincidence until a rare level-4 staff named an attack and
-                 turned up as a fourth button that equips nothing)
+                 turned up as a fourth button that equips nothing. The staff's
+                 own `damage` moved with it, from the `{1, 2}` spec 217 gave the
+                 weakest row in the table -- authored when *"hitting somebody
+                 with it is the fallback rather than the plan"* -- to a `{2, 5}`
+                 between the bow and the keen sword, because since 217 that
+                 range **is** what an Ember Shot hits for)
                  unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
                  monsters are drawn from an authored unit, the pure function from
                  replicated facts to machine commands -- handed a snapshot and not
@@ -3622,7 +3772,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  photographs the real page into .claude/screenshots/world-*.png,
                  and `npx tsx scripts/preview-shots.ts` flies the real ShotRig
                  through a real arc into .claude/screenshots/shots.png. That one
-                 photographs the *mesh* and since spec 216 the ember's column on
+                 photographs the *mesh* and since spec 218 the ember's column on
                  it is deliberately incomplete, because an ember is the one shot
                  whose mesh is half its collision radius and whose silhouette is
                  the paint: the whole picture is `preview-brush-vfx.ts`'s third

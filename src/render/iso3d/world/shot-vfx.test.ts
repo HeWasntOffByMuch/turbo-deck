@@ -1,5 +1,5 @@
 /**
- * The paint a shot flies with (spec 216).
+ * The paint a shot flies with (spec 218).
  *
  * Two halves, and they fail differently. The **table** half is the pair of
  * assertions spec 215 wrote for `AFFLICTION_ART`, restated one system along:
