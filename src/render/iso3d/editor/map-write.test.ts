@@ -189,9 +189,9 @@ describe('a map the editor made, over a map that is already there', () => {
       readFileSync(join(root, 'maps', 'arena', region), 'utf8'),
     );
 
-  it('writes a rock tier, and reads it back as two layers (spec 219)', () => {
+  it('writes a rock tier, and reads it back as two layers (spec 220)', () => {
     // The editor's own tool, not a hand-built document: `addRock` adds a layer,
-    // and until spec 219 the split refused every map that had one. From the
+    // and until spec 220 the split refused every map that had one. From the
     // panel that was "Save to maps/" answering `not a map document`, with the
     // map unsaveable until the tier was undone.
     const { root } = already();

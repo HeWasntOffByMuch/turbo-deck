@@ -237,7 +237,7 @@ function regionBounds(
  * diffed and validated on its own.
  *
  * **A region is a square of the world, so it holds everything in that square**
- * (spec 219). It was written one layer to a file, which refused every map this
+ * (spec 220). It was written one layer to a file, which refused every map this
  * format has always promised to carry -- `heightAt` maxes over layers, the
  * mesher skirts them, the wire sends them, and the editor's Rock and Stair
  * tools make them. The arena's ground covers the world, so every tier collided
@@ -444,7 +444,7 @@ export function joinMap(manifest: MapManifest, readRegion: (path: string) => str
  * anything, and `bounds` is the region's own extent rather than the layer's, so
  * a region disagreeing with the manifest about it is the normal state and not a
  * fault. A file that does not carry the layer at all is the complaint that
- * replaces the old "names layer X, manifest says Y": since spec 219 a region
+ * replaces the old "names layer X, manifest says Y": since spec 220 a region
  * may carry several, so what matters is whether this one is among them.
  */
 export function regionsAgreeWithManifest(
@@ -479,7 +479,7 @@ export function regionsAgreeWithManifest(
 }
 
 /**
- * Which files in `r/` the manifest no longer makes reachable (spec 219).
+ * Which files in `r/` the manifest no longer makes reachable (spec 220).
  *
  * `writeSplit` has to sweep the regions a save left behind, and the rule for
  * that is spec 209's: **the manifest is the only thing that makes a region

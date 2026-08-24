@@ -498,7 +498,7 @@ export default tseslint.config(
     // and rejoins documents, names regions and computes identities, and
     // `map-file.ts` on the server and `map-asset.ts` in the browser are what
     // actually read bytes. That has been stated in `regions.ts` since spec 204
-    // and was honour-system until spec 219, where it cost a map.
+    // and was honour-system until spec 220, where it cost a map.
     //
     // `writeSplit` decided which region files a save had made unreachable by
     // comparing `path.join('r', name)` against `regionPath`'s `r/name`. A region
@@ -523,7 +523,7 @@ export default tseslint.config(
             {
               group: ['node:*'],
               message:
-                'src/terrain/ reads no files and joins no paths. A region path is a key in a document, not a location on a disk — spelling one with path.join is the Windows bug spec 219 fixed.',
+                'src/terrain/ reads no files and joins no paths. A region path is a key in a document, not a location on a disk — spelling one with path.join is the Windows bug spec 220 fixed.',
             },
           ],
         },

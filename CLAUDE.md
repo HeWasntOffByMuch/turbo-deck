@@ -219,7 +219,38 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  every write was the whole world and **deletes the entire map**
                  the first time it is handed the three regions a grow changed:
                  the manifest is the only thing that makes a region reachable, so
-                 the manifest is the only thing that can say a file is not. A recipe is the only place natural
+                 the manifest is the only thing that can say a file is not.
+                 Spec 220 is the two things that rule was still getting wrong.
+                 **A region is a square of the world, so it holds every layer in
+                 it** -- it was written one layer to a file, and the format has
+                 always promised layers (`heightAt` maxes over them, the mesher
+                 skirts them, the wire carries them, `probe-rock.ts` builds a
+                 three-layer world) with the editor's Rock and Stair tools the
+                 way you make one. The arena's ground covers everything, so every
+                 tier collided with it and `splitMap` threw: from the panel that
+                 was "Save to maps/" answering `not a map document`, the map
+                 unsaveable until the tier was undone, and the download it points
+                 at instead unable to be split back. Layers go into a region file
+                 in document order and `joinMap` picks its layer **by id** rather
+                 than taking `layers[0]` -- which would hand one layer the other's
+                 chunks silently, since chunks are chunks either way. Each layer's
+                 entry names the shared file: the `hash` is the *file's*, because
+                 that is what says the bytes have not drifted, and the `cells` are
+                 that layer's *own*, because that is what an unfilled rim is
+                 measured against. A one-layer map is byte-identical, so no
+                 committed map file moved.
+                 And **which files a save made unreachable is a question about the
+                 document, not about a disk**: `writeSplit` asked it with
+                 `path.join('r', name)` against `regionPath`'s `r/name`. A region
+                 path is a *key* -- the manifest names it and both ends compare it
+                 as a string -- so the two agree on POSIX, and on Windows nothing
+                 matched, every region file went into the stale set, and the last
+                 three lines of every save deleted the whole map: a manifest naming
+                 224 regions over an empty directory. CI is Linux, so nothing in
+                 the tree could see it. The decision is `staleRegionFiles` in
+                 `regions.ts` now, and lint refuses `node:*` under `src/terrain/`
+                 -- the rule that directory has stated since 204 and could not
+                 enforce. A recipe is the only place natural
                  language enters: an agent writes one, it is reviewed as JSON,
                  and nothing at runtime reads a model.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers

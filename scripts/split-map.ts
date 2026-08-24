@@ -77,7 +77,7 @@ export function writeSplit(
   // which is why nothing here exempts a file because it was just written. One
   // authority, or the two disagree and the loser is a file nobody can reach.
   //
-  // The decision itself lives in `regions.ts` beside the manifest (spec 219),
+  // The decision itself lives in `regions.ts` beside the manifest (spec 220),
   // because it is a decision about a document: made here, it was `path.join`
   // against `regionPath`'s forward slash, which agrees on POSIX and on Windows
   // deletes every region file in the map at the end of every save.

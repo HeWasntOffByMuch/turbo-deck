@@ -322,7 +322,7 @@ describe('the manifest on disk', () => {
 
 /**
  * The shipped ground with a second layer over it -- the shape a rock tier is
- * (spec 219).
+ * (spec 220).
  *
  * Two chunks on purpose: one sharing a region with the ground, which is the
  * case that used to throw, and one far outside every region the ground
