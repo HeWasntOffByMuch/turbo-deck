@@ -478,7 +478,7 @@ describe('movement validation', () => {
 
   it('refuses to let a body end up inside a wall', () => {
     // Stated here rather than borrowed from the sim's constants, which stopped
-    // carrying a layout in spec 220: what is being tested is that a rect stops
+    // carrying a layout in spec 221: what is being tested is that a rect stops
     // a body, so this test brings its own.
     const wall = { x: 300, y: 90, w: 36, h: 250 };
     let state = createWorldState(1);

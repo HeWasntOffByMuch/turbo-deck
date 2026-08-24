@@ -41,7 +41,7 @@ function insideWorld(position: Vec2, radius: number): boolean {
 /**
  * A barricade, for the player-vs-wall tests.
  *
- * Its own rectangle since spec 220 removed the hand-authored layout this used
+ * Its own rectangle since spec 221 removed the hand-authored layout this used
  * to borrow from: what these tests are about is that a rect blocks a body, not
  * where any particular rect once stood.
  */
@@ -57,7 +57,7 @@ function distance(a: Vec2, b: Vec2): number {
 
 
 
-describe('a world carries only the colliders it was given (spec 220)', () => {
+describe('a world carries only the colliders it was given (spec 221)', () => {
   it('defaults to no walls, where it used to default to the arena layout', () => {
     expect(createWorldColliders().rects).toEqual([]);
     expect(createWorldColliders([], []).rects).toEqual([]);
@@ -93,7 +93,7 @@ describe('hitbox geometry', () => {
   });
 
   it('reports a barricade as blocking inside it and clear out in the open', () => {
-    // The world is named rather than defaulted since spec 220: the default
+    // The world is named rather than defaulted since spec 221: the default
     // carries no walls, so a test that wants one has to bring it.
     const world = createWorldColliders([BARRICADE]);
     const inside = { x: BARRICADE.x + BARRICADE.w / 2, y: BARRICADE.y + BARRICADE.h / 2 };
