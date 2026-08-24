@@ -17,6 +17,7 @@ import { rarityRow } from '../../../server/data/loot.js';
 import type { StatModifier } from '../../../server/data/modifiers.js';
 import type { ItemDefinition } from '../../../server/data/items.js';
 import {
+  damageOf,
   effectiveScaling,
   letterOf,
   NO_GRADE_MODIFIERS,
@@ -220,6 +221,24 @@ function statDetails(modifiers: StatModifier): ItemDetail[] {
 }
 
 /**
+ * What a weapon hits for, before any attribute touches it (spec 217).
+ *
+ * The **row's own** range rather than the wielder's resolved one, and that is
+ * the deliberate half: this is the number a player compares two weapons by, and
+ * a range that already had the reader's Strength in it would make every weapon
+ * in the bag look better the more they had spent. What the attributes add is
+ * what the scaling line underneath is for.
+ *
+ * A single-value range says one number rather than `1-1`, because "1-1 damage"
+ * reads as a mistake.
+ */
+function damageDetail(definition: ItemDefinition): ItemDetail | null {
+  if (definition.slot !== 'mainHand') return null;
+  const { min, max } = damageOf(definition.damage, true);
+  return { text: `${min === max ? min : `${min}-${max}`} Damage`, tone: 'good' };
+}
+
+/**
  * What a weapon scales with, as one compact line (spec 216).
  *
  * Three positions, always `Strength / Agility / Intelligence` in that fixed
@@ -308,8 +327,11 @@ export function detailsFor(
     { text: slot === null ? tier : `${tier}  ${wornName(slot)}`, tone: 'rarity' },
   ];
   if (definition) {
-    // Above the stat lines: what a weapon scales with is the first thing a
-    // player decides on, and it is the line the other numbers are read against.
+    // Above the stat lines, and damage above scaling: what it hits for and what
+    // that grows with are the two things a player picks a weapon on, and the
+    // rest of the row is read against them.
+    const damage = damageDetail(definition);
+    if (damage) lines.push(damage);
     const scaling = scalingDetail(definition, modifiers);
     if (scaling) lines.push(scaling);
     lines.push(...statDetails(definition.modifiers));

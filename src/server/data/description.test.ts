@@ -159,13 +159,33 @@ describe('derived numbers match the row they came from', () => {
   });
 
   it('follows a retune without being edited', () => {
-    const slash = abilityById('melee.slash');
-    expect(slash).not.toBeNull();
-    if (!slash) return;
-    const louder = { ...slash, damage: 99, range: 123 };
+    // An *ability*, because since spec 217 a basic attack has no damage number
+    // of its own to follow -- see the test below.
+    const bolt = abilityById('bolt.arcane');
+    expect(bolt).not.toBeNull();
+    if (!bolt) return;
+    const louder = { ...bolt, damage: 99, range: 123 };
     const text = technicalText(describeAbility(louder));
     expect(text).toContain('Deals 99 damage.');
     expect(text).toContain('Range 123.');
+  });
+
+  it('sends a basic attack to the weapon rather than naming a number', () => {
+    // The vocabulary standard's rule (docs/mechanics-vocabulary.md): a
+    // description is derived from the row the sim reads, and since spec 217 the
+    // row the sim reads for a swing is the *weapon's*. Stating this ability's
+    // own `damage` would be a second copy of a rule, and a false one.
+    for (const ability of ALL_ABILITIES) {
+      if (!ability.basicAttack) continue;
+      const text = technicalText(describeAbility(ability));
+      expect(text, ability.id).toContain('Deals your weapon damage.');
+      expect(text, ability.id).not.toMatch(/Deals \d+ damage\./);
+    }
+    // And it holds even for a row that still carries a number.
+    const slash = abilityById('melee.slash');
+    if (slash) {
+      expect(technicalText(describeAbility({ ...slash, damage: 99 }))).not.toContain('99 damage');
+    }
   });
 
   it('converts ticks to seconds', () => {
@@ -182,9 +202,12 @@ describe('effects are described in the row order', () => {
     expect(ability).not.toBeNull();
     if (!ability) return;
     const text = technicalText(describeAbility(ability));
+    // Read off the row rather than spelled here: what this asserts is the
+    // *order* the three lines come in, and a hand-written number turns it into
+    // a test that fails whenever somebody retunes the skill.
     const strip = text.indexOf('Removes 50 Guard');
-    const guardDamage = text.indexOf('25 Guard damage');
-    const damage = text.indexOf('Deals 12 damage');
+    const guardDamage = text.indexOf('Guard damage');
+    const damage = text.indexOf(`Deals ${ability.damage} damage`);
     expect(strip).toBeGreaterThanOrEqual(0);
     expect(guardDamage).toBeGreaterThan(strip);
     expect(damage).toBeGreaterThan(guardDamage);
@@ -211,7 +234,7 @@ describe('effects are described in the row order', () => {
     expect(ability).not.toBeNull();
     if (!ability) return;
     expect(technicalText(describeAbility(ability))).toContain(
-      'Deals 7 damage every 0.25s for 2s.',
+      `Deals ${ability.damage} damage every 0.25s for 2s.`,
     );
   });
 });
@@ -223,7 +246,7 @@ describe('nothing is invented', () => {
     if (!ability) return;
     const effects = describeAbility(ability).lines.filter((line) => line.tone === 'effect');
     expect(effects).toHaveLength(1);
-    expect(effects[0]?.text).toBe('Deals 42 damage.');
+    expect(effects[0]?.text).toBe(`Deals ${ability.damage} damage.`);
   });
 
   it('adds no facing line for a row with no cast angle', () => {

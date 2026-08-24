@@ -7,7 +7,7 @@ import { EntityField, ServerMessageType } from './protocol.js';
 import { applyStatus, StatusId, adaptedKey, type Statuses } from '../sim/statuses.js';
 import { ADAPTED_ID, visualFor } from '../data/status-visuals.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
-import { NO_WEAPON_SCALING } from '../data/weapon-scaling.js';
+import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { blankProgression } from '../sim/world.js';
 
@@ -26,7 +26,7 @@ const STATS: EffectiveStats = {
   resourceRegen: 0.05,
   basicAttackId: 'melee.slash',
   skillAbilityIds: [],
-  ...NO_WEAPON_SCALING,
+  ...NO_WEAPON,
   traits: NEUTRAL_TRAITS,
 };
 

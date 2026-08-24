@@ -125,6 +125,7 @@ describe('detailsFor', () => {
     // The maul is the row that has both, which is why it is the one asked.
     expect(detailsFor('maul.iron')).toEqual([
       { text: 'Rare  Main Hand', tone: 'rarity' },
+      { text: '4-11 Damage', tone: 'good' },
       {
         text: 'S / - / -',
         tone: 'normal',
@@ -137,7 +138,6 @@ describe('detailsFor', () => {
         ],
       },
       { text: '+2 Strength', tone: 'good' },
-      { text: '+14 Damage', tone: 'good' },
       { text: '+10 Range', tone: 'good' },
       { text: '-20% Attack Speed', tone: 'bad' },
       { text: 'Worth 110 coins', tone: 'dim' },

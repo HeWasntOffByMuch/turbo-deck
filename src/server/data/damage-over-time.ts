@@ -114,7 +114,7 @@ const DEFINITIONS: readonly DotDefinition[] = [
     // The most damage a second in the table and the shortest life, which is
     // what "immediate pressure" is: it has to be answered now, and it answers
     // itself shortly whether you do anything or not.
-    damagePerSecond: 9,
+    damagePerSecond: 1.3,
     intervalTicks: seconds(0.5),
     pulses: 8,
     // It does not stack. A second application is the same fire, refreshed --
@@ -126,7 +126,7 @@ const DEFINITIONS: readonly DotDefinition[] = [
   {
     id: StatusId.Bleed,
     name: 'Bleed',
-    damagePerSecond: 5,
+    damagePerSecond: 0.7,
     intervalTicks: seconds(0.5),
     pulses: 12,
     maxStacks: 3,
@@ -141,7 +141,7 @@ const DEFINITIONS: readonly DotDefinition[] = [
     name: 'Poison',
     // The weakest rate and the longest life. One stack is barely worth
     // noticing; five is the whole point, and getting to five takes five darts.
-    damagePerSecond: 2,
+    damagePerSecond: 0.3,
     intervalTicks: seconds(0.5),
     pulses: 20,
     maxStacks: 5,
@@ -150,7 +150,7 @@ const DEFINITIONS: readonly DotDefinition[] = [
   {
     id: StatusId.Corrosion,
     name: 'Corrosion',
-    damagePerSecond: 4,
+    damagePerSecond: 0.6,
     intervalTicks: seconds(0.5),
     pulses: 12,
     maxStacks: 3,
@@ -175,7 +175,7 @@ const DEFINITIONS: readonly DotDefinition[] = [
   {
     id: StatusId.Shock,
     name: 'Shock',
-    damagePerSecond: 8,
+    damagePerSecond: 1.1,
     // Six times Poison's interval, from the same column of rates: the same
     // arithmetic arriving in lumps you can see land.
     intervalTicks: seconds(0.75),
@@ -190,7 +190,7 @@ const DEFINITIONS: readonly DotDefinition[] = [
     id: StatusId.Frostbite,
     name: 'Frostbite',
     // Starts at less than Poison's single stack and ends at more than Burn.
-    damagePerSecond: 2,
+    damagePerSecond: 0.3,
     intervalTicks: seconds(0.5),
     pulses: 16,
     maxStacks: 1,
@@ -203,7 +203,7 @@ const DEFINITIONS: readonly DotDefinition[] = [
     name: 'Decay',
     // The lowest damage in the table by design: what it costs you is not the
     // health it takes, it is the health you cannot put back.
-    damagePerSecond: 1.5,
+    damagePerSecond: 0.2,
     intervalTicks: seconds(1),
     pulses: 10,
     maxStacks: 1,

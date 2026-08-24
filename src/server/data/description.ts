@@ -312,7 +312,13 @@ function effectLines(ability: AbilityDefinition): readonly string[] {
   // No effect list is "the damage, as before", which is what every row written
   // before spec 188 means.
   const out: string[] = [];
-  if (ability.damage > 0) out.push(`Deals ${amount(ability.damage)} damage.`);
+  // A basic attack's damage is the **weapon's**, since spec 217, so there is no
+  // number on this row to state -- and stating the row's anyway is exactly the
+  // second copy of a rule the vocabulary standard exists to forbid. What the
+  // weapon rolls between is on the weapon's own tooltip, where the player is
+  // choosing between weapons.
+  if (ability.basicAttack === true) out.push('Deals your weapon damage.');
+  else if (ability.damage > 0) out.push(`Deals ${amount(ability.damage)} damage.`);
   const healing = healLine(ability.healing ?? 0, ability.healingFraction ?? 0, true);
   if (healing) out.push(healing);
   return out;

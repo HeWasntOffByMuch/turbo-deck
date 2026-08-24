@@ -343,13 +343,18 @@ describe('recovery', () => {
   });
 
   it('refuses while the body is in combat', () => {
-    const subject = hurt(50, {
+    // Half its pool rather than a literal: spec 217 divided every monster's
+    // health, and a hand-written 50 was above a Ravager's whole bar afterwards
+    // -- so recovery had nowhere to go and the test failed for a reason that
+    // had nothing to do with what it is about.
+    const half = max() / 2;
+    const subject = hurt(half, {
       statuses: applyStatus(NO_STATUSES, StatusId.InCombat, 0, RESTORATION.rest.combatTicks),
     });
-    expect(restore(subject, 1).health).toBe(50);
+    expect(restore(subject, 1).health).toBe(half);
     // And resumes the tick that window closes rather than needing anything else
     // to notice it has.
-    expect(restore(subject, RESTORATION.rest.combatTicks).health).toBeGreaterThan(50);
+    expect(restore(subject, RESTORATION.rest.combatTicks).health).toBeGreaterThan(half);
   });
 
   it('never revives a corpse', () => {

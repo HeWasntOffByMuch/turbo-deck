@@ -14,7 +14,6 @@
 import {
   MOVE_SPEED_HARD_MAX,
   MOVE_SPEED_HARD_MIN,
-  PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
   TICK_RATE as SIM_TICK_RATE,
@@ -31,6 +30,7 @@ import { itemById } from '../data/items.js';
 import { above, SCALING } from '../data/scaling.js';
 import {
   attributeScalingBonus,
+  damageOf,
   effectiveScaling,
   gradeModifiersFrom,
   scalingOf,
@@ -62,7 +62,7 @@ export const HP_PER_CONSTITUTION = SCALING.constitution.healthPer;
 /** Health per point of strength. Small: Constitution owns the pool. */
 export const HP_PER_STRENGTH = SCALING.strength.healthPer;
 /** Health granted by each character level beyond the first. */
-export const HP_PER_LEVEL = 8;
+export const HP_PER_LEVEL = 2;
 /**
  * What a body with nothing on it waits between basic attacks (spec 088).
  *
@@ -208,18 +208,25 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   // tooltip reads the same grades rather than working them out again.
   const mainHand = player.equipment.mainHand;
   const weapon = mainHand ? itemById(mainHand) : null;
+  const held = weapon !== null;
   const scalingModifiers = gradeModifiersFrom(bonus);
-  const weaponScaling = effectiveScaling(scalingOf(weapon?.scaling, weapon !== null), scalingModifiers);
+  const weaponScaling = effectiveScaling(scalingOf(weapon?.scaling, held), scalingModifiers);
 
-  // Base plus the attribute term, then the percentage, exactly as before: this
-  // spec changes what the attribute term *is*, not what happens to it after.
-  const attackDamage = Math.max(
-    0,
-    (PLAYER_ATTACK_DAMAGE +
-      attributeScalingBonus({ strength, agility, intelligence }, weaponScaling) +
-      bonus.attackDamage) *
-      (1 + bonus.attackDamagePct),
-  );
+  // The weapon's own range, with everything that acts on it folded in (spec
+  // 217). Both ends take the same additions, so a wide weapon stays wide and a
+  // narrow one stays narrow -- an attribute term that multiplied the spread
+  // would make every high-Strength maul a lottery.
+  const weaponDamage = damageOf(weapon?.damage, held);
+  const scalingBonus = attributeScalingBonus({ strength, agility, intelligence }, weaponScaling);
+  const resolve = (end: number): number =>
+    Math.max(0, (end + scalingBonus + bonus.attackDamage) * (1 + bonus.attackDamagePct));
+  const weaponDamageMin = resolve(weaponDamage.min);
+  const weaponDamageMax = resolve(weaponDamage.max);
+
+  // The **midpoint**, which is what the character sheet's Damage row shows and
+  // what a stagger's power is sized off. One number, because both of those want
+  // one; the range is what a blow actually rolls between.
+  const attackDamage = (weaponDamageMin + weaponDamageMax) / 2;
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
@@ -288,6 +295,8 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     basicAttackId: basicAttackFor(player),
     skillAbilityIds: skillAbilityIdsOf(player.equipment),
     weaponScaling,
+    weaponDamageMin,
+    weaponDamageMax,
     scalingModifiers,
     // Derived last, because two of its fields are fractions of maxHealth and
     // one is a duration in ticks -- it needs the pool it is a fraction of, and

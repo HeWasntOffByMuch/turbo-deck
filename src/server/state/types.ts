@@ -321,21 +321,6 @@ export interface TraitStats {
   readonly breakResource: number;
   /** Fraction of live cooldowns removed by a poise break this body caused. */
   readonly breakCooldownRefund: number;
-  /**
-   * Multiplier on a **basic attack's** damage, the way `spellPower` is one on an
-   * ability's (spec 147).
-   *
-   * This is the fix for a hole spec 062 left and nobody noticed for eighty-five
-   * specs: `applyDamage` multiplied every blow by `spellPower` and read
-   * `attackDamage` nowhere at all, so Strength's damage coefficient was
-   * decorative -- derived, replicated, shown on the sheet, and never reaching a
-   * blow. A "pure Strength" build could not deal damage with Strength.
-   *
-   * Derived *from* `attackDamage` rather than beside it, so there is still one
-   * number that means "how hard do I hit" and the sheet's Damage row is that
-   * number rather than a second one nobody can reconcile with it.
-   */
-  readonly weaponPower: number;
   /** Multiplier on poise damage this body's *abilities* deal. 0 is none. */
   readonly abilityPoiseFactor: number;
   /** Damage multiplier against a staggered target under `executeBelow` health. */
@@ -531,7 +516,6 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'executeBonus',
   'executeBelow',
   'overkillResource',
-  'weaponPower',
   'momentumTicks',
   'momentumWindupScale',
   'heavyWindupScale',
@@ -717,6 +701,19 @@ export interface EffectiveStats {
    * its damage comes off its own table.
    */
   readonly weaponScaling: WeaponScaling;
+  /**
+   * What a basic attack rolls between, resolved (spec 217).
+   *
+   * The weapon's own range with the attribute term, the flat bonuses and the
+   * percentage already in it, so `resolveBlow` rolls and is done -- there is no
+   * second place that knows how a swing's damage is assembled.
+   *
+   * A monster's is `min = max = ` its authored `attackDamage`. Before spec 217
+   * that field reached nothing but stagger power and every melee monster in the
+   * game hit for `melee.slash.damage` exactly, whatever its row said.
+   */
+  readonly weaponDamageMin: number;
+  readonly weaponDamageMax: number;
   /**
    * The grade steps this body's equipment, milestones and synergies contribute
    * (spec 216).

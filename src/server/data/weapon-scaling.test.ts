@@ -13,6 +13,9 @@ import {
   attributeScalingBonus,
   coefficientOf,
   contributionOf,
+  damageOf,
+  NO_WEAPON_DAMAGE,
+  UNARMED_DAMAGE,
   effectiveScaling,
   explainScaling,
   formatScaling,
@@ -285,10 +288,14 @@ describe('what an attribute contributes', () => {
   });
 
   it('stays finite and proportional at an unusually high attribute', () => {
+    // Proportional in what is *spent*, not in the raw value: since spec 217 the
+    // term is measured from `SCALING.startingAttribute`, so twice the attribute
+    // is not twice the bonus -- twice the investment is.
     const scaling = GRADES(ScalingGrade.S, ScalingGrade.None, ScalingGrade.None);
-    const big = attributeScalingBonus(AT(100_000, 0, 0), scaling);
+    const start = SCALING.startingAttribute;
+    const big = attributeScalingBonus(AT(start + 100_000, 0, 0), scaling);
     expect(Number.isFinite(big)).toBe(true);
-    expect(big).toBeCloseTo(attributeScalingBonus(AT(50_000, 0, 0), scaling) * 2, 6);
+    expect(big).toBeCloseTo(attributeScalingBonus(AT(start + 50_000, 0, 0), scaling) * 2, 6);
   });
 
   it('is unmoved by Constitution, Wisdom and Perception', () => {
@@ -361,5 +368,70 @@ describe('the breakdown', () => {
   it('writes the line as STR / AGI / INT', () => {
     expect(formatScaling(GRADES(ScalingGrade.S, ScalingGrade.D, ScalingGrade.None))).toBe('S / D / -');
     expect(formatScaling(NO_SCALING)).toBe('- / - / -');
+  });
+});
+
+/**
+ * A weapon's own damage range (spec 217).
+ *
+ * The resolution only -- `damageOf` and its two defaults. What a blow does with
+ * the range is `sim/progression-combat.test.ts`'s, and what a character's
+ * resolved range comes out as is `player/stats.test.ts`'s.
+ */
+describe('a weapon damage range', () => {
+  it('is the row when a row has one', () => {
+    expect(damageOf({ min: 4, max: 11 }, true)).toEqual({ min: 4, max: 11 });
+  });
+
+  it('falls back to the unarmed range for an empty hand', () => {
+    expect(damageOf(undefined, false)).toEqual(UNARMED_DAMAGE);
+    expect(UNARMED_DAMAGE.min).toBeGreaterThan(0);
+  });
+
+  it('falls back to something non-zero for a held item with no range', () => {
+    // A partially-authored weapon still swings. Zero would make an unconfigured
+    // row a weapon that cannot hurt anything, which reads as a broken game
+    // rather than as a missing field.
+    expect(damageOf(undefined, true)).toEqual(NO_WEAPON_DAMAGE);
+    expect(NO_WEAPON_DAMAGE.min).toBeGreaterThan(0);
+  });
+
+  it('puts a backwards range the right way round rather than rolling negative', () => {
+    expect(damageOf({ min: 8, max: 4 }, true)).toEqual({ min: 4, max: 8 });
+  });
+
+  it('holds a corrupt range at zero rather than propagating NaN', () => {
+    expect(damageOf({ min: Number.NaN, max: 5 }, true)).toEqual({ min: 0, max: 5 });
+    expect(damageOf({ min: -4, max: -1 }, true)).toEqual({ min: 0, max: 0 });
+  });
+});
+
+/**
+ * The baseline (spec 217).
+ *
+ * Re-based through `above()`, which is the rule `data/scaling.ts` already
+ * applies to every other scale. Its consequence is the one the weapon ranges
+ * were authored against: a character who has spent nothing hits for exactly
+ * what the row says.
+ */
+describe('the scaling baseline', () => {
+  it('gives a character who has spent nothing no attribute damage at all', () => {
+    const start = SCALING.startingAttribute;
+    const everything = GRADES(ScalingGrade.S, ScalingGrade.S, ScalingGrade.S);
+    expect(attributeScalingBonus(AT(start, start, start), everything)).toBe(0);
+  });
+
+  it('pays only for the points past the start', () => {
+    const start = SCALING.startingAttribute;
+    const scaling = GRADES(ScalingGrade.A, ScalingGrade.None, ScalingGrade.None);
+    const one = attributeScalingBonus(AT(start + 1, start, start), scaling);
+    const two = attributeScalingBonus(AT(start + 2, start, start), scaling);
+    expect(one).toBeGreaterThan(0);
+    expect(two).toBeCloseTo(one * 2, 9);
+  });
+
+  it('still refuses to go negative below the start', () => {
+    const scaling = GRADES(ScalingGrade.S, ScalingGrade.S, ScalingGrade.S);
+    expect(attributeScalingBonus(AT(0, 0, 0), scaling)).toBe(0);
   });
 });

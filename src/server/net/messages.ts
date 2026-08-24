@@ -1448,6 +1448,10 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
   // signed and has no narrower signed writer here. Owner-only and sent on login
   // and on equipment changes rather than per tick, like the rest of this block.
   writeScaling(writer, stats.weaponScaling);
+  // The resolved range a basic attack rolls between (spec 217). `f32`, like
+  // every other quantity in this block: both ends carry the attribute term and
+  // the percentage, so neither is an integer once anything has been spent.
+  writer.f32(stats.weaponDamageMin).f32(stats.weaponDamageMax);
   writer.i16(clampStep(stats.scalingModifiers.strength));
   writer.i16(clampStep(stats.scalingModifiers.agility));
   writer.i16(clampStep(stats.scalingModifiers.intelligence));
@@ -1535,6 +1539,8 @@ function readStats(reader: BufferReader): EffectiveStats {
     basicAttackId: reader.str(),
     skillAbilityIds: readStringList(reader),
     weaponScaling: readScaling(reader),
+    weaponDamageMin: reader.f32(),
+    weaponDamageMax: reader.f32(),
     scalingModifiers: {
       strength: reader.i16(),
       agility: reader.i16(),

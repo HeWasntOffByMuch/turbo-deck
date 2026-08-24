@@ -38,7 +38,7 @@ import { ACTION_BAR } from './action-bar.js';
  */
 const GALLERY_BAR = ['melee.slash', 'melee.heavy', 'bolt.arcane', 'self.mend'];
 import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
-import { NO_WEAPON_SCALING } from '../../../server/data/weapon-scaling.js';
+import { NO_WEAPON } from '../../../server/data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
 import { startingBaseStats } from '../../../server/player/attributes.js';
 
@@ -57,7 +57,7 @@ const STATS: EffectiveStats = {
   resourceRegen: 0.5,
   basicAttackId: 'melee.slash',
   skillAbilityIds: [],
-  ...NO_WEAPON_SCALING,
+  ...NO_WEAPON,
   traits: NEUTRAL_TRAITS,
 };
 

@@ -2028,6 +2028,71 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  migration moved at five builds. `explainScaling` is the same
                  arithmetic taken apart term by term, for answering "why did that
                  hit for 70" during development; nothing in production reads it.
+                 `data/weapon-scaling.ts` also holds **what a weapon hits
+                 for** (spec 217), because a weapon having damage of its own is
+                 the other half of it having scaling of its own. A row authors a
+                 `{ min, max }` and that *is* the basic attack: before it, a
+                 swing was `ability.damage * weaponPower`, so the number setting
+                 how hard every sword in the game hit was a field on
+                 `melee.slash` -- shared with every monster on the map.
+                 Three findings, and they were one finding. **A weapon had no
+                 damage of its own**, so "this sword hits for 1 to 3" was not
+                 expressible. **Every melee monster hit for exactly 14**:
+                 `monsterTraits` spreads `NEUTRAL_TRAITS`, whose `weaponPower` is
+                 1, so a monster's blow was `melee.slash.damage` and the
+                 `attackDamage` its row authored reached nothing but its stagger
+                 power -- the Ravager's 24 and the Grazer's 6 landed identically,
+                 and the Training Dummy authored 0 and hit for 14. And **the
+                 numbers were an order of magnitude too big to read**: a fresh
+                 character hit a 24-health Grazer for 26.3 and deleted it.
+                 `EffectiveStats.weaponDamageMin`/`Max` is the resolved range,
+                 with the attribute term, the flat bonuses and the percentage
+                 already folded into **both ends** -- so a wide weapon stays wide
+                 and `resolveBlow` rolls and is done. `attackDamage` survives as
+                 the **midpoint**, which is what the character sheet shows and
+                 what a stagger's power is sized off; `TraitStats.weaponPower` is
+                 gone, its one production reader having stopped reading it.
+                 A monster's range is `min = max =` its authored `attackDamage`,
+                 filled in by `withTraits`, which is the whole of the second bug.
+                 **The draw is one `nextInt`, before the crit roll, and only for
+                 a basic attack.** Conditioning on the ability's own
+                 `basicAttack` flag is safe where conditioning on a *chance*
+                 would not be: it is a property of the row, fixed for an id, so
+                 two replays of the same inputs draw the same count. The Rng draw
+                 count is protocol, so this moved every seeded combat sequence in
+                 the tree once, deliberately.
+                 The scaling baseline moved with it: spec 216's attribute term is
+                 measured through `above()` now, the rule `data/scaling.ts`
+                 already applies to every other scale, so a character who has
+                 spent nothing gets nothing from scaling and the Worn Sword's
+                 `1-3` is exactly what a fresh character hits for.
+                 What the rescale reached, and why each: health and monster
+                 damage **divide by four**; ability damage, DoT rates and
+                 `HEAVY_ABILITY_DAMAGE` divide by **seven**, measured against
+                 `npm run balance` rather than chosen -- at a quarter,
+                 Intelligence sat at 13 kills against Strength's 5 where main had
+                 9 against 8, because abilities had kept their power against
+                 health while weapons lost a third of theirs. The **poise**
+                 economy divides by four alongside health and had to: a monster's
+                 guard is `maxHealth * monsterPoiseFraction` floored at
+                 `minPoise`, so quartering health alone put every monster in the
+                 game on the floor. `data/restoration.ts` needed no change at
+                 all, because every number in it is a fraction of a pool.
+                 Two things in the **harness** were measuring a character nobody
+                 plays, and both were invisible until the table went strange.
+                 `bestReady` compares each ability against the basic attack's
+                 damage, read off the ability row -- which is 0 now -- so every
+                 build stopped swinging and the weak-point column went to zero
+                 across all twelve; it reads `stats.attackDamage`. And the
+                 presets fought in `EMPTY_EQUIPMENT`, which used to be worth 14 a
+                 swing and is now a 1-2 punch, so they wear `STARTER_EQUIPMENT`
+                 -- the same worn sword for all twelve, a control rather than a
+                 variable.
+                 The one row that did **not** divide by four is the Grazer, which
+                 divided by eight: being hit sends it running for two and a half
+                 seconds, it used to die to the first blow that landed, and at a
+                 quarter it took three hits, fled three times and could not be
+                 caught. Prey that cannot be caught is scenery with a loot table.
                  `data/description.ts` is what those tables *say* (spec 191) --
                  the one writer for every player-facing Technical Description,
                  composing a row into a target, its effects in the row's own

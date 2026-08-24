@@ -23,7 +23,7 @@ import type { EffectiveStats } from '../state/types.js';
 import { advanceCast, mayCast, modelledResource, steerFacing, type Mirror } from './combat.js';
 import { GameClient } from './game-client.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
-import { NO_WEAPON_SCALING } from '../data/weapon-scaling.js';
+import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { EntityActivity } from '../net/protocol.js';
 
@@ -44,7 +44,7 @@ const STATS: EffectiveStats = {
   resourceRegen: 0.1,
   basicAttackId: 'melee.slash',
   skillAbilityIds: [],
-  ...NO_WEAPON_SCALING,
+  ...NO_WEAPON,
   traits: NEUTRAL_TRAITS,
 };
 

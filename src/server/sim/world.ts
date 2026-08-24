@@ -34,7 +34,7 @@ import { rarityOf } from '../data/items.js';
 import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
-import { NO_WEAPON_SCALING } from '../data/weapon-scaling.js';
+import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { bolt, notice, playersOf, rally, settle } from './aggro.js';
 import { idle } from './idle.js';
@@ -147,7 +147,9 @@ function blankEntity(id: number): ServerEntity {
       resourceRegen: 0,
       basicAttackId: '',
       skillAbilityIds: [],
-      ...NO_WEAPON_SCALING,
+      ...NO_WEAPON,
+      weaponDamageMin: 0,
+      weaponDamageMax: 0,
       traits: NEUTRAL_TRAITS,
     },
     activity: ActivityValue.Idle,

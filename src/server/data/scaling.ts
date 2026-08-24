@@ -117,14 +117,14 @@ export const SCALING = {
      * durability to close the distance and none of the tools to survive being
      * there.
      */
-    healthPer: 6,
+    healthPer: 1.5,
     /** Poise damage a blow carries: a base, plus a soft-capped rate. */
-    staggerBase: 8,
-    staggerPer: 0.9,
+    staggerBase: 2,
+    staggerPer: 0.225,
     staggerKnee: 40,
     staggerFalloff: 0.5,
     /** Poise contributed to one's own pool. */
-    poisePer: 0.8,
+    poisePer: 0.2,
     /** How long a break roots the broken body: a floor plus a rate, capped. */
     staggerTicksBase: seconds(0.5),
     staggerTicksPer: 0.2,
@@ -174,12 +174,12 @@ export const SCALING = {
   },
 
   constitution: {
-    healthPer: 14,
-    poiseBase: 40,
-    poisePer: 2.2,
+    healthPer: 3.5,
+    poiseBase: 10,
+    poisePer: 0.55,
     /** Poise per second, before the calm multiplier. */
-    poiseRegenBase: 4,
-    poiseRegenPer: 0.35,
+    poiseRegenBase: 1,
+    poiseRegenPer: 0.0875,
     armorPer: 0.008,
     healingPer: 0.006,
     /** Shield ceiling, as a fraction of max health. */
@@ -218,7 +218,16 @@ export const SCALING = {
     masteryRelief: 3,
   },
 
-  /** Shared combat constants the attributes act through. */
+  /**
+   * Shared combat constants the attributes act through.
+   *
+   * The poise numbers here and in `strength`/`constitution` above divide by the
+   * same four the health economy did in spec 217, and they had to: a monster's
+   * guard is `maxHealth * monsterPoiseFraction` floored at {@link minPoise}, so
+   * quartering health alone put **every** monster in the game on the floor --
+   * one guard value for the grazer and the ravager alike, and every stagger
+   * threshold met by blows that used to bounce.
+   */
   combat: {
     /**
      * How long after a poise break a body cannot be broken again.
@@ -232,11 +241,11 @@ export const SCALING = {
     /** Overkill fraction that counts as an overkill, for Strength's payoff. */
     overkillFraction: 0.25,
     /** Poise a body with no Constitution at all still has. */
-    minPoise: 20,
+    minPoise: 5,
     /** Poise a monster gets, as a fraction of its health. */
     monsterPoiseFraction: 0.35,
     /** Poise a monster regains per second. */
-    monsterPoiseRegen: 6,
+    monsterPoiseRegen: 1.5,
   },
 
   /**
@@ -264,7 +273,17 @@ export const SCALING = {
    * ladder it was chosen against.
    */
   weaponScaling: {
-    damagePerPoint: 2 / 3,
+    /**
+     * Damage a point of a scaling attribute buys, at grade `A` times this.
+     *
+     * Retuned from `2/3` to `0.15` by spec 217, along with the whole damage
+     * economy: a weapon's own range is now what a swing is built on, and a
+     * scaling term an order of magnitude larger than the weapon would have made
+     * the range decorative. Measured from `above()` since 217 too, so this is
+     * what a point *past the starting five* is worth rather than what a point
+     * is.
+     */
+    damagePerPoint: 0.15,
     /**
      * Grade to coefficient. Keyed by the grade's own name, so a reader can check
      * this against the ladder without counting array positions.

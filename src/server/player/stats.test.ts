@@ -8,6 +8,7 @@ import {
   NO_GRADE_MODIFIERS,
   NO_SCALING,
   ScalingGrade,
+  UNARMED_DAMAGE,
   UNARMED_SCALING,
 } from '../data/weapon-scaling.js';
 import {
@@ -22,7 +23,6 @@ import { CHARACTERS, type Character } from '../../sim/characters.js';
 import {
   MOVE_SPEED_HARD_MAX,
   MOVE_SPEED_HARD_MIN,
-  PLAYER_ATTACK_DAMAGE,
   TURN_RATE_PER_AGILITY,
 } from '../../sim/constants.js';
 import { PlayerManager, STARTER_EQUIPMENT } from './player-manager.js';
@@ -683,17 +683,22 @@ describe('what the weapon scales with', () => {
     expect(holding('sword.keen', { perception: 55 }).attackDamage).toBeCloseTo(plain, 9);
   });
 
-  it('still deals base damage for a weapon with no scaling at all', () => {
-    // No shipped row scales with nothing, so the rule is asked of the resolver
-    // and of the arithmetic around it: the flat half of the sum survives.
-    const bare = PLAYER_ATTACK_DAMAGE + attributeScalingBonus({ strength: 60, agility: 60, intelligence: 60 }, NO_SCALING);
-    expect(bare).toBe(PLAYER_ATTACK_DAMAGE);
+  it('still deals its weapon\'s damage when the weapon scales with nothing', () => {
+    // No shipped row scales with nothing, so the rule is asked of the arithmetic
+    // directly: with every grade at None the attribute term is zero and what is
+    // left is the weapon's own range.
+    expect(
+      attributeScalingBonus({ strength: 60, agility: 60, intelligence: 60 }, NO_SCALING),
+    ).toBe(0);
   });
 
   it('scales an empty hand with the unarmed default rather than with nothing', () => {
     const stats = computeEffectiveStats(player({ baseStats: { ...HIGH_STRENGTH } }));
     expect(stats.weaponScaling).toEqual(UNARMED_SCALING);
-    expect(stats.attackDamage).toBeGreaterThan(PLAYER_ATTACK_DAMAGE);
+    // Above the bare range, because Strength was spent and the unarmed default
+    // scales with it. Fists are still worse than anything in the table.
+    expect(stats.weaponDamageMax).toBeGreaterThan(UNARMED_DAMAGE.max);
+    expect(stats.weaponDamageMax).toBeLessThan(holding('maul.iron', { strength: 40 }).weaponDamageMax);
   });
 
   it('resolves the held weapon\'s grades onto the stats, once', () => {

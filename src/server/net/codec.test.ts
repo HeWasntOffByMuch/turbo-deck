@@ -28,7 +28,7 @@ import {
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats } from '../state/types.js';
 import { maxStackOf } from '../data/items.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
-import { NO_WEAPON_SCALING } from '../data/weapon-scaling.js';
+import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { startingBaseStats } from '../player/attributes.js';
 
@@ -48,7 +48,7 @@ const STATS: EffectiveStats = {
   resourceRegen: 0.0625,
   basicAttackId: 'ranged.shot',
   skillAbilityIds: [],
-  ...NO_WEAPON_SCALING,
+  ...NO_WEAPON,
   traits: NEUTRAL_TRAITS,
 };
 

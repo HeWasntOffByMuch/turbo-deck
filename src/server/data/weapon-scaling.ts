@@ -32,7 +32,7 @@ import type {
   ScalingGradeModifiers,
   WeaponScaling,
 } from '../state/types.js';
-import { SCALING } from './scaling.js';
+import { above, SCALING } from './scaling.js';
 
 export type { ScalingAttribute, ScalingGradeModifiers, WeaponScaling };
 
@@ -122,15 +122,70 @@ export const NO_GRADE_MODIFIERS: ScalingGradeModifiers = {
 };
 
 /**
- * The two `EffectiveStats` scaling fields for a body that has no weapon row.
+ * What a weapon hits for before any attribute touches it (spec 217).
+ *
+ * A **range**, because that is the shape a weapon's damage has been in every
+ * game this one is descended from, and because a single number makes every
+ * blow of a fight identical -- crit and weak points were the only variance a
+ * hit had, and both are rare enough that ordinary swings read as a constant.
+ *
+ * Integral, and rolled integrally: at these magnitudes a fractional roll is a
+ * number nobody can read off a popup. Whatever the attribute term adds on top
+ * is fractional, as it always was.
+ */
+export interface WeaponDamage {
+  readonly min: number;
+  readonly max: number;
+}
+
+/**
+ * An empty hand (spec 217).
+ *
+ * The counterpart to {@link UNARMED_SCALING}, and it exists for the same
+ * reason: a fist has no row to author, and falling through to zero would make
+ * losing your sword a cliff rather than a setback.
+ */
+export const UNARMED_DAMAGE: WeaponDamage = { min: 1, max: 2 };
+
+/** What a held item with no `damage` row hits for. Deliberately not zero. */
+export const NO_WEAPON_DAMAGE: WeaponDamage = { min: 1, max: 1 };
+
+/**
+ * A row's damage, or the stated default for an empty hand.
+ *
+ * The same totality {@link scalingOf} has, and the same two cases: a *missing*
+ * item is the empty hand, and a held item whose row nobody has configured is a
+ * partially-authored weapon that still swings rather than a crash.
+ */
+export function damageOf(damage: WeaponDamage | undefined, held: boolean): WeaponDamage {
+  if (!held) return UNARMED_DAMAGE;
+  if (!damage) return NO_WEAPON_DAMAGE;
+  const min = Number.isFinite(damage.min) ? Math.max(0, damage.min) : 0;
+  const max = Number.isFinite(damage.max) ? Math.max(0, damage.max) : 0;
+  // Held in order rather than trusted: a row authored `8-4` by hand is a range
+  // whose roll would otherwise be negative, and refusing it here is one check
+  // against one at every roll.
+  return min <= max ? { min, max } : { min: max, max: min };
+}
+
+/**
+ * The `EffectiveStats` weapon fields of a body with no weapon row.
  *
  * Spread, the way `NO_ATTACK_SPEED` already is, so a monster row, a prop stub
- * and a test fixture all say "scales with nothing" in one token rather than
- * two fields each of them could get separately wrong.
+ * and a test fixture all say "no weapon" in one token rather than four fields
+ * each of them could get separately wrong.
+ *
+ * The range is the **unarmed** one rather than zero (spec 217): a body with no
+ * weapon still has hands, and a default of nothing would make every fixture
+ * that spreads this a body incapable of hurting anything -- which is a silent
+ * way for a combat test to stop testing combat. Anything with a real answer
+ * (a monster's authored damage, a prop's nothing) states it after the spread.
  */
-export const NO_WEAPON_SCALING = {
+export const NO_WEAPON = {
   weaponScaling: NO_SCALING,
   scalingModifiers: NO_GRADE_MODIFIERS,
+  weaponDamageMin: UNARMED_DAMAGE.min,
+  weaponDamageMax: UNARMED_DAMAGE.max,
 } as const;
 
 /**
@@ -258,8 +313,16 @@ export type ScalingAttributes = Readonly<Record<ScalingAttribute, number>>;
  * that grows with its grade.
  */
 export function contributionOf(value: number, grade: ScalingGrade): number {
-  const attr = Number.isFinite(value) ? Math.max(0, value) : 0;
-  return attr * coefficientOf(grade) * SCALING.weaponScaling.damagePerPoint;
+  // Measured from the **starting** attribute rather than from zero (spec 217),
+  // through the baseline rule `data/scaling.ts` already states and applies to
+  // every other scale in the game. A character who has spent nothing gets
+  // nothing here, which is what makes a weapon's authored range exactly what a
+  // fresh character hits for -- rather than the small half of a sum that
+  // already had five points of every attribute in it.
+  //
+  // `above` floors at zero, so a negative attribute subtracts nothing rather
+  // than turning a good weapon into a penalty that grows with its grade.
+  return above(value) * coefficientOf(grade) * SCALING.weaponScaling.damagePerPoint;
 }
 
 /**

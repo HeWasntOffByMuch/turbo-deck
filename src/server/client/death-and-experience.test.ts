@@ -65,6 +65,14 @@ function positionOf(r: Rig, entityId: number): { x: number; y: number } {
   return { x: entity.position.x, y: entity.position.y };
 }
 
+/** Where the one monster under test is, or null once it is gone. */
+function monsterOf(r: Rig): { x: number; y: number } | null {
+  for (const entity of r.server.world.entities.values()) {
+    if (entity.kind === EntityKindValue.Monster) return { x: entity.position.x, y: entity.position.y };
+  }
+  return null;
+}
+
 function monsterCount(r: Rig): number {
   let n = 0;
   for (const entity of r.server.world.entities.values()) {
@@ -86,10 +94,23 @@ async function killNearby(r: Rig, client: GameClient, monsterId: string): Promis
   await r.tick(2);
   expect(monsterCount(r), 'the body under test should be standing there').toBe(1);
 
+  // Walk after it while swinging (spec 217). A grazer is skittish and runs for
+  // two and a half seconds from whatever hit it -- which never mattered while
+  // one blow killed it, and does now that it takes two or three. Standing still
+  // and swinging at a fixed point simply misses everything after the first.
   for (let swing = 0; swing < 40 && monsterCount(r) > 0; swing++) {
-    client.useAbility('melee.slash', at.x + 1000, at.y);
+    const prey = monsterOf(r);
+    if (!prey) break;
+    client.useAbility('melee.slash', prey.x, prey.y);
     for (let i = 0; i < 60; i++) {
-      client.sendInput({ moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+      const here = positionOf(r, self);
+      const there = monsterOf(r);
+      const dx = there ? there.x - here.x : 0;
+      const dy = there ? there.y - here.y : 0;
+      const len = Math.hypot(dx, dy);
+      // Close to just inside reach and stop, so the swing is not walked out of.
+      const chase = len > 40 ? { moveX: dx / len, moveY: dy / len } : { moveX: 0, moveY: 0 };
+      client.sendInput({ ...chase, facing: Math.atan2(dy, dx), buttons: 0 });
       await r.tick();
     }
   }
