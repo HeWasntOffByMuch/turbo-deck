@@ -13,7 +13,7 @@
 import type { FigureMetrics } from '../cloth/figure.js';
 
 /** The species the game ships. Doubles as the sandbox's unit kind. */
-export type CritterId = 'pig' | 'cow';
+export type CritterId = 'pig' | 'cow' | 'sheep';
 
 /**
  * A colour slot on a critter.
@@ -213,12 +213,70 @@ export interface SocketSpec {
   readonly mirror?: boolean;
 }
 
+/**
+ * How many legs the animal stands on.
+ *
+ * Not a rendering switch -- the rig builds both the same way, off the forward
+ * offsets in {@link FigureMetrics} -- but a fact about the species that the
+ * things *measuring* one have to know. A biped is checked for standing at
+ * player height with its head stacked above its chest; a quadruped is a shorter
+ * body with its head out in front, and holding it to the upright rules would
+ * either fail it or, worse, pass it for the wrong reasons.
+ *
+ * Absent is `biped`, which is every species that existed before there was a
+ * choice.
+ */
+export type Stance = 'biped' | 'quadruped';
+
+/**
+ * The head-down pose an animal falls into when it has stopped.
+ *
+ * Authored per species rather than switched on in the rig, because "puts its
+ * head down when it is not going anywhere" is true of a sheep and absurd on a
+ * player's character -- and because the only thing separating a grazing animal
+ * from a standing one, at the size these are drawn, is the neck angle.
+ *
+ * It is driven off the same gait number the ears and tail already read, so it
+ * costs no new state: a species that declares one dips whenever it is at rest
+ * and lifts as soon as it walks, and one that does not never moves its head.
+ */
+export interface GrazePose {
+  /**
+   * Radians the head pitches down at a full stop. Negative pitches the nose
+   * toward the ground, since the gait swings every limb about the same axis.
+   */
+  readonly dip: number;
+  /**
+   * World units the head *sinks* as it dips, and how far it reaches forward
+   * doing it.
+   *
+   * Rotation alone does not graze. A head hung 34 units up with an 8-unit skull
+   * on it can pitch as far as it likes and its nose still ends up two thirds of
+   * the way up the animal -- which reads as a body looking at its own feet, not
+   * as one eating. What closes the gap is the neck, so the head drops and
+   * stretches out in front as it turns down, and the three together put the
+   * mouth in the grass.
+   */
+  readonly drop: number;
+  readonly reach: number;
+  /** Radians of nibble, once the head is down. Small: this is a mouth, not a nod. */
+  readonly nibbleAmp: number;
+  /** Nibbles per second. */
+  readonly nibbleHz: number;
+  /** How fast the head lowers and lifts (1/s). Low reads as unbothered. */
+  readonly follow: number;
+}
+
 /** One species: everything needed to build, colour and animate it. */
 export interface CritterSpecies {
   readonly id: CritterId;
   readonly name: string;
   /** One line for the unit picker's tooltip. */
   readonly blurb: string;
+  /** How many legs it stands on. Absent is {@link Stance} `biped`. */
+  readonly stance?: Stance;
+  /** What it does with its head at rest, or absent for an animal that does nothing. */
+  readonly graze?: GrazePose;
   /** Proportions. Shares `cloth/figure.ts`'s bone layout, so the gait is shared. */
   readonly metrics: FigureMetrics;
   readonly sockets: readonly SocketSpec[];

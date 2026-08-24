@@ -25,7 +25,10 @@ import { PNG } from 'pngjs';
 import * as THREE from 'three';
 import { ALL_MONSTERS } from '../src/server/data/monsters.js';
 import { MechRig, defaultMechTuning } from '../src/render/iso3d/rigs.js';
+import { CritterRig, defaultCritterTuning } from '../src/render/iso3d/critter.js';
+import { CRITTERS } from '../src/render/critters/index.js';
 import { monsterLookFor } from '../src/render/iso3d/world/monster-look.js';
+import { monsterCritterFor } from '../src/render/iso3d/world/monster-critter.js';
 
 const BIG = Number(process.env.BIG ?? 256);
 const SMALL = 64;
@@ -202,8 +205,30 @@ function render(tris: readonly Tri[], size: number): Uint8ClampedArray {
 
 // --- Sheet ----------------------------------------------------------------
 
-/** Exactly how `scene.ts` builds a monster's rig. */
-function rigFor(typeId: string): MechRig {
+/**
+ * Exactly how `scene.ts` builds a monster's rig -- both branches of it.
+ *
+ * Some monsters are animals rather than machines and are built by the critter
+ * rig instead (see `monster-critter.ts`). This has to follow that branch for the
+ * same reason it follows the look table: a preview that built every body the one
+ * way would draw a sheep as a chassis on legs and report that the arena was full
+ * of something it is not, which is the exact drift this sheet exists to catch.
+ *
+ * Both rigs are driven the same way -- `update(dt, position, yaw)` -- so nothing
+ * below has to know which one it got.
+ */
+interface PreviewRig {
+  readonly group: THREE.Object3D;
+  update(dt: number, at: { x: number; y: number }, yaw: number): void;
+}
+
+function rigFor(typeId: string): PreviewRig {
+  const animal = monsterCritterFor(typeId);
+  if (animal) {
+    return new CritterRig(CRITTERS[animal.species], {
+      tuning: { ...defaultCritterTuning(), ...animal.figure },
+    });
+  }
   const look = monsterLookFor(typeId);
   return new MechRig(typeId, undefined, {
     tuning: { ...defaultMechTuning(), ...look?.tuning },
@@ -281,13 +306,16 @@ MONSTERS.forEach((monster, row) => {
   // And at the size it actually ships at, upscaled so a person can see it.
   blit(render([...ring, ...walking], SMALL), SMALL, 2 * cellW, row * rowH, SMALL_SCALE);
   const look = monsterLookFor(monster.id);
+  const animal = monsterCritterFor(monster.id);
   process.stdout.write(
     `${monster.name}: radius ${monster.radius}, speed ${monster.stats.moveSpeed}, ` +
       `${
-        look
-          ? `${look.appearance.shape} body at ${look.tuning.sizeScale ?? 1}x ` +
-            `(body ${look.tuning.bodySize ?? 1}x, #${look.appearance.bodyColor.toString(16).padStart(6, '0')})`
-          : 'no look row (box body at 1x)'
+        animal
+          ? `${animal.species} critter at ${animal.figure.bodyScale}x`
+          : look
+            ? `${look.appearance.shape} body at ${look.tuning.sizeScale ?? 1}x ` +
+              `(body ${look.tuning.bodySize ?? 1}x, #${look.appearance.bodyColor.toString(16).padStart(6, '0')})`
+            : 'no look row (box body at 1x)'
       }, ` +
       `${walking.length} triangles\n`,
   );

@@ -894,6 +894,34 @@ describe('self abilities', () => {
     expect(healed?.health).toBeGreaterThan(20);
     expect(healed?.health).toBeLessThanOrEqual(STATS.maxHealth);
     expect(result.events.some((event) => event.kind === 'effect')).toBe(true);
+    // And says so, as a hit against itself with the sign flipped (spec 157).
+    const reported = result.events.find((event) => event.kind === 'hit');
+    expect(reported?.kind === 'hit' && reported.damage).toBeLessThan(0);
+  });
+
+  it('reports nothing at all when there was no room for the heal (spec 219)', () => {
+    // A flask drunk at full health. `applyHealing` hands the caster back
+    // untouched, so the difference is zero -- and an unguarded report sends
+    // `-0`, which `effectsForBlow` tests with `damage < 0` and therefore reads
+    // as a *blow*: a brush hit painted on the drinker and a `0` floating off
+    // them. `collectMote` has always guarded this; this never did.
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const full = state.entities.get(player.id);
+    if (!full) throw new Error('no player');
+    expect(full.health).toBe(full.stats.maxHealth);
+
+    const ability = abilityById('self.mend');
+    if (!ability) throw new Error('no self.mend');
+    const result = run(state, ability.windupTicks + 2, {
+      0: [input(player.id, { castAbilityId: 'self.mend' })],
+    });
+
+    // The cast happened -- the ability's own effect went out, so this is a heal
+    // that landed and restored nothing rather than a cast that never resolved.
+    expect(result.events.some((event) => event.kind === 'effect')).toBe(true);
+    expect(result.events.filter((event) => event.kind === 'hit')).toEqual([]);
   });
 });
 

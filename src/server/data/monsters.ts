@@ -282,6 +282,60 @@ const AUTHORED: readonly AuthoredMonster[] = [
     },
   },
   {
+    // The only body in the table you find *doing* something rather than waiting
+    // (spec 213 gave every row an idle plan; this is the first one authored for
+    // the plan rather than given one). Everything else about it keeps that the
+    // point: it is the cheapest kill in the arena, it grants the least
+    // experience, and it is the only row whose drop is a certainty.
+    //
+    // `radius` is 12 rather than a number picked for a sheep, deliberately:
+    // `ROUTING_RADII` builds one nav grid per *distinct* radius at boot, so a
+    // body that fits an existing one is free and a body half a unit off costs a
+    // whole grid. 12 is the small spider's, and it happens to be right here --
+    // the sheep is drawn small, and a 24-unit ring sits between the girth of
+    // the body and its nose-to-tail length, which is the band a quadruped's
+    // collider wants to be in. Halving the drawn size without halving this
+    // would leave a lamb standing in the middle of a grazer-sized target.
+    id: 'sheep',
+    name: 'Sheep',
+    radius: 12,
+    // Less than the grazer's 8. It runs, it does not fight, and killing one is
+    // worth doing for the wool rather than for the level.
+    experience: 5,
+    // Two and a half seconds of running, which at 62 is about 155 units of
+    // ground -- far enough to be a chase, short enough that the chase ends. A
+    // sheep that outran the player for its whole flight would make its own drop
+    // table unreachable.
+    temperament: { kind: 'skittish', fleeTicks: seconds(2.5) },
+    // A short ramble on a long cycle, which is the pairing that makes it read as
+    // grazing rather than as pacing. `wander` spends whatever is left of the
+    // cycle standing at the spot it picked, so a small radius against nine
+    // seconds is mostly standing: at `IDLE_PACE` it crosses a 150-unit patch in
+    // about four, and eats for the other five. The renderer puts its head down
+    // for exactly that part (`GrazePose` in `render/critters/types.ts`), so the
+    // ratio here is the one that decides how much of its life a sheep is seen
+    // with its face in the grass.
+    idle: { kind: 'wander', radius: 150, cycleTicks: seconds(9) },
+    stats: {
+      maxHealth: 18,
+      moveSpeed: 62,
+      turnRate: 150,
+      // It has an attack and it will never land one, for exactly the reason the
+      // grazer's never lands: being hit sends it running, and a fleeing body
+      // never swings.
+      attackDamage: 4,
+      attackRange: 55,
+      baseAttackTimeTicks: seconds(1.8),
+      ...NO_ATTACK_SPEED,
+      armor: 0,
+      spellPower: 1,
+      critChance: 0,
+      maxResource: 0,
+      resourceRegen: 0,
+      basicAttackId: 'melee.slash',
+    },
+  },
+  {
     id: 'stalker',
     name: 'Stalker',
     radius: 20,
