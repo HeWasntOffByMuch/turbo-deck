@@ -1631,7 +1631,7 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
   ];
   // Reported as a hit against itself with negative damage, so a client has
   // exactly one code path for "a number floated off someone" -- and only when
-  // there is a number (spec 218).
+  // there is a number (spec 219).
   //
   // `collectMote` has always guarded this and this never did, and what an
   // unguarded one sends is `-0`: `effectsForBlow` tests `damage < 0`, `-0 < 0`

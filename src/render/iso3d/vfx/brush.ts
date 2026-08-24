@@ -1439,7 +1439,7 @@ export const EMBER_BURST_RADIUS = 34;
 export const HEAVY_HIT_INTENSITY = 1.35;
 
 /**
- * How long the dominant mark of an ordinary hit is, in world units (spec 218).
+ * How long the dominant mark of an ordinary hit is, in world units (spec 219).
  *
  * A stroke's authored size *is* its length (`stroke.ts` builds the spine over a
  * unit span), and `bloodHit` gives the primary `scale * 3.1` -- so this number

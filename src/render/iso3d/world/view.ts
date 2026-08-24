@@ -1377,7 +1377,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           killed: (result.flags & CombatFlag.Killed) !== 0,
           critical: (result.flags & CombatFlag.Critical) !== 0,
           blocked: (result.flags & CombatFlag.Blocked) !== 0,
-          // An affliction's beat draws no blow at all (spec 218). It still
+          // An affliction's beat draws no blow at all (spec 219). It still
           // floats its number below, and its own paint is `affliction-vfx.ts`'s.
           periodic: (result.flags & CombatFlag.Periodic) !== 0,
           damageType: 'physical',

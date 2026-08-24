@@ -279,7 +279,7 @@ describe('the blood hit', () => {
     expect(heavy.emitters.map((e) => e.mesh?.shape)).toEqual(light.emitters.map((e) => e.mesh?.shape));
   });
 
-  it('is a mark on a body rather than one laid across it (spec 218)', () => {
+  it('is a mark on a body rather than one laid across it (spec 219)', () => {
     // A stroke's authored size *is* its length in world units (`stroke.ts`
     // builds the spine over a unit span), and a body is about ten units of
     // radius -- `vfx-wire.ts`'s `CONTACT_RADIUS`, which is "about the radius of

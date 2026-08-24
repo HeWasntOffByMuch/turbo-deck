@@ -74,7 +74,7 @@ export interface CombatFacts {
   /** Whether this target bleeds. A construct throws sparks instead. */
   readonly bleeds: boolean;
   /**
-   * This damage came from an affliction rather than from a blow (spec 218).
+   * This damage came from an affliction rather than from a blow (spec 219).
    *
    * `CombatFlag.Periodic`, which the sim has carried since spec 190 and kept to
    * itself until it turned out that the *number* is the only thing a pulse and
@@ -186,7 +186,7 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
   const seed = blowSeed(facts, tick);
 
   // An affliction's beat, which is not a blow and must not be drawn as one
-  // (spec 218).
+  // (spec 219).
   //
   // Nothing at all, and that is the whole of it: no blood, no flash, no crit,
   // no debris, no pool on a pulse that kills. Everything below aims a picture
@@ -211,7 +211,7 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
   // and a killed/critical/blocked flag on one means nothing.
   //
   // The test is the **sign**, and `-0` is negative -- which `damage < 0` says it
-  // is testing and does not (spec 218). A heal that restored nothing arrives as
+  // is testing and does not (spec 219). A heal that restored nothing arrives as
   // exactly that, so under the magnitude test it fell straight through into the
   // blow path and painted a brush hit on the person who drank the flask. A blow
   // that did nothing is `+0` and is still a blow, which is the rule spec 157

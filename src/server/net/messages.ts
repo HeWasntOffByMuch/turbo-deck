@@ -833,7 +833,7 @@ export const CombatFlag = {
   Critical: 1 << 1,
   Blocked: 1 << 2,
   /**
-   * This damage came from an affliction rather than from a blow (spec 218).
+   * This damage came from an affliction rather than from a blow (spec 219).
    *
    * The sim has carried a `periodic` flag on its `hit` event since spec 190 and
    * kept it to itself, on the argument that *"a client draws a floating number

@@ -2965,7 +2965,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  carries a `periodic` flag and `rally` skips it, since that
                  function's whole bound is one hop per actual blow and a poison
                  ticking twenty times would drag a nest across the map for ten
-                 seconds. Spec 218 gave that flag a wire bit
+                 seconds. Spec 219 gave that flag a wire bit
                  (`CombatFlag.Periodic`) for the same reason one level out:
                  **a pulse is not drawn as a blow either.** It was sim-only on
                  the argument that a client draws a floating number the same way

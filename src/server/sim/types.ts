@@ -708,7 +708,7 @@ export type ServerSimEvent =
        * that keeps a pulse away from `provoke`: the blow that applied the
        * affliction has already called everyone it was going to call.
        *
-       * It was sim-only until spec 218, on the argument that a client draws a
+       * It was sim-only until spec 219, on the argument that a client draws a
        * floating number the same way whatever caused it -- true of the number,
        * and false of the *picture*. A pulse has an attacker who walked away
        * seconds ago and a bearing along which nothing happened, so every beat

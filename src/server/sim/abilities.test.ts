@@ -899,7 +899,7 @@ describe('self abilities', () => {
     expect(reported?.kind === 'hit' && reported.damage).toBeLessThan(0);
   });
 
-  it('reports nothing at all when there was no room for the heal (spec 218)', () => {
+  it('reports nothing at all when there was no room for the heal (spec 219)', () => {
     // A flask drunk at full health. `applyHealing` hands the caster back
     // untouched, so the difference is zero -- and an unguarded report sends
     // `-0`, which `effectsForBlow` tests with `damage < 0` and therefore reads

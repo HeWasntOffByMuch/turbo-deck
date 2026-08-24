@@ -397,11 +397,11 @@ describe('combat over the wire', () => {
     expect(result?.attackerId).toBe(entityId);
     expect(result?.damage).toBeGreaterThan(0);
     expect(result?.targetHealth).toBeGreaterThanOrEqual(0);
-    // A swing is not periodic, and the client draws its picture (spec 218).
+    // A swing is not periodic, and the client draws its picture (spec 219).
     expect((result?.flags ?? 0) & CombatFlag.Periodic).toBe(0);
   });
 
-  it("marks an affliction's pulses as periodic, so no blow is drawn for them (spec 218)", async () => {
+  it("marks an affliction's pulses as periodic, so no blow is drawn for them (spec 219)", async () => {
     // The sim has known a pulse from a blow since spec 190 and kept it to
     // itself, so every beat of a Poison arrived at the client indistinguishable
     // from a sword landing -- and got a brush hit thrown along a bearing from an

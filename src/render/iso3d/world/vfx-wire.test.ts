@@ -237,7 +237,7 @@ describe('a heal (spec 157)', () => {
     expect(blow(facts({ damage: 0 }), 1)[0]?.id).toBe('blood_hit_brush');
   });
 
-  it('draws nothing at all for a heal that restored nothing (spec 218)', () => {
+  it('draws nothing at all for a heal that restored nothing (spec 219)', () => {
     // `-0`, which is what a flask drunk at full health used to send: the sign is
     // negative and the amount is zero, so there is a heal here and there is
     // nothing to say about it. Under `damage < 0` this fell into the blow path
@@ -265,7 +265,7 @@ describe('a heal (spec 157)', () => {
   });
 });
 
-describe("an affliction's beat (spec 218)", () => {
+describe("an affliction's beat (spec 219)", () => {
   /** A pulse, which is a `hit` on the wire and is not a blow. */
   const pulse = (overrides: Partial<CombatFacts> = {}): CombatFacts =>
     facts({ periodic: true, ...overrides });

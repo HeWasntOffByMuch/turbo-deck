@@ -156,7 +156,7 @@ describe('the damage-type tables', () => {
                       fromX: -40,
                       fromZ: 0,
                       bleeds,
-                      // A pulse names nothing at all (spec 218), so it can hide
+                      // A pulse names nothing at all (spec 219), so it can hide
                       // no typo -- this sweep is about the blow's four ids.
                       periodic: false,
                     },
