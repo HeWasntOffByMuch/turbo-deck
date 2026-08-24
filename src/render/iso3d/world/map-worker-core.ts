@@ -32,7 +32,7 @@ import {
   navGridFor,
 } from '../../../sim/pathfinding.js';
 import { buildChunkArrays, footprintOf } from '../terrain-arrays.js';
-import { buildRegionInstances, propRegionKey, setPropRegionSize } from '../props.js';
+import { buildRegionInstances, propRegionKey, propRegionKeysIn, setPropRegionSize } from '../props.js';
 import type { WorldRect } from './chunk-ingest.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 
@@ -58,9 +58,17 @@ export class MapWorkerCore {
     this.shape = this.streamed.snapshotColliders();
   }
 
-  /** How many chunks are in hand -- what a nav reply answers *for*. */
+  /**
+   * Which version of the ground a nav reply answers for (spec 215).
+   *
+   * The store's churn rather than its size, because a nav grid's ordering has
+   * to be a version and `size` stopped being one the day a client learned to
+   * forget: held bounded at 35, a grid built later is not "larger" and was
+   * refused as stale, so the renderer routed against its spawn point's grid for
+   * the session.
+   */
   get generation(): number {
-    return this.streamed?.size ?? 0;
+    return this.streamed?.revision ?? 0;
   }
 
   /**
@@ -172,11 +180,7 @@ export class MapWorkerCore {
 
     const wanted = new Set<string>();
     for (const rect of rects) {
-      const [lox, loz] = keyParts(propRegionKey(rect.minX, rect.minZ));
-      const [hix, hiz] = keyParts(propRegionKey(rect.maxX, rect.maxZ));
-      for (let rz = loz; rz <= hiz; rz++) {
-        for (let rx = lox; rx <= hix; rx++) wanted.add(`${rx},${rz}`);
-      }
+      for (const key of propRegionKeysIn(rect)) wanted.add(key);
     }
     if (wanted.size === 0) return [];
 
@@ -225,7 +229,7 @@ export class MapWorkerCore {
     // transfer them.
     return {
       kind: 'nav',
-      generation: streamed.size,
+      generation: streamed.revision,
       radius,
       colliders,
       grid: {
@@ -263,12 +267,6 @@ export class MapWorkerCore {
  * The mesh arrays are safe because `buildChunkArrays` allocates fresh ones per
  * call and nothing here keeps them.
  */
-/** `"3,-1"` as a pair of numbers. */
-function keyParts(key: string): [number, number] {
-  const [x, z] = key.split(',').map(Number);
-  return [x ?? 0, z ?? 0];
-}
-
 export function transfersOf(reply: MapWorkerReply): ArrayBuffer[] {
   if (reply.kind === 'mesh') {
     const out: ArrayBuffer[] = [];

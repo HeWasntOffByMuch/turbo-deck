@@ -30,6 +30,15 @@
  * abstract -- a reveal implemented as client-side state would be a client
  * deciding when an item becomes real, and the state compared below includes the
  * drop's authoritative identity on every tick of the run.
+ *
+ * Spec 197 added a fourth: the paint on an afflicted body. It belongs here for
+ * the same reason the reveal does, and one more. An affliction is the first
+ * thing in this game a client works out the *schedule* of for itself -- the beat
+ * is derived from the replicated expiry rather than sent -- so the obvious way
+ * to get it wrong is to let that derivation reach back into anything. The
+ * driver is handed only replicated facts and a recording player; if it ever
+ * touched the sim's Rng, or the prediction, or a shared scratch buffer, this run
+ * would diverge from the one with it switched off.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -52,6 +61,7 @@ import { TurnEase, lagBound, shortestTurn, type TurnLimits } from '../turn-ease.
 import { turnLimitsFor } from './turn-limits.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import { DropPresenter, type DropPresentation } from './loot-drop.js';
+import { AfflictionVfx, type VfxPlayer } from './affliction-vfx.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 const TICKS = 240;
@@ -113,6 +123,15 @@ interface RunResult {
   readonly yaws: readonly { drawn: number; heading: number; limits: TurnLimits }[];
   /** Every drop presentation produced, so a run that presented nothing fails. */
   readonly drops: readonly DropPresentation[];
+  /**
+   * Every effect the affliction layer asked for (spec 215), so a run whose paint
+   * silently did nothing cannot claim to have covered it. Ids rather than
+   * handles: what is worth asserting is that a cling was started and a beat was
+   * played, not which slot they landed in.
+   */
+  readonly painted: readonly string[];
+  /** Handles the affliction layer stopped, so a leak is visible as an absence. */
+  readonly stoppedPaint: readonly number[];
   /** How many attacks were called off (spec 166), so a run that left every
    * one-shot to finish on its own cannot claim to have covered the cancel. */
   readonly cancels: number;
@@ -166,6 +185,30 @@ async function play(animate: boolean): Promise<RunResult> {
   const yaws: { drawn: number; heading: number; limits: TurnLimits }[] = [];
   const dropPresenter = new DropPresenter();
   const drops: DropPresentation[] = [];
+  // A recorder rather than a `VfxLayer`, which is the whole reason `VfxPlayer`
+  // is an interface: the driver has no three.js in it and is driven here in
+  // Node exactly as `scene.ts` drives it.
+  const painted: string[] = [];
+  const stopped: number[] = [];
+  let nextHandle = 1;
+  const recorder: VfxPlayer = {
+    has: () => true,
+    // Nothing here fills an instance pool, so no handle is ever evicted. The
+    // eviction path is `affliction-vfx.test.ts`'s to cover; what this run is
+    // for is that the layer changes no authoritative state.
+    isLive: (handle) => handle !== 0 && !stopped.includes(handle),
+    play: (id) => {
+      painted.push(id);
+      return nextHandle++;
+    },
+    // Recorded rather than ignored: a cling is `durationTicks: 0` and stops only
+    // when it is told to, so "was anything ever stopped" is a real question
+    // about this run and a discarded handle is how a persistent effect leaks.
+    stop: (handle) => {
+      stopped.push(handle);
+    },
+  };
+  const afflictions = new AfflictionVfx(recorder);
   let cancels = 0;
   const flinches = new StaggerFlinches();
 
@@ -176,6 +219,13 @@ async function play(animate: boolean): Promise<RunResult> {
     // (spec 158). Rare, because a common one reveals on the tick it lands and
     // would never exercise the withheld half at all.
     if (tick === 20) server.triggerEvent('drop', 620, 450, 1);
+    // Every visible status, which is every affliction, on whatever is standing
+    // near the spawn (spec 186's developer path). At a fixed tick and a fixed
+    // point for the reason the drop is: both runs have to see the same world.
+    // It is applied in *both* runs -- it is a server action, not a presentation
+    // one -- so the comparison is between two identical fights, one of which is
+    // being painted.
+    if (tick === 30) server.triggerEvent('status', 700, 500, 400);
     client.advanceTick();
     // A fixed script: walk a circle, and every fortieth tick stop, swing, and
     // then walk out of it again -- which withdraws (spec 166), because asking
@@ -206,6 +256,23 @@ async function play(animate: boolean): Promise<RunResult> {
       drops.push(dropPresenter.read(drop, landing, view.estimatedTick));
     }
     dropPresenter.retain(new Set(view.drops.map((drop) => drop.entityId)));
+
+    // The paint (spec 215), driven exactly as `syncBodies` drives it: the
+    // replicated status list, the drawn tick, and the body's own radius as the
+    // scale. Nothing is read back.
+    for (const entity of view.entities) {
+      afflictions.step(
+        {
+          entityId: entity.id,
+          x: entity.x,
+          y: entity.z,
+          z: entity.y,
+          radius: SERVER_PLAYER_RADIUS,
+        },
+        entity.statuses ?? [],
+        view.estimatedTick,
+      );
+    }
 
     // The animation layer, driven exactly as the scene drives it.
     for (const entity of view.entities) {
@@ -259,7 +326,16 @@ async function play(animate: boolean): Promise<RunResult> {
     }
   }
 
-  return { states, events, yaws, drops, cancels, flinchesTracked: flinches.tracked };
+  return {
+    states,
+    events,
+    yaws,
+    drops,
+    painted,
+    stoppedPaint: stopped,
+    cancels,
+    flinchesTracked: flinches.tracked,
+  };
 }
 
 describe('animation is presentation only', () => {
@@ -322,6 +398,33 @@ describe('animation is presentation only', () => {
     expect(animated.drops.some((shown) => shown.label !== null)).toBe(true);
     // ...and it announced itself on the way, by name rather than by asset.
     expect(animated.drops.flatMap((shown) => shown.cues)).toContain('loot.reveal.rare');
+  }, 30_000);
+
+  it('was actually painting an affliction, and beating it (spec 215)', async () => {
+    // The same guard the yaw and the drop get. A driver that started nothing
+    // would satisfy the byte-for-byte assertion above and prove nothing -- and
+    // that is not a hypothetical here, because every id it can play is looked up
+    // through `has()` first and a table with a typo in it plays silence.
+    const animated = await play(true);
+    // The cling: started, and started once per body per affliction rather than
+    // once per frame. Two hundred and forty ticks of holding it would be
+    // thousands of plays if the idempotence were broken.
+    const clings = animated.painted.filter((id) => !id.endsWith('_pulse'));
+    expect(clings.length).toBeGreaterThan(0);
+    expect(clings.length).toBeLessThan(60);
+    // And the beat, which is the half that is derived rather than replicated.
+    const beats = animated.painted.filter((id) => id.endsWith('_pulse'));
+    expect(beats.length).toBeGreaterThan(0);
+    // All seven afflictions land together under the developer trigger, so all
+    // seven should have been painted. This is what catches a table that names
+    // an effect the registry does not hold -- for six of the seven.
+    const kinds = new Set(clings.map((id) => id.replace(/_heavy$/, '')));
+    expect(kinds.size).toBe(7);
+    // And they were let go of again. The developer trigger's afflictions run
+    // out inside this window, so a driver that started seven clings and stopped
+    // none of them would be the leak this whole handle-holding design exists to
+    // make impossible.
+    expect(animated.stoppedPaint.length).toBeGreaterThan(0);
   }, 30_000);
 
   it('drives the stagger flinch, and it changes no state (spec 173)', async () => {

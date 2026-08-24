@@ -1065,8 +1065,9 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
   it('still drops the cast when the hit is a killing one, and says so', () => {
     let state = createWorldState(1);
     // A caster frail enough that the stalker's first blow finishes it; it spawns
-    // on full health, so its maximum is all it has.
-    const player = withPlayer(state, 600, 450, { ...STATS, maxHealth: 6, armor: 0 });
+    // on full health, so its maximum is all it has. Two rather than six since
+    // spec 217 -- a stalker hits for what its row authors now, which is three.
+    const player = withPlayer(state, 600, 450, { ...STATS, maxHealth: 2, armor: 0 });
     state = player.state;
 
     const definition = monsterById('stalker');

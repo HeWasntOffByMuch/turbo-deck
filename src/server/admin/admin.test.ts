@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { GameClient } from '../client/game-client.js';
 import { LiveConfigStore } from '../config.js';
+import { ALL_DOTS, dotDurationTicks, type DotDefinition } from '../data/damage-over-time.js';
 import type { AdminItemRow, AdminPlayerRow } from '../net/admin-messages.js';
 import { AdminMessageType, AdminProgressMode, AdminReplyType } from '../net/protocol.js';
+import { LoopbackTransport } from '../net/transport-loop.js';
+import { GameServer } from '../server.js';
+import { StatusId, statusOf, type StatusState } from '../sim/statuses.js';
+import { EntityKindValue, type ServerEntity } from '../sim/types.js';
 import { MemoryDataStore } from '../state/memory-store.js';
 import { AuditLog } from './audit.js';
 import {
@@ -526,5 +532,223 @@ describe('character edits (spec 154)', () => {
       expect(reply.type).toBe(AdminReplyType.Error);
     }
     expect(test.host.calls).toEqual([]);
+  });
+});
+
+/**
+ * `admin:triggerEvent 'affliction'` (spec 215).
+ *
+ * Everything above this point is the **router**, driven against a `FakeHost`:
+ * the claim being made there is that a frame reaches a method carrying its
+ * arguments, that a refusal comes back as a refusal, and that a decision leaves
+ * an audit entry behind. None of that needs a world.
+ *
+ * This block is the other half of the same feature and does. What
+ * `'affliction'` is *for* is the state it leaves on the bodies in front of the
+ * operator -- one named affliction, at full severity, for its own authored
+ * length -- and a host that answers a string has no bodies to leave it on. So
+ * the server here is the real one and the bodies are real too: the player is
+ * logged in over the real loopback, because the operator's own character is the
+ * most likely thing this is ever pointed at and the kind filter has two arms,
+ * and the monsters arrive through `spawnEntities`, which is what an admin
+ * conjuring a fight already does.
+ */
+describe("admin:triggerEvent 'affliction' (spec 215)", () => {
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  /** Comfortably inside any reach worth having. */
+  const NEAR = 40;
+  /**
+   * Far enough to bracket the reach without reading it.
+   *
+   * `AFFLICTION_DEMO_REACH` is private on purpose, and a test that imported it
+   * would be asserting that a number equals itself. The claim worth making is
+   * the weaker, more useful one: a body eight hundred units away is across the
+   * field, and this trigger does not reach across the field.
+   */
+  const FAR = 800;
+
+  interface Fight {
+    readonly server: GameServer;
+    /** Where the operator is standing, which is where the trigger is aimed. */
+    readonly at: { readonly x: number; readonly y: number };
+    readonly player: number;
+    readonly near: number;
+    readonly far: number;
+  }
+
+  function entityOf(server: GameServer, id: number): ServerEntity {
+    const entity = server.world.entities.get(id);
+    if (!entity) throw new Error(`no entity ${id}`);
+    return entity;
+  }
+
+  /** The body standing at an x, which is how a spawn is found without ids. */
+  function idAtX(server: GameServer, x: number): number {
+    for (const entity of server.world.entities.values()) {
+      if (Math.abs(entity.position.x - x) < 0.001) return entity.id;
+    }
+    throw new Error(`no body at x ${x}`);
+  }
+
+  function heldOn(server: GameServer, id: number, dotId: string): StatusState | null {
+    return statusOf(entityOf(server, id).statuses, dotId, server.world.tick);
+  }
+
+  function rowAt(index: number): DotDefinition {
+    const row = ALL_DOTS[index];
+    if (!row) throw new Error(`no affliction at ordinal ${index}`);
+    return row;
+  }
+
+  /** The ordinal an operator would type for a named affliction. */
+  function ordinalOf(dotId: string): number {
+    const index = ALL_DOTS.findIndex((row) => row.id === dotId);
+    if (index < 0) throw new Error(`${dotId} is not an affliction`);
+    return index;
+  }
+
+  async function fight(): Promise<Fight> {
+    const transport = new LoopbackTransport();
+    const server = new GameServer({ seed: 7, transport });
+    // No ambient spawning: this wants the bodies it put there and no others, so
+    // that the count in the reply is a number the test can name outright.
+    server.liveConfig.set('spawnRateMultiplier', 0);
+    transport.onConnection((channel) => server.accept(channel));
+    const client = new GameClient(transport.connect(), { playerId: 'root', displayName: 'root' });
+    const welcome = client.connect();
+    await settle();
+    await welcome;
+    await settle();
+    server.tick();
+    await settle();
+
+    const player = [...server.world.entities.values()].find(
+      (entity) => entity.kind === EntityKindValue.Player,
+    );
+    if (!player) throw new Error('the player never reached the world');
+    const at = { x: player.position.x, y: player.position.y };
+    server.spawnEntities('grazer', at.x + NEAR, at.y, 1);
+    server.spawnEntities('grazer', at.x + FAR, at.y, 1);
+    return {
+      server,
+      at,
+      player: player.id,
+      near: idAtX(server, at.x + NEAR),
+      far: idAtX(server, at.x + FAR),
+    };
+  }
+
+  it('marks the bodies in front of you and not the one across the field', async () => {
+    const test = await fight();
+    const row = rowAt(ordinalOf(StatusId.Corrosion));
+
+    const said = test.server.triggerEvent(
+      'affliction',
+      test.at.x,
+      test.at.y,
+      ordinalOf(StatusId.Corrosion),
+    );
+    // The reply names the affliction, the severity and the length, because
+    // `magnitude` is an ordinal and nobody typing one into a console box has the
+    // table in front of them. Matched by shape rather than by its exact seconds:
+    // the tuning belongs to `data/damage-over-time.ts` and a retune there should
+    // not fail a test about the admin channel.
+    expect(said).toMatch(/^marked 2 bodies with Corrosion x3 for \d+\.\d+s$/);
+
+    // The player and the monster beside them, which is both arms of the kind
+    // filter. The expiry is the row's own, which is the substantive claim: this
+    // is the real affliction on its real clock, not a demo window with a mark
+    // over it.
+    for (const id of [test.player, test.near]) {
+      const held = heldOn(test.server, id, StatusId.Corrosion);
+      expect(held?.stacks).toBe(row.maxStacks);
+      expect(held?.expiresAtTick).toBe(test.server.world.tick + dotDurationTicks(row));
+      // A neutral caster's spell power, and nobody responsible for it: a kill by
+      // a conjured poison pays no restoration, no assist and no loot roll.
+      expect(held?.magnitude).toBe(1);
+      expect(held?.sourceId).toBe(0);
+    }
+    expect(heldOn(test.server, test.far, StatusId.Corrosion)).toBeNull();
+    expect(Object.keys(entityOf(test.server, test.far).statuses)).toEqual([]);
+  });
+
+  it.each(ALL_DOTS.map((row) => [row.name, row.id] as const))(
+    '%s lands alone, at its own full stack count and its own length',
+    async (_name, dotId) => {
+      const test = await fight();
+      const row = rowAt(ordinalOf(dotId));
+
+      test.server.triggerEvent('affliction', test.at.x, test.at.y, ordinalOf(dotId));
+
+      // Full severity rather than one stack, because severity is precisely what
+      // spec 215's paint draws differently and one stack of Poison is the tier
+      // a single dart already produces.
+      const held = heldOn(test.server, test.near, dotId);
+      expect(held?.stacks).toBe(row.maxStacks);
+      expect(held?.expiresAtTick).toBe(test.server.world.tick + dotDurationTicks(row));
+      // **Alone**, which is the entire difference from `'status'`: that one puts
+      // all sixteen visible statuses on at once, which is right for reading the
+      // mark row and useless for looking at one effect.
+      expect(Object.keys(entityOf(test.server, test.near).statuses)).toEqual([dotId]);
+    },
+  );
+
+  it.each([
+    ['an ordinal below the table', -4, rowAt(0)],
+    ['one exactly past its end', ALL_DOTS.length, rowAt(ALL_DOTS.length - 1)],
+    ['one a long way past it', 9_999, rowAt(ALL_DOTS.length - 1)],
+    ['something that is not a number at all', Number.NaN, rowAt(0)],
+  ] as const)('clamps %s rather than throwing', async (_label, magnitude, expected) => {
+    const test = await fight();
+
+    const said = test.server.triggerEvent('affliction', test.at.x, test.at.y, magnitude);
+
+    // Clamped rather than refused: an operator has no list in front of them, and
+    // the failure mode of a refusal is a button that appears to do nothing. The
+    // reply says which row it settled on, so a wrong number is visible there.
+    expect(said).toContain(`with ${expected.name} x${expected.maxStacks} `);
+    // And it actually landed. A clamp that returned a sentence and marked nobody
+    // reads identically in the console, which is the version worth ruling out.
+    expect(heldOn(test.server, test.near, expected.id)?.stacks).toBe(expected.maxStacks);
+  });
+
+  it('marks bodies and nothing else, so a drop at your feet is left lying there', async () => {
+    const test = await fight();
+    // The other admin trigger that puts an entity in the world, used as the
+    // negative arm of the kind filter: a drop is in reach, is an entity, and is
+    // not something an affliction can be on.
+    test.server.triggerEvent('drop', test.at.x, test.at.y, 0);
+    const drop = [...test.server.world.entities.values()].find((entity) => entity.drop);
+    if (!drop) throw new Error('the admin drop never landed');
+
+    test.server.triggerEvent('affliction', test.at.x, test.at.y, ordinalOf(StatusId.Burn));
+
+    expect(Object.keys(entityOf(test.server, drop.id).statuses)).toEqual([]);
+    expect(heldOn(test.server, test.player, StatusId.Burn)).not.toBeNull();
+  });
+
+  it('draws nothing from the Rng, so triggering one cannot move a roll', async () => {
+    const test = await fight();
+    // The guarantee the `'status'` case above it makes and this one inherits: it
+    // writes only into `statuses`, so it can no more change an outcome than the
+    // real thing can.
+    //
+    // `Rng` is immutable -- every draw returns a *new* one -- so the sharpest
+    // statement available is that the world is holding the same object
+    // afterwards. `getState()` is copied and compared beside it because identity
+    // alone would also hold for a replacement that happened to be equal, and
+    // what is being claimed is that no draw was taken at all.
+    const before = test.server.world.rng;
+    const state = [...before.getState()];
+    const bodies = test.server.world.entities.size;
+
+    test.server.triggerEvent('affliction', test.at.x, test.at.y, ordinalOf(StatusId.Poison));
+
+    expect(test.server.world.rng).toBe(before);
+    expect([...test.server.world.rng.getState()]).toEqual(state);
+    // Nothing spawned and nothing despawned either -- the other way an admin
+    // action reaches past the body it was aimed at.
+    expect(test.server.world.entities.size).toBe(bodies);
   });
 });

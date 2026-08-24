@@ -142,6 +142,21 @@ export interface StatModifier {
   readonly constitution?: number;
   readonly perception?: number;
   readonly wisdom?: number;
+  // --- weapon scaling grade steps (spec 216) ---
+  /**
+   * Steps along the `None -> E -> D -> C -> B -> A -> S` ladder, applied to
+   * whatever weapon is held.
+   *
+   * Steps rather than coefficients, and generic rather than per item: an amulet
+   * says `{ agilityScalingGrade: 1 }` and the resolver consumes it, so a new
+   * trinket is a row in `data/items.ts` and combat code never learns its name.
+   * Summed with everything else by {@link sumModifiers}, which is what makes
+   * "a ring, an amulet and a debuff on the same attribute" one net number
+   * before the clamp rather than three clamps in a row.
+   */
+  readonly strengthScalingGrade?: number;
+  readonly agilityScalingGrade?: number;
+  readonly intelligenceScalingGrade?: number;
   // --- flat additions to derived stats ---
   readonly maxHealth?: number;
   readonly moveSpeed?: number;
@@ -285,6 +300,9 @@ export function sumModifiers(modifiers: readonly StatModifier[]): Readonly<Modif
     constitution: 0,
     perception: 0,
     wisdom: 0,
+    strengthScalingGrade: 0,
+    agilityScalingGrade: 0,
+    intelligenceScalingGrade: 0,
     maxHealth: 0,
     moveSpeed: 0,
     turnRate: 0,

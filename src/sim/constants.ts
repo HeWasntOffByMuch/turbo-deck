@@ -68,7 +68,7 @@ export const ATTACK_SPEED_PER_AGILITY = 0.05;
 // Intelligence: each point adds this fraction to all spell damage.
 export const SPELL_DAMAGE_PER_INTELLIGENCE = 0.06;
 
-export const PLAYER_MAX_HEALTH = 100;
+export const PLAYER_MAX_HEALTH = 25;
 // Reach of the player's melee strike, measured from the player's centre to the
 // enemy's centre it must be within (ENEMY_RADIUS is added at the call site).
 export const PLAYER_ATTACK_RANGE = 50;

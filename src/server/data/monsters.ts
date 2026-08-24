@@ -37,6 +37,7 @@ import { monsterTraits } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import type { EffectiveStats } from '../state/types.js';
 import { SCALING } from './scaling.js';
+import { NO_WEAPON } from './weapon-scaling.js';
 
 /**
  * What a row actually authors (spec 147).
@@ -47,7 +48,20 @@ import { SCALING } from './scaling.js';
  * numbers per monster that nobody could tune relative to each other, and a row
  * added later would be a body that silently cannot be staggered.
  */
-export type AuthoredStats = Omit<EffectiveStats, 'traits' | 'skillAbilityIds'>;
+export type AuthoredStats = Omit<
+  EffectiveStats,
+  | 'traits'
+  | 'skillAbilityIds'
+  | 'weaponScaling'
+  | 'scalingModifiers'
+  // Derived from `attackDamage` below rather than authored (spec 217), so a row
+  // states how hard it hits once. Before that spec it stated it once and was
+  // read nowhere: `weaponPower` was 1 for every monster, so a blow was
+  // `melee.slash.damage` and the Ravager's 24 and the Grazer's 6 landed
+  // identically at 14.
+  | 'weaponDamageMin'
+  | 'weaponDamageMax'
+>;
 
 /**
  * How a body meets a player (spec 163).
@@ -211,6 +225,16 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
       // a row in `data/abilities.ts` without `skill: true`, which is what every
       // ability in the table already is.
       skillAbilityIds: [],
+      // Not authorable either, and for the same shape of reason (spec 216): a
+      // weapon's scaling is a property of the row a *player* picks up, and a
+      // monster's damage comes off its own table. Filled in as "scales with
+      // nothing" so every body in the world answers the question.
+      ...NO_WEAPON,
+      // A flat range: a monster's blow is the number its row authors, which is
+      // what makes retuning one a one-line edit. A per-row spread is a field
+      // this table can grow if a monster ever wants one.
+      weaponDamageMin: Math.max(0, monster.stats.attackDamage),
+      weaponDamageMax: Math.max(0, monster.stats.attackDamage),
       traits: monsterTraits(monster.stats.maxHealth, power),
     },
   };
@@ -236,10 +260,16 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // from its spawner, which is a herd animal rather than a decoration.
     idle: { kind: 'wander', radius: 200, cycleTicks: seconds(16) },
     stats: {
-      maxHealth: 24,
+      // Three, and the flee is why (spec 217). Every other row divided by four;
+      // this one divided by eight, because being hit sends a grazer running for
+      // two and a half seconds and it used to die to the first blow that landed
+      // -- so that flee had never once happened in a real fight. At a quarter it
+      // took three hits, fled three times, and a fresh character could not
+      // finish it: prey that cannot be caught is scenery with a loot table.
+      maxHealth: 3,
       moveSpeed: 40,
       turnRate: 120,
-      attackDamage: 6,
+      attackDamage: 2,
       attackRange: 60,
       baseAttackTimeTicks: seconds(1.6),
       ...NO_ATTACK_SPEED,
@@ -326,10 +356,10 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // `idle.test.ts` states.
     idle: { kind: 'patrol', radius: 150, points: 4, legTicks: seconds(7) },
     stats: {
-      maxHealth: 40,
+      maxHealth: 10,
       moveSpeed: 105,
       turnRate: 240,
-      attackDamage: 11,
+      attackDamage: 3,
       attackRange: 70,
       baseAttackTimeTicks: seconds(0.9),
       ...NO_ATTACK_SPEED,
@@ -354,10 +384,10 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // else, because {@link DEFAULT_IDLE} is what a row that has no opinion gets
     // and this row has no opinion.
     stats: {
-      maxHealth: 140,
+      maxHealth: 35,
       moveSpeed: 95,
       turnRate: 150,
-      attackDamage: 24,
+      attackDamage: 6,
       attackRange: 95,
       baseAttackTimeTicks: seconds(2.25),
       ...NO_ATTACK_SPEED,
@@ -398,10 +428,10 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // middle. 300 + 90 leaves its reach well inside the ceiling as well.
     idle: { kind: 'wander', radius: 90, cycleTicks: seconds(7) },
     stats: {
-      maxHealth: 22,
+      maxHealth: 6,
       moveSpeed: 115,
       turnRate: 290,
-      attackDamage: 5,
+      attackDamage: 1,
       attackRange: 55,
       baseAttackTimeTicks: seconds(0.8),
       ...NO_ATTACK_SPEED,
@@ -445,10 +475,10 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // fails on it rather than leaving it to be re-discovered.
     idle: { kind: 'patrol', radius: 100, points: 3, legTicks: seconds(6) },
     stats: {
-      maxHealth: 34,
+      maxHealth: 9,
       moveSpeed: 90,
       turnRate: 200,
-      attackDamage: 9,
+      attackDamage: 2,
       // `monsterIntent` stands off at the *ability's* range, so this number only
       // matters to a body that has lost its throwing arm. The star reaches 300.
       attackRange: 300,
@@ -479,7 +509,7 @@ const DUMMY: AuthoredMonster = {
   // intent is the one a reader of this table is looking for.
   idle: { kind: 'sentinel' },
   stats: {
-    maxHealth: 100000,
+    maxHealth: 25000,
     moveSpeed: 0,
     turnRate: 0,
     attackDamage: 0,

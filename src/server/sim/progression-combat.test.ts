@@ -13,6 +13,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { itemById } from '../data/items.js';
+import { rollBetween } from './blow.js';
+import { monsterById } from '../data/monsters.js';
 import { Rng } from '../../shared/prng.js';
 import { abilityById, type AbilityDefinition } from '../data/abilities.js';
 import { SCALING } from '../data/scaling.js';
@@ -406,15 +409,26 @@ describe('a blow', () => {
     expect(Math.min(...damages)).toBeLessThan(damages[0] ?? 0);
   });
 
-  it('rolls crit before the weak point, always, so a replay is reproducible', () => {
+  it('rolls the weapon then the crit, always, so a replay is reproducible', () => {
     // Not a style rule. The Rng is threaded through the whole sim, and a body
     // that draws a different number of values changes every fight after it.
-    const noWeakPoint = body({ ...statsFor(), traits: { ...NEUTRAL_TRAITS, weakPointChance: 0 } });
-    const before = Rng.fromSeed(99);
-    const [, expected] = before.nextInt(0, 9999);
+    //
+    // Two draws for a basic attack since spec 217 -- the weapon's own range and
+    // then the crit -- where it used to be the crit alone. Built through
+    // `rollBetween` rather than by spelling the first draw out here, so the
+    // order is asserted against the function the sim actually calls.
+    const stats = statsFor();
+    const noWeakPoint = body({ ...stats, traits: { ...NEUTRAL_TRAITS, weakPointChance: 0 } });
+    const [, afterWeapon] = rollBetween(Rng.fromSeed(99), stats.weaponDamageMin, stats.weaponDamageMax);
+    const [, expected] = afterWeapon.nextInt(0, 9999);
     const result = resolveBlow(SLASH, noWeakPoint, body(statsFor(), { id: 2 }), 0, Rng.fromSeed(99));
-    // One draw when the weak-point roll is skipped, and the state is exactly the
-    // one a single crit roll leaves behind.
+    expect(result.rng.getState()).toEqual(expected.getState());
+  });
+
+  it('rolls the crit alone for an ability, which has no weapon range to roll', () => {
+    const noWeakPoint = body({ ...statsFor(), traits: { ...NEUTRAL_TRAITS, weakPointChance: 0 } });
+    const [, expected] = Rng.fromSeed(99).nextInt(0, 9999);
+    const result = resolveBlow(BOLT, noWeakPoint, body(statsFor(), { id: 2 }), 0, Rng.fromSeed(99));
     expect(result.rng.getState()).toEqual(expected.getState());
   });
 
@@ -633,5 +647,188 @@ describe('spell geometry', () => {
     // A weapon's reach is the weapon's. Shaping is for constructed things.
     const shaper = statsFor({ intelligence: SCALING.attributeHardCap });
     expect(castRangeFor(SLASH, { stats: shaper })).toBe(SLASH.range);
+  });
+});
+
+/**
+ * A weapon's letters reaching a real blow (spec 216).
+ *
+ * `resolveBlow` was not touched by that spec -- what changed is what
+ * `weaponPower` is built from -- so what is asserted here is exactly that: the
+ * scaled damage goes through crit, armour and the rest of the pipeline the way
+ * the unscaled damage always did, and a basic attack is the only thing it
+ * reaches.
+ */
+describe('weapon scaling through a blow', () => {
+  const holding = (mainHand: string, baseStats: Partial<BaseStats> = {}): EffectiveStats =>
+    statsFor(baseStats, { equipment: { ...EMPTY_EQUIPMENT, mainHand }, level: 20 });
+
+  /**
+   * What one blow took off, measured as health lost.
+   *
+   * `BlowResult` carries the bodies rather than a number, so the damage is the
+   * difference -- which is also the honest measurement, since it is what the
+   * whole pipeline (crit, armour, shields) actually left behind.
+   */
+  const struck = (attacker: EffectiveStats, seed = 7): number => {
+    const target = body(statsFor(), { id: 2 });
+    const result = resolveBlow(SLASH, body(attacker), target, 0, Rng.fromSeed(seed));
+    return target.health - result.target.health;
+  };
+
+  it('hits harder with the maul on a Strength build than on an Agility one', () => {
+    expect(struck(holding('maul.iron', { strength: 40 }))).toBeGreaterThan(
+      struck(holding('maul.iron', { agility: 40 })),
+    );
+  });
+
+  it('hits harder with the stars on an Agility build -- the other way round', () => {
+    expect(struck(holding('stars.weighted', { agility: 40 }))).toBeGreaterThan(
+      struck(holding('stars.weighted', { strength: 40 })),
+    );
+  });
+
+  it('still loses the target\'s armour off the scaled number', () => {
+    const attacker = holding('maul.iron', { strength: 40 });
+    const soft = body(statsFor(), { id: 2 });
+    const armoured = body(statsFor({ constitution: 50 }), { id: 3 });
+    const bare = resolveBlow(SLASH, body(attacker), soft, 0, Rng.fromSeed(11));
+    const mitigated = resolveBlow(SLASH, body(attacker), armoured, 0, Rng.fromSeed(11));
+    expect(armoured.stats.armor).toBeGreaterThan(soft.stats.armor);
+    // Compared as fractions of each body's own pool, since Constitution moved
+    // the armoured body's maximum health as well as its armour.
+    const took = (before: ServerEntity, after: ServerEntity): number =>
+      (before.health - after.health) / before.stats.maxHealth;
+    expect(took(armoured, mitigated.target)).toBeLessThan(took(soft, bare.target));
+  });
+
+  // The split spec 147 drew and this spec deliberately did not move: a swing
+  // scales with what you are swinging, and a spell with Intelligence's spell
+  // power. A weapon's letters must not reach an ability's damage.
+  it('leaves an ability\'s damage alone -- that is still spell power', () => {
+    const target = body(statsFor(), { id: 2 });
+    const maul = resolveBlow(BOLT, body(holding('maul.iron', { strength: 40 })), target, 0, Rng.fromSeed(3));
+    const stars = resolveBlow(BOLT, body(holding('stars.weighted', { strength: 40 })), target, 0, Rng.fromSeed(3));
+    expect(maul.target.health).toBeCloseTo(stars.target.health, 9);
+  });
+});
+
+/**
+ * The weapon's own damage, rolled (spec 217).
+ *
+ * What a basic attack is built on changed: it used to be `ability.damage` times
+ * a multiplier, and it is now a roll between the two ends `computeEffectiveStats`
+ * resolved. These assert the roll itself and the two bugs the change closed.
+ */
+describe('a rolled weapon range', () => {
+  const holding = (mainHand: string, baseStats: Partial<BaseStats> = {}): EffectiveStats =>
+    statsFor(baseStats, { equipment: { ...EMPTY_EQUIPMENT, mainHand }, level: 20 });
+
+  /** One blow's damage against an unarmoured body, as health lost. */
+  const hit = (attacker: EffectiveStats, seed: number): number => {
+    // Armour explicitly zeroed rather than built low: every attribute grants a
+    // little, so even a Constitution-0 body mitigates a couple of percent and
+    // the rolled integer comes back fractional.
+    const target = body({ ...statsFor(), armor: 0 }, { id: 2, health: 100_000 });
+    const result = resolveBlow(SLASH, body(attacker), target, 0, Rng.fromSeed(seed));
+    return target.health - result.target.health;
+  };
+
+  it('rolls an integer inside its range, and reaches both ends', () => {
+    // Asserted on `rollBetween` itself rather than on a blow's damage, because
+    // by the time a blow has been through crit, weak points and armour the
+    // number is no longer the roll -- and a test that filtered those out would
+    // be asserting the filter.
+    const stats = holding('maul.iron');
+    const lo = Math.round(stats.weaponDamageMin);
+    const hi = Math.round(stats.weaponDamageMax);
+    expect(hi).toBeGreaterThan(lo);
+    const seen = new Set<number>();
+    let rng = Rng.fromSeed(1);
+    for (let i = 0; i < 400; i++) {
+      const [roll, next] = rollBetween(rng, stats.weaponDamageMin, stats.weaponDamageMax);
+      rng = next;
+      expect(Number.isInteger(roll)).toBe(true);
+      expect(roll).toBeGreaterThanOrEqual(lo);
+      expect(roll).toBeLessThanOrEqual(hi);
+      seen.add(roll);
+    }
+    expect(seen.has(lo), 'never rolled its minimum').toBe(true);
+    expect(seen.has(hi), 'never rolled its maximum').toBe(true);
+  });
+
+  it('carries the roll into the blow: an ordinary hit is never below the floor', () => {
+    const stats = holding('maul.iron');
+    const lo = Math.round(stats.weaponDamageMin);
+    for (let seed = 0; seed < 120; seed++) {
+      expect(hit(stats, seed), `seed ${seed}`).toBeGreaterThanOrEqual(lo);
+    }
+  });
+
+  it('is the same damage for the same seed, twice', () => {
+    const stats = holding('maul.iron');
+    for (let seed = 0; seed < 20; seed++) expect(hit(stats, seed)).toBe(hit(stats, seed));
+  });
+
+  // The rule the draw order rests on: a blow's draw count may depend on the
+  // ability's own row, never on the attacker's stats.
+  it('spends the same number of draws whatever the attacker\'s stats', () => {
+    const target = body(statsFor(), { id: 2 });
+    const after = (attacker: EffectiveStats): readonly number[] =>
+      resolveBlow(SLASH, body(attacker), target, 0, Rng.fromSeed(5)).rng.getState();
+    // Perception moves the weak-point chance and Strength the range; neither
+    // may move where the next blow's Rng starts.
+    expect(after(holding('maul.iron', { perception: 40 }))).toEqual(
+      after(holding('maul.iron', { strength: 40 })),
+    );
+  });
+
+  it('gives a fresh character exactly the Worn Sword\'s authored range', () => {
+    const fresh = statsFor({}, { equipment: { ...EMPTY_EQUIPMENT, mainHand: 'sword.worn' } });
+    const row = itemById('sword.worn')?.damage;
+    expect(row).toEqual({ min: 1, max: 3 });
+    expect(Math.round(fresh.weaponDamageMin)).toBe(row?.min);
+    expect(Math.round(fresh.weaponDamageMax)).toBe(row?.max);
+  });
+
+  // Spec 217's second finding: every melee monster hit for `melee.slash.damage`
+  // and the number its row authored reached nothing but its stagger power.
+  it('makes a monster hit for what its own row authors', () => {
+    const ravager = monsterById('ravager');
+    const grazer = monsterById('grazer');
+    expect(ravager?.stats.weaponDamageMin).toBe(ravager?.stats.attackDamage);
+    expect(grazer?.stats.weaponDamageMin).toBe(grazer?.stats.attackDamage);
+    expect(ravager?.stats.weaponDamageMin).not.toBe(grazer?.stats.weaponDamageMin);
+  });
+
+  it('leaves a body that authors no damage unable to hurt anything', () => {
+    // The training dummy, which authored 0 and hit for 14 before spec 217.
+    const dummy = monsterById('dummy');
+    expect(dummy?.stats.attackDamage).toBe(0);
+    expect(dummy?.stats.weaponDamageMax).toBe(0);
+  });
+
+  it('resolves attackDamage as the midpoint of the range', () => {
+    const stats = holding('maul.iron', { strength: 30 });
+    expect(stats.attackDamage).toBeCloseTo((stats.weaponDamageMin + stats.weaponDamageMax) / 2, 9);
+  });
+
+  it('still moves the range with the weapon\'s own scaling, and only that', () => {
+    // The maul is `S / - / -`, the stars `- / S / -`.
+    expect(holding('maul.iron', { strength: 40 }).weaponDamageMax).toBeGreaterThan(
+      holding('maul.iron').weaponDamageMax,
+    );
+    expect(holding('stars.weighted', { strength: 40 }).weaponDamageMax).toBeCloseTo(
+      holding('stars.weighted').weaponDamageMax,
+      9,
+    );
+  });
+
+  it('leaves an ability\'s damage off the weapon entirely', () => {
+    const target = body(statsFor(), { id: 2 });
+    const maul = resolveBlow(BOLT, body(holding('maul.iron')), target, 0, Rng.fromSeed(3));
+    const stars = resolveBlow(BOLT, body(holding('stars.weighted')), target, 0, Rng.fromSeed(3));
+    expect(maul.target.health).toBeCloseTo(stars.target.health, 9);
+    expect(maul.target.health).toBeLessThan(target.health);
   });
 });

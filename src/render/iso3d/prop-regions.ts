@@ -123,3 +123,29 @@ export function propRegionKeysIn(rect: {
   }
   return out;
 }
+
+/**
+ * The world rectangle one region covers (spec 215).
+ *
+ * The inverse of {@link propRegionKey}, for a caller that has a region key and
+ * needs to ask the world a question about the ground under it -- which is how
+ * the streaming client decides a region's trees have no ground left to stand
+ * on. Here rather than in `props.ts` for the same reason the forward direction
+ * is: the module that answers it must not need a mesh.
+ */
+export function propRegionBounds(key: string): {
+  readonly minX: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxZ: number;
+} {
+  const comma = key.indexOf(',');
+  const rx = Number(key.slice(0, comma));
+  const rz = Number(key.slice(comma + 1));
+  return {
+    minX: rx * regionSize,
+    minZ: rz * regionSize,
+    maxX: (rx + 1) * regionSize,
+    maxZ: (rz + 1) * regionSize,
+  };
+}

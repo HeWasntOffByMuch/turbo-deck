@@ -271,7 +271,11 @@ describe('the worker lets go too', () => {
     // Drop the middle: the four beside it are now stitched to ground that is
     // gone, so they come back as meshes.
     const replies = core.evict([{ layer: 0, cx: 0, cz: 0 }]);
-    expect(core.generation).toBe(8);
+    // **Up, not down** (spec 215). This used to read `toBe(8)`, because the
+    // generation was the held count -- and a version number that goes backwards
+    // when ground is let go is what had the renderer refusing every nav grid
+    // built after the held set stopped growing.
+    expect(core.generation).toBe(10);
     const meshed = replies.filter((r) => r.kind === 'mesh');
     expect(meshed.length).toBe(4);
     for (const r of meshed) {
@@ -286,5 +290,67 @@ describe('the worker lets go too', () => {
       core.setMap(INFO, 550);
       expect(core.evict([{ layer: 0, cx: 99, cz: 99 }])).toEqual([]);
     })();
+  });
+});
+
+/**
+ * The number a nav reply is ordered by, and the number that says how much has
+ * changed (spec 215).
+ *
+ * Both were the held chunk *count*, which is a version only for a client that
+ * never forgets. Measured in a browser once it did: over a walk across the
+ * shipped map the renderer asked for **one** grid and adopted **two**, and went
+ * on routing against the one built over its spawn point -- pathfinding that
+ * works until you go anywhere.
+ */
+describe('how much ground has moved', () => {
+  it('counts a chunk let go as a change, the same as one that arrived', () => {
+    const streamed = new StreamedMap(INFO);
+    const doc = BY_COORD.get('0,0');
+    if (!doc) throw new Error('no chunk');
+
+    expect(streamed.revision).toBe(0);
+    streamed.add({ layer: 0, cx: 0, cz: 0, chunk: doc });
+    expect(streamed.revision).toBe(1);
+    streamed.remove([{ layer: 0, cx: 0, cz: 0 }]);
+    expect(streamed.revision).toBe(2);
+    expect(streamed.size).toBe(0);
+  });
+
+  it('only ever goes up, while the held count does not', () => {
+    // The property the whole fix rests on. Walking a corridor, the held set
+    // reaches its keep window and stays there -- so `size` is flat and useless
+    // as a version, while every step still changes which ground is held.
+    const c = client();
+    const seen: number[] = [];
+    const sizes: number[] = [];
+    for (let cx = 0; cx <= 12; cx++) {
+      const p = at(cx, 3);
+      c.stream(p.x, p.z);
+      c.evict(p.x, p.z);
+      seen.push(c.streamed.revision);
+      sizes.push(c.streamed.size);
+    }
+
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i] ?? 0).toBeGreaterThan(seen[i - 1] ?? 0);
+    }
+    // ...and the count it replaced flattens out, which is the bug in one line.
+    const settled = sizes.slice(4);
+    expect(Math.max(...settled) - Math.min(...settled)).toBeLessThan(
+      (seen[seen.length - 1] ?? 0) - (seen[4] ?? 0),
+    );
+  });
+
+  it('ignores a chunk that was not held and one already held', () => {
+    const streamed = new StreamedMap(INFO);
+    const doc = BY_COORD.get('0,0');
+    if (!doc) throw new Error('no chunk');
+
+    streamed.remove([{ layer: 0, cx: 0, cz: 0 }]);
+    expect(streamed.revision).toBe(0);
+    streamed.add({ layer: 0, cx: 0, cz: 0, chunk: doc });
+    streamed.add({ layer: 0, cx: 0, cz: 0, chunk: doc });
+    expect(streamed.revision).toBe(1);
   });
 });

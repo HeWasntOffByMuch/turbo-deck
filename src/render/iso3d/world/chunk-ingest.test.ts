@@ -309,4 +309,56 @@ describe('a region whose ground is not all in yet (spec 180)', () => {
     // Chunk (2,0) runs 1232..1848, so its regions start at or past 1100.
     expect(queue.takePropRects(200, 8, halfArrived).length).toBeGreaterThan(0);
   });
+
+  /**
+   * The backstop is a *deadline*, not a quiet period (spec 215).
+   *
+   * Measured on the shipped map: `rectCovered` fires **zero** times over a walk,
+   * because a 2200-unit region needs a 4x4 block of 616-unit chunks and the
+   * request window has been 5x5 and unaligned since spec 202 narrowed the
+   * radius. So completeness is no longer "the common case" this clock backs up
+   * -- it is the only gate there is, and read from the last touch it could be
+   * postponed forever by the very arrivals it is waiting on.
+   */
+  it('counts from when the region first went dirty, not from the last arrival', () => {
+    const queue = ingest(120, 8, 4000);
+    // Ground keeps landing in the same region, the way it does under a body
+    // that keeps moving: every 500ms, for longer than the hold.
+    for (let at = 0; at <= 6000; at += 500) {
+      queue.offer([chunk(0, 0)], at);
+      queue.complete(0, 0, 0, at);
+      // Never settled, because its own ground genuinely has not stopped.
+      expect(queue.takePropRects(at + 50, 8, halfArrived)).toHaveLength(0);
+    }
+    // The first quiet moment past the settle, and it is *overdue* rather than
+    // starting a fresh four seconds: it has been waiting since tick 0.
+    expect(queue.takePropRects(6200, 8, halfArrived)).toHaveLength(1);
+  });
+
+  it('starts the deadline again once the region has been handed back', () => {
+    const queue = ingest(120, 8, 4000);
+    queue.offer([chunk(0, 0)], 0);
+    queue.complete(0, 0, 0, 0);
+    expect(queue.takePropRects(4001, 8, halfArrived)).toHaveLength(1);
+
+    // Dirtied afresh: this one has waited no time at all.
+    queue.offer([chunk(0, 0)], 5000);
+    queue.complete(0, 0, 0, 5000);
+    expect(queue.takePropRects(5200, 8, halfArrived)).toHaveLength(0);
+    expect(queue.takePropRects(9100, 8, halfArrived)).toHaveLength(1);
+  });
+
+  it('forgets both clocks when a region is dropped for having no ground', () => {
+    const queue = ingest(120, 8, 4000);
+    queue.offer([chunk(0, 0)], 0);
+    queue.complete(0, 0, 0, 0);
+    expect(queue.forgetRegions(() => true)).toBeGreaterThan(0);
+
+    // Re-dirtied later, it waits its own full hold rather than inheriting the
+    // deadline of the entry that was thrown away.
+    queue.offer([chunk(0, 0)], 5000);
+    queue.complete(0, 0, 0, 5000);
+    expect(queue.takePropRects(5200, 8, halfArrived)).toHaveLength(0);
+    expect(queue.takePropRects(9100, 8, halfArrived)).toHaveLength(1);
+  });
 });

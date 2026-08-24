@@ -62,8 +62,11 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
+| `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
+| `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -1606,6 +1609,74 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  for. Dropping one chunk re-meshes the four beside it, because a
                  chunk's apron is built from its neighbours: the mirror of what
                  an arrival does, in the other direction.
+                 Since spec 215 the client also forgets the **trees** on that
+                 ground. Spec 208 evicted terrain at four layers and said prop
+                 regions were the same question one level up; one level up had
+                 no answer at all, because `PropFieldHandle` could adopt a
+                 region or dispose the whole field and nothing in between. A
+                 lawnmower over the shipped map left **72 regions and 1,124
+                 shadow-casting meshes drawn over 4 regions' worth of ground**.
+                 The rule is derived rather than chosen: **a region is drawn
+                 because a chunk under it is held, so it is dropped when none
+                 is** -- which is what makes it unable to fight the streamer by
+                 construction, where terrain had to derive a keep radius to buy
+                 the same guarantee. One predicate, two callers
+                 (`world/prop-residency.ts`): the drop pass, and the adopt path,
+                 where a region asked for on one frame and evicted on the next
+                 would otherwise be hung on the graph *behind* the drop pass
+                 with nothing left to take it down.
+                 What that exposed is the half worth knowing about, because
+                 shipping the drop alone made the game worse and the report was
+                 "went south, then north again and chunks didn't re-appear".
+                 **Dropping a region is only half a cache**, and the thing that
+                 puts it back was already broken:
+                 `ChunkIngest.takePropRects` hands a region back once its ground
+                 has been quiet for `settleMs` and either its ground is complete
+                 or it has waited `incompleteHoldMs`, and both halves had
+                 failed. The completeness rule fires **zero** times -- a
+                 2200-unit region needs a 4x4 block of 616-unit chunks and the
+                 request window has been 5x5 and unaligned since spec 202
+                 narrowed the radius, so what spec 180 wrote as "the common
+                 case" now never happens -- which leaves the backstop deciding
+                 everything, and it was measured from the region's *last* touch,
+                 so every arrival pushed its own deadline out and a body that
+                 kept moving never reached it. Invisible before eviction,
+                 because a region drawn once was drawn forever; with eviction it
+                 is a world that strips itself as you walk and takes fourteen
+                 seconds of standing perfectly still to fill back in. So **the
+                 incomplete-hold clock is a deadline, not a quiet period**: a
+                 region keeps two stamps, the last touch for the settle and the
+                 first for the backstop, and nothing restarts the second until
+                 the region is handed back. That the completeness rule is dead
+                 is written down in spec 215 with its measurement rather than
+                 repaired, because repairing it means asking "is every chunk of
+                 this region *inside the request window* held", which changes a
+                 rule spec 180 stated.
+                 `npx tsx scripts/probe-walk-back.ts` is the half no headless
+                 test could see -- the shipped page, a real worker, a real scene
+                 graph, the body moved by admin teleport because the keep radius
+                 is a minute of walking -- and it reads `data-prop-regions`
+                 against `data-chunks-held`: the ground was bounded and complete
+                 the whole way while the trees went to **zero** and came back to
+                 three.
+                 The same probe found the third one, one system over: the
+                 **nav grid was keyed on the held chunk count** at both of its
+                 gates -- `streamed.size - sizeWhenLastAsked >= 8` to decide a
+                 rebuild is worth it, and `generation: streamed.size` to order
+                 the replies. A count is a version only for a client that never
+                 lets go, and bounded at 35 by the keep window it is neither: the
+                 trigger stops firing and every later grid is refused as stale,
+                 so a client routes and predicts collision against the grid built
+                 over its spawn point for the session. Measured over sixteen
+                 chunk-crossings: **one request, two grids**, `gen` stuck at 35
+                 from the second leg on -- which reads as pathfinding that works
+                 until you go anywhere. `StreamedMap.revision` is what both
+                 questions were always about: **churn**, one up per insert *and*
+                 one per removal, so it only ever grows and a chunk let go counts
+                 as the change to the ground it is. Same walk after: fourteen
+                 grids, `gen` 25 to 155, none refused. It arrived with spec 208
+                 rather than with 215, and nothing caught it because every test
+                 in the tree drives a client that grows.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -1878,6 +1949,150 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 `data/weapon-scaling.ts` is **what a weapon scales with**
+                 (spec 216), and it exists because until it did, every weapon in
+                 the game scaled the same way and the way was Strength: the two
+                 attribute terms were written into `attackDamage` in
+                 `player/stats.ts`, so the maul, the Hunting Bow and the
+                 Emberwood Staff all bought damage from the same stat and nothing
+                 a designer could write in `data/items.ts` changed it. Swinging
+                 the staff -- a row granting +3 Intelligence and spell power --
+                 was a Strength act.
+                 A weapon now authors one letter per attribute,
+                 `None -> E -> D -> C -> B -> A -> S`, over Strength, Agility and
+                 Intelligence and those three only. `ScalingGrade` is *ordinal*
+                 rather than a letter union, the `StatusId` const-object pattern,
+                 because every operation a grade has is step arithmetic and
+                 clamping; the letters are `GRADE_LETTERS` and are a display
+                 concern.
+                 Four rules, and the first is the one the feature does not work
+                 without. **One rate for all three attributes.** Strength used to
+                 buy 0.6 damage a point and Agility 0.15, a four-to-one gap
+                 sitting *underneath* the grades -- an `A` in Agility would have
+                 been worth less than an `E` in Strength, and no letter anybody
+                 could write would have balanced the two. So
+                 `SCALING.weaponScaling.damagePerPoint` is shared and the
+                 **grade** is the whole differentiation. It is `2/3` because
+                 `2/3 * 0.9` is exactly `0.6`: grade `A` reproduces the Strength
+                 rate this replaced, so migrating a weapon to `A` moved a
+                 Strength build's damage by nothing at all. An independent
+                 constant rather than one derived from `A`, or retuning `A` would
+                 be silently cancelled by the rate it was chosen against.
+                 **The coefficients live in `SCALING` and nowhere else.**
+                 `data/scaling.ts` already states its reason to exist -- a
+                 balance pass is a diff of that file and nothing else -- so
+                 deciding `S` is worth 1.30 is one edit that reaches every `S`
+                 weapon in the game. A weapon row stores the *letter*, and the
+                 tooltip draws the letter it was authored with rather than
+                 inferring one back out of a number. `coefficientOf` is the only
+                 reader, and it switches on the ordinal so a corrupt row answers
+                 `none` rather than `undefined`.
+                 **`effectiveScaling` is the single resolver**, and both the
+                 damage and the tooltip go through it -- which is what makes "what
+                 the number does" and "what the player is told" the same sentence
+                 rather than two implementations that agree until one is edited.
+                 It returns a new object and never touches the base, which is the
+                 property the modifier design rests on: an amulet raising Agility
+                 a grade must not write into `data/items.ts`, because taking it
+                 off would need the row restored from somewhere and there is
+                 nowhere. Removing a modifier restores the effective scaling
+                 because the base was never moved.
+                 And **a modifier is a step, generic and summed**: three flat
+                 fields on `StatModifier` beside the six attribute grants, added
+                 by `sumModifiers` with everything else, so a ring at +1, an
+                 amulet at +2 and a debuff at -1 are a net +2 clamped **once** --
+                 rather than three clamps in a row, which answer differently near
+                 the ends of the ladder. `S + 1` is `S`, `None - 1` is `None`, and
+                 there is no `S+` and no `F`. A step also *lifts* a `None`, which
+                 is deliberate: a modifier that could not create scaling would
+                 make "raise a grade" mean two different things.
+                 What did **not** move is spec 147's split: `resolveBlow` still
+                 chooses between `weaponPower` and `spellPower` on
+                 `ability.basicAttack`, so a weapon's letters reach a swing and an
+                 ability still scales with Intelligence's spell power. And
+                 monsters have no weapon row, so `AuthoredStats` cannot author
+                 scaling at all and `withTraits` fills in `NO_WEAPON_SCALING`.
+                 The two resolved fields ride `EffectiveStats` and the `Stats`
+                 message, and both are needed rather than one: the grades answer
+                 "what does the weapon I am holding scale with", and the steps are
+                 what the bag needs to answer the same question about a weapon it
+                 is only *hovering*. Re-deriving those steps from the client's own
+                 copy of the equipment would be the second modifier
+                 implementation the whole spec exists to prevent -- and would miss
+                 the milestones and synergies that side cannot see.
+                 `npx tsx scripts/preview-weapon-scaling.ts` is the balance
+                 instrument: the roster, the coefficient budget each weapon's
+                 letters add up to (which is the number a balance pass actually
+                 reads, because breadth has to be paid for or a three-letter
+                 weapon is simply better than a one-letter one), and what the
+                 migration moved at five builds. `explainScaling` is the same
+                 arithmetic taken apart term by term, for answering "why did that
+                 hit for 70" during development; nothing in production reads it.
+                 `data/weapon-scaling.ts` also holds **what a weapon hits
+                 for** (spec 217), because a weapon having damage of its own is
+                 the other half of it having scaling of its own. A row authors a
+                 `{ min, max }` and that *is* the basic attack: before it, a
+                 swing was `ability.damage * weaponPower`, so the number setting
+                 how hard every sword in the game hit was a field on
+                 `melee.slash` -- shared with every monster on the map.
+                 Three findings, and they were one finding. **A weapon had no
+                 damage of its own**, so "this sword hits for 1 to 3" was not
+                 expressible. **Every melee monster hit for exactly 14**:
+                 `monsterTraits` spreads `NEUTRAL_TRAITS`, whose `weaponPower` is
+                 1, so a monster's blow was `melee.slash.damage` and the
+                 `attackDamage` its row authored reached nothing but its stagger
+                 power -- the Ravager's 24 and the Grazer's 6 landed identically,
+                 and the Training Dummy authored 0 and hit for 14. And **the
+                 numbers were an order of magnitude too big to read**: a fresh
+                 character hit a 24-health Grazer for 26.3 and deleted it.
+                 `EffectiveStats.weaponDamageMin`/`Max` is the resolved range,
+                 with the attribute term, the flat bonuses and the percentage
+                 already folded into **both ends** -- so a wide weapon stays wide
+                 and `resolveBlow` rolls and is done. `attackDamage` survives as
+                 the **midpoint**, which is what the character sheet shows and
+                 what a stagger's power is sized off; `TraitStats.weaponPower` is
+                 gone, its one production reader having stopped reading it.
+                 A monster's range is `min = max =` its authored `attackDamage`,
+                 filled in by `withTraits`, which is the whole of the second bug.
+                 **The draw is one `nextInt`, before the crit roll, and only for
+                 a basic attack.** Conditioning on the ability's own
+                 `basicAttack` flag is safe where conditioning on a *chance*
+                 would not be: it is a property of the row, fixed for an id, so
+                 two replays of the same inputs draw the same count. The Rng draw
+                 count is protocol, so this moved every seeded combat sequence in
+                 the tree once, deliberately.
+                 The scaling baseline moved with it: spec 216's attribute term is
+                 measured through `above()` now, the rule `data/scaling.ts`
+                 already applies to every other scale, so a character who has
+                 spent nothing gets nothing from scaling and the Worn Sword's
+                 `1-3` is exactly what a fresh character hits for.
+                 What the rescale reached, and why each: health and monster
+                 damage **divide by four**; ability damage, DoT rates and
+                 `HEAVY_ABILITY_DAMAGE` divide by **seven**, measured against
+                 `npm run balance` rather than chosen -- at a quarter,
+                 Intelligence sat at 13 kills against Strength's 5 where main had
+                 9 against 8, because abilities had kept their power against
+                 health while weapons lost a third of theirs. The **poise**
+                 economy divides by four alongside health and had to: a monster's
+                 guard is `maxHealth * monsterPoiseFraction` floored at
+                 `minPoise`, so quartering health alone put every monster in the
+                 game on the floor. `data/restoration.ts` needed no change at
+                 all, because every number in it is a fraction of a pool.
+                 Two things in the **harness** were measuring a character nobody
+                 plays, and both were invisible until the table went strange.
+                 `bestReady` compares each ability against the basic attack's
+                 damage, read off the ability row -- which is 0 now -- so every
+                 build stopped swinging and the weak-point column went to zero
+                 across all twelve; it reads `stats.attackDamage`. And the
+                 presets fought in `EMPTY_EQUIPMENT`, which used to be worth 14 a
+                 swing and is now a 1-2 punch, so they wear `STARTER_EQUIPMENT`
+                 -- the same worn sword for all twelve, a control rather than a
+                 variable.
+                 The one row that did **not** divide by four is the Grazer, which
+                 divided by eight: being hit sends it running for two and a half
+                 seconds, it used to die to the first blow that landed, and at a
+                 quarter it took three hits, fled three times and could not be
+                 caught. Prey that cannot be caught is scenery with a loot table.
                  `data/description.ts` is what those tables *say* (spec 191) --
                  the one writer for every player-facing Technical Description,
                  composing a row into a target, its effects in the row's own
@@ -2443,6 +2658,127 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  appears, which is the whole reason a bottom-anchored holder may
                  grow at the top at all -- the cast bar had to be taken out of
                  flow for exactly this.
+                 `world/affliction-vfx.ts` is what a *body* says about the same
+                 thing (spec 215), and it exists because a mark over the head is
+                 the wrong shape of information for an affliction: an affliction
+                 is the one damage here that stays on a body after the thing
+                 that did it walked away, and until this the only difference
+                 between four seconds of fire and ten seconds of rot was which
+                 thirteen-pixel glyph sat in a row of glyphs. So the seven get
+                 painted, in the spec 158-162 vocabulary, and three sockets that
+                 had been waiting with comments naming this work got filled:
+                 `auras.ts`'s *"the day a status list is replicated, `aurasFor`
+                 gains a branch"* (spec 186 replicated it; `aurasFor` and
+                 `AuraTracker` had no caller outside their own test for
+                 seventy-five specs), `EmitterShape`'s `{ kind: 'mesh' }` --
+                 *"the surface of whatever the effect is attached to ... what
+                 makes a **burning-unit** definition safe to preview in
+                 isolation"*, with no burning-unit definition and no `surface`
+                 hook, so in the game it had never resolved to anything but a
+                 point -- and `scene.ts`'s attach hook, *"the effects that need
+                 a socket, a burning unit, arrive with the fire work"*.
+                 The decision the whole thing turns on: **the beat is derived,
+                 not sent**. `WireStatus` carries an *absolute* `expiresAtTick`
+                 and `data/damage-over-time.ts` is shared code, so
+                 `elapsed = tick - (expiresAtTick - dotDurationTicks(row))`
+                 recovers the entire schedule -- the same rule `loot-drop.ts`'s
+                 reveal phase and `stun-icon.ts`'s swirl already are. Every
+                 client beats together, nothing new crosses the wire, and the
+                 paint lands on the frame the damage number does, which is the
+                 whole difference between "there is a green haze on that thing"
+                 and "that thing is being poisoned". It is a **count** rather
+                 than "is this tick a pulse tick", and that half is
+                 load-bearing: a frame drains several ticks -- three at 20fps,
+                 and this environment paints a real page at about five -- so the
+                 modulo version skips most beats and *all* of them on a slow
+                 frame, where counting what has landed and firing on the
+                 increase is frame-rate independent by construction, and fires
+                 **once** for a frame that drained three, because a beat is a
+                 beat and not a quantity. One stated limit: the sim measures
+                 elapsed from `appliedAtTick`, which a refresh does not move,
+                 and the client has only the expiry, which it does -- so after a
+                 refresh the phase can sit up to one interval off. The *cadence*
+                 stays exact, the offset is under half a second on every row,
+                 and it is accepted rather than fixed with a protocol change.
+                 That split is `auras.ts`'s own line -- *"a hit happens; a poison
+                 lasts"* -- with an affliction being the first thing here that
+                 is both: the **cling** is a state, started once and stopped
+                 once and drawn for a body that walked into view already
+                 burning; the **beat** is an event and needs an edge, the way
+                 `stagger-flinch.ts` does and for the same reason.
+                 `vfx/brush.ts` gained the two builders. Four things about the
+                 vocabulary decided their shape rather than taste.
+                 **`worldSpace: false` is the whole of "it clings"** -- the
+                 compiled default is `true` and attaching an effect moves only
+                 the emission *origin*, so a mark born on a walking body and
+                 left in world space is a mark the body walks out of. **The
+                 shape choice is the orientation choice**: `brush-blot` is
+                 `tumble`, world space, so the cling turns with the body's own
+                 volume, while `brush-slash` and `brush-flick` are
+                 `cardVelocity` and always face the camera, which is what a beat
+                 must do; `brush-mark` is `ground` and is the one brush shape
+                 that cannot go on a body at all. **`fizzle`, never `retract`**
+                 for anything held long enough to be watched -- spec 161's rule,
+                 and this is the case it was written about. And **`alpha`,
+                 nothing additive**, which matters more here than anywhere else
+                 in the file because a cling is many overlapping marks on one
+                 body *by construction*: the one arrangement where a translucent
+                 mark is guaranteed to cross another and make a third colour in
+                 neither of them.
+                 Every length is in **body radii**: the driver plays with
+                 `scale` set to the footprint radius and the `surface` hook
+                 answers in the same units, and `system.ts` multiplies both the
+                 shape's local coordinates and the size curve by it -- so one
+                 authored definition lands on a spider and on a player at the
+                 right place *and* the right size. Speed and gravity are not
+                 scaled, which is correct, because gravity is gravity.
+                 Severity is **two tiers and more paint, never brighter paint**:
+                 the count is already drawn over the head, so what the paint owes
+                 is severity, brightness is what the beat says, and one signal
+                 meaning two things is a legend nobody can read. Frostbite
+                 crosses on *elapsed* rather than stacks, since its ramp is that
+                 row's whole design; Burn and Shock get no heavy tier at all,
+                 because neither stacks and neither ramps and a louder version
+                 would be a picture of a state that never happens.
+                 The driver does its own diff rather than using `AuraTracker`,
+                 and the reason is specific: **`play` returns 0 on refusal** --
+                 unknown id, over budget, beyond `cullDistance` -- and a tracker
+                 that records *ids* cannot say "wanted, asked for, did not
+                 start", so committing a refused id leaves a body silently
+                 unmarked for the rest of its life. Holding **handles** makes a
+                 refusal mean "not started yet". The obligation that comes with
+                 that: on despawn **nothing stops itself** -- the attach hook
+                 answers false, the instance stays where it last resolved, and a
+                 `durationTicks: 0` effect hangs in the air forever holding one
+                 of 128 slots -- so `forget` is called from the sweep that knows
+                 a body has left, never inferred from an absence. Nothing in
+                 this game had ever held a persistent attached effect, so this
+                 is the pattern rather than a use of one. The other half of the
+                 same problem is **eviction**, and it was found by reading
+                 `claimInstance` rather than by anything failing: a full instance
+                 pool does not refuse, it takes the lowest-priority furthest
+                 instance, hands the slot over and bumps its generation, so every
+                 handle to it goes stale where it sits. A cling is priority 1 and
+                 therefore the first thing in the game to go -- correctly, since
+                 the fight in front of you matters more than paint on a body
+                 across the arena -- and a driver that went on believing its
+                 handle would leave that body unpainted for the rest of its life,
+                 silently, and only in the crowded fight that caused the
+                 pressure. `isLive` is asked every step and a dead handle is "not
+                 started".
+                 The palette gained two ramps, and each had to be unmistakable
+                 against the neighbour it would otherwise read as: Corrosion is a
+                 *chemical* green pushed toward chartreuse against Poison's leaf,
+                 because two greens read as one affliction at two intensities and
+                 that is exactly backwards; Decay is the only **desaturated**
+                 ramp in the table, since what it does is suppress healing and it
+                 should look like colour draining rather than colour landing.
+                 `presentation-only.test.ts` drives it beside the machines, the
+                 eased yaw and the drop's reveal, and it is worth having there
+                 for one reason past the others: an affliction is the first thing
+                 a client works out the *schedule* of for itself, so the obvious
+                 way to get it wrong is to let that derivation reach back into
+                 something.
                  `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
                  to a body because of the bodies around it (spec 187). Until they
                  existed nothing on the server knew that two units were in the

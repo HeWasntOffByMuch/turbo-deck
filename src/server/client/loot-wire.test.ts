@@ -104,10 +104,28 @@ async function killSomethingNearby(r: Rig, client: GameClient, typeId = 'grazer'
   r.server.spawnEntities(typeId, at.x + 40, at.y, 1);
   await r.tick(2);
 
+  // Walk after it while swinging (spec 217): a grazer is skittish, and now that
+  // it takes more than one blow its flee actually happens. Standing still and
+  // swinging at a fixed point misses everything after the first hit.
+  const preyAt = (): { x: number; y: number } | null => {
+    for (const entity of r.server.world.entities.values()) {
+      if (entity.kind === EntityKindValue.Monster) {
+        return { x: entity.position.x, y: entity.position.y };
+      }
+    }
+    return null;
+  };
   for (let swing = 0; swing < 40 && drops(r).length === 0; swing++) {
-    client.useAbility('melee.slash', at.x + 1000, at.y);
+    const prey = preyAt();
+    client.useAbility('melee.slash', prey?.x ?? at.x + 1000, prey?.y ?? at.y);
     for (let i = 0; i < 60; i++) {
-      client.sendInput({ moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+      const here = positionOf(r, self);
+      const there = preyAt();
+      const dx = there ? there.x - here.x : 0;
+      const dy = there ? there.y - here.y : 0;
+      const len = Math.hypot(dx, dy);
+      const chase = len > 40 ? { moveX: dx / len, moveY: dy / len } : { moveX: 0, moveY: 0 };
+      client.sendInput({ ...chase, facing: Math.atan2(dy, dx), buttons: 0 });
       await r.tick();
     }
   }

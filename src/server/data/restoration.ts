@@ -13,11 +13,13 @@
  * What makes it worth more in absolute terms is Wisdom's `healingScale`, which
  * is the stat that is supposed to own efficiency.
  *
- * The reference character is a fresh level-1 build: 200 max health (100 flat +
- * 5 Strength x 6 + 5 Constitution x 14). At that size a vitality mote is 12
- * health and a flask is 70, so one draught is roughly six motes -- insurance
- * enough to rescue a disastrous encounter, nowhere near enough to be the
- * economy.
+ * The reference character is a fresh level-1 build: 50 max health (25 flat +
+ * 5 Strength x 1.5 + 5 Constitution x 3.5), since spec 217 quartered the health
+ * economy. Every number in this file is a *fraction* of that pool rather than an
+ * absolute, which is why the rescale reached none of them -- a vitality mote is
+ * 3 health now where it was 12, and a flask is still the same share of a bar. One
+ * draught is roughly six motes either way: insurance enough to rescue a
+ * disastrous encounter, nowhere near enough to be the economy.
  *
  * **How these numbers were arrived at, and the signature to watch for.** The
  * first tuning pass generated a mote every half-kill at twice this size, and

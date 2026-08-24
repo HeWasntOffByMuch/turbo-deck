@@ -365,7 +365,6 @@ describe('a body with no progression at all', () => {
     expect(NEUTRAL_TRAITS.attackPointScale).toBe(1);
     expect(NEUTRAL_TRAITS.resourceCostScale).toBe(1);
     expect(NEUTRAL_TRAITS.cooldownScale).toBe(1);
-    expect(NEUTRAL_TRAITS.weaponPower).toBe(1);
     expect(NEUTRAL_TRAITS.windupPoiseArmor).toBe(0);
   });
 });

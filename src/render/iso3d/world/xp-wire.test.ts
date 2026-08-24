@@ -63,10 +63,31 @@ describe('the experience strip, off a real kill', () => {
       return n;
     };
 
+    // Walk after it while swinging (spec 217): a grazer runs from whatever hit
+    // it, and now that it survives the first blow that flee actually happens.
+    const preyAt = (): { x: number; y: number } | null => {
+      for (const entity of server.world.entities.values()) {
+        if (entity.kind === EntityKindValue.Monster) {
+          return { x: entity.position.x, y: entity.position.y };
+        }
+      }
+      return null;
+    };
+    const meAt = (): { x: number; y: number } => {
+      const body = server.world.entities.get(client.view().selfEntityId);
+      return body ? { x: body.position.x, y: body.position.y } : at;
+    };
     for (let swing = 0; swing < 40 && monsters() > 0; swing++) {
-      client.useAbility('melee.slash', at.x + 1000, at.y);
+      const prey = preyAt();
+      client.useAbility('melee.slash', prey?.x ?? at.x + 1000, prey?.y ?? at.y);
       for (let i = 0; i < 60; i++) {
-        client.sendInput({ moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+        const here = meAt();
+        const there = preyAt();
+        const dx = there ? there.x - here.x : 0;
+        const dy = there ? there.y - here.y : 0;
+        const len = Math.hypot(dx, dy);
+        const chase = len > 40 ? { moveX: dx / len, moveY: dy / len } : { moveX: 0, moveY: 0 };
+        client.sendInput({ ...chase, facing: Math.atan2(dy, dx), buttons: 0 });
         await tick();
       }
     }

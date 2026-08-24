@@ -73,8 +73,8 @@ import {
   step,
   type StepContext,
 } from '../src/server/sim/world.js';
+import { STARTER_EQUIPMENT } from '../src/server/player/player-manager.js';
 import {
-  EMPTY_EQUIPMENT,
   emptyInventory,
   type BaseStats,
   type PersistedPlayer,
@@ -132,7 +132,13 @@ function recordFor(preset: BuildPreset): PersistedPlayer {
     // adding a hand-picked tree to each build would make the table a comparison
     // between whoever picked the trees.
     skills: [],
-    equipment: EMPTY_EQUIPMENT,
+    // The starter kit rather than bare hands (spec 217). Every character in the
+    // game begins holding `sword.worn`, and since a weapon now carries the
+    // damage a swing does, an empty-handed preset measures a build punching --
+    // which nobody does, and which is 1-2 damage against an ability's several.
+    // The same weapon for all twelve, so it stays a control rather than a
+    // variable.
+    equipment: STARTER_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
     facing: 0,
@@ -181,7 +187,13 @@ function run(preset: BuildPreset): Row {
   state = spawned.state;
   const selfId = spawned.entity.id;
 
-  const basicDamage = abilityById(stats.basicAttackId)?.damage ?? 0;
+  // What a swing is worth, which since spec 217 is the **weapon's** resolved
+  // range rather than a field on the ability row. Read off the row it used to
+  // be, this is now 0 for every build -- so `bestReady` preferred any ability
+  // over swinging, every build stopped making basic attacks, and the weak-point
+  // column of this table went to zero across the board while the harness
+  // measured a rotation nobody plays.
+  const basicDamage = stats.attackDamage;
   let metrics = EMPTY_METRICS;
   let seq = 0;
   let foeId = 0;

@@ -73,6 +73,10 @@ import type { Widget } from '../../../ui/core/widget.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import { characterViewOf } from './character-model.js';
 import { containerViewOf } from './inventory-model.js';
+import {
+  NO_GRADE_MODIFIERS,
+  type ScalingGradeModifiers,
+} from '../../../server/data/weapon-scaling.js';
 import { swapProgress, type SwapProgress } from './skill-swap-view.js';
 import { shopViewOf } from './shop-model.js';
 import { tradeViewOf } from './trade-model.js';
@@ -395,6 +399,8 @@ export class UiScreens {
   private lastInventory: ClientView['inventory'] | null = null;
   private lastEquipment: ClientView['equipment'] | null = null;
   private lastLevel = -1;
+  /** The grade steps the bag was last built against (spec 216). */
+  private lastScaling: ScalingGradeModifiers = NO_GRADE_MODIFIERS;
   /** The change in flight last frame, so the frame it ends on is noticed. */
   private lastSwap: SwapProgress | null = null;
   private lastSkills: ClientView['skills'] | null = null;
@@ -766,6 +772,11 @@ export class UiScreens {
           inventory: view.inventory,
           equipment: view.equipment,
           level: view.level,
+          // The server's own summed grade steps (spec 216), so the scaling line
+          // on every tooltip in the bag is resolved from the same modifiers the
+          // damage was. Absent before the first `Stats` arrives, which is the
+          // frame or two where a bag can be open and nothing has been sent yet.
+          scalingModifiers: view.stats?.scalingModifiers ?? NO_GRADE_MODIFIERS,
           swap,
         }),
       );
@@ -970,8 +981,20 @@ export class UiScreens {
     // marked, and comparing the two nulls is how that frame is noticed.
     const swapping = swap !== null || this.lastSwap !== null;
     this.lastSwap = swap;
+    // Compared by value rather than by identity (spec 216): a fresh `Stats`
+    // arrives as a new object on every recalculation, so an identity check would
+    // rebuild the bag whenever anything at all about the character moved. And it
+    // has to be checked *somewhere* -- a buff that raises a scaling grade without
+    // touching the equipment moves nothing else on this list, and every tooltip
+    // in the bag would go on showing the grades from before it landed.
+    const scaling = view.stats?.scalingModifiers ?? NO_GRADE_MODIFIERS;
+    const scalingMoved =
+      scaling.strength !== this.lastScaling.strength ||
+      scaling.agility !== this.lastScaling.agility ||
+      scaling.intelligence !== this.lastScaling.intelligence;
     if (
       !swapping &&
+      !scalingMoved &&
       view.inventory === this.lastInventory &&
       view.equipment === this.lastEquipment &&
       view.level === this.lastLevel
@@ -981,6 +1004,7 @@ export class UiScreens {
     this.lastInventory = view.inventory;
     this.lastEquipment = view.equipment;
     this.lastLevel = view.level;
+    this.lastScaling = scaling;
     return true;
   }
 

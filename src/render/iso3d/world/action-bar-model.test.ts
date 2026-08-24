@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { InputMap } from '../../../ui/input/input-map.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
+import { NO_WEAPON } from '../../../server/data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
 import { equipmentAddress } from '../../../server/player/inventory.js';
 import type { EffectiveStats } from '../../../server/state/types.js';
@@ -29,6 +30,7 @@ const STATS: EffectiveStats = {
   resourceRegen: 0.5,
   basicAttackId: 'melee.slash',
   skillAbilityIds: [],
+  ...NO_WEAPON,
   traits: NEUTRAL_TRAITS,
 };
 
