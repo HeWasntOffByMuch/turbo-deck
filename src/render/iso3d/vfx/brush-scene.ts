@@ -34,6 +34,7 @@ import { VfxLayer } from './layer.js';
 import { sampleCapsuleSurface } from './shapes.js';
 import { BRUSH_EXPLOSION_RADIUS } from './brush.js';
 import { EFFECTS } from './registry.js';
+import { SERVER_TICK_RATE } from '../../../server/config.js';
 
 /** Where the dummy stands, and where a blow lands on it. */
 const DUMMY = { x: 0, y: 0, z: 0 } as const;
@@ -73,6 +74,23 @@ const DUMMY_ENTITY = 1;
  */
 const DUMMY_RADIUS = 14;
 const DUMMY_HEIGHT_RADII = 5;
+
+/**
+ * The shot's own entity id, and where it flies (spec 216).
+ *
+ * A **second** body in this scene, and the reason it has to exist rather than
+ * reusing the dummy's id is the whole of what a shot's paint is: an affliction
+ * clings to something standing still, and a shot's trail is only a trail
+ * because the thing it is attached to *moves*. Photographing `shot_ember` on a
+ * stationary dummy would be a picture of a bonfire.
+ *
+ * It flies across the frame at the ball's own height rather than at the ground,
+ * so the trail is measured against sky and grass the way it is in the game --
+ * and the flight is a straight line rather than the sim's parabola, because
+ * this rig is judging the *paint* and an arc is `preview-shots.ts`'s subject.
+ */
+const SHOT_ENTITY = 2;
+const SHOT_HEIGHT = 34;
 
 export interface SceneShot {
   /** Radians about Y. */
@@ -116,6 +134,23 @@ export interface AfflictionTrigger {
   readonly scale?: number;
 }
 
+export interface ShotTrigger {
+  readonly seed: number;
+  /**
+   * The shot's collision radius, which is the effect's `scale`.
+   *
+   * Every length in `brushShot` is a multiple of it, so this one argument is
+   * what makes an authored definition a fireball at the size the row flies.
+   */
+  readonly radius?: number;
+  /** World units a second, along the flight. The game's is speed x 0.39. */
+  readonly speed?: number;
+  /** Radians about Y: which way it is going. */
+  readonly heading?: number;
+  /** How far back from the middle of the frame it starts, in world units. */
+  readonly from?: number;
+}
+
 export interface SceneReport {
   readonly particles: number;
   readonly drawCalls: number;
@@ -138,6 +173,17 @@ declare global {
        * look at the four heavy clings or the seven beats beside them.
        */
       affliction: (id: string, input: AfflictionTrigger) => number;
+      /**
+       * Play any registry effect on a body that is **flying** (spec 216).
+       *
+       * The counterpart to {@link affliction}, and the difference is the point:
+       * that one attaches to something standing still, and a shot's trail only
+       * exists because the emitter's origin moves between ticks. `step` carries
+       * the flight forward one tick at a time while it advances the system, so
+       * the marks are laid where the shot actually was rather than all at the
+       * position it ended up.
+       */
+      shot: (id: string, input: ShotTrigger) => number;
       /**
        * Stop everything {@link affliction} started, softly.
        *
@@ -308,6 +354,16 @@ class BrushScene {
         // despawns mid-effect: the instance is left where it last resolved
         // rather than teleported to the origin.
         attach: (entityId, _socket, out, at) => {
+          // The shot, if one is in the air (spec 216). Asked every tick, and
+          // the answer *changes* between them, which is the one thing this rig
+          // could not do before and the only way a trail can be photographed.
+          if (entityId === SHOT_ENTITY) {
+            if (!this.flight) return false;
+            out[at] = this.flight.x;
+            out[at + 1] = this.flight.y;
+            out[at + 2] = this.flight.z;
+            return true;
+          }
           if (entityId !== DUMMY_ENTITY) return false;
           out[at] = DUMMY.x;
           out[at + 1] = DUMMY.y;
@@ -410,6 +466,47 @@ class BrushScene {
     this.applyFrame();
   }
 
+  /**
+   * The shot in the air, or null (spec 216).
+   *
+   * Held rather than derived because the attach hook is asked for a *position*
+   * every tick and there is nothing else in this rig that knows one.
+   */
+  private flight: { x: number; y: number; z: number; vx: number; vz: number } | null = null;
+
+  /**
+   * Play an effect on a body flying across the frame.
+   *
+   * The scale defaults to the ember's own radius for the reason
+   * {@link affliction}'s defaults to the dummy's: every length in `brushShot` is
+   * a multiple of it, and a caller that passed nothing would get a fireball a
+   * ninth of the size it was authored at.
+   */
+  shot(id: string, input: ShotTrigger): number {
+    const speed = input.speed ?? 273;
+    const heading = input.heading ?? 0;
+    const from = input.from ?? 150;
+    this.flight = {
+      x: DUMMY.x - Math.cos(heading) * from,
+      y: SHOT_HEIGHT,
+      z: DUMMY.z - Math.sin(heading) * from,
+      vx: Math.cos(heading) * speed,
+      vz: Math.sin(heading) * speed,
+    };
+    const handle = this.layer.play(id, {
+      x: this.flight.x,
+      y: this.flight.y,
+      z: this.flight.z,
+      seed: input.seed,
+      scale: input.radius ?? 9,
+      attach: { kind: 'entity', entityId: SHOT_ENTITY },
+    });
+    // Zero is a refusal, and holding one would mean stopping a slot somebody
+    // else owns later -- `affliction`'s rule, one body along.
+    if (handle !== 0) this.held.push(handle);
+    return handle;
+  }
+
   blood(input: BloodTrigger): number {
     // The attacker's bearing, as a unit direction in the ground plane; the blow
     // travels from there into the dummy, so the paint carries on outward.
@@ -470,6 +567,7 @@ class BrushScene {
   }
 
   clear(): void {
+    this.flight = null;
     this.layer.system.clear();
     // Every instance has just been retired, so the handles are stale: a `stop`
     // on one now would be refused by the generation check, and keeping them
@@ -499,7 +597,20 @@ class BrushScene {
   step(ticks: number): SceneReport {
     const whole = Math.max(0, Math.round(ticks));
     if (whole > 0) {
-      this.layer.update(whole);
+      if (this.flight) {
+        // One tick at a time while a shot is up (spec 216), and that is the
+        // whole of the addition. `update(n)` runs n ticks against one emission
+        // origin, so a trail advanced in a single call is laid down as a heap
+        // at the far end of the flight -- which is not a shorter trail, it is
+        // no trail at all, drawn as one clump the ball has already left.
+        for (let tick = 0; tick < whole; tick++) {
+          this.flight.x += this.flight.vx / SERVER_TICK_RATE;
+          this.flight.z += this.flight.vz / SERVER_TICK_RATE;
+          this.layer.update(1);
+        }
+      } else {
+        this.layer.update(whole);
+      }
       this.ticks += whole;
     }
     return this.draw();
@@ -624,6 +735,14 @@ function main(): void {
       scene.explosion({ seed: roll(), radius: 62, smoulder: true, x: -40, z: -120 });
       paint();
     }),
+    // The one trigger here that only means anything while time is running: a
+    // shot's trail is laid down between ticks, so a paused rig shows the ball
+    // and nothing behind it (spec 216). Hold the scrubber or leave it playing.
+    button('Ember shot', () => {
+      scene.clear();
+      scene.shot('shot_ember', { seed: roll(), radius: 9, from: 200 });
+      paint();
+    }),
     button('20 seeds', () => {
       // Twenty in a row, spread over the ground, so the *family* can be judged
       // rather than one member of it.
@@ -716,6 +835,7 @@ function main(): void {
     blood: (input) => scene.blood(input),
     explosion: (input) => scene.explosion(input),
     affliction: (id, input) => scene.affliction(id, input),
+    shot: (id, input) => scene.shot(id, input),
     stopAffliction: () => scene.stopAffliction(),
     clear: () => scene.clear(),
     look: (shot) => scene.look(shot),

@@ -67,6 +67,24 @@ and `data/abilities.ts` a row:
 row exactly: the field describes what a melee swing would have reached, and a
 weapon that names a shot never melees.
 
+### One thing that falls out: the weapon switch narrows
+
+`WEAPON_SWITCH` is derived from the item table -- one entry per distinct
+auto-attack a main hand can name -- and its own comment promises that "a
+crossbow added there turns up here without this file being told". Two tests have
+asserted since spec 126 that every entry is level 1 and every entry is in the
+starting kit, and **nothing enforced either**: they held because the only two
+weapons that named a shot were level-1 commons in the kit.
+
+A rare level-4 staff makes the promise come due. Derived as it was, the ember
+shot turns up as a fourth button that equips nothing, refuses silently and has
+no icon. So the derivation reads `STARTING_KIT`, which makes both rules true *by
+construction* instead of by luck, and means the next weapon naming an attack a
+starting character cannot hold adds no button rather than a dead one. Nothing is
+lost: the staff is bought from a vendor and equipped out of the bag like
+everything else, and `admin:giveItem` plus `admin:setLevel` is how a probe
+reaches it -- the developer path that already exists, rather than a new one.
+
 Three numbers are the design and the rest follow from them.
 
 **330, against the bow's 420 and the star's 300.** Shorter than the bow is the
@@ -183,6 +201,30 @@ Every length is authored in **shot radii** and the driver plays with
 turbulence stay world units, which is `brushAffliction`'s stated asymmetry and
 is correct for the same reason -- a big fireball's smoke does not rise faster.
 
+### Three things the numbers could not settle
+
+Every version below scored clean on stipple and on connectedness and looked
+wrong, which is why the sheet exists. Each is recorded in the builder beside the
+number it produced.
+
+**The fire has to outnumber the smoke.** Authored the other way round -- more
+trail marks than core ones, at similar sizes and similar alpha -- it photographs
+as a swarm of dark specks with a red dab in front. Against a mid-green field an
+orange mark is a highlight and a near-black one is a *hole*, and there were
+twice as many holes.
+
+**The trail has to be cooler and lighter than the fire.** `smokeDark` (0x3c3733)
+is not a dark mass on grass, it is a hole, and a dozen holes read as flies.
+Warming it to `paintBurnt` fixed the value and broke the hue: a brown plume
+behind an orange ball reads as leaves blowing past it, because nothing separates
+the two. Pale grey does both jobs.
+
+**The ball is mostly `mid`.** Holding the pale `fireCore` reads as light rather
+than as fire; reaching `fireDeep` early reads as an ember going out. At
+twenty-five pixels a flame is a saturated orange mass with something brighter
+inside it -- and in the game that brighter thing is the `ShotRig` core, which no
+paint sheet can show.
+
 ### The driver: `world/shot-vfx.ts`
 
 Pure, in the register `affliction-vfx.ts` set, and for the same reasons:
@@ -285,6 +327,11 @@ throwing fire keeps the swing it already plays.
   the spec was asked for is an ordering.
 - `windupTicks + backswingTicks < BASE_ATTACK_TIME_TICKS`, so the cadence stays
   the stat's.
+- The weapon switch offers only attacks a fresh character can reach, and the
+  two rules it has asserted since spec 126 -- level 1, and in the bag -- now
+  hold by construction. Asserted with a third: that the set it offers is
+  strictly smaller than the set the item table can name, so the narrowing is
+  doing something rather than passing on an empty difference.
 - It satisfies the table's existing sweeps unchanged: the structural gate in
   `sim/abilities.test.ts`, the reach invariant in `stats.test.ts`
   (`speed / tickRate * lifetimeTicks >= range`), and every rule
@@ -337,11 +384,33 @@ throwing fire keeps the swing it already plays.
 
 - `scripts/preview-shots.ts` gains the ember beside the arrow, the star and the
   orb, through the real `ShotRig` on a real flight.
-- `scripts/preview-brush-vfx.ts` gains the shot's paint and its burst, measured
-  by the four numbers that sheet already computes -- isolated-pixel fraction,
-  largest connected mass, ink area and variation between seeds -- and the live
-  particle count at every sampled tick, because the way this fails silently is
-  an emitter that spawns nothing.
+- `scripts/preview-brush-vfx.ts` gains a third sheet, `brush-shot.png`, measured
+  by the four numbers it already computes -- isolated-pixel fraction, largest
+  connected mass, ink area and variation between seeds -- and the live particle
+  count at every sampled tick, because the way this fails silently is an emitter
+  that spawns nothing.
+
+  Two things about that sheet are decisions rather than settings. It needs
+  **motion**, which the judging rig could not do: `brush-scene.ts` gains a
+  `shot(id, ...)` beside its `affliction(id, ...)` and a `step` that carries the
+  flight forward *one tick at a time*, because `update(n)` runs n ticks against
+  one emission origin and a trail advanced in a single call is laid down as a
+  heap at the far end of the flight. And it carries a **rest-against-speed row**
+  -- the same effect, the same seed, the same tick, at 0 and at 273 units a
+  second -- which is the one comparison that can fail while every other tile
+  looks right: at rest the trail is laid on top of the ball and the whole thing
+  is a bonfire. Measured, the moving pair carries three to six times the ink.
+
+  The frame is much tighter than the blood and blast sheets', for the reason
+  `preview-afflictions-vfx.ts` gives about its own: a blast is a hundred units
+  across and this is an 18-unit ball, and framed like a blast it is half a
+  percent of the tile -- *less subject than the seed check needs difference*, so
+  every number would be a number about grass.
+
+  The bearings row deliberately carries **no bearings check**. That check asks
+  whether the ink survives being looked at from anywhere, which is right about a
+  blast and wrong about a thing with a direction: seen down the line of flight a
+  trail is behind the ball and hidden by it, exactly as an arrow's streak is.
 
 ## Out of scope
 
