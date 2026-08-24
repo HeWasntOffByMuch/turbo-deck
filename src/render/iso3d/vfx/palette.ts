@@ -120,9 +120,72 @@ export const VFX_PALETTE = {
   boltWhite: 0xfffbe0,
   boltYellow: 0xffe08a,
   boltViolet: 0x9a5ad0,
+  /**
+   * Corrosion's acid (spec 215) -- and it is a *third* green in a table that
+   * already has two, which is only worth the entry because of what it has to be
+   * told apart from.
+   *
+   * Poison is a leaf green and Corrosion is a chemical one. If they read as the
+   * same colour they read as one affliction at two intensities, which is exactly
+   * backwards: Poison is the weakest rate in the table and Corrosion is the one
+   * that takes the guard and the armour with it. So this ramp is pushed hard
+   * toward yellow -- chartreuse rather than leaf -- and its dark end goes to a
+   * rusted olive-brown rather than to Poison's murk, because what Corrosion
+   * leaves behind is rust and what Poison leaves behind is more poison.
+   */
+  corrodeBright: 0xe9f77a,
+  corrodeBody: 0xa8c22f,
+  corrodeDeep: 0x8a6a2e,
+  /**
+   * Decay's rot (spec 215): the one affliction whose colour is an *absence*.
+   *
+   * Every other ramp here is saturated, because every other effect is something
+   * arriving. Decay suppresses healing -- what it costs you is the health you
+   * cannot put back -- so it is the one that should look like colour draining
+   * rather than colour landing, and it is the only desaturated ramp in the
+   * table. Violet-grey with an olive cast, so it is neither Corrosion's acid nor
+   * the neutral smoke greys, and so that it reads as *sick* beside
+   * `auraHeal`'s clean pale green rather than as dust.
+   */
+  decayBright: 0xc3b8c9,
+  decayBody: 0x8b7f9a,
+  decayDeep: 0x6e6a52,
   arcaneLilac: 0xd7bdf0,
   arcaneMagenta: 0xc04ab8,
   arcaneDeep: 0x4a2a7a,
+
+  /**
+   * The amber between the cream and the orange (spec 215 follow-up).
+   *
+   * `fire` runs `fireCore` (pale cream) to `fireBody` (a strong orange) to
+   * `fireDeep` (red), and that is right for a *flame*, which is a thing you look
+   * into. It was wrong for a body that is on fire: the cling settles on the mid
+   * tone, so a burning body wore `fireBody` and the paint coming off it ran
+   * straight to red -- orange and red, and no yellow anywhere in it.
+   *
+   * This is the missing step, and adding one rather than shifting `fireBody`
+   * matters: seventeen call sites read that key, including the torch, the
+   * campfire and the explosion's own ramp, and none of them asked for a
+   * different flame.
+   */
+  fireAmber: 0xffb833,
+  /**
+   * Lightning, as three colours that are not the bolt's (spec 215 follow-up).
+   *
+   * `boltWhite`/`boltYellow`/`boltViolet` are a *bolt* -- a cream white through
+   * a warm yellow to a purple -- which reads as arcane sparks on a body rather
+   * than as electricity. Lightning is near-white with a blue cast, and the blue
+   * has to be told apart from ice: `icePale` is cyan-leaning and this is
+   * violet-leaning, which is the difference that survives the quantizer when a
+   * shocked body and a frostbitten one are on screen together.
+   *
+   * The mid tone is deliberately barely blue at all. The cling settles there, so
+   * it is what a shocked body actually wears, and what it should wear is
+   * **white** -- the blue belongs to what comes off it and to the jolt.
+   */
+  boltFlash: 0xf4f8ff,
+  boltPale: 0xd2e2ff,
+  boltArc: 0x6478f0,
 
   // --- status auras ---
   auraBuff: 0x7fd08a,

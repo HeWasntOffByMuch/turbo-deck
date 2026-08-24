@@ -31,11 +31,48 @@
 
 import * as THREE from 'three';
 import { VfxLayer } from './layer.js';
+import { sampleCapsuleSurface } from './shapes.js';
 import { BRUSH_EXPLOSION_RADIUS } from './brush.js';
+import { EFFECTS } from './registry.js';
 
 /** Where the dummy stands, and where a blow lands on it. */
 const DUMMY = { x: 0, y: 0, z: 0 } as const;
 const CHEST = 26;
+
+/**
+ * The entity id the dummy answers to (spec 215).
+ *
+ * There is exactly one body in this scene and it needs an id at all only because
+ * `attach: { kind: 'entity' }` is how an effect says "ride that thing" -- and an
+ * affliction is the first thing in the library that has to. Any non-zero number
+ * would do; the hooks below answer for this one and false for everything else,
+ * which is the honest shape rather than a resolver that says yes to whatever it
+ * is asked about. A hook that always succeeds cannot demonstrate the case the
+ * game actually has, where a body despawns mid-effect.
+ */
+const DUMMY_ENTITY = 1;
+
+/**
+ * The dummy's own capsule: how wide, and how tall in multiples of that width.
+ *
+ * `brushAffliction` authors every length as a multiple of the effect's `scale`
+ * and the driver plays it with the body's footprint radius, so the radius here
+ * is what decides how big the marks come out -- 14 rather than the post's own
+ * 11, because a real body in this game is about 16 across the base and the
+ * dummy is a stick with arms rather than a shape anybody would measure. The
+ * height is in radii for the same reason the surface sampler answers in them:
+ * `system.ts` multiplies a shape's local coordinates by the instance scale and
+ * a number in world units here would be a body five times the wrong size the
+ * moment a spider wore the same effect.
+ *
+ * 14 x 5 puts the capsule from the ground to 70 units up, which covers the post
+ * (0..52) and the head (53..71) and leaves the arms sticking out of it. That is
+ * deliberate: a capsule is what spec 215 says the game's own hook will sample,
+ * and photographing this rig against a tighter volume than the game has would
+ * be photographing an effect the game does not play.
+ */
+const DUMMY_RADIUS = 14;
+const DUMMY_HEIGHT_RADII = 5;
 
 export interface SceneShot {
   /** Radians about Y. */
@@ -66,6 +103,19 @@ export interface ExplosionTrigger {
   readonly z?: number;
 }
 
+export interface AfflictionTrigger {
+  readonly seed: number;
+  /**
+   * The body's radius in world units, which is the effect's `scale`.
+   *
+   * Optional because the answer for this scene is always the dummy's, and a
+   * script that had to know it would be a second description of how big the
+   * dummy is. Overridable because "does this read on something small" is a
+   * question a sheet should be able to ask.
+   */
+  readonly scale?: number;
+}
+
 export interface SceneReport {
   readonly particles: number;
   readonly drawCalls: number;
@@ -79,6 +129,23 @@ declare global {
       blood: (input: BloodTrigger) => number;
       /** Fire an explosion on the ground. */
       explosion: (input: ExplosionTrigger) => number;
+      /**
+       * Play any registry effect attached to the dummy. Returns the handle.
+       *
+       * Deliberately not `affliction(dotId)`: this rig has no business owning a
+       * second copy of the dot-id-to-effect-id table that `AFFLICTION_ART`
+       * already is, and a harness that can only play the seven cannot be used to
+       * look at the four heavy clings or the seven beats beside them.
+       */
+      affliction: (id: string, input: AfflictionTrigger) => number;
+      /**
+       * Stop everything {@link affliction} started, softly.
+       *
+       * Soft, because that is what the driver does and what the end of an
+       * affliction is: emitters switch off and the marks already on the body dry
+       * where they are. A hard stop would photograph a different feature.
+       */
+      stopAffliction: () => void;
       /** Clear everything in flight and reset the clock. */
       clear: () => void;
       /** Park the camera. */
@@ -106,6 +173,7 @@ function prop(geometry: THREE.BufferGeometry, color: number, x: number, z: numbe
   return mesh;
 }
 
+
 class BrushScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly camera: THREE.OrthographicCamera;
@@ -129,6 +197,18 @@ class BrushScene {
   private owed = 0;
   private ticks = 0;
   private last = 0;
+  /**
+   * Handles {@link affliction} started, so they can be stopped.
+   *
+   * Held rather than forgotten because an affliction is `durationTicks: 0` --
+   * it burns until somebody stops it -- and this rig is the first thing in the
+   * tree that plays one. The same obligation `AfflictionVfx` carries in the
+   * game: nothing in the system stops itself. A beat's handle goes in here too
+   * and is a dead reference within a dozen ticks, which costs a no-op `stop`
+   * and saves this scene from having to know which kind of effect it just
+   * played.
+   */
+  private readonly held: number[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     // The opposite of `probe.ts` in every setting that matters: real pixels,
@@ -211,8 +291,41 @@ class BrushScene {
     this.scene.add(sun, sun.target);
 
     // --- the effects -------------------------------------------------------
+    //
+    // Two hooks beyond the ground, and both of them exist for the afflictions
+    // (spec 215). Without them this rig would photograph the seven with the one
+    // thing they are *about* switched off: `shape: { kind: 'mesh' }` degrades to
+    // a bare point when there is no `surface` resolver, so every mark of every
+    // cling would be born at the dummy's feet in a single spot, and the sheet
+    // would report a working feature as a puddle.
     this.layer = new VfxLayer({
-      hooks: { ground: () => 0 },
+      hooks: {
+        ground: () => 0,
+        // Where the body is now. The dummy does not move, so this is a constant
+        // -- but it is asked every tick all the same, because that is what an
+        // attachment is and the point of this rig is to run the real path.
+        // False for anything else, which is the case the game has when a body
+        // despawns mid-effect: the instance is left where it last resolved
+        // rather than teleported to the origin.
+        attach: (entityId, _socket, out, at) => {
+          if (entityId !== DUMMY_ENTITY) return false;
+          out[at] = DUMMY.x;
+          out[at + 1] = DUMMY.y;
+          out[at + 2] = DUMMY.z;
+          return true;
+        },
+        // A point on the body's own volume, for `mesh` emitter shapes. A capsule
+        // rather than the mesh's vertices, for the reason spec 215 gives: at
+        // this resolution a painted mark wants a volume and not a surface, and
+        // reading vertices would put a skinning cost on every particle spawned.
+        // The dummy's post-and-head is nearly a capsule anyway, which is a
+        // convenience here and a fact about most bodies in the game.
+        surface: (entityId, rng, out, at) => {
+          if (entityId !== DUMMY_ENTITY) return false;
+          sampleCapsuleSurface(rng, out, at, DUMMY_HEIGHT_RADII);
+          return true;
+        },
+      },
       limits: { maxParticles: 3000, maxInstances: 32, pressureFloor: 0.25 },
       lights: true,
     });
@@ -328,8 +441,40 @@ class BrushScene {
     });
   }
 
+  /**
+   * Play an effect attached to the dummy.
+   *
+   * The scale defaults to the dummy's own radius because every length in
+   * `brushAffliction` is authored as a multiple of it -- so this one argument is
+   * what makes an authored definition fit a body, and a caller that passed
+   * nothing would get marks a fourteenth of the size they were written at.
+   */
+  affliction(id: string, input: AfflictionTrigger): number {
+    const handle = this.layer.play(id, {
+      x: DUMMY.x,
+      y: DUMMY.y,
+      z: DUMMY.z,
+      seed: input.seed,
+      scale: input.scale ?? DUMMY_RADIUS,
+      attach: { kind: 'entity', entityId: DUMMY_ENTITY },
+    });
+    // Zero is a refusal -- an unknown id, or over budget -- and holding one
+    // would mean stopping a slot somebody else owns later.
+    if (handle !== 0) this.held.push(handle);
+    return handle;
+  }
+
+  stopAffliction(): void {
+    for (const handle of this.held) this.layer.stop(handle);
+    this.held.length = 0;
+  }
+
   clear(): void {
     this.layer.system.clear();
+    // Every instance has just been retired, so the handles are stale: a `stop`
+    // on one now would be refused by the generation check, and keeping them
+    // would grow this array by a shot per capture across a contact sheet.
+    this.held.length = 0;
     // And then a zero-tick update, which is not a no-op: `system.clear` empties
     // the *pool*, and the instanced attributes keep whatever was last uploaded
     // until `VfxLayer.sync` runs. Without this the next frame drawn still shows
@@ -494,6 +639,44 @@ function main(): void {
     }),
   );
 
+  // The afflictions get a picker and a stop rather than a button each, and both
+  // halves of that are the point. Eighteen more buttons in this bar would be a
+  // toolbar with a scene behind it; and an affliction is a *state*, so watching
+  // it end -- the last few marks drying rather than the whole thing vanishing --
+  // is half of what was authored and needs a button of its own to see.
+  const afflictionRow = document.createElement('span');
+  afflictionRow.style.cssText = 'display:flex;gap:5px;align-items:center;';
+  const picker = document.createElement('select');
+  picker.style.cssText =
+    'font:12px/1.4 ui-monospace,monospace;padding:4px;border:1px solid #2c3a44;border-radius:3px;' +
+    'background:#14212a;color:#dbe7ee;';
+  // Read off the compiled registry rather than listed here, so an affliction
+  // authored and then reached by nothing shows up in this menu on the next
+  // reload -- which is the exact failure spec 215 exists to close, and a
+  // hand-written list would be one more place for it to hide.
+  for (const effect of EFFECTS) {
+    if (!effect.id.startsWith('affliction_')) continue;
+    const option = document.createElement('option');
+    option.value = effect.id;
+    // The prefix is on all eighteen, and reading it eighteen times is reading
+    // nothing.
+    option.textContent = effect.id.slice('affliction_'.length);
+    picker.append(option);
+  }
+  afflictionRow.append(
+    'affliction',
+    picker,
+    button('Play', () => {
+      scene.affliction(picker.value, { seed: roll() });
+      paint();
+    }),
+    button('Stop', () => {
+      scene.stopAffliction();
+      paint();
+    }),
+  );
+  bar.append(afflictionRow);
+
   const speedRow = document.createElement('span');
   speedRow.style.cssText = 'display:flex;gap:5px;align-items:center;';
   speedRow.append('speed');
@@ -532,6 +715,8 @@ function main(): void {
     setChrome,
     blood: (input) => scene.blood(input),
     explosion: (input) => scene.explosion(input),
+    affliction: (id, input) => scene.affliction(id, input),
+    stopAffliction: () => scene.stopAffliction(),
     clear: () => scene.clear(),
     look: (shot) => scene.look(shot),
     setTimeScale: (value) => scene.setTimeScale(value),

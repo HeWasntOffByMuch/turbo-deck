@@ -25,6 +25,34 @@
 
 import { GameClient } from '../../../server/client/game-client.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
+import { afflictionsFromQuery } from './affliction-vfx.js';
+
+/**
+ * How often `?afflict=` re-applies what it was asked for, in ticks (spec 215).
+ *
+ * Three seconds, and the number is chosen rather than picked. Two constraints
+ * and they only leave a narrow band:
+ *
+ * **Inside the shortest window.** Burn is eight pulses of half a second, so it
+ * is gone 241 ticks after it lands; anything past that and the paint lapses
+ * while somebody is looking at it.
+ *
+ * **A common multiple of every pulse interval**, which is what 120 was not.
+ * `applyStatus` refreshes rather than extends and deliberately does not move
+ * `appliedAtTick`, so the *sim's* beat phase is unchanged by a refresh -- while
+ * the client derives its own from the expiry, which a refresh does move. The
+ * derived phase therefore shifts by `cadence mod intervalTicks` each time. The
+ * table runs at 30, 45 and 60 ticks; 180 is a multiple of all three and 120 is
+ * not, so at 120 Shock alone slid half an interval every three seconds and its
+ * beat walked off the damage it is drawing. At 180 every row stays exactly in
+ * step, which turns the header's stated post-refresh limit in
+ * `affliction-vfx.ts` into something this path does not have to pay at all.
+ *
+ * It is also far enough apart that the re-application is not itself the thing
+ * being watched: a status refreshed every tick has a beat phase that never
+ * advances, which is precisely the half of this feature worth looking at.
+ */
+const FORCED_AFFLICTION_EVERY_TICKS = 180;
 import { connectChannel } from '../../../server/net/transport-browser.js';
 import { GameServer } from '../../../server/server.js';
 import { planConnection, rememberSession } from './connection.js';
@@ -405,6 +433,26 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * and the same seed get the same bad connection, which is what makes a
    * screenshot of one reproducible on the other.
    */
+  /**
+   * The afflictions `?afflict=` asks for (spec 215), as ordinals into `ALL_DOTS`.
+   *
+   * Loopback only, and not by omission: this drives `triggerEvent`, which is the
+   * server's own developer path, and over a socket there is no server on this
+   * thread to ask. A remote session that wants one uses the admin console, which
+   * is where an operator's authority already lives.
+   */
+  const forcedAfflictions = server === null ? [] : afflictionsFromQuery(location.search);
+  /**
+   * When the forced afflictions are topped up again.
+   *
+   * They have to be, and that is the honest shape of the thing rather than a
+   * shortcut: the longest row in the table runs ten seconds and the shortest
+   * four, so a one-shot application would be a feature you had to reload the
+   * page to look at twice. Re-applied on a cadence comfortably inside the
+   * shortest window, at the player's own position, so walking somewhere else
+   * takes the paint with you and whatever you walk up to gets it too.
+   */
+  let afflictAgainAtTick = 0;
   let wireConditions: WireConditions = parseWire(new URLSearchParams(location.search).get('wire'));
   const wire = new UnreliableChannel(channel, () => wireConditions, Rng.fromSeed(seed));
 
@@ -2830,6 +2878,22 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // socket there is no server here to drive -- the client's own clock below
       // is the only one this tab owns (spec 144).
       server?.tick();
+      // Top the forced afflictions up (spec 215). Inside the sim loop rather
+      // than in the frame, because the cadence is measured in ticks and a frame
+      // is however long this machine took -- the same reason everything else
+      // that has to happen "every N ticks" is counted here.
+      if (server !== null && forcedAfflictions.length > 0) {
+        afflictAgainAtTick -= 1;
+        if (afflictAgainAtTick <= 0) {
+          afflictAgainAtTick = FORCED_AFFLICTION_EVERY_TICKS;
+          const at = client.view().self;
+          if (at) {
+            for (const ordinal of forcedAfflictions) {
+              server.triggerEvent('affliction', at.x, at.y, ordinal);
+            }
+          }
+        }
+      }
       // The client keeps its own clock (spec 065's follow-up): deltas are
       // suppressed when nothing changed, so `view.tick` is not one.
       client.advanceTick();

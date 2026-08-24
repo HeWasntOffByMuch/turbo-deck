@@ -150,6 +150,8 @@ import {
 } from './ground-decal.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
+import { AfflictionVfx } from './affliction-vfx.js';
+import { sampleCapsuleSurface } from '../vfx/shapes.js';
 import type { WorldAnchor } from './damage-popup.js';
 
 /** One sim tick, in seconds -- the clock an authored unit's speed is on. */
@@ -348,6 +350,15 @@ interface Body {
    * shared default that cut straight through the pig's head.
    */
   headroom: number;
+  /**
+   * The body's footprint radius, for the `surface` sampler (spec 215).
+   *
+   * The same number `appearanceOf` gives the hover volume, kept here so the
+   * particle system can ask about a body it is attached to without the scene
+   * having to hold a second map keyed the same way. Not readonly for the same
+   * reason `headroom` is not: a rig can be replaced under one entity id.
+   */
+  radius: number;
 }
 
 /**
@@ -491,6 +502,15 @@ export class WorldScene {
   /** The rock a poise break puts on a body (spec 173). Presentation only. */
   private readonly staggerFlinches = new StaggerFlinches();
   private readonly bodies = new Map<number, Body>();
+  /**
+   * The paint on every afflicted body, and the beat it lands on (spec 215).
+   *
+   * Assigned in the constructor because it needs the layer, and `readonly`
+   * because nothing may swap it: it is holding the handles that stop the
+   * effects, and a replacement would leave every cling in the world running
+   * with nothing left able to stop it.
+   */
+  private readonly afflictions: AfflictionVfx;
   /**
    * The groups `RetroPass` leaves out of the quantize (spec 138).
    *
@@ -682,7 +702,67 @@ export class WorldScene {
           out[at + 2] = body.group.position.z;
           return true;
         },
+        /**
+         * A point on a body's own volume, for `mesh` emitter shapes (spec 215).
+         *
+         * The socket the format has had since spec 118 -- *"the surface of
+         * whatever the effect is attached to ... which is what makes a
+         * burning-unit definition safe to preview in isolation"* -- and which
+         * nothing supplied, so in the game that shape had never once resolved
+         * to anything but a point.
+         *
+         * **A capsule, not the mesh.** Reading vertices would mean skinning on
+         * the CPU per spawned particle, for a body a couple of hundred pixels
+         * tall carrying marks several pixels across. What a painted stain needs
+         * is to be *on* the body rather than on a particular triangle of it,
+         * and the two numbers that answer that are already here: the footprint
+         * radius every hover volume is built from, and the headroom the health
+         * bar hangs off.
+         *
+         * **It answers in the effect's own scale units**, not in world units,
+         * because `system.ts` multiplies what this writes by the instance
+         * scale -- the same treatment an authored `circle` or `sphere` shape
+         * gets. `AfflictionVfx` plays with `scale` set to the body's radius, so
+         * writing a unit-radius capsule here means one authored definition
+         * lands correctly on a spider and on a player, at the right place *and*
+         * at the right size. Dividing the height by the radius rather than
+         * normalising both is what preserves the body's actual proportions:
+         * a tall thin body gets a tall thin capsule.
+         *
+         * Drawn from the system's own `VfxRng`, never `Math.random`: a
+         * continuous emitter carries its generator across ticks, and this is
+         * called from inside that stream.
+         *
+         * The sampling itself is `sampleCapsuleSurface`, shared with the judging
+         * rig rather than written twice. A rig that distributed paint
+         * differently from the game would be evidence about the rig -- the
+         * failure `probe-chat.ts` records having shipped once, where a clearance
+         * check measured the wrong furniture and passed while the log sat on the
+         * button beside it.
+         */
+        surface: (entityId, rng, out, at) => {
+          const body = this.bodies.get(entityId);
+          if (!body) return false;
+          const radius = Math.max(1, body.radius);
+          // Height in radii, so the capsule keeps the body's proportions once
+          // the instance scale multiplies it back up.
+          sampleCapsuleSurface(rng, out, at, Math.max(2, body.headroom / radius));
+          return true;
+        },
       },
+    });
+    // The paint on an afflicted body (spec 215). Given the layer rather than the
+    // scene, so the whole driver is pure and is driven end to end in Node
+    // against a recorder -- the same reason `unit-driver.ts` takes a snapshot
+    // and not a `GameClient`.
+    this.afflictions = new AfflictionVfx({
+      play: (id, options) => this.vfx.play(id, options),
+      stop: (handle) => this.vfx.stop(handle),
+      has: (id) => this.vfx.system.has(id),
+      // A cling is the lowest-priority thing in the game and the first the
+      // instance pool evicts under pressure. Asking rather than assuming is what
+      // lets the driver put it back afterwards (spec 215).
+      isLive: (handle) => this.vfx.system.isLive(handle),
     });
     this.scene.add(this.vfx.root);
 
@@ -1347,6 +1427,9 @@ export class WorldScene {
   }
 
   dispose(): void {
+    // Before the layer goes: every handle it is holding names an instance in
+    // that layer's system.
+    this.afflictions.clear();
     this.vfx.dispose();
     for (const body of this.bodies.values()) {
       this.scene.remove(body.group);
@@ -1576,6 +1659,34 @@ export class WorldScene {
       const dead = entity.maxHealth > 0 && entity.health <= 0;
       const fallen = body.unit !== undefined && hasDeathAnimation(body.unit.def);
       body.group.scale.setScalar(dead && !fallen ? 0.6 : 1);
+
+      // The paint on an afflicted body (spec 215).
+      //
+      // Fed the **drawn** position and the **drawn** tick -- the same `x`,
+      // `ground` and `frame.tick` the body itself is placed by -- so the marks
+      // sit where the body is being shown rather than where the last delta put
+      // it, and a beat lands on the same frame at 30fps as at 144.
+      //
+      // A corpse wears nothing. The line above says what a dead body is here:
+      // it lies where it fell and stops animating, because that is how a kill
+      // reads. Paint on it would be a picture of damage still being done to
+      // something that is already dead -- and the capsule the surface sampler
+      // draws from is a *standing* body's, so the marks would hang in the air
+      // over a rig lying flat.
+      //
+      // `?? []` for the reason `hud.ts` gives at its own two call sites: several
+      // harnesses fabricate a `ClientView` by hand and do not know to set a
+      // field added to `ReplicatedEntity`, and a frame that throws on a missing
+      // one takes the whole render loop rather than one body's marks.
+      if (dead) {
+        this.afflictions.forget(entity.id);
+      } else {
+        this.afflictions.step(
+          { entityId: entity.id, x, y: ground, z: y, radius: look.radius },
+          entity.statuses ?? [],
+          frame.tick,
+        );
+      }
       // Cleared here and turned back on by `syncHover`, so exactly one body is
       // ever lit however many frames ago the cursor last moved.
       body.highlight?.setHighlighted(false);
@@ -1608,6 +1719,13 @@ export class WorldScene {
       // A held weapon is a loaded mesh hanging off a bone that is about to
       // leave the scene, so it goes with it.
       if (body.unit) this.dropHeldWeapon(body.unit);
+      // Nothing in the particle system stops itself when the body it is
+      // attached to goes away (spec 215): the attach hook simply answers false,
+      // the instance stays wherever it last resolved, and a `durationTicks: 0`
+      // effect hangs in the air forever holding one of 128 instance slots. The
+      // stop is the caller's, so it is made here -- from the sweep that already
+      // knows a body has left -- rather than inferred from an absence.
+      this.afflictions.forget(id);
       this.bodies.delete(id);
     }
   }
@@ -2141,6 +2259,7 @@ export class WorldScene {
         unit: driven,
         highlight: attachHighlight(group),
         headroom: DEFAULT_HEADROOM,
+        radius,
       };
       this.scene.add(authoredBody.group);
       // `castsShadows` runs again once the mesh has actually loaded, above --
@@ -2167,6 +2286,7 @@ export class WorldScene {
         headroom:
           (species.metrics.headY + species.metrics.headRadius) * PLAYER_FIGURE.bodyScale +
           HEADROOM_GAP,
+        radius,
       };
     } else if (rig === 'projectile') {
       // The silhouette comes from the ability that threw it (spec 087), so a
@@ -2174,7 +2294,7 @@ export class WorldScene {
       const shot = new ShotRig(look ?? 'orb', radius, { tint, detail, outline });
       // A shot never shows a bar, so its headroom is the shared default rather
       // than anything measured off the mesh.
-      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM };
+      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM, radius };
     } else {
       // No authored unit for this type, so the procedural rig it has always
       // had. Additive on purpose: the roster moves over when there is a roster.
@@ -2195,6 +2315,7 @@ export class WorldScene {
         mech,
         highlight: attachHighlight(mech.group),
         headroom: DEFAULT_HEADROOM,
+        radius,
       };
     }
 

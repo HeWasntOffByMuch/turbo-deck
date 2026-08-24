@@ -815,6 +815,362 @@ export const ORDER_MARK_ARM = 28;
  */
 export const ORDER_MARK_REACH = ORDER_MARK_ARM * MARK_REACH;
 
+// --- the afflictions ---------------------------------------------------------
+
+/**
+ * A body carrying an affliction (spec 215), as paint that clings to it.
+ *
+ * The fourth builder here and the first that is not an *event*. `bloodHit`,
+ * `brushExplosion` and `brushCross` are all a burst thrown at a point and over
+ * inside a second and a bit; an affliction stays on a body that is walking
+ * around, for four to ten seconds, and is the one damage in this game that
+ * outlives the thing that delivered it. That is a different animal, and it gets
+ * its own builder rather than a `bloodHit` with the numbers turned down -- a hit
+ * that never stops bursting is a body standing inside a permanent spatter.
+ *
+ * ## Two layers, and they are doing different jobs
+ *
+ * **The cling** is what says *stained*: marks born on the body's own surface,
+ * riding it, barely moving, renewed about twice a second. It is the layer that
+ * reads at a glance and the only reason a poisoned body looks different from a
+ * burning one across the arena.
+ *
+ * **The shed** is what says *which*: marks leaving that surface along {@link
+ * BrushAfflictionParams.rise}. Direction is information in this vocabulary and
+ * up-or-down is the cheapest direction there is -- fire goes up, rot goes down,
+ * and nothing has to be read to know which is which.
+ *
+ * There is deliberately no third layer. The hit has three because it is a
+ * *gesture* and needs a dominant mark to carry the bearing; an affliction has no
+ * bearing, and the beat that would be its third layer is a separate one-shot
+ * ({@link brushAfflictionPulse}) fired on the tick the damage actually lands.
+ *
+ * ## Four facts about the vocabulary that decide the rest
+ *
+ * **`worldSpace: false` is the whole of "it clings."** The compiled default is
+ * `true` (`compile.ts`), and attaching an effect to an entity moves only the
+ * *emission origin* -- so a mark born on a walking body and left in world space
+ * is a mark the body immediately walks out of. A parented particle is displaced
+ * by its owner's delta each tick, which is a translation and not a rotation: a
+ * stain does not turn with a body that spins on the spot. At half a second a
+ * mark and twice a second a refresh, that is not a thing anybody can see, and
+ * paying for it would mean giving every particle a frame.
+ *
+ * **The shape choice IS the orientation choice.** `orientOf` gives `brush-blot`
+ * `tumble` -- world space, which is where this vocabulary's sense of depth comes
+ * from -- `brush-dab` `velocity`, and `brush-slash`/`brush-flick` `cardVelocity`,
+ * camera-facing so they always read. A stain on a body should turn with the
+ * body's own volume, so the cling is a blot. `brush-mark` is `ground`, flat in
+ * XZ, and is therefore the one brush shape that cannot go on a body at all.
+ *
+ * **`fizzle`, never `retract`.** Spec 161's rule, and this is the case it was
+ * written about: a retract walks an eroding threshold from the mark's own root
+ * and pulls the spine after it, which played slowly is the brush retracing its
+ * own path backwards -- the stroke being *un-painted* rather than anything
+ * thinning away. Every mark here is held long enough to be watched.
+ *
+ * **`blend: 'alpha'`.** Paint is opaque, and two translucent marks crossing make
+ * a third colour that is in neither of them. This matters more here than
+ * anywhere else in the file, because a cling is *many overlapping marks on one
+ * body by construction* -- the one arrangement where a translucent mark is
+ * guaranteed to cross another one.
+ *
+ * ## Lengths are in body radii, not in world units
+ *
+ * Every length below is a multiple of the effect's own scale, and the driver
+ * plays these with `scale` set to the body's footprint radius. The surface hook
+ * answers in the same units. So one authored definition fits a spider and a
+ * player: the marks land on the body at the right place *and* come out the right
+ * size, because `system.ts` multiplies both the shape's local coordinates and
+ * the size curve by the instance scale.
+ *
+ * ## ...but speed, acceleration and turbulence are world units
+ *
+ * `system.ts` multiplies the shape's local coordinates and the size curve by the
+ * instance scale and **nothing else** -- a particle's velocity, the constant push
+ * on it and its turbulence amplitude are all integrated in world units per
+ * second. That is correct rather than an omission: a big body's paint drips at
+ * the same rate as a small one's, because gravity is gravity.
+ *
+ * It is written down because it is the one asymmetry in this file and the
+ * mistake it invites is silent. Authored as if they were radii, every one of
+ * these numbers comes out about a hundred times too small, and the result is not
+ * an effect that looks wrong -- it is a shed layer that never leaves the surface
+ * it was born on, which reads as a cling with more marks in it.
+ *
+ * The calibration to hold them against is `bloodHit`, in this file: a hit's
+ * primary mark leaves at `scale * 7` -- about 180 units a second -- under
+ * `gravity: -900`, and the mist that *hangs* rather than falling replaces that
+ * with `drift: 26` and `turbulence: 62`. So 26 is a gentle lift, 62 is
+ * "the marks come apart", and 900 is a real fall. Everything here is quieter
+ * than a hit by design, and sits between those.
+ *
+ * ## Eighteen effects and no new draw calls
+ *
+ * A batch is keyed `family:blend:sheet:meshShape` (`compile.ts`), and every
+ * emitter here is a `mesh` in `alpha` on one of four marks the file already
+ * draws -- `brush-blot` from the explosion's smoke, and `brush-slash`,
+ * `brush-flick` and `brush-dab` from the hit. So the whole of this costs the
+ * registry **zero** additional batches, which matters because `library.test.ts`
+ * caps them at 25 and the table is sitting on that number.
+ *
+ * Neither `worldSpace` nor `strokeDecay` is in the key, and that is not luck:
+ * decay rides as a per-*instance* attribute precisely so two effects can share a
+ * mark and end it differently, which is what lets the cling fizzle and the beat
+ * retract out of the same geometry.
+ */
+export interface BrushAfflictionParams {
+  readonly id: string;
+  /** Marks held on the body, per second. The layer that says "stained". */
+  readonly cling?: number;
+  /** Marks leaving it, per second. The layer that says which affliction. */
+  readonly shed?: number;
+  /**
+   * Where the shed goes, in **world** units per second squared. Positive rises.
+   *
+   * The one number that separates the seven at a glance. Fire lifts, every rot
+   * falls, and cold barely moves at all. Against `bloodHit`'s `drift: 26` for a
+   * gentle lift and its `gravity: -900` for a real fall.
+   */
+  readonly rise?: number;
+  /** How far a shed mark wanders, **world** units per second squared. */
+  readonly turbulence?: number;
+  /** How fast a shed mark leaves the surface, **world** units per second. */
+  readonly shedSpeed?: number;
+  /** Ticks a cling mark lives. Short: paint being renewed, not accumulating. */
+  readonly clingLife?: readonly [number, number];
+  readonly shedLife?: readonly [number, number];
+  /** A cling mark's length, in body radii. */
+  readonly clingSize?: number;
+  /** A shed mark's length, in body radii. */
+  readonly shedSize?: number;
+  /**
+   * The shed's mark, and the choice is an orientation choice (see the header).
+   *
+   * `brush-dab` takes `velocity`, so it lies along its own travel -- right for
+   * anything that drips or falls, where the direction *is* the information.
+   * `brush-flick` is `cardVelocity` and streaks, for anything leaving fast.
+   * `brush-blot` is `tumble`: it turns in world space and is the roundest mark
+   * in the set, which is the only one of the three that can be a **bubble** --
+   * a dab rising vertically is a vertical dash, and a dash going up is not a
+   * bubble however slowly it moves.
+   */
+  readonly shedShape?: 'brush-dab' | 'brush-flick' | 'brush-blot';
+  /** Palest, for a mark that has just landed. */
+  readonly bright: PaletteKey;
+  /** The body colour, and most of what is on screen. */
+  readonly mid: PaletteKey;
+  /** Darkest, where a mark is drying or falling away. */
+  readonly deep: PaletteKey;
+  readonly priority?: Priority;
+  readonly cullDistance?: number;
+}
+
+export function brushAffliction(params: BrushAfflictionParams): EffectDefinition {
+  const cling = Math.max(0, params.cling ?? 7);
+  const shed = Math.max(0, params.shed ?? 3);
+  const rise = params.rise ?? 0;
+  const turbulence = Math.max(0, params.turbulence ?? 0);
+  const shedSpeed = Math.max(0, params.shedSpeed ?? 9);
+  const [clingMin, clingMax] = params.clingLife ?? [22, 34];
+  const [shedMin, shedMax] = params.shedLife ?? [26, 44];
+  const clingSize = params.clingSize ?? 0.62;
+  const shedSize = params.shedSize ?? 0.34;
+  const shedShape = params.shedShape ?? 'brush-dab';
+
+  const emitters: Emitter[] = [
+    // (a) The cling. Born on the body's surface, riding it, barely moving.
+    //
+    // Its speed is a *trickle* rather than nothing, and that is the difference
+    // between paint and wallpaper: at exactly zero every mark sits on the point
+    // it was born at and the layer reads as a texture that was always there.
+    // A little travel, killed almost immediately by the drag, is a mark being
+    // put on -- and it is what lets the same definition read on a body standing
+    // still and on one running away from you.
+    {
+      id: 'cling',
+      shape: { kind: 'mesh' },
+      emission: { kind: 'rate', perSecond: cling },
+      lifetimeTicks: [Math.round(clingMin), Math.round(clingMax)],
+      // World units a second, and small: with `drag: 7` a mark sheds almost all
+      // of this inside a sixth of a second and travels well under a unit. That
+      // is the point -- it is a mark being *put on*, not one going anywhere --
+      // and it is the difference between paint and wallpaper. At exactly zero
+      // every mark sits on the point it was born at and the layer reads as a
+      // texture that was always there.
+      speed: [1.5, 5],
+      // Nearly a full hemisphere. The surface hook hands back a point and a
+      // straight-up direction (`system.ts`), so without this every cling mark on
+      // a body would set off in the same direction and the layer would read as a
+      // fringe rather than as a coat.
+      spreadRadians: 1.5,
+      drag: 7,
+      angularVelocity: [-0.7, 0.7],
+      // Born a little under, at full size a third of the way in, and ending
+      // where it started rather than at nothing: paint dries, it does not
+      // evaporate, and `fizzle` is what takes this one off the body.
+      size: { keys: [[0, clingSize * 0.72], [0.34, clingSize], [1, clingSize * 0.86]] },
+      // Opaque for four fifths of its life. The mark is coming apart into
+      // islands by then and there is very little left for alpha to do.
+      alpha: { keys: [[0, 1], [0.78, 1], [1, 0]] },
+      // Born bright and settling on the body colour, and it **never reaches
+      // `deep`** -- which is the rule the first cut got wrong. A cling is the
+      // layer that has to read, and reading is mostly a question of value: with
+      // the ramp running all the way down, a mark spent the back half of its
+      // life in the darkest tone the affliction has, and against grass and dirt
+      // that is mud. It showed up as Frostbite being far and away the most
+      // legible of the seven for no reason anybody had chosen -- its ramp is the
+      // only one whose dark end is still light.
+      //
+      // So the two layers split the ramp between them: the cling lives in the
+      // top two tones because it is what is *on* the body, and the shed below
+      // takes `mid` to `deep` because it is what is coming *off* it. Which also
+      // buys the thing a single ramp could not: the paint on a body and the
+      // paint falling from it are different colours, so the two layers separate
+      // without either needing a second palette entry.
+      color: { stops: [[0, params.bright], [0.35, params.mid], [1, params.mid]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-blot' },
+      blend: 'alpha',
+      strokeDecay: 'fizzle',
+      // The whole of "it clings". See the header.
+      worldSpace: false,
+    },
+    // (b) The shed. The same surface, and then it leaves.
+    //
+    // Left in world space on purpose, and it is the one place these two layers
+    // disagree: what has come off a body is no longer on it, and a drip that
+    // followed the body it fell from would read as being stuck to it.
+    {
+      id: 'shed',
+      shape: { kind: 'mesh' },
+      emission: { kind: 'rate', perSecond: shed },
+      lifetimeTicks: [Math.round(shedMin), Math.round(shedMax)],
+      speed: [shedSpeed * 0.4, shedSpeed * 1.5],
+      spreadRadians: 1.15,
+      drag: 1.6,
+      acceleration: { x: 0, y: rise, z: 0 },
+      turbulence: { amplitude: turbulence, frequency: 0.05 },
+      angularVelocity: [-1.6, 1.6],
+      // Thins as it goes, unlike the cling: this one IS leaving.
+      size: { keys: [[0, shedSize * 0.8], [0.3, shedSize], [1, shedSize * 0.42]] },
+      alpha: { keys: [[0, 1], [0.6, 1], [1, 0]] },
+      // Mid to deep: this one is leaving, and going dark on the way out is what
+      // says so. See the cling above for why the two layers divide the ramp.
+      color: { stops: [[0, params.mid], [0.45, params.mid], [1, params.deep]] },
+      render: 'mesh',
+      mesh: { shape: shedShape },
+      blend: 'alpha',
+      strokeDecay: 'fizzle',
+    },
+  ];
+
+  return {
+    id: params.id,
+    // Low, and deliberately the lowest thing this file authors. A cling holds an
+    // instance slot for the whole life of the affliction against a budget of
+    // 128, so an affliction on a body across the arena is the first thing that
+    // should yield and the fight in front of you is the last.
+    priority: params.priority ?? 1,
+    cullDistance: params.cullDistance ?? 1200,
+    // Until stopped. The driver owns the stop, and owes one on despawn: nothing
+    // in this system stops itself when the body it is attached to goes away.
+    durationTicks: 0,
+    // Soft, not hard. A cling mark lives about half a second, so letting the
+    // last few dry is what an affliction ending should look like -- the aura's
+    // `hardStop` argument was a single particle held for ten minutes, which is
+    // not this.
+    emitters,
+  };
+}
+
+/**
+ * One beat of an affliction (spec 215): the tick a pulse actually lands.
+ *
+ * The other half of the pair, and an *event* where {@link brushAffliction} is a
+ * state -- the division `world/auras.ts` draws in one line, *"a hit happens; a
+ * poison lasts"*. It is played one-shot on the tick the sim's own resolver fires
+ * on, which the client can work out from the replicated expiry without anything
+ * new crossing the wire, so **the paint and the damage number arrive on the same
+ * frame**.
+ *
+ * That is the entire difference between "there is a green haze on that thing"
+ * and "that thing is being poisoned". A cling with no beat is an aura; a beat
+ * with no cling is a hit that keeps happening for no visible reason.
+ *
+ * `brush-slash` and `brush-flick` throughout, because both take `cardVelocity`
+ * and therefore always face the camera: a cling may turn away and still read as
+ * a stain, and a beat that turned away would be a beat nobody saw. Left in
+ * **world space**, unlike the cling: a jolt is thrown *off* a body and should
+ * not travel with it.
+ */
+export interface BrushPulseParams {
+  readonly id: string;
+  /** Marks thrown. Few: a beat is a punctuation mark, not a burst. */
+  readonly marks?: number;
+  readonly lifetimeTicks?: number;
+  /** **World** units per second squared. Positive rises. */
+  readonly rise?: number;
+  /** **World** units per second the marks leave at. */
+  readonly velocity?: number;
+  /** Half-angle thrown through, radians. */
+  readonly spread?: number;
+  /** A mark's length, in body radii. */
+  readonly markSize?: number;
+  readonly shape?: 'brush-slash' | 'brush-flick';
+  readonly bright: PaletteKey;
+  readonly mid: PaletteKey;
+  readonly deep: PaletteKey;
+  readonly priority?: Priority;
+  readonly cullDistance?: number;
+}
+
+export function brushAfflictionPulse(params: BrushPulseParams): EffectDefinition {
+  const marks = Math.max(1, Math.round(params.marks ?? 3));
+  const life = Math.max(4, Math.round(params.lifetimeTicks ?? 14));
+  const rise = params.rise ?? 0;
+  const velocity = params.velocity ?? 45;
+  const spread = params.spread ?? 1.1;
+  const markSize = params.markSize ?? 0.85;
+
+  return {
+    id: params.id,
+    // A step above the cling it beats on. A beat that yielded under pressure
+    // while its own cling kept running would be an affliction that visibly
+    // stopped doing anything, which is worse than one that is not drawn at all.
+    priority: params.priority ?? 2,
+    cullDistance: params.cullDistance ?? 1200,
+    emitters: [
+      {
+        id: 'beat',
+        shape: { kind: 'mesh' },
+        emission: { kind: 'burst', count: marks },
+        // A tight band rather than a range: the marks of one beat should read as
+        // one event, and a spread of lifetimes turns a punctuation mark into a
+        // small shower.
+        lifetimeTicks: [Math.round(life * 0.82), life],
+        speed: [velocity * 0.55, velocity * 1.25],
+        spreadRadians: spread,
+        drag: 6.5,
+        acceleration: { x: 0, y: rise, z: 0 },
+        angularVelocity: [-2.2, 2.2],
+        // Full size almost at once and holding: a beat has fourteen ticks to be
+        // seen and cannot afford to spend four of them growing.
+        size: { keys: [[0, markSize * 0.86], [0.18, markSize], [1, markSize * 0.7]] },
+        alpha: { keys: [[0, 1], [0.72, 1], [1, 0]] },
+        color: { stops: [[0, params.bright], [0.42, params.bright], [0.72, params.mid], [1, params.deep]] },
+        render: 'mesh',
+        mesh: { shape: params.shape ?? 'brush-flick' },
+        blend: 'alpha',
+        // The one place in this feature that retracts rather than fizzles, and
+        // for the reason spec 161 gives: this is a flick, over in a few ticks,
+        // and a retract is what reads as having been thrown.
+        strokeDecay: 'retract',
+      },
+    ],
+  };
+}
+
 // --- the shipped presets -----------------------------------------------------
 
 /** The nominal radius `explosion_brush` is authored at, for the scale maths. */
@@ -936,6 +1292,366 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     lifetimeTicks: 86,
     light: true,
     priority: 3,
+  }),
+
+  // --- the afflictions (spec 215) --------------------------------------------
+  //
+  // Seven states rather than seven effects, and the numbers below are the seven
+  // characters `data/damage-over-time.ts` authored, read back out as paint. What
+  // separates them at a glance is `rise` -- fire is the only one that goes up,
+  // and everything that rots goes down -- and after that it is *rate*: Burn is
+  // the loudest thing here because it is the shortest and hardest, Decay the
+  // quietest because it is the slowest, and Shock is almost silent between its
+  // beats on purpose, because "it arrives in jolts" is a statement about the
+  // gaps as much as about the jolts.
+  //
+  // A `_heavy` exists only for the rows that can *get worse* -- the three that
+  // stack, and Frostbite, which ramps instead. There is no `_heavy` for Burn or
+  // Shock, because there is no state of a body in this game where either is
+  // worse than it already is.
+
+  // Burn: the most damage a second in the table and the shortest life, and the
+  // only one whose shed *streaks* rather than dripping or drifting.
+  //
+  // It lifts hardest by a distance -- nearly three times Poison's bubbles, the
+  // only other row that goes up at all -- and that gap is what keeps the two
+  // apart at a glance: fire is thrown off a body and rot floats off it.
+  //
+  // Its ramp settles on `fireAmber` rather than `fireBody`, which is the
+  // difference between a burning body reading as yellow-into-orange and reading
+  // as orange-into-red. The flame effects keep the old ramp; a body on fire is
+  // a different subject from a fire, and the thing you want to see on it is the
+  // heat rather than the embers.
+  brushAffliction({
+    id: 'affliction_burn',
+    cling: 22,
+    shed: 10,
+    rise: 72,
+    turbulence: 40,
+    shedSpeed: 22,
+    clingSize: 0.6,
+    clingLife: [16, 26],
+    shedLife: [22, 38],
+    shedSize: 0.36,
+    shedShape: 'brush-flick',
+    bright: 'fireCore',
+    mid: 'fireAmber',
+    deep: 'fireDeep',
+  }),
+  // Bleed: red, and it falls hard. The heaviest `rise` in the table by
+  // magnitude, because a drip that hesitates is not a drip -- and the shortest
+  // shed life, since blood is off the body and gone rather than hanging about.
+  brushAffliction({
+    id: 'affliction_bleed',
+    cling: 15,
+    shed: 7,
+    rise: -260,
+    turbulence: 5,
+    shedSpeed: 9,
+    clingSize: 0.55,
+    shedSize: 0.3,
+    shedLife: [18, 30],
+    bright: 'bloodBright',
+    mid: 'bloodFresh',
+    deep: 'bloodInk',
+  }),
+  brushAffliction({
+    id: 'affliction_bleed_heavy',
+    cling: 28,
+    shed: 12,
+    rise: -270,
+    turbulence: 6,
+    shedSpeed: 11,
+    clingSize: 0.66,
+    shedSize: 0.34,
+    shedLife: [18, 32],
+    bright: 'bloodBright',
+    mid: 'bloodFresh',
+    deep: 'bloodInk',
+  }),
+  // Poison: the weakest rate and the longest life, and the numbers say so. One
+  // stack is meant to be *barely worth noticing*, so this is the quietest cling
+  // of the seven and the one that changes most when it stacks.
+  //
+  // It is also the one affliction whose character is in the **shed** rather than
+  // in the coat: bubbles, rising off the body and wobbling as they go. That is
+  // the only row here with a positive `rise` besides Burn, and the two are not
+  // confusable, because fire's lift is four times as hard and its marks streak
+  // where these drift. Everything a bubble needs is already in the vocabulary --
+  // a small round `brush-dab`, a slow upward push, and enough turbulence that
+  // they do not rise in a column -- so nothing about the shape language moves.
+  //
+  // The coat is deliberately thinner than it was to pay for it. A body that is
+  // both coated *and* fizzing reads as two afflictions.
+  brushAffliction({
+    id: 'affliction_poison',
+    cling: 8,
+    shed: 9,
+    rise: 26,
+    turbulence: 22,
+    shedShape: 'brush-blot',
+    shedSpeed: 5,
+    shedSize: 0.26,
+    clingSize: 0.5,
+    clingLife: [26, 40],
+    shedLife: [40, 64],
+    bright: 'poisonPale',
+    // The cling settles on `mid`, so `mid` is the colour Poison *is* rather
+    // than the bottom of its ramp. Leaf green here read as mud on a body at
+    // this size, and it put Poison and Corrosion within a shade of each other
+    // at the one moment they most need telling apart -- the pale green against
+    // Corrosion's saturated chartreuse is the difference that survives the
+    // quantizer.
+    mid: 'poisonPale',
+    deep: 'poisonDeep',
+  }),
+  brushAffliction({
+    id: 'affliction_poison_heavy',
+    cling: 16,
+    shed: 20,
+    rise: 30,
+    turbulence: 26,
+    shedShape: 'brush-blot',
+    shedSpeed: 6,
+    shedSize: 0.3,
+    clingSize: 0.6,
+    clingLife: [28, 44],
+    shedLife: [42, 68],
+    bright: 'poisonPale',
+    // The cling settles on `mid`, so `mid` is the colour Poison *is* rather
+    // than the bottom of its ramp. Leaf green here read as mud on a body at
+    // this size, and it put Poison and Corrosion within a shade of each other
+    // at the one moment they most need telling apart -- the pale green against
+    // Corrosion's saturated chartreuse is the difference that survives the
+    // quantizer.
+    mid: 'poisonPale',
+    deep: 'poisonDeep',
+  }),
+  // Corrosion: acid, and the one that is visibly *doing something to the
+  // surface*. The first cut authored it as **pitting** rather than a coat --
+  // small marks, renewed twice as fast as anything else -- on the argument that
+  // what it eats through is the guard and the armour. The contact sheet said no:
+  // it came out at a third of Frostbite's ink and was the one row of the seven
+  // you had to look for. Small and fast is *detail*, and this vocabulary's whole
+  // rule is silhouette over detail at three hundred pixels tall. It keeps the
+  // fast renewal, which is where the sense of something being eaten away comes
+  // from, and the marks are the size of everybody else's.
+  brushAffliction({
+    id: 'affliction_corrosion',
+    cling: 17,
+    shed: 8,
+    rise: -110,
+    turbulence: 24,
+    shedSpeed: 13,
+    clingSize: 0.62,
+    clingLife: [18, 30],
+    shedLife: [24, 40],
+    bright: 'corrodeBright',
+    mid: 'corrodeBody',
+    deep: 'corrodeDeep',
+  }),
+  brushAffliction({
+    id: 'affliction_corrosion_heavy',
+    cling: 32,
+    shed: 14,
+    rise: -120,
+    turbulence: 30,
+    shedSpeed: 15,
+    clingSize: 0.7,
+    clingLife: [18, 32],
+    shedLife: [24, 42],
+    bright: 'corrodeBright',
+    mid: 'corrodeBody',
+    deep: 'corrodeDeep',
+  }),
+  // Shock: almost nothing between the beats, which is the whole design. High
+  // turbulence so the little that is there jitters rather than sits, and the
+  // loudest pulse in the table to land on top of it. An affliction that
+  // "arrives in jolts" has to be *quiet* in between or the jolts are not
+  // arrivals.
+  brushAffliction({
+    id: 'affliction_shock',
+    // The highest rate in the table over the shortest life, which is not the
+    // contradiction it looks like: what is alive at any instant is about ten
+    // marks, the joint fewest of the seven, and each of them lasts an eighth of
+    // a second. That is the difference between *thin* and *flickering*, and
+    // flickering is what a body between jolts should be doing.
+    //
+    // The first cut was four a second, which works out at under one live mark --
+    // a body between jolts drawn as a body with nothing on it at all. That is
+    // not quiet, it is a missing effect. Quiet has to be something you can watch
+    // being quiet.
+    cling: 30,
+    shed: 9,
+    rise: 18,
+    turbulence: 66,
+    shedSpeed: 20,
+    clingSize: 0.54,
+    clingLife: [8, 16],
+    shedLife: [12, 22],
+    shedSize: 0.3,
+    shedShape: 'brush-flick',
+    bright: 'boltFlash',
+    mid: 'boltPale',
+    deep: 'boltArc',
+  }),
+  // Frostbite: the one that accumulates. Nothing here moves -- the slowest shed,
+  // the least turbulence and the longest-lived cling marks in the table, so what
+  // is on the body stays on the body and builds up. `_heavy` is not "more
+  // stacks" for this one but *more time*: its ramp is the design, and the tier
+  // crosses on how long it has been carried.
+  brushAffliction({
+    id: 'affliction_frostbite',
+    cling: 15,
+    shed: 3,
+    rise: -10,
+    turbulence: 3,
+    shedSpeed: 4,
+    clingSize: 0.66,
+    clingLife: [34, 52],
+    shedLife: [30, 46],
+    shedSize: 0.26,
+    bright: 'iceWhite',
+    mid: 'icePale',
+    deep: 'iceDeep',
+  }),
+  brushAffliction({
+    id: 'affliction_frostbite_heavy',
+    cling: 34,
+    shed: 5,
+    rise: -9,
+    turbulence: 4,
+    shedSpeed: 5,
+    clingSize: 0.82,
+    clingLife: [40, 62],
+    shedLife: [30, 48],
+    shedSize: 0.3,
+    bright: 'iceWhite',
+    mid: 'icePale',
+    deep: 'iceDeep',
+  }),
+  // Decay: the lowest damage in the table by design, and what it costs you is
+  // not the health it takes. So this is the slowest thing here -- long marks,
+  // long lives, a drift barely distinguishable from stillness -- and the only
+  // desaturated ramp, because Decay is colour draining rather than colour
+  // landing.
+  brushAffliction({
+    id: 'affliction_decay',
+    cling: 11,
+    shed: 5,
+    rise: -28,
+    turbulence: 9,
+    shedSpeed: 6,
+    clingSize: 0.68,
+    clingLife: [40, 62],
+    shedLife: [44, 70],
+    shedSize: 0.32,
+    bright: 'decayBright',
+    mid: 'decayBody',
+    deep: 'decayDeep',
+  }),
+
+  // --- the beats -------------------------------------------------------------
+  //
+  // One per affliction, played on the tick its pulse actually resolves. The
+  // shapes are the character: a lick, a spurt, a bloom, a spit, a crack, a
+  // crust, a sag.
+  brushAfflictionPulse({
+    id: 'affliction_burn_pulse',
+    marks: 4,
+    lifetimeTicks: 13,
+    rise: 300,
+    velocity: 55,
+    spread: 0.9,
+    markSize: 0.95,
+    bright: 'fireCore',
+    mid: 'fireAmber',
+    deep: 'fireDeep',
+  }),
+  brushAfflictionPulse({
+    id: 'affliction_bleed_pulse',
+    marks: 3,
+    lifetimeTicks: 12,
+    rise: -380,
+    velocity: 75,
+    spread: 1,
+    markSize: 0.9,
+    bright: 'bloodBright',
+    mid: 'bloodFresh',
+    deep: 'bloodInk',
+  }),
+  brushAfflictionPulse({
+    id: 'affliction_poison_pulse',
+    marks: 6,
+    lifetimeTicks: 20,
+    rise: 60,
+    velocity: 22,
+    spread: 1.35,
+    markSize: 0.6,
+    bright: 'poisonPale',
+    mid: 'poisonDeep',
+    deep: 'poisonMurk',
+  }),
+  brushAfflictionPulse({
+    id: 'affliction_corrosion_pulse',
+    marks: 4,
+    lifetimeTicks: 15,
+    rise: -180,
+    velocity: 48,
+    spread: 1.15,
+    markSize: 0.8,
+    bright: 'corrodeBright',
+    mid: 'corrodeBody',
+    deep: 'corrodeDeep',
+  }),
+  // The loudest of the seven and the shortest. Slashes rather than flicks, at
+  // twice anything else's speed and a third of its life: a jolt has eight ticks
+  // to be a jolt, and what it is competing with is its own near-silent cling.
+  brushAfflictionPulse({
+    id: 'affliction_shock_pulse',
+    marks: 5,
+    // Ten rather than eight. Still by some way the shortest beat in the table --
+    // the next is a third longer again -- but eight ticks is 133ms, which is
+    // four frames at 30fps and fewer than that on a frame that stutters. A jolt
+    // should be brief; it should not be missable.
+    lifetimeTicks: 10,
+    rise: 40,
+    velocity: 130,
+    spread: 1.45,
+    markSize: 1.25,
+    shape: 'brush-slash',
+    bright: 'boltFlash',
+    mid: 'boltPale',
+    deep: 'boltArc',
+  }),
+  // Slashes for the opposite reason: not speed but *edge*. Cold is the one
+  // affliction whose mark should look like it has a straight side, so this is a
+  // slash held almost still for twenty-two ticks -- a crust forming rather than
+  // anything thrown.
+  brushAfflictionPulse({
+    id: 'affliction_frostbite_pulse',
+    marks: 5,
+    lifetimeTicks: 22,
+    rise: -12,
+    velocity: 12,
+    spread: 1.4,
+    markSize: 0.72,
+    shape: 'brush-slash',
+    bright: 'iceWhite',
+    mid: 'icePale',
+    deep: 'iceDeep',
+  }),
+  brushAfflictionPulse({
+    id: 'affliction_decay_pulse',
+    marks: 3,
+    lifetimeTicks: 26,
+    rise: -40,
+    velocity: 15,
+    spread: 1.2,
+    markSize: 0.85,
+    bright: 'decayBright',
+    mid: 'decayBody',
+    deep: 'decayDeep',
   }),
 ];
 

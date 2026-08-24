@@ -64,6 +64,8 @@ change a game outcome.
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
+| `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
+| `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -2511,6 +2513,127 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  appears, which is the whole reason a bottom-anchored holder may
                  grow at the top at all -- the cast bar had to be taken out of
                  flow for exactly this.
+                 `world/affliction-vfx.ts` is what a *body* says about the same
+                 thing (spec 215), and it exists because a mark over the head is
+                 the wrong shape of information for an affliction: an affliction
+                 is the one damage here that stays on a body after the thing
+                 that did it walked away, and until this the only difference
+                 between four seconds of fire and ten seconds of rot was which
+                 thirteen-pixel glyph sat in a row of glyphs. So the seven get
+                 painted, in the spec 158-162 vocabulary, and three sockets that
+                 had been waiting with comments naming this work got filled:
+                 `auras.ts`'s *"the day a status list is replicated, `aurasFor`
+                 gains a branch"* (spec 186 replicated it; `aurasFor` and
+                 `AuraTracker` had no caller outside their own test for
+                 seventy-five specs), `EmitterShape`'s `{ kind: 'mesh' }` --
+                 *"the surface of whatever the effect is attached to ... what
+                 makes a **burning-unit** definition safe to preview in
+                 isolation"*, with no burning-unit definition and no `surface`
+                 hook, so in the game it had never resolved to anything but a
+                 point -- and `scene.ts`'s attach hook, *"the effects that need
+                 a socket, a burning unit, arrive with the fire work"*.
+                 The decision the whole thing turns on: **the beat is derived,
+                 not sent**. `WireStatus` carries an *absolute* `expiresAtTick`
+                 and `data/damage-over-time.ts` is shared code, so
+                 `elapsed = tick - (expiresAtTick - dotDurationTicks(row))`
+                 recovers the entire schedule -- the same rule `loot-drop.ts`'s
+                 reveal phase and `stun-icon.ts`'s swirl already are. Every
+                 client beats together, nothing new crosses the wire, and the
+                 paint lands on the frame the damage number does, which is the
+                 whole difference between "there is a green haze on that thing"
+                 and "that thing is being poisoned". It is a **count** rather
+                 than "is this tick a pulse tick", and that half is
+                 load-bearing: a frame drains several ticks -- three at 20fps,
+                 and this environment paints a real page at about five -- so the
+                 modulo version skips most beats and *all* of them on a slow
+                 frame, where counting what has landed and firing on the
+                 increase is frame-rate independent by construction, and fires
+                 **once** for a frame that drained three, because a beat is a
+                 beat and not a quantity. One stated limit: the sim measures
+                 elapsed from `appliedAtTick`, which a refresh does not move,
+                 and the client has only the expiry, which it does -- so after a
+                 refresh the phase can sit up to one interval off. The *cadence*
+                 stays exact, the offset is under half a second on every row,
+                 and it is accepted rather than fixed with a protocol change.
+                 That split is `auras.ts`'s own line -- *"a hit happens; a poison
+                 lasts"* -- with an affliction being the first thing here that
+                 is both: the **cling** is a state, started once and stopped
+                 once and drawn for a body that walked into view already
+                 burning; the **beat** is an event and needs an edge, the way
+                 `stagger-flinch.ts` does and for the same reason.
+                 `vfx/brush.ts` gained the two builders. Four things about the
+                 vocabulary decided their shape rather than taste.
+                 **`worldSpace: false` is the whole of "it clings"** -- the
+                 compiled default is `true` and attaching an effect moves only
+                 the emission *origin*, so a mark born on a walking body and
+                 left in world space is a mark the body walks out of. **The
+                 shape choice is the orientation choice**: `brush-blot` is
+                 `tumble`, world space, so the cling turns with the body's own
+                 volume, while `brush-slash` and `brush-flick` are
+                 `cardVelocity` and always face the camera, which is what a beat
+                 must do; `brush-mark` is `ground` and is the one brush shape
+                 that cannot go on a body at all. **`fizzle`, never `retract`**
+                 for anything held long enough to be watched -- spec 161's rule,
+                 and this is the case it was written about. And **`alpha`,
+                 nothing additive**, which matters more here than anywhere else
+                 in the file because a cling is many overlapping marks on one
+                 body *by construction*: the one arrangement where a translucent
+                 mark is guaranteed to cross another and make a third colour in
+                 neither of them.
+                 Every length is in **body radii**: the driver plays with
+                 `scale` set to the footprint radius and the `surface` hook
+                 answers in the same units, and `system.ts` multiplies both the
+                 shape's local coordinates and the size curve by it -- so one
+                 authored definition lands on a spider and on a player at the
+                 right place *and* the right size. Speed and gravity are not
+                 scaled, which is correct, because gravity is gravity.
+                 Severity is **two tiers and more paint, never brighter paint**:
+                 the count is already drawn over the head, so what the paint owes
+                 is severity, brightness is what the beat says, and one signal
+                 meaning two things is a legend nobody can read. Frostbite
+                 crosses on *elapsed* rather than stacks, since its ramp is that
+                 row's whole design; Burn and Shock get no heavy tier at all,
+                 because neither stacks and neither ramps and a louder version
+                 would be a picture of a state that never happens.
+                 The driver does its own diff rather than using `AuraTracker`,
+                 and the reason is specific: **`play` returns 0 on refusal** --
+                 unknown id, over budget, beyond `cullDistance` -- and a tracker
+                 that records *ids* cannot say "wanted, asked for, did not
+                 start", so committing a refused id leaves a body silently
+                 unmarked for the rest of its life. Holding **handles** makes a
+                 refusal mean "not started yet". The obligation that comes with
+                 that: on despawn **nothing stops itself** -- the attach hook
+                 answers false, the instance stays where it last resolved, and a
+                 `durationTicks: 0` effect hangs in the air forever holding one
+                 of 128 slots -- so `forget` is called from the sweep that knows
+                 a body has left, never inferred from an absence. Nothing in
+                 this game had ever held a persistent attached effect, so this
+                 is the pattern rather than a use of one. The other half of the
+                 same problem is **eviction**, and it was found by reading
+                 `claimInstance` rather than by anything failing: a full instance
+                 pool does not refuse, it takes the lowest-priority furthest
+                 instance, hands the slot over and bumps its generation, so every
+                 handle to it goes stale where it sits. A cling is priority 1 and
+                 therefore the first thing in the game to go -- correctly, since
+                 the fight in front of you matters more than paint on a body
+                 across the arena -- and a driver that went on believing its
+                 handle would leave that body unpainted for the rest of its life,
+                 silently, and only in the crowded fight that caused the
+                 pressure. `isLive` is asked every step and a dead handle is "not
+                 started".
+                 The palette gained two ramps, and each had to be unmistakable
+                 against the neighbour it would otherwise read as: Corrosion is a
+                 *chemical* green pushed toward chartreuse against Poison's leaf,
+                 because two greens read as one affliction at two intensities and
+                 that is exactly backwards; Decay is the only **desaturated**
+                 ramp in the table, since what it does is suppress healing and it
+                 should look like colour draining rather than colour landing.
+                 `presentation-only.test.ts` drives it beside the machines, the
+                 eased yaw and the drop's reveal, and it is worth having there
+                 for one reason past the others: an affliction is the first thing
+                 a client works out the *schedule* of for itself, so the obvious
+                 way to get it wrong is to let that derivation reach back into
+                 something.
                  `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
                  to a body because of the bodies around it (spec 187). Until they
                  existed nothing on the server knew that two units were in the
