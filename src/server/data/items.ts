@@ -154,9 +154,12 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     // Keen: the speed is the point of it (spec 070), so it says so as a
     // percentage rather than by shaving a tick off the base interval.
     modifiers: { attackDamage: 8, attackRange: 6, attackSpeedPct: 0.15 },
-    // Keen: the row already says the speed is the point of it, so the letters
-    // say the same thing. A finesse blade a Strength character can still swing.
-    scaling: { strength: ScalingGrade.B, agility: ScalingGrade.A, intelligence: ScalingGrade.None },
+    // The versatile blade: good in either hand, best in neither. `B`/`B` is 1.40
+    // of coefficient against the maul's single `S` at 1.15, which is the shape
+    // the balance rule wants -- a two-attribute weapon out-scales a
+    // one-attribute weapon only for somebody who actually paid for both, and
+    // pays for the breadth by taking a lower letter in each.
+    scaling: { strength: ScalingGrade.B, agility: ScalingGrade.B, intelligence: ScalingGrade.None },
   },
   {
     id: 'maul.iron',
@@ -292,6 +295,36 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     slot: 'trinket',
     levelRequirement: 8,
     modifiers: { maxHealthPct: 0.12, attackDamagePct: 0.05 },
+  },
+  // Two trinkets that move a *letter* rather than a number (spec 215).
+  //
+  // They exist to make the grade-modifier path reachable content rather than a
+  // mechanism with no caller, and they are the shape every future one takes:
+  // a generic step on a named attribute, consumed by `effectiveScaling`, with
+  // nothing in combat code knowing either of these rows exists. A third is
+  // another entry in this table and no code at all.
+  //
+  // A step is worth far more than a stat point, because it re-prices every
+  // point of that attribute the holder has -- so both are priced high and gated
+  // late, and the Runic Pendant *pays* for its two steps with one off Strength
+  // rather than being strictly better than the amulet beside it.
+  {
+    id: 'trinket.precision',
+    rarity: 'rare',
+    value: 160,
+    name: 'Amulet of Precision',
+    slot: 'trinket',
+    levelRequirement: 6,
+    modifiers: { agilityScalingGrade: 1 },
+  },
+  {
+    id: 'trinket.runic',
+    rarity: 'exceptional',
+    value: 240,
+    name: 'Runic Pendant',
+    slot: 'trinket',
+    levelRequirement: 9,
+    modifiers: { intelligenceScalingGrade: 2, strengthScalingGrade: -1 },
   },
   // --- active skills (spec 188) ---
   //

@@ -25,12 +25,20 @@ describe('theme.json against its schema', () => {
     expect(validate(typo)).toBe(false);
   });
 
-  // Sixteen until spec 185, which added the three rarity tiers. The cap is
-  // against invented colour: those three are the world's own, already drawn on
-  // every drop in the grass, and importing them is what keeps the bag and the
-  // ground from drifting.
-  it('keeps the palette to nineteen colours', () => {
-    expect(Object.keys(THEME.palette).length).toBeLessThanOrEqual(19);
+  // Sixteen until spec 185, which added the three rarity tiers, and
+  // twenty-two since spec 215's three attribute colours. The cap is against
+  // *invented* colour rather than against colour: the tiers are the world's own,
+  // already drawn on every drop in the grass, and these three are the identity
+  // of Strength, Agility and Intelligence -- one hue each, in the fixed order a
+  // scaling line is read in, so `S / D / -` says which letter belongs to which
+  // attribute without three labels to fit beside it.
+  //
+  // They are deliberately not `danger`/`success`/`focus`, which are the three
+  // nearest hues already here. Those mean bad, good and focused: an `S` drawn in
+  // `danger` reads as a warning about the best grade on the ladder, and the two
+  // vocabularies would collide on the one line where both appear.
+  it('keeps the palette to twenty-two colours', () => {
+    expect(Object.keys(THEME.palette).length).toBeLessThanOrEqual(22);
   });
 });
 

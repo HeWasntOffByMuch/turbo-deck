@@ -15,6 +15,15 @@
 import { itemById, rarityOf } from '../../../server/data/items.js';
 import { rarityRow } from '../../../server/data/loot.js';
 import type { StatModifier } from '../../../server/data/modifiers.js';
+import type { ItemDefinition } from '../../../server/data/items.js';
+import {
+  effectiveScaling,
+  letterOf,
+  NO_GRADE_MODIFIERS,
+  NO_SCALING,
+  SCALING_ATTRIBUTES,
+  type ScalingGradeModifiers,
+} from '../../../server/data/weapon-scaling.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { describeAbility } from '../../../server/data/description.js';
 import {
@@ -30,6 +39,7 @@ import {
 import type {
   ContainerView,
   ItemDetail,
+  ItemDetailSpan,
   ItemView,
   SlotDescriptor,
 } from '../../../ui/screens/inventory.js';
@@ -155,6 +165,14 @@ const STAT_LABELS: readonly StatLabel[] = [
   { key: 'constitution', name: 'Constitution', percent: false },
   { key: 'perception', name: 'Perception', percent: false },
   { key: 'wisdom', name: 'Wisdom', percent: false },
+  // Then the grade steps (spec 215), beside the attributes because they are the
+  // same kind of claim -- a thing about the character rather than about a
+  // number -- and above the stat lines for the same reason a weapon's own
+  // scaling line is. `writeAmount` already writes a signed integer, so
+  // `+1 Agility Scaling` needs no special case.
+  { key: 'strengthScalingGrade', name: 'Strength Scaling', percent: false },
+  { key: 'agilityScalingGrade', name: 'Agility Scaling', percent: false },
+  { key: 'intelligenceScalingGrade', name: 'Intelligence Scaling', percent: false },
   // ...then what it does to the numbers, offence before defence before movement.
   { key: 'attackDamage', name: 'Damage', percent: false },
   { key: 'attackDamagePct', name: 'Damage', percent: true },
@@ -201,6 +219,42 @@ function statDetails(modifiers: StatModifier): ItemDetail[] {
   return lines;
 }
 
+/**
+ * What a weapon scales with, as one compact line (spec 215).
+ *
+ * Three positions, always `Strength / Agility / Intelligence` in that fixed
+ * order, one character each, `-` for `None`. Never reordered by strongest --
+ * position *is* the attribute, which is what lets the line be three characters
+ * instead of three labelled rows.
+ *
+ * The grades come from {@link effectiveScaling}, the same resolver
+ * `computeEffectiveStats` runs the damage through, so what a player is told and
+ * what a blow does cannot drift: a modifier that moved one moved both, and
+ * neither this file nor `src/ui/` has any modifier arithmetic in it to disagree
+ * with.
+ *
+ * Absent for anything that is not a weapon. A main hand with no scaling
+ * configured still draws `- / - / -`, because "this scales with nothing" is a
+ * fact worth stating about a weapon and an empty line would read as a tooltip
+ * that had forgotten to mention it.
+ */
+function scalingDetail(definition: ItemDefinition, modifiers: ScalingGradeModifiers): ItemDetail | null {
+  if (definition.slot !== 'mainHand') return null;
+  const effective = effectiveScaling(definition.scaling ?? NO_SCALING, modifiers);
+  const spans: ItemDetailSpan[] = [];
+  SCALING_ATTRIBUTES.forEach((attribute, index) => {
+    // The separator takes `normal` -- the tooltip's own text colour -- so only
+    // the three letters carry an attribute hue and the line reads as three
+    // marked positions rather than as coloured punctuation.
+    if (index > 0) spans.push({ text: SCALING_SEPARATOR, tone: 'normal' });
+    spans.push({ text: letterOf(effective[attribute]), tone: attribute });
+  });
+  return { text: spans.map((span) => span.text).join(''), tone: 'normal', spans };
+}
+
+/** What sits between two grades. One string, so the text and the runs agree. */
+const SCALING_SEPARATOR = ' / ';
+
 function descriptorOf(slot: EquipSlot): SlotDescriptor {
   // `accepts` is the **family**, which is what makes one `slot: 'skill'` sigil
   // row fit any of the four skill slots (spec 188). It is the slot's own name
@@ -242,7 +296,10 @@ export const SKILL_SLOT_VIEW: readonly SlotDescriptor[] = SKILL_EQUIP_SLOTS.map(
  * character's own level. Baking it in would mean rebuilding every view the
  * moment somebody levelled.
  */
-export function detailsFor(defId: string): readonly ItemDetail[] {
+export function detailsFor(
+  defId: string,
+  modifiers: ScalingGradeModifiers = NO_GRADE_MODIFIERS,
+): readonly ItemDetail[] {
   const definition = itemById(defId);
   const rarity = rarityOf(defId);
   const tier = rarityRow(rarity).name;
@@ -251,6 +308,10 @@ export function detailsFor(defId: string): readonly ItemDetail[] {
     { text: slot === null ? tier : `${tier}  ${wornName(slot)}`, tone: 'rarity' },
   ];
   if (definition) {
+    // Above the stat lines: what a weapon scales with is the first thing a
+    // player decides on, and it is the line the other numbers are read against.
+    const scaling = scalingDetail(definition, modifiers);
+    if (scaling) lines.push(scaling);
     lines.push(...statDetails(definition.modifiers));
     // A sigil's Technical Description is its *skill's* (spec 191). Before this,
     // a sigil said its tier, that it went in a skill slot, and what it was
@@ -287,7 +348,11 @@ export function detailsFor(defId: string): readonly ItemDetail[] {
  * An id the table no longer defines still draws: it is in somebody's bag and
  * pretending otherwise would make it un-draggable and therefore un-removable.
  */
-export function itemViewOf(defId: string, count: number): ItemView {
+export function itemViewOf(
+  defId: string,
+  count: number,
+  modifiers: ScalingGradeModifiers = NO_GRADE_MODIFIERS,
+): ItemView {
   const definition = itemById(defId);
   return {
     defId,
@@ -300,7 +365,7 @@ export function itemViewOf(defId: string, count: number): ItemView {
     // answers on the server: a stack nobody can name is drawn quietly rather
     // than not at all.
     rarity: rarityOf(defId),
-    details: detailsFor(defId),
+    details: detailsFor(defId, modifiers),
   };
 }
 
@@ -308,6 +373,18 @@ export interface ContainerSource {
   readonly inventory: Inventory;
   readonly equipment: Equipment;
   readonly level: number;
+  /**
+   * The body's weapon-scaling grade steps, from its replicated `Stats` (spec 215).
+   *
+   * Handed in rather than derived from `equipment` above, because the server's
+   * summation is the one that counts -- it includes the milestones and synergies
+   * this side cannot see, and re-deriving it from equipment alone would be a
+   * second answer to a question `effectiveScaling` exists to have one answer to.
+   *
+   * Absent is "no modifiers", which is what a fresh character has and what every
+   * test that does not care about them gets.
+   */
+  readonly scalingModifiers?: ScalingGradeModifiers;
   /** The skill-slot change in flight and how far through it is (spec 188). */
   readonly swap?: SwapProgress | null;
 }
@@ -320,12 +397,13 @@ export interface ContainerSource {
  * rest of the client's read model.
  */
 export function containerViewOf(source: ContainerSource): ContainerView {
+  const modifiers = source.scalingModifiers ?? NO_GRADE_MODIFIERS;
   return {
-    bag: source.inventory.map((stack) => (stack ? itemViewOf(stack.defId, stack.count) : null)),
+    bag: source.inventory.map((stack) => (stack ? itemViewOf(stack.defId, stack.count, modifiers) : null)),
     worn: Object.fromEntries(
       EQUIP_SLOTS.map((slot) => {
         const id = source.equipment[slot];
-        return [slot, id === null ? null : itemViewOf(id, 1)];
+        return [slot, id === null ? null : itemViewOf(id, 1, modifiers)];
       }),
     ),
     slots: EQUIPMENT_SLOT_VIEW,

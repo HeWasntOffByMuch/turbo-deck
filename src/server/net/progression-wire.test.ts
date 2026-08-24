@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import { ATTRIBUTE_KEYS, ordinalOfAttribute } from '../data/attributes.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
+import { NO_WEAPON_SCALING } from '../data/weapon-scaling.js';
 import { startingBaseStats } from '../player/attributes.js';
 import { computeEffectiveStats } from '../player/stats.js';
 import {
@@ -124,6 +125,7 @@ describe('the Stats message', () => {
       resourceRegen: 0,
       basicAttackId: '',
       skillAbilityIds: [],
+      ...NO_WEAPON_SCALING,
       traits: NEUTRAL_TRAITS,
     };
     const record = { ...built(), skills: [], baseStats: startingBaseStats() };

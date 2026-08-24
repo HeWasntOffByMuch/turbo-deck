@@ -183,7 +183,7 @@ const STAT_ROWS: readonly {
   {
     label: 'Damage',
     of: (s) => String(Math.round(s.attackDamage)),
-    hint: 'How hard your weapon hits. Multiplies every basic attack. Mostly Strength.',
+    hint: 'How hard your weapon hits. Multiplies every basic attack. Which attributes raise it is the weapon\'s own scaling.',
   },
   { label: 'Range', of: (s) => String(Math.round(s.attackRange)), hint: 'How far your weapon reaches, in world units.' },
   // Ticks are a server unit; a player reads swings per second (specs 088, 144).

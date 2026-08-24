@@ -62,6 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 215's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
@@ -1878,6 +1879,85 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 `data/weapon-scaling.ts` is **what a weapon scales with**
+                 (spec 215), and it exists because until it did, every weapon in
+                 the game scaled the same way and the way was Strength: the two
+                 attribute terms were written into `attackDamage` in
+                 `player/stats.ts`, so the maul, the Hunting Bow and the
+                 Emberwood Staff all bought damage from the same stat and nothing
+                 a designer could write in `data/items.ts` changed it. Swinging
+                 the staff -- a row granting +3 Intelligence and spell power --
+                 was a Strength act.
+                 A weapon now authors one letter per attribute,
+                 `None -> E -> D -> C -> B -> A -> S`, over Strength, Agility and
+                 Intelligence and those three only. `ScalingGrade` is *ordinal*
+                 rather than a letter union, the `StatusId` const-object pattern,
+                 because every operation a grade has is step arithmetic and
+                 clamping; the letters are `GRADE_LETTERS` and are a display
+                 concern.
+                 Four rules, and the first is the one the feature does not work
+                 without. **One rate for all three attributes.** Strength used to
+                 buy 0.6 damage a point and Agility 0.15, a four-to-one gap
+                 sitting *underneath* the grades -- an `A` in Agility would have
+                 been worth less than an `E` in Strength, and no letter anybody
+                 could write would have balanced the two. So
+                 `SCALING.weaponScaling.damagePerPoint` is shared and the
+                 **grade** is the whole differentiation. It is `2/3` because
+                 `2/3 * 0.9` is exactly `0.6`: grade `A` reproduces the Strength
+                 rate this replaced, so migrating a weapon to `A` moved a
+                 Strength build's damage by nothing at all. An independent
+                 constant rather than one derived from `A`, or retuning `A` would
+                 be silently cancelled by the rate it was chosen against.
+                 **The coefficients live in `SCALING` and nowhere else.**
+                 `data/scaling.ts` already states its reason to exist -- a
+                 balance pass is a diff of that file and nothing else -- so
+                 deciding `S` is worth 1.30 is one edit that reaches every `S`
+                 weapon in the game. A weapon row stores the *letter*, and the
+                 tooltip draws the letter it was authored with rather than
+                 inferring one back out of a number. `coefficientOf` is the only
+                 reader, and it switches on the ordinal so a corrupt row answers
+                 `none` rather than `undefined`.
+                 **`effectiveScaling` is the single resolver**, and both the
+                 damage and the tooltip go through it -- which is what makes "what
+                 the number does" and "what the player is told" the same sentence
+                 rather than two implementations that agree until one is edited.
+                 It returns a new object and never touches the base, which is the
+                 property the modifier design rests on: an amulet raising Agility
+                 a grade must not write into `data/items.ts`, because taking it
+                 off would need the row restored from somewhere and there is
+                 nowhere. Removing a modifier restores the effective scaling
+                 because the base was never moved.
+                 And **a modifier is a step, generic and summed**: three flat
+                 fields on `StatModifier` beside the six attribute grants, added
+                 by `sumModifiers` with everything else, so a ring at +1, an
+                 amulet at +2 and a debuff at -1 are a net +2 clamped **once** --
+                 rather than three clamps in a row, which answer differently near
+                 the ends of the ladder. `S + 1` is `S`, `None - 1` is `None`, and
+                 there is no `S+` and no `F`. A step also *lifts* a `None`, which
+                 is deliberate: a modifier that could not create scaling would
+                 make "raise a grade" mean two different things.
+                 What did **not** move is spec 147's split: `resolveBlow` still
+                 chooses between `weaponPower` and `spellPower` on
+                 `ability.basicAttack`, so a weapon's letters reach a swing and an
+                 ability still scales with Intelligence's spell power. And
+                 monsters have no weapon row, so `AuthoredStats` cannot author
+                 scaling at all and `withTraits` fills in `NO_WEAPON_SCALING`.
+                 The two resolved fields ride `EffectiveStats` and the `Stats`
+                 message, and both are needed rather than one: the grades answer
+                 "what does the weapon I am holding scale with", and the steps are
+                 what the bag needs to answer the same question about a weapon it
+                 is only *hovering*. Re-deriving those steps from the client's own
+                 copy of the equipment would be the second modifier
+                 implementation the whole spec exists to prevent -- and would miss
+                 the milestones and synergies that side cannot see.
+                 `npx tsx scripts/preview-weapon-scaling.ts` is the balance
+                 instrument: the roster, the coefficient budget each weapon's
+                 letters add up to (which is the number a balance pass actually
+                 reads, because breadth has to be paid for or a three-letter
+                 weapon is simply better than a one-letter one), and what the
+                 migration moved at five builds. `explainScaling` is the same
+                 arithmetic taken apart term by term, for answering "why did that
+                 hit for 70" during development; nothing in production reads it.
                  `data/description.ts` is what those tables *say* (spec 191) --
                  the one writer for every player-facing Technical Description,
                  composing a row into a target, its effects in the row's own

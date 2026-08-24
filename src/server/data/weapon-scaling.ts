@@ -76,8 +76,11 @@ export const GRADE_LETTERS: readonly string[] = ['-', 'E', 'D', 'C', 'B', 'A', '
 
 /** The letter a grade draws as. Totally defined -- a bad ordinal reads `-`. */
 export function letterOf(grade: ScalingGrade): string {
-  return GRADE_LETTERS[grade] ?? GRADE_LETTERS[ScalingGrade.None]!;
+  return GRADE_LETTERS[grade] ?? NO_SCALING_LETTER;
 }
+
+/** What an absent or out-of-range grade draws as. Also the `None` letter. */
+const NO_SCALING_LETTER = '-';
 
 /**
  * The three attributes that participate, in the fixed order they are shown in.

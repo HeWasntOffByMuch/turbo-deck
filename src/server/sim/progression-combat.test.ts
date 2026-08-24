@@ -635,3 +635,66 @@ describe('spell geometry', () => {
     expect(castRangeFor(SLASH, { stats: shaper })).toBe(SLASH.range);
   });
 });
+
+/**
+ * A weapon's letters reaching a real blow (spec 215).
+ *
+ * `resolveBlow` was not touched by that spec -- what changed is what
+ * `weaponPower` is built from -- so what is asserted here is exactly that: the
+ * scaled damage goes through crit, armour and the rest of the pipeline the way
+ * the unscaled damage always did, and a basic attack is the only thing it
+ * reaches.
+ */
+describe('weapon scaling through a blow', () => {
+  const holding = (mainHand: string, baseStats: Partial<BaseStats> = {}): EffectiveStats =>
+    statsFor(baseStats, { equipment: { ...EMPTY_EQUIPMENT, mainHand }, level: 20 });
+
+  /**
+   * What one blow took off, measured as health lost.
+   *
+   * `BlowResult` carries the bodies rather than a number, so the damage is the
+   * difference -- which is also the honest measurement, since it is what the
+   * whole pipeline (crit, armour, shields) actually left behind.
+   */
+  const struck = (attacker: EffectiveStats, seed = 7): number => {
+    const target = body(statsFor(), { id: 2 });
+    const result = resolveBlow(SLASH, body(attacker), target, 0, Rng.fromSeed(seed));
+    return target.health - result.target.health;
+  };
+
+  it('hits harder with the maul on a Strength build than on an Agility one', () => {
+    expect(struck(holding('maul.iron', { strength: 40 }))).toBeGreaterThan(
+      struck(holding('maul.iron', { agility: 40 })),
+    );
+  });
+
+  it('hits harder with the stars on an Agility build -- the other way round', () => {
+    expect(struck(holding('stars.weighted', { agility: 40 }))).toBeGreaterThan(
+      struck(holding('stars.weighted', { strength: 40 })),
+    );
+  });
+
+  it('still loses the target\'s armour off the scaled number', () => {
+    const attacker = holding('maul.iron', { strength: 40 });
+    const soft = body(statsFor(), { id: 2 });
+    const armoured = body(statsFor({ constitution: 50 }), { id: 3 });
+    const bare = resolveBlow(SLASH, body(attacker), soft, 0, Rng.fromSeed(11));
+    const mitigated = resolveBlow(SLASH, body(attacker), armoured, 0, Rng.fromSeed(11));
+    expect(armoured.stats.armor).toBeGreaterThan(soft.stats.armor);
+    // Compared as fractions of each body's own pool, since Constitution moved
+    // the armoured body's maximum health as well as its armour.
+    const took = (before: ServerEntity, after: ServerEntity): number =>
+      (before.health - after.health) / before.stats.maxHealth;
+    expect(took(armoured, mitigated.target)).toBeLessThan(took(soft, bare.target));
+  });
+
+  // The split spec 147 drew and this spec deliberately did not move: a swing
+  // scales with what you are swinging, and a spell with Intelligence's spell
+  // power. A weapon's letters must not reach an ability's damage.
+  it('leaves an ability\'s damage alone -- that is still spell power', () => {
+    const target = body(statsFor(), { id: 2 });
+    const maul = resolveBlow(BOLT, body(holding('maul.iron', { strength: 40 })), target, 0, Rng.fromSeed(3));
+    const stars = resolveBlow(BOLT, body(holding('stars.weighted', { strength: 40 })), target, 0, Rng.fromSeed(3));
+    expect(maul.target.health).toBeCloseTo(stars.target.health, 9);
+  });
+});

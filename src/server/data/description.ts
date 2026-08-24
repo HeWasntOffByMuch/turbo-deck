@@ -549,6 +549,16 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'moveSpeedPct', where: 'stat', name: 'Move Speed', form: 'percent' },
   { key: 'turnRate', where: 'stat', name: 'Turn Rate', form: 'flat' },
 
+  // --- weapon scaling grades (spec 215) ------------------------------------
+  //
+  // Named here as well as in `inventory-model.ts` for the reason this table
+  // exists: an item and a passive skill granting the same field must call it the
+  // same thing. `flat`, because a step is a whole signed count and not a
+  // percentage of anything -- `+1 Agility Scaling` says exactly what it does.
+  { key: 'strengthScalingGrade', where: 'stat', name: 'Strength Scaling', form: 'flat' },
+  { key: 'agilityScalingGrade', where: 'stat', name: 'Agility Scaling', form: 'flat' },
+  { key: 'intelligenceScalingGrade', where: 'stat', name: 'Intelligence Scaling', form: 'flat' },
+
   // --- the trait half ------------------------------------------------------
   //
   // Guard, never poise: the pool has one player-facing name and the internal
