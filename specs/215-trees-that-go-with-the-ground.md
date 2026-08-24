@@ -136,6 +136,15 @@ same question the drop pass asks, at the moment it would draw.
   and the region count returns to what it left with, with nothing still owed —
   asserted in a real browser, because the failure this closes was invisible to
   every headless test in the tree.
+- **Churn only ever goes up, and the held count does not.** A chunk let go
+  counts as a change; a chunk re-offered or one that was never held counts as
+  none. Asserted alongside the count it replaced flattening out over the same
+  walk, which is the bug in one line.
+- **The nav grid follows the body.** Measured from the furthest point out rather
+  than from the start, because "it moved once" is what the broken version does
+  too: the boot grid plus one as the window fills, then frozen. What has to hold
+  is that it is still being rebuilt on the way *back*, over ground the client
+  evicted on the way out.
 - **The editor is untouched.** `rebuildWithin` still rebuilds a rectangle's
   regions from a full prop list, which is the only thing the brush and the part
   tools use.
@@ -194,6 +203,49 @@ asking "is every chunk of this region that is *inside the request window* held",
 which needs the player's position at the call site and is a change to a rule
 spec 180 stated and measured. Written down with its measurement so it is a
 decision rather than something inherited by accident.
+
+## The nav grid was keyed on the same broken number
+
+Reported after the settle fix: *"pathfinding (at least on the client) doesn't
+work when moving far"*. Same shape as everything above, one system over: a rule
+keyed on something that quietly stopped being true when the client learned to
+forget.
+
+The renderer asks the worker for a nav grid, and two gates decide when. Both
+read the **held chunk count**:
+
+- the trigger — `streamed.size - sizeWhenLastAsked >= 8`, "has enough new ground
+  arrived to be worth a build";
+- the ordering — `reply.generation <= navGeneration`, where the worker sends
+  `generation: streamed.size`, "is this reply newer than the grid I have".
+
+A count is a version only for a client that never lets go. Bounded at 35 by
+spec 208's keep window, it is neither. Measured in a real browser over sixteen
+chunk-crossings across the shipped map:
+
+```
+  south 2:    nav gen=35 asked=1 adopted=2
+  south 8:    nav gen=35 asked=1 adopted=2
+  home again: nav gen=35 asked=1 adopted=2
+```
+
+**One request and two grids for the whole session**, and the second was the last
+— so the client routed, and predicted collision against, the grid built over its
+spawn point, for as long as it was connected. Near where it was built the grid
+is roughly right, which is why this reads as "pathfinding works until you go
+anywhere".
+
+`StreamedMap.revision` is the number both questions were always about:
+**churn**, one up per chunk inserted *and* one per chunk removed. It only ever
+grows, so it is a version; and a chunk let go is as much a change to the ground
+a route is planned over as a chunk that arrived, so it is also the right measure
+of "how much has changed". Same walk, after: `gen` 25 → 155, fourteen grids
+adopted, none refused.
+
+This one predates spec 215 — it arrived with spec 208's eviction and nothing
+caught it, because every test in the tree drives a client that grows. It is
+fixed here because it is the same bug in the same family, found by the same
+probe.
 
 ## Two things found on the way
 

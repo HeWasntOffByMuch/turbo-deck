@@ -58,9 +58,17 @@ export class MapWorkerCore {
     this.shape = this.streamed.snapshotColliders();
   }
 
-  /** How many chunks are in hand -- what a nav reply answers *for*. */
+  /**
+   * Which version of the ground a nav reply answers for (spec 215).
+   *
+   * The store's churn rather than its size, because a nav grid's ordering has
+   * to be a version and `size` stopped being one the day a client learned to
+   * forget: held bounded at 35, a grid built later is not "larger" and was
+   * refused as stale, so the renderer routed against its spawn point's grid for
+   * the session.
+   */
   get generation(): number {
-    return this.streamed?.size ?? 0;
+    return this.streamed?.revision ?? 0;
   }
 
   /**
@@ -221,7 +229,7 @@ export class MapWorkerCore {
     // transfer them.
     return {
       kind: 'nav',
-      generation: streamed.size,
+      generation: streamed.revision,
       radius,
       colliders,
       grid: {

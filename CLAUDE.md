@@ -1656,6 +1656,24 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  against `data-chunks-held`: the ground was bounded and complete
                  the whole way while the trees went to **zero** and came back to
                  three.
+                 The same probe found the third one, one system over: the
+                 **nav grid was keyed on the held chunk count** at both of its
+                 gates -- `streamed.size - sizeWhenLastAsked >= 8` to decide a
+                 rebuild is worth it, and `generation: streamed.size` to order
+                 the replies. A count is a version only for a client that never
+                 lets go, and bounded at 35 by the keep window it is neither: the
+                 trigger stops firing and every later grid is refused as stale,
+                 so a client routes and predicts collision against the grid built
+                 over its spawn point for the session. Measured over sixteen
+                 chunk-crossings: **one request, two grids**, `gen` stuck at 35
+                 from the second leg on -- which reads as pathfinding that works
+                 until you go anywhere. `StreamedMap.revision` is what both
+                 questions were always about: **churn**, one up per insert *and*
+                 one per removal, so it only ever grows and a chunk let go counts
+                 as the change to the ground it is. Same walk after: fourteen
+                 grids, `gen` 25 to 155, none refused. It arrived with spec 208
+                 rather than with 215, and nothing caught it because every test
+                 in the tree drives a client that grows.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,

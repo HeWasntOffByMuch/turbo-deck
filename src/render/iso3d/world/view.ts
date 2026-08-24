@@ -226,7 +226,14 @@ const INGEST_DECAY = 0.92;
 const PROP_INCOMPLETE_HOLD_MS = 4000;
 
 /**
- * How much new ground it takes to be worth asking for a fresh nav grid.
+ * How much ground has to move before a fresh nav grid is worth building.
+ *
+ * Counted as **churn** since spec 215 -- chunks arrived plus chunks let go --
+ * rather than as growth in the held set. Growth stopped being able to answer
+ * the question the day spec 208 taught the client to forget: held bounded at 35
+ * on the shipped map, this trigger fired *once* over a walk across it, and the
+ * grid the client went on routing against was the one built over its spawn
+ * point.
  *
  * A grid is ~190ms of obstacle passes and component flood whatever has changed,
  * so the question is not "has anything changed" but "has enough changed to be
@@ -525,7 +532,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   let lastLoadLabel = '';
   /** Whether the remote path has built its collision ground and nav grid once. */
   let firstGroundBuilt = false;
-  /** Chunks held when a nav grid was last asked for. */
+  /**
+   * The store's churn when a nav grid was last asked for (spec 215).
+   *
+   * Churn rather than the held count, because the held count is bounded now and
+   * a bounded number cannot say how much has changed. Measured on a walk over
+   * the shipped map: with the count pinned at 35 this trigger fired **once** in
+   * a session, and the grid the client kept describes the ground it spawned on.
+   */
   let chunksAtGroundRefresh = -1;
   /** Whether a grid is being built right now, so only one is ever in flight. */
   let navRequested = false;
@@ -539,6 +553,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * top of a newer one and the client routes against ground that has changed.
    */
   let navGeneration = -1;
+  let navAsked = 0;
+  let navAdopted = 0;
+  let navStale = 0;
   /** The last published mesh readout, so the DOM is written only on change. */
   let lastMeshState = '';
   /**
@@ -845,11 +862,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       plan.mode === 'remote' &&
       firstGroundBuilt &&
       !navRequested &&
-      streamed.size - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS
+      streamed.revision - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS
     ) {
       navRequested = true;
       navRequestedAtMs = nowMs;
-      chunksAtGroundRefresh = streamed.size;
+      chunksAtGroundRefresh = streamed.revision;
+      navAsked++;
       mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
     }
 
@@ -864,8 +882,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // improvement, it is a worse world: it would route around trees that have
       // since been joined by others and over ground that has since turned into a
       // hill.
-      if (reply.generation <= navGeneration) continue;
+      if (reply.generation <= navGeneration) { navStale++; continue; }
       navGeneration = reply.generation;
+      navAdopted++;
       // The worker's colliders, not a fresh snapshot of our own: `navGridFor`
       // memoizes on identity, so the set the grid was graded against and the set
       // it is filed under have to be the same object. The *sampler* stays ours,
@@ -924,7 +943,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       ingest.pending === 0
     ) {
       firstGroundBuilt = true;
-      chunksAtGroundRefresh = streamed.size;
+      chunksAtGroundRefresh = streamed.revision;
       navRequested = true;
       navRequestedAtMs = performance.now();
       mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
@@ -962,7 +981,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const regionsDrawn = scene.heldPropRegions().length;
     const meshState =
       `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}` +
-      `:${ingest.dirtyRegionCount}:${propsRefused}`;
+      `:${ingest.dirtyRegionCount}:${propsRefused}:${navGeneration}:${navAdopted}:${navStale}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
@@ -971,6 +990,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       root.dataset['propRegions'] = String(regionsDrawn);
       root.dataset['propDirty'] = String(ingest.dirtyRegionCount);
       root.dataset['propRefused'] = String(propsRefused);
+      root.dataset['nav'] =
+        `gen=${String(navGeneration)} asked=${String(navAsked)}` +
+        ` adopted=${String(navAdopted)} refused=${String(navStale)}`;
     }
 
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;

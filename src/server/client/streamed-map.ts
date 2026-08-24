@@ -62,6 +62,8 @@ export class StreamedMap {
   private readonly info: MapInfoMessage;
   /** Chunks already inserted, so a re-offered one is not re-meshed. */
   private readonly held = new Set<string>();
+  /** Inserts plus removals over the store's life. See {@link revision}. */
+  private churn = 0;
   /** Every chunk the map says exists, from `MapInfo`. See {@link knows}. */
   private readonly declared = new Set<string>();
   /** A chunk's edge in world units. */
@@ -280,6 +282,27 @@ export class StreamedMap {
     return this.held.size;
   }
 
+  /**
+   * How much ground has moved through this store, ever (spec 215).
+   *
+   * One up per chunk inserted **and** one per chunk removed, so it only ever
+   * grows -- which is the whole point, because {@link size} does not. It was
+   * standing in for this: the nav grid's "is this reply newer than the one I
+   * have" test and its "has enough changed to be worth rebuilding" trigger were
+   * both reading the held *count*, which grew monotonically for as long as a
+   * client never let go of anything and stopped the day spec 208 made it forget.
+   *
+   * Held at 35 on the shipped map, `size - sizeWhenLastAsked` never reaches its
+   * threshold again and `reply.generation <= installed` refuses every grid built
+   * afterwards -- so a client walked the map routing against the grid it built
+   * over its spawn point, for the session. Churn is the quantity both questions
+   * were always about: a chunk that went is as much a change to the ground as a
+   * chunk that arrived.
+   */
+  get revision(): number {
+    return this.churn;
+  }
+
   has(layer: number, cx: number, cz: number): boolean {
     return this.held.has(`${layer}:${cx},${cz}`);
   }
@@ -310,6 +333,7 @@ export class StreamedMap {
     if (layerId === undefined) return [];
     if (!this.loaded.store.insertChunk(layerId, held.chunk)) return [];
     this.held.add(key);
+    this.churn++;
 
     const out: ChunkRef[] = [ this.refFor(held.layer, held.cx, held.cz) ];
     for (const [dx, dz] of EDGE_NEIGHBOURS) {
@@ -366,6 +390,7 @@ export class StreamedMap {
       const layerId = this.info.layers[ref.layer]?.id;
       if (layerId === undefined) continue;
       if (!this.loaded.store.removeChunk(layerId, ref.cx, ref.cz)) continue;
+      this.churn++;
       this.held.delete(key);
       gone.add(key);
       removed.push(this.refFor(ref.layer, ref.cx, ref.cz));

@@ -80,6 +80,9 @@ interface Counts {
   regions: number;
   dirty: number;
   refused: number;
+  nav: string;
+  navGen: number;
+  navAdopted: number;
   x: number;
   z: number;
 }
@@ -96,6 +99,9 @@ async function counts(page: Page): Promise<Counts> {
       regions: Number(root?.dataset['propRegions'] ?? 0),
       dirty: Number(root?.dataset['propDirty'] ?? 0),
       refused: Number(root?.dataset['propRefused'] ?? 0),
+      nav: String(root?.dataset['nav'] ?? ''),
+      navGen: Number(/gen=(-?\d+)/.exec(String(root?.dataset['nav'] ?? ''))?.[1] ?? -1),
+      navAdopted: Number(/adopted=(\d+)/.exec(String(root?.dataset['nav'] ?? ''))?.[1] ?? 0),
       x: Number(parts[0] ?? 0),
       z: Number(parts[1] ?? 0),
     };
@@ -201,7 +207,7 @@ async function main(): Promise<void> {
       legs.push(now);
       console.log(
         `  south ${step}: held ${now.held}, drawn ${now.drawn}, pending ${now.pending},` +
-          ` regions ${now.regions}, dirty ${now.dirty}, refused ${now.refused}`,
+          ` regions ${now.regions}, nav [${now.nav}]`,
       );
     }
 
@@ -212,7 +218,7 @@ async function main(): Promise<void> {
       legs.push(now);
       console.log(
         `  north ${step}: held ${now.held}, drawn ${now.drawn}, pending ${now.pending},` +
-          ` regions ${now.regions}, dirty ${now.dirty}, refused ${now.refused}`,
+          ` regions ${now.regions}, nav [${now.nav}]`,
       );
     }
 
@@ -220,7 +226,7 @@ async function main(): Promise<void> {
     const back = await caughtUp(game);
     console.log(
       `  home again: held ${back.held}, drawn ${back.drawn}, regions ${back.regions},` +
-        ` dirty ${back.dirty}, refused ${back.refused}`,
+        ` dirty ${back.dirty}, nav [${back.nav}]`,
     );
     check(
       'the ground came back: every chunk held is drawn',
@@ -253,6 +259,34 @@ async function main(): Promise<void> {
     // The walk should not have grown what is held without bound.
     const peak = Math.max(...legs.map((l) => l.held));
     check('held stayed bounded over the walk', peak <= 81, `peak ${peak}`);
+
+    // The nav grid has to follow the body, and before spec 215 it did not:
+    // both the "worth rebuilding" trigger and the "is this reply newer" test
+    // read the held chunk *count*, which grew monotonically only for as long as
+    // a client never let go of anything. Bounded at 35 by spec 208's eviction,
+    // the trigger fired once and every later grid was refused as stale -- so the
+    // client routed and predicted against the grid built over its spawn point
+    // for the whole session, which is pathfinding that works until you go
+    // anywhere.
+    // Measured from the furthest point out rather than from the start, because
+    // "it moved once" is what the broken version does too: the boot grid is
+    // followed by exactly one more as the held set fills to its keep window, and
+    // then it is frozen for the session. What has to be true is that the grid is
+    // still being rebuilt on the way *back* -- over ground the client evicted on
+    // the way out, which is the whole of the reported failure.
+    const furthest = legs[Math.floor(legs.length / 2) - 1];
+    check(
+      'the nav grid was still following the body on the way back',
+      furthest !== undefined && back.navGen > furthest.navGen,
+      `at the far end ${furthest?.nav ?? '?'}, home again ${back.nav}`,
+    );
+    // ...and it kept up rather than landing once: a grid per few crossings over
+    // sixteen of them, against the two a whole session used to get.
+    check(
+      'and it kept up with the walk rather than landing once',
+      back.navAdopted >= legs.length / 2,
+      `adopted ${back.navAdopted} grids over ${legs.length} legs`,
+    );
 
     await game.screenshot({ path: '.claude/screenshots/walk-back.png' });
     console.log('  wrote .claude/screenshots/walk-back.png');
