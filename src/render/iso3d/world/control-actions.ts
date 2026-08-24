@@ -60,6 +60,18 @@ export interface ControlDecision {
   readonly skillbar: readonly number[];
   /** Whether a wind-up should be called off. */
   readonly cancel: boolean;
+  /**
+   * Whether every commitment should be dropped: the blow, the orders, the legs
+   * (spec 199).
+   *
+   * Beside {@link cancel} rather than folded into it, because the two are
+   * different questions and one of them is conditional. Escape asks "is there
+   * anything to back out of" and opens the menu when there is not (spec 135);
+   * a stop asked at rest is a stop. One field each is also what lets a player
+   * put them on one control if they want to -- two actions on one chord is a
+   * conflict the keybindings window reports and both still fire.
+   */
+  readonly stop: boolean;
   /** Windows to open or close, in the order their actions fired (spec 131). */
   readonly windows: readonly WindowId[];
   /** Whether the diagnostic readout should be shown or hidden (spec 183). */
@@ -96,6 +108,7 @@ export const NO_DECISION: ControlDecision = {
   move: [],
   skillbar: [],
   cancel: false,
+  stop: false,
   windows: [],
   toggleStats: false,
   chat: false,
@@ -107,6 +120,22 @@ export const NO_DECISION: ControlDecision = {
 
 /** The action id that calls off a wind-up. */
 export const CANCEL_ACTION = 'combat.cancel';
+
+/**
+ * The action id that calls *everything* off (spec 199).
+ *
+ * The row has been in `bindings.json` since spec 125 -- listed under Combat,
+ * rebindable, saved -- and reached nothing at all, for the reason
+ * `debug.toggleStats` reached nothing until spec 183: every action that was not
+ * a move, a slot, a window or the cancel fell off the end of the loop below.
+ *
+ * The id does not move, because a stored profile references it and a rename is
+ * a player's binding silently discarded. What moved is the chord it ships on
+ * (`KeyX` -> `Space`) and the label, which had to grow: the Combat tab holds two
+ * rows that both sound like this one, and "Stop" beside "Cancel cast" does not
+ * say which is which.
+ */
+export const STOP_ACTION = 'combat.stop';
 
 /**
  * The action that opens the chat's input line (spec 189, the chat one).
@@ -158,6 +187,7 @@ export function decideControlDown(map: InputMap, code: string, mods: Modifiers):
   const skillbar: number[] = [];
   const windows: WindowId[] = [];
   let cancel = false;
+  let stop = false;
   let toggleStats = false;
   let chat = false;
   let confirmAim = false;
@@ -181,6 +211,7 @@ export function decideControlDown(map: InputMap, code: string, mods: Modifiers):
       continue;
     }
     if (action === CANCEL_ACTION) cancel = true;
+    if (action === STOP_ACTION) stop = true;
     if (action === TOGGLE_STATS_ACTION) toggleStats = true;
     if (action === CHAT_ACTION) chat = true;
     if (action === CONFIRM_AIM_ACTION) confirmAim = true;
@@ -193,7 +224,7 @@ export function decideControlDown(map: InputMap, code: string, mods: Modifiers):
     if (action === ZOOM_OUT_ACTION) zoom = -1;
   }
 
-  return { move, skillbar, cancel, windows, toggleStats, chat, confirmAim, order, trade, zoom };
+  return { move, skillbar, cancel, stop, windows, toggleStats, chat, confirmAim, order, trade, zoom };
 }
 
 /**

@@ -84,6 +84,9 @@ function inProcess(onReply: (reply: MapWorkerReply) => void): MapWorkerHandle {
         case 'chunk':
           for (const out of core.addChunk(request.held)) onReply(out);
           return;
+        case 'evict':
+          for (const out of core.evict(request.refs)) onReply(out);
+          return;
         case 'nav': {
           const out = core.navGrid(request.radius);
           if (out) onReply(out);

@@ -2,6 +2,7 @@ import { circleBlocked, circleHitsCircle, circleHitsRect, DEFAULT_WORLD, segment
 import {
   MAX_STEP_HEIGHT,
   NAV_CELL_SIZE,
+  NAV_TILE_CELLS,
   NAV_CLEARANCE,
   NAV_RELOCATE_RADIUS,
   NAV_TIGHT_COST,
@@ -101,6 +102,22 @@ export interface NavGrid {
   readonly originY: number;
   /** Body radius this grid was built for. */
   readonly radius: number;
+  /**
+   * Whether this grid is a **window** onto a larger world (spec 205).
+   *
+   * It decides what a point outside the rectangle means. On a world grid,
+   * outside is a body that has walked past the edge of the ground that exists --
+   * `bounds` is explicitly not the play area -- and clamping it to the nearest
+   * cell is the right answer. On a window, outside is somewhere the search
+   * simply cannot see, and clamping turns *there is no way to my target* into
+   * *there is a way to this other spot* -- which is the failure `routeToward`
+   * already names when it refuses to hand a ring point to `findPath`.
+   *
+   * In correct operation a window is padded past every goal `routeToward` can be
+   * given, so this never fires. It is the guard that makes that a property
+   * rather than something to remember.
+   */
+  readonly windowed: boolean;
   readonly world: WorldColliders;
   /** The ground this grid was graded against (spec 130). */
   readonly ground: NavGround;
@@ -131,6 +148,20 @@ export interface NavGrid {
   readonly components: Int32Array;
   /** How many cells each component holds, indexed by component id. */
   readonly componentSizes: Int32Array;
+  /**
+   * 1 where a component reaches this grid's own edge (spec 205).
+   *
+   * Its true size is then **unknown**, because the grid is a window onto a
+   * bigger world and the rest of the region is outside. So `isPocket` must not
+   * judge it small: a corridor entering at a corner shows a handful of cells and
+   * is not a nook, and treating it as one makes `freeCellNear` refuse to put a
+   * body somewhere perfectly good.
+   *
+   * On a world-sized grid the edge is the world's rim, which `gradeNavCells`
+   * already marks blocked out to the body's radius -- so nothing reaches it and
+   * every entry is 0. The flag costs nothing where it does not apply.
+   */
+  readonly componentAtEdge: Uint8Array;
   /**
    * Search buffers. Shared with every other grid of the same cell count rather
    * than owned -- the radii in play (a player and three monster sizes) all span
@@ -440,8 +471,7 @@ export function invalidateNavHeights(
  * This is the whole point of the per-cell cache: the renderer spends a slice of
  * each frame here instead of meeting the entire cost inside the one frame that
  * happens to ask for a route. It is the same work and the same result -- only
- * when it happens moves, exactly as `warmNavGrids` already argued for doing it
- * at boot rather than at the first move order.
+ * when it happens moves.
  */
 export function stepNavHeights(
   ground: NavGround,
@@ -486,6 +516,109 @@ function heightVersionOf(
 }
 
 /**
+ * The shape a grading writes into: any rectangle of cells, not necessarily the
+ * world's.
+ */
+export interface NavShape {
+  readonly cellSize: number;
+  readonly cols: number;
+  readonly rows: number;
+  readonly originX: number;
+  readonly originY: number;
+  readonly cells: Uint8Array;
+}
+
+/**
+ * Grade a rectangle of cells against the world: water, ground nobody has, the
+ * world's rim, and every collider that reaches it (spec 205).
+ *
+ * Extracted from `createNavGrid` so that a world-sized grid and a single nav
+ * tile go through **one description of what blocks a body**. Two of them would
+ * be two answers to what a tree does, and the tiled builder exists precisely so
+ * that a window assembled from tiles is the grid the old builder would have
+ * made -- which is a claim about this function having one implementation.
+ *
+ * `shape` is the rectangle being written. `bounds` is the **world's**, and is
+ * separate because the rim is a fact about the edge of the ground that exists
+ * rather than about the rectangle: a tile in the middle of the map gets no rim,
+ * and one on the edge gets exactly the band that falls inside it.
+ *
+ * `circles` is passed rather than read off a `WorldColliders` so a caller can
+ * narrow it -- the tile builder hands over what `circlesInRect` found, which is
+ * a couple of hundred against the map's 28,919. Grades only rise, so a narrowed
+ * list in bucket order and the full list in authored order write the same cells.
+ */
+export function gradeNavCells(
+  shape: NavShape,
+  bounds: { x: number; y: number; w: number; h: number },
+  rects: readonly { x: number; y: number; w: number; h: number }[],
+  circles: readonly { x: number; y: number; r: number }[],
+  radius: number,
+  heights: Float32Array,
+  ground: NavGround,
+): void {
+  const { cells, cols, cellSize, originX, originY } = shape;
+
+  // Deep water is blocked ground, exactly as a trunk is (spec 130). Nothing
+  // stands in a lake, so nothing is routed through one -- and grading it here
+  // rather than at step time means the component flood already knows an island
+  // is an island.
+  //
+  // Ground the sampler admits it does not have is left open (spec 146). On a
+  // streaming client an unarrived cell samples as an extrapolation of the held
+  // extent, which grades as water often enough to wall the map off along the
+  // edge of what has loaded -- a route refusing to cross ground the player can
+  // see. Optimistic is the right direction: the step-time check still refuses a
+  // real cliff once the ground is in hand.
+  const knowsGround = ground.knows;
+  for (let index = 0; index < cells.length; index++) {
+    if ((heights[index] ?? 0) > WALKABLE_MIN_HEIGHT) continue;
+    if (knowsGround !== undefined) {
+      const col = index % cols;
+      const row = (index - col) / cols;
+      const x = originX + (col + 0.5) * cellSize;
+      const y = originY + (row + 0.5) * cellSize;
+      if (!knowsGround.call(ground, x, y)) continue;
+    }
+    cells[index] = NAV_BLOCKED;
+  }
+
+  // Two passes over the same obstacles at two inflations: the body plus its
+  // preferred margin is tight ground, the body alone is blocked ground. The
+  // second pass is a subset of the first, so the order below only matters for
+  // the work skipped, not for the result.
+  for (const [inflation, value] of [
+    [radius + NAV_CLEARANCE, NAV_TIGHT],
+    [radius, NAV_BLOCKED],
+  ] as const) {
+    markRim(shape, bounds, inflation, value);
+    for (const rect of rects) {
+      markCells(
+        shape,
+        value,
+        rect.x - inflation,
+        rect.y - inflation,
+        rect.x + rect.w + inflation,
+        rect.y + rect.h + inflation,
+        (centre) => circleHitsRect(centre, inflation, rect),
+      );
+    }
+    for (const circle of circles) {
+      const reach = circle.r + inflation;
+      markCells(
+        shape,
+        value,
+        circle.x - reach,
+        circle.y - reach,
+        circle.x + reach,
+        circle.y + reach,
+        (centre) => circleHitsCircle(centre, inflation, circle),
+      );
+    }
+  }
+}
+
+/**
  * Label every passable cell with the region it belongs to, and measure each
  * region (spec 073).
  *
@@ -512,9 +645,13 @@ function labelComponents(
   rows: number,
   cells: Uint8Array,
   heights: Float32Array,
-): { components: Int32Array; componentSizes: Int32Array } {
+): { components: Int32Array; componentSizes: Int32Array; componentAtEdge: Uint8Array } {
   const components = new Int32Array(cols * rows).fill(-1);
   const sizes: number[] = [];
+  // Whether each component reaches the grid's own edge, computed in the same
+  // flood because it is one comparison per popped cell and a second pass would
+  // be a second walk of the whole grid (spec 205).
+  const atEdge: number[] = [];
   // One shared stack, reused across floods: the regions partition the grid, so
   // no cell is ever pushed twice and the total pushes are bounded by cell count.
   const stack = new Int32Array(cols * rows);
@@ -522,6 +659,7 @@ function labelComponents(
     if ((cells[seed] ?? NAV_BLOCKED) === NAV_BLOCKED || components[seed] !== -1) continue;
     const id = sizes.length;
     let size = 0;
+    let edge = 0;
     let top = 0;
     stack[top++] = seed;
     components[seed] = id;
@@ -530,6 +668,7 @@ function labelComponents(
       size++;
       const col = current % cols;
       const row = (current - col) / cols;
+      if (col === 0 || row === 0 || col === cols - 1 || row === rows - 1) edge = 1;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue;
@@ -558,8 +697,13 @@ function labelComponents(
       }
     }
     sizes.push(size);
+    atEdge.push(edge);
   }
-  return { components, componentSizes: Int32Array.from(sizes) };
+  return {
+    components,
+    componentSizes: Int32Array.from(sizes),
+    componentAtEdge: Uint8Array.from(atEdge),
+  };
 }
 
 export function createNavGrid(
@@ -575,65 +719,9 @@ export function createNavGrid(
   const shape = { cellSize, cols, rows, originX: bounds.x, originY: bounds.y, cells };
   const heights = heightsFor(ground, cols, rows, bounds.x, bounds.y, cellSize);
 
-  // Deep water is blocked ground, exactly as a trunk is (spec 130). Nothing
-  // stands in a lake, so nothing is routed through one -- and grading it here
-  // rather than at step time means the component flood already knows an island
-  // is an island.
-  //
-  // Ground the sampler admits it does not have is left open (spec 146). On a
-  // streaming client an unarrived cell samples as an extrapolation of the held
-  // extent, which grades as water often enough to wall the map off along the
-  // edge of what has loaded -- a route refusing to cross ground the player can
-  // see. Optimistic is the right direction: the step-time check still refuses a
-  // real cliff once the ground is in hand.
-  const knowsGround = ground.knows;
-  for (let index = 0; index < cells.length; index++) {
-    if ((heights[index] ?? 0) > WALKABLE_MIN_HEIGHT) continue;
-    if (knowsGround !== undefined) {
-      const col = index % cols;
-      const row = (index - col) / cols;
-      const x = bounds.x + (col + 0.5) * cellSize;
-      const y = bounds.y + (row + 0.5) * cellSize;
-      if (!knowsGround.call(ground, x, y)) continue;
-    }
-    cells[index] = NAV_BLOCKED;
-  }
+  gradeNavCells(shape, bounds, world.rects, world.circles, radius, heights, ground);
 
-  // Two passes over the same obstacles at two inflations: the body plus its
-  // preferred margin is tight ground, the body alone is blocked ground. The
-  // second pass is a subset of the first, so the order below only matters for
-  // the work skipped, not for the result.
-  for (const [inflation, value] of [
-    [radius + NAV_CLEARANCE, NAV_TIGHT],
-    [radius, NAV_BLOCKED],
-  ] as const) {
-    markRim(shape, bounds, inflation, value);
-    for (const rect of world.rects) {
-      markCells(
-        shape,
-        value,
-        rect.x - inflation,
-        rect.y - inflation,
-        rect.x + rect.w + inflation,
-        rect.y + rect.h + inflation,
-        (centre) => circleHitsRect(centre, inflation, rect),
-      );
-    }
-    for (const circle of world.circles) {
-      const reach = circle.r + inflation;
-      markCells(
-        shape,
-        value,
-        circle.x - reach,
-        circle.y - reach,
-        circle.x + reach,
-        circle.y + reach,
-        (centre) => circleHitsCircle(centre, inflation, circle),
-      );
-    }
-  }
-
-  const { components, componentSizes } = labelComponents(cols, rows, cells, heights);
+  const { components, componentSizes, componentAtEdge } = labelComponents(cols, rows, cells, heights);
 
   return {
     cellSize,
@@ -642,12 +730,111 @@ export function createNavGrid(
     originX: bounds.x,
     originY: bounds.y,
     radius,
+    windowed: false,
     world,
     ground,
     cells,
     heights,
     components,
     componentSizes,
+    componentAtEdge,
+    scratch: scratchFor(cols * rows),
+  };
+}
+
+/**
+ * Where a window's cells come from: one tile's worth at a time (spec 205).
+ *
+ * An interface rather than an import, so `pathfinding.ts` does not depend on
+ * `nav-tiles.ts` -- that file already depends on this one for `gradeNavCells`,
+ * and the assembly needs `labelComponents` and the scratch pool, both of which
+ * are private here. The dependency runs one way and the seam is four numbers.
+ */
+export interface NavTileSource {
+  /** `NAV_TILE_CELLS ** 2` ground heights, row-major, for this tile. */
+  tileHeights(tx: number, tz: number): Float32Array;
+  /** `NAV_TILE_CELLS ** 2` grades, row-major, for this tile at this radius. */
+  tileCells(tx: number, tz: number, radius: number): Uint8Array;
+}
+
+/**
+ * A grid over a rectangle of tiles (spec 205).
+ *
+ * The same `NavGrid` `findPath` has always walked -- flat arrays, `cols`,
+ * `rows`, an origin -- filled by copying tiles in rather than by sampling and
+ * grading from scratch. That is the whole saving: the sampling is 86% of what a
+ * grid costs, and a window that moves with the players re-samples only the tiles
+ * it has newly reached.
+ *
+ * Two rules make the window honest about being a window, and both are about the
+ * fact that the world does not stop at its edge:
+ *
+ * **A point outside is refused rather than clamped.** `cellOf` clamps, which is
+ * right for a world grid -- outside is a body that walked past the edge of the
+ * ground -- and wrong for a window, where it silently routes to the edge of what
+ * the search happened to be able to see. `windowed` is what tells them apart.
+ *
+ * **A component touching the edge is never a pocket**, which `labelComponents`
+ * records and `isPocket` reads. Its true size is unknown, so judging it small
+ * would make `freeCellNear` refuse to place a body in a corridor that merely
+ * enters at a corner.
+ *
+ * What it deliberately does **not** do is block its own rim, which the spec
+ * asked for and which turned out to be both unnecessary and self-defeating. Not
+ * necessary: A* expands within `cols x rows`, so a route cannot leave a window
+ * whatever the rim says, and every cell in a window *is* sampled -- there is no
+ * "ground nobody has" inside one to be conservative about, because a tile is
+ * graded knowing the colliders that reach into it from outside. Self-defeating:
+ * a blocked outer ring is a ring no component can contain, so `componentAtEdge`
+ * could never be 1 and the pocket rule above would silently never fire. Blocking
+ * it would also refuse real ground at the window's edge, which a route may
+ * legitimately need to cross to get round something.
+ */
+export function assembleNavGrid(
+  source: NavTileSource,
+  rect: { minTx: number; minTz: number; maxTx: number; maxTz: number },
+  radius: number,
+  world: WorldColliders,
+  ground: NavGround,
+  cellSize: number = NAV_CELL_SIZE,
+): NavGrid {
+  const tileCols = rect.maxTx - rect.minTx + 1;
+  const tileRows = rect.maxTz - rect.minTz + 1;
+  const cols = tileCols * NAV_TILE_CELLS;
+  const rows = tileRows * NAV_TILE_CELLS;
+  const cells = new Uint8Array(cols * rows);
+  const heights = new Float32Array(cols * rows);
+
+  for (let tz = 0; tz < tileRows; tz++) {
+    for (let tx = 0; tx < tileCols; tx++) {
+      const tileH = source.tileHeights(rect.minTx + tx, rect.minTz + tz);
+      const tileC = source.tileCells(rect.minTx + tx, rect.minTz + tz, radius);
+      for (let row = 0; row < NAV_TILE_CELLS; row++) {
+        const from = row * NAV_TILE_CELLS;
+        const to = (tz * NAV_TILE_CELLS + row) * cols + tx * NAV_TILE_CELLS;
+        heights.set(tileH.subarray(from, from + NAV_TILE_CELLS), to);
+        cells.set(tileC.subarray(from, from + NAV_TILE_CELLS), to);
+      }
+    }
+  }
+
+  const { components, componentSizes, componentAtEdge } = labelComponents(cols, rows, cells, heights);
+
+  return {
+    cellSize,
+    cols,
+    rows,
+    originX: rect.minTx * NAV_TILE_CELLS * cellSize,
+    originY: rect.minTz * NAV_TILE_CELLS * cellSize,
+    radius,
+    windowed: true,
+    world,
+    ground,
+    cells,
+    heights,
+    components,
+    componentSizes,
+    componentAtEdge,
     scratch: scratchFor(cols * rows),
   };
 }
@@ -740,6 +927,7 @@ export interface NavGridArrays {
   readonly heights: Float32Array;
   readonly components: Int32Array;
   readonly componentSizes: Int32Array;
+  readonly componentAtEdge: Uint8Array;
 }
 
 /** The transferable half of a grid. */
@@ -755,6 +943,7 @@ export function navGridArrays(grid: NavGrid): NavGridArrays {
     heights: grid.heights,
     components: grid.components,
     componentSizes: grid.componentSizes,
+    componentAtEdge: grid.componentAtEdge,
   };
 }
 
@@ -802,12 +991,16 @@ export function adoptNavGrid(
     originX: arrays.originX,
     originY: arrays.originY,
     radius: arrays.radius,
+    // An adopted grid is checked against `navShapeOf(world)` just above, so it
+    // spans the world the caller holds rather than a window onto it.
+    windowed: false,
     world,
     ground,
     cells: arrays.cells,
     heights: arrays.heights,
     components: arrays.components,
     componentSizes: arrays.componentSizes,
+    componentAtEdge: arrays.componentAtEdge,
     scratch: scratchFor(arrays.cols * arrays.rows),
   };
 
@@ -828,31 +1021,21 @@ export function adoptNavGrid(
   return grid;
 }
 
-/**
- * Build the grids a world is going to need, now, rather than when something
- * first asks for a route (spec 130).
- *
- * Sampling the ground is what costs: `heightAt` on a real map is a walk down
- * the layers, a jittered-corner search and a plane solve, and the grid wants one
- * per cell -- 180k of them over the arena, which is well over a second. Left
- * lazy that lands inside a tick, the first time a monster's line to a player is
- * blocked, and stalls the world for a second and a bit.
- *
- * It is the same work either way. This only decides *when* it happens, and boot
- * is a place where a second is already being spent on reading the map.
- */
-export function warmNavGrids(
-  world: WorldColliders,
-  ground: NavGround,
-  radii: readonly number[],
-): void {
-  for (const radius of radii) navGridFor(radius, world, ground);
-}
 
 function cellOf(grid: NavGrid, point: Vec2): number {
   const col = Math.min(grid.cols - 1, Math.max(0, Math.floor((point.x - grid.originX) / grid.cellSize)));
   const row = Math.min(grid.rows - 1, Math.max(0, Math.floor((point.y - grid.originY) / grid.cellSize)));
   return row * grid.cols + col;
+}
+
+/** Whether a world point falls inside a grid's own rectangle (spec 205). */
+function insideGrid(grid: NavGrid, point: Vec2): boolean {
+  return (
+    point.x >= grid.originX &&
+    point.y >= grid.originY &&
+    point.x < grid.originX + grid.cols * grid.cellSize &&
+    point.y < grid.originY + grid.rows * grid.cellSize
+  );
 }
 
 function centreOf(grid: NavGrid, cell: number): Vec2 {
@@ -942,6 +1125,9 @@ const POCKET_CELLS = 128;
 function isPocket(grid: NavGrid, cell: number, escape: number): boolean {
   const component = grid.components[cell] ?? -1;
   if (component < 0 || component === (grid.components[escape] ?? -2)) return false;
+  // A component that reaches the grid's edge has an unknown true size, so it is
+  // never a pocket however little of it is visible here (spec 205).
+  if ((grid.componentAtEdge[component] ?? 0) === 1) return false;
   return (grid.componentSizes[component] ?? 0) < POCKET_CELLS;
 }
 
@@ -1167,6 +1353,7 @@ export function findPath(grid: NavGrid, from: Vec2, to: Vec2): readonly Vec2[] {
   const reachable = standable(grid, to);
   if (reachable && pathClear(grid, from, to)) return [to];
 
+  if (grid.windowed && (!insideGrid(grid, from) || !insideGrid(grid, to))) return [];
   const start = freeCellNear(grid, from, -1);
   const goal = freeCellNear(grid, to, start);
   if (start === -1 || goal === -1) return [];

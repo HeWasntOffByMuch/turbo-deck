@@ -191,6 +191,26 @@ export const WALKABLE_MIN_HEIGHT = SEA_LEVEL;
 // wide. At the 30 this used to be, the 32-to-40-unit gaps the scatter actually
 // produces were found or missed on alignment alone (spec 067).
 export const NAV_CELL_SIZE = 10;
+
+/**
+ * Cells per nav tile, per axis (spec 205).
+ *
+ * The lattice is cut into tiles so a nav grid is sized by where players are
+ * rather than by how big the map is. The unit is the **interest chunk**:
+ * `CHUNK_SIZE` is 400 and this is `400 / NAV_CELL_SIZE`, exactly.
+ *
+ * That exactness is the whole reason for the choice, and the reason the obvious
+ * unit was refused: a *map* chunk is `cellSize 22 x chunkCells 28` = 616 units,
+ * which is 61.6 cells, and tiles of 61.6 cells do not tile a lattice of whole
+ * ones. The interest chunk divides, and is already what residency is counted in
+ * -- `activeChunks` and `isSimulated` both read it.
+ *
+ * Written as a literal rather than derived, because `sim/` may not import
+ * `server/config.ts`: the deterministic core does not depend on the server's
+ * knobs. `nav-tiles.test.ts` asserts the two agree, so the divisibility is
+ * checked rather than remembered.
+ */
+export const NAV_TILE_CELLS = 40;
 // Elbow room a route prefers to keep beyond the body radius, so it does not hug
 // a wall closely enough for separation to shove a unit into one.
 //

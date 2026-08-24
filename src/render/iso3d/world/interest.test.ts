@@ -19,6 +19,7 @@ import {
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_VIEW_HALF_WIDTH,
   MAX_VIEW_HALF_WIDTH,
+  SUPPORTED_MAX_VIEW_HALF_WIDTH,
   offsetToOrbit,
 } from '../view-settings.js';
 
@@ -54,8 +55,8 @@ describe('interest covers the camera', () => {
     expect(GUARANTEED_INTEREST).toBeGreaterThan(reach.y);
   });
 
-  it('reaches past what the widest zoom frames', () => {
-    const reach = groundReach(MAX_VIEW_HALF_WIDTH);
+  it('reaches past what the widest *supported* zoom frames', () => {
+    const reach = groundReach(SUPPORTED_MAX_VIEW_HALF_WIDTH);
     expect(GUARANTEED_INTEREST).toBeGreaterThan(reach.x);
     expect(GUARANTEED_INTEREST).toBeGreaterThan(reach.y);
   });
@@ -67,14 +68,31 @@ describe('interest covers the camera', () => {
    * so horizontal reach keeps growing with the window and there is no absolute
    * ceiling to test against -- 32:9 is simply where monitors stop.
    */
+  it('is not asked to cover the slider\'s own maximum, which is a dev setting', () => {
+    // Spec 202: the slider still reaches `MAX_VIEW_HALF_WIDTH`, and past the
+    // supported band bodies wink out inside the frame. That is the degradation
+    // the Display page names rather than a bug, and it is written down here so
+    // that the gap between the two constants is a stated fact rather than a
+    // test somebody deleted.
+    expect(groundReach(MAX_VIEW_HALF_WIDTH).x).toBeGreaterThan(GUARANTEED_INTEREST);
+  });
+
+  it('is sized for a band the default zoom is inside of', () => {
+    // Without this, raising the default past the supported cap would ship
+    // visible holes in an ordinary configuration while the setting describes
+    // them as dev-only.
+    expect(DEFAULT_VIEW_HALF_WIDTH).toBeLessThanOrEqual(SUPPORTED_MAX_VIEW_HALF_WIDTH);
+    expect(SUPPORTED_MAX_VIEW_HALF_WIDTH).toBeLessThanOrEqual(MAX_VIEW_HALF_WIDTH);
+  });
+
   it.each([
     ['16:10 laptop', 1280, 800],
     ['16:9', 1920, 1080],
     ['21:9 ultrawide', 3440, 1440],
     ['32:9 superwide', 3840, 1080],
     ['tall portrait', 1080, 1920],
-  ])('covers a %s window at the widest zoom', (_label, width, height) => {
-    const reach = groundReach(MAX_VIEW_HALF_WIDTH, width, height);
+  ])('covers a %s window at the widest supported zoom', (_label, width, height) => {
+    const reach = groundReach(SUPPORTED_MAX_VIEW_HALF_WIDTH, width, height);
     expect(GUARANTEED_INTEREST).toBeGreaterThan(reach.x);
     expect(GUARANTEED_INTEREST).toBeGreaterThan(reach.y);
   });

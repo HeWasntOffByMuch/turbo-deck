@@ -36,7 +36,7 @@ import {
   INTEREST_CHUNK_RADIUS,
   MAP_CHUNK_BURST,
   MAP_CHUNK_REFILL_PER_SECOND,
-  MAP_CHUNK_REQUEST_RADIUS,
+  MAP_CHUNK_SERVE_RADIUS,
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
@@ -150,6 +150,9 @@ import { spawnAround } from './world/spawn-around.js';
 import { circleBlocked } from '../sim/collision.js';
 import { WALKABLE_MIN_HEIGHT } from '../sim/constants.js';
 import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
+import { ROUTING_RADII } from './world/build.js';
+import { ServerNav } from './world/nav.js';
+import { NAV_WINDOW_PAD_TILES } from './world/nav-residency.js';
 import type { SpawnPoint } from './world/spawners.js';
 import type { MapIndex } from './world/map-index.js';
 import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
@@ -447,6 +450,11 @@ export class GameServer implements AdminHost {
    * only thing that puts one anywhere.
    */
   private readonly spawnPoints: readonly SpawnPoint[];
+  /**
+   * Nav sized by residency, or null for a world small enough not to need it
+   * (spec 205).
+   */
+  private readonly nav: ServerNav | null;
   private state: ServerWorldState;
 
   constructor(options: GameServerOptions = {}) {
@@ -460,6 +468,17 @@ export class GameServer implements AdminHost {
     this.store = options.store ?? new MemoryDataStore();
     this.assetManifestHash = options.assetManifestHash ?? '';
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
+    // Tiled nav only where it pays. Below one window the window *is* the world,
+    // so tiling is pure overhead -- and that is every sandbox, every headless
+    // test and the loopback tab, which is why they keep routing exactly as they
+    // did. Measured against the world rather than gated on a flag, because "is
+    // this world bigger than a window" is the actual question.
+    const windowSide = (2 * INTEREST_CHUNK_RADIUS + 1 + 2 * NAV_WINDOW_PAD_TILES) * CHUNK_SIZE;
+    const bounds = this.colliders.bounds;
+    this.nav =
+      bounds.w > windowSide || bounds.h > windowSide
+        ? new ServerNav(this.colliders, this.terrain, ROUTING_RADII)
+        : null;
     this.players = new PlayerManager(this.store, this.zones);
     this.audit = new AuditLog(this.store);
     this.transport = options.transport ?? new NullTransport();
@@ -570,6 +589,14 @@ export class GameServer implements AdminHost {
     });
     channel.onClose(() => {
       void this.disconnect(connection);
+    });
+    // A pong stamps exactly the field a frame stamps (spec 197). It is what
+    // keeps a player whose tab is hidden -- and whose timers the browser has
+    // throttled to one a minute -- from being swept as a lost socket, because
+    // nothing in that tab has to run for the answer to be sent. Optional call:
+    // a loopback channel has no wire and says so by not having the method.
+    channel.onAlive?.(() => {
+      connection.lastSeenTick = this.state.tick;
     });
     return connection;
   }
@@ -1182,6 +1209,14 @@ export class GameServer implements AdminHost {
    * A client's own `predictedX/Y` never reaches here: it is a hint the sim
    * measures for corrections, and trusting it would let a client read the whole
    * map by claiming to stand anywhere.
+   *
+   * Which is exactly why the radius is {@link MAP_CHUNK_SERVE_RADIUS} rather
+   * than the one the client asks at (spec 214). The two positions are never
+   * identical -- a predicting client leads its own server by its latency -- so
+   * measured at the same radius the leading-edge column is refused whenever the
+   * pair straddle a chunk boundary, on the exact edge a running body needs.
+   * Serving one chunk wider costs nothing a claim could exploit, because the
+   * claim still never enters this arithmetic.
    */
   private handleChunkRequest(connection: Connection, req: RequestChunkMessage): void {
     const index = this.mapIndex;
@@ -1208,7 +1243,7 @@ export class GameServer implements AdminHost {
       req,
       entity.position.x,
       entity.position.y,
-      MAP_CHUNK_REQUEST_RADIUS,
+      MAP_CHUNK_SERVE_RADIUS,
       connection.chunkBudget,
       this.state.tick,
     );
@@ -2431,6 +2466,11 @@ export class GameServer implements AdminHost {
       }
     }
 
+    // Before the step, and off the same set the step is handed: `refreshActive`
+    // runs *after* `step` returns (spec 193), so this is the set the tick will
+    // use rather than one it is about to replace.
+    this.nav?.update(this.chunks.activeChunks());
+
     const result = step(this.state, inputs, {
       world: this.colliders,
       terrain: this.terrain,
@@ -2439,6 +2479,7 @@ export class GameServer implements AdminHost {
       activeChunks: this.chunks.activeChunks(),
       chunkSize: CHUNK_SIZE,
       spawnPoints: this.spawnPoints,
+      ...(this.nav === null ? {} : { nav: this.nav }),
       // Where bodies were, so a blow lands on what its attacker saw (spec 149).
       rewind: this.history,
     });

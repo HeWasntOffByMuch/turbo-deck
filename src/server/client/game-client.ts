@@ -42,7 +42,7 @@ import {
   ServerMessageType,
   TradeStageValue,
 } from '../net/protocol.js';
-import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
+import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
 
 /**
  * How many chunks one pass may ask for (spec 072).
@@ -51,17 +51,28 @@ import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
  * against a misbehaving client rather than something that shapes the stream in
  * normal play -- a cold start should be paced by this number, not by a refusal.
  *
- * 8 was that pace for a 56-chunk map. On the grown map the radius reaches 169,
+ * 8 was that pace for a 56-chunk map. On the grown map the radius reached 169,
  * and 8 per 50ms pump is twenty-one pumps of asking before the last one is even
- * requested (spec 165). 24 brings the ask down to about seven pumps and stays
- * well under the burst.
+ * requested (spec 165). 24 brought the ask down to about seven pumps.
+ *
+ * Since spec 202 narrowed the request radius to 2 the whole window is 25 chunks,
+ * so one pass now very nearly covers a cold start outright -- which is what this
+ * number was always trying to buy. It stays at 24 rather than shrinking with the
+ * window: the pass is a *ceiling* on one pump, and there is nothing to gain from
+ * lowering a ceiling the stream no longer reaches.
+ *
+ * It must stay at or under {@link MAP_CHUNK_BURST}, or the client's own pacing
+ * would outrun the server's bucket and the throttle would start shaping normal
+ * play. That was a sentence in this comment and is now asserted in
+ * `map-radius.test.ts`, because narrowing the radius moved the burst underneath
+ * it and nothing would have said so.
  *
  * Raising it is only safe because the *meshing* is budgeted separately now:
  * before spec 165 a bigger pass would have arrived as a bigger pile of geometry
  * rebuilds inside one frame, and asking faster would have traded a slow load for
  * a juddering one.
  */
-const CHUNK_REQUESTS_PER_PASS = 24;
+export const CHUNK_REQUESTS_PER_PASS = 24;
 
 /**
  * How often the backstop pump runs, in client ticks. One broadcast period: often
@@ -79,6 +90,28 @@ const CHUNK_REQUEST_INTERVAL_TICKS = 3;
  * throttle worse rather than respecting it.
  */
 const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
+
+/**
+ * How far ahead of the body the request order looks, in seconds (spec 214).
+ *
+ * The stream is bounded by the server's bucket, so the useful question is not
+ * "how far can I see" -- the radius already answers that -- but "which of the
+ * ground I can see will I be standing on first". Two seconds is the honest
+ * answer to that: it is several broadcast periods, so a chunk asked for on the
+ * strength of it has time to arrive.
+ *
+ * A *duration* rather than a distance, so it scales with the body: at walking
+ * speed it is about half a chunk and the order barely moves, and at
+ * `MOVE_SPEED_HARD_MAX` it is 1100 units, which since spec 201 shrank the
+ * request radius to 2 is most of the window. Both are right -- what the rule
+ * says is "the ground you reach soonest, soonest", and a body that crosses the
+ * whole window in two seconds should be asking for the far edge of it.
+ *
+ * Nothing depends on it being right. It reorders the requests inside a window
+ * it cannot widen, so the cost of a bad lead is a chunk arriving in the order it
+ * would have arrived in anyway.
+ */
+const CHUNK_LEAD_SECONDS = 2;
 import { abilityById } from '../data/abilities.js';
 import { itemById, rarityFromByte, type RarityId } from '../data/items.js';
 import {
@@ -633,6 +666,11 @@ export class GameClient {
   private mapCache: MapChunkCache | null = null;
   /** Ticks to wait before asking for chunks again, after being throttled. */
   private chunkBackoffTicks = 0;
+  /**
+   * The direction the last input asked to move in (spec 214). See
+   * {@link chunkLead}. Zero means "standing", which is its own answer.
+   */
+  private lastMoveRequest: { x: number; y: number } = { x: 0, y: 0 };
   /** The spawner readout, when it has been asked for (spec 076). */
   private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
@@ -927,6 +965,9 @@ export class GameClient {
     // slow would be a correction every tick for its whole duration, which is
     // the one thing spec 067's drift nudges are not for.
     const input: PredictedInput = { ...intended, seq: this.seq, moveScale: this.selfMoveScale() };
+    // What the body is committed to, for the chunk stream to aim at (spec 214).
+    // The *intended* one, so a request the stagger dropped leads nowhere.
+    this.lastMoveRequest = { x: input.moveX, y: input.moveY };
     const predicted = this.prediction.apply(input);
     this.channel.send(
       encodeClientMessage({
@@ -1890,13 +1931,25 @@ export class GameClient {
   private requestChunks(): void {
     const cache = this.mapCache;
     const at = this.prediction?.drawn ?? this.selfAuthoritative();
-    if (!cache || !at || this.chunkBackoffTicks > 0) return;
+    if (!cache || !at) return;
+    // Forget before asking, and on the same cadence, because both questions are
+    // "where is the player" and asking them at different moments is two answers
+    // (spec 208). Before rather than after, so a chunk that has just gone out of
+    // keep range cannot be re-requested on the very pass that drops it -- the
+    // radii are two apart so it could not anyway, and doing it in the order that
+    // makes it impossible costs nothing.
+    //
+    // Ahead of the backoff check: a client that has stopped asking is exactly
+    // the one that should still be letting go.
+    cache.evictBeyond(at.x, at.y, MAP_CHUNK_KEEP_RADIUS);
+    if (this.chunkBackoffTicks > 0) return;
     for (const req of cache.wanted(
       at.x,
       at.y,
       MAP_CHUNK_REQUEST_RADIUS,
       CHUNK_REQUESTS_PER_PASS,
       this.localTick,
+      this.chunkLead(at),
     )) {
       cache.markRequested(req, this.localTick);
       this.channel.send(
@@ -1908,6 +1961,26 @@ export class GameClient {
         }),
       );
     }
+  }
+
+  /**
+   * Where the body will be in {@link CHUNK_LEAD_SECONDS}, or null when it is not
+   * going anywhere (spec 214).
+   *
+   * Built from the direction this client last *asked* to move in rather than
+   * from a velocity differenced out of two positions: the request is what the
+   * body is committed to, it is known on the tick it is made rather than a tick
+   * later, and it is not smeared by a correction easing in underneath it. A body
+   * that has stopped asking has no lead at all, which is what makes a standing
+   * player's request order byte for byte what it always was.
+   */
+  private chunkLead(at: { readonly x: number; readonly y: number }): { x: number; y: number } | null {
+    const { x, y } = this.lastMoveRequest;
+    const length = Math.hypot(x, y);
+    if (length <= 1e-6) return null;
+    const reach = (this.stats?.moveSpeed ?? 0) * CHUNK_LEAD_SECONDS;
+    if (reach <= 0) return null;
+    return { x: at.x + (x / length) * reach, y: at.y + (y / length) * reach };
   }
 
   /** The server's own position for this client, before any prediction. */
@@ -2186,6 +2259,22 @@ export class GameClient {
         this.baseStats = message.baseStats;
         this.attributes = message.attributes;
         this.unspentAttributePoints = message.unspentAttributePoints;
+        // The recalculation reaching the *prediction* rather than only the
+        // sheet. The step closes over the derived speed, so a client told it
+        // now walks at 155 rather than 161 has to be walked at 155 -- otherwise
+        // taking a pair of greaves off leaves the local body running at the
+        // speed it wore, and the server disagrees with it on every tick of
+        // every step from then on.
+        //
+        // Every stats message rather than only the ones whose speed moved,
+        // because `options.predictor` is handed the whole `EffectiveStats` and
+        // is free to close over any of it. A rebuild is one closure. `welcome`
+        // is non-null wherever `prediction` is -- the buffer is built from its
+        // tick rate -- but it is that tick rate that is wanted here, so it is
+        // asked for rather than asserted.
+        if (this.prediction && this.welcome) {
+          this.prediction.setStep(this.predictStepFor(message.stats, this.welcome.tickRate));
+        }
         break;
 
       case ServerMessageType.Delta: {
@@ -2397,10 +2486,24 @@ export class GameClient {
       this.wantedFacing = self.facing;
       this.facingSeeded = true;
     }
-    const build = this.options.predictor ?? ((stats, rate) => createFlatPredictor(stats.moveSpeed, rate));
     this.prediction = new PredictionBuffer(
       { x: self.x, y: self.y },
-      build(this.stats, this.welcome.tickRate),
+      this.predictStepFor(this.stats, this.welcome.tickRate),
     );
+  }
+
+  /**
+   * The local step for the stats this client currently has.
+   *
+   * A method rather than the expression it used to be inside
+   * {@link startPredictingIfReady}, because the step is built more than once.
+   * It closes over how fast this body walks, and that number is derived: a
+   * level, an attribute allocation and every piece of gear carrying a
+   * `moveSpeed` modifier change it mid-session. See
+   * {@link PredictionBuffer.setStep}.
+   */
+  private predictStepFor(stats: EffectiveStats, tickRate: number): PredictStep {
+    const build = this.options.predictor ?? ((s, rate) => createFlatPredictor(s.moveSpeed, rate));
+    return build(stats, tickRate);
   }
 }

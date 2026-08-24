@@ -23,7 +23,6 @@ function doc(markers: Record<string, readonly MapMarker[]>): MapDocument {
     tones: [0, chunkCells * chunkCells],
     props: [],
     markers: markers[`${cx},${cz}`] ?? [],
-    nav: null,
   });
   return {
     version: 1,

@@ -25,7 +25,7 @@
 import { Rng } from '../../shared/prng.js';
 import { pushOutOfObstacles } from '../../sim/collision.js';
 import type { AvoidanceParams } from '../../sim/avoidance.js';
-import { findPath, navGridFor, pathClear } from '../../sim/pathfinding.js';
+import { findPath, navGridFor, pathClear, type NavGrid } from '../../sim/pathfinding.js';
 import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
 import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
@@ -35,7 +35,8 @@ import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
-import { FLEE_DISTANCE, notice, rally, settle } from './aggro.js';
+import { bolt, notice, playersOf, rally, settle } from './aggro.js';
+import { idle } from './idle.js';
 import { SlotBoard, slotAngle, slotNearest } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import {
@@ -154,6 +155,7 @@ function blankEntity(id: number): ServerEntity {
     targetId: null,
     aggro: AggroValue.Calm,
     aggroUntilTick: 0,
+    fleeGoal: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -237,6 +239,24 @@ export interface StepContext {
    * with no spawn points simply has no monsters in it.
    */
   readonly spawnPoints: readonly SpawnPoint[];
+  /**
+   * Nav sized by where the players are (spec 205).
+   *
+   * Absent means "route against a world-sized grid", which is what every
+   * sandbox, every headless test and the loopback tab mean -- their worlds are
+   * a few hundred cells across and a window would be the whole thing. A real
+   * server passes one, and that is where the 182x at the 4x target lives.
+   */
+  readonly nav?: NavLookup;
+}
+
+/**
+ * What the sim asks for a route grid. An interface rather than the class, so
+ * `sim/` states what it needs and `world/nav.ts` supplies it -- and so a test
+ * can hand over a stub without standing up a field.
+ */
+export interface NavLookup {
+  gridAt(radius: number, x: number, y: number): NavGrid | null;
 }
 
 export function createWorldState(seed: number): ServerWorldState {
@@ -306,6 +326,7 @@ export function spawnEntity(
     // attacker means. Without a target it is calm, which is the same state.
     aggro: spec.targetId === undefined ? AggroValue.Calm : AggroValue.Engaged,
     aggroUntilTick: 0,
+    fleeGoal: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -742,6 +763,11 @@ export function step(
   // past its leash, it loses interest, its chunk stops being simulated
   // (spec 187).
   openSlotBoard(SLOTS, state.entities, isSimulated);
+  // Gathered once for the whole tick rather than rediscovered per monster
+  // (spec 206). `notice` used to walk the entire entity map to find a handful of
+  // players, once for every calm monster that could see anything -- so what it
+  // cost was what the world held rather than who was in it.
+  const players = playersOf(working);
   for (const entity of state.entities.values()) {
     const current = working.get(entity.id) ?? entity;
     if (current.health <= 0) {
@@ -777,7 +803,7 @@ export function step(
     } else {
       // A monster's route is entity state, so deciding where to walk can change
       // the entity -- see `monsterIntent`.
-      const decision = monsterIntent(current, working, tick, context, SLOTS);
+      const decision = monsterIntent(current, working, players, tick, context, SLOTS);
       rawIntent = decision.input;
       steered = decision.entity;
       charging = decision.charging;
@@ -1833,8 +1859,11 @@ function collectMote(
  * Whether this intent asks the body to walk (spec 079).
  *
  * The threshold is float slack, not a dead zone: every producer of a move vector
- * -- `moveIntent`, `monsterIntent`, the bots -- emits either a unit vector or an
- * exact zero, so anything with length at all is somebody asking to go somewhere.
+ * -- `moveIntent`, `monsterIntent`, the bots -- emits either an exact zero or a
+ * vector somebody meant, so anything with length at all is somebody asking to go
+ * somewhere. Not necessarily a *unit* vector since spec 213: a body ambling
+ * about its own business asks for a fraction of its speed, and asking to amble
+ * is still asking.
  */
 /**
  * Two inputs for one body in one tick, as one input (spec 090).
@@ -1960,6 +1989,7 @@ interface MonsterDecision {
 function monsterIntent(
   monster: ServerEntity,
   entities: ReadonlyMap<number, ServerEntity>,
+  players: readonly ServerEntity[],
   tick: number,
   context: StepContext,
   slots: SlotBoard,
@@ -1992,7 +2022,7 @@ function monsterIntent(
   // it would leave a body walking home that still reports the player it has
   // given up on.
   if (!target) {
-    monster = notice(settle(monster, null, tick), entities, tick);
+    monster = notice(settle(monster, null, tick), players, tick);
     target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   } else {
     // Deliberately no `notice` on this side: a territorial body that has just
@@ -2003,11 +2033,11 @@ function monsterIntent(
     if (monster.targetId === null) target = null;
   }
 
-  if (!target) {
-    const home = walkHome(monster, tick, context);
-    if (home) return home;
-    return { input: null, entity: forgetPath(monster), charging: null };
-  }
+  // Nobody to fight, so it goes about its own business (spec 213): home if it
+  // has been dragged off its ground, and milling about or walking its beat once
+  // it is back on it -- recovering throughout, which is what closes
+  // pull-and-reset.
+  if (!target) return idleDecision(monster, tick, context);
 
   // Running away, and swinging at nothing whatever it ends up standing next to.
   // Routed with the same A* a chase uses, so a fleeing grazer goes round a rock
@@ -2103,12 +2133,28 @@ function monsterIntent(
 /**
  * The other way out of a fight (spec 163): away, as fast as this body goes.
  *
- * Aimed at a point {@link FLEE_DISTANCE} directly opposite whatever it is
- * running from, and routed with the same `routeToward` a chase uses -- so the
- * common case is a straight line that touches no grid at all, and a cornered
- * body goes round the corner instead of grinding along it. Recomputed every
- * tick, so a grazer that gets outflanked mid-flight turns rather than committing
- * to the direction it set off in.
+ * Aimed at the point the body bolted for when the blow landed, and routed with
+ * the same `routeToward` a chase uses -- so the common case is a straight line
+ * that touches no grid at all, and a cornered body goes round the corner instead
+ * of grinding along it.
+ *
+ * **The goal is not recomputed while the flight runs** (spec 213), and that is
+ * the whole of this function's correctness. It used to be re-derived every tick
+ * as "directly away from wherever my attacker is now", which is stable only
+ * while the attacker is slower than its quarry -- and no player is. A pursuer at
+ * 155 against the grazer's 40 overshoots *through* the fleeing body every frame,
+ * so the away vector flipped sign at 60Hz: measured off a real `step`, the
+ * velocity alternated +40, -40, +40, -40 and the body oscillated between two
+ * coordinates two thirds of a unit apart for the rest of its flight. It never
+ * dropped its target and never left `Fleeing` early -- it simply stopped
+ * getting anywhere, which from outside is indistinguishable from having given
+ * up.
+ *
+ * So it re-aims on two events and no others: the goal is reached, or a fresh
+ * blow lands -- which is `provoke`'s business, not this function's. The fallback
+ * when the router has nothing to say runs *at the committed goal* rather than
+ * away from the attacker, for the same reason: the goal holds still and the
+ * attacker does not.
  *
  * The intent it returns carries no `castAbilityId` at all, which is the rule
  * stated once rather than checked at each caller: a fleeing body never swings,
@@ -2120,18 +2166,28 @@ function fleeFrom(
   tick: number,
   context: StepContext,
 ): MonsterDecision {
-  const away = unit(monster.position.x - from.position.x, monster.position.y - from.position.y);
-  // Standing exactly on top of its attacker leaves no direction to run in, so it
-  // keeps the one it is already facing rather than dividing by zero.
-  const heading = away ?? { x: Math.cos(monster.facing), y: Math.sin(monster.facing) };
-  const goal: Vec3 = {
-    x: monster.position.x + heading.x * FLEE_DISTANCE,
-    y: monster.position.y + heading.y * FLEE_DISTANCE,
-    z: monster.position.z,
-  };
+  // A goal is normally already there -- `provoke` writes one on the blow that
+  // starts the flight. It is picked here only for a body put into `Fleeing` by
+  // some other route (a test seeding one, an admin), and re-picked when the
+  // committed goal has been reached, which at 900 units is a body that has
+  // genuinely got away.
+  const committed = monster.fleeGoal;
+  const arrived =
+    committed !== null &&
+    Math.hypot(committed.x - monster.position.x, committed.y - monster.position.y) <= monster.radius;
+  const aim = committed !== null && !arrived ? committed : bolt(monster, from);
+  const aiming = aim === committed ? monster : { ...monster, fleeGoal: aim };
 
-  const steer = routeToward(monster, goal, tick, context);
-  const direction = steer.direction ?? heading;
+  const goal: Vec3 = { x: aim.x, y: aim.y, z: monster.position.z };
+  const steer = routeToward(aiming, goal, tick, context);
+  const direction =
+    steer.direction ??
+    unit(aim.x - monster.position.x, aim.y - monster.position.y) ??
+    // Only reachable for a body standing exactly on its own goal, which the
+    // re-aim above has already ruled out -- `bolt` always answers a full
+    // {@link FLEE_DISTANCE} away. Kept because a fallback that cannot be reached
+    // is cheaper than a direction that could be zero.
+    { x: Math.cos(monster.facing), y: Math.sin(monster.facing) };
   return {
     entity: steer.entity,
     // Still the one body it does not dodge, and for the same reason as a chase
@@ -2169,27 +2225,46 @@ function beyondLeash(monster: ServerEntity): boolean {
 }
 
 /**
- * The walk back to the spawn point, for a body with no target and no business
- * being where it is (spec 076).
+ * One tick of a monster with nobody to fight (specs 076, 201).
  *
- * Routed with the same A* a chase uses, so a monster led round a wall comes
- * back round it rather than pressing into it. It walks until it is within its
- * own radius of home and then simply stands: it does not snap to the marker,
- * because an inch of drift costs nothing and a teleport is visible.
+ * What this used to be was `walkHome`: a walk back to the anchor, and nothing
+ * else in the world. A body already home returned null and stood on its spawn
+ * coordinate forever, and a body walking home arrived carrying whatever damage
+ * had been done on the way out -- which is pull-and-reset, wide open, with the
+ * leash itself doing the work.
  *
- * Nothing here stops it being hit on the way. Being hit re-targets it, exactly
- * as it always did -- and the leash check runs before the target is read, so the
- * next tick takes that target straight back off it. "Cannot be pulled again
- * until it is home" falls out of the rule rather than being a second flag.
+ * The decision now comes from `sim/idle.ts`, which answers all of it in one
+ * call: where to go, how fast, and the body with this tick's recovery already
+ * applied. Everything here is the steering, which is what this file owns --
+ * routed with the same `routeToward` a chase uses, so a monster ambling toward a
+ * spot goes round a rock exactly as a charging one does, and a spot it cannot
+ * reach at all costs it a rest rather than a body pressed into a tree.
+ *
+ * Arriving is not marked anywhere and does not need to be: the goal does not
+ * move until the plan's own clock turns it over, so a body that has reached it
+ * simply stands there. **That standing is the dwell** -- "pick a spot, hang out
+ * on it, move on" with nothing counting the hanging out.
  */
-function walkHome(monster: ServerEntity, tick: number, context: StepContext): MonsterDecision | null {
-  const anchor = monster.anchor;
-  if (!anchor) return null;
-  const dx = anchor.x - monster.position.x;
-  const dy = anchor.y - monster.position.y;
-  if (Math.hypot(dx, dy) <= monster.radius) return null;
+function idleDecision(monster: ServerEntity, tick: number, context: StepContext): MonsterDecision {
+  const step = idle(monster, tick);
+  const rested = step.entity;
+  const goal = step.goal;
+  if (!goal) return { input: null, entity: forgetPath(rested), charging: null };
 
-  const steer = routeToward(monster, { x: anchor.x, y: anchor.y, z: monster.position.z }, tick, context);
+  const dx = goal.at.x - rested.position.x;
+  const dy = goal.at.y - rested.position.y;
+  // Within its own body of the spot is arrived. It does not snap to it, because
+  // an inch of drift costs nothing and a teleport is visible.
+  if (Math.hypot(dx, dy) <= rested.radius) {
+    return { input: null, entity: forgetPath(rested), charging: null };
+  }
+
+  const steer = routeToward(
+    rested,
+    { x: goal.at.x, y: goal.at.y, z: rested.position.z },
+    tick,
+    context,
+  );
   if (!steer.direction) return { input: null, entity: forgetPath(steer.entity), charging: null };
 
   return {
@@ -2198,8 +2273,14 @@ function walkHome(monster: ServerEntity, tick: number, context: StepContext): Mo
     input: {
       entityId: monster.id,
       seq: 0,
-      moveX: steer.direction.x,
-      moveY: steer.direction.y,
+      // The one place in the sim that asks for *less* than a body's full speed
+      // (spec 213). `resolveMovement` reads a direction of length at most one and
+      // multiplies by the body's own speed, so a short vector is how "slower than
+      // I can go" is said -- the same conversion `applyCrowd` already round-trips
+      // exactly. An amble is not a charge, and a field of monsters sprinting
+      // between random points reads worse than a field of statues.
+      moveX: steer.direction.x * goal.pace,
+      moveY: steer.direction.y * goal.pace,
       facing: Math.atan2(steer.direction.y, steer.direction.x),
       buttons: 0,
       predictedX: monster.position.x,
@@ -2261,7 +2342,12 @@ function routeToward(
   // The ground is part of "nothing is between us" (spec 130): a cliff face is
   // not a collider, so the collider test alone sent a monster striding at a
   // seventy-unit wall without ever asking for a route.
-  const grid = navGridFor(monster.radius, context.world, context.terrain);
+  // The window this body routes in, falling back to the world-sized grid for a
+  // context with no residency (spec 205). `routeToward` is the sim's only nav
+  // consumer, so this is the one place the two paths meet.
+  const grid =
+    context.nav?.gridAt(monster.radius, from.x, from.y) ??
+    navGridFor(monster.radius, context.world, context.terrain);
   if (pathClear(grid, from, to)) {
     // Open ground, so a place on the ring around the target is worth aiming at
     // rather than the target itself (spec 187) -- which is what fans a pack out
@@ -2348,6 +2434,65 @@ interface SpawnerResult {
 }
 
 /**
+ * How many bodies are in each chunk, counted once (spec 206).
+ *
+ * From the **live** entity map rather than from `ChunkManager`, which is what
+ * makes it this tick's answer: the manager is updated after `step()` returns, so
+ * during a tick it describes the previous one and would still be holding a body
+ * the sweep a few passes above has already buried.
+ */
+function populationByChunk(
+  entities: ReadonlyMap<number, ServerEntity>,
+  chunkSize: number,
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const entity of entities.values()) {
+    const key = chunkKeyOf(entity.position.x, entity.position.y, chunkSize);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Which spawn points are in which chunk, by their **authored index**.
+ *
+ * Memoized on the point list itself, because a map's spawn points are fixed for
+ * the life of the server and rebuilding this per tick would be exactly the walk
+ * it exists to remove. A `WeakMap`, so a world that goes away takes its index
+ * with it; nested on the chunk size, because that is the other thing the answer
+ * depends on and a test may use a different one.
+ *
+ * Indices rather than points, so the caller can sort them back into the order
+ * the document listed them -- see the note at the call site about entity ids.
+ */
+const SPAWN_INDEX = new WeakMap<readonly SpawnPoint[], Map<number, ReadonlyMap<string, number[]>>>();
+
+function spawnIndexFor(
+  points: readonly SpawnPoint[],
+  chunkSize: number,
+): ReadonlyMap<string, number[]> {
+  let bySize = SPAWN_INDEX.get(points);
+  if (!bySize) {
+    bySize = new Map();
+    SPAWN_INDEX.set(points, bySize);
+  }
+  const held = bySize.get(chunkSize);
+  if (held) return held;
+
+  const built = new Map<string, number[]>();
+  for (let at = 0; at < points.length; at++) {
+    const point = points[at];
+    if (!point) continue;
+    const key = chunkKeyOf(point.x, point.y, chunkSize);
+    const list = built.get(key);
+    if (list) list.push(at);
+    else built.set(key, [at]);
+  }
+  bySize.set(chunkSize, built);
+  return built;
+}
+
+/**
  * Refills the map's spawn points (spec 076).
  *
  * One spawner, one monster, one timer each. A spawner with no entry has never
@@ -2385,7 +2530,42 @@ function runSpawners(
 
   if (interval === null) return { nextEntityId, spawners, events };
 
-  for (const point of spawnPoints) {
+  // Only the spawn points near a player, in the order the map authored them
+  // (spec 206).
+  //
+  // It used to walk every point the map declares, every tick, resident or not --
+  // so what a tick cost was a function of how big the world was rather than of
+  // where anybody was standing. The index is built once and memoized on the
+  // point list, because building it per tick would be the walk it replaces.
+  //
+  // Gathered by chunk and then **sorted back into authored order**, which is the
+  // part that is not an optimisation: a spawn takes the next entity id, so the
+  // order two spawners are visited in decides which id each body gets, and ids
+  // are replicated. Sorting makes the result independent of the order
+  // `activeChunks` happens to iterate in, which is a `Set`'s insertion order and
+  // is nobody's intended contract.
+  const index = spawnIndexFor(spawnPoints, chunkSize);
+  const resident: number[] = [];
+  for (const key of context.activeChunks) {
+    const here = index.get(key);
+    if (here) resident.push(...here);
+  }
+  resident.sort((a, b) => a - b);
+
+  // Counted once for the tick rather than once per spawner (spec 206). It was
+  // `for (const entity of entities.values())` *inside* the loop below, which
+  // made the cap `O(spawn points x entities)`.
+  //
+  // Counted here rather than read off `ChunkManager.populationOf`, which the
+  // plan proposed: that index is maintained by `chunks.track`/`remove`, which
+  // run *after* `step()` returns, so inside a tick it holds the previous tick's
+  // occupancy -- it would not see a body killed by the sweep a few passes above
+  // this one.
+  const population = config.maxEntitiesPerChunk > 0 ? populationByChunk(entities, chunkSize) : null;
+
+  for (const at of resident) {
+    const point = spawnPoints[at];
+    if (!point) continue;
     const current = spawners.get(point.id) ?? EMPTY_SPAWNER;
 
     // Still holding a live body: nothing to do. A body that vanished by some
@@ -2401,13 +2581,9 @@ function runSpawners(
     // The population cap is the one thing that can still refuse a spawn: a
     // spawner inside a chunk that is already full waits rather than tipping it
     // over, and tries again next tick.
-    if (config.maxEntitiesPerChunk > 0) {
+    if (population) {
       const key = chunkKeyOf(point.x, point.y, chunkSize);
-      let population = 0;
-      for (const entity of entities.values()) {
-        if (chunkKeyOf(entity.position.x, entity.position.y, chunkSize) === key) population += 1;
-      }
-      if (population >= config.maxEntitiesPerChunk) continue;
+      if ((population.get(key) ?? 0) >= config.maxEntitiesPerChunk) continue;
     }
 
     const definition = monsterById(point.monsterId);

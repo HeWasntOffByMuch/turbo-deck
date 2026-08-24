@@ -32,7 +32,6 @@ function chunkAt(cx: number, cz: number, height: number): MapChunk {
     tones: [0, cells],
     props: [],
     markers: [],
-    nav: null,
   };
 }
 

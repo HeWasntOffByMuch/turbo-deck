@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
 import { MAP_VERSION, parseMap, serializeMap, type MapChunk, type MapDocument } from './map.js';
 import { loadMap, MapChunkStore } from './map-world.js';
+import { loadMapFile } from '../server/world/map-file.js';
 
 /**
  * The grid a map is indexed on (spec 083).
@@ -19,12 +19,19 @@ import { loadMap, MapChunkStore } from './map-world.js';
  *   negative, and adding a chunk west of everything renumbers nothing.
  */
 
-const ARENA = 'maps/arena.json';
 const LAYER = 'ground';
 
-function shipped(): { text: string; doc: MapDocument } {
-  const text = readFileSync(ARENA, 'utf8');
-  return { text, doc: parseMap(text) };
+/**
+ * The shipped world, joined from `maps/arena/`.
+ *
+ * There is no whole-file text to compare against since spec 204 split the map
+ * across a manifest and 224 regions, so what the round trip asserts below is a
+ * *fixed point* rather than equality with a canonical string -- which is the
+ * stronger claim anyway, and the one `regions.test.ts` makes about the split
+ * itself.
+ */
+function shipped(): { doc: MapDocument } {
+  return { doc: loadMapFile().doc };
 }
 
 /**
@@ -83,10 +90,11 @@ describe('the shipped map', () => {
     expect(built?.originZ).toBe(layer.origin.z);
   });
 
-  it('is at the current version and round-trips to identical text', () => {
-    const { text, doc } = shipped();
+  it('is at the current version and is a fixed point of the serializer', () => {
+    const { doc } = shipped();
     expect(doc.version).toBe(MAP_VERSION);
-    expect(serializeMap(doc)).toBe(text);
+    const text = serializeMap(doc);
+    expect(serializeMap(parseMap(text))).toBe(text);
   });
 });
 
@@ -141,7 +149,6 @@ function chunkAt(cx: number, cz: number, cols: number, rows: number, height: num
     tones: [0, cols * rows],
     props: [],
     markers: [],
-    nav: null,
   };
 }
 

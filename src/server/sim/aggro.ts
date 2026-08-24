@@ -14,6 +14,7 @@
  * and a replay of the same seed meets the same monsters the same way.
  */
 
+import type { Vec2 } from '../../sim/types.js';
 import { monsterById, noticeRangeOf, type Temperament } from '../data/monsters.js';
 import { AggroValue, EntityKindValue, type ServerEntity, type ServerSimEvent } from './types.js';
 
@@ -33,18 +34,55 @@ export function temperamentOf(entity: ServerEntity): Temperament | null {
   return monsterById(entity.typeId)?.temperament ?? null;
 }
 
-/** Nothing to say about anybody: no target, no clock. */
+/** Nothing to say about anybody: no target, no clock, nowhere it was bolting. */
 function calm(entity: ServerEntity): ServerEntity {
-  if (entity.targetId === null && entity.aggro === AggroValue.Calm && entity.aggroUntilTick === 0) {
+  if (
+    entity.targetId === null &&
+    entity.aggro === AggroValue.Calm &&
+    entity.aggroUntilTick === 0 &&
+    entity.fleeGoal === null
+  ) {
     return entity;
   }
-  return { ...entity, targetId: null, aggro: AggroValue.Calm, aggroUntilTick: 0 };
+  return { ...entity, targetId: null, aggro: AggroValue.Calm, aggroUntilTick: 0, fleeGoal: null };
 }
 
 /** Committed: chasing and swinging, until the leash or a death takes it away. */
 function engage(entity: ServerEntity, targetId: number): ServerEntity {
-  if (entity.targetId === targetId && entity.aggro === AggroValue.Engaged) return entity;
-  return { ...entity, targetId, aggro: AggroValue.Engaged, aggroUntilTick: 0 };
+  if (entity.targetId === targetId && entity.aggro === AggroValue.Engaged && entity.fleeGoal === null) {
+    return entity;
+  }
+  // The flight's goal goes with the flight. A body that has turned to fight is
+  // not on its way anywhere, and a stale goal left on it would be picked up by
+  // the next flight instead of being measured from the blow that started it.
+  return { ...entity, targetId, aggro: AggroValue.Engaged, aggroUntilTick: 0, fleeGoal: null };
+}
+
+/**
+ * Where a body startled by `from` bolts to (spec 213).
+ *
+ * A point rather than a heading, because a flight is routed with the same A* a
+ * chase is and a route needs somewhere to be -- and because a *point* is the
+ * thing that can be committed to. Measured once, at the instant of the blow,
+ * and then held: see {@link ServerEntity.fleeGoal} for what recomputing it every
+ * tick does to a body being chased by anything faster than itself.
+ *
+ * Standing exactly on top of its attacker leaves no direction to run in, so a
+ * body in that position bolts the way it is already facing rather than dividing
+ * by zero.
+ */
+export function bolt(body: ServerEntity, from: ServerEntity): Vec2 {
+  const dx = body.position.x - from.position.x;
+  const dy = body.position.y - from.position.y;
+  const length = Math.hypot(dx, dy);
+  const heading =
+    length > 1e-6
+      ? { x: dx / length, y: dy / length }
+      : { x: Math.cos(body.facing), y: Math.sin(body.facing) };
+  return {
+    x: body.position.x + heading.x * FLEE_DISTANCE,
+    y: body.position.y + heading.y * FLEE_DISTANCE,
+  };
 }
 
 /**
@@ -54,12 +92,12 @@ function engage(entity: ServerEntity, targetId: number): ServerEntity {
  * system, and keeps that line's behaviour exactly for everything with no
  * temperament to read -- a player, a prop, a body whose row has gone missing.
  */
-export function provoke(target: ServerEntity, attackerId: number, tick: number): ServerEntity {
+export function provoke(target: ServerEntity, attacker: ServerEntity, tick: number): ServerEntity {
   const temperament = temperamentOf(target);
   if (!temperament) {
     // The pre-163 rule, untouched: the first thing to hit you is the thing you
     // hold, and later blows do not steal it.
-    return target.targetId === null ? { ...target, targetId: attackerId } : target;
+    return target.targetId === null ? { ...target, targetId: attacker.id } : target;
   }
 
   if (temperament.kind === 'skittish') {
@@ -67,12 +105,14 @@ export function provoke(target: ServerEntity, attackerId: number, tick: number):
     // be: a body running away is running from whoever hit it last, and a grazer
     // that kept sprinting away from the first thing to touch it would run
     // straight into the second. A fresh blow also restarts the clock, so
-    // something still being hit is still running.
+    // something still being hit is still running -- and re-aims it, which is the
+    // only thing other than arrival that moves a flight's goal (spec 213).
     return {
       ...target,
-      targetId: attackerId,
+      targetId: attacker.id,
       aggro: AggroValue.Fleeing,
       aggroUntilTick: tick + temperament.fleeTicks,
+      fleeGoal: bolt(target, attacker),
     };
   }
 
@@ -80,20 +120,25 @@ export function provoke(target: ServerEntity, attackerId: number, tick: number):
   // it out -- a body that is shot while sizing you up has finished sizing you
   // up. `Engaged` is therefore assigned rather than merged, which is exactly
   // the Alert -> Engaged edge.
-  return engage(target, target.targetId ?? attackerId);
+  return engage(target, target.targetId ?? attacker.id);
 }
 
 /**
  * What standing near a player does to a calm monster's mind.
  *
- * A linear scan of the entity map, which is the same shape and the same size as
- * the one spec 076 removed. There is no broadphase in this repo and this does
- * not add one: it runs only for a body that is both calm and able to notice
- * anything at all, which is two comparisons for every monster that is neither.
+ * A linear scan of the **players**, gathered once for the tick (spec 206). It
+ * used to scan the whole entity map, which made deciding whether one body had
+ * seen another cost what the world contained rather than who was in it: a
+ * resident monster walked past every monster everywhere else, every tick.
+ *
+ * There is still no broadphase over the players and this does not add one --
+ * there are a handful of them, and it runs only for a body that is both calm and
+ * able to notice anything at all, which is two comparisons for every monster
+ * that is neither.
  */
 export function notice(
   monster: ServerEntity,
-  entities: ReadonlyMap<number, ServerEntity>,
+  players: readonly ServerEntity[],
   tick: number,
 ): ServerEntity {
   if (monster.aggro !== AggroValue.Calm) return monster;
@@ -104,7 +149,7 @@ export function notice(
   // range -- the scan below cannot be reached with a body that has none.
   if (temperament.kind === 'skittish' || temperament.kind === 'defensive') return monster;
 
-  const found = nearestQuarry(monster, entities, temperament.noticeRange);
+  const found = nearestQuarry(monster, players, temperament.noticeRange);
   if (found === null) return monster;
 
   // Insertion order breaks a tie, via `nearestQuarry`'s strict `<` -- the same
@@ -216,16 +261,26 @@ export function rally(
   return changed;
 }
 
-/** Nearest living player within `range`, by id, or null. */
+/**
+ * Nearest living player within `range`, by id, or null.
+ *
+ * Handed the **players** rather than every entity in the world (spec 206). It
+ * used to walk the whole entity map to find a handful of them, once per
+ * noticing monster per tick, so the cost of deciding whether one body had seen
+ * another was proportional to how many bodies existed everywhere else. The list
+ * is gathered once in `step` and is the same list for every monster in the tick.
+ *
+ * `playersOf` keeps the entity map's insertion order, which the tie rule below
+ * depends on.
+ */
 function nearestQuarry(
   monster: ServerEntity,
-  entities: ReadonlyMap<number, ServerEntity>,
+  players: readonly ServerEntity[],
   range: number,
 ): number | null {
   let bestId: number | null = null;
   let bestSq = range * range;
-  for (const other of entities.values()) {
-    if (other.kind !== EntityKindValue.Player) continue;
+  for (const other of players) {
     if (other.health <= 0) continue;
     const dx = other.position.x - monster.position.x;
     const dy = other.position.y - monster.position.y;
@@ -237,6 +292,23 @@ function nearestQuarry(
     }
   }
   return bestId;
+}
+
+/**
+ * The living-or-not players in the world, in the entity map's own order.
+ *
+ * Order matters: `nearestQuarry` breaks an exact tie with a strict `<`, so the
+ * first body in insertion order keeps it -- the rule the proximity scan spec 076
+ * deleted used, and deterministic for the same reason. A gathered list that
+ * reordered them would be a different answer on a tie, which is the sort of
+ * divergence that shows up once in a thousand replays.
+ */
+export function playersOf(entities: ReadonlyMap<number, ServerEntity>): ServerEntity[] {
+  const out: ServerEntity[] = [];
+  for (const entity of entities.values()) {
+    if (entity.kind === EntityKindValue.Player) out.push(entity);
+  }
+  return out;
 }
 
 /** Squared-distance comparison, so noticing costs no square roots. */

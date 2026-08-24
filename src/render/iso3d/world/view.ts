@@ -59,11 +59,10 @@ import { planConnection, rememberSession } from './connection.js';
 import { ReconnectingChannel } from '../../../server/net/reconnecting.js';
 import { createConnectionBanner } from './connection-banner.js';
 import { createGroundPredictor, emptyGround, fillGround } from './prediction-ground.js';
-import { mapIdOf } from '../../../server/world/map-index.js';
 import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
-import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
+import { buildWorldFromMap } from '../../../server/world/build.js';
 import { adoptNavGrid } from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
@@ -77,8 +76,7 @@ import type { BaseStatKey } from '../../../server/state/types.js';
 import { viewSeed } from '../seed.js';
 import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
 import { ASSET_MANIFEST_HASH } from './unit-assets.js';
-import mapText from '../../../../maps/arena.json?raw';
-import { parseMap } from '../../../terrain/map.js';
+import { loadShippedMap } from '../map-asset.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { HeldChunk } from '../../../server/client/map-cache.js';
 import type { ViewHandle } from '../view-handle.js';
@@ -126,22 +124,28 @@ import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import {
   DEFAULT_SHOW_FPS,
   loadScale,
+  loadMaxZoom,
   loadShowFps,
+  resolveMaxZoom,
   saveScale,
+  saveMaxZoom,
   saveShowFps,
 } from '../../../ui/input/display-store.js';
+import { SUPPORTED_MAX_VIEW_HALF_WIDTH } from '../view-settings.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
 import { windupLostItsMarkIn } from './withdraw.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
+import { worldCursor, worldMark } from './crosshair.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
 import type { WorldAnchor } from './damage-popup.js';
 import { XpGains } from './xp-gain.js';
 import { castRefusalText } from './error-log.js';
+import { backoffTicksFor, KEEPALIVE_MS } from './keepalive.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -262,29 +266,57 @@ const PROP_INCOMPLETE_HOLD_MS = 4000;
  * prediction aid that the server's routing corrects.
  */
 const GROUND_REFRESH_MIN_CHUNKS = 8;
+
+/**
+ * How long a chunk offered to the mesher may go unanswered before the ledger
+ * gives up on it (spec 214).
+ *
+ * Ten seconds, which is far longer than a mesh has ever taken and is meant to
+ * be: this is a backstop for a reply that is never coming, not a schedule for
+ * one that is late. Sweeping a live chunk costs one extra prop rebuild;
+ * sweeping too late costs nothing at all -- so the number errs long.
+ *
+ * What it protects is not the mesh, it is everything downstream of the count:
+ * a chunk stuck in the queue holds every prop region it touches `inFlight` for
+ * the session and keeps `ingest.pending` off zero, which is the condition both
+ * the load gate and the first nav grid wait on.
+ */
+const MESH_TIMEOUT_MS = 10_000;
+
+/**
+ * How long a nav grid may be outstanding before another is allowed (spec 214).
+ *
+ * `navRequested` is a one-in-flight latch, and a latch with no way out is a
+ * wedge: a reply that never arrives -- a worker that died, a message dropped on
+ * a page that was backgrounded mid-build -- leaves the client routing and
+ * predicting against the last grid it managed to adopt, for as long as the
+ * session lasts. A generation counter already refuses a stale grid that lands
+ * late, so the only cost of re-arming early is one extra build.
+ *
+ * Thirty seconds: the slowest measured grid on the shipped map is a first one
+ * at 3.7 seconds, so this is most of an order of magnitude of headroom.
+ */
+const NAV_REPLY_TIMEOUT_MS = 30_000;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
-/**
- * Wall-clock period for the two things that must outlive the frame loop
- * (spec 157): the heartbeat, and the reconnect backoff.
- *
- * Both used to ride `requestAnimationFrame`, which a browser throttles to
- * nothing in a hidden tab -- so switching tabs for a minute stopped the pings,
- * the server's ten-second timeout dropped the connection, and the backoff that
- * would have brought it back was frozen by the same stall. A `setInterval` is
- * clamped to about a second when hidden but never stops, which is the whole
- * difference between "slower" and "never".
- *
- * 500ms is the rate the frame loop drove them at, so nothing about a visible
- * tab changes.
- */
-const KEEPALIVE_MS = 500;
-/** Ticks of backoff clock per keep-alive, so `ReconnectingChannel` stays tick-driven. */
-const KEEPALIVE_TICKS = Math.round(KEEPALIVE_MS / TICK_MS);
 /** Ms between deltas -- the interval the renderer interpolates across. */
 const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
-export function mountWorld(container: HTMLElement): ViewHandle {
+export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
+  /**
+   * The shipped map, fetched rather than bundled (spec 203).
+   *
+   * Awaited here and nowhere deeper: everything below is synchronous from
+   * `buildWorldFromMap` through `warmRouting`, `fillGround` and the transport,
+   * and threading a promise into that would be a rewrite of the whole function.
+   * The mount boundary is the one place a wait costs nothing but a frame.
+   *
+   * Fetched on the remote path too, even though only a loopback tab builds a
+   * world from it: the manifest's `mapId` is how this tab tells the server it
+   * is on the same document, and a client that skipped the fetch could not make
+   * that comparison at all.
+   */
+  const shippedMap = await loadShippedMap();
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#0b0b12;';
 
@@ -322,24 +354,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * that path is ever exercised: used whenever the two happened to agree, it
    * would be a path that only runs in the case it is broken in.
    */
-  const local = plan.mode === 'loopback' ? buildWorldFromMap(parseMap(mapText), mapText) : null;
+  const local = plan.mode === 'loopback' ? buildWorldFromMap(shippedMap.doc, shippedMap.mapId) : null;
   // Same reason as the server (spec 130): sampling the ground into a nav grid is
   // around a second on a real map, and it belongs beside the rest of the page's
   // start-up rather than in the frame where the first move order is given. The
   // streaming client's equivalent is on the settle in `ingestChunks`, which is
   // the earliest moment it could possibly be done.
   //
-  // Blocking, and deliberately back to blocking (spec 165 follow-up 3). Slicing
-  // this across frames was worse in every way that mattered: the sim reaches
-  // `navGridFor` on its own inside `routeToward`, so the grid has to exist
-  // before the first tick rather than eventually -- and a budget spent *per
-  // frame* makes the wall-clock cost of loading a function of the frame rate,
-  // which on a slow machine turned five seconds of work into thirty of waiting.
+  // There used to be a `warmRouting(local)` here, and spec 165's follow-up spent
+  // real effort making it blocking again: the sim reached `navGridFor` inside
+  // `routeToward`, so a world-sized grid had to exist before the first tick, and
+  // slicing the build across frames made the wall-clock cost of loading a
+  // function of the frame rate -- five seconds of work became thirty of waiting
+  // on a slow machine.
   //
-  // What made it affordable was never the slicing. It is the per-cell height
-  // cache below: this pass is the only one that pays for the whole map, and the
-  // chunk arrivals that used to re-pay for it now cost their own ground.
-  if (local) warmRouting(local);
+  // Spec 205 deleted the thing being warmed. Nav is windows now, and a window is
+  // built inside the tick that first wants one: ~140ms of sampling for one
+  // player's surroundings rather than 3.6s for the world, on a map where the
+  // window does not grow when the map does. There is nothing left to have ready.
 
   /**
    * What the predictor is allowed to collide against.
@@ -489,6 +521,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     regionSize: propRegionSize(),
     regionsPerFlush: PROP_REGIONS_PER_FRAME,
     incompleteHoldMs: PROP_INCOMPLETE_HOLD_MS,
+    meshTimeoutMs: MESH_TIMEOUT_MS,
   });
   /**
    * Where the load actually happens (spec 180).
@@ -543,6 +576,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let chunksAtGroundRefresh = -1;
   /** Whether a grid is being built right now, so only one is ever in flight. */
   let navRequested = false;
+  /** When that request went out, so a reply that never comes is not forever. */
+  let navRequestedAtMs = 0;
   /**
    * The chunk count of the newest grid adopted.
    *
@@ -643,7 +678,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // prediction off, because the alternative was colliding against a forest
       // the server did not have; now the colliders come from the stream either
       // way and this is just a useful thing to see in a screenshot.
-      if (plan.mode === 'remote' && map.info.mapId !== mapIdOf(mapText)) {
+      if (plan.mode === 'remote' && map.info.mapId !== shippedMap.mapId) {
         banner.note(`server map ${map.info.mapId.slice(0, 8)}`);
       }
     }
@@ -657,6 +692,34 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       pendingInserts.set(`${held.layer}:${held.cx},${held.cz}`, held);
     }
 
+    // Ground the cache has let go of (spec 208).
+    //
+    // Reconciled against the cache's held list rather than being told, because
+    // the cache is what decides residency and a message saying "these went"
+    // would be a second description of the same fact -- one that can be dropped,
+    // leaving geometry drawn over ground nothing holds. Comparing is O(held),
+    // and held is bounded by exactly the thing this pass enforces.
+    const live = new Set<string>();
+    for (const held of map.chunks) live.add(`${String(held.layer)}:${String(held.cx)},${String(held.cz)}`);
+    const stale = streamed
+      .heldRefs()
+      .filter((ref) => !live.has(`${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`));
+    if (stale.length > 0) {
+      const { removed, restitch } = streamed.remove(stale);
+      for (const ref of removed) {
+        pendingInserts.delete(`${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`);
+        const layerId = streamed.meshLayers[ref.layer]?.id;
+        if (layerId !== undefined) scene.dropTerrainChunk(layerId, ref.cx, ref.cz);
+      }
+      // The neighbours are stitched to ground that has gone, so they are dirty
+      // in exactly the sense an arrival makes its neighbours dirty.
+      if (restitch.length > 0) ingest.offer(restitch, nowMs);
+      // The height memo held samples over ground this side no longer has
+      // (spec 153), the same reason an insert invalidates it.
+      scene.invalidateGroundSamples();
+      mapWorker.send({ kind: 'evict', refs: stale });
+    }
+
     const insertStart = performance.now();
     const spend = new FrameBudget(nowMs, INGEST_BUDGET_MS);
     for (const [key, held] of pendingInserts) {
@@ -668,6 +731,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // to keep the ledger and the prop regions, which is 0.1ms against the
       // 3.4ms a build is (spec 180).
       const dirty = streamed.add(held);
+      // Forwarded whether or not it dirtied anything here (spec 214). The two
+      // stores are only the same world because they are fed the same chunks:
+      // skipping the send for a chunk this side declined to insert -- an unknown
+      // layer, a refused `insertChunk` -- leaves the worker's store short of
+      // ground it would otherwise have had, permanently, and the nav grid and
+      // the prop regions it builds are then of a map nobody is playing. The
+      // worker takes a duplicate as a no-op, which is the cheap side of the
+      // trade.
+      mapWorker.send({ kind: 'chunk', held });
       if (dirty.length === 0) continue;
       ingest.offer(dirty, nowMs);
       // The memo is over the ground this chunk just changed. Everything it
@@ -675,7 +747,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // invalidated on the *insert* rather than when the triangles come back,
       // because the memo is about the store and the store has this ground now.
       scene.invalidateGroundSamples();
-      mapWorker.send({ kind: 'chunk', held });
     }
 
     stage('insert', performance.now() - insertStart);
@@ -755,6 +826,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // exist and spends the worker on a grid of a map that is one twentieth
     // arrived -- and then again at sixteen, and again at twenty-four, each one
     // queued behind the last, so the grid that matters arrives last.
+    //
+    // `navRequested` is a one-in-flight latch, and a latch is a wedge when the
+    // reply can fail to arrive (spec 214). A worker that died, or a message
+    // dropped on a page backgrounded mid-build, used to leave this client
+    // routing and predicting against the last grid it managed to adopt for the
+    // rest of the session. Re-arming costs at worst one extra build, and
+    // `navGeneration` already refuses a stale grid that lands after it.
+    if (navRequested && nowMs - navRequestedAtMs > NAV_REPLY_TIMEOUT_MS) navRequested = false;
     if (
       plan.mode === 'remote' &&
       firstGroundBuilt &&
@@ -762,6 +841,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       streamed.size - chunksAtGroundRefresh >= GROUND_REFRESH_MIN_CHUNKS
     ) {
       navRequested = true;
+      navRequestedAtMs = nowMs;
       chunksAtGroundRefresh = streamed.size;
       mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
     }
@@ -839,6 +919,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       firstGroundBuilt = true;
       chunksAtGroundRefresh = streamed.size;
       navRequested = true;
+      navRequestedAtMs = performance.now();
       mapWorker.send({ kind: 'nav', radius: SERVER_PLAYER_RADIUS });
     }
 
@@ -928,6 +1009,45 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['vfxParticles'] = String(readout.particles);
     root.dataset['vfxDecals'] = String(readout.decals);
     root.dataset['vfxStarted'] = playing;
+  }
+
+  /**
+   * Mirrors what the body is committed to onto the root element (spec 199).
+   *
+   * The same window `publishUnitReadout` opens, for the same reason and read by
+   * nobody in the game: what a stop drops lives as half a dozen closure `let`s
+   * in this file, so a browser harness has nothing to ask about them -- and
+   * `scripts/probe-stop.ts` is the only thing that can say whether the branch
+   * this spec added reaches any of them. Two attributes rather than one, because
+   * they answer different questions: `data-orders` is what has been *asked for*,
+   * and `data-self-at` is whether the body is actually still moving, which is a
+   * fact about the server rather than about this file's bookkeeping.
+   *
+   * Named in the vocabulary the spec's table uses, in a fixed order, so a
+   * missing word is a specific drop that did not happen rather than a diff.
+   * Written only when it changes: a per-frame attribute write is a per-frame
+   * style invalidation, and a walking body writes one every frame anyway --
+   * which is exactly why the position is rounded to a whole world unit here.
+   */
+  let lastOrders = '';
+  function publishOrders(): void {
+    const me = selfPosition();
+    const orders = [
+      destination !== null ? 'walk' : '',
+      targetId !== null ? 'attack' : '',
+      pickupId !== null ? 'pickup' : '',
+      pendingAim !== null ? 'aim' : '',
+      order !== null ? 'cast' : '',
+      held.size > 0 ? 'keys' : '',
+    ]
+      .filter((word) => word !== '')
+      .join(' ');
+    const at = `${Math.round(me.x)},${Math.round(me.y)}`;
+    const text = `${orders}|${at}`;
+    if (text === lastOrders) return;
+    lastOrders = text;
+    root.dataset['orders'] = orders;
+    root.dataset['selfAt'] = at;
   }
 
   /**
@@ -1255,6 +1375,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * `scripts/probe-orbit.ts` drives a real page.
    */
   const heldKeys = new Set<string>();
+  /**
+   * Key codes that were physically down when a stop fired (spec 199).
+   *
+   * The rule without which the stop does not work at all, and one no unit test
+   * in this tree could have found, because it is a fact about the browser rather
+   * than about the game: a key held down repeats `keydown` at the platform's own
+   * rate, and `onKeyDown` has never looked at `event.repeat`. So every repeat
+   * puts `move.north` straight back into {@link held}, and a player walking north
+   * who asks to stop watches the walk resume on its own half a second later.
+   *
+   * A code goes in when the stop is applied and comes out when it is actually
+   * released. It costs nothing anywhere else -- a repeat only ever re-adds what
+   * its own first press already added -- and it catches the stop's own key first:
+   * Space held down fires once rather than sending `cancelCast` thirty times a
+   * second.
+   */
+  const disarmed = new Set<string>();
   const inputMap = new InputMap();
   /**
    * Where the key profile lives. Reached for here, at the DOM edge, exactly as
@@ -1282,6 +1419,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * Every callback below is a *request*: the screens emit intents and the server
    * decides. Nothing here writes to a container, a purse or a skill tree.
    */
+  // The widest zoom the player has asked for (spec 202), read once and applied
+  // to the camera before the first frame -- a ceiling honoured only on the next
+  // change would leave a restored session framing wider than it was told to.
+  const storedMaxZoom = loadMaxZoom(bindingStorage);
+  scene.controls.restoreMaxZoom(resolveMaxZoom(storedMaxZoom, SUPPORTED_MAX_VIEW_HALF_WIDTH));
+
   const ui = new UiLayer(root, {
     map: inputMap,
     onMove: (from, to, count) => client.moveItem(from, to, count),
@@ -1327,9 +1470,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       ui.setShowFps(show);
       saveShowFps(bindingStorage, show);
     },
+    // The same three steps again (spec 202): honour it on the camera, tell the
+    // page so its slider matches what is drawn, and save it before the frame
+    // that could lose it. The *choice* is stored rather than the number it
+    // resolves to, so `'supported'` keeps tracking the cap when the cap moves.
+    //
+    // `chooseMaxZoom` rather than `restoreMaxZoom`, which is the whole fix: a
+    // player dragging the slider has to see the width they picked, and clamping
+    // alone only ever moves the camera *in*.
+    onMaxZoomChosen: (choice) => {
+      scene.controls.chooseMaxZoom(resolveMaxZoom(choice, SUPPORTED_MAX_VIEW_HALF_WIDTH));
+      ui.setMaxZoom(choice);
+      saveMaxZoom(bindingStorage, choice);
+    },
     // The one place the platform is asked, beside the media queries.
     scale: loadScale(bindingStorage),
     showFps: loadShowFps(bindingStorage),
+    maxZoom: storedMaxZoom,
     // Where the windows were (spec 147). Read here and written back here, for
     // the third time and the third reason: the mount is pure, so the document
     // arrives as a value and leaves as a callback. `saveLayout` cannot throw --
@@ -1561,6 +1718,51 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   /**
+   * Call off the blow, and the orders whose whole job is to aim one (spec 199).
+   *
+   * What a stop shares with Escape, said once. Both used to write these three
+   * lines out, and two lists of what "calling off a blow" drops is two answers
+   * that drift the first time a fourth kind of order is added.
+   *
+   * `cancelCast` refunds the cost and the cooldown before the attack point and
+   * returns only the legs after it (spec 144) -- so what a called-off cast spends
+   * is exactly the time it took. `targetId` goes with it because withdrawing from
+   * a blow the auto-attack would re-commit to on the next tick is not withdrawing
+   * from anything.
+   */
+  function dropCommitments(): void {
+    client.cancelCast();
+    targetId = null;
+    clearAim();
+  }
+
+  /**
+   * Everything the body is committed to, dropped in one press (spec 199).
+   *
+   * `dropCommitments` plus the legs: the walk over to a drop, the standing move
+   * order and the route planned for it, and whatever is held. Unconditional --
+   * a stop asked at rest drops nothing, opens nothing and costs nothing, which
+   * is the whole difference from Escape, whose rule is to reach for the menu
+   * when there is nothing to back out of (spec 135). One control that sometimes
+   * opens a menu is enough.
+   *
+   * Nothing new crosses the wire, because stopping is the *absence* of a
+   * request: with `held` empty and no destination, `moveIntent` asks for (0, 0)
+   * and the server stops the body on the next tick it applies. The one thing
+   * that does need saying is already a message, and `cancelCast` sends it.
+   */
+  function stopEverything(): void {
+    dropCommitments();
+    pickupId = null;
+    destination = null;
+    planner.clear();
+    held.clear();
+    // The keys and buttons still down when this fired. Without this the walk
+    // resumes on its own at the browser's repeat rate; see `disarmed`.
+    for (const code of heldKeys) disarmed.add(code);
+  }
+
+  /**
    * Whether a right-click on this body should attack it rather than walk to it.
    *
    * Deliberately thin, and deliberately not a rule: it keeps the cursor from
@@ -1585,13 +1787,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   function collectable(entity: { kind: number }): boolean {
     return entity.kind === EntityKind.Drop;
-  }
-
-  /** Whether the cursor is over a drop this frame. Nothing else reads it. */
-  function hoveringDrop(view: ReturnType<typeof client.view>, hovered: number | null): boolean {
-    if (hovered === null) return false;
-    const entity = view.entities.find((candidate) => candidate.id === hovered);
-    return entity !== undefined && collectable(entity);
   }
 
   /**
@@ -1636,12 +1831,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // camera key is the same bug with the view spinning instead.
       held.clear();
       heldKeys.clear();
+      disarmed.clear();
       return;
     }
 
     // Recorded before the map is consulted, because these are the keys the map
     // does not know about (spec 140).
     heldKeys.add(event.code);
+
+    // A key the stop disarmed, still down and repeating (spec 199). Dropped
+    // whole rather than filtered down to its non-move half: a repeat carries no
+    // new intent by construction, since its own first press already did
+    // everything this one would. The default is prevented anyway, because the
+    // press this repeats prevented it -- and the disarmed key most often held
+    // down is the stop's own Space, which scrolls a page that does not stop it.
+    if (event.repeat && disarmed.has(event.code)) {
+      event.preventDefault();
+      return;
+    }
 
     if (applyDecision(decideControlDown(inputMap, event.code, modifiersOf(event)))) {
       event.preventDefault();
@@ -1735,12 +1942,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // both facts are visible -- that half may not see a cast, on purpose.
       const committed =
         pendingAim !== null || order !== null || targetId !== null || client.view().selfRoot !== null;
-      client.cancelCast();
-      // Withdrawing from a blow that the auto-attack would re-commit to on the
-      // next tick is not withdrawing from anything.
-      targetId = null;
-      clearAim();
+      dropCommitments();
       if (!committed) ui.toggle('options');
+    }
+
+    // And the control that means all of it (spec 199). It is Escape's three
+    // drops plus the legs and the route, with no condition on any of it: the
+    // row has been in the keybindings window since spec 125 asserting that a key
+    // does something, and until now the key did nothing at all.
+    //
+    // The default is prevented because Space scrolls a page, and because the
+    // action is rebindable -- so is whatever gets here.
+    if (decision.stop) {
+      stopEverything();
+      prevent = true;
     }
 
     // The verbs the pointer ships bound to, and they are branches on an action
@@ -1797,6 +2012,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Dropped whatever the interface said, for the reason below: a release the
     // UI swallowed is a key held forever, and here that is a view that spins.
     heldKeys.delete(event.code);
+    // Letting go is what re-arms a control the stop disarmed (spec 199).
+    disarmed.delete(event.code);
     // Released whatever the interface said, always. A release that the UI
     // swallowed is a held action with no way out, and the symptom is walking
     // into a wall until the same key is pressed and released again.
@@ -1974,6 +2191,56 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     issueOrder();
   }
 
+  /**
+   * Say what the next click would do (specs 158, 201).
+   *
+   * Three things change the pointer, and the arrow is what stands the rest of
+   * the time. A pending aim gets the full crosshair, because that is the one
+   * state in which the pointer is choosing a *point* rather than pointing at a
+   * thing. A body a click would act on gets the same mark with its arms pulled
+   * in. A drop keeps the pointing hand it has had since spec 158, being the one
+   * thing in the world the cursor does something to that has no affordance of
+   * its own: a monster lights up when hovered, a window has a border, and an
+   * item on the ground has neither. Which of the three wins is `crosshair.ts`'s
+   * to answer, in a module a test can reach; this only carries it out.
+   *
+   * Our two marks are *drawn*, by the HUD, at the pointer position this file
+   * already tracks -- they were CSS cursor images for two cuts of spec 200, and
+   * on a real machine the image landed four to seven pixels up and left of the
+   * point it was marking, because a cursor is placed by a hotspot applied
+   * somewhere between the style and the glass. Nothing in a page can see where
+   * that put it; every pixel of this can be measured.
+   *
+   * Called from the frame **and from the end of every pointer and key event**,
+   * which is the whole reason it is a function rather than four lines in the
+   * frame: the events keep the mark with the pointer that moved it, in the same
+   * task, and the frame covers what the *world* changed -- a monster walking
+   * under a pointer that never moved raises no event at all.
+   *
+   * The hovered body is resolved once and asked both questions rather than found
+   * twice -- a drop and an attackable body are two readings of the same id.
+   */
+  function applyCursor(): void {
+    const view = client.view();
+    const hovered =
+      scene.hoveredEntityId === null
+        ? undefined
+        : view.entities.find((entity) => entity.id === scene.hoveredEntityId);
+    const pointer = {
+      aiming: pendingAim !== null,
+      overEnemy: hovered !== undefined && attackable(hovered, view.selfEntityId),
+      overDrop: hovered !== undefined && collectable(hovered),
+    };
+    // The mark and the cursor under it are one decision read twice, so "we hid
+    // the pointer" and "we drew a mark" cannot come apart.
+    //
+    // `cursor` is null while the pointer is over a window or off the canvas
+    // (`onMove`, `onLeave`), and a mark with nowhere to go draws nothing --
+    // which is also what stops a hidden cursor being left over the interface.
+    canvas.style.cursor = cursor === null ? '' : worldCursor(pointer);
+    hud.setCrosshair(cursor === null ? null : worldMark(pointer), cursor);
+  }
+
   const onPointerDown = (event: PointerEvent): void => {
     if (event.pointerType !== 'touch') {
       onMouseDown(event);
@@ -2085,6 +2352,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const onBlur = (): void => {
     held.clear();
     heldKeys.clear();
+    // Beside the two above and for the reason they are here: focus lost is every
+    // key released as far as this tab is concerned, and a code left disarmed
+    // would swallow the repeats of the next press of it.
+    disarmed.clear();
     // A gesture interrupted by losing focus never sends its pointerup, and the
     // next finger down would otherwise land mid-pinch.
     gestures.clear();
@@ -2445,6 +2716,43 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let backoffTick = 0;
   /** The wall-clock timer driving the heartbeat and the backoff. 0 when stopped. */
   let keepAlive = 0;
+  /** When `pump` last ran, so the backoff can be advanced by the gap it got. */
+  let lastPumpMs = 0;
+
+  /**
+   * One beat of the clock that outlives the frame loop (spec 197).
+   *
+   * Called by the interval, and again the instant the tab becomes visible --
+   * which is the one moment we know the reason for an outage has gone, and the
+   * one moment the old code did nothing, because it sat waiting for the very
+   * timer the browser had throttled. Both callers want exactly this, so it is a
+   * function rather than two copies that could drift.
+   *
+   * The gap is measured rather than assumed: see `keepalive.ts` for why a
+   * constant per firing halved the reconnect ladder in a hidden tab.
+   */
+  function pump(nowMs: number): void {
+    const elapsed = lastPumpMs === 0 ? KEEPALIVE_MS : nowMs - lastPumpMs;
+    lastPumpMs = nowMs;
+    client.keepAlive();
+    backoffTick += backoffTicksFor(elapsed, SERVER_TICK_RATE);
+    reconnecting?.deliver(backoffTick);
+  }
+
+  /**
+   * The tab being looked at again.
+   *
+   * Two things, and the second is the reason this is not only about the socket:
+   * the frame clock is reset the way `start()` resets it, so the first frame
+   * after ten hidden minutes is one tick long rather than a ten-minute `dt`
+   * handed to the camera and averaged into the frame meter.
+   */
+  function onVisible(): void {
+    if (document.visibilityState !== 'visible') return;
+    last = 0;
+    frames.reset();
+    pump(performance.now());
+  }
 
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
@@ -2646,14 +2954,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       scene.hoveredEntityId,
       now,
     );
-    // The cursor says what the next click would do (spec 158).
-    //
-    // Only a drop changes it, and only because a drop is the one thing in the
-    // world the cursor *does* something to that has no other affordance: a
-    // monster lights up when hovered, a window has a border, and an item on the
-    // ground has neither -- the pointer is what tells you it can be clicked at
-    // all. Presentation, and the only `if` in this file that touches a style.
-    canvas.style.cursor = hoveringDrop(client.view(), scene.hoveredEntityId) ? 'pointer' : '';
+    applyCursor();
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());
@@ -2707,6 +3008,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
     publishUnitReadout();
     publishVfxReadout();
+    publishOrders();
 
     // Last, over everything (spec 131). It is handed `now` rather than reading
     // one: nothing under `src/ui/` may touch a clock, which is what makes an
@@ -2725,6 +3027,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
       window.addEventListener('blur', onBlur);
+      document.addEventListener('visibilitychange', onVisible);
       // Pointer events rather than mouse events, so a tap is read once: the
       // compatibility `mousedown` a touch also fires would arrive as button 0
       // and confirm an aim nobody asked about (spec 093).
@@ -2733,6 +3036,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       canvas.addEventListener('pointerup', onPointerUp);
       canvas.addEventListener('pointercancel', onPointerCancel);
       canvas.addEventListener('mouseleave', onLeave);
+      // Last on purpose: these run after the handlers above have decided
+      // whatever this event decides, in the same task, so the cursor the frame
+      // would have set a moment later is set while the browser still has the
+      // input in hand. See `applyCursor`.
+      for (const kind of ['pointermove', 'pointerdown', 'pointerup'] as const) {
+        canvas.addEventListener(kind, applyCursor);
+      }
+      window.addEventListener('keydown', applyCursor);
       root.addEventListener('wheel', onWheel, { capture: true, passive: false });
       document.documentElement.addEventListener('contextmenu', onContextMenu);
 
@@ -2749,12 +3060,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
           // rather than a second body beside the first (spec 150).
           rememberSession(sessionStorage, client.sessionToken);
         });
-        // The heartbeat and the backoff, on a clock a hidden tab cannot stop.
-        keepAlive = window.setInterval(() => {
-          client.keepAlive();
-          backoffTick += KEEPALIVE_TICKS;
-          reconnecting?.deliver(backoffTick);
-        }, KEEPALIVE_MS);
+        // The heartbeat and the backoff, on a clock the frame loop cannot
+        // stop. Not one a *browser* cannot stop -- it throttles this to one
+        // firing a minute past five minutes hidden, which is why the
+        // connection is held from the far end now (spec 197's `SERVER_PING_MS`)
+        // and this drives the visible case and the reconnect ladder.
+        keepAlive = window.setInterval(() => pump(performance.now()), KEEPALIVE_MS);
         void client.connect().catch((error: unknown) => {
           banner.refuse(error instanceof Error ? error.message : String(error));
         });
@@ -2764,6 +3075,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
       last = 0;
       accumulator = 0;
+      lastPumpMs = 0;
       raf = requestAnimationFrame(frame);
     },
     stop(): void {
@@ -2775,9 +3087,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisible);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointerup', onPointerUp);
+      for (const kind of ['pointermove', 'pointerdown', 'pointerup'] as const) {
+        canvas.removeEventListener(kind, applyCursor);
+      }
+      window.removeEventListener('keydown', applyCursor);
       canvas.removeEventListener('pointercancel', onPointerCancel);
       canvas.removeEventListener('mouseleave', onLeave);
       root.removeEventListener('wheel', onWheel, { capture: true });

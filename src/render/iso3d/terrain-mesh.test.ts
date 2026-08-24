@@ -624,3 +624,66 @@ describe('removing a chunk', () => {
     expect(meshes(handle.group).length).toBe(before);
   });
 });
+
+describe('a window is the mesh the whole-world build would have made (spec 212)', () => {
+  /**
+   * The editor stopped meshing every chunk at open and meshes what the camera
+   * frames instead. The claim that makes that a change of *which* rather than
+   * of *what* is this one: the chunks a window meshes are byte for byte the
+   * chunks the eager build produced for them, and in this file that is
+   * assertable vertex by vertex rather than by eye.
+   */
+  const world = testWorld();
+  const doc = exportMap({ world, props: [], seed: 7, arena: ARENA, options: OPT });
+  const map = loadMap(parseMap(serializeMap(doc)));
+
+  /** Every mesh's vertex data, keyed so two builds can be compared out of order. */
+  const rows = (handle: TerrainMeshHandle): string[] =>
+    meshes(handle.group)
+      .map((mesh) => {
+        const position = attribute(mesh, 'position');
+        const colour = attribute(mesh, 'color');
+        return JSON.stringify({
+          position: position ? [...position].map((v) => Number(v.toFixed(4))) : null,
+          colour: colour ? [...colour].map((v) => Number(v.toFixed(4))) : null,
+        });
+      })
+      .sort();
+
+  it('meshes a subset of the chunks and draws each of them identically', () => {
+    const all = map.chunks;
+    expect(all.length).toBeGreaterThan(4);
+    // A window: the chunks whose origin is in the left half of the world.
+    const middle = (Math.min(...all.map((c) => c.originX)) + Math.max(...all.map((c) => c.originX))) / 2;
+    const inWindow = all.filter((c) => c.originX <= middle);
+    expect(inWindow.length).toBeGreaterThan(0);
+    expect(inWindow.length).toBeLessThan(all.length);
+
+    // Built the way the editor builds it: empty, then one chunk at a time,
+    // deliberately not in the order the eager build walks them.
+    const windowed = buildTerrainMeshFromChunks(map.meshLayers, []);
+    for (const chunk of [...inWindow].reverse()) windowed.rebuild(chunk);
+
+    const eagerWindow = buildTerrainMeshFromChunks(map.meshLayers, inWindow);
+    expect(rows(windowed)).toEqual(rows(eagerWindow));
+    expect(rows(windowed).length).toBeGreaterThan(0);
+  });
+
+  it('leaves nothing of a chunk it never meshed, and everything of one it did', () => {
+    const all = map.chunks;
+    const one = all[0];
+    if (!one) throw new Error('the test world produced no chunks');
+
+    const single = buildTerrainMeshFromChunks(map.meshLayers, []);
+    expect(single.pickTargets.length).toBe(0);
+    single.rebuild(one);
+    const drawn = single.pickTargets.length;
+    expect(drawn).toBeGreaterThan(0);
+
+    // And dropping it puts the handle back where it started -- which is what
+    // makes panning away and back cost nothing but the rebuild.
+    expect(single.remove(one.layerId, one.coord.cx, one.coord.cz)).toBe(true);
+    expect(single.pickTargets.length).toBe(0);
+    expect(meshes(single.group).length).toBe(0);
+  });
+});

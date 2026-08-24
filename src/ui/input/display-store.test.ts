@@ -10,8 +10,12 @@ import {
   DEFAULT_SHOW_FPS,
   DISPLAY_KEY,
   DISPLAY_VERSION,
+  loadDisplay,
+  loadMaxZoom,
   loadScale,
   loadShowFps,
+  resolveMaxZoom,
+  saveMaxZoom,
   migrateDisplay,
   parseDisplay,
   saveScale,
@@ -57,6 +61,7 @@ describe('the scale preference across a reload', () => {
       version: DISPLAY_VERSION,
       scale: 3,
       showFps: DEFAULT_SHOW_FPS,
+      maxZoom: 'supported',
     });
   });
 });
@@ -94,6 +99,7 @@ describe('what the store refuses', () => {
       version: DISPLAY_VERSION,
       scale: 'auto',
       showFps: DEFAULT_SHOW_FPS,
+      maxZoom: 'supported',
     });
   });
 });
@@ -167,5 +173,51 @@ describe('what a choice is called', () => {
       '3x',
       '4x',
     ]);
+  });
+});
+
+describe('the widest-zoom preference (spec 202)', () => {
+  it('reads as "supported" when nothing was ever written', () => {
+    expect(loadMaxZoom(storage())).toBe('supported');
+  });
+
+  it('round-trips a number, and keeps the other preferences', () => {
+    const store = storage();
+    saveShowFps(store, false);
+    saveMaxZoom(store, 900);
+    expect(loadMaxZoom(store)).toBe(900);
+    expect(loadShowFps(store)).toBe(false);
+  });
+
+  it('reads a document written before the setting existed', () => {
+    // The whole reason the version is here rather than a reason to reject: a v2
+    // profile has no zoom preference in it, which is the same thing as not
+    // having one.
+    const store = storage();
+    store.setItem(DISPLAY_KEY, JSON.stringify({ version: 2, scale: 2, showFps: false }));
+    const read = loadDisplay(store);
+    expect(read.maxZoom).toBe('supported');
+    expect(read.scale).toBe(2);
+    expect(read.showFps).toBe(false);
+  });
+
+  it('costs the default rather than the document when the value is nonsense', () => {
+    const store = storage();
+    for (const bad of [0, -5, Number.NaN, 'wide', null, {}]) {
+      store.setItem(DISPLAY_KEY, JSON.stringify({ version: 3, scale: 'auto', showFps: true, maxZoom: bad }));
+      expect(loadDisplay(store).maxZoom).toBe('supported');
+      // A camera that cannot frame anything would be a worse answer than a
+      // default, and losing the scale beside it would be worse still.
+      expect(loadDisplay(store).scale).toBe('auto');
+    }
+  });
+
+  it('resolves the sentinel against whatever the build is sized for', () => {
+    // The point of the sentinel: the number lives beside the camera, and this
+    // module may not import it. So a cap that moves takes every profile that
+    // never overrode it along.
+    expect(resolveMaxZoom('supported', 420)).toBe(420);
+    expect(resolveMaxZoom('supported', 380)).toBe(380);
+    expect(resolveMaxZoom(900, 420)).toBe(900);
   });
 });

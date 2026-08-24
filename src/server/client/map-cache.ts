@@ -7,8 +7,14 @@
  * stream.
  *
  * The cache is per session and in memory. Persisting it would buy a warm reload
- * and cost a quota story and a staleness story; the whole map is under a
- * megabyte and a session asks for each chunk exactly once.
+ * and cost a quota story and a staleness story.
+ *
+ * Since spec 208 it also **forgets**. It used to have `accept` and no
+ * counterpart, so a session held every chunk it had ever walked past: a circuit
+ * of the shipped map left 392 held against a 25-chunk request window, and a map
+ * four times the size is four times that. `evictBeyond` is the other half, and
+ * the radius it is called with is derived from the request radius rather than
+ * chosen -- see {@link evictBeyond}.
  */
 
 import type { MapChunk } from '../../terrain/map.js';
@@ -108,12 +114,50 @@ export class MapChunkCache {
    * set: a player dropping into a cold cache should get the ground under their
    * own feet before the ground at the edge of the frame, and with a budget per
    * broadcast the difference is several seconds of standing on nothing.
+   *
+   * `lead` is where the body is *going* (spec 214), and it changes the
+   * question from "how far away is this ground" to "how soon will I be standing
+   * on it". Nearest-first is exactly right for a player who is not moving and
+   * exactly wrong for one who is: the chunk directly ahead at the edge of the
+   * window ranks in the same ring as the forty-seven behind and beside it, so
+   * with the server's bucket refilling at a bounded rate the ground a body is
+   * about to walk onto arrives after ground it has already left.
+   *
+   * The rank is **distance to the walk, then distance to the body**, and the
+   * pair is what makes it a tilt rather than a lurch. A chunk is projected onto
+   * the segment from the body to the lead and ranked first by how far off that
+   * line it sits, so the corridor the body is about to walk down comes forward
+   * whole; ties then go to whatever is nearest the body, so the corridor is
+   * served outward from the feet rather than from the horizon. The ground being
+   * stood on is the only chunk that scores zero on both, so it is still asked
+   * for first -- a bias toward the horizon that starved the ground under the
+   * feet would be worse than no bias at all.
+   *
+   * With no lead the segment is a point, both keys are `chebyshev(chunk, at)`,
+   * and the order is byte for byte what it always was.
+   *
+   * What this deliberately does not do is widen anything: the candidates are
+   * still generated from the window around `(x, z)` and a lead outside it asks
+   * for nothing new. This reorders a request stream; it does not extend one.
    */
-  wanted(x: number, z: number, radius: number, budget: number, tick = 0): ChunkRequest[] {
-    const out: { req: ChunkRequest; distance: number }[] = [];
+  wanted(
+    x: number,
+    z: number,
+    radius: number,
+    budget: number,
+    tick = 0,
+    lead: { readonly x: number; readonly y: number } | null = null,
+  ): ChunkRequest[] {
+    const out: { req: ChunkRequest; offLine: number; distance: number }[] = [];
     for (let layer = 0; layer < this.info.layers.length; layer++) {
       const at = this.coordsAt(layer, x, z);
       if (!at) continue;
+      const toward = lead ? this.coordsAt(layer, lead.x, lead.y) : null;
+      // The walk, in chunk indices. A zero-length one is a standing player and
+      // collapses every projection below onto the body's own chunk.
+      const vx = toward ? toward.cx - at.cx : 0;
+      const vz = toward ? toward.cz - at.cz : 0;
+      const along = vx * vx + vz * vz;
       for (let cz = at.cz - radius; cz <= at.cz + radius; cz++) {
         for (let cx = at.cx - radius; cx <= at.cx + radius; cx++) {
           const k = key(layer, cx, cz);
@@ -122,9 +166,15 @@ export class MapChunkCache {
           // Still in flight, unless it has been in flight too long to believe.
           const asked = this.inFlight.get(k);
           if (asked !== undefined && tick - asked < CHUNK_RETRY_TICKS) continue;
+          const dx = cx - at.cx;
+          const dz = cz - at.cz;
+          // Clamped, so ground *behind* projects onto the body rather than onto
+          // an imaginary extension of the walk going the wrong way.
+          const t = along > 0 ? Math.min(1, Math.max(0, (dx * vx + dz * vz) / along)) : 0;
           out.push({
             req: { layer, cx, cz },
-            distance: Math.max(Math.abs(cx - at.cx), Math.abs(cz - at.cz)),
+            offLine: Math.max(Math.abs(dx - t * vx), Math.abs(dz - t * vz)),
+            distance: Math.max(Math.abs(dx), Math.abs(dz)),
           });
         }
       }
@@ -133,6 +183,7 @@ export class MapChunkCache {
     // runs of the same path ask for the same chunks in the same order.
     out.sort(
       (a, b) =>
+        a.offLine - b.offLine ||
         a.distance - b.distance ||
         a.req.layer - b.req.layer ||
         a.req.cz - b.req.cz ||
@@ -181,4 +232,49 @@ export class MapChunkCache {
     this.inFlight.delete(k);
     if (reason === ChunkDeniedReason.Unknown) this.absent.add(k);
   }
+
+  /**
+   * Drop every held chunk further than `radius` chunks from `(x, z)`, and every
+   * request outstanding for one (spec 208).
+   *
+   * The radius is the caller's and is expected to be **wider than the request
+   * radius**, because the one thing eviction must not do is fight the streamer.
+   * Requested inside `MAP_CHUNK_REQUEST_RADIUS` and dropped outside
+   * `MAP_CHUNK_KEEP_RADIUS`, a chunk between the two is held and not asked for:
+   * a player crosses two whole chunks past the edge of what they are streaming
+   * before anything goes, and two back before it is asked for again. There is no
+   * position at which one pass drops what the next pass asks for.
+   *
+   * An evicted chunk returns to **not held, not in flight, not absent** -- the
+   * same state `deny` puts a temporarily-refused one in -- so `wanted` re-raises
+   * it on a later pass with no new state and no new path.
+   *
+   * `absent` is deliberately left alone. A chunk the server says does not exist
+   * still does not, and re-asking for it on every lap would be a request storm
+   * for ground that is never coming.
+   *
+   * Chebyshev distance, like `wanted`: interest is a square window, so eviction
+   * has to be square too or the corners of what is being streamed are dropped
+   * the moment they arrive.
+   */
+  evictBeyond(x: number, z: number, radius: number): readonly ChunkRequest[] {
+    const gone: ChunkRequest[] = [];
+    for (const [k, held] of this.chunks) {
+      const at = this.coordsAt(held.layer, x, z);
+      // A layer this point is not in cannot say how far away anything is, so
+      // nothing in it is dropped. Keeping is the safe direction.
+      if (!at) continue;
+      const distance = Math.max(Math.abs(held.cx - at.cx), Math.abs(held.cz - at.cz));
+      if (distance <= radius) continue;
+      this.chunks.delete(k);
+      this.inFlight.delete(k);
+      gone.push({ layer: held.layer, cx: held.cx, cz: held.cz });
+    }
+    // Deterministic, so two runs of the same walk evict in the same order and a
+    // caller may compare the lists.
+    gone.sort((a, b) => a.layer - b.layer || a.cz - b.cz || a.cx - b.cx);
+    if (gone.length > 0) this.revision++;
+    return gone;
+  }
+
 }

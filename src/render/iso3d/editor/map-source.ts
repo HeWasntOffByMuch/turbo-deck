@@ -2,14 +2,13 @@ import {
   createArenaWorld,
   exportMap,
   loadMap,
-  parseMap,
   worldVegetation,
   type LoadedMap,
   type MapDocument,
 } from '../../../terrain/index.js';
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
 import { mapFilename } from './persistence.js';
-import shippedMapText from '../../../../maps/arena.json?raw';
+
 
 /**
  * Where the editor's map comes from (spec 049, redecided in 176).
@@ -19,8 +18,8 @@ import shippedMapText from '../../../../maps/arena.json?raw';
  * being able to assert on it in Node.
  *
  * The map it opens is **the map the game plays** -- `maps/arena.json`, the file
- * `src/server/world/map-file.ts` boots from and the Play tab imports through the
- * same `?raw` module. It did not used to be. The editor baked a world from
+ * `src/server/world/map-file.ts` boots from and the Play tab fetches through the
+ * same `map-asset.ts` (spec 203; it was a shared `?raw` module before that). It did not used to be. The editor baked a world from
  * `viewSeed()`, which falls back to the clock, so every session opened a
  * different generated world while the game played the shipped arena, and nothing
  * placed in the editor -- a marker least of all -- had anywhere to arrive. That
@@ -66,6 +65,21 @@ export function editorMapChoice(search: string): EditorMapChoice {
   return new URLSearchParams(search).get('map') === 'generated' ? 'generated' : 'shipped';
 }
 
+/**
+ * Where the shipped map comes from (spec 203, a document since 200).
+ *
+ * Handed in rather than reached for, the way `StorageLike` is: in a browser it
+ * is `map-asset.ts`'s fetch of a manifest and its regions, and in Node it is
+ * `loadMapFile`. Without the seam this module could only be exercised where a
+ * `fetch` works, and the whole reason it was split out of the view was so the
+ * editor's relationship with the terrain system could be asserted in Node.
+ *
+ * A *document* rather than text since the map became many files: there is no
+ * single string to hand over any more, and `parseMap` has already run by the
+ * time either reader has something to give.
+ */
+export type ReadMapDocument = () => Promise<MapDocument>;
+
 export interface OpenedMap {
   readonly document: MapDocument;
   readonly map: LoadedMap;
@@ -95,17 +109,29 @@ export function bakeEditorMap(seed: number): { document: MapDocument; map: Loade
  * the text is what the server reads and what the Play tab hashes, and a map that
  * only the editor would accept is not the map being played.
  */
-export function shippedEditorMap(): { document: MapDocument; map: LoadedMap } {
-  const document = parseMap(shippedMapText);
+export async function shippedEditorMap(read: ReadMapDocument): Promise<{ document: MapDocument; map: LoadedMap }> {
+  const document = await read();
   return { document, map: loadMap(document) };
 }
 
-/** What the editor opens, and what to call it. */
-export function openEditorMap(search: string, seed: number): OpenedMap {
+/**
+ * What the editor opens, and what to call it.
+ *
+ * Asynchronous since spec 203, because the shipped map is fetched rather than
+ * bundled. The generated branch still needs nothing but a seed and resolves
+ * immediately -- it is `async` for one shape rather than two, since a caller
+ * that had to know which branch it was on would be a caller that has to know
+ * where the map came from.
+ */
+export async function openEditorMap(
+  search: string,
+  seed: number,
+  read: ReadMapDocument,
+): Promise<OpenedMap> {
   if (editorMapChoice(search) === 'generated') {
     const baked = bakeEditorMap(seed);
     return { ...baked, name: mapFilename(baked.document), from: `generated world, seed ${seed}` };
   }
-  const opened = shippedEditorMap();
+  const opened = await shippedEditorMap(read);
   return { ...opened, name: SHIPPED_MAP_NAME, from: SHIPPED_MAP_NAME };
 }

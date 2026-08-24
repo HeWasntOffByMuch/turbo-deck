@@ -27,7 +27,7 @@ import type { TerrainChunk } from '../../terrain/chunk.js';
 import type { TerrainWorld } from '../../terrain/types.js';
 import { vegetationColliders, type Prop } from '../../terrain/vegetation.js';
 import type { MapInfoMessage } from '../net/map-messages.js';
-import type { HeldChunk } from './map-cache.js';
+import type { ChunkRequest, HeldChunk } from './map-cache.js';
 import { chunksToDocument } from './map-rebuild.js';
 import { createWorldColliders } from '../../sim/collision.js';
 import { ARENA_OBSTACLES } from '../../sim/constants.js';
@@ -288,6 +288,75 @@ export class StreamedMap {
       }
     }
     return out;
+  }
+
+  /**
+   * Every chunk held, as references (spec 208).
+   *
+   * For the renderer's reconcile: the cache is what decides residency, and this
+   * side finds out by comparing rather than by being told. A message saying
+   * "these went" would be a second description of the same fact, and one that
+   * can be dropped.
+   */
+  heldRefs(): ChunkRequest[] {
+    const out: ChunkRequest[] = [];
+    for (const key of this.held) {
+      const colon = key.indexOf(':');
+      const comma = key.indexOf(',', colon);
+      out.push({
+        layer: Number(key.slice(0, colon)),
+        cx: Number(key.slice(colon + 1, comma)),
+        cz: Number(key.slice(comma + 1)),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Give up chunks the client has walked away from (spec 208).
+   *
+   * The counterpart to {@link add}, and it returns the same two kinds of thing:
+   * what stopped existing, and what has to be **re-meshed because its
+   * neighbour** stopped existing. A chunk's apron is built from the ground next
+   * to it, so dropping one leaves the four beside it drawing a seam against
+   * ground that is no longer there -- the same reason `add` re-meshes its edge
+   * neighbours, in the other direction.
+   *
+   * `removed` and `restitch` are separated because the caller does two different
+   * things with them: one is `TerrainMeshHandle.remove`, the other is the
+   * ordinary build-and-adopt path. Merging them would make the renderer ask "did
+   * this one go away or not" per entry, which is a question it should not have.
+   */
+  remove(refs: readonly ChunkRequest[]): { removed: ChunkRef[]; restitch: ChunkRef[] } {
+    const removed: ChunkRef[] = [];
+    const gone = new Set<string>();
+    for (const ref of refs) {
+      const key = `${String(ref.layer)}:${String(ref.cx)},${String(ref.cz)}`;
+      if (!this.held.has(key)) continue;
+      const layerId = this.info.layers[ref.layer]?.id;
+      if (layerId === undefined) continue;
+      if (!this.loaded.store.removeChunk(layerId, ref.cx, ref.cz)) continue;
+      this.held.delete(key);
+      gone.add(key);
+      removed.push(this.refFor(ref.layer, ref.cx, ref.cz));
+    }
+
+    // Gathered after every removal rather than during, so a neighbour that is
+    // itself being dropped in the same pass is not queued to be rebuilt.
+    const restitch: ChunkRef[] = [];
+    const seen = new Set<string>();
+    for (const ref of refs) {
+      for (const [dx, dz] of EDGE_NEIGHBOURS) {
+        const cx = ref.cx + dx;
+        const cz = ref.cz + dz;
+        const key = `${String(ref.layer)}:${String(cx)},${String(cz)}`;
+        if (gone.has(key) || seen.has(key)) continue;
+        if (!this.has(ref.layer, cx, cz)) continue;
+        seen.add(key);
+        restitch.push(this.refFor(ref.layer, cx, cz));
+      }
+    }
+    return { removed, restitch };
   }
 
   /**

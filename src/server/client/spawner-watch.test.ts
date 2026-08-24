@@ -19,7 +19,7 @@ import { GameClient } from './game-client.js';
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 const file = loadMapFile();
-const built = buildWorldFromMap(file.doc, file.text);
+const built = buildWorldFromMap(file.doc, file.mapId);
 
 function harness(): { server: GameServer; transport: LoopbackTransport } {
   const transport = new LoopbackTransport();

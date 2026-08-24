@@ -67,6 +67,12 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 197) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 197) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
+| `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
+| `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
+| `npx tsx scripts/bench-grow.ts` | What a grow costs, whole-world against partial. Flat is the invariant (spec 209) |
+| `npx tsx scripts/probe-editor-ground.ts` | Whether the editor's ground window really meshes and evicts, in a browser (spec 212) |
+| `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
+| `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -164,10 +170,55 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  (`bake-map.ts` defaults to seed 1, and the arena was seed 1 with
                  no parts); spec 165 grew the map and the coincidence went with
                  it. Checked in so the world reviews as a diff.
+                 recipes/shore.json is the one a coastline is grown from
+                 (spec 210), and the number worth knowing is its **depth**: the
+                 shipped map has 212 walkable chunks within two of undeclared
+                 space and **not one chunk of sea**, so its whole perimeter is
+                 ground ending at nothing, with the sim's wall at exactly the
+                 same place. A strip `n` chunks deep gives `n - 1` rows of true
+                 sea, because `bakePart` eases the recipe in over a skirt where
+                 it meets existing ground -- so a shore is grown
+                 `MAP_CHUNK_REQUEST_RADIUS + 1` deep, measured: 3 clears an
+                 edge, 4 and 5 buy nothing.
                  recipes/ are the feature lists parts are grown from (spec 083) --
                  `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
                  --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
-                 rather than regenerating it. A recipe is the only place natural
+                 rather than regenerating it -- and since spec 209 it reads only
+                 the regions the bake reaches rather than the world. Spec 204 had
+                 made a grow *write* only what it touched and it still opened
+                 everything to get there: 6.9s on a 12,960-chunk map to change
+                 one region, of which 1,691ms was joining every region, 1,234ms
+                 `growMap` over the whole store and 3,990ms re-splitting all of
+                 it. **35ms now, and flat** -- the whole-world path is a function
+                 of how big the map is and this one of how big the *part* is.
+                 What made it possible is that the code already said how far a
+                 bake reaches: `bakePart`'s stitch walks out `SKIRT_CELLS`
+                 looking for a corner the store holds, which is 4 cells against
+                 28 per chunk, so the read is the rectangle plus one chunk and
+                 `bakeReadBorder` derives that rather than typing it. Everything
+                 else `growMap` wants is manifest-level.
+                 The merge rule is one sentence and is what makes it exact rather
+                 than approximately right: **the part's regions are authoritative
+                 for what is in them, the previous manifest for everywhere else.**
+                 That covers a chunk that moved between regions and one that
+                 stopped existing, not just the append case -- and it means the
+                 border regions a part only *read* come back byte-identical, so
+                 writing them again is a no-op rather than a special case. The
+                 one thing it cannot express is a region emptied *entirely*,
+                 since a part that produces no region for a coordinate is saying
+                 nothing about it rather than "it is gone"; that cannot arise
+                 from growing, and it is a test rather than a hope.
+                 Two things moved with it. `RegionEntry` gained a `cells` count,
+                 because the unfilled-rim warning needs each chunk's
+                 `cols x rows` -- a chunk on a flank can be short -- and
+                 coordinates without sizes could not answer it; it is not hashed
+                 into `mapId`, so adding it left every region file and the world's
+                 identity untouched. And `writeSplit` stopped deciding staleness
+                 by what it was handed to write, which was the same thing while
+                 every write was the whole world and **deletes the entire map**
+                 the first time it is handed the three regions a grow changed:
+                 the manifest is the only thing that makes a region reachable, so
+                 the manifest is the only thing that can say a file is not. A recipe is the only place natural
                  language enters: an agent writes one, it is reviewed as JSON,
                  and nothing at runtime reads a model.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
@@ -223,6 +274,63 @@ src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  so `crowd.ts` re-sorts by distance and breaks ties on entity id,
                  because the linear program's answer can depend on the order its
                  half-planes arrive in.
+                 nav-tiles.ts is nav that is not sized by the map (spec 205).
+                 `createNavGrid` allocates over `colliders.bounds` -- the whole
+                 world rectangle -- so route planning cost what the *map* was
+                 rather than what was near anybody: 3.08 M cells per body radius
+                 and five radii today, 246 M cells and 2.2 GB at the 4x target,
+                 and `warmRouting` spending it all at boot. Making terrain lazy
+                 does not help, because a lattice is a function of the rectangle
+                 alone. So the lattice is cut into **tiles**, built on demand and
+                 dropped when nothing is near them, and a **window** -- the
+                 rectangle a route is searched in -- is assembled by copying
+                 tiles into the flat arrays `findPath` already walks. Measured:
+                 `bench-map`'s `navWindow` column is flat while the world grows
+                 sixteenfold, where the `navWarm` it replaced tracked the world.
+                 A tile is an **interest chunk**, and that is the one number in
+                 it that had to be chosen rather than derived: `NAV_CELL_SIZE` is
+                 10 and a *map* chunk is 616 units, so 61.6 cells, and tiles of
+                 61.6 do not tile a lattice of whole cells -- while an interest
+                 chunk is 400, exactly 40, and is already what `activeChunks` and
+                 `isSimulated` count in. So a `ChunkKey` is already a tile key.
+                 A tile holds heights and one graded `cells` array per radius, and
+                 deliberately **no components**: ground sampling is 86% of what a
+                 grid costs and is radius-independent, so heights are shared by
+                 every radius, while connectivity is not a tile-local property at
+                 all and labelling happens over the assembled window or nowhere.
+                 Copied rather than looked up per cell, because A* reads
+                 neighbours in its innermost loop and that would be a tile lookup
+                 on every expansion of every route to save a memcpy that happens
+                 when residency changes. Cached at the *tile* rather than at the
+                 window because `HEIGHT_CACHE` never evicts -- harmless while
+                 there is one grid shape per ground, and one entry per place
+                 anybody has ever stood the moment the window moves.
+                 Two rules keep a window honest about being one, and the first
+                 was got backwards first. **A point outside is refused rather
+                 than clamped**: `cellOf` clamps, which is right for a world grid
+                 -- outside is a body that walked past the edge of the ground,
+                 and `bounds` is explicitly not the play area -- and silently
+                 turns "there is no way to my target" into "there is a way to
+                 this other spot" for a window, which is the failure
+                 `routeToward` already names when it refuses to hand a ring point
+                 to `findPath`. **A component touching the edge is never a
+                 pocket**, because its true size is unknown and judging it small
+                 makes `freeCellNear` refuse a corridor that merely enters at a
+                 corner. What the spec asked for and does *not* happen is
+                 blocking the window's rim: A* cannot leave a window whatever the
+                 rim says, a tile is graded knowing the colliders that reach into
+                 it so there is no unsampled ground inside one, and worse, a
+                 blocked outer ring is a ring no component can contain -- so the
+                 pocket rule could never have fired. The two rules cancelled, and
+                 the tests written for them are the only reason that is a
+                 correction rather than a bug.
+                 `gradeNavCells` came out of `createNavGrid` for this: a tile and
+                 a world grid go through **one description of what blocks a
+                 body**, which is what makes "a window is the grid the old
+                 builder would have made" a claim about one function rather than
+                 about two agreeing. It is asserted directly, while that builder
+                 is still there to compare against -- same cells, same heights
+                 exactly, same route for 49 pairs of points.
 src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
                  small document and explicitly none of the bind-pose, skinning,
                  retarget and family machinery src/units/ exists to manage for a
@@ -665,6 +773,77 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  order. The labels avoid every word `keyLabel` already makes:
                  `Right` alone is taken -- it is what `ArrowRight` comes back as
                  -- so the pointer says `Right Click`;
+                 Since spec 198 a `TabPanel` scrolls its **own body**: each
+                 tab's content is wrapped in a scroller when it is built, so the
+                 strip is that scroller's *sibling* and **a tab strip is never
+                 inside the thing it scrolls**. That is a fact about the widget
+                 tree rather than a rule a screen has to remember, and it exists
+                 because whether a tabbed screen scrolled used to be the mount's
+                 decision -- and neither answer it can give keeps the tabs
+                 reachable. Wrapped in one `ScrollView`, which is what the mount
+                 does to every screen, reading the bottom of the character
+                 sheet's skill tree scrolled the tab headers clean off the top of
+                 the window and there was no way back to Attributes without
+                 scrolling up first. *Un*wrapped, which is how the options window
+                 is registered, a keybinding category with more rows than the
+                 window is tall met `Linear.shareSpace`'s overflow branch instead
+                 -- every row shrunk toward nothing, no bar, and the rows at the
+                 bottom unreachable rather than merely off screen. It costs
+                 nothing where nobody wanted it: a `ScrollView` offered an
+                 unbounded height measures to its content, so a panel inside
+                 somebody else's scroller still scrolls nothing and behaves
+                 exactly as it did. One scroller **per tab** rather than one for
+                 the body, because spec 124's rule reaches the offset too -- the
+                 comment that rule is written under names "a scroll position" as
+                 one of the things nobody thinks of as state, and a shared
+                 scroller clamps a long tab's offset against a short tab's
+                 content the moment you switch. Two consequences worth knowing.
+                 A screen that pins a band *above* the strip has to hand the
+                 wheel down (`CharacterScreen.onEvent` into `wheelBody`), since a
+                 notch over the heading has nothing above it that scrolls and a
+                 window that scrolls everywhere except its own top inch reads as
+                 a broken wheel. And a hit test against a tab's rows has to be
+                 inside `bodyViewport()`: a row scrolled out of the body keeps
+                 the rectangle it was last arranged into, which is the same class
+                 of bug `showing()` was written for, one level out.
+                 Since spec 199 `combat.stop` is a control rather than a row.
+                 It had been listed under Combat, bound to `X`, rebindable and
+                 saved since spec 125 and reached **nothing** -- spec 183's
+                 finding one tab over, and for the same reason: every action that
+                 was not a move, a slot, a window or the cancel fell off the end
+                 of `decideControlDown`. It ships on `Space` now and drops
+                 everything a body is committed to in one press: the wind-up, the
+                 standing attack order, the walk over to a drop, a pending aim,
+                 a confirmed one, the click-to-move order and its route, and
+                 whatever is held. The id does not move, because a stored profile
+                 references it; the label does, because "Stop" beside "Cancel
+                 cast" does not say which is which. Three rules. It is
+                 **unconditional** -- Escape asks whether anything is committed to
+                 and reaches for the menu when nothing is (spec 135), and one
+                 control that sometimes opens a window is enough. **Nothing new
+                 crosses the wire**, because stopping is the *absence* of a
+                 request: `moveIntent` yields (0,0) and the server stops the body,
+                 and the one thing that does need saying is already
+                 `CancelCast`. And **a control still physically down is disarmed
+                 until it is let go**, which is the rule the feature does not work
+                 without and the one no test in this tree could have found: a held
+                 key repeats `keydown` at the platform's own rate and `onKeyDown`
+                 has never read `event.repeat`, so every repeat put `move.north`
+                 straight back in `held` and the walk somebody asked to stop
+                 resumed on its own half a second later. It catches the stop's own
+                 key first -- Space held down fires once rather than sending
+                 `cancelCast` thirty times a second. `npx tsx
+                 scripts/probe-stop.ts` is the half no headless test can see, and
+                 the measurement that makes it honest is that it checks the
+                 browser *marked* its synthesised presses as repeats before
+                 believing what it measured from them: a stop that "held" against
+                 events that were never repeats is evidence of nothing. It reads
+                 `data-orders` (what has been asked for, in a fixed vocabulary, so
+                 a missing word is a specific drop that did not happen) beside
+                 `data-self-at` (whether the body is actually still moving), and
+                 needs both -- a stop that cleared the bookkeeping and left the
+                 legs running is the failure worth catching, and the first
+                 attribute alone would report it as a pass;
                  render/ is the only impure part. Everything else runs in Node.
                  Since spec 131 all but the HUD are in the Play tab, over
                  the world -- mounted by src/render/iso3d/world/ui-screens.ts,
@@ -1199,6 +1378,112 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  solidity and the water line, a prop's colour comes from its own
                  part rather than from what it stands on, and a marker sits at a
                  height.
+                 ground-residency.ts is which ground is meshed (spec 212), and
+                 it is the other half of the editor's boot: `map.chunks` plus
+                 `buildTerrainMeshFromChunks` was 4.9s on the shipped map and
+                 ~73s of the ~148s projected at the 4x target, and nothing was
+                 ever dropped -- `TerrainMeshHandle.remove` exists for spec 085's
+                 part removal and spec 208 borrowed it for the *client*, while
+                 the editor called it from nowhere on the boot path. The mesh
+                 opens **empty** now and `pumpGround` meshes what the camera
+                 frames from the pivot outward, dropping what it has panned away
+                 from: measured in a browser on the shipped map, 20 chunks of
+                 810 at the open, 39 zoomed out, 25 back in. The editor's whole
+                 open is 9.4s to ~197ms, and 84% of what is left is `parse` --
+                 which spec 207 named as the next thing and 204's split made
+                 possible.
+                 The keep window is **derived, not chosen**, the way spec 208
+                 derives keep from request: the one thing eviction must not do is
+                 fight the fill. It is the chunk-space **bounding box of what is
+                 in view grown by two chunks**, rather than the world-unit pad
+                 the spec asked for -- a chunk has no single world size, since
+                 flank chunks are short, and `store.chunksInRect` already owns
+                 the question. That also makes the no-oscillation rule hold by
+                 construction: owed is inside the view, the view is inside its
+                 own box, the box is inside the padded one. Asserted anyway over
+                 every camera position, because "by construction" is a claim
+                 about code somebody can edit.
+                 Three things differ from 208 and each was learned rather than
+                 assumed. **"A pan out and back holds what it started with" is
+                 false here and should be** -- that property holds on the client
+                 because its request radius fills the band inside the keep
+                 radius, where this fill meshes only what is *in view* and keeps
+                 wider, so held converges on (ever meshed within the keep box).
+                 What must not happen is that going round again adds more, and
+                 that is what is asserted. **Nothing beside a dropped chunk needs
+                 re-meshing**: there the store loses the chunk so its neighbours'
+                 aprons go stale, here the store is untouched and only what is
+                 *drawn* changes, so a chunk's mesh is a pure function of the
+                 store whichever neighbours happen to be on the graph. So
+                 eviction runs **unbudgeted** -- it can never drop what the same
+                 frame wants, and deferring it holds memory to save nothing. And
+                 residency is **per layer**, because the rock tiers are layers
+                 with their own chunk grids and one window over all of them would
+                 let the ground's view evict a tier.
+                 The consequence worth knowing is picking: `pickTargets` is the
+                 terrain meshes, so ground with no mesh cannot be raycast.
+                 Everything in view is meshed, so it only bites during fill-in,
+                 and `pickPlane` is the stated fallback -- a tool that refuses a
+                 null pick must go on refusing rather than acting at the flat
+                 plane's height, or a stroke over ground that has not arrived
+                 writes at the wrong altitude.
+                 `npx tsx scripts/probe-editor-ground.ts` reads `data-ground`,
+                 whose `meshed` is counted off `pickTargets` rather than off the
+                 ledger, so a window that meshed nothing and believed otherwise
+                 reads as broken. `probe-map-editor.ts` is the picking half and
+                 needed no change: it places a marker by clicking the ground and
+                 reads it back out of the saved file, which is exactly what fails
+                 if a window leaves a hole under the cursor.
+                 prop-residency.ts is which trees arrive next (spec 211), and it
+                 exists because `buildPropField` composed every region in the
+                 world before the editor could draw a frame -- **half** of
+                 everything opening the editor costs, at every world size
+                 `bench-editor.ts` measures, and 4.5s on the map we ship. Spec
+                 207 named `buildChunks` as the editor's next problem and it is
+                 under a third; nothing had measured the rest. The field is
+                 built `deferred` now and `pumpProps` composes regions nearest
+                 the camera's **pivot** first, so the trees you are looking at
+                 arrive before the far corner of the map -- 4,153ms to 1ms at
+                 the open. It is the pivot rather than the rectangle the camera
+                 frames because this camera *orbits*: its footprint is not
+                 axis-aligned, and a rect standing in for it would be an
+                 approximation of a value used only to sort. The seam was
+                 already there and unused from here -- `adoptRegion` and
+                 `buildRegionInstances` are spec 181's, built for the Play tab.
+                 What does **not** move with them is the composition itself: the
+                 Play tab's props are immutable once streamed, so a worker can
+                 hold a copy, and the editor's change under every tool, so a
+                 worker's copy of them would be a second description of the
+                 document. Paced rather than moved.
+                 Two things in it were learned by getting them wrong. **The
+                 budget cannot bound the frame**, and pretending otherwise would
+                 be the comment lying: one region is 55ms to compose (median
+                 over the shipped map's 72, 77ms at the worst), `FrameBudget` is
+                 checked *after* a unit of work and nothing here can subdivide a
+                 region, so the pump does exactly one region a frame. What that
+                 buys is still the feature -- the first region lands in 55ms
+                 where the eager field took 4.5s to land anything, and the tab
+                 pans and paints throughout -- and the fix if a bounded frame is
+                 ever wanted is a smaller region, which spec 195 chose for the
+                 *Play tab* on a real GPU and left `?props=` to re-ask. And
+                 **`held` is not a subset of the regions that exist**: an edit
+                 marks every region its rectangle touched, empty ones included,
+                 so `held.size >= regions.size` can be true with regions still
+                 owed -- written as the size comparison it obviously wants to
+                 be, the fill stops dead after a stroke near the edge of the map
+                 and the trees never arrive, silently. `propRegionsPending`
+                 counts instead, and the test pins the trap rather than the
+                 happy case. The grid itself moved to `prop-regions.ts`, which
+                 is `props.ts` minus three, so the pure half can key a region
+                 without a second copy of the arithmetic.
+                 `npx tsx scripts/probe-editor-props.ts` is the half no headless
+                 test can see, and the reason it exists is that every rule above
+                 is green in Node beside a frame loop that might call none of
+                 them -- an editor that opens instantly and draws no trees ever
+                 passes all of them. It reads `data-props`, published from what
+                 is **attached to the scene graph** rather than from what was
+                 asked for, so a region composed into batches that never reached
+                 the group reads as absent.
                  `npx tsx scripts/preview-parts.ts` drives the tools in a real
                  browser, since the drag and the commit live in view.ts, and
                  `npx tsx scripts/probe-map-editor.ts` is the one that asks
@@ -1263,11 +1548,238 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the generator, and terrain reaches clients as MapInfo plus the
                  MapChunks a player is standing near -- a seed cannot describe a
                  map somebody edited by hand.
+                 Boot **meshes nothing** (spec 207). `loadMap` used to build
+                 every chunk's mesh data eagerly -- a jittered world position and
+                 a normal per corner, 54 million height lookups over a 4x map --
+                 and `buildWorldFromDocument` reads `world` and `props` and never
+                 touches it: `TerrainChunk` is what something *draws*, and the
+                 only caller that wants it is the map editor. So the whole of a
+                 server boot went into arrays discarded on the next line: 32.4s
+                 of 34s at 12,960 chunks. `LoadedMap.chunks` is a memoized getter
+                 now -- the same snapshot, taken at first read instead of at load
+                 -- and `buildWorldFromMap` goes 32,402ms to 731ms at the 4x
+                 target and 1,810ms to 34ms at today's size. Asserted by
+                 **counting** rather than by timing, since a clock in the suite is
+                 a test about the container it runs in.
+                 That replaced a designed phase rather than completing one: the
+                 plan called for a `ChunkSource` with asynchronous budgeted
+                 acquisition and three residency states, and measuring said boot
+                 was a wasted eager computation rather than a residency problem --
+                 with heap at 0.26 GB rather than the 2.0 GB projected before spec
+                 204 took `nav` out of the format. It is deferred with the reading
+                 that would bring it back written down: `bench-map`'s `heap` past
+                 ~1 GB at the target size, or its `build` past ~2s. What the
+                 change does *not* fix is the **editor's** boot -- `buildChunks`
+                 still costs 30.7s at 4x when it is called, and the editor calls
+                 it, which is a different problem because the editor genuinely
+                 wants the mesh.
+                 Since spec 208 a client **forgets** what it walked past. Nothing
+                 on the map path removed anything: `MapChunkCache` had `accept`
+                 and no counterpart, `StreamedMap` never called
+                 `MapChunkStore.removeChunk`, and terrain geometry is disposed by
+                 `TerrainMeshHandle.remove` -- which exists for spec 085's part
+                 removal and had no caller here. Driven around a circuit of the
+                 shipped map, a real cache held **392 chunks against a 25-chunk
+                 request window**, and stopped at 392 only because a circuit
+                 revisits its own ground. `MAP_CHUNK_KEEP_RADIUS` is
+                 `MAP_CHUNK_REQUEST_RADIUS + 2`, **derived rather than chosen**,
+                 because the one thing eviction must not do is fight the
+                 streamer: requested inside 2 and dropped outside 4, a chunk
+                 between them is held and unasked, so a player crosses 1,232
+                 units past the edge of what they are streaming before anything
+                 goes and the same distance back before it is asked for again.
+                 That there is no position where one pass drops what the next
+                 asks for is asserted over every position *in* a chunk rather
+                 than over the middle, since a boundary bug is a bug about where
+                 in the chunk you are standing. An evicted chunk returns to "not
+                 held, not in flight, not absent" -- the state `deny` already
+                 puts a temporarily-refused one in -- so `wanted` re-raises it
+                 with no new state and no new path; `absent` is deliberately
+                 *not* cleared, because ground the server says does not exist
+                 still does not and re-asking each lap is a request storm.
+                 Four layers let go, and the renderer finds out by
+                 **reconciling** against the cache's held list rather than by
+                 being told: a message saying "these went" is a second
+                 description of the same fact, and one that can be dropped,
+                 leaving geometry drawn over ground nothing holds. The worker
+                 keeps a `StreamedMap` of its own and gets an `evict` request,
+                 without which it would hold every chunk of the session on the
+                 thread nobody is watching -- half the memory the eviction was
+                 for. Dropping one chunk re-meshes the four beside it, because a
+                 chunk's apron is built from its neighbours: the mirror of what
+                 an arrival does, in the other direction.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
+                 net/transport-ws.ts pings (spec 197), and the reason is the one
+                 thing spec 157 could not have known: it moved the heartbeat off
+                 `requestAnimationFrame` onto a wall-clock `setInterval` because
+                 "a browser clamps it to about a second when hidden but never
+                 stops", and that is true for five minutes. Chrome throttles a
+                 page hidden and silent past that to **one timer firing a
+                 minute**, and an open socket does not exempt it -- so a
+                 ten-second `CONNECTION_TIMEOUT_TICKS` dropped anybody who went
+                 to read their email. The heartbeat that survives is the one the
+                 page is not holding: RFC 6455 makes answering a ping the
+                 *endpoint's* job, so a browser pongs from its network stack with
+                 no JavaScript running at all. `Channel.onAlive` is how that
+                 reaches `lastSeenTick`, and it is **optional** on purpose --
+                 `transport.ts` is "the smallest thing both implementations can
+                 honestly provide", a loopback channel has no wire to prove
+                 anything about, and an absent member says so where a required
+                 one would make it lie. It is also *better* evidence than the
+                 application ping it backs up: that one proves the tab's
+                 JavaScript is running, this proves the socket is, and the case
+                 the timeout exists for -- a dead router, a suspended phone, no
+                 `close` -- answers neither.
+                 What that leaves the client's interval doing is the visible
+                 case and the reconnect ladder, and the ladder had the same bug
+                 in miniature (`render/iso3d/world/keepalive.ts`): it advanced by
+                 a *constant* 30 ticks per firing, which is 60 a second only if
+                 something is really firing twice a second. At the hidden tab's
+                 1s clamp the ladder took 79 seconds against a 30-second resume
+                 grace; under the intensive throttle its first rung landed a
+                 minute out, past the point where there was a body left to resume
+                 into. It converts the gap it actually got now, so the ladder is
+                 the same number of seconds however often the timer fires -- and
+                 a long gap delivered in one step is safe by construction, since
+                 `ReconnectingChannel.deliver` opens at most one attempt per call
+                 and its rung advances on a *failed attempt* rather than on the
+                 clock. The other half is that `visibilitychange` is finally
+                 listened to: coming back to the tab is the one moment the cause
+                 of an outage is known to be gone, and it was the one moment the
+                 client did nothing, waiting out the timer that was the problem.
+                 world/nav.ts and world/nav-residency.ts are which window a body
+                 routes in (spec 205), over `src/sim/nav-tiles.ts`. The obvious
+                 answer -- one window over the bounding box of every active chunk
+                 -- is the bug in a different hat, because two players ten
+                 thousand units apart have a bounding box the size of the world;
+                 so the active set is cut into **connected clusters** and each
+                 gets its own window, with merging and splitting both being
+                 "recompute when the set changes". Affordable for the same reason
+                 the labelling is: the set changes when somebody crosses a chunk
+                 boundary, every few seconds at walking speed. Eight-connected,
+                 since chunks meeting at a corner are two paces apart and
+                 splitting them would put two windows over one fight.
+                 The padding is **derived, not chosen**: a window has to hold both
+                 ends of every route, and of the three goals `routeToward` is
+                 given two reach past the body asking -- `walkHome` at
+                 `LEASH_RADIUS` and `flee` at `FLEE_DISTANCE`. Unpadded,
+                 `walkHome`'s route is refused, and that is not graceful
+                 degradation but the loss of spec 076's stated feature: a monster
+                 led round a wall comes back round it rather than pressing into
+                 it. Padding rather than clamping the goal into the window, for
+                 the reason `routeToward` gives about ring points.
+                 `nav.ts` is a cache and one invalidation rule, and the rule is
+                 the whole file: **windows are dropped whenever the active set
+                 changes, tiles are kept while anything wants them.** Different
+                 questions -- a tile is expensive (its ground is sampled) and
+                 stays correct wherever the players go, while a window is cheap
+                 to reassemble and is only correct *as* a window, because its
+                 component labels describe a rectangle and the rectangle moved.
+                 The active set is compared by **content**, since
+                 `activeChunks()` hands back its live set and rebuilds it
+                 whenever any player changes chunk -- so neither identity nor
+                 size tells "unchanged" from "rebuilt", and getting that wrong
+                 throws away every window on a tick somebody crossed a boundary
+                 somewhere else entirely.
+                 Tiled nav is switched on by **measuring the world**, not by a
+                 flag: below one window the window is the world and the tiling is
+                 pure overhead, which is every sandbox, every headless test and
+                 the loopback tab -- so they keep routing exactly as they did,
+                 through `navGridFor`.
+                 The determinism argument is that a window is a pure function of
+                 its rectangle and its tiles and a tile of where it is, so the
+                 only way a cache could feed wall-clock into the sim is if what
+                 is *held* changed what is *answered*. Asserted both ways: byte
+                 for byte at the cache, and as a real walled-off fight replayed
+                 to bit-identical state on a fresh nav and on one already walked
+                 round the far side of the map. That test carries a **control**,
+                 and the control earned its place at once -- the first fixture
+                 put the monster 400 units from a 300-unit notice range, so
+                 nothing engaged, nav was never asked, and both replays passed as
+                 two identical recordings of nothing happening.
+                 What a *fast* body does to all of that is spec 214, and the
+                 three things it found are one shape: every rule about which
+                 ground the client gets, and when, was keyed on something that
+                 quietly stops being true when a body moves fast. (The fourth
+                 thing the same report turned up -- a `PredictStep` built from
+                 the first `Stats` and never rebuilt, so a player who equipped
+                 anything carrying `moveSpeed` kept predicting the speed they had
+                 before it -- is `PredictionBuffer.setStep` and
+                 `gear-speed.test.ts`, and was not about chunks at all.)
+                 **The serve window is one chunk wider than the ask window.**
+                 `MAP_CHUNK_SERVE_RADIUS` is derived rather than judged -- the
+                 client asks from `prediction.drawn`, which the sim keeps within
+                 `correctionThreshold` of the server's position plus at most
+                 `MAX_EASED_OFFSET` of undecayed visual offset, under a hundred
+                 units against 616-unit chunks, and a disagreement smaller than a
+                 chunk moves an index by at most one. Measured at the *same*
+                 radius the whole leading-edge column came back `OutOfRange`
+                 whenever the two straddled a boundary, and spec 208 made that
+                 cost more rather than less: at radius 2 a refused column is a
+                 fifth of everything the client holds, where at 6 it was a
+                 thirteenth. It sits between the two radii 208 derived and
+                 disturbs neither. Nothing a client *claims* enters that
+                 arithmetic, so the guard is unchanged.
+                 **The request order follows the body.** `wanted` ranked by how
+                 far away ground is, which is right for a standing player and
+                 wrong for a running one -- the chunk directly ahead at the edge
+                 of the window sat in the same ring as the ones behind and beside
+                 it. It ranks by distance to the *walk* now (the segment from the
+                 body to where it will be in `CHUNK_LEAD_SECONDS`, clamped so
+                 ground behind projects onto the body) and then by distance to
+                 the body, so the corridor comes forward whole and is served
+                 outward from the feet rather than from the horizon; the ground
+                 being stood on is the only chunk that scores zero on both. With
+                 no lead the segment is a point, both keys collapse to the old
+                 one, and a standing player's stream is byte for byte what it was
+                 -- and the candidates still come from the window around the
+                 body, so this reorders a request stream and cannot widen one.
+                 The lead is a *duration* rather than a distance, so it scales
+                 with the body: half a chunk at walking speed, most of the window
+                 at `MOVE_SPEED_HARD_MAX`, which is the rule working rather than
+                 overreaching -- a body that crosses the window in two seconds
+                 should be asking for its far edge. It comes from the direction
+                 the last input *asked* for rather than a differenced velocity:
+                 it is what the body is committed to, it is known on the tick it
+                 is made, and a correction easing in underneath does not smear
+                 it.
+                 And **one lost message may not wedge the load**, which is the
+                 half that matches "no loaded trees, and navigation broken from
+                 that point on". `ChunkIngest` is a promise in two halves --
+                 `offer` when ground lands, `complete` when its triangles come
+                 back -- and nothing ever failed the second: `map-worker-core`
+                 drops a reply for a layer it cannot mesh or a chunk that will not
+                 build, `view.ts` skips `complete` when the scene refuses the
+                 adopt, nothing re-offers, and nothing aged the queue out. Offer
+                 two chunks, complete one, wait sixty seconds of total quiet, and
+                 the other's prop regions are *still* `inFlight` -- their trees
+                 never drawn for the session -- with `pending` still above zero,
+                 which is the count the load gate and the first nav grid both
+                 wait on. `meshTimeoutMs` sweeps it, and sweeping is the right
+                 repair rather than a shrug: what a settled region needs is that
+                 the **store** has its ground, and the store had it at insert --
+                 the mesh is the picture, not the data the trees stand on. So the
+                 region stays dirty and rebuilds from the store, which is exactly
+                 what an arriving reply would have caused, and the region is
+                 deliberately *not* touched, since a sweep is the one moment the
+                 ground has demonstrably stopped moving. Two more of the same
+                 kind in `view.ts`: `navRequested` is a one-in-flight latch and a
+                 latch with no way out is a wedge, so it re-arms after
+                 `NAV_REPLY_TIMEOUT_MS` (`navGeneration` already refuses a stale
+                 grid that lands late); and every chunk taken out of
+                 `pendingInserts` is forwarded to the worker rather than only
+                 those that dirtied something here, because the two stores are
+                 the same world only for as long as they are fed the same chunks.
+                 `src/render/iso3d/world/fast-run.test.ts` is the end-to-end half
+                 -- a real server over the shipped map, a real client, a real
+                 `RoutePlanner`, at `MOVE_SPEED_HARD_MAX` -- and it asserts the
+                 two things that would show the reported symptoms: a tick spent
+                 standing on ground the map declares and the client has not been
+                 sent, and a refusal on the edge the body is running toward.
                  sim/attack-timing.ts is how long an attack takes, in every sense
                  of the question (spec 144), and the only place any of it is
                  worked out. The idea it exists to hold is that the **attack
@@ -1553,6 +2065,84 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  pause the player cannot act on is not a decision. Nothing of
                  this rides the wire: the tell is the body turning to face you
                  and standing still, and facing already replicates.
+                 Since spec 213 a flight also **commits to somewhere**.
+                 `fleeFrom` used to re-derive "directly away from my attacker"
+                 every tick from the attacker's *current* position, which is
+                 stable only while the attacker is slower than its quarry -- and
+                 no player is. A player at 155 closing on a grazer at 40
+                 overshoots *through* the fleeing body every frame, so the away
+                 vector flipped sign at 60Hz: measured off a real `step`, the
+                 velocity alternated +40, -40, +40, -40 and the body oscillated
+                 between two coordinates two thirds of a unit apart for the rest
+                 of its flight. It never dropped its target and never left
+                 `Fleeing` early -- the one temperament whose entire behaviour is
+                 *leaving* simply could not leave, which from outside is
+                 indistinguishable from having given up. `ServerEntity.fleeGoal`
+                 is that commitment: written by `provoke`, which is the one
+                 moment the attacker's position is the right one to measure from,
+                 cleared by `calm` and `engage`, and moved by exactly two events
+                 -- the goal is reached, or a fresh blow lands. "Hit it again and
+                 it bolts anew" is a rule a player reads off the screen; a
+                 heading re-derived every 16ms is not.
+                 `sim/idle.ts` is the other ninety-nine percent of a monster's
+                 life (spec 213), and before it there was no answer at all: a
+                 body with no target stood on the exact coordinate its spawner
+                 put it on forever, and `walkHome` returned one to its anchor
+                 carrying whatever damage had been done on the way out -- which
+                 is pull-and-reset, wide open, with the leash itself doing the
+                 work. One function and one call site, so coming home, milling
+                 about, walking a beat and recovering are one answer rather than
+                 four: home first if it has been dragged off its ground, then the
+                 plan its row authors, recovering throughout.
+                 A row authors that plan as a second union beside `Temperament`
+                 rather than a fifth member of it, because the two are
+                 independent questions -- a temperament is how a body meets a
+                 *player*, this is what it does when there is none, and the
+                 ravager ignores you and still grazes. Folding them together
+                 would be five temperaments becoming fifteen. Same authoring
+                 rule, which is why both are unions: **a row only names a number
+                 the behaviour it chose actually reads**, so a sentinel has no
+                 radius and a wanderer has no post count. Absent means
+                 `DEFAULT_IDLE`, filled in by `withTraits` exactly as `traits`
+                 is, so "all units wander" is a property of the default rather
+                 than of five rows each remembering to say so -- and the one row
+                 that declares `sentinel` is the training dummy, which would
+                 otherwise be a training dummy you had to chase.
+                 Three rules. **Nothing draws from the `Rng`**: a spot is a hash
+                 of `(entity id, epoch)` through `shared/hash.ts`, the precedent
+                 `crowd.ts`'s `symmetryBreak` set and for the reason stated
+                 there -- the sim's draw *count* is load-bearing, and a field of
+                 monsters sampling the PRNG sixty times a second would move every
+                 combat roll in the world. `idle.test.ts` asserts that as a
+                 property: the `Rng` state after twenty seconds with six
+                 wandering monsters equals the state after twenty seconds with
+                 none. **So there is no new entity state for any of it** -- where
+                 a body is headed is a pure function of its id and the tick, and
+                 a goal that is derived cannot be persisted wrong, expire wrong,
+                 or be forgotten to be cleared when a fight starts. The epoch is
+                 offset by a per-body hashed phase and a patrol's direction and
+                 start angle are hashed too, so a herd does not step off together
+                 and two sentries do not orbit as a formation. And **arriving is
+                 not marked anywhere**: the goal does not move until the plan's
+                 own clock turns it over, so a body that has reached it simply
+                 stands there -- *that standing is the dwell*, and "pick a spot,
+                 hang out on it, move on" needs nothing counting the hanging out.
+                 Recovery is the fourth thing and is deliberately **not** part of
+                 that order, because it is not a place: it is gated on
+                 `StatusId.InCombat` rather than on arriving home, so the rule
+                 stays one sentence -- *a monster nobody is fighting recovers* --
+                 instead of a special case bolted to the leash. Linear rather
+                 than a percentage of what is missing, since a curve that
+                 approaches full without reaching it leaves the exploit intact at
+                 the tail. It is also the one place in the sim that asks for
+                 *less* than a body's full speed: `IdleGoal.pace` is a magnitude
+                 on the intent vector, which `resolveMovement` already honours
+                 and `applyCrowd` already round-trips exactly, because a field of
+                 monsters sprinting between random points reads worse than a
+                 field of statues. Coming home is the exception at full pace --
+                 a body dawdling through the distance a leash just measured would
+                 be catchable for the whole return trip, which is the exploit
+                 arriving by the other door.
                  `loot.ts` and `sim/loot.ts` are what a kill leaves behind
                  (spec 158), and the two of them draw one line: **the item is
                  decided when the body falls and its presentation unfolds
@@ -2209,6 +2799,50 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  is still true. `magnitude` does not ride at all, on the same
                  argument that made poise a fraction: the picture says *that* a
                  body is Exposed, never by how much.
+                 Three things inside a tick used to be sized by **what the
+                 world contains** rather than by what is near anybody, and spec
+                 206 is all three. With one player and 49 chunks active on every
+                 row, a tick went from 102us to 7,492us as the world's spawn
+                 point count went from 14 to 12,800 -- residency identical
+                 throughout. It is flat now, and 32us at the far end.
+                 The biggest one had nothing to do with residency and was
+                 already expensive at today's size: **`segmentClear` walked
+                 every collider in the world**, all 28,919 of them, at 84us a
+                 call. Spec 192 built `ColliderIndex` precisely because
+                 "`pushOutOfObstacles` and `circleBlocked` used to test every
+                 circle in the world"; it indexed those two and left this one --
+                 which is what `pathClear` is and what aggro's line of sight is,
+                 so every routing monster paid for every tree on the map every
+                 tick. Off the index it is 1.27us, and the query is the
+                 segment's **bounding box** rather than a walk down the cells it
+                 crosses: a long diagonal over-fetches, and a few dozen circles
+                 against 28,919 is not worth a second query shape. Safe in the
+                 deterministic core because the answer is "did anything hit",
+                 which is order-independent -- exactly the property
+                 `pushOutOfObstacles` does *not* have, and why `circlesNear`
+                 promises ascending original order and `circlesInRect` does not.
+                 `nearestQuarry` is handed the **players**, gathered once by
+                 `playersOf` at the top of the tick, rather than walking the
+                 whole entity map once per noticing monster. The gathered list
+                 keeps the entity map's insertion order, because the tie rule is
+                 a strict `<` and reordering it is a different answer on a tie.
+                 And `runSpawners` visits only the spawn points in active
+                 chunks, through an index memoized on the point list -- built
+                 per tick it would be the walk it replaces. The resident points
+                 are then **sorted back into authored order**, which is not an
+                 optimisation: a spawn takes the next entity id, so visit order
+                 decides which body gets which id, and ids are replicated;
+                 sorting makes the result independent of the order
+                 `activeChunks` happens to iterate in, which is a `Set`'s
+                 insertion order and nobody's intended contract. Its population
+                 cap is counted **once per tick** from the live entity map
+                 rather than once per spawner. Not from
+                 `ChunkManager.populationOf`, which the plan proposed and which
+                 has no caller anywhere in the tree: that index is maintained by
+                 `chunks.track`/`remove`, which run *after* `step()` returns, so
+                 inside a tick it holds the previous tick's occupancy and would
+                 still be counting a body the sweep a few passes above
+                 `runSpawners` has already buried.
                  `sim/blow.ts` is one blow with all of it applied, in one
                  order, written once -- and the line in it that must not move is
                  that **crit is rolled before the weak point and always**: the Rng
@@ -2497,6 +3131,54 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  at its uphill edge and floats over the downhill one by whatever
                  the ground fell across it, which for a mark this size is a couple
                  of units on anything walkable),
+                 crosshair.ts (what the pointer *is* over the world, spec 200:
+                 two marks that are the same mark at two lengths, authored as a
+                 9x9 table of `#` in `pixel-font.ts`'s register and rendered as
+                 crisp rects -- which is why the art is odd-sided, since what a
+                 crosshair marks is its centre pixel and an even box has none.
+                 The **small** one -- a centre dot and the four arm tips -- says
+                 a click would act on the body under the pointer; the **full**
+                 one says a skill is armed and the next click places it.
+                 Everywhere else the page's own arrow stands, because a mark that
+                 is always on says nothing by being on.
+                 They are **drawn in the page** rather than handed to CSS as
+                 cursor images, and that is the whole lesson of this spec. The
+                 first two cuts were a `cursor: url(...) 11 11` data URI, and on
+                 a real machine the mark landed four to seven pixels up and left
+                 of the point it was marking -- about *half* the hotspot -- with
+                 the pointer provably still. It took a phone recording of the
+                 screen to see at all, because neither a headless screenshot nor
+                 OBS captures what the compositor draws for a cursor; and the
+                 first fix, assigning the style inside the input event rather
+                 than in the frame, changed nothing. A hotspot is applied between
+                 the style and the glass by a layer that also has a device scale
+                 and a page zoom to apply, and CSS cannot ask what it did.
+                 Drawn, the mark is placed from the pointer position the game
+                 already tracks, in the coordinate space everything else on that
+                 layer is placed in -- so there is no hotspot to be right about,
+                 and a probe can finally *measure* where the mark went, which is
+                 the check that matters and the one a cursor image made
+                 impossible. It costs a frame against a composited cursor, so it
+                 is placed from the pointer event as well as from the frame.
+                 `worldCursor` says `none` exactly where `worldMark` draws
+                 something, derived from it rather than deciding twice: a hidden
+                 cursor with nothing drawn is a pointer the player cannot find.
+                 The order is the order of commitment -- an armed skill beats a
+                 body and beats the drop's pointer (spec 158), since its click
+                 *places* the aim rather than doing anything to what is
+                 underneath -- and what counts as a body is `attackable`'s
+                 answer, the same predicate the right-click attack order reads,
+                 so the mark and what the button does cannot disagree. Nothing is
+                 drawn while the pointer is over the interface or off the canvas,
+                 since `cursor` is already null there: a button keeps the arrow
+                 that says it is a button, and no hidden cursor is left over a
+                 window. `npx tsx scripts/probe-aim-cursor.ts` is the measurement
+                 -- the mark's own rectangle against the point the pointer was
+                 moved to, in every state -- and its first run caught two things
+                 at once: an unsized holder, whose absolutely-positioned children
+                 are out of flow and so reported a zero rectangle eleven pixels
+                 up and left of the truth, and the deliberate rule above about
+                 the interface),
                  action-bar.ts, xp-bar.ts, pool-bars.ts and death.ts (the bottom
                  band, spec 164 -- everything the HUD grew along the edge of the
                  frame, each pure and each about one number). action-bar.ts is

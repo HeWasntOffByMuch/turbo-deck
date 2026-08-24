@@ -24,6 +24,18 @@ export const DEFAULT_SHOW_FPS = true;
 /** `'auto'` defers to `autoUiScale`; a number overrides it. */
 export type ScaleChoice = 'auto' | 1 | 2 | 3 | 4;
 
+/**
+ * How far out the camera may be zoomed (spec 202).
+ *
+ * `'supported'` -- the default -- means "whatever this build is sized for", the
+ * same shape `'auto'` has above and for the same reason: the number lives in
+ * `view-settings.ts` beside the camera, `src/ui/` may not import the renderer,
+ * and a copy of it here would be a second place to write down a constant that is
+ * going to move. A number is an override, and one past the supported cap is a
+ * dev setting the Display page marks as such.
+ */
+export type MaxZoomChoice = 'supported' | number;
+
 /** What the Display tab offers, in the order it offers them. */
 export const SCALE_CHOICES: readonly ScaleChoice[] = ['auto', 1, 2, 3, 4];
 
@@ -31,8 +43,12 @@ export const SCALE_CHOICES: readonly ScaleChoice[] = ['auto', 1, 2, 3, 4];
  * 2 adds `showFps` (spec 165). A version 1 document is still read -- it simply
  * has no frame-rate preference in it, which is the same thing as not wanting one.
  * That is the whole reason the version is here rather than the reason to reject.
+ *
+ * 3 adds `maxZoom` (spec 202), and reads a 1 or a 2 the same way: absent means
+ * `'supported'`, which is what every profile written before the setting existed
+ * meant by saying nothing.
  */
-export const DISPLAY_VERSION = 2;
+export const DISPLAY_VERSION = 3;
 export const DISPLAY_KEY = 'turbo-deck.ui.display';
 
 export interface StoredDisplay {
@@ -49,6 +65,8 @@ export interface StoredDisplay {
    * checkbox is how you turn it *off*.
    */
   readonly showFps: boolean;
+  /** See {@link MaxZoomChoice}. */
+  readonly maxZoom: MaxZoomChoice;
 }
 
 /** What a choice is called in the interface. One place, so the two ends agree. */
@@ -60,6 +78,15 @@ function readScale(raw: unknown): ScaleChoice | null {
   if (raw === 'auto') return 'auto';
   if (raw === 1 || raw === 2 || raw === 3 || raw === 4) return raw;
   return null;
+}
+
+function readMaxZoom(raw: unknown): MaxZoomChoice {
+  // Absent, or anything that is not a finite positive number, reads as
+  // `'supported'`. A preference nobody expressed is not a reason to throw the
+  // rest of the document away, and a nonsense one costs the default rather than
+  // a camera that cannot frame anything.
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
+  return 'supported';
 }
 
 /** Read whatever was stored, or null. Never throws. */
@@ -79,7 +106,7 @@ export function migrateDisplay(raw: unknown): StoredDisplay | null {
   // Absent means the default rather than false, so a profile written before
   // this preference existed does not read as "the player turned it off".
   const showFps = record['showFps'] === undefined ? DEFAULT_SHOW_FPS : record['showFps'] === true;
-  return { version: DISPLAY_VERSION, scale, showFps };
+  return { version: DISPLAY_VERSION, scale, showFps, maxZoom: readMaxZoom(record['maxZoom']) };
 }
 
 export function parseDisplay(text: string | null): StoredDisplay | null {
@@ -96,6 +123,7 @@ export const DISPLAY_DEFAULTS: StoredDisplay = {
   version: DISPLAY_VERSION,
   scale: 'auto',
   showFps: DEFAULT_SHOW_FPS,
+  maxZoom: 'supported',
 };
 
 /** The stored document, or the defaults. Never throws. */
@@ -123,6 +151,26 @@ export function saveScale(storage: StorageLike, scale: ScaleChoice, key = DISPLA
 
 export function saveShowFps(storage: StorageLike, showFps: boolean, key = DISPLAY_KEY): void {
   patch(storage, { showFps }, key);
+}
+
+export function saveMaxZoom(storage: StorageLike, maxZoom: MaxZoomChoice, key = DISPLAY_KEY): void {
+  patch(storage, { maxZoom }, key);
+}
+
+/** The stored preference, or `'supported'` -- which is what nothing stored means. */
+export function loadMaxZoom(storage: StorageLike, key = DISPLAY_KEY): MaxZoomChoice {
+  return loadDisplay(storage, key).maxZoom;
+}
+
+/**
+ * The stored preference as an actual number of world units.
+ *
+ * `supported` is handed in rather than imported, which is the whole point of the
+ * `'supported'` sentinel: this module may not reach into `view-settings.ts`, and
+ * the caller that can is the one place that knows what this build is sized for.
+ */
+export function resolveMaxZoom(choice: MaxZoomChoice, supported: number): number {
+  return choice === 'supported' ? supported : choice;
 }
 
 /** The stored preference, or `'auto'` -- which is also what nothing stored means. */
