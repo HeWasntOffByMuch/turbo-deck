@@ -611,6 +611,29 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
  * Stats as the sim and the client actually use them. Computed, broadcast, and
  * never written to the store.
  */
+/**
+ * A weapon's scaling letter, as an ordinal (spec 215).
+ *
+ * The *type* lives here rather than beside its behaviour because this file is
+ * the shared vocabulary the wire, persistence and the sim all agree on, and it
+ * deliberately imports nothing. `data/weapon-scaling.ts` declares the named
+ * constants (`ScalingGrade.S` and the rest), the ladder's bounds and every
+ * operation on one; this is the shape they satisfy.
+ *
+ * `0` is `None` and `6` is `S`. Ordinal rather than a letter union because
+ * every operation a grade has is step arithmetic and clamping.
+ */
+export type ScalingGrade = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+/** The three attributes that scale a weapon, in the order they are shown in. */
+export type ScalingAttribute = 'strength' | 'agility' | 'intelligence';
+
+/** One grade per participating attribute -- a weapon's row, or a resolved set. */
+export type WeaponScaling = Readonly<Record<ScalingAttribute, ScalingGrade>>;
+
+/** Grade *steps* a body's equipment, perks and buffs contribute. Not coefficients. */
+export type ScalingGradeModifiers = Readonly<Record<ScalingAttribute, number>>;
+
 export interface EffectiveStats {
   readonly maxHealth: number;
   /** World units per second. */
@@ -685,6 +708,27 @@ export interface EffectiveStats {
    * skill sits is the bag's question.
    */
   readonly skillAbilityIds: readonly string[];
+  /**
+   * The main hand's effective scaling, base plus this body's modifiers (spec 215).
+   *
+   * Resolved once here, through `effectiveScaling`, so the Damage row above and
+   * anything that wants to know *why* it is that number read the same three
+   * grades. A monster gets `NO_SCALING`: it has no weapon row to author one and
+   * its damage comes off its own table.
+   */
+  readonly weaponScaling: WeaponScaling;
+  /**
+   * The grade steps this body's equipment, milestones and synergies contribute
+   * (spec 215).
+   *
+   * Replicated beside the resolved grades above, and *not* redundant with them:
+   * those answer "what does the weapon I am holding scale with", and this is
+   * what the bag needs to answer the same question about a weapon it is only
+   * hovering over. Without it a tooltip would have to re-derive the player's
+   * modifiers from its own copy of the equipment, which is the second
+   * implementation of the resolver this spec exists to prevent.
+   */
+  readonly scalingModifiers: ScalingGradeModifiers;
   /**
    * Everything the six attributes derive (spec 147). See {@link TraitStats}.
    *

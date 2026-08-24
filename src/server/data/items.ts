@@ -8,6 +8,7 @@
 
 import type { EquipTarget } from '../state/types.js';
 import type { StatModifier } from './modifiers.js';
+import { ScalingGrade, type WeaponScaling } from './weapon-scaling.js';
 
 /**
  * The rarity tiers, in ascending order (spec 158). **Three, and on purpose.**
@@ -57,6 +58,24 @@ export interface ItemDefinition {
   /** Character level required to equip; below it the equip is rejected. */
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
+  /**
+   * Which attributes swinging this scales with, as a letter each (spec 215).
+   *
+   * The row's **base** scaling and only that: whatever the player is wearing is
+   * applied on top by `effectiveScaling`, which never writes back here. A row is
+   * a constant, and taking an amulet off restores the effective grades because
+   * nothing ever moved them.
+   *
+   * Absent is {@link NO_SCALING} -- correct for everything that is not a weapon,
+   * and correct for a main hand nobody has configured yet, which then deals its
+   * base damage with no attribute term rather than crashing or silently
+   * inheriting somebody else's letters. An empty hand is the one case that is
+   * *not* this: see `UNARMED_SCALING`.
+   *
+   * Only ever read for the main hand. Scaling on a helmet is inert, the same
+   * nothing a `basicAttackId` on one already is.
+   */
+  readonly scaling?: WeaponScaling;
   /**
    * The auto-attack this weapon swings with (spec 079), or absent for one that
    * changes numbers but not the motion.
@@ -120,6 +139,10 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     slot: 'mainHand',
     levelRequirement: 1,
     modifiers: { attackDamage: 3 },
+    // The plain blade, and the one row migrated to scale exactly as it did
+    // before spec 215: `A` is the grade `damagePerPoint` was chosen against, so
+    // its Strength term is the pre-spec 0.6 a point to the last decimal.
+    scaling: { strength: ScalingGrade.A, agility: ScalingGrade.D, intelligence: ScalingGrade.None },
   },
   {
     id: 'sword.keen',
@@ -131,6 +154,9 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     // Keen: the speed is the point of it (spec 070), so it says so as a
     // percentage rather than by shaving a tick off the base interval.
     modifiers: { attackDamage: 8, attackRange: 6, attackSpeedPct: 0.15 },
+    // Keen: the row already says the speed is the point of it, so the letters
+    // say the same thing. A finesse blade a Strength character can still swing.
+    scaling: { strength: ScalingGrade.B, agility: ScalingGrade.A, intelligence: ScalingGrade.None },
   },
   {
     id: 'maul.iron',
@@ -140,6 +166,10 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     slot: 'mainHand',
     levelRequirement: 5,
     modifiers: { attackDamage: 14, attackSpeedPct: -0.2, attackRange: 10, strength: 2 },
+    // +2 Strength, the slowest swing and the biggest number: nothing about this
+    // row was ever ambiguous. The single-attribute `S` the balance rule is
+    // written about -- it has to be able to compete with a three-letter hybrid.
+    scaling: { strength: ScalingGrade.S, agility: ScalingGrade.None, intelligence: ScalingGrade.None },
   },
   {
     id: 'staff.emberwood',
@@ -149,6 +179,11 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     slot: 'mainHand',
     levelRequirement: 4,
     modifiers: { attackDamage: 2, spellPower: 0.2, intelligence: 3, attackRange: 20 },
+    // The headline fix. +3 Intelligence, spell power, and two points of weapon
+    // damage -- and before spec 215 swinging it scaled off Strength, because
+    // every weapon did. `E` in Strength rather than `None` so that hitting
+    // something with a stick is still worth marginally more to a strong body.
+    scaling: { strength: ScalingGrade.E, agility: ScalingGrade.None, intelligence: ScalingGrade.A },
   },
   {
     id: 'bow.hunting',
@@ -161,6 +196,9 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     // The range is the weapon; the shot it names carries its own (spec 079), so
     // `attackRange` here only nudges what a melee swing would have reached.
     modifiers: { attackDamage: 5, attackSpeedPct: -0.1 },
+    // A drawn bow is a Strength act and an aimed one is not, which is why this
+    // is the one row with two live letters and neither of them top of the ladder.
+    scaling: { strength: ScalingGrade.D, agility: ScalingGrade.A, intelligence: ScalingGrade.None },
     basicAttackId: 'ranged.shot',
   },
   {
@@ -170,6 +208,9 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     slot: 'mainHand',
     levelRequirement: 1,
     modifiers: { attackDamage: 2, attackSpeedPct: 0.2, agility: 1 },
+    // +1 Agility, the fastest thing in the table and two points of damage: the
+    // pure-Agility counterpart to the maul, and priced the same way.
+    scaling: { strength: ScalingGrade.None, agility: ScalingGrade.S, intelligence: ScalingGrade.None },
     basicAttackId: 'ranged.star',
   },
   // --- off hand ---

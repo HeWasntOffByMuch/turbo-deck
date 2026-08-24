@@ -37,6 +37,7 @@ import { monsterTraits } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import type { EffectiveStats } from '../state/types.js';
 import { SCALING } from './scaling.js';
+import { NO_WEAPON_SCALING } from './weapon-scaling.js';
 
 /**
  * What a row actually authors (spec 147).
@@ -47,7 +48,10 @@ import { SCALING } from './scaling.js';
  * numbers per monster that nobody could tune relative to each other, and a row
  * added later would be a body that silently cannot be staggered.
  */
-export type AuthoredStats = Omit<EffectiveStats, 'traits' | 'skillAbilityIds'>;
+export type AuthoredStats = Omit<
+  EffectiveStats,
+  'traits' | 'skillAbilityIds' | 'weaponScaling' | 'scalingModifiers'
+>;
 
 /**
  * How a body meets a player (spec 163).
@@ -211,6 +215,11 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
       // a row in `data/abilities.ts` without `skill: true`, which is what every
       // ability in the table already is.
       skillAbilityIds: [],
+      // Not authorable either, and for the same shape of reason (spec 215): a
+      // weapon's scaling is a property of the row a *player* picks up, and a
+      // monster's damage comes off its own table. Filled in as "scales with
+      // nothing" so every body in the world answers the question.
+      ...NO_WEAPON_SCALING,
       traits: monsterTraits(monster.stats.maxHealth, power),
     },
   };

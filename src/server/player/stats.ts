@@ -29,6 +29,12 @@ import { SERVER_TICK_RATE } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { itemById } from '../data/items.js';
 import { above, SCALING } from '../data/scaling.js';
+import {
+  attributeScalingBonus,
+  effectiveScaling,
+  gradeModifiersFrom,
+  scalingOf,
+} from '../data/weapon-scaling.js';
 import type { StatModifier } from '../data/modifiers.js';
 import { armorFromAttributes, deriveTraits } from './derived.js';
 import { skillAbilityIdsOf } from './skill-slots.js';
@@ -57,8 +63,6 @@ export const HP_PER_CONSTITUTION = SCALING.constitution.healthPer;
 export const HP_PER_STRENGTH = SCALING.strength.healthPer;
 /** Health granted by each character level beyond the first. */
 export const HP_PER_LEVEL = 8;
-/** Attack damage per point of strength. */
-export const DAMAGE_PER_STRENGTH = SCALING.strength.damagePer;
 /**
  * What a body with nothing on it waits between basic attacks (spec 088).
  *
@@ -189,11 +193,30 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const turnRate = Math.max(30, BASE_TURN_RATE + SCALING.agility.turnPer * agility + bonus.turnRate);
 
+  // The Damage row (spec 215).
+  //
+  // What replaced two hard-coded attribute terms is one call through the
+  // resolver: the weapon says which attributes it scales with as a letter each,
+  // the player's equipment and passives shift those letters, and
+  // `attributeScalingBonus` turns the resolved grades into a number. Before
+  // this, `SCALING.strength.damagePer * strength + agility.damagePer * agility`
+  // was added for *every* weapon in the game, so the maul, the bow and the
+  // Emberwood Staff all bought their damage from the same stat and nothing a
+  // designer could write in `data/items.ts` changed it.
+  //
+  // Resolved once, here, and handed to the client on `EffectiveStats` -- the
+  // tooltip reads the same grades rather than working them out again.
+  const mainHand = player.equipment.mainHand;
+  const weapon = mainHand ? itemById(mainHand) : null;
+  const scalingModifiers = gradeModifiersFrom(bonus);
+  const weaponScaling = effectiveScaling(scalingOf(weapon?.scaling, weapon !== null), scalingModifiers);
+
+  // Base plus the attribute term, then the percentage, exactly as before: this
+  // spec changes what the attribute term *is*, not what happens to it after.
   const attackDamage = Math.max(
     0,
     (PLAYER_ATTACK_DAMAGE +
-      DAMAGE_PER_STRENGTH * strength +
-      SCALING.agility.damagePer * agility +
+      attributeScalingBonus({ strength, agility, intelligence }, weaponScaling) +
       bonus.attackDamage) *
       (1 + bonus.attackDamagePct),
   );
@@ -264,6 +287,8 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     resourceRegen,
     basicAttackId: basicAttackFor(player),
     skillAbilityIds: skillAbilityIdsOf(player.equipment),
+    weaponScaling,
+    scalingModifiers,
     // Derived last, because two of its fields are fractions of maxHealth and
     // one is a duration in ticks -- it needs the pool it is a fraction of, and
     // the tick rate the sim actually runs at.

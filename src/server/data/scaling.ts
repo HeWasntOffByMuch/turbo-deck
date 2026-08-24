@@ -108,8 +108,6 @@ export const SCALING = {
   respecCost: 40,
 
   strength: {
-    /** Attack damage per point. The existing coefficient, unchanged. */
-    damagePer: 0.6,
     /**
      * Health per point.
      *
@@ -154,7 +152,6 @@ export const SCALING = {
     turnPer: 30,
     /** Armour per point -- half Constitution's, and the reason is footwork. */
     armorPer: 0.004,
-    damagePer: 0.15,
     /** How long one `flow` stack lives, and how many may be held. */
     flowTicks: seconds(1.2),
     flowMaxStacks: 3,
@@ -240,6 +237,47 @@ export const SCALING = {
     monsterPoiseFraction: 0.35,
     /** Poise a monster regains per second. */
     monsterPoiseRegen: 6,
+  },
+
+  /**
+   * What a weapon's scaling letters are worth (spec 215).
+   *
+   * **The one place a grade becomes a number.** Nothing else in the tree may
+   * spell a coefficient: `coefficientOf` in `data/weapon-scaling.ts` is the only
+   * reader, the weapon rows author a *letter*, and the tooltip draws the letter
+   * it was authored with rather than inferring one back out of a number. So
+   * deciding that `S` is worth 1.30 is an edit here and nowhere else, and it
+   * reaches every `S` weapon in the game on the next tick.
+   *
+   * `damagePerPoint` is **one rate shared by all three attributes**, and that is
+   * what makes a grade mean something. Before this spec Strength bought 0.6
+   * damage a point and Agility 0.15, which is a four-to-one gap living
+   * underneath the grades -- an `A` in Agility would have been worth less than
+   * an `E` in Strength, and no letter a designer could write would have fixed
+   * it. The differentiation belongs in the grade or it belongs nowhere.
+   *
+   * It is `2/3` because `2/3 * 0.9` is exactly `0.6`: grade `A` reproduces the
+   * Strength rate this spec inherited, so migrating the existing weapons to `A`
+   * moves a Strength build's damage by nothing at all. Retuning `A` afterwards
+   * is a deliberate rebalance rather than a side effect, which is the whole
+   * reason this rate is its own constant instead of being derived from the
+   * ladder it was chosen against.
+   */
+  weaponScaling: {
+    damagePerPoint: 2 / 3,
+    /**
+     * Grade to coefficient. Keyed by the grade's own name, so a reader can check
+     * this against the ladder without counting array positions.
+     */
+    grades: {
+      none: 0,
+      E: 0.15,
+      D: 0.3,
+      C: 0.5,
+      B: 0.7,
+      A: 0.9,
+      S: 1.15,
+    },
   },
 } as const;
 
