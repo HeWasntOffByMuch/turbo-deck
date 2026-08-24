@@ -41,8 +41,13 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
  * numbers and different looks behave identically. It rides no wire either -- a
  * projectile entity's `typeId` is already its ability id, and this table is
  * shared code the client imports, so the look is a lookup rather than a field.
+ *
+ * `ember` is the one of the four that is mostly *paint* (spec 218): the mesh
+ * `ShotRig` builds for it is half the collision radius, because the silhouette
+ * of a ball of fire is the marks around it and a bead drawn at the full radius
+ * would have flames stuck to the outside of it.
  */
-export type ProjectileLook = 'orb' | 'arrow' | 'shuriken';
+export type ProjectileLook = 'orb' | 'arrow' | 'shuriken' | 'ember';
 
 export interface ProjectileSpec {
   /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 088). */
@@ -323,6 +328,45 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     projectile: { speed: 1150, arc: 0, radius: 6, lifetimeTicks: seconds(1.5), look: 'shuriken' },
     basicAttack: true,
     description: 'Sharpened on four edges and thrown flat.',
+  },
+  {
+    id: 'ranged.ember',
+    name: 'Ember Shot',
+    kind: 'projectile',
+    // Point-targeted like the other two weapon shots, so a throw past the
+    // staff's reach is refused rather than loosed at nothing.
+    targeting: 'point',
+    // 42 and 18 ticks: 60 against `BASE_ATTACK_TIME_TICKS`'s 72, so how often
+    // the staff throws stays the attack-speed stat's answer (spec 088) and the
+    // commitment sits between the bow's 0.8 and the star's 0.45.
+    windupTicks: seconds(0.7),
+    backswingTicks: seconds(0.3),
+    cooldownTicks: seconds(1),
+    cost: 0,
+    // Shorter than the bow's 420 and longer than the star's 300 (spec 218).
+    // Shorter than the bow is the design; longer than the star is the rarity --
+    // this is the level-4 rare against two level-1 commons. It is the reach
+    // `autoAttack` chases to and `startCast` refuses past, which is why the row
+    // carries it and the item does not.
+    range: 330,
+    // Nothing, since spec 217: a basic attack's damage is the weapon's own
+    // range, rolled in `resolveBlow`. What an Ember Shot hits for is
+    // `staff.emberwood`'s `{2, 5}` and the Intelligence term on top of it, so
+    // the number that decides how hard this lands is on the weapon a player
+    // picked up rather than on a row shared with whatever else throws one.
+    damage: 0,
+    // The slowest thing anybody throws here -- the arrow leaves at 900 and the
+    // star at 1150. That is the whole of what makes a fireball a shot you can
+    // see coming and step out of, which is spec 094's argument about wind-ups
+    // moved into the flight.
+    //
+    // The arc is a *look* and nothing else: `projectileHits` is a flat 2D
+    // overlap with no height term in it (spec 191). A quarter arc peaks 21
+    // units over a full-range throw, which is enough that the ball clears the
+    // grass and the smoke behind it bends.
+    projectile: { speed: 700, arc: 0.25, radius: 9, lifetimeTicks: seconds(1.5), look: 'ember' },
+    basicAttack: true,
+    description: 'A knot of fire, shaken off the charred head of the staff.',
   },
   {
     id: 'bolt.arcane',

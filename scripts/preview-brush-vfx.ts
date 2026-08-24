@@ -6,6 +6,19 @@
 //
 //   .claude/screenshots/brush-blood.png       the hit: lifecycle, bearings, seeds
 //   .claude/screenshots/brush-explosion.png   the blast: lifecycle, bearings, seeds
+//   .claude/screenshots/brush-shot.png        the ember shot in flight, and where
+//                                             it lands (spec 218)
+//
+// ## Why the shot is on this sheet rather than one of its own
+//
+// Because it is judged on the same two questions. `shot_ember` is a state played
+// on a moving body -- the affliction's shape, which is what argued
+// `preview-afflictions-vfx.ts` into a harness of its own -- but what a fireball
+// is judged on is exactly what a hit and a blast are judged on: whether the
+// paint is silhouettes or stipple, and whether two seeds are two paintings by
+// one artist. The one thing it needs that neither of the others does is
+// *motion*, and that is one call into the rig rather than a second definition of
+// crisp.
 //
 // ## Why this replaced the old harness
 //
@@ -248,6 +261,7 @@ async function main(): Promise<void> {
   const problems: string[] = [];
   const bloodRows: Row[] = [];
   const boomRows: Row[] = [];
+  const shotRows: Row[] = [];
 
   try {
     await waitForServer(`http://localhost:${PORT}/brush-scene.html`);
@@ -269,9 +283,22 @@ async function main(): Promise<void> {
 
     interface Shot {
       readonly label: string;
-      readonly kind: 'blood' | 'explosion';
+      readonly kind: 'blood' | 'explosion' | 'shot';
       readonly seed: number;
       readonly ticks: number;
+      /**
+       * `shot` only: which effect to fly.
+       *
+       * An id rather than a look, so this harness owns no copy of `SHOT_ART`
+       * and can be pointed at a second shot's paint the day there is one -- the
+       * same argument the rig's own `affliction(id, ...)` makes about
+       * `AFFLICTION_ART`.
+       */
+      readonly effectId?: string;
+      /** `shot` only: how far back the flight begins, so it fits the frame. */
+      readonly launch?: number;
+      /** `shot` only: world units a second, along the flight. */
+      readonly speed?: number;
       readonly from?: number;
       readonly radius?: number;
       readonly intensity?: number;
@@ -329,6 +356,13 @@ async function main(): Promise<void> {
             ...(input.from === undefined ? {} : { from: input.from }),
             ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
             ...(input.dissipates === undefined ? {} : { dissipates: input.dissipates }),
+          });
+        } else if (input.kind === 'shot') {
+          api.shot(input.effectId ?? 'shot_ember', {
+            seed: input.seed,
+            ...(input.radius === undefined ? {} : { radius: input.radius }),
+            ...(input.launch === undefined ? {} : { from: input.launch }),
+            ...(input.speed === undefined ? {} : { speed: input.speed }),
           });
         } else {
           api.explosion({
@@ -474,6 +508,119 @@ async function main(): Promise<void> {
       ]),
     });
 
+    // --- the ember shot (spec 218) ----------------------------------------
+    //
+    // The ball's own radius is 9 and it travels 273 units a second, so a tick is
+    // half a radius: by tick 20 it has crossed ten shot-lengths and everything
+    // behind it is the trail. That is why the samples run *early* -- the fire is
+    // renewed continuously and looks the same at tick 40 as at tick 12, and the
+    // only thing that changes across a flight is how much smoke is behind it.
+    //
+    // The camera is much tighter than either sheet above, and for the reason
+    // `preview-afflictions-vfx.ts` gives about its own: a blast is a hundred
+    // units across and needs room, and this is an 18-unit ball with sixty units
+    // of smoke behind it. Framed like a blast it is half a percent of the tile,
+    // which is *less subject than the seeds check needs difference*, so every
+    // measurement below would be a measurement of grass.
+    const FLIGHT_FRAME = 62;
+    const LAUNCH = 74;
+    const flightTicks = [2, 5, 9, 13, 18, 24];
+    shotRows.push({
+      title: 'the shot in flight (ticks; the trail is what grows, not the ball)',
+      tiles: await series(
+        flightTicks.map((tick) => ({
+          label: `t=${tick}`,
+          kind: 'shot' as const,
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          radius: 9,
+          launch: LAUNCH,
+          halfHeight: FLIGHT_FRAME,
+        })),
+      ),
+    });
+    // No `bearings` check on this row, and that is a statement rather than an
+    // omission: that check asks whether the ink survives being looked at from
+    // anywhere, which is the right question about a blast and the wrong one
+    // about a thing with a *direction*. Seen down the line of flight a trail is
+    // behind the ball and hidden by it, and it should be -- an arrow's streak
+    // does the same. What the row is for is the other half: that the ball reads
+    // from every seat, including the one where the trail does not.
+    shotRows.push({
+      title: 'the same flight from six camera bearings (end-on, the trail hides)',
+      tiles: await series(
+        Array.from({ length: COLUMNS }, (_, i) => ({
+          label: `cam ${Math.round((i / COLUMNS) * 360)}deg`,
+          kind: 'shot' as const,
+          seed: SEEDS[0] ?? 1,
+          ticks: 16,
+          radius: 9,
+          launch: LAUNCH,
+          azimuth: (i / COLUMNS) * Math.PI * 2,
+          halfHeight: FLIGHT_FRAME,
+        })),
+      ),
+    });
+    shotRows.push({
+      title: 'six seeds, one flight',
+      check: 'seeds',
+      tiles: await series(
+        SEEDS.map((seed, i) => ({
+          label: `#${i}`,
+          kind: 'shot' as const,
+          seed,
+          ticks: 16,
+          radius: 9,
+          launch: LAUNCH,
+          halfHeight: FLIGHT_FRAME,
+        })),
+      ),
+    });
+    // Standing still against travelling, which is the one comparison that can
+    // fail while every tile above looks right: at speed 0 the trail is laid on
+    // top of the ball and the whole thing is a bonfire. The two columns are the
+    // same effect, the same seed and the same tick.
+    shotRows.push({
+      title: 'a fireball is not a bonfire: the same effect at rest and at speed',
+      tiles: await series([
+        { label: 'v=0 t=9', kind: 'shot', seed: SEEDS[1] ?? 1, ticks: 9, radius: 9, launch: 0, speed: 0, halfHeight: FLIGHT_FRAME },
+        { label: 'v=0 t=18', kind: 'shot', seed: SEEDS[1] ?? 1, ticks: 18, radius: 9, launch: 0, speed: 0, halfHeight: FLIGHT_FRAME },
+        { label: 'v=273 t=9', kind: 'shot', seed: SEEDS[1] ?? 1, ticks: 9, radius: 9, launch: LAUNCH, halfHeight: FLIGHT_FRAME },
+        { label: 'v=273 t=18', kind: 'shot', seed: SEEDS[1] ?? 1, ticks: 18, radius: 9, launch: LAUNCH, halfHeight: FLIGHT_FRAME },
+        // ...and the landing it draws, which has no smoke in it at all.
+        //
+        // By **id**, and through the same standing-still path, rather than
+        // through the rig's `explosion()` helper: that one goes via
+        // `brushExplosionRequest`, which picks a preset by size and would hand
+        // back `explosion_brush_small` -- a different effect, with smoke in it,
+        // photographed under this one's label. `scale: 1` because since spec 218
+        // `scene.addEffect` plays an authored effect at its authored size, and
+        // this sheet has to show what the game shows.
+        {
+          label: 'burst t=6',
+          kind: 'shot',
+          effectId: 'ranged.ember.impact',
+          seed: SEEDS[4] ?? 1,
+          ticks: 6,
+          radius: 1,
+          launch: 0,
+          speed: 0,
+          halfHeight: 70,
+        },
+        {
+          label: 'burst t=16',
+          kind: 'shot',
+          effectId: 'ranged.ember.impact',
+          seed: SEEDS[4] ?? 1,
+          ticks: 16,
+          radius: 1,
+          launch: 0,
+          speed: 0,
+          halfHeight: 70,
+        },
+      ]),
+    });
+
     const shaderProblems = logs.filter((line) => /error|could not compile|shader/i.test(line) && !/favicon|404/i.test(line));
     if (shaderProblems.length > 0) problems.push(...shaderProblems);
   } finally {
@@ -483,8 +630,10 @@ async function main(): Promise<void> {
 
   writeFileSync(join(shots, 'brush-blood.png'), PNG.sync.write(sheet(bloodRows)));
   writeFileSync(join(shots, 'brush-explosion.png'), PNG.sync.write(sheet(boomRows)));
+  writeFileSync(join(shots, 'brush-shot.png'), PNG.sync.write(sheet(shotRows)));
   console.log(`wrote ${join(shots, 'brush-blood.png')}`);
   console.log(`wrote ${join(shots, 'brush-explosion.png')}`);
+  console.log(`wrote ${join(shots, 'brush-shot.png')}`);
 
   const report = (rows: readonly Row[], what: string): void => {
     console.log(`\n== ${what} ==`);
@@ -540,6 +689,7 @@ async function main(): Promise<void> {
 
   report(bloodRows, 'blood');
   report(boomRows, 'explosion');
+  report(shotRows, 'shot');
 
   // The blast must not be a radial star. A star is centred on its own origin and
   // even all round; a composition of lobes is not.

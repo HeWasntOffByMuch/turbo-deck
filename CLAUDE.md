@@ -3148,6 +3148,45 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
+                 shot-vfx.ts (the paint a shot flies with, spec 218: `SHOT_ART`
+                 says which effect each `ProjectileLook` carries, and the driver
+                 beside it starts one when a projectile comes into view and stops
+                 it when it leaves. Built to `affliction-vfx.ts`'s three rules
+                 because the machinery is the same and so are the failure modes
+                 -- it holds a **handle** rather than an id, since `play` returns
+                 0 on refusal and a driver recording ids cannot tell "asked for,
+                 did not start" from "started"; it asks `isLive` every frame,
+                 since a full instance pool *evicts* rather than refusing and
+                 bumps the slot's generation; and the **stop is owed**, made from
+                 the despawn sweep that already knows a body has left, because
+                 nothing in the particle system stops itself and a
+                 `durationTicks: 0` effect hangs in the air forever holding one
+                 of 128 slots. A shot lives a second and a half, so that last one
+                 is a leak that would run at the rate of the shooting. Only the
+                 ember carries paint: an arrow and a star ARE their mesh, and an
+                 orb already reads as lit from within.
+                 Three things fell out of wiring it. `scene.addEffect` now plays
+                 an authored effect at **scale 1** -- the `max(0.25, radius / 40)`
+                 it replaces could not have worked, because `scale` multiplies a
+                 mark's size and *not* its speed, so an explosion played at a
+                 quarter is quarter-sized marks thrown at full-sized velocities;
+                 and a quarter is what every direct hit got, since the radius on
+                 that message is the *shot's* collision radius against a nominal
+                 40. Changing it was free because the branch had never run: the
+                 server can send 46 effect ids and the registry held none of
+                 them, so `ranged.ember.impact` is the first authored effect any
+                 ability in this game has ever drawn -- and the painted
+                 explosion, four presets and `brushExplosionRequest`, had had no
+                 caller since spec 159. And `WEAPON_SWITCH` narrowed to the
+                 starting kit: two tests had asserted since spec 126 that every
+                 entry is level 1 and in the player's bag, and both held by
+                 coincidence until a rare level-4 staff named an attack and
+                 turned up as a fourth button that equips nothing. The staff's
+                 own `damage` moved with it, from the `{1, 2}` spec 217 gave the
+                 weakest row in the table -- authored when *"hitting somebody
+                 with it is the fallback rather than the plan"* -- to a `{2, 5}`
+                 between the bow and the keen sword, because since 217 that
+                 range **is** what an Ember Shot hits for)
                  unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
                  monsters are drawn from an authored unit, the pure function from
                  replicated facts to machine commands -- handed a snapshot and not
@@ -3732,7 +3771,16 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png,
                  and `npx tsx scripts/preview-shots.ts` flies the real ShotRig
-                 through a real arc into .claude/screenshots/shots.png.
+                 through a real arc into .claude/screenshots/shots.png. That one
+                 photographs the *mesh* and since spec 218 the ember's column on
+                 it is deliberately incomplete, because an ember is the one shot
+                 whose mesh is half its collision radius and whose silhouette is
+                 the paint: the whole picture is `preview-brush-vfx.ts`'s third
+                 sheet, `brush-shot.png`, which needed the judging rig to learn
+                 to *move* -- a trail is laid down between ticks, so `step`
+                 carries the flight one tick at a time, and a rest-against-speed
+                 row is the one comparison that fails while every other tile
+                 looks right.
                  `npx tsx scripts/preview-units.ts` puts authored units in the
                  real arena (`?units=grazer:mannequin`) and asserts a skinned
                  body with 25 bones is being posed -- the half of spec 111 that

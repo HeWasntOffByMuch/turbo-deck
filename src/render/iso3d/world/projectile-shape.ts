@@ -1,5 +1,5 @@
 /**
- * What an arrow and a shuriken are shaped like (spec 087).
+ * What an arrow, a shuriken and an ember are shaped like (specs 087, 216).
  *
  * Pure -- no three.js, no DOM -- for the same reason `lobe.ts` is: at the size
  * a shot crosses the frame at, the silhouette is the entire difference between
@@ -11,6 +11,11 @@
  * `projectile.radius` -- so a bigger shot is the same shot bigger rather than a
  * differently proportioned one, and a row added to the ability table gets a
  * sensible arrow without anybody drawing it.
+ *
+ * All three numbers below are draw *scales* against that one radius, and the
+ * spread between them is the point: an arrow is drawn at a third of its
+ * collision radius, a star at nearly twice it, and an ember at half. Each is a
+ * different answer to "how much of this thing is its mesh".
  */
 
 export interface ShapePoint {
@@ -150,3 +155,29 @@ export function shurikenThickness(radius: number): number {
  * this is about 30 tips a second.
  */
 export const SHURIKEN_SPIN_TURNS_PER_SECOND = 7.5;
+
+/**
+ * How large the ember's drawn core is against the shot's collision radius
+ * (spec 218).
+ *
+ * **Less than one, and that is the whole of the look.** An arrow and a star are
+ * *objects*: their mesh is the entire silhouette, which is why `ARROW_DRAW_SCALE`
+ * shrinks one and `SHURIKEN_DRAW_SCALE` grows the other until each reads as the
+ * thing it is. A ball of fire is not an object -- the silhouette is the paint
+ * around it -- so the mesh is only the heat at the middle, and a bead drawn at
+ * the full collision radius would be an orange marble with flames stuck to the
+ * outside of it.
+ *
+ * A half, so the paint has as much room as the core. The core exists at all
+ * because `VfxLayer.play` returns 0 on refusal -- an unknown id, a full instance
+ * pool, past `cullDistance` -- and `Effects: Off` skips the simulation outright
+ * rather than hiding it. A shot that were paint alone would be an *invisible*
+ * shot, which is a gameplay failure and not a presentation one.
+ */
+export const EMBER_CORE_SCALE = 0.5;
+
+/** The core to draw for an ember shot of this collision radius. */
+export function emberCoreRadius(radius: number): number {
+  const r = Number.isFinite(radius) && radius > 0 ? radius : 1;
+  return r * EMBER_CORE_SCALE;
+}
