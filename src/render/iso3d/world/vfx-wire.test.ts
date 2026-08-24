@@ -236,6 +236,33 @@ describe('a heal (spec 157)', () => {
     // The test is the sign, not "not positive". A zero-damage hit is a hit.
     expect(blow(facts({ damage: 0 }), 1)[0]?.id).toBe('blood_hit_brush');
   });
+
+  it('draws nothing at all for a heal that restored nothing (spec 218)', () => {
+    // `-0`, which is what a flask drunk at full health used to send: the sign is
+    // negative and the amount is zero, so there is a heal here and there is
+    // nothing to say about it. Under `damage < 0` this fell into the blow path
+    // and painted a brush hit on the drinker.
+    for (const gore of [0, 1, 2] as const) {
+      expect(effectsForBlow(heal({ damage: -0 }), 1, gore), `gore ${gore}`).toEqual([]);
+    }
+  });
+
+  it('still refuses it when the message carries flags it has no business with', () => {
+    for (const killed of [false, true]) {
+      for (const critical of [false, true]) {
+        for (const bleeds of [false, true]) {
+          expect(blow(heal({ damage: -0, killed, critical, bleeds }), 3)).toEqual([]);
+        }
+      }
+    }
+  });
+
+  it('tells the two zeroes apart by their sign and by nothing else', () => {
+    // The pair that makes the rule readable: same everything, opposite signs of
+    // the same zero, and one is a blow while the other is not an event.
+    expect(blow(facts({ damage: 0 }), 1).length).toBeGreaterThan(0);
+    expect(blow(facts({ damage: -0 }), 1)).toEqual([]);
+  });
 });
 
 describe("an affliction's beat (spec 218)", () => {

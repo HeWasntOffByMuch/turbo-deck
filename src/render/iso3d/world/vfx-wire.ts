@@ -209,7 +209,19 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
   // the feet -- and none of the blow's vocabulary reaches it. A heal is not a
   // hit read quietly; it is a different event travelling on the hit's message,
   // and a killed/critical/blocked flag on one means nothing.
-  if (facts.damage < 0) {
+  //
+  // The test is the **sign**, and `-0` is negative -- which `damage < 0` says it
+  // is testing and does not (spec 218). A heal that restored nothing arrives as
+  // exactly that, so under the magnitude test it fell straight through into the
+  // blow path and painted a brush hit on the person who drank the flask. A blow
+  // that did nothing is `+0` and is still a blow, which is the rule spec 157
+  // stated and the one the sign test finally keeps.
+  if (facts.damage < 0 || Object.is(facts.damage, -0)) {
+    // Nothing restored, nothing drawn. The server stopped sending this at all
+    // (`landSelf`); the refusal stays here because the sign is the only thing
+    // that tells a heal of nothing from a blow that did nothing, and this is
+    // the module that knows the difference.
+    if (facts.damage === 0) return out;
     out.push({ id: HEAL_EFFECT, x: facts.x, y: 0, z: facts.z, rotation: 0, scale: 1, seed });
     return out;
   }
