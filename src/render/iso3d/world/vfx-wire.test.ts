@@ -40,6 +40,7 @@ function facts(overrides: Partial<CombatFacts> = {}): CombatFacts {
     fromX: 60,
     fromZ: 200,
     bleeds: true,
+    periodic: false,
     ...overrides,
   };
 }
@@ -234,6 +235,84 @@ describe('a heal (spec 157)', () => {
   it('treats a blow that did nothing as a blow, not as a heal', () => {
     // The test is the sign, not "not positive". A zero-damage hit is a hit.
     expect(blow(facts({ damage: 0 }), 1)[0]?.id).toBe('blood_hit_brush');
+  });
+
+  it('draws nothing at all for a heal that restored nothing (spec 219)', () => {
+    // `-0`, which is what a flask drunk at full health used to send: the sign is
+    // negative and the amount is zero, so there is a heal here and there is
+    // nothing to say about it. Under `damage < 0` this fell into the blow path
+    // and painted a brush hit on the drinker.
+    for (const gore of [0, 1, 2] as const) {
+      expect(effectsForBlow(heal({ damage: -0 }), 1, gore), `gore ${gore}`).toEqual([]);
+    }
+  });
+
+  it('still refuses it when the message carries flags it has no business with', () => {
+    for (const killed of [false, true]) {
+      for (const critical of [false, true]) {
+        for (const bleeds of [false, true]) {
+          expect(blow(heal({ damage: -0, killed, critical, bleeds }), 3)).toEqual([]);
+        }
+      }
+    }
+  });
+
+  it('tells the two zeroes apart by their sign and by nothing else', () => {
+    // The pair that makes the rule readable: same everything, opposite signs of
+    // the same zero, and one is a blow while the other is not an event.
+    expect(blow(facts({ damage: 0 }), 1).length).toBeGreaterThan(0);
+    expect(blow(facts({ damage: -0 }), 1)).toEqual([]);
+  });
+});
+
+describe("an affliction's beat (spec 219)", () => {
+  /** A pulse, which is a `hit` on the wire and is not a blow. */
+  const pulse = (overrides: Partial<CombatFacts> = {}): CombatFacts =>
+    facts({ periodic: true, ...overrides });
+
+  it('draws no blow at all, whatever the message carries', () => {
+    // The whole of it. Everything `effectsForBlow` produces is aimed along the
+    // blow, and a pulse's attacker walked off seconds ago -- so eight beats of
+    // a Poison drew eight brush hits down eight meaningless bearings.
+    for (const gore of [0, 1, 2] as const) {
+      for (const killed of [false, true]) {
+        for (const critical of [false, true]) {
+          for (const blocked of [false, true]) {
+            for (const bleeds of [false, true]) {
+              const played = effectsForBlow(
+                pulse({ killed, critical, blocked, bleeds }),
+                7,
+                gore,
+              );
+              expect(played, JSON.stringify({ gore, killed, critical, blocked, bleeds })).toEqual([]);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('draws nothing for any damage type either', () => {
+    // Not "no blood": no flash and no debris. A construct rotting is still an
+    // affliction, and `hit_physical` plus `impact_physical` per beat is the same
+    // failure in a different colour.
+    for (const damageType of Object.keys(DAMAGE_EFFECTS) as (keyof typeof DAMAGE_EFFECTS)[]) {
+      expect(blow(pulse({ bleeds: false, damageType }), 9), damageType).toEqual([]);
+    }
+  });
+
+  it('lays no pool on a pulse that kills', () => {
+    // `death_blood` is the one effect here that outlives the moment -- a stain
+    // on the ground -- so a poison finishing somebody would leave the loudest
+    // mark of the lot behind it.
+    expect(blow(pulse({ killed: true }), 11, 2)).toEqual([]);
+  });
+
+  it('is the flag and not the damage that decides', () => {
+    // The same blow, told apart by one bit. Nothing about a pulse's numbers
+    // distinguishes it -- which is why the bit had to go on the wire.
+    expect(blow(facts({ periodic: false }), 13).length).toBeGreaterThan(0);
+    expect(blow(facts({ periodic: true }), 13)).toEqual([]);
   });
 });
 
