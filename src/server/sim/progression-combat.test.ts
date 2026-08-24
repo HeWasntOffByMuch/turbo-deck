@@ -140,6 +140,7 @@ function casting(abilityId: string, phase: number): CastState {
     targetX: 100,
     targetY: 0,
     targetEntityId: 0,
+    targetInReach: true,
     nextPulseTick: 0,
   };
 }

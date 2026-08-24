@@ -1855,8 +1855,8 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  interval and the attack animation are two spans that start
                  together and end apart**: an interval from the wind-up's first
                  tick, an attack point partway through it where the blow becomes
-                 real, and a backswing after that which may be walked out of for
-                 free. One factor -- `(1 + attackSpeed/100) * mult * slowMult`,
+                 real, and a backswing after that which a *player* may walk out
+                 of for free (spec 219 roots monsters through theirs). One factor -- `(1 + attackSpeed/100) * mult * slowMult`,
                  HoN's, where +100 is twice the rate -- divides all three, so
                  attacking faster shortens the swing rather than only the
                  standing still.
@@ -1883,6 +1883,55 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  process, and the release tick belongs to the attack. The last
                  tick a withdrawal works on is `releaseTick - 1`, asserted from
                  both sides in `sim/attack-cancel.test.ts`.
+                 **A swing that began in reach lands** (spec 219), and the two
+                 halves of that were separate bugs. Withdrawing by walking is a
+                 *player* rule now: `monsterIntent` asks to move whenever its
+                 target is past standoff with no regard for a live cast, so the
+                 movement pass read a chase as a withdrawal and a monster
+                 cancelled its own blow -- measured on a spider, a wind-up ending
+                 `Cancelled` 12 ticks into 30 with **neither a hit nor a miss**,
+                 and a backswing broken out of 12 ticks into 24, both on the tick
+                 the player crossed standoff. Guarded at the one line in
+                 `world.ts` rather than at `closing`, because that is one branch
+                 of five -- fleeing, idling, walking home and a target dying
+                 mid-wind-up all reach it by their own routes -- and what keeps
+                 the body still is the root that was already there. Death and a
+                 poise break still knock a monster out of a swing: both cancel
+                 directly as `Interrupted`, from `blow.ts` and `poise.ts`.
+                 Underneath it, `landOnTarget` stopped measuring range at the
+                 release. Spec 070 measured it there on the argument that
+                 checking earlier makes a wind-up unreadable from the other side;
+                 that readability lives in the wind-up being long enough to
+                 *withdraw* from, which it still is, and asking at the release
+                 meant a completed swing could quietly amount to nothing.
+                 `CastState.targetInReach` is the answer taken once, at the tick
+                 the wind-up *begins* -- at the wind-up rather than at the commit
+                 because a body turns first (spec 065) and the turn is not the
+                 swing, which is why `windupStartTick` is re-stamped at alignment
+                 and the reach is re-stamped beside it. Two things decided its
+                 home. It is stamped in `advanceCast`, which runs on the same
+                 tick as `startCast`, because what is to hand *there* is
+                 `attempt.targetX/Y` -- the position the **client claimed** --
+                 and with the release no longer measuring anything, a reach taken
+                 from a claim is a reach a client could simply assert; the
+                 candidates `advanceCast` is handed are the server's own, rewound
+                 to what this attacker was looking at (spec 149). And the flag
+                 has to be *remembered* rather than replaced by a refusal at the
+                 commit, because `melee.slash` is `direction`-targeted and
+                 `startCast`'s range gate only runs for `point` and `unit` -- a
+                 body three times its reach away can legally be named, and
+                 without the stamp that would be a hit at any distance. What
+                 still misses: a dead target, and one gone from `candidates`
+                 altogether, which is the natural bound on "unconditional".
+                 The rewind's job moved with it rather than going away -- it
+                 decides whether the swing was allowed to *begin* holding its
+                 target, where it used to decide where the target was at the
+                 release -- and `world/position-history.test.ts` is timed against
+                 the wind-up now. `sim/attack-reach.test.ts` is the rest, and
+                 every rule in it was checked by putting the bug back: each
+                 mutation fails exactly the test written for it, including the
+                 turning one, whose first cut asserted a miss and so passed on
+                 the default with the alignment re-stamp deleted.
                  Where a player's attack speed comes from is the **weapon**,
                  since spec 174: 091 took the cadence off it and 144 rebuilt the
                  socket without plugging anything in, which left four rows in

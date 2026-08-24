@@ -457,6 +457,7 @@ describe('what a lethal pulse leaves behind', () => {
         spentHealth: 0,
         spentCharges: 0,
         spentPoise: 0,
+        targetInReach: true,
         nextPulseTick: 0,
         windupStartTick: 0,
         timing: NO_TIMING,

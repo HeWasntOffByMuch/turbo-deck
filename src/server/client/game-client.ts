@@ -1601,6 +1601,12 @@ export class GameClient {
         targetX: confirmed.targetX,
         targetY: confirmed.targetY,
         targetEntityId: confirmed.targetEntityId,
+        // Not replicated and not guessed at either (spec 219), for the reason
+        // the refunds above are not: whether a swing began in reach is what
+        // decides the *damage*, which is the server's alone. Nothing on this
+        // side reads it -- the client draws a bar and predicts a cooldown -- and
+        // `false` is the truthful "this client is not modelling that".
+        targetInReach: false,
         nextPulseTick: 0,
       };
     }

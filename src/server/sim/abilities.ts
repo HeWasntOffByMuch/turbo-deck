@@ -402,6 +402,27 @@ export function castRangeFor(
 }
 
 /**
+ * Is this body within reach of that point, counting the target's own edge?
+ *
+ * The one description of "in range", so the gate `startCast` applies at the
+ * commit and the reach stamped onto {@link CastState.targetInReach} when the
+ * wind-up begins cannot come to different answers about the same pair of
+ * bodies (spec 219). Measured to the target's edge rather than its centre,
+ * which is what `landOnTarget` measured before it stopped measuring at all.
+ */
+export function withinReach(
+  ability: AbilityDefinition,
+  caster: Pick<ServerEntity, 'stats' | 'position'>,
+  targetX: number,
+  targetY: number,
+  targetRadius: number,
+): boolean {
+  const dx = targetX - caster.position.x;
+  const dy = targetY - caster.position.y;
+  return Math.hypot(dx, dy) <= castRangeFor(ability, caster) + targetRadius;
+}
+
+/**
  * The health and guard this skill costs, and whether the caster can pay
  * (spec 188).
  *
@@ -576,6 +597,10 @@ export function startCast(
   const releaseTick = tick + timing.attackPointTicks;
   const endTick = endTickFor(ability, releaseTick, timing);
 
+  // A self cast is aimed at the caster whatever id came with the request, so it
+  // can never be turned into an attack on somebody else by naming them.
+  const namedTarget = ability.targeting === 'self' ? 0 : (attempt.targetEntityId ?? 0);
+
   const cast: CastState = {
     abilityId: ability.id,
     spentResource: Math.min(cost, entity.resource),
@@ -596,9 +621,15 @@ export function startCast(
     timing,
     targetX: aim.x,
     targetY: aim.y,
-    // A self cast is aimed at the caster whatever id came with the request, so
-    // it can never be turned into an attack on somebody else by naming them.
-    targetEntityId: ability.targeting === 'self' ? 0 : (attempt.targetEntityId ?? 0),
+    targetEntityId: namedTarget,
+    // Left false here and stamped by `advanceCast`, which runs on this same
+    // tick (spec 219). Not because it could not be worked out now, but because
+    // what is to hand *here* is `attempt.targetX/Y` -- the position the client
+    // claimed -- and with the release no longer measuring anything, a reach
+    // taken from a claim is a reach a client could simply assert. `advanceCast`
+    // is handed the server's own view of the target, rewound to what this
+    // attacker was looking at (spec 149).
+    targetInReach: false,
     nextPulseTick: 0,
   };
 
@@ -1058,9 +1089,12 @@ export function advanceCast(
   tick: number,
   rng: Rng,
 ): AdvanceResult {
-  const cast = entity.cast;
+  const opening = entity.cast;
   const empty: AdvanceResult = { updated: new Map(), spawns: [], events: [], rng };
-  if (!cast) return empty;
+  if (!opening) return empty;
+  // Reassignable because the wind-up's reach is stamped onto it below (spec
+  // 219) and everything after that has to read the stamped one.
+  let cast: CastState = opening;
 
   const ability = abilityById(cast.abilityId);
   if (!ability) {
@@ -1133,6 +1167,12 @@ export function advanceCast(
     // does not have those six ticks quietly counted against its next swing.
     const releaseTick = tick + cast.timing.attackPointTicks;
     const endTick = endTickFor(ability, releaseTick, cast.timing);
+    // And the reach is measured now, for the same reason the clock is restarted
+    // now (spec 219): the swing begins here, so this is the tick "was it in
+    // range when I started" is asking about. Off the target's *live* position
+    // rather than the aim captured at the commit, because a body that walked
+    // away during a long turn has walked away.
+    const turned = candidates.find((candidate) => candidate.id === cast.targetEntityId);
     caster = {
       ...caster,
       cast: {
@@ -1141,6 +1181,9 @@ export function advanceCast(
         windupStartTick: tick,
         releaseTick,
         endTick,
+        targetInReach:
+          turned !== undefined &&
+          withinReach(ability, caster, turned.position.x, turned.position.y, turned.radius),
       },
       activityUntilTick: endTick,
     };
@@ -1158,6 +1201,28 @@ export function advanceCast(
       targetEntityId: cast.targetEntityId,
     });
     return { updated, spawns, events, rng: currentRng };
+  }
+
+  // --- the wind-up begins ----------------------------------------------
+  // The one tick "was this in reach" is ever asked (spec 219), for a cast that
+  // needed no turn: `startCast` runs earlier in this same tick and leaves the
+  // question to here, where the *server's* view of the target is. `candidates`
+  // has been rewound to what this attacker was looking at (spec 149), so a
+  // laggy player still gets the swing they saw connect, and a lying one gets
+  // nothing -- which matters now in a way it did not before, since the release
+  // no longer measures anything.
+  //
+  // The turning branch above stamps its own on the tick it aligns, through this
+  // same `withinReach`, because it returns before reaching this.
+  if (cast.phase === CastPhase.Windup && cast.windupStartTick === tick && cast.targetEntityId > 0) {
+    const named = candidates.find((candidate) => candidate.id === cast.targetEntityId);
+    cast = {
+      ...cast,
+      targetInReach:
+        named !== undefined &&
+        withinReach(ability, caster, named.position.x, named.position.y, named.radius),
+    };
+    caster = { ...caster, cast };
   }
 
   // --- the attack point: COMMIT ----------------------------------------
@@ -1463,17 +1528,24 @@ function landArea(
 }
 
 /**
- * One blow, on one named body (spec 070).
+ * One blow, on one named body (specs 070, 219).
  *
- * Range is measured at the *release*, not at the commit, and that is the whole
- * decision this function encodes: a target that walked out of reach during the
- * wind-up is a miss. The alternative -- checking at the commit and landing
- * regardless -- would make the wind-up unreadable from the other side, which is
- * exactly the thing spec 062 replaced the parry window to avoid.
+ * **Range is not measured here.** It was measured once, at the tick the wind-up
+ * began, and `cast.targetInReach` is that answer: a swing that started in reach
+ * lands, and a target that walked out of it during a wind-up nobody withdrew
+ * from is hit anyway. Spec 070 asked the question at the release instead, on
+ * the argument that checking earlier would make the wind-up unreadable from the
+ * other side -- but that readability lives in the wind-up being long enough to
+ * *withdraw* from, which it still is, and asking at the release meant a
+ * completed swing could quietly amount to nothing. Spec 219 reverses it.
  *
- * The facing is not re-checked. The body already turned into the aim before the
- * wind-up started (spec 065), and a target that side-stepped without leaving
- * reach is inside the swing.
+ * What still misses: a target that is dead, or gone from `candidates`
+ * altogether. That last one is the natural bound on "unconditional" -- a body
+ * that left the simulated set cannot be hit by a swing that is still finishing.
+ *
+ * The facing is not re-checked either. The body already turned into the aim
+ * before the wind-up started (spec 065), and a target that side-stepped without
+ * leaving reach is inside the swing.
  */
 function landOnTarget(
   ability: AbilityDefinition,
@@ -1486,11 +1558,8 @@ function landOnTarget(
   // Only from `candidates`, which the caller has already filtered by hostility:
   // naming an id is a request, not a licence to hit an ally or a projectile.
   const target = candidates.find((candidate) => candidate.id === cast.targetEntityId);
-  const dx = target ? target.position.x - caster.position.x : 0;
-  const dy = target ? target.position.y - caster.position.y : 0;
-  const reach = target ? ability.range + target.radius : 0;
 
-  if (!target || target.health <= 0 || Math.hypot(dx, dy) > reach) {
+  if (!target || target.health <= 0 || !cast.targetInReach) {
     return {
       updated: new Map(),
       spawns: [],

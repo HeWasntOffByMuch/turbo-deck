@@ -826,8 +826,31 @@ export function step(
     //    arrow is in the air, the interval is running, and all that is returned
     //    is the legs. Which is the whole feature: cancelling the follow-through
     //    buys movement, and can never buy a faster next attack.
+    //
+    // **A player only** (spec 219). Walking out of a blow is a decision, and a
+    // monster does not make one: `monsterIntent` asks to move whenever its
+    // target is past standoff, with no regard for a live cast, so this line
+    // read a chase as a withdrawal and the body cancelled its own swing --
+    // measured, a wind-up ending `Cancelled` 12 ticks into 30 with neither a
+    // hit nor a miss, and a backswing broken out of 12 ticks into 24. A
+    // committed monster now finishes what it started.
+    //
+    // Guarded here rather than at `closing`, because that is one branch of five:
+    // fleeing, idling, walking home and a target dying mid-wind-up all reach
+    // this line by their own routes. What keeps the body *still* is unchanged --
+    // the root below already drops the movement components of any casting body,
+    // and the intent cached for the cast pass is that rooted one, so the second
+    // withdrawal site needs no guard of its own.
+    //
+    // Death and a poise break do not come through here: both cancel directly,
+    // as `Interrupted` (`blow.ts`, `poise.ts`), so a monster is still knocked
+    // out of a swing by the things that are supposed to knock it out of one.
     let withdrawal: readonly ServerSimEvent[] = NO_EVENTS;
-    if (steered.cast !== null && asksToMove(rawIntent)) {
+    if (
+      steered.kind === EntityKindValue.Player &&
+      steered.cast !== null &&
+      asksToMove(rawIntent)
+    ) {
       const withdrawn = cancelCast(steered, tick, CastEndReason.Cancelled);
       if (withdrawn.cancelled) {
         steered = withdrawn.entity;
