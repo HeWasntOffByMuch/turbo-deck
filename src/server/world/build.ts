@@ -19,7 +19,7 @@
  */
 
 import { createWorldColliders } from '../../sim/collision.js';
-import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
+import { WORLD_BOUNDS } from '../../sim/constants.js';
 import type { Rect, WorldColliders } from '../../sim/types.js';
 import { SERVER_PLAYER_RADIUS } from '../config.js';
 import { ALL_MONSTERS } from '../data/monsters.js';
@@ -73,7 +73,7 @@ export function buildWorld(seed: number): BuiltWorld {
     terrain,
     props,
     sampler: terrainSamplerFrom(terrain),
-    colliders: createWorldColliders(ARENA_OBSTACLES, vegetationColliders(props), WORLD_BOUNDS),
+    colliders: createWorldColliders([], vegetationColliders(props), WORLD_BOUNDS),
   };
 }
 
@@ -137,7 +137,7 @@ export function buildWorldFromDocument(doc: MapDocument): BuiltWorld {
     terrain: loaded.world,
     props,
     sampler: terrainSamplerFrom(loaded.world),
-    colliders: createWorldColliders(ARENA_OBSTACLES, vegetationColliders(props), worldBoundsOf(doc)),
+    colliders: createWorldColliders([], vegetationColliders(props), worldBoundsOf(doc)),
   };
 }
 

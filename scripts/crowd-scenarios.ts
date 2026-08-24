@@ -55,11 +55,13 @@ const PLAYER_STATS = computeEffectiveStats(RECORD);
 /**
  * Open ground and nothing else.
  *
- * Deliberately not `DEFAULT_WORLD`, which carries `ARENA_OBSTACLES` -- three
- * blocks left over from the single-player arena that predate the map document
- * entirely. A crowd scenario that had them in it would be measuring how a herd
- * gets round furniture nobody has seen since spec 072, and the one scenario
- * that is genuinely about geometry builds its own wall.
+ * This used to have to say "deliberately not `DEFAULT_WORLD`", which carried
+ * six blocks left over from the single-player arena that predated the map
+ * document entirely -- a crowd scenario with them in it would have been
+ * measuring how a herd gets round furniture nobody had seen since spec 072.
+ * Spec 220 removed them, so the default is open ground too; this stays spelled
+ * out because a scenario should say what it is measuring in, and the one
+ * scenario that is genuinely about geometry still builds its own wall.
  */
 const OPEN = createWorldColliders([], [], WORLD_BOUNDS);
 

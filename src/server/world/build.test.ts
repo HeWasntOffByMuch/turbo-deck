@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildWorld, buildWorldFromDocument, worldBoundsOf } from './build.js';
 import { footprintRadius } from '../../terrain/vegetation.js';
 import { circleBlocked } from '../../sim/collision.js';
-import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
+import { WORLD_BOUNDS } from '../../sim/constants.js';
 import { MAP_VERSION, type MapChunk, type MapDocument } from '../../terrain/map.js';
 import { loadMapFile } from '../../server/world/map-file.js';
 
@@ -50,9 +50,13 @@ describe('buildWorld', () => {
     }
   });
 
-  it('keeps the arena walls and the world edge', () => {
+  it('builds no walls of its own, and keeps the world edge (spec 220)', () => {
     const world = buildWorld(3);
-    expect(world.colliders.rects).toEqual(ARENA_OBSTACLES);
+    // Every collider in the world is authored in the map: the six hand-written
+    // barricades that used to be compiled in here are gone, and nothing else
+    // produces a rect. The vegetation is untouched by their removal.
+    expect(world.colliders.rects).toEqual([]);
+    expect(world.colliders.circles.length).toBeGreaterThan(0);
     expect(world.colliders.bounds.w).toBeGreaterThan(0);
   });
 

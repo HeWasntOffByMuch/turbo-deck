@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { circleBlocked, createWorldColliders, DEFAULT_WORLD } from '../../sim/collision.js';
-import { ARENA_OBSTACLES, PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../sim/constants.js';
+import { PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../sim/constants.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
 import { abilityById } from '../data/abilities.js';
 import { monsterById } from '../data/monsters.js';
@@ -477,15 +477,17 @@ describe('movement validation', () => {
   });
 
   it('refuses to let a body end up inside a wall', () => {
-    const wall = ARENA_OBSTACLES[0];
-    if (!wall) throw new Error('expected an arena obstacle');
+    // Stated here rather than borrowed from the sim's constants, which stopped
+    // carrying a layout in spec 220: what is being tested is that a rect stops
+    // a body, so this test brings its own.
+    const wall = { x: 300, y: 90, w: 36, h: 250 };
     let state = createWorldState(1);
     // Standing just left of the wall, walking straight into it.
     const player = withPlayer(state, wall.x - 20, wall.y + wall.h / 2);
     state = player.state;
 
     const ctx = context({
-      world: createWorldColliders(ARENA_OBSTACLES, [], WORLD_BOUNDS),
+      world: createWorldColliders([wall], [], WORLD_BOUNDS),
       activeChunks: activeAround({ x: wall.x, y: wall.y }),
     });
     for (let tick = 0; tick < 20; tick++) {

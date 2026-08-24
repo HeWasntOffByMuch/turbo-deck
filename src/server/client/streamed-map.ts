@@ -30,7 +30,6 @@ import type { MapInfoMessage } from '../net/map-messages.js';
 import type { ChunkRequest, HeldChunk } from './map-cache.js';
 import { chunksToDocument } from './map-rebuild.js';
 import { createWorldColliders } from '../../sim/collision.js';
-import { ARENA_OBSTACLES } from '../../sim/constants.js';
 import type { Rect, WorldColliders } from '../../sim/types.js';
 import { worldBoundsOf } from '../world/build.js';
 import type { CoverageSampler } from '../world/terrain.js';
@@ -113,7 +112,7 @@ export class StreamedMap {
    * the map loaded.
    */
   snapshotColliders(): WorldColliders {
-    return createWorldColliders(ARENA_OBSTACLES, vegetationColliders(this.props()), this.bounds);
+    return createWorldColliders([], vegetationColliders(this.props()), this.bounds);
   }
 
   /**

@@ -146,20 +146,15 @@ export const WAVE_MAX_ENEMIES = 40;
 // Cap on stacked incoming-damage reduction (stance + guard), so nothing is fully immune.
 export const MAX_DAMAGE_REDUCTION = 0.85;
 
-// --- Arena obstacles (spec 037) ---
-// A fixed, hand-authored layout: not seeded, so every run has the same walls.
-// Two barricades per flank with a central gap, plus a bar above and below the
-// spawn, which sits at the arena's centre. The outer ring is deliberately left
-// clear (>= 90 units) so travel along the border is never blocked, and the
-// horizontal band through the middle is an open lane between the gaps.
-export const ARENA_OBSTACLES: readonly Rect[] = [
-  { x: 300, y: 90, w: 36, h: 250 },
-  { x: 300, y: 560, w: 36, h: 250 },
-  { x: 864, y: 90, w: 36, h: 250 },
-  { x: 864, y: 560, w: 36, h: 250 },
-  { x: 500, y: 200, w: 200, h: 40 },
-  { x: 500, y: 660, w: 200, h: 40 },
-];
+// --- Arena obstacles ---
+// There are none, and that is the point (spec 220). Spec 037 compiled six
+// hand-authored rects in here -- barricades around a spawn at the centre of a
+// flat 1200x900 arena -- and they outlived both halves of their premise: spec
+// 072 made the map document the world, and spec 165 grew it to 18,480x16,632,
+// leaving that arena as 0.35% of one corner with a hillside running through it.
+// A wall somebody wants comes from `maps/`, where every other collider in the
+// game already comes from. `WorldColliders.rects` is still the facility for
+// one; nothing hard-codes its contents.
 
 // --- Collision resolution ---
 // Pairwise separation passes run after every unit has moved. Separation is an
