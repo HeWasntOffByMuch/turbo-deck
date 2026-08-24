@@ -28,7 +28,7 @@ export interface Collider {
  * empty world; the iso views build the real one from the terrain and hand it to
  * `initCombat`.
  *
- * Empty of rects as well as circles since spec 219 -- it used to carry the
+ * Empty of rects as well as circles since spec 220 -- it used to carry the
  * hand-authored arena walls, which is why a headless caller that named no world
  * still got six barricades it never asked for.
  */
@@ -38,7 +38,7 @@ export const DEFAULT_WORLD: WorldColliders = createWorldColliders([], [], WORLD_
  * A world of walls and vegetation; bounds default to the whole world.
  *
  * Both collider lists default to empty: a caller that names none gets none.
- * Walls come from the map document like everything else (spec 219).
+ * Walls come from the map document like everything else (spec 220).
  */
 export function createWorldColliders(
   rects: readonly Rect[] = [],

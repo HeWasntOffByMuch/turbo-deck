@@ -50,7 +50,7 @@ describe('buildWorld', () => {
     }
   });
 
-  it('builds no walls of its own, and keeps the world edge (spec 219)', () => {
+  it('builds no walls of its own, and keeps the world edge (spec 220)', () => {
     const world = buildWorld(3);
     // Every collider in the world is authored in the map: the six hand-written
     // barricades that used to be compiled in here are gone, and nothing else

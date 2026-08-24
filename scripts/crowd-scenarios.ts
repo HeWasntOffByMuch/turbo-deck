@@ -59,7 +59,7 @@ const PLAYER_STATS = computeEffectiveStats(RECORD);
  * six blocks left over from the single-player arena that predated the map
  * document entirely -- a crowd scenario with them in it would have been
  * measuring how a herd gets round furniture nobody had seen since spec 072.
- * Spec 219 removed them, so the default is open ground too; this stays spelled
+ * Spec 220 removed them, so the default is open ground too; this stays spelled
  * out because a scenario should say what it is measuring in, and the one
  * scenario that is genuinely about geometry still builds its own wall.
  */
