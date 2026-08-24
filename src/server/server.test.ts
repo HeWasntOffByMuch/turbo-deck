@@ -9,7 +9,7 @@ import { createHmacAdminVerifier, signToken } from './admin/auth.js';
 import { abilityById } from './data/abilities.js';
 import { BROADCAST_EVERY_N_TICKS, PROTOCOL_VERSION, SERVER_TICK_RATE } from './config.js';
 import { encodeAdminRequest, decodeAdminReply, type AdminReply } from './net/admin-messages.js';
-import { decodeServerMessage, encodeClientMessage, type ServerMessage } from './net/messages.js';
+import { CombatFlag, decodeServerMessage, encodeClientMessage, type ServerMessage } from './net/messages.js';
 import {
   AdminMessageType,
   AdminProgressMode,
@@ -397,6 +397,49 @@ describe('combat over the wire', () => {
     expect(result?.attackerId).toBe(entityId);
     expect(result?.damage).toBeGreaterThan(0);
     expect(result?.targetHealth).toBeGreaterThanOrEqual(0);
+    // A swing is not periodic, and the client draws its picture (spec 218).
+    expect((result?.flags ?? 0) & CombatFlag.Periodic).toBe(0);
+  });
+
+  it("marks an affliction's pulses as periodic, so no blow is drawn for them (spec 218)", async () => {
+    // The sim has known a pulse from a blow since spec 190 and kept it to
+    // itself, so every beat of a Poison arrived at the client indistinguishable
+    // from a sword landing -- and got a brush hit thrown along a bearing from an
+    // attacker who is no longer there. The bit is the whole fix; `vfx-wire.ts`
+    // is what reads it.
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+    const at = game.world.entities.get(entityId)?.position ?? { x: 600, y: 450, z: 0 };
+
+    const admin = new Client(game);
+    await admin.admin({
+      type: AdminMessageType.Auth,
+      token: signToken({ sub: 'root', role: 'admin' }, SECRET, Date.now()),
+    });
+    // The developer path that puts a real affliction on a real body: same pass,
+    // same cadence, same damage as one a skill lands.
+    await admin.admin({
+      type: AdminMessageType.TriggerEvent,
+      eventName: 'affliction',
+      x: at.x,
+      y: at.y,
+      magnitude: 0,
+    });
+    client.clear();
+
+    for (let i = 0; i < SERVER_TICK_RATE; i++) game.tick();
+
+    const pulses = client.of(ServerMessageType.CombatResult);
+    expect(pulses.length).toBeGreaterThan(0);
+    for (const pulse of pulses) {
+      expect(pulse.flags & CombatFlag.Periodic, JSON.stringify(pulse)).not.toBe(0);
+      // The number still rides. What a pulse loses is the blow's picture, not
+      // its damage -- an affliction that reported nothing would be a health bar
+      // falling on its own.
+      expect(pulse.damage).toBeGreaterThan(0);
+    }
   });
 });
 

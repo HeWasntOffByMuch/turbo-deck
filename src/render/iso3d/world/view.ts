@@ -72,6 +72,7 @@ import {
 } from '../../../server/config.js';
 import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import { CombatFlag } from '../../../server/net/messages.js';
 import type { BaseStatKey } from '../../../server/state/types.js';
 import { viewSeed } from '../seed.js';
 import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
@@ -1373,9 +1374,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           attackerId: result.attackerId,
           targetId: result.targetId,
           damage: result.damage,
-          killed: (result.flags & 1) !== 0,
-          critical: (result.flags & 2) !== 0,
-          blocked: (result.flags & 4) !== 0,
+          killed: (result.flags & CombatFlag.Killed) !== 0,
+          critical: (result.flags & CombatFlag.Critical) !== 0,
+          blocked: (result.flags & CombatFlag.Blocked) !== 0,
+          // An affliction's beat draws no blow at all (spec 218). It still
+          // floats its number below, and its own paint is `affliction-vfx.ts`'s.
+          periodic: (result.flags & CombatFlag.Periodic) !== 0,
           damageType: 'physical',
           x: target.x,
           y: BLOOD_HEIGHT,
@@ -1396,14 +1400,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the fallback for a hit on a body no frame has drawn yet.
     const at = scene.bodyAnchor(result.targetId) ?? replicaAnchor(result.targetId);
     if (!at) return;
-    hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
+    hud.addDamage(result.targetId, at, result.damage, (result.flags & CombatFlag.Critical) !== 0);
     // Where the reward for this body will go, if there turns out to be one
     // (spec 184). Remembered rather than acted on, because the experience is not
     // in this message: the server grants it against the store and sends a whole
     // `Stats` some frames later, with nothing in it saying which kill it was
     // for. This is the client's half of that join -- the same anchor the damage
     // number was given, held until a total moves.
-    if ((result.flags & 1) !== 0 && result.attackerId === client.view().selfEntityId) {
+    if ((result.flags & CombatFlag.Killed) !== 0 && result.attackerId === client.view().selfEntityId) {
       lastKill = { group: result.targetId, at };
     }
   });

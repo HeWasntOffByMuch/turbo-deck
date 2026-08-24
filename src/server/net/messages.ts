@@ -824,7 +824,7 @@ export interface CombatResultMessage {
   readonly targetId: number;
   readonly damage: number;
   readonly targetHealth: number;
-  /** bit 0 = killing blow, bit 1 = critical, bit 2 = blocked. */
+  /** bit 0 = killing blow, bit 1 = critical, bit 2 = blocked, bit 3 = periodic. */
   readonly flags: number;
 }
 
@@ -832,6 +832,18 @@ export const CombatFlag = {
   Killed: 1 << 0,
   Critical: 1 << 1,
   Blocked: 1 << 2,
+  /**
+   * This damage came from an affliction rather than from a blow (spec 218).
+   *
+   * The sim has carried a `periodic` flag on its `hit` event since spec 190 and
+   * kept it to itself, on the argument that *"a client draws a floating number
+   * the same way whatever caused it"*. True of the number and false of
+   * everything else a client does with a blow: a pulse has an attacker who
+   * walked off seconds ago and a bearing that means nothing, so eight beats of
+   * Poison drew eight brush hits thrown along a line nobody is standing on. The
+   * number still rides; the blow's picture does not (`vfx-wire.ts`).
+   */
+  Periodic: 1 << 3,
 } as const;
 
 export interface StatsMessage {

@@ -2962,10 +2962,21 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  is the first damage here that outlives its own delivery, so it
                  is the first that could carry a wilderness fight over a
                  safe-zone line. **A pulse does not shout**: the `hit` event
-                 carries a sim-only `periodic` flag and `rally` skips it, since
-                 that function's whole bound is one hop per actual blow and a
-                 poison ticking twenty times would drag a nest across the map
-                 for ten seconds. And **death drops the cast** -- the one thing
+                 carries a `periodic` flag and `rally` skips it, since that
+                 function's whole bound is one hop per actual blow and a poison
+                 ticking twenty times would drag a nest across the map for ten
+                 seconds. Spec 218 gave that flag a wire bit
+                 (`CombatFlag.Periodic`) for the same reason one level out:
+                 **a pulse is not drawn as a blow either.** It was sim-only on
+                 the argument that a client draws a floating number the same way
+                 whatever caused it -- true of the number and false of the
+                 picture, since everything `effectsForBlow` produces is aimed
+                 *along* the blow and a pulse's attacker walked off seconds ago.
+                 So eight beats of a Poison were eight brush hits thrown down
+                 eight bearings that described nothing. The number still rides
+                 and the health bar still moves; what a pulse loses is the blow's
+                 picture, and what it already has is its own
+                 (`world/affliction-vfx.ts`). And **death drops the cast** -- the one thing
                  `resolveBlow` does on a kill that is easy to leave out, and not
                  cosmetic: a player's entity survives death, the cast pass
                  refuses a corpse, and `respawn` rewrites eleven fields without
