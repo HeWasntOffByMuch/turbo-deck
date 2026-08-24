@@ -954,6 +954,52 @@ export class MapChunkStore {
     return { cx: chunk.cx, cz: chunk.cz };
   }
 
+  /**
+   * Replace one marker by id, re-filing it if the change moved it (spec 222).
+   *
+   * One primitive rather than three, because "edit it" and "move it" are the
+   * same write: a marker lives in the chunk that contains it, so changing its
+   * point can change which chunk owns it, and an update that wrote in place
+   * would leave it filed under ground it is no longer standing on. Returns
+   * every chunk that changed -- one for an edit, two for a move across a seam --
+   * or null if no marker holds that id, or if the new point is off the layer.
+   *
+   * The removal happens **before** the insert is attempted, and the marker goes
+   * back if the insert is refused: an update that ate the marker on the way to
+   * a point outside the map would be the worst bug this could have, which is
+   * the same rule `pickUpDrop` follows for a full bag.
+   */
+  updateMarker(layerId: string, id: string, next: MapMarker): ChunkCoord[] | null {
+    const layer = this.layers.get(layerId);
+    if (!layer) return null;
+    let from: StoredChunk | null = null;
+    let at = -1;
+    for (const chunk of layer.chunks.values()) {
+      const found = chunk.markers.findIndex((m) => m.id === id);
+      if (found >= 0) {
+        from = chunk;
+        at = found;
+        break;
+      }
+    }
+    if (!from) return null;
+
+    const previous = from.markers[at];
+    if (!previous) return null;
+    this.touched();
+    from.markers.splice(at, 1);
+    const landed = this.addMarker(layerId, next);
+    if (!landed) {
+      // Refused: off the layer, or over a hole in it. Put it back exactly where
+      // it was rather than leaving the map one marker lighter.
+      from.markers.splice(at, 0, previous);
+      return null;
+    }
+    return landed.cx === from.cx && landed.cz === from.cz
+      ? [landed]
+      : [landed, { cx: from.cx, cz: from.cz }];
+  }
+
   /** Markers whose centre lies within `radius` of (x, z), in world space. */
   markersWithin(layerId: string, x: number, z: number, radius: number): MapMarker[] {
     const layer = this.layers.get(layerId);
