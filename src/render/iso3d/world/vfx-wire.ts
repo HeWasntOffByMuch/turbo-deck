@@ -73,6 +73,14 @@ export interface CombatFacts {
   readonly fromZ: number;
   /** Whether this target bleeds. A construct throws sparks instead. */
   readonly bleeds: boolean;
+  /**
+   * This damage came from an affliction rather than from a blow (spec 219).
+   *
+   * `CombatFlag.Periodic`, which the sim has carried since spec 190 and kept to
+   * itself until it turned out that the *number* is the only thing a pulse and
+   * a blow have in common.
+   */
+  readonly periodic: boolean;
 }
 
 /**
@@ -177,6 +185,21 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
   const out: PlayRequest[] = [];
   const seed = blowSeed(facts, tick);
 
+  // An affliction's beat, which is not a blow and must not be drawn as one
+  // (spec 219).
+  //
+  // Nothing at all, and that is the whole of it: no blood, no flash, no crit,
+  // no debris, no pool on a pulse that kills. Everything below aims a picture
+  // *along* the blow, from the attacker to the target -- and a pulse's attacker
+  // is whoever applied the affliction, who is by now wherever they have walked
+  // to. So a Poison ticking eight times threw eight brush hits down eight
+  // bearings that described nothing, at a body nobody was touching.
+  //
+  // What draws an affliction is `affliction-vfx.ts` (spec 215): the cling that
+  // stays on the body and the beat that lands on the frame the number does. The
+  // picture already exists; this is the blow's one being taken back off it.
+  if (facts.periodic) return out;
+
   // A heal, which arrives on this message with the sign flipped (spec 157).
   //
   // Answered *before* the contact point, and that is the substance of it rather
@@ -186,7 +209,19 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
   // the feet -- and none of the blow's vocabulary reaches it. A heal is not a
   // hit read quietly; it is a different event travelling on the hit's message,
   // and a killed/critical/blocked flag on one means nothing.
-  if (facts.damage < 0) {
+  //
+  // The test is the **sign**, and `-0` is negative -- which `damage < 0` says it
+  // is testing and does not (spec 219). A heal that restored nothing arrives as
+  // exactly that, so under the magnitude test it fell straight through into the
+  // blow path and painted a brush hit on the person who drank the flask. A blow
+  // that did nothing is `+0` and is still a blow, which is the rule spec 157
+  // stated and the one the sign test finally keeps.
+  if (facts.damage < 0 || Object.is(facts.damage, -0)) {
+    // Nothing restored, nothing drawn. The server stopped sending this at all
+    // (`landSelf`); the refusal stays here because the sign is the only thing
+    // that tells a heal of nothing from a blow that did nothing, and this is
+    // the module that knows the difference.
+    if (facts.damage === 0) return out;
     out.push({ id: HEAL_EFFECT, x: facts.x, y: 0, z: facts.z, rotation: 0, scale: 1, seed });
     return out;
   }
