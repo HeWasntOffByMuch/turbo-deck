@@ -128,10 +128,50 @@ function markerMaterial(kind: MapMarkerKind, caption: string): THREE.SpriteMater
   return material;
 }
 
+/**
+ * How much bigger the selected marker's billboard is drawn (spec 222).
+ *
+ * A scale rather than a second texture, so the selection costs no atlas entry
+ * and works on a marker of any kind and any caption. Enough to read as picked
+ * out at a glance, not enough to cover its neighbours.
+ */
+const SELECTED_SCALE = 1.3;
+
+/** How much taller the selected marker's stem is drawn, for the same reason. */
+const SELECTED_STEM = 1.25;
+
 export interface MarkerViewHandle {
   readonly group: THREE.Object3D;
-  /** Redraw every marker. Cheap enough to call whenever the set changes. */
-  render(markers: readonly MapMarker[], heightAt: (x: number, z: number) => number): void;
+  /**
+   * Redraw every marker. Cheap enough to call whenever the set changes.
+   *
+   * `selectedId` is an **id** rather than an index or a marker, for the reason
+   * everything else about the selection is: the store hands back fresh objects
+   * on every `markers()` call and re-files a moved one into a different chunk,
+   * so anything held is stale the moment something is edited (spec 222).
+   */
+  render(
+    markers: readonly MapMarker[],
+    heightAt: (x: number, z: number) => number,
+    selectedId?: string,
+  ): void;
+  /**
+   * The billboards, for a raycast (spec 222).
+   *
+   * The select tool aims at *these* rather than at the ground, and that is the
+   * whole reason they are exposed: a disc floats `STEM_HEIGHT` above the point
+   * it marks, so the ground under a cursor aimed at a disc is some way from the
+   * marker -- and how far depends on the camera's pitch, which means no ground
+   * radius is right at every angle. Aiming at the picture is exact at all of
+   * them.
+   *
+   * Only the sprites in use are in the list: spares are kept and hidden rather
+   * than destroyed (see below), and a hidden sprite is one nobody can see to
+   * click on.
+   */
+  readonly pickTargets: THREE.Object3D[];
+  /** Which marker a picked object is, or null for anything else. */
+  markerIdOf(object: THREE.Object3D): string | null;
   dispose(): void;
 }
 
@@ -148,20 +188,40 @@ export function createMarkerView(): MarkerViewHandle {
   group.add(stems);
 
   const sprites: THREE.Sprite[] = [];
+  /** Exactly the sprites in use, so a hidden spare is never picked (spec 222). */
+  const live: THREE.Object3D[] = [];
 
   return {
     group,
-    render(markers: readonly MapMarker[], heightAt: (x: number, z: number) => number): void {
+    pickTargets: live,
+    markerIdOf(object: THREE.Object3D): string | null {
+      const id: unknown = object.userData['markerId'];
+      return typeof id === 'string' && id !== '' ? id : null;
+    },
+    render(
+      markers: readonly MapMarker[],
+      heightAt: (x: number, z: number) => number,
+      selectedId = '',
+    ): void {
       // One stem segment per marker, all in a single LineSegments: a marker set
       // is small, but a draw call each would still be a draw call each.
       const positions = new Float32Array(markers.length * 6);
       const colors = new Float32Array(markers.length * 6);
       const colour = new THREE.Color();
 
+      live.length = 0;
+
       markers.forEach((marker, i) => {
         const ground = heightAt(marker.x, marker.z);
-        positions.set([marker.x, ground, marker.z, marker.x, ground + STEM_HEIGHT, marker.z], i * 6);
-        colour.setHex(MARKER_COLORS[marker.kind]);
+        const picked = marker.id === selectedId;
+        // The selected marker stands taller and is drawn white, so which one the
+        // panel is about is readable from the map rather than only from the id
+        // in the panel (spec 222). Both channels, because a kind's own colour is
+        // already doing work -- a red spawner turning a lighter red would read
+        // as a different kind rather than as a selection.
+        const stem = picked ? STEM_HEIGHT * SELECTED_STEM : STEM_HEIGHT;
+        positions.set([marker.x, ground, marker.z, marker.x, ground + stem, marker.z], i * 6);
+        colour.setHex(picked ? 0xffffff : MARKER_COLORS[marker.kind]);
         colors.set([colour.r, colour.g, colour.b, colour.r, colour.g, colour.b], i * 6);
 
         const caption = markerCaption(marker);
@@ -177,21 +237,38 @@ export function createMarkerView(): MarkerViewHandle {
         // sprite is wider, and a slot that held one and now holds a plain
         // marker would otherwise stay stretched.
         sprite.material = markerMaterial(marker.kind, caption);
-        if (caption === '') sprite.scale.set(BILLBOARD_SIZE, BILLBOARD_SIZE, 1);
-        else sprite.scale.set((BILLBOARD_SIZE * CAPTION_W) / TEXTURE_PX, (BILLBOARD_SIZE * CAPTION_H) / TEXTURE_PX, 1);
+        const grow = picked ? SELECTED_SCALE : 1;
+        if (caption === '') sprite.scale.set(BILLBOARD_SIZE * grow, BILLBOARD_SIZE * grow, 1);
+        else
+          sprite.scale.set(
+            (BILLBOARD_SIZE * CAPTION_W * grow) / TEXTURE_PX,
+            (BILLBOARD_SIZE * CAPTION_H * grow) / TEXTURE_PX,
+            1,
+          );
         sprite.position.set(
           marker.x,
-          ground + STEM_HEIGHT - (caption === '' ? 0 : CAPTION_DISC_DROP),
+          ground + stem - (caption === '' ? 0 : CAPTION_DISC_DROP * grow),
           marker.z,
         );
         sprite.visible = true;
+        // Carried on the object rather than looked up by index at pick time,
+        // because sprites are reused across renders: an index is a fact about
+        // this frame's list, and the raycast hands back an object.
+        sprite.userData['markerId'] = marker.id;
+        live.push(sprite);
       });
 
       // Surplus sprites are hidden rather than destroyed: placing and erasing
       // the same marker repeatedly would otherwise churn objects every stroke.
       for (let i = markers.length; i < sprites.length; i++) {
         const spare = sprites[i];
-        if (spare) spare.visible = false;
+        if (spare) {
+          spare.visible = false;
+          // Cleared as well as hidden: a spare still carrying the id of a marker
+          // that has been erased is a pick waiting to name something that is not
+          // there any more.
+          spare.userData['markerId'] = '';
+        }
       }
 
       stemGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -203,6 +280,7 @@ export function createMarkerView(): MarkerViewHandle {
       stemMaterial.dispose();
       group.clear();
       sprites.length = 0;
+      live.length = 0;
     },
   };
 }

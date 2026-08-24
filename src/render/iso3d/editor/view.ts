@@ -45,7 +45,7 @@ import { createBrushCursor, type BrushCursorHandle } from './cursor.js';
 import { EditHistory } from './history.js';
 import { EditorInputCapture } from './input.js';
 import { createArenaOutline, createMarkerView } from './marker-view.js';
-import { eraseMarkers, placeMarker } from './markers.js';
+import { eraseMarkers, markerAt, placeMarker, updateMarker } from './markers.js';
 import { bakeLayerNav, rebakeNav } from './nav.js';
 import { createNavView } from './nav-view.js';
 import {
@@ -61,7 +61,18 @@ import { openEditorMap, SHIPPED_MAP_NAME } from './map-source.js';
 import { loadShippedMap } from '../map-asset.js';
 import { writeMapToDisk } from './map-write.js';
 import { buildEditorPanel, type EditorPanel } from './panel.js';
-import { createEditorSettings, cursorColor, cursorRadius, NEW_ROCK_TIER } from './tools.js';
+import {
+  clearSelection,
+  createEditorSettings,
+  cursorColor,
+  cursorRadius,
+  MARKER_CURSOR_RADIUS,
+  MODE_COLORS,
+  NEW_ROCK_TIER,
+  patchFromSelection,
+  selectionFrom,
+  SELECT_PICK_RADIUS,
+} from './tools.js';
 import {
   addPart,
   chunkRectArea,
@@ -450,6 +461,33 @@ class EditorScene {
     return ground ? { x: ground.point.x, z: ground.point.z } : null;
   }
 
+  /**
+   * The nearest of `targets` under the cursor, or null (spec 222).
+   *
+   * Beside `pick` rather than folded into it because the two answer different
+   * questions -- that one is "which ground", this is "which *thing*" -- and the
+   * select tool needs the second: a marker's billboard floats above the point
+   * it marks, so aiming at the picture and aiming at the ground under it are
+   * metres apart, by a distance that depends on the camera's pitch.
+   *
+   * `visible` is checked because the marker view keeps its spare sprites and
+   * hides them rather than destroying them, and three does not skip an
+   * invisible object for a direct `intersectObjects` over a list.
+   */
+  pickObject(cssX: number, cssY: number, targets: readonly THREE.Object3D[]): THREE.Object3D | null {
+    if (targets.length === 0) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    this.ndc.set((cssX / rect.width) * 2 - 1, -((cssY / rect.height) * 2 - 1));
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    this.hits.length = 0;
+    this.raycaster.intersectObjects([...targets], false, this.hits);
+    for (const hit of this.hits) {
+      if (hit.object.visible) return hit.object;
+    }
+    return null;
+  }
+
   /** Re-mesh one chunk after an edit -- the whole point of the patch rebuild. */
   rebuildChunk(layerId: string, cx: number, cz: number): void {
     // Ground that is not meshed is not re-meshed (spec 212). A mesh is derived,
@@ -780,8 +818,25 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   const cursor: BrushCursorHandle = createBrushCursor(cursorColor(settings));
   scene.addOverlay(cursor.object);
 
+  /**
+   * How far a select drag must travel before it counts as moving the marker
+   * rather than as a click that selected it (spec 222).
+   *
+   * In world units, so it is a real distance on the ground rather than a number
+   * of pixels that means something different at every zoom -- and small enough
+   * that a deliberate drag crosses it immediately.
+   */
+  const MARKER_DRAG_SLOP = 4;
+
   const markerView = createMarkerView();
   scene.addOverlay(markerView.group);
+  // A second ring, in the select tool's own colour, parked on the selected
+  // marker rather than following the cursor (spec 222). The same geometry the
+  // brush cursor is, for the same reason: a flat ring laid against a hillside
+  // buries half of itself, and a marker on a slope is exactly where you want to
+  // see which one is picked.
+  const selectionRing: BrushCursorHandle = createBrushCursor(MODE_COLORS.select);
+  scene.addOverlay(selectionRing.object);
   const arenaOutline = createArenaOutline();
   scene.addOverlay(arenaOutline.object);
   // The chunk rectangle a part drag has selected, in the part tool's own colour
@@ -861,9 +916,126 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
 
   /** Redraw the markers and the arena box from whatever the store now holds. */
   const refreshMarkers = (): void => {
-    markerView.render(scene.map.store.markers(layerId), groundAt);
+    const markers = scene.map.store.markers(layerId);
+    // The selection is held by id, so a marker that has gone -- erased, or taken
+    // away by an undo -- has to be *noticed* rather than announced. Checked here
+    // because this is the one function every path that changes the marker set
+    // already calls, so there is no way to change the set and skip the check.
+    const selected = markers.find((m) => m.id === settings.selectedMarkerId) ?? null;
+    if (!selected) Object.assign(settings, clearSelection(settings));
+    markerView.render(markers, groundAt, settings.selectedMarkerId);
+    if (selected) {
+      selectionRing.moveTo(selected.x, selected.z, MARKER_CURSOR_RADIUS, groundAt);
+      selectionRing.setVisible(true);
+    } else {
+      selectionRing.setVisible(false);
+    }
     arenaOutline.object.visible = settings.showArena;
     arenaOutline.refresh(scene.document.arena, groundAt);
+  };
+
+  /**
+   * Select the marker a click named, or nothing (spec 222).
+   *
+   * Two picks in order, and the order is the whole design. **The billboards
+   * first**, because that is what a person is aiming at and a sprite raycast is
+   * exact at every camera angle -- where the marker's own point is
+   * `STEM_HEIGHT` below its disc, so the ground under an aimed cursor is some
+   * way off and by a distance the pitch decides. **Then the ground**, within
+   * `SELECT_PICK_RADIUS`, so a click that missed the disc but landed by the
+   * stem still names the thing it was obviously about.
+   *
+   * A click that names nothing clears the selection, which is what makes the
+   * selection dismissable without a second control.
+   */
+  const selectAt = (cssX: number, cssY: number, ground: { x: number; z: number } | null): void => {
+    const markers = scene.map.store.markers(layerId);
+    const hit = scene.pickObject(cssX, cssY, markerView.pickTargets);
+    const byBillboard = hit ? markerView.markerIdOf(hit) : null;
+    const found =
+      byBillboard !== null
+        ? (markers.find((m) => m.id === byBillboard) ?? null)
+        : ground
+          ? markerAt(markers, ground.x, ground.z, SELECT_PICK_RADIUS)
+          : null;
+
+    if (!found) {
+      Object.assign(settings, clearSelection(settings));
+      refreshMarkers();
+      panel.refresh();
+      status = 'nothing there: click a marker to select it';
+      return;
+    }
+    Object.assign(settings, selectionFrom(found, settings));
+    refreshMarkers();
+    panel.refresh();
+    status = `selected ${found.id}${found.label === undefined ? '' : `: ${found.label}`}`;
+  };
+
+  /**
+   * Write the panel's values onto the selected marker.
+   *
+   * One undo entry per edit rather than per stroke: there is no drag here, and a
+   * change to a dropdown is a whole thought.
+   */
+  const commitSelection = (): void => {
+    const id = settings.selectedMarkerId;
+    if (id === '') return;
+    history.beginStroke();
+    const { marker } = updateMarker(scene.map.store, layerId, id, patchFromSelection(settings), (cx, cz) => {
+      history.captureChunk(scene.map.store, layerId, cx, cz);
+    });
+    history.endStroke();
+    if (!marker) {
+      status = `could not edit ${id}`;
+      return;
+    }
+    // A marker sits at a height and changes nothing under it, so this owes the
+    // autosave and nothing else -- no re-mesh, no nav re-bake, no prop rebuild.
+    // The same reasoning the repaint stroke's comment sets out, one field over.
+    markEdited();
+    refreshMarkers();
+    // Said in words, like a placement is (spec 178): a spawner and a campfire
+    // are two letters apart in the strip, and what a kind change actually did to
+    // the numbers under it is worth reading rather than inferring.
+    status = `${marker.id}: ${marker.kind}${marker.label === undefined ? '' : ` ${marker.label}`}`;
+  };
+
+  /** The selected marker as the document holds it, for a probe (spec 222). */
+  const selectedReadout = (): string => {
+    const id = settings.selectedMarkerId;
+    if (id === '') return 'none';
+    const marker = scene.map.store.markers(layerId).find((m) => m.id === id);
+    if (!marker) return 'none';
+    return (
+      `${marker.id} kind:${marker.kind} label:${marker.label ?? ''} ` +
+      `respawn:${String(marker.spawner?.respawnSeconds ?? 0)} leash:${String(marker.spawner?.leashRadius ?? 0)} ` +
+      `at:${String(Math.round(marker.x))},${String(Math.round(marker.z))}`
+    );
+  };
+
+  /** Take the selected marker off the map, since the eraser is a radius. */
+  const deleteSelection = (): void => {
+    const id = settings.selectedMarkerId;
+    if (id === '') {
+      status = 'nothing selected';
+      return;
+    }
+    const found = scene.map.store.markers(layerId).find((m) => m.id === id);
+    if (!found) return;
+    history.beginStroke();
+    // Through the eraser's own removal, at a radius small enough to take one
+    // marker: a second way to delete a marker would be a second set of rules
+    // about which chunks that dirties.
+    eraseMarkers(scene.map.store, layerId, { x: found.x, z: found.z, radius: 0.01 }, (cx, cz) => {
+      history.captureChunk(scene.map.store, layerId, cx, cz);
+    });
+    history.endStroke();
+    markEdited();
+    // Clears the selection on its own, since the id it names has gone.
+    refreshMarkers();
+    panel.refresh();
+    status = `deleted ${id}`;
   };
 
   /**
@@ -1383,6 +1555,8 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
       if (settings.removePartId) commitRemove(settings.removePartId);
       else status = 'no part selected to remove';
     },
+    onSelectionEdit: commitSelection,
+    onSelectionDelete: deleteSelection,
     onUndo: undo,
     onSave: saveToFile,
     onSaveToDisk: saveToDisk,
@@ -1438,6 +1612,24 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   let strokeChangedProps = false;
   let strokeMovedGround = false;
   let strokeChangedMarkers = false;
+  /**
+   * The marker a select drag is carrying, by id (spec 222).
+   *
+   * Set on the press when the click named one, cleared on release. An id rather
+   * than the marker, because the drag re-files it as it crosses a chunk seam and
+   * a held object is stale the moment it does.
+   */
+  let grabbedMarkerId = '';
+  /**
+   * Where the ground pick was when the drag began, or null.
+   *
+   * A drag only *becomes* a move once it has travelled further than
+   * `MARKER_DRAG_SLOP`, so a click with a shaky hand selects a marker without
+   * nudging it half a unit -- the same reason a press and a drag are different
+   * gestures everywhere else.
+   */
+  let markerDragFrom: { x: number; z: number } | null = null;
+  let markerDragging = false;
   /**
    * Whether this stroke repainted any ground (spec 179).
    *
@@ -1562,6 +1754,17 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
         if (under) commitRemove(under.id);
         else status = 'no part under the cursor';
       }
+      if (settings.mode === 'select') {
+        // Handed the *ground* pick as the fallback, and the cursor position for
+        // the billboard raycast that is tried first (spec 222).
+        selectAt(mouse.x, mouse.y, at);
+        grabbedMarkerId = settings.selectedMarkerId;
+        // Opened here rather than at the first drag frame, so the undo entry
+        // holds where the marker was before it started moving. A press that
+        // selects and never drags closes it having captured nothing, which is
+        // what `endStroke` already does with an empty entry.
+        markerDragFrom = at;
+      }
       if (at && settings.mode === 'marker') {
         const placed = placeMarker(
           scene.map.store,
@@ -1599,6 +1802,25 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     // on the terrain: after a gap, the line between where it left and where it
     // came back is not ground anybody dragged over.
     if (!at) paintFrom = null;
+
+    if (input.isPainting && at && settings.mode === 'select' && grabbedMarkerId !== '') {
+      const from = markerDragFrom;
+      if (from && !markerDragging && Math.hypot(at.x - from.x, at.z - from.z) > MARKER_DRAG_SLOP) {
+        markerDragging = true;
+      }
+      if (markerDragging) {
+        const moved = updateMarker(scene.map.store, layerId, grabbedMarkerId, { x: at.x, z: at.z }, capture);
+        if (moved.marker) {
+          strokeChangedMarkers = true;
+          refreshMarkers();
+          status = `moved ${grabbedMarkerId}`;
+        } else {
+          // `updateMarker` puts the marker back when the point is off the layer,
+          // so this is a drag that went past the edge rather than a lost marker.
+          status = 'no ground there: a marker has to sit on the map';
+        }
+      }
+    }
 
     if (input.isPainting && at) {
       if (settings.mode === 'terrain') {
@@ -1696,6 +1918,9 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
         if (at && rockAnchor) commitRock(rockAnchor, at);
         rockAnchor = null;
       } else history.endStroke();
+      grabbedMarkerId = '';
+      markerDragFrom = null;
+      markerDragging = false;
       // Trees stand on the ground, and either the ground or the trees just
       // moved -- but only over the chunks the stroke actually touched, which is
       // what makes an erase or a height brush cost the stroke rather than the
@@ -1748,6 +1973,13 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     // whether the frame loop calls any of it. `meshed` is counted off the scene
     // graph, so ground built and hung on nothing reads as absent.
     readout.dataset.ground = `meshed:${String(scene.groundMeshedCount)} held:${String(scene.groundHeldCount)} of:${String(chunkCount())}`;
+    // What the selected marker is **in the document** (spec 222), which is the
+    // only reading worth publishing: every rule about selecting and editing one
+    // is asserted in Node and none of them can say whether a click reached any
+    // of it. Read off the store rather than off the settings for the reason
+    // `data-ground`'s `meshed` is counted off the scene graph -- a panel that
+    // believes it edited something and wrote nothing has to read as unedited.
+    readout.dataset.selected = selectedReadout();
     readout.innerHTML =
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
