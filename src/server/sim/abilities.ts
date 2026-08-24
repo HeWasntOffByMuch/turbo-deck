@@ -407,7 +407,7 @@ export function castRangeFor(
  * The one description of "in range", so the gate `startCast` applies at the
  * commit and the reach stamped onto {@link CastState.targetInReach} when the
  * wind-up begins cannot come to different answers about the same pair of
- * bodies (spec 219). Measured to the target's edge rather than its centre,
+ * bodies (spec 221). Measured to the target's edge rather than its centre,
  * which is what `landOnTarget` measured before it stopped measuring at all.
  */
 export function withinReach(
@@ -623,7 +623,7 @@ export function startCast(
     targetY: aim.y,
     targetEntityId: namedTarget,
     // Left false here and stamped by `advanceCast`, which runs on this same
-    // tick (spec 219). Not because it could not be worked out now, but because
+    // tick (spec 221). Not because it could not be worked out now, but because
     // what is to hand *here* is `attempt.targetX/Y` -- the position the client
     // claimed -- and with the release no longer measuring anything, a reach
     // taken from a claim is a reach a client could simply assert. `advanceCast`
@@ -1168,7 +1168,7 @@ export function advanceCast(
     const releaseTick = tick + cast.timing.attackPointTicks;
     const endTick = endTickFor(ability, releaseTick, cast.timing);
     // And the reach is measured now, for the same reason the clock is restarted
-    // now (spec 219): the swing begins here, so this is the tick "was it in
+    // now (spec 221): the swing begins here, so this is the tick "was it in
     // range when I started" is asking about. Off the target's *live* position
     // rather than the aim captured at the commit, because a body that walked
     // away during a long turn has walked away.
@@ -1204,7 +1204,7 @@ export function advanceCast(
   }
 
   // --- the wind-up begins ----------------------------------------------
-  // The one tick "was this in reach" is ever asked (spec 219), for a cast that
+  // The one tick "was this in reach" is ever asked (spec 221), for a cast that
   // needed no turn: `startCast` runs earlier in this same tick and leaves the
   // question to here, where the *server's* view of the target is. `candidates`
   // has been rewound to what this attacker was looking at (spec 149), so a
@@ -1528,7 +1528,7 @@ function landArea(
 }
 
 /**
- * One blow, on one named body (specs 070, 219).
+ * One blow, on one named body (specs 070, 221).
  *
  * **Range is not measured here.** It was measured once, at the tick the wind-up
  * began, and `cast.targetInReach` is that answer: a swing that started in reach
@@ -1537,7 +1537,7 @@ function landArea(
  * the argument that checking earlier would make the wind-up unreadable from the
  * other side -- but that readability lives in the wind-up being long enough to
  * *withdraw* from, which it still is, and asking at the release meant a
- * completed swing could quietly amount to nothing. Spec 219 reverses it.
+ * completed swing could quietly amount to nothing. Spec 221 reverses it.
  *
  * What still misses: a target that is dead, or gone from `candidates`
  * altogether. That last one is the natural bound on "unconditional" -- a body

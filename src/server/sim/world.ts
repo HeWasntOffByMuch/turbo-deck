@@ -827,7 +827,7 @@ export function step(
     //    is the legs. Which is the whole feature: cancelling the follow-through
     //    buys movement, and can never buy a faster next attack.
     //
-    // **A player only** (spec 219). Walking out of a blow is a decision, and a
+    // **A player only** (spec 221). Walking out of a blow is a decision, and a
     // monster does not make one: `monsterIntent` asks to move whenever its
     // target is past standoff, with no regard for a live cast, so this line
     // read a chase as a withdrawal and the body cancelled its own swing --

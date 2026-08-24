@@ -1,5 +1,5 @@
 /**
- * A swing that was in range lands (spec 219).
+ * A swing that was in range lands (spec 221).
  *
  * Driven through the real `step` rather than by calling the landers directly,
  * for the reason `attack-cancel.test.ts` gives: two of the three rules here

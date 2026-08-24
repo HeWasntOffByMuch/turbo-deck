@@ -1887,7 +1887,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  together and end apart**: an interval from the wind-up's first
                  tick, an attack point partway through it where the blow becomes
                  real, and a backswing after that which a *player* may walk out
-                 of for free (spec 219 roots monsters through theirs). One factor -- `(1 + attackSpeed/100) * mult * slowMult`,
+                 of for free (spec 221 roots monsters through theirs). One factor -- `(1 + attackSpeed/100) * mult * slowMult`,
                  HoN's, where +100 is twice the rate -- divides all three, so
                  attacking faster shortens the swing rather than only the
                  standing still.
@@ -1914,7 +1914,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  process, and the release tick belongs to the attack. The last
                  tick a withdrawal works on is `releaseTick - 1`, asserted from
                  both sides in `sim/attack-cancel.test.ts`.
-                 **A swing that began in reach lands** (spec 219), and the two
+                 **A swing that began in reach lands** (spec 221), and the two
                  halves of that were separate bugs. Withdrawing by walking is a
                  *player* rule now: `monsterIntent` asks to move whenever its
                  target is past standoff with no regard for a live cast, so the

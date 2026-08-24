@@ -237,7 +237,7 @@ export interface CastState {
   readonly targetEntityId: number;
   /**
    * Was the named target within `range + radius` when the wind-up *began*
-   * (spec 219)?
+   * (spec 221)?
    *
    * The whole of "a swing that was in range lands". `landOnTarget` reads this
    * instead of measuring the distance again at the release, so a target that

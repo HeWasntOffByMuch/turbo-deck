@@ -183,7 +183,7 @@ function healthOf(fight: Fight): number {
  * before the wind-up begins. Returns how much damage was dealt.
  *
  * Timed against the **wind-up's start** rather than the release, because that
- * is the tick reach is decided on since spec 219. `melee.slash` needs no turn
+ * is the tick reach is decided on since spec 221. `melee.slash` needs no turn
  * at this rig's 3600 turn rate, so the wind-up begins on the commit tick.
  */
 function swing(options: {
@@ -238,7 +238,7 @@ describe('a blow lands on what its attacker saw', () => {
   });
 
   /**
-   * The rewind's whole job moved with spec 219, and this is what it moved to.
+   * The rewind's whole job moved with spec 221, and this is what it moved to.
    *
    * Reach used to be measured at the release, so the compensation was about
    * where the target was *then*. It is measured when the wind-up begins now, so
