@@ -28,7 +28,7 @@ import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { afflictionsFromQuery } from './affliction-vfx.js';
 
 /**
- * How often `?afflict=` re-applies what it was asked for, in ticks (spec 197).
+ * How often `?afflict=` re-applies what it was asked for, in ticks (spec 215).
  *
  * Three seconds, and the number is chosen rather than picked. Two constraints
  * and they only leave a narrow band:
@@ -426,7 +426,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * screenshot of one reproducible on the other.
    */
   /**
-   * The afflictions `?afflict=` asks for (spec 197), as ordinals into `ALL_DOTS`.
+   * The afflictions `?afflict=` asks for (spec 215), as ordinals into `ALL_DOTS`.
    *
    * Loopback only, and not by omission: this drives `triggerEvent`, which is the
    * server's own developer path, and over a socket there is no server on this
@@ -2791,7 +2791,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // socket there is no server here to drive -- the client's own clock below
       // is the only one this tab owns (spec 144).
       server?.tick();
-      // Top the forced afflictions up (spec 197). Inside the sim loop rather
+      // Top the forced afflictions up (spec 215). Inside the sim loop rather
       // than in the frame, because the cadence is measured in ticks and a frame
       // is however long this machine took -- the same reason everything else
       // that has to happen "every N ticks" is counted here.

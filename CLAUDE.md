@@ -64,8 +64,8 @@ change a game outcome.
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
-| `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 197) |
-| `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 197) |
+| `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
+| `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -2446,7 +2446,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  grow at the top at all -- the cast bar had to be taken out of
                  flow for exactly this.
                  `world/affliction-vfx.ts` is what a *body* says about the same
-                 thing (spec 197), and it exists because a mark over the head is
+                 thing (spec 215), and it exists because a mark over the head is
                  the wrong shape of information for an affliction: an affliction
                  is the one damage here that stays on a body after the thing
                  that did it walked away, and until this the only difference

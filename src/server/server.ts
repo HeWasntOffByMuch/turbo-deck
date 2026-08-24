@@ -3209,7 +3209,7 @@ export class GameServer implements AdminHost {
   private static readonly STATUS_DEMO_TICKS = 600;
 
   /**
-   * How far `admin:triggerEvent 'affliction'` reaches, in world units (spec 197).
+   * How far `admin:triggerEvent 'affliction'` reaches, in world units (spec 215).
    *
    * A constant rather than the `magnitude` its neighbours spend on reach,
    * because that argument is already spent naming *which* affliction -- and of
@@ -3310,7 +3310,7 @@ export class GameServer implements AdminHost {
         return `marked ${marked} bodies with every visible status until tick ${until}`;
       }
       case 'affliction': {
-        // The developer path for spec 197's paint: **one named affliction**, on
+        // The developer path for spec 215's paint: **one named affliction**, on
         // every body within reach, at full severity and for its own authored
         // length.
         //

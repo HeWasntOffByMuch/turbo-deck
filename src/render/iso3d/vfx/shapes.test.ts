@@ -142,7 +142,7 @@ describe('applySpread', () => {
   });
 });
 
-describe('sampleCapsuleSurface (spec 197)', () => {
+describe('sampleCapsuleSurface (spec 215)', () => {
   /** How far a point is from the capsule's surface, in radii. Zero is on it. */
   function offSurface(point: Float32Array, heightRadii: number): number {
     const straight = Math.max(0, heightRadii - 2);

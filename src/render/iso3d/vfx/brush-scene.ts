@@ -40,7 +40,7 @@ const DUMMY = { x: 0, y: 0, z: 0 } as const;
 const CHEST = 26;
 
 /**
- * The entity id the dummy answers to (spec 197).
+ * The entity id the dummy answers to (spec 215).
  *
  * There is exactly one body in this scene and it needs an id at all only because
  * `attach: { kind: 'entity' }` is how an effect says "ride that thing" -- and an
@@ -67,7 +67,7 @@ const DUMMY_ENTITY = 1;
  *
  * 14 x 5 puts the capsule from the ground to 70 units up, which covers the post
  * (0..52) and the head (53..71) and leaves the arms sticking out of it. That is
- * deliberate: a capsule is what spec 197 says the game's own hook will sample,
+ * deliberate: a capsule is what spec 215 says the game's own hook will sample,
  * and photographing this rig against a tighter volume than the game has would
  * be photographing an effect the game does not play.
  */
@@ -293,7 +293,7 @@ class BrushScene {
     // --- the effects -------------------------------------------------------
     //
     // Two hooks beyond the ground, and both of them exist for the afflictions
-    // (spec 197). Without them this rig would photograph the seven with the one
+    // (spec 215). Without them this rig would photograph the seven with the one
     // thing they are *about* switched off: `shape: { kind: 'mesh' }` degrades to
     // a bare point when there is no `surface` resolver, so every mark of every
     // cling would be born at the dummy's feet in a single spot, and the sheet
@@ -315,7 +315,7 @@ class BrushScene {
           return true;
         },
         // A point on the body's own volume, for `mesh` emitter shapes. A capsule
-        // rather than the mesh's vertices, for the reason spec 197 gives: at
+        // rather than the mesh's vertices, for the reason spec 215 gives: at
         // this resolution a painted mark wants a volume and not a surface, and
         // reading vertices would put a skinning cost on every particle spawned.
         // The dummy's post-and-head is nearly a capsule anyway, which is a
@@ -652,7 +652,7 @@ function main(): void {
     'background:#14212a;color:#dbe7ee;';
   // Read off the compiled registry rather than listed here, so an affliction
   // authored and then reached by nothing shows up in this menu on the next
-  // reload -- which is the exact failure spec 197 exists to close, and a
+  // reload -- which is the exact failure spec 215 exists to close, and a
   // hand-written list would be one more place for it to hide.
   for (const effect of EFFECTS) {
     if (!effect.id.startsWith('affliction_')) continue;

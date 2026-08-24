@@ -124,7 +124,7 @@ interface RunResult {
   /** Every drop presentation produced, so a run that presented nothing fails. */
   readonly drops: readonly DropPresentation[];
   /**
-   * Every effect the affliction layer asked for (spec 197), so a run whose paint
+   * Every effect the affliction layer asked for (spec 215), so a run whose paint
    * silently did nothing cannot claim to have covered it. Ids rather than
    * handles: what is worth asserting is that a cling was started and a beat was
    * played, not which slot they landed in.
@@ -257,7 +257,7 @@ async function play(animate: boolean): Promise<RunResult> {
     }
     dropPresenter.retain(new Set(view.drops.map((drop) => drop.entityId)));
 
-    // The paint (spec 197), driven exactly as `syncBodies` drives it: the
+    // The paint (spec 215), driven exactly as `syncBodies` drives it: the
     // replicated status list, the drawn tick, and the body's own radius as the
     // scale. Nothing is read back.
     for (const entity of view.entities) {
@@ -400,7 +400,7 @@ describe('animation is presentation only', () => {
     expect(animated.drops.flatMap((shown) => shown.cues)).toContain('loot.reveal.rare');
   }, 30_000);
 
-  it('was actually painting an affliction, and beating it (spec 197)', async () => {
+  it('was actually painting an affliction, and beating it (spec 215)', async () => {
     // The same guard the yaw and the drop get. A driver that started nothing
     // would satisfy the byte-for-byte assertion above and prove nothing -- and
     // that is not a hypothetical here, because every id it can play is looked up

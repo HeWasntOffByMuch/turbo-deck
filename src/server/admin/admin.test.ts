@@ -536,7 +536,7 @@ describe('character edits (spec 154)', () => {
 });
 
 /**
- * `admin:triggerEvent 'affliction'` (spec 197).
+ * `admin:triggerEvent 'affliction'` (spec 215).
  *
  * Everything above this point is the **router**, driven against a `FakeHost`:
  * the claim being made there is that a frame reaches a method carrying its
@@ -553,7 +553,7 @@ describe('character edits (spec 154)', () => {
  * and the monsters arrive through `spawnEntities`, which is what an admin
  * conjuring a fight already does.
  */
-describe("admin:triggerEvent 'affliction' (spec 197)", () => {
+describe("admin:triggerEvent 'affliction' (spec 215)", () => {
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
   /** Comfortably inside any reach worth having. */
@@ -682,7 +682,7 @@ describe("admin:triggerEvent 'affliction' (spec 197)", () => {
       test.server.triggerEvent('affliction', test.at.x, test.at.y, ordinalOf(dotId));
 
       // Full severity rather than one stack, because severity is precisely what
-      // spec 197's paint draws differently and one stack of Poison is the tier
+      // spec 215's paint draws differently and one stack of Poison is the tier
       // a single dart already produces.
       const held = heldOn(test.server, test.near, dotId);
       expect(held?.stacks).toBe(row.maxStacks);

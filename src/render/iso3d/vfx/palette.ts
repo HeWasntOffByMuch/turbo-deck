@@ -121,7 +121,7 @@ export const VFX_PALETTE = {
   boltYellow: 0xffe08a,
   boltViolet: 0x9a5ad0,
   /**
-   * Corrosion's acid (spec 197) -- and it is a *third* green in a table that
+   * Corrosion's acid (spec 215) -- and it is a *third* green in a table that
    * already has two, which is only worth the entry because of what it has to be
    * told apart from.
    *
@@ -137,7 +137,7 @@ export const VFX_PALETTE = {
   corrodeBody: 0xa8c22f,
   corrodeDeep: 0x8a6a2e,
   /**
-   * Decay's rot (spec 197): the one affliction whose colour is an *absence*.
+   * Decay's rot (spec 215): the one affliction whose colour is an *absence*.
    *
    * Every other ramp here is saturated, because every other effect is something
    * arriving. Decay suppresses healing -- what it costs you is the health you
@@ -155,7 +155,7 @@ export const VFX_PALETTE = {
   arcaneDeep: 0x4a2a7a,
 
   /**
-   * The amber between the cream and the orange (spec 197 follow-up).
+   * The amber between the cream and the orange (spec 215 follow-up).
    *
    * `fire` runs `fireCore` (pale cream) to `fireBody` (a strong orange) to
    * `fireDeep` (red), and that is right for a *flame*, which is a thing you look
@@ -170,7 +170,7 @@ export const VFX_PALETTE = {
    */
   fireAmber: 0xffb833,
   /**
-   * Lightning, as three colours that are not the bolt's (spec 197 follow-up).
+   * Lightning, as three colours that are not the bolt's (spec 215 follow-up).
    *
    * `boltWhite`/`boltYellow`/`boltViolet` are a *bolt* -- a cream white through
    * a warm yellow to a purple -- which reads as arcane sparks on a body rather

@@ -1,9 +1,9 @@
 /**
- * The afflictions, painted onto a real body in the real Play tab (spec 197).
+ * The afflictions, painted onto a real body in the real Play tab (spec 215).
  *
  *   npx tsx scripts/probe-afflictions.ts
  *
- * Everything spec 197 decides is asserted in Node already: `brushAffliction`'s
+ * Everything spec 215 decides is asserted in Node already: `brushAffliction`'s
  * invariants (`vfx/brush.test.ts`), the derived beat against the sim's own
  * resolver, the severity crossover, `AuraTracker` starting and stopping a cling
  * once across an apply/refresh/expire cycle, and the whole thing driven twice

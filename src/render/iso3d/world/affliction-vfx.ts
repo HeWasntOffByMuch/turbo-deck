@@ -1,5 +1,5 @@
 /**
- * The paint on a body carrying an affliction, and the beat it lands on (spec 197).
+ * The paint on a body carrying an affliction, and the beat it lands on (spec 215).
  *
  * Pure -- no three.js, no DOM, no `GameClient`. It is handed replicated facts
  * and answers what to play, which is the discipline `vfx-wire.ts`, `auras.ts`
@@ -518,7 +518,7 @@ export function seedFor(entityId: number, id: string, index: number): number {
  * shipped page applies an affliction.** Every one of the seven arrives through
  * a skill sigil that has to be looted and equipped, or through a monster that
  * has to be authored to carry one, and no monster in the roster does. So the
- * whole of spec 197 was unreachable from the Play tab: the paint could be
+ * whole of spec 215 was unreachable from the Play tab: the paint could be
  * asserted in Node and photographed in a rig, and nobody could walk up to a
  * burning body in the game and look at it.
  *

@@ -818,7 +818,7 @@ export const ORDER_MARK_REACH = ORDER_MARK_ARM * MARK_REACH;
 // --- the afflictions ---------------------------------------------------------
 
 /**
- * A body carrying an affliction (spec 197), as paint that clings to it.
+ * A body carrying an affliction (spec 215), as paint that clings to it.
  *
  * The fourth builder here and the first that is not an *event*. `bloodHit`,
  * `brushExplosion` and `brushCross` are all a burst thrown at a point and over
@@ -1085,7 +1085,7 @@ export function brushAffliction(params: BrushAfflictionParams): EffectDefinition
 }
 
 /**
- * One beat of an affliction (spec 197): the tick a pulse actually lands.
+ * One beat of an affliction (spec 215): the tick a pulse actually lands.
  *
  * The other half of the pair, and an *event* where {@link brushAffliction} is a
  * state -- the division `world/auras.ts` draws in one line, *"a hit happens; a
@@ -1294,7 +1294,7 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     priority: 3,
   }),
 
-  // --- the afflictions (spec 197) --------------------------------------------
+  // --- the afflictions (spec 215) --------------------------------------------
   //
   // Seven states rather than seven effects, and the numbers below are the seven
   // characters `data/damage-over-time.ts` authored, read back out as paint. What

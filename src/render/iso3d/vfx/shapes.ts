@@ -272,7 +272,7 @@ export function applySpread(rng: VfxRng, out: Float32Array, dirAt: number, sprea
 
 /**
  * A point on a capsule of unit radius, `heightRadii` radii tall, standing on
- * `y = 0` (spec 197).
+ * `y = 0` (spec 215).
  *
  * What a `surface` hook owes `system.ts`, and the one place it is worked out.
  * There are two callers -- the game's own bodies in `world/scene.ts` and the

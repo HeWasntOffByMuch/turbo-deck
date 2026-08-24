@@ -28,7 +28,7 @@ review gate.**
 | two variants that linger (spec 160) | done |
 | a mark that comes apart (spec 161) | done |
 | the tab could not show what it was editing (spec 162) | done |
-| the afflictions, as paint on a body (spec 197) | **at the review gate** |
+| the afflictions, as paint on a body (spec 215) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1678,7 +1678,7 @@ would have got the shader retuned to satisfy a number rather than the picture.
 
 ---
 
-## 11. The afflictions, as paint on a body (spec 197)
+## 11. The afflictions, as paint on a body (spec 215)
 
 The painted vocabulary had three builders and all three were *events*: a hit, a
 blast, a placed cross. Nothing in it held to a body, and nothing in it lasted

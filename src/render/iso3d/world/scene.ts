@@ -351,7 +351,7 @@ interface Body {
    */
   headroom: number;
   /**
-   * The body's footprint radius, for the `surface` sampler (spec 197).
+   * The body's footprint radius, for the `surface` sampler (spec 215).
    *
    * The same number `appearanceOf` gives the hover volume, kept here so the
    * particle system can ask about a body it is attached to without the scene
@@ -503,7 +503,7 @@ export class WorldScene {
   private readonly staggerFlinches = new StaggerFlinches();
   private readonly bodies = new Map<number, Body>();
   /**
-   * The paint on every afflicted body, and the beat it lands on (spec 197).
+   * The paint on every afflicted body, and the beat it lands on (spec 215).
    *
    * Assigned in the constructor because it needs the layer, and `readonly`
    * because nothing may swap it: it is holding the handles that stop the
@@ -703,7 +703,7 @@ export class WorldScene {
           return true;
         },
         /**
-         * A point on a body's own volume, for `mesh` emitter shapes (spec 197).
+         * A point on a body's own volume, for `mesh` emitter shapes (spec 215).
          *
          * The socket the format has had since spec 118 -- *"the surface of
          * whatever the effect is attached to ... which is what makes a
@@ -751,7 +751,7 @@ export class WorldScene {
         },
       },
     });
-    // The paint on an afflicted body (spec 197). Given the layer rather than the
+    // The paint on an afflicted body (spec 215). Given the layer rather than the
     // scene, so the whole driver is pure and is driven end to end in Node
     // against a recorder -- the same reason `unit-driver.ts` takes a snapshot
     // and not a `GameClient`.
@@ -761,7 +761,7 @@ export class WorldScene {
       has: (id) => this.vfx.system.has(id),
       // A cling is the lowest-priority thing in the game and the first the
       // instance pool evicts under pressure. Asking rather than assuming is what
-      // lets the driver put it back afterwards (spec 197).
+      // lets the driver put it back afterwards (spec 215).
       isLive: (handle) => this.vfx.system.isLive(handle),
     });
     this.scene.add(this.vfx.root);
@@ -1640,7 +1640,7 @@ export class WorldScene {
       const fallen = body.unit !== undefined && hasDeathAnimation(body.unit.def);
       body.group.scale.setScalar(dead && !fallen ? 0.6 : 1);
 
-      // The paint on an afflicted body (spec 197).
+      // The paint on an afflicted body (spec 215).
       //
       // Fed the **drawn** position and the **drawn** tick -- the same `x`,
       // `ground` and `frame.tick` the body itself is placed by -- so the marks
@@ -1700,7 +1700,7 @@ export class WorldScene {
       // leave the scene, so it goes with it.
       if (body.unit) this.dropHeldWeapon(body.unit);
       // Nothing in the particle system stops itself when the body it is
-      // attached to goes away (spec 197): the attach hook simply answers false,
+      // attached to goes away (spec 215): the attach hook simply answers false,
       // the instance stays wherever it last resolved, and a `durationTicks: 0`
       // effect hangs in the air forever holding one of 128 instance slots. The
       // stop is the caller's, so it is made here -- from the sweep that already

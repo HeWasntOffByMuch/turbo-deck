@@ -1,4 +1,4 @@
-// Dev-only: look at the seven afflictions on a body (spec 197).
+// Dev-only: look at the seven afflictions on a body (spec 215).
 // `npx tsx scripts/preview-afflictions-vfx.ts`
 //
 // Drives `src/render/brush-scene.html` -- the judging rig: full resolution,
@@ -34,7 +34,7 @@
 //   - **mass is in a few big pieces.** The largest connected ink region as a
 //     share of all ink.
 //   - **ink area.** How much of the tile the affliction actually covers, which
-//     is the number severity is made of: spec 197's rule is *more paint, never
+//     is the number severity is made of: spec 215's rule is *more paint, never
 //     brighter paint*, so a heavy cling that is not measurably more ink than its
 //     light one has not implemented the rule it was written for.
 //   - **variation between seeds.** Different paintings by one artist.
@@ -648,7 +648,7 @@ async function main(): Promise<void> {
         `    ${lightTile.label.padEnd(22)} ink ${(light.ink * 100).toFixed(2)}% (${String(lightTile.particles).padStart(4)} marks)` +
           `   heavy ink ${(heavy.ink * 100).toFixed(2)}% (${String(heavyTile.particles).padStart(4)} marks)   ${ratio.toFixed(2)}x`,
       );
-      // The rule spec 197 states, as a measurement. A heavy cling that is not
+      // The rule spec 215 states, as a measurement. A heavy cling that is not
       // measurably more paint than its light one has not implemented it -- and
       // the failure is invisible in a thumbnail, because "slightly more marks"
       // and "the same marks" look identical at 480 pixels.

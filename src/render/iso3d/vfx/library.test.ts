@@ -824,12 +824,12 @@ describe('the whole library actually runs', () => {
 
 
 /**
- * The afflictions (spec 197).
+ * The afflictions (spec 215).
  *
  * Both directions, and the second one is why this block exists. Checking that
  * every id `AFFLICTION_ART` names is in the registry catches a typo -- the
  * failure `aurasFor`'s own test names, "a name that looks right and silently
- * plays nothing". Checking the other way catches the failure spec 197 was
+ * plays nothing". Checking the other way catches the failure spec 215 was
  * written to close: an effect that was **authored and then reached by nothing**.
  * `EmitterShape`'s `{ kind: 'mesh' }` sat in the type for eighty specs with no
  * definition that used it and no `surface` hook to resolve it, and every test in
@@ -842,7 +842,7 @@ describe('the whole library actually runs', () => {
  * indistinguishable from being wrong about your own health bar -- which is the
  * exact state this spec found the game in.
  */
-describe('the afflictions (spec 197)', () => {
+describe('the afflictions (spec 215)', () => {
   /** Every id reachable from the art table: the cling, its heavy tier, the beat. */
   const named = new Set<string>();
   for (const art of Object.values(AFFLICTION_ART)) {

@@ -1,5 +1,5 @@
 /**
- * The paint on an afflicted body, and the beat under it (spec 197).
+ * The paint on an afflicted body, and the beat under it (spec 215).
  *
  * Three things here are worth more than the rest of the file put together, and
  * each is a property that a green suite of per-case assertions would happily
@@ -300,7 +300,7 @@ function driveWholeWindow(
 
 // --- what is live on a body --------------------------------------------------
 
-describe('afflictionsOn (spec 197)', () => {
+describe('afflictionsOn (spec 215)', () => {
   it('reports an affliction that is on the body', () => {
     const live = afflictionsOn([status(StatusId.Burn, 200)], 40);
     expect(live).toHaveLength(1);
@@ -370,7 +370,7 @@ describe('afflictionsOn (spec 197)', () => {
   it('orders by wire index rather than by the order it was handed', () => {
     // Two bodies carrying the same afflictions must produce the same list, and
     // a mark must not move because something else was applied -- the reason
-    // `AURA_ORDER` is fixed and the invariant spec 197 states in as many words:
+    // `AURA_ORDER` is fixed and the invariant spec 215 states in as many words:
     // *"in wire order, whatever order the statuses arrive in"*.
     //
     // The wire does arrive sorted -- `visibleStatusesOf` in `net/delta.ts` ends
@@ -902,7 +902,7 @@ describe('AfflictionVfx', () => {
     expect(recorder.stopped).toEqual([]);
   });
 
-  it('puts a cling back after the pool evicts it (spec 197)', () => {
+  it('puts a cling back after the pool evicts it (spec 215)', () => {
     // The failure this closes is silent and only happens in the fight that
     // caused it: with the instance pool full, `claimInstance` evicts the
     // lowest-priority instance it can find rather than refusing, and a cling is
