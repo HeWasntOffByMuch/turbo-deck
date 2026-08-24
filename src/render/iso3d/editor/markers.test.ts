@@ -13,7 +13,7 @@ import {
   type Rect,
 } from '../../../terrain/index.js';
 import { EditHistory } from './history.js';
-import { eraseMarkers, nextMarkerId, placeMarker } from './markers.js';
+import { markerCaption, eraseMarkers, nextMarkerId, placeMarker } from './markers.js';
 import { DEFAULT_SCATTER, eraseStroke, scatterStroke } from './scatter.js';
 
 /**
@@ -271,5 +271,40 @@ describe('undo', () => {
     history.undo(map.store);
     expect(map.store.markers(LAYER)).toHaveLength(1);
     expect(map.store.props(LAYER)).toHaveLength(props);
+  });
+});
+
+
+describe('what a marker says', () => {
+  /**
+   * The caption is the whole reason a spawner is placeable in the editor and
+   * not merely present in it. Every marker of a kind draws the same disc with
+   * the same letter, which is right for the kinds where the kind is the whole
+   * meaning -- and wrong for the one where the label *is* the meaning. A field
+   * of sheep and a ravager were the same red M until this.
+   */
+  it('names the monster a spawner spawns', () => {
+    expect(markerCaption({ label: 'sheep' })).toBe('sheep');
+    expect(markerCaption({ label: 'ravager' })).toBe('ravager');
+  });
+
+  it('says nothing for a marker that carries no label', () => {
+    // The four other kinds, and a spawner mid-placement before one is chosen.
+    // An empty caption is what puts a marker back on the plain billboard, so
+    // this is the case that keeps every unlabelled marker on the map the size
+    // it has always been.
+    expect(markerCaption({})).toBe('');
+    expect(markerCaption({ label: undefined })).toBe('');
+    expect(markerCaption({ label: '' })).toBe('');
+    // Whitespace is not a name. It would otherwise buy a marker a wider sprite
+    // and an empty black pill, which reads as a bug rather than as a blank.
+    expect(markerCaption({ label: '   ' })).toBe('');
+  });
+
+  it('is exactly the label, so what is drawn is what is stored', () => {
+    // No prettifying. `small_spider` is the id the document carries and the id
+    // the server refuses to boot without, so an editor that displayed
+    // "Small Spider" would be showing something nobody can search the map for.
+    expect(markerCaption({ label: 'small_spider' })).toBe('small_spider');
   });
 });

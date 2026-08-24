@@ -3,7 +3,7 @@ import { TERRAIN_TOOLS } from './brush.js';
 import { fenceStep, FENCE_STYLES } from './fence.js';
 import { MARKER_KINDS } from './markers.js';
 import { PAINT_MATERIALS } from './paint.js';
-import {
+import { SPAWNER_MONSTER_CHOICES,
   createEditorSettings,
   cursorColor,
   cursorRadius,
@@ -22,6 +22,7 @@ import {
   type EditorMode,
   type EditorSettings,
 } from './tools.js';
+import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 
 /**
  * Spec 058. The panel's *decisions* -- which tool is armed, whose settings that
@@ -212,5 +213,36 @@ describe('telling the marker kinds apart (spec 178)', () => {
       // written to the map and read by nobody, and the panel says so.
       expect(markerKindEffect(kind)).toMatch(/nothing reads it yet/);
     }
+  });
+});
+
+
+describe('the spawner monster picker', () => {
+  /**
+   * The property, rather than the contents: the picker is *derived* from the
+   * monster table, so adding a creature to the game adds it to the editor and
+   * nobody has to remember a second list. This is what would fail if somebody
+   * later replaced the derivation with a hand-written array -- which is the
+   * change that looks harmless and quietly makes the newest monster
+   * unplaceable.
+   */
+  it('offers exactly the monsters the game has, in table order', () => {
+    expect(SPAWNER_MONSTER_CHOICES.map((c) => c.value)).toEqual(ALL_MONSTERS.map((m) => m.id));
+  });
+
+  it('offers no monster the server would refuse to boot on', () => {
+    // `spawnPointsFrom` throws on a spawner naming a monster it cannot find, so
+    // an id in this list that is not in the table is a map the editor can write
+    // and the server cannot load.
+    const known = new Set(ALL_MONSTERS.map((m) => m.id));
+    for (const choice of SPAWNER_MONSTER_CHOICES) expect(known.has(choice.value), choice.value).toBe(true);
+  });
+
+  it('is not empty, so the strip always has something armed', () => {
+    // `defaultToolState` arms `SPAWNER_MONSTER_CHOICES[0]`, so an empty table
+    // would arm `''` -- a spawner with no monster, which is the one marker the
+    // document treats as invalid.
+    expect(SPAWNER_MONSTER_CHOICES.length).toBeGreaterThan(0);
+    expect(SPAWNER_MONSTER_CHOICES[0]?.value).not.toBe('');
   });
 });
