@@ -65,6 +65,8 @@ change a game outcome.
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 215's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
+| `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
+| `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -1607,6 +1609,74 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  for. Dropping one chunk re-meshes the four beside it, because a
                  chunk's apron is built from its neighbours: the mirror of what
                  an arrival does, in the other direction.
+                 Since spec 215 the client also forgets the **trees** on that
+                 ground. Spec 208 evicted terrain at four layers and said prop
+                 regions were the same question one level up; one level up had
+                 no answer at all, because `PropFieldHandle` could adopt a
+                 region or dispose the whole field and nothing in between. A
+                 lawnmower over the shipped map left **72 regions and 1,124
+                 shadow-casting meshes drawn over 4 regions' worth of ground**.
+                 The rule is derived rather than chosen: **a region is drawn
+                 because a chunk under it is held, so it is dropped when none
+                 is** -- which is what makes it unable to fight the streamer by
+                 construction, where terrain had to derive a keep radius to buy
+                 the same guarantee. One predicate, two callers
+                 (`world/prop-residency.ts`): the drop pass, and the adopt path,
+                 where a region asked for on one frame and evicted on the next
+                 would otherwise be hung on the graph *behind* the drop pass
+                 with nothing left to take it down.
+                 What that exposed is the half worth knowing about, because
+                 shipping the drop alone made the game worse and the report was
+                 "went south, then north again and chunks didn't re-appear".
+                 **Dropping a region is only half a cache**, and the thing that
+                 puts it back was already broken:
+                 `ChunkIngest.takePropRects` hands a region back once its ground
+                 has been quiet for `settleMs` and either its ground is complete
+                 or it has waited `incompleteHoldMs`, and both halves had
+                 failed. The completeness rule fires **zero** times -- a
+                 2200-unit region needs a 4x4 block of 616-unit chunks and the
+                 request window has been 5x5 and unaligned since spec 202
+                 narrowed the radius, so what spec 180 wrote as "the common
+                 case" now never happens -- which leaves the backstop deciding
+                 everything, and it was measured from the region's *last* touch,
+                 so every arrival pushed its own deadline out and a body that
+                 kept moving never reached it. Invisible before eviction,
+                 because a region drawn once was drawn forever; with eviction it
+                 is a world that strips itself as you walk and takes fourteen
+                 seconds of standing perfectly still to fill back in. So **the
+                 incomplete-hold clock is a deadline, not a quiet period**: a
+                 region keeps two stamps, the last touch for the settle and the
+                 first for the backstop, and nothing restarts the second until
+                 the region is handed back. That the completeness rule is dead
+                 is written down in spec 215 with its measurement rather than
+                 repaired, because repairing it means asking "is every chunk of
+                 this region *inside the request window* held", which changes a
+                 rule spec 180 stated.
+                 `npx tsx scripts/probe-walk-back.ts` is the half no headless
+                 test could see -- the shipped page, a real worker, a real scene
+                 graph, the body moved by admin teleport because the keep radius
+                 is a minute of walking -- and it reads `data-prop-regions`
+                 against `data-chunks-held`: the ground was bounded and complete
+                 the whole way while the trees went to **zero** and came back to
+                 three.
+                 The same probe found the third one, one system over: the
+                 **nav grid was keyed on the held chunk count** at both of its
+                 gates -- `streamed.size - sizeWhenLastAsked >= 8` to decide a
+                 rebuild is worth it, and `generation: streamed.size` to order
+                 the replies. A count is a version only for a client that never
+                 lets go, and bounded at 35 by the keep window it is neither: the
+                 trigger stops firing and every later grid is refused as stale,
+                 so a client routes and predicts collision against the grid built
+                 over its spawn point for the session. Measured over sixteen
+                 chunk-crossings: **one request, two grids**, `gen` stuck at 35
+                 from the second leg on -- which reads as pathfinding that works
+                 until you go anywhere. `StreamedMap.revision` is what both
+                 questions were always about: **churn**, one up per insert *and*
+                 one per removal, so it only ever grows and a chunk let go counts
+                 as the change to the ground it is. Same walk after: fourteen
+                 grids, `gen` 25 to 155, none refused. It arrived with spec 208
+                 rather than with 215, and nothing caught it because every test
+                 in the tree drives a client that grows.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -2523,6 +2593,127 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  appears, which is the whole reason a bottom-anchored holder may
                  grow at the top at all -- the cast bar had to be taken out of
                  flow for exactly this.
+                 `world/affliction-vfx.ts` is what a *body* says about the same
+                 thing (spec 215), and it exists because a mark over the head is
+                 the wrong shape of information for an affliction: an affliction
+                 is the one damage here that stays on a body after the thing
+                 that did it walked away, and until this the only difference
+                 between four seconds of fire and ten seconds of rot was which
+                 thirteen-pixel glyph sat in a row of glyphs. So the seven get
+                 painted, in the spec 158-162 vocabulary, and three sockets that
+                 had been waiting with comments naming this work got filled:
+                 `auras.ts`'s *"the day a status list is replicated, `aurasFor`
+                 gains a branch"* (spec 186 replicated it; `aurasFor` and
+                 `AuraTracker` had no caller outside their own test for
+                 seventy-five specs), `EmitterShape`'s `{ kind: 'mesh' }` --
+                 *"the surface of whatever the effect is attached to ... what
+                 makes a **burning-unit** definition safe to preview in
+                 isolation"*, with no burning-unit definition and no `surface`
+                 hook, so in the game it had never resolved to anything but a
+                 point -- and `scene.ts`'s attach hook, *"the effects that need
+                 a socket, a burning unit, arrive with the fire work"*.
+                 The decision the whole thing turns on: **the beat is derived,
+                 not sent**. `WireStatus` carries an *absolute* `expiresAtTick`
+                 and `data/damage-over-time.ts` is shared code, so
+                 `elapsed = tick - (expiresAtTick - dotDurationTicks(row))`
+                 recovers the entire schedule -- the same rule `loot-drop.ts`'s
+                 reveal phase and `stun-icon.ts`'s swirl already are. Every
+                 client beats together, nothing new crosses the wire, and the
+                 paint lands on the frame the damage number does, which is the
+                 whole difference between "there is a green haze on that thing"
+                 and "that thing is being poisoned". It is a **count** rather
+                 than "is this tick a pulse tick", and that half is
+                 load-bearing: a frame drains several ticks -- three at 20fps,
+                 and this environment paints a real page at about five -- so the
+                 modulo version skips most beats and *all* of them on a slow
+                 frame, where counting what has landed and firing on the
+                 increase is frame-rate independent by construction, and fires
+                 **once** for a frame that drained three, because a beat is a
+                 beat and not a quantity. One stated limit: the sim measures
+                 elapsed from `appliedAtTick`, which a refresh does not move,
+                 and the client has only the expiry, which it does -- so after a
+                 refresh the phase can sit up to one interval off. The *cadence*
+                 stays exact, the offset is under half a second on every row,
+                 and it is accepted rather than fixed with a protocol change.
+                 That split is `auras.ts`'s own line -- *"a hit happens; a poison
+                 lasts"* -- with an affliction being the first thing here that
+                 is both: the **cling** is a state, started once and stopped
+                 once and drawn for a body that walked into view already
+                 burning; the **beat** is an event and needs an edge, the way
+                 `stagger-flinch.ts` does and for the same reason.
+                 `vfx/brush.ts` gained the two builders. Four things about the
+                 vocabulary decided their shape rather than taste.
+                 **`worldSpace: false` is the whole of "it clings"** -- the
+                 compiled default is `true` and attaching an effect moves only
+                 the emission *origin*, so a mark born on a walking body and
+                 left in world space is a mark the body walks out of. **The
+                 shape choice is the orientation choice**: `brush-blot` is
+                 `tumble`, world space, so the cling turns with the body's own
+                 volume, while `brush-slash` and `brush-flick` are
+                 `cardVelocity` and always face the camera, which is what a beat
+                 must do; `brush-mark` is `ground` and is the one brush shape
+                 that cannot go on a body at all. **`fizzle`, never `retract`**
+                 for anything held long enough to be watched -- spec 161's rule,
+                 and this is the case it was written about. And **`alpha`,
+                 nothing additive**, which matters more here than anywhere else
+                 in the file because a cling is many overlapping marks on one
+                 body *by construction*: the one arrangement where a translucent
+                 mark is guaranteed to cross another and make a third colour in
+                 neither of them.
+                 Every length is in **body radii**: the driver plays with
+                 `scale` set to the footprint radius and the `surface` hook
+                 answers in the same units, and `system.ts` multiplies both the
+                 shape's local coordinates and the size curve by it -- so one
+                 authored definition lands on a spider and on a player at the
+                 right place *and* the right size. Speed and gravity are not
+                 scaled, which is correct, because gravity is gravity.
+                 Severity is **two tiers and more paint, never brighter paint**:
+                 the count is already drawn over the head, so what the paint owes
+                 is severity, brightness is what the beat says, and one signal
+                 meaning two things is a legend nobody can read. Frostbite
+                 crosses on *elapsed* rather than stacks, since its ramp is that
+                 row's whole design; Burn and Shock get no heavy tier at all,
+                 because neither stacks and neither ramps and a louder version
+                 would be a picture of a state that never happens.
+                 The driver does its own diff rather than using `AuraTracker`,
+                 and the reason is specific: **`play` returns 0 on refusal** --
+                 unknown id, over budget, beyond `cullDistance` -- and a tracker
+                 that records *ids* cannot say "wanted, asked for, did not
+                 start", so committing a refused id leaves a body silently
+                 unmarked for the rest of its life. Holding **handles** makes a
+                 refusal mean "not started yet". The obligation that comes with
+                 that: on despawn **nothing stops itself** -- the attach hook
+                 answers false, the instance stays where it last resolved, and a
+                 `durationTicks: 0` effect hangs in the air forever holding one
+                 of 128 slots -- so `forget` is called from the sweep that knows
+                 a body has left, never inferred from an absence. Nothing in
+                 this game had ever held a persistent attached effect, so this
+                 is the pattern rather than a use of one. The other half of the
+                 same problem is **eviction**, and it was found by reading
+                 `claimInstance` rather than by anything failing: a full instance
+                 pool does not refuse, it takes the lowest-priority furthest
+                 instance, hands the slot over and bumps its generation, so every
+                 handle to it goes stale where it sits. A cling is priority 1 and
+                 therefore the first thing in the game to go -- correctly, since
+                 the fight in front of you matters more than paint on a body
+                 across the arena -- and a driver that went on believing its
+                 handle would leave that body unpainted for the rest of its life,
+                 silently, and only in the crowded fight that caused the
+                 pressure. `isLive` is asked every step and a dead handle is "not
+                 started".
+                 The palette gained two ramps, and each had to be unmistakable
+                 against the neighbour it would otherwise read as: Corrosion is a
+                 *chemical* green pushed toward chartreuse against Poison's leaf,
+                 because two greens read as one affliction at two intensities and
+                 that is exactly backwards; Decay is the only **desaturated**
+                 ramp in the table, since what it does is suppress healing and it
+                 should look like colour draining rather than colour landing.
+                 `presentation-only.test.ts` drives it beside the machines, the
+                 eased yaw and the drop's reveal, and it is worth having there
+                 for one reason past the others: an affliction is the first thing
+                 a client works out the *schedule* of for itself, so the obvious
+                 way to get it wrong is to let that derivation reach back into
+                 something.
                  `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
                  to a body because of the bodies around it (spec 187). Until they
                  existed nothing on the server knew that two units were in the
