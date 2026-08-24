@@ -77,8 +77,20 @@ export function regionOf(cx: number, cz: number, size: number = REGION_CHUNKS): 
  * sign in the name -- `r/-1_2.json` reads as the region it is.
  */
 export function regionPath(rx: number, rz: number): string {
-  return `r/${String(rx)}_${String(rz)}.json`;
+  return `${REGION_DIR}/${String(rx)}_${String(rz)}.json`;
 }
+
+/**
+ * The one spelling of the directory regions live in.
+ *
+ * A region path is a **key in a document**, not a location on a disk: the
+ * manifest names it, `SplitMap.regions` is keyed by it, and both ends compare
+ * it as a string. So it is joined with a forward slash here and nowhere else --
+ * a caller that builds one with `path.join` gets the platform's separator and
+ * silently stops matching the manifest on Windows, which is how `writeSplit`
+ * came to delete every region file in the map at the end of every save.
+ */
+export const REGION_DIR = 'r';
 
 export const MANIFEST_PATH = 'manifest.json';
 
@@ -217,11 +229,23 @@ function regionBounds(
 /**
  * One document, as a manifest and a set of region files.
  *
- * A region file is itself a **valid `MapDocument`**, carrying its layer's
- * scalars and only its own chunks. That is deliberate reuse: `serializeMap`
- * writes one terrain row per line and `parseMap` checks every field, and a
- * second format for the same data would be a second thing to keep right. It
- * also means a region file can be opened, diffed and validated on its own.
+ * A region file is itself a **valid `MapDocument`**, carrying the scalars of
+ * every layer with chunks in that region and only those chunks. That is
+ * deliberate reuse: `serializeMap` writes one terrain row per line and
+ * `parseMap` checks every field, and a second format for the same data would be
+ * a second thing to keep right. It also means a region file can be opened,
+ * diffed and validated on its own.
+ *
+ * **A region is a square of the world, so it holds everything in that square**
+ * (spec 220). It was written one layer to a file, which refused every map this
+ * format has always promised to carry -- `heightAt` maxes over layers, the
+ * mesher skirts them, the wire sends them, and the editor's Rock and Stair
+ * tools make them. The arena's ground covers the world, so every tier collided
+ * with it and saving was refused outright. Layers go in in document order, and
+ * each layer's `RegionEntry` names the shared file: `hash` is the whole file's,
+ * because that is what says the bytes have not drifted, and `cells` is that
+ * layer's own, because that is what `grow-map.ts` measures a layer's rim
+ * against. A one-layer map is byte-identical to what this wrote before.
  *
  * The manifest is authoritative for everything a region file repeats -- `joinMap`
  * reads every layer scalar out of the manifest and none out of the region -- and
@@ -240,14 +264,21 @@ function regionBounds(
  */
 export function splitMap(doc: MapDocument, size: number = REGION_CHUNKS): SplitMap {
   const regions = new Map<string, string>();
-  const layers: ManifestLayer[] = [];
   const species = new Set<string>();
+  const extent = doc.grid.cellSize * doc.grid.chunkCells;
+
+  /** What each layer puts where, in document order. */
+  const held: {
+    layer: MapLayer;
+    coords: { cx: number; cz: number }[];
+    spawners: ManifestSpawner[];
+    byRegion: Map<string, MapLayer['chunks'][number][]>;
+  }[] = [];
 
   for (const layer of doc.layers) {
     const byRegion = new Map<string, MapLayer['chunks'][number][]>();
     const coords: { cx: number; cz: number }[] = [];
     const spawners: ManifestSpawner[] = [];
-    const extent = doc.grid.cellSize * doc.grid.chunkCells;
 
     for (const chunk of layer.chunks) {
       coords.push({ cx: chunk.cx, cz: chunk.cz });
@@ -268,43 +299,65 @@ export function splitMap(doc: MapDocument, size: number = REGION_CHUNKS): SplitM
       }
       const { rx, rz } = regionOf(chunk.cx, chunk.cz, size);
       const key = regionPath(rx, rz);
-      const held = byRegion.get(key);
-      if (held) held.push(chunk);
+      const inRegion = byRegion.get(key);
+      if (inRegion) inRegion.push(chunk);
       else byRegion.set(key, [chunk]);
     }
 
-    const entries: RegionEntry[] = [];
+    // Row-major inside the file, so a region's text is a function of its
+    // contents rather than of the order the document happened to list them.
     for (const [path, chunks] of byRegion) {
-      // Row-major inside the file, so a region's text is a function of its
-      // contents rather than of the order the document happened to list them.
-      const ordered = [...chunks].sort((a, b) => a.cz - b.cz || a.cx - b.cx);
-      const text = serializeMap({
+      byRegion.set(path, [...chunks].sort((a, b) => a.cz - b.cz || a.cx - b.cx));
+    }
+    held.push({ layer, coords, spawners, byRegion });
+  }
+
+  // Which layers land in each region. Written once per *region* rather than
+  // once per (layer, region), because the file is the square of the world.
+  const members = new Map<string, { layer: MapLayer; chunks: MapLayer['chunks'][number][] }[]>();
+  for (const { layer, byRegion } of held) {
+    for (const [path, chunks] of byRegion) {
+      const there = members.get(path);
+      if (there) there.push({ layer, chunks });
+      else members.set(path, [{ layer, chunks }]);
+    }
+  }
+
+  for (const [path, present] of members) {
+    regions.set(
+      path,
+      serializeMap({
         version: MAP_VERSION,
         seed: doc.seed,
         grid: doc.grid,
         arena: doc.arena,
         parts: [],
         // `bounds` is the region's own, never the layer's. See the note above.
-        layers: [{ ...layer, bounds: regionBounds(layer, ordered, doc.grid), chunks: ordered }],
-      });
-      const existing = regions.get(path);
-      // Two layers sharing a region path would overwrite each other. One ground
-      // layer is all this format has ever had, and silently losing the second is
-      // the wrong way to find out.
-      if (existing !== undefined) {
-        throw new Error(`splitMap: two layers both write ${path}; regions are per layer only for one-layer maps`);
-      }
-      regions.set(path, text);
-      const first = ordered[0];
+        layers: present.map(({ layer, chunks }) => ({
+          ...layer,
+          bounds: regionBounds(layer, chunks, doc.grid),
+          chunks,
+        })),
+      }),
+    );
+  }
+
+  const layers: ManifestLayer[] = held.map(({ layer, coords, spawners, byRegion }) => {
+    const entries: RegionEntry[] = [];
+    for (const [path, chunks] of byRegion) {
+      const first = chunks[0];
       if (!first) continue;
       const at = regionOf(first.cx, first.cz, size);
       let cells = 0;
-      for (const chunk of ordered) cells += chunk.cols * chunk.rows;
-      entries.push({ rx: at.rx, rz: at.rz, hash: hashText(text), cells });
+      for (const chunk of chunks) cells += chunk.cols * chunk.rows;
+      // The hash is the *file's*, which two layers sharing a region both name --
+      // it is what says the bytes on disk are the bytes this wrote, and that is
+      // a fact about the file rather than about one layer's share of it.
+      entries.push({ rx: at.rx, rz: at.rz, hash: hashText(regions.get(path) ?? ''), cells });
     }
     entries.sort((a, b) => a.rz - b.rz || a.rx - b.rx);
 
-    layers.push({
+    return {
       id: layer.id,
       seed: layer.seed,
       origin: layer.origin,
@@ -314,8 +367,8 @@ export function splitMap(doc: MapDocument, size: number = REGION_CHUNKS): SplitM
       coords,
       spawners,
       regions: entries,
-    });
-  }
+    };
+  });
 
   const withoutId = {
     version: MAP_VERSION,
@@ -342,9 +395,13 @@ export function joinMap(manifest: MapManifest, readRegion: (path: string) => str
   const layers: MapLayer[] = manifest.layers.map((info) => {
     const chunks: MapLayer['chunks'][number][] = [];
     for (const entry of info.regions) {
-      const region = parseMap(readRegion(regionPath(entry.rx, entry.rz)));
-      const layer = region.layers[0];
-      if (!layer) throw new Error(`joinMap: ${regionPath(entry.rx, entry.rz)} has no layer`);
+      const path = regionPath(entry.rx, entry.rz);
+      const region = parseMap(readRegion(path));
+      // By id, never `layers[0]`: a region shared by the ground and a rock tier
+      // holds both, and taking the first would give one layer the other's
+      // chunks -- silently, since they are chunks either way.
+      const layer = region.layers.find((l) => l.id === info.id);
+      if (!layer) throw new Error(`joinMap: ${path} does not carry layer ${info.id}`);
       chunks.push(...layer.chunks);
     }
     // Back into the order the manifest lists, so a join is the inverse of a
@@ -382,10 +439,13 @@ export function joinMap(manifest: MapManifest, readRegion: (path: string) => str
  * have not been hand-edited apart -- returned as a list of complaints rather
  * than thrown, because a tool wants to report all of them at once.
  *
- * `id` and `origin` are checked and `bounds` deliberately is not: those two are
- * what make a region's chunk indices mean anything, and `bounds` is the region's
- * own extent rather than the layer's, so a region disagreeing with the manifest
- * about it is the normal state and not a fault. See `splitMap`.
+ * The layer is looked up by `id` and its `origin` is checked; `bounds`
+ * deliberately is not. Those two are what make a region's chunk indices mean
+ * anything, and `bounds` is the region's own extent rather than the layer's, so
+ * a region disagreeing with the manifest about it is the normal state and not a
+ * fault. A file that does not carry the layer at all is the complaint that
+ * replaces the old "names layer X, manifest says Y": since spec 220 a region
+ * may carry several, so what matters is whether this one is among them.
  */
 export function regionsAgreeWithManifest(
   manifest: MapManifest,
@@ -403,18 +463,48 @@ export function regionsAgreeWithManifest(
         continue;
       }
       if (hashText(text) !== entry.hash) problems.push(`${path} does not match the hash in the manifest`);
-      const layer = parseMap(text).layers[0];
+      // The layer this entry is about, which is not necessarily the file's
+      // first: a region shared by two layers carries both.
+      const layer = parseMap(text).layers.find((l) => l.id === info.id);
       if (!layer) {
-        problems.push(`${path} has no layer`);
+        problems.push(`${path} does not carry layer ${info.id}`);
         continue;
       }
-      if (layer.id !== info.id) problems.push(`${path} names layer ${layer.id}, manifest says ${info.id}`);
       if (layer.origin.x !== info.origin.x || layer.origin.z !== info.origin.z) {
         problems.push(`${path} has a different origin than the manifest`);
       }
     }
   }
   return problems;
+}
+
+/**
+ * Which files in `r/` the manifest no longer makes reachable (spec 220).
+ *
+ * `writeSplit` has to sweep the regions a save left behind, and the rule for
+ * that is spec 209's: **the manifest is the only thing that makes a region
+ * reachable, so it is the only thing that can say a file is not.** This is that
+ * rule, taken off the filesystem and put beside the manifest, because it is a
+ * decision about a *document* and it was being made with `path.join`.
+ *
+ * That is the whole bug it exists to fix. `regionPath` spells a path the
+ * manifest's way -- `r/0_0.json`, a forward slash, because it is a key -- and
+ * `join('r', name)` spells it the platform's way. The two agree on POSIX and
+ * not on Windows, where `r\0_0.json` matched nothing the manifest named, every
+ * region file in the map went into the stale set, and the last three lines of
+ * every save deleted all of them: a manifest naming 224 regions over an empty
+ * directory. CI is Linux, so nothing in the tree could see it.
+ *
+ * Takes bare names as `readdirSync` gives them. Anything the manifest does not
+ * name comes back, which includes a `.tmp` left by an interrupted write --
+ * correctly, since nothing can reach that either.
+ */
+export function staleRegionFiles(names: readonly string[], manifest: MapManifest): string[] {
+  const reachable = new Set<string>();
+  for (const layer of manifest.layers) {
+    for (const entry of layer.regions) reachable.add(regionPath(entry.rx, entry.rz));
+  }
+  return names.map((name) => `${REGION_DIR}/${name}`).filter((path) => !reachable.has(path));
 }
 
 export function serializeManifest(manifest: MapManifest): string {

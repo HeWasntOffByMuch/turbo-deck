@@ -219,7 +219,38 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  every write was the whole world and **deletes the entire map**
                  the first time it is handed the three regions a grow changed:
                  the manifest is the only thing that makes a region reachable, so
-                 the manifest is the only thing that can say a file is not. A recipe is the only place natural
+                 the manifest is the only thing that can say a file is not.
+                 Spec 220 is the two things that rule was still getting wrong.
+                 **A region is a square of the world, so it holds every layer in
+                 it** -- it was written one layer to a file, and the format has
+                 always promised layers (`heightAt` maxes over them, the mesher
+                 skirts them, the wire carries them, `probe-rock.ts` builds a
+                 three-layer world) with the editor's Rock and Stair tools the
+                 way you make one. The arena's ground covers everything, so every
+                 tier collided with it and `splitMap` threw: from the panel that
+                 was "Save to maps/" answering `not a map document`, the map
+                 unsaveable until the tier was undone, and the download it points
+                 at instead unable to be split back. Layers go into a region file
+                 in document order and `joinMap` picks its layer **by id** rather
+                 than taking `layers[0]` -- which would hand one layer the other's
+                 chunks silently, since chunks are chunks either way. Each layer's
+                 entry names the shared file: the `hash` is the *file's*, because
+                 that is what says the bytes have not drifted, and the `cells` are
+                 that layer's *own*, because that is what an unfilled rim is
+                 measured against. A one-layer map is byte-identical, so no
+                 committed map file moved.
+                 And **which files a save made unreachable is a question about the
+                 document, not about a disk**: `writeSplit` asked it with
+                 `path.join('r', name)` against `regionPath`'s `r/name`. A region
+                 path is a *key* -- the manifest names it and both ends compare it
+                 as a string -- so the two agree on POSIX, and on Windows nothing
+                 matched, every region file went into the stale set, and the last
+                 three lines of every save deleted the whole map: a manifest naming
+                 224 regions over an empty directory. CI is Linux, so nothing in
+                 the tree could see it. The decision is `staleRegionFiles` in
+                 `regions.ts` now, and lint refuses `node:*` under `src/terrain/`
+                 -- the rule that directory has stated since 204 and could not
+                 enforce. A recipe is the only place natural
                  language enters: an agent writes one, it is reviewed as JSON,
                  and nothing at runtime reads a model.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
@@ -3011,10 +3042,21 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  is the first damage here that outlives its own delivery, so it
                  is the first that could carry a wilderness fight over a
                  safe-zone line. **A pulse does not shout**: the `hit` event
-                 carries a sim-only `periodic` flag and `rally` skips it, since
-                 that function's whole bound is one hop per actual blow and a
-                 poison ticking twenty times would drag a nest across the map
-                 for ten seconds. And **death drops the cast** -- the one thing
+                 carries a `periodic` flag and `rally` skips it, since that
+                 function's whole bound is one hop per actual blow and a poison
+                 ticking twenty times would drag a nest across the map for ten
+                 seconds. Spec 219 gave that flag a wire bit
+                 (`CombatFlag.Periodic`) for the same reason one level out:
+                 **a pulse is not drawn as a blow either.** It was sim-only on
+                 the argument that a client draws a floating number the same way
+                 whatever caused it -- true of the number and false of the
+                 picture, since everything `effectsForBlow` produces is aimed
+                 *along* the blow and a pulse's attacker walked off seconds ago.
+                 So eight beats of a Poison were eight brush hits thrown down
+                 eight bearings that described nothing. The number still rides
+                 and the health bar still moves; what a pulse loses is the blow's
+                 picture, and what it already has is its own
+                 (`world/affliction-vfx.ts`). And **death drops the cast** -- the one thing
                  `resolveBlow` does on a kill that is easy to leave out, and not
                  cosmetic: a player's entity survives death, the cast pass
                  refuses a corpse, and `respawn` rewrites eleven fields without

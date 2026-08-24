@@ -36,6 +36,30 @@ export const MARKER_GLYPHS: Record<MapMarkerKind, string> = {
 };
 
 /**
+ * What to write under a marker's disc, or `''` for one that needs nothing.
+ *
+ * A spawner is the reason this exists. Every marker of a kind draws the same
+ * coloured disc with the same letter on it, which is exactly right for the four
+ * kinds where the kind *is* the whole meaning -- one spawn point is much like
+ * another. A spawner's meaning is its label: it is the monster that stands
+ * there, it is the only thing separating a field of sheep from a ravager, and
+ * until this the editor drew both as the same red M. Placing a flock and
+ * placing a boss looked identical on the map you were editing.
+ *
+ * Pure, and here rather than in `marker-view.ts`, for the reason the whole file
+ * is: what a marker *says* is a judgement, what it looks like is drawing, and a
+ * judgement in a canvas callback is a judgement no test can reach. The same
+ * split `world/spawner-overlay.ts` makes for the in-game overlay.
+ *
+ * Any labelled marker gets its label, not just a spawner. A `trigger` named
+ * `boss-door` is worth reading too, and a rule that applied to one kind would
+ * be a rule somebody has to remember to extend.
+ */
+export function markerCaption(marker: Pick<MapMarker, 'label'>): string {
+  return marker.label?.trim() ?? '';
+}
+
+/**
  * The next free id for a kind: `spawn-1`, `spawn-2`, and so on.
  *
  * The **lowest** free number, not one past the highest, so deleting `spawn-2`

@@ -8,7 +8,6 @@ import { describe, expect, it } from 'vitest';
 import { circleBlocked, createWorldColliders, DEFAULT_WORLD, segmentClear } from './collision.js';
 import {
   ARENA_HEIGHT,
-  ARENA_OBSTACLES,
   ARENA_WIDTH,
   ENEMY_RADIUS,
   NAV_CELL_SIZE,
@@ -19,7 +18,18 @@ import {
 import { createNavGrid, findPath, navGridFor, NAV_BLOCKED, NAV_OPEN, NAV_TIGHT } from './pathfinding.js';
 import type { Circle, Rect, Vec2, WorldColliders } from './types.js';
 
-const ARENA_GRID = navGridFor(ENEMY_RADIUS);
+/**
+ * A single barricade, and the grid over a world holding just it.
+ *
+ * Stated here rather than borrowed from the sim's constants: spec 220 removed
+ * the hand-authored arena layout, and these tests are about the *rect* half of
+ * the grader -- that a wall blocks cells, that the grade eases away from one,
+ * that a body inside one can still route out. They need a rectangle, not that
+ * particular rectangle.
+ */
+const BARRICADE: Rect = { x: 300, y: 90, w: 36, h: 250 };
+const ARENA_WORLD = createWorldColliders([BARRICADE]);
+const ARENA_GRID = navGridFor(ENEMY_RADIUS, ARENA_WORLD);
 const WORLD_GRID_COLS = Math.ceil(WORLD_BOUNDS.w / NAV_CELL_SIZE);
 const WORLD_GRID_ROWS = Math.ceil(WORLD_BOUNDS.h / NAV_CELL_SIZE);
 const CENTRE: Vec2 = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 };
@@ -137,7 +147,7 @@ describe('nav grid', () => {
   });
 
   it('grades ground by how much room it has, monotonically away from a wall (spec 067)', () => {
-    const wall = ARENA_OBSTACLES[0] as Rect;
+    const wall = BARRICADE;
     const y = wall.y + wall.h / 2;
     const row = Math.floor((y - ARENA_GRID.originY) / ARENA_GRID.cellSize);
     // Walking west out of the wall, a grade may only ever ease: blocked, then
@@ -180,7 +190,7 @@ describe('nav grid', () => {
   });
 
   it('is reused rather than rebuilt for the same radius', () => {
-    expect(navGridFor(ENEMY_RADIUS)).toBe(ARENA_GRID);
+    expect(navGridFor(ENEMY_RADIUS, ARENA_WORLD)).toBe(ARENA_GRID);
   });
 });
 
@@ -194,7 +204,7 @@ describe('findPath', () => {
   it('routes around a barricade, ends on the goal, and every leg is walkable', () => {
     const from: Vec2 = { x: 150, y: 200 };
     // Straight through the barricade -- there must be a detour.
-    expect(segmentClear(from, CENTRE, ENEMY_RADIUS)).toBe(false);
+    expect(segmentClear(from, CENTRE, ENEMY_RADIUS, ARENA_WORLD)).toBe(false);
     const path = findPath(ARENA_GRID, from, CENTRE);
     expect(path.length).toBeGreaterThan(1);
     expect(path[path.length - 1]).toEqual(CENTRE);
@@ -225,7 +235,7 @@ describe('findPath', () => {
   });
 
   it('paths out of a wall it has somehow ended up inside', () => {
-    const barricade = ARENA_OBSTACLES[0] as Rect;
+    const barricade = BARRICADE;
     const stuck: Vec2 = { x: barricade.x + barricade.w / 2, y: barricade.y + barricade.h / 2 };
     const path = findPath(ARENA_GRID, stuck, CENTRE);
     expect(path.length).toBeGreaterThan(0);

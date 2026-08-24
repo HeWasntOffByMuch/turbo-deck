@@ -1683,37 +1683,51 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
   // for no reason.
   const applied = applyEffects(ability, restored.entity, restored.entity, tick, rng);
   const healed = applied.target.health;
+  // What actually went into the health bar. `applyHealing` returns the caster
+  // untouched when there was no room for any of it, so this is exactly zero for
+  // a flask drunk at full health.
+  const gained = restored.entity.health - caster.health;
+  const events: ServerSimEvent[] = [
+    {
+      kind: 'effect',
+      effectId: `${ability.id}.self`,
+      x: caster.position.x,
+      y: caster.position.y,
+      z: caster.position.z,
+      radius: caster.radius * 2,
+      durationTicks: Math.round(SERVER_TICK_RATE * 0.5),
+    },
+  ];
+  // Reported as a hit against itself with negative damage, so a client has
+  // exactly one code path for "a number floated off someone" -- and only when
+  // there is a number (spec 219).
+  //
+  // `collectMote` has always guarded this and this never did, and what an
+  // unguarded one sends is `-0`: `effectsForBlow` tests `damage < 0`, `-0 < 0`
+  // is false, and a heal that restored nothing therefore fell through the heal
+  // branch into the *blow* one -- so a flask drunk at full health painted a
+  // brush hit on the drinker's own chest and floated a `0` off them.
+  if (gained > 0) {
+    events.push({
+      kind: 'hit',
+      attackerId: caster.id,
+      targetId: caster.id,
+      damage: -gained,
+      targetHealth: healed,
+      killed: false,
+      critical: false,
+      blocked: false,
+      weakPoint: false,
+    });
+  }
+  // The effect list's own events after the heal's, in the order they happened.
+  // The floating number above is still the *healing* only -- what an effect did
+  // to the caster reports itself.
+  events.push(...applied.events);
   return {
     updated: new Map([[caster.id, applied.target]]),
     spawns: [],
-    events: [
-      {
-        kind: 'effect',
-        effectId: `${ability.id}.self`,
-        x: caster.position.x,
-        y: caster.position.y,
-        z: caster.position.z,
-        radius: caster.radius * 2,
-        durationTicks: Math.round(SERVER_TICK_RATE * 0.5),
-      },
-      // Reported as a hit against itself with negative damage, so a client has
-      // exactly one code path for "a number floated off someone".
-      {
-        kind: 'hit',
-        attackerId: caster.id,
-        targetId: caster.id,
-        damage: -(restored.entity.health - caster.health),
-        targetHealth: healed,
-        killed: false,
-        critical: false,
-        blocked: false,
-        weakPoint: false,
-      },
-      // The effect list's own events after the heal's, in the order they
-      // happened. The floating number above is still the *healing* only -- what
-      // an effect did to the caster reports itself.
-      ...applied.events,
-    ],
+    events,
     rng: applied.rng,
   };
 }

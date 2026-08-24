@@ -727,14 +727,20 @@ export type ServerSimEvent =
        * This damage arrived from an affliction rather than from a blow
        * (spec 190).
        *
-       * Sim-only: it rides no wire, because a client draws a floating number
-       * the same way whatever caused it. What it exists for is `rally`, which
-       * is driven off this tick's `hit` events and whose whole bound is *"one
-       * hop per actual blow"* -- a poison pulsing twenty times would otherwise
-       * shout for the nest twenty times, from wherever the applier had got to
-       * by then. It is the same argument that keeps a pulse away from
-       * `provoke`: the blow that applied the affliction has already called
-       * everyone it was going to call.
+       * What it exists for is `rally`, which is driven off this tick's `hit`
+       * events and whose whole bound is *"one hop per actual blow"* -- a poison
+       * pulsing twenty times would otherwise shout for the nest twenty times,
+       * from wherever the applier had got to by then. It is the same argument
+       * that keeps a pulse away from `provoke`: the blow that applied the
+       * affliction has already called everyone it was going to call.
+       *
+       * It was sim-only until spec 219, on the argument that a client draws a
+       * floating number the same way whatever caused it -- true of the number,
+       * and false of the *picture*. A pulse has an attacker who walked away
+       * seconds ago and a bearing along which nothing happened, so every beat
+       * of a Poison threw a brush hit off the body. It rides as
+       * `CombatFlag.Periodic` now, and the client draws the number and not the
+       * blow.
        */
       readonly periodic?: boolean;
     }

@@ -494,6 +494,43 @@ export default tseslint.config(
     },
   },
   {
+    // src/terrain/ decides things *about* files and never touches one: it splits
+    // and rejoins documents, names regions and computes identities, and
+    // `map-file.ts` on the server and `map-asset.ts` in the browser are what
+    // actually read bytes. That has been stated in `regions.ts` since spec 204
+    // and was honour-system until spec 220, where it cost a map.
+    //
+    // `writeSplit` decided which region files a save had made unreachable by
+    // comparing `path.join('r', name)` against `regionPath`'s `r/name`. A region
+    // path is a **key in a document** -- the manifest names it and both ends
+    // compare it as a string -- so joining one with the platform's separator
+    // agrees on POSIX, disagrees on Windows, and there put every region file in
+    // the map into the stale set: a manifest naming 224 regions over an empty
+    // directory, at the end of every editor save. CI is Linux, so nothing in the
+    // tree could see it.
+    //
+    // Tests are exempt: `partial-grow.test.ts` writes a real map to a temp
+    // directory, which is the one thing here that genuinely wants a filesystem.
+    files: ['src/terrain/**/*.ts'],
+    ignores: ['src/terrain/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          ...NO_RENDERING_LIBRARIES,
+          patterns: [
+            ...NO_RENDERING_LIBRARIES.patterns,
+            {
+              group: ['node:*'],
+              message:
+                'src/terrain/ reads no files and joins no paths. A region path is a key in a document, not a location on a disk — spelling one with path.join is the Windows bug spec 220 fixed.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: PURE_RENDER,
     rules: {
       'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS],

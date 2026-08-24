@@ -11,12 +11,13 @@ import {
   circleHitsRect,
   clampCircleToBounds,
   createWorldColliders,
+  DEFAULT_WORLD,
   resolveOverlaps,
   segmentClear,
   slideCircle,
   type Collider,
 } from './collision.js';
-import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, ENEMY_RADIUS, PLAYER_RADIUS, WORLD_BOUNDS } from './constants.js';
+import { ARENA_HEIGHT, ARENA_WIDTH, ENEMY_RADIUS, PLAYER_RADIUS, WORLD_BOUNDS } from './constants.js';
 import type { Circle, Rect, Vec2 } from './types.js';
 
 // A single test wall, away from the world edges so clamping never interferes.
@@ -37,8 +38,14 @@ function insideWorld(position: Vec2, radius: number): boolean {
   );
 }
 
-/** The first barricade of the real layout, used for player-vs-wall tests. */
-const BARRICADE = ARENA_OBSTACLES[0] as Rect;
+/**
+ * A barricade, for the player-vs-wall tests.
+ *
+ * Its own rectangle since spec 220 removed the hand-authored layout this used
+ * to borrow from: what these tests are about is that a rect blocks a body, not
+ * where any particular rect once stood.
+ */
+const BARRICADE: Rect = { x: 300, y: 90, w: 36, h: 250 };
 
 
 function distance(a: Vec2, b: Vec2): number {
@@ -50,6 +57,32 @@ function distance(a: Vec2, b: Vec2): number {
 
 
 
+describe('a world carries only the colliders it was given (spec 220)', () => {
+  it('defaults to no walls, where it used to default to the arena layout', () => {
+    expect(createWorldColliders().rects).toEqual([]);
+    expect(createWorldColliders([], []).rects).toEqual([]);
+    expect(DEFAULT_WORLD.rects).toEqual([]);
+    expect(DEFAULT_WORLD.circles).toEqual([]);
+  });
+
+  it('still takes walls when a caller names them', () => {
+    // The rect facility is the thing that stayed: what went is the hard-coded
+    // content, not the ability to block a body with a box. That a named wall
+    // actually blocks is asserted under 'hitbox geometry'.
+    expect(createWorldColliders([BARRICADE]).rects).toEqual([BARRICADE]);
+  });
+
+  it('lets a body walk clean through where the old barricade stood', () => {
+    const midY = BARRICADE.y + BARRICADE.h / 2;
+    const from: Vec2 = { x: BARRICADE.x - 60, y: midY };
+    const to: Vec2 = { x: BARRICADE.x + BARRICADE.w + 60, y: midY };
+    expect(segmentClear(from, to, PLAYER_RADIUS, DEFAULT_WORLD)).toBe(true);
+    expect(circleBlocked({ x: BARRICADE.x + BARRICADE.w / 2, y: midY }, PLAYER_RADIUS, DEFAULT_WORLD)).toBe(
+      false,
+    );
+  });
+});
+
 describe('hitbox geometry', () => {
   it('detects circle/rectangle overlap, and treats exact touching as clear', () => {
     expect(circleHitsRect({ x: 450, y: 450 }, 5, WALL)).toBe(true); // centre inside
@@ -59,10 +92,13 @@ describe('hitbox geometry', () => {
     expect(circleHitsRect({ x: 385, y: 385 }, 20, WALL)).toBe(false); // near the corner, but out of reach
   });
 
-  it('reports the arena layout as blocking inside a barricade and clear at the spawn', () => {
+  it('reports a barricade as blocking inside it and clear out in the open', () => {
+    // The world is named rather than defaulted since spec 220: the default
+    // carries no walls, so a test that wants one has to bring it.
+    const world = createWorldColliders([BARRICADE]);
     const inside = { x: BARRICADE.x + BARRICADE.w / 2, y: BARRICADE.y + BARRICADE.h / 2 };
-    expect(circleBlocked(inside, ENEMY_RADIUS)).toBe(true);
-    expect(circleBlocked({ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 }, ENEMY_RADIUS)).toBe(false);
+    expect(circleBlocked(inside, ENEMY_RADIUS, world)).toBe(true);
+    expect(circleBlocked({ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 }, ENEMY_RADIUS, world)).toBe(false);
   });
 
   it('blocks a line of sight through a wall and passes one beside it', () => {
