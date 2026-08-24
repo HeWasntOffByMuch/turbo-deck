@@ -33,6 +33,10 @@ describe('appearanceOf', () => {
     for (const id of ['bolt.arcane', 'bolt.lob', 'bolt.seek']) {
       expect(appearanceOf({ kind: EntityKind.Projectile, typeId: id }).look, id).toBe('orb');
     }
+    // The staff's shot is the fourth look (spec 218), and the one that is mostly
+    // paint: `shot.ts` draws half a collision radius of core and `shot_ember`
+    // draws the rest of the silhouette.
+    expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'ranged.ember' }).look).toBe('ember');
     // A row that says nothing draws as what every shot drew before spec 087.
     expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'nothing.like.this' }).look).toBe(
       'orb',

@@ -10,22 +10,24 @@
 
 import { COW } from './cow.js';
 import { PIG } from './pig.js';
+import { SHEEP } from './sheep.js';
 import type { CritterId, CritterSpecies } from './types.js';
 
 export const CRITTERS: Record<CritterId, CritterSpecies> = {
   pig: PIG,
   cow: COW,
+  sheep: SHEEP,
 };
 
 /** Every species, in picker order. */
-export const CRITTER_IDS: readonly CritterId[] = ['pig', 'cow'];
+export const CRITTER_IDS: readonly CritterId[] = ['pig', 'cow', 'sheep'];
 
 /** Whether `kind` names a critter species. Narrows a sandbox unit kind. */
 export function isCritterId(kind: string): kind is CritterId {
   return kind in CRITTERS;
 }
 
-export { COW, PIG };
+export { COW, PIG, SHEEP };
 export * from './types.js';
 export { splitBodyProfile } from './body.js';
 export { deriveCoat, PLAYER_COATS, swatchFor, MIN_ACCENT_CONTRAST, type CoatSwatch } from './palette.js';

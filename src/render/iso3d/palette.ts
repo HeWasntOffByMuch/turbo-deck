@@ -69,6 +69,14 @@ export const PALETTE = {
   arrowHead: 0xd3d9df,
   arrowFletch: 0xbc4a3c,
   shurikenSteel: 0xb4bfca,
+  // The ember shot's core (spec 218), and the one shot in the table that is
+  // mostly paint: the mesh is half the collision radius and everything around
+  // it is `shot_ember`'s marks, so these two only have to be the hot middle.
+  // Near-white against a hot orange rim -- the same core-and-rim pair a mote
+  // uses (spec 156), and for the same reason: a small bright thing on grass
+  // needs a value it does not share with the grass.
+  emberCore: 0xfff3cd,
+  emberRim: 0xff8a3d,
   // The streak a shuriken leaves. Cooler and paler than the plate, so the trace
   // reads as air rather than as more metal.
   shurikenTrace: 0xdce8f4,

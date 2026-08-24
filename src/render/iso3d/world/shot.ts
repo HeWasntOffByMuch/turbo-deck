@@ -17,6 +17,7 @@ import type { ProjectileLook } from '../../../server/data/abilities.js';
 import { PALETTE } from '../palette.js';
 import {
   arrowProfile,
+  emberCoreRadius,
   SHURIKEN_POINTS,
   SHURIKEN_SPIN_TURNS_PER_SECOND,
   shurikenDrawRadius,
@@ -49,6 +50,16 @@ const TRACE_LIFT = 2.5;
  * outline has to survive being drawn a few pixels wide.
  */
 const OUTLINE_SCALE = 1.4;
+
+/**
+ * How round the ember's core is drawn (spec 218).
+ *
+ * One subdivision, the mote's rather than the bolt's. A faceted die is right for
+ * a conjured shot that is on screen for a moment and *supposed* to look cut from
+ * glass; a ball of fire is a ball, and at four and a half units across the
+ * twenty flat faces of detail 0 read as an orange lump rather than as a core.
+ */
+const EMBER_DETAIL = 1;
 
 /**
  * How to draw an orb: its colour, how round it is, and what rims it.
@@ -128,6 +139,21 @@ export class ShotRig {
       case 'shuriken':
         this.spinner = this.buildShuriken(radius);
         break;
+      case 'ember':
+        this.spinner = null;
+        // The orb geometry, at half the size and in fire (spec 218). Reusing it
+        // is not a shortcut: a core behind a brighter rim is exactly the pair
+        // `buildOrb` already draws, and a second sphere builder would be a
+        // second thing to keep looking right. What is authored here is the two
+        // decisions that are this look's own -- how big the mesh is against the
+        // shot (`emberCoreRadius`, and it is deliberately *smaller*), and that
+        // it is lit from inside rather than made of anything.
+        this.buildOrb(emberCoreRadius(radius), {
+          tint: PALETTE.emberCore,
+          detail: EMBER_DETAIL,
+          outline: PALETTE.emberRim,
+        });
+        break;
       default:
         this.spinner = null;
         this.buildOrb(radius, orb);
@@ -135,7 +161,11 @@ export class ShotRig {
     }
 
     // Only the star traces. An arrow is long enough to show its own direction,
-    // and a conjured orb streaking would read as a second spell.
+    // and a conjured orb streaking would read as a second spell. The ember
+    // leaves a trail and deliberately not this one (spec 218): a `Trail` is a
+    // flat strip of geometry laid across the ground plane, and smoke is not a
+    // ribbon -- what is behind an ember is `shot_ember`'s own world-space marks,
+    // laid down by the paint and left where they fall.
     if (look === 'shuriken') {
       const plate = shurikenDrawRadius(radius);
       this.trail = new Trail(TRACE_SAMPLES, plate * TRACE_SPACING);

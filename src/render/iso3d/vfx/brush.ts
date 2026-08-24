@@ -1171,10 +1171,269 @@ export function brushAfflictionPulse(params: BrushPulseParams): EffectDefinition
   };
 }
 
+// --- the paint a shot carries with it ----------------------------------------
+
+/**
+ * The marks a projectile wears and the ones it leaves behind (spec 218).
+ *
+ * A **state**, in exactly the register {@link brushAffliction} is one: played
+ * once when the shot comes into view, attached to a body that is moving fast,
+ * and stopped once when it despawns. `world/shot-vfx.ts` owns both ends, and
+ * owes the stop -- nothing in this system stops itself when the body it is
+ * attached to goes away.
+ *
+ * ## `worldSpace`, read both ways, is the whole thing
+ *
+ * The compiled default is `true` and attaching an effect moves only the
+ * emission *origin*, so the same flag says two opposite things depending on
+ * which layer it is on:
+ *
+ * - `worldSpace: false` on the core is **it clings**. A mark born on the ball
+ *   and left in world space is a mark the ball is out of within one tick -- at
+ *   273 units a second it moves four and a half units between ticks, which is
+ *   half its own radius.
+ * - `worldSpace: true` on the trail is **it is left behind**. The emitter's
+ *   origin follows the shot and the marks do not, which is a trail by
+ *   construction, with nothing tracking anything and no ring buffer of where
+ *   the thing has been.
+ *
+ * That second half is why this is a builder here rather than a `Trail` in
+ * `world/shot.ts`. The ribbon that streak is made of is a flat strip laid across
+ * the ground plane; smoke is not a ribbon.
+ *
+ * ## Three layers and no new draw calls
+ *
+ * A batch is keyed `family:blend:sheet:meshShape` (`compile.ts`) and the
+ * compiled registry is sitting on exactly 25 against `library.test.ts`'s cap of
+ * 25. `mesh:alpha:brush-blot` already exists (the explosion's smoke, and every
+ * affliction cling) and so does `mesh:additive:brush-slash` (the explosion's
+ * flash), so all three layers here are free. A fourth mark or any other blend
+ * would fail that test -- which is the constraint that chose these three, and
+ * is worth writing down rather than rediscovering.
+ *
+ * ## Radii, and the one asymmetry
+ *
+ * Every length is a multiple of the effect's own scale and the driver plays with
+ * `scale` set to the shot's collision radius, so one definition is a fireball at
+ * any size. Speed, acceleration and turbulence are **world** units, because
+ * `system.ts` multiplies the shape's local coordinates and the size curve by the
+ * instance scale and nothing else. That is right rather than an omission: a
+ * bigger fireball's smoke does not rise faster. The calibration is
+ * `brushAffliction`'s -- 26 is a gentle lift, 62 is "the marks come apart".
+ */
+export interface BrushShotParams {
+  readonly id: string;
+  /** Marks held on the ball, per second. The layer that says "burning". */
+  readonly core?: number;
+  /** Additive marks over them, per second. The layer that says "light". */
+  readonly licks?: number;
+  /** Marks laid down and left behind, per second. The trail. */
+  readonly trail?: number;
+  /** Ticks a core mark lives. Short: the ball is renewed, never accumulated. */
+  readonly coreLife?: readonly [min: number, max: number];
+  /** Ticks a trail mark lives. This is what "short trail" means in numbers. */
+  readonly trailLife?: readonly [min: number, max: number];
+  /** How wide the ball of marks is, in shot radii. */
+  readonly ball?: number;
+  /** A core mark's length, in shot radii. */
+  readonly coreSize?: number;
+  /** A trail mark's length at its widest, in shot radii. */
+  readonly trailSize?: number;
+  /** How fast a trail mark drifts off the line, **world** units per second. */
+  readonly trailSpeed?: number;
+  /** **World** units per second squared. Positive rises. */
+  readonly trailRise?: number;
+  /** How far a trail mark wanders, **world** units per second squared. */
+  readonly trailTurbulence?: number;
+  /** Palest, at the middle of the ball. */
+  readonly hot: PaletteKey;
+  /** The body colour, and most of what is on screen. */
+  readonly mid: PaletteKey;
+  /** Where a mark is going out. */
+  readonly deep: PaletteKey;
+  /** The trail, born off the fire. */
+  readonly trailFrom: PaletteKey;
+  /** ...and thinning away. */
+  readonly trailTo: PaletteKey;
+  readonly priority?: Priority;
+  readonly cullDistance?: number;
+}
+
+export function brushShot(params: BrushShotParams): EffectDefinition {
+  // The fire outnumbers the smoke, and that ordering is the tuning finding this
+  // definition cost. Authored the other way round -- more trail marks than core
+  // ones, at similar sizes and similar alpha -- the first cut photographed as a
+  // swarm of dark specks with a red dab in front of it: legible as *something*
+  // and not as a fireball, because against a mid-green field a near-black mark
+  // is a hole and an orange one is a highlight, and there were twice as many
+  // holes. See `preview-brush-vfx.ts`'s shot sheet.
+  const core = Math.max(0, params.core ?? 40);
+  const licks = Math.max(0, params.licks ?? 16);
+  const trail = Math.max(0, params.trail ?? 42);
+  const [coreMin, coreMax] = params.coreLife ?? [8, 14];
+  const [trailMin, trailMax] = params.trailLife ?? [10, 15];
+  // Tight, and the word is the whole brief. The marks are three times the
+  // radius they are born within, so they overlap into one mass rather than
+  // sitting beside each other -- born on a wider shell the same count reads as
+  // a handful of separate flames orbiting a gap.
+  const ball = params.ball ?? 0.34;
+  const coreSize = params.coreSize ?? 1.02;
+  // Small, and *many*, which is the other half of the tuning finding. Seven big
+  // blots behind the ball read as leaves blowing past it; a dozen small ones
+  // overlapping read as a wisp.
+  const trailSize = params.trailSize ?? 0.5;
+  const trailSpeed = Math.max(0, params.trailSpeed ?? 7);
+  const trailRise = params.trailRise ?? 16;
+  const trailTurbulence = Math.max(0, params.trailTurbulence ?? 26);
+
+  const emitters: Emitter[] = [
+    // (a) The ball. Born on a tight shell rather than through the volume, so
+    // the marks crowd the outline instead of piling up in the middle -- the
+    // silhouette is what a shot is read by at the size it crosses the frame.
+    //
+    // A trickle of speed, killed at once by the drag, for `brushAffliction`'s
+    // stated reason: at exactly zero every mark sits on the point it was born
+    // at and the layer reads as a texture rather than as fire being made.
+    {
+      id: 'core',
+      shape: { kind: 'sphere', radius: ball, shell: true },
+      emission: { kind: 'rate', perSecond: core },
+      lifetimeTicks: [Math.round(coreMin), Math.round(coreMax)],
+      speed: [2, 7],
+      spreadRadians: 1.6,
+      drag: 8,
+      angularVelocity: [-2.4, 2.4],
+      // Born nearly full, peaking early and ending a little under: a mark that
+      // grew over its life would make the ball pulse at the emission rate.
+      size: { keys: [[0, coreSize * 0.82], [0.3, coreSize], [1, coreSize * 0.7]] },
+      alpha: { keys: [[0, 1], [0.72, 1], [1, 0]] },
+      // The flame ramp, whole -- `fireCore` into the body colour into the deep
+      // one. This is the one place the *full* ramp is right where an affliction
+      // cling deliberately stops at `mid`: a body wearing fire is a stain and
+      // has to stay legible against grass, and a fireball is a thing you look
+      // *into*, where the dark end is the depth.
+      // **Mostly `mid`**, with `hot` as a flash at birth and `deep` as the last
+      // sixth. Both ends were tried longer and both are wrong in the same way:
+      // a ball that holds the pale cream reads as light rather than as fire,
+      // and one that reaches the deep red early reads as an ember going out.
+      // What a flame is, at twenty-five pixels, is a saturated orange mass with
+      // something brighter inside it.
+      color: { stops: [[0, params.hot], [0.12, params.mid], [0.62, params.mid], [1, params.deep]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-blot' },
+      blend: 'alpha',
+      strokeDecay: 'fizzle',
+      // It clings. See the header.
+      worldSpace: false,
+    },
+    // (b) The licks. Light rather than pigment, and the difference between a
+    // ball that is burning and a ball that is orange. Three or four ticks each
+    // and `hot` throughout: an additive mark that ramps down to a body colour
+    // is a dim additive mark, which is the one thing additive is bad at.
+    {
+      id: 'licks',
+      shape: { kind: 'sphere', radius: ball * 0.7, shell: true },
+      emission: { kind: 'rate', perSecond: licks },
+      lifetimeTicks: [3, 6],
+      speed: [4, 12],
+      spreadRadians: 1.6,
+      drag: 9,
+      angularVelocity: [-3.4, 3.4],
+      size: { keys: [[0, coreSize * 0.42], [0.35, coreSize * 0.52], [1, coreSize * 0.28]] },
+      alpha: { keys: [[0, 0.8], [0.5, 0.62], [1, 0]] },
+      // Hot into the body colour rather than staying hot. Additive near-white on
+      // grass blows out to a flat blob, and the licks are the layer *most* able
+      // to do that -- they are the only additive marks on the ball.
+      color: { stops: [[0, params.hot], [0.5, params.mid], [1, params.mid]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-slash' },
+      blend: 'additive',
+      strokeDecay: 'retract',
+      worldSpace: false,
+    },
+    // (c) The trail. World space, which is the same flag as the core's read the
+    // other way round -- the origin follows the shot and these do not.
+    //
+    // The life is the number the phrase "very short trail" turns into: at 273
+    // units a second, fifteen ticks is about 68 units of smoke behind a 9-unit
+    // ball. Seven shot-radii, and gone.
+    {
+      id: 'trail',
+      shape: { kind: 'sphere', radius: ball * 0.5 },
+      emission: { kind: 'rate', perSecond: trail },
+      lifetimeTicks: [Math.round(trailMin), Math.round(trailMax)],
+      speed: [trailSpeed * 0.3, trailSpeed],
+      spreadRadians: 1.5,
+      drag: 2.2,
+      acceleration: { x: 0, y: trailRise, z: 0 },
+      turbulence: { amplitude: trailTurbulence, frequency: 0.05 },
+      angularVelocity: [-1.2, 1.2],
+      // Grows as it goes, unlike the ball: smoke expands, and a puff that held
+      // its size would read as a string of beads rather than as a column coming
+      // apart.
+      size: { keys: [[0, trailSize * 0.42], [0.45, trailSize], [1, trailSize * 1.15]] },
+      // In, hold, out -- the explosion's smoke curve, and never opaque.
+      //
+      // Fading *in* is what keeps a mark from appearing on top of the fire it
+      // was born in: the emitter's origin is the ball, and at 273 units a second
+      // the ball is sixteen units clear by the time this reaches its peak. And
+      // the peak is a half rather than the explosion's 0.96, because this smoke
+      // is *beside* the thing it is meant to sit behind rather than replacing
+      // it -- a translucent plume reads as smoke where an opaque one reads as a
+      // hole cut in the field.
+      alpha: { keys: [[0, 0], [0.3, 0.55], [0.72, 0.45], [1, 0]] },
+      // Held at the pale end for over half its life. The trail's job is to be
+      // *cooler than the fire and lighter than the field* -- the two things that
+      // make it read as smoke rather than as debris -- and only the last dregs,
+      // by which point the alpha is already going, drop toward the dark end.
+      color: { stops: [[0, params.trailFrom], [0.58, params.trailFrom], [1, params.trailTo]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-blot' },
+      blend: 'alpha',
+      // Broken up where it lies, never pulled back to its root: spec 161's
+      // rule, and the explosion's smoke keeps it for the same reason -- a blot
+      // has no root the eye can point at, so a retract reads as the mass being
+      // eaten from one side.
+      strokeDecay: 'fizzle',
+    },
+  ];
+
+  return {
+    id: params.id,
+    // A step above a cling and below a telegraph. A shot in the air is
+    // information -- it is the thing you are being asked to step out of -- so it
+    // should not be the first paint dropped under pressure; a telegraph, which
+    // says where a blast is about to be, still outranks it.
+    priority: params.priority ?? 2,
+    cullDistance: params.cullDistance ?? 1600,
+    // Until stopped. The driver owns the stop and owes one on despawn.
+    durationTicks: 0,
+    emitters,
+  };
+}
+
 // --- the shipped presets -----------------------------------------------------
 
 /** The nominal radius `explosion_brush` is authored at, for the scale maths. */
 export const BRUSH_EXPLOSION_RADIUS = 60;
+
+/**
+ * How wide the ember shot's impact burst is, in world units (spec 218).
+ *
+ * The radius it is **authored at and drawn at**, which since spec 218 are the
+ * same statement: `scene.addEffect` plays an authored effect at scale 1, so a
+ * number here is a length on screen rather than an input to a conversion. That
+ * matters more than it sounds -- `scale` multiplies a mark's size and *not* its
+ * speed, so an explosion played at anything but 1 is marks of one size thrown at
+ * another size's velocity, which is a scatter rather than a burst.
+ *
+ * 34 against a 9-unit shot, and against a player's 16-unit radius: about two
+ * bodies across. Small, which is the request, and the same number
+ * `explosion_brush_small` is authored at -- so the burst is the vocabulary's own
+ * small blast rather than a shrunk large one, which is the distinction
+ * `brushExplosionRequest` picks presets by and for the same reason.
+ */
+export const EMBER_BURST_RADIUS = 34;
 
 /** Below this intensity a hit plays the light mark, above it the loud one. */
 export const HEAVY_HIT_INTENSITY = 1.35;
@@ -1325,6 +1584,67 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     light: true,
   }),
   brushExplosion({ id: 'explosion_brush', radius: BRUSH_EXPLOSION_RADIUS, light: true }),
+  /**
+   * The ember shot's landing (spec 218), and the painted explosion's first
+   * caller in the game.
+   *
+   * Reached by the seam the server has had since spec 062 and no other: a
+   * projectile's direct hit pushes `{ effectId: `${ability.id}.impact` }`, and
+   * `scene.addEffect` plays it because the registry now knows the id. Nothing
+   * was added to the wire and nothing was added to a call site, which is the
+   * acceptance criterion `world/vfx-wire.ts` states for the whole arc.
+   *
+   * **`smoke: 0`, and that is the request read literally.** `debris` stays,
+   * because the transitional layer is burnt orange going to brown drawn *among*
+   * the fire -- it is what makes a painted explosion painted rather than a
+   * radial star -- and with the smoke gone there is no `paintSoot` anywhere in
+   * the picture, which is the only place soot appears.
+   *
+   * **No `light`, and that is a finding rather than a preference.** A light's
+   * radius is written straight into the light buffer (`system.ts`) and is the
+   * one authored length the instance scale does not touch, so a lit preset is a
+   * light sized for whatever radius it happened to be authored at. The three
+   * lit presets above are played by nothing, so nothing has ever noticed.
+   *
+   * Short: 34 ticks against `explosion_brush_small`'s 62. A basic attack lands
+   * about once a second, and a burst that is still unfolding when the next one
+   * arrives is two bursts nobody can tell apart.
+   */
+  brushExplosion({
+    id: 'ranged.ember.impact',
+    radius: EMBER_BURST_RADIUS,
+    radialCount: 8,
+    debris: 2,
+    smoke: 0,
+    lifetimeTicks: 34,
+  }),
+
+  /**
+   * The ember shot in flight (spec 218).
+   *
+   * Named for the *look* rather than for the ability, because `SHOT_ART` keys on
+   * `ProjectileLook` -- two rows throwing the same-looking shot are one picture,
+   * the way two abilities firing an arrow already are.
+   */
+  brushShot({
+    id: 'shot_ember',
+    // The flame ramp whole, which `palette.ts` calls right for "a thing you look
+    // into" -- and a fireball is one, where a *burning body* is not, which is
+    // why `affliction_burn` settles on `fireAmber` instead and this does not.
+    hot: 'fireCore',
+    mid: 'fireBody',
+    deep: 'fireDeep',
+    // Pale grey, going dark only at the very end. Two earlier choices are worth
+    // recording because each failed in its own way and neither was obvious from
+    // the numbers -- both scored clean on stipple and on connectedness, and both
+    // looked wrong. `smokeDark` (0x3c3733) is not a dark mass against grass, it
+    // is a *hole*, and a dozen holes read as a swarm of flies. `paintBurnt` into
+    // `smokeLight` fixed the value and broke the hue: a warm brown behind an
+    // orange ball reads as leaves blowing past it, because nothing separates the
+    // trail from the fire. Cool and light does both.
+    trailFrom: 'smokeLight',
+    trailTo: 'smokeDark',
+  }),
   brushExplosion({
     id: 'explosion_brush_large',
     radius: 96,

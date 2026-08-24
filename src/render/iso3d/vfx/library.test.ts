@@ -16,6 +16,11 @@ import { sampleCurve, compileCurve, sampleGradient, compileGradient } from './cu
 import { VfxSystem } from './system.js';
 import { DAMAGE_EFFECTS, DAMAGE_DEBRIS, effectsForBlow } from '../world/vfx-wire.js';
 import { AFFLICTION_ART } from '../world/affliction-vfx.js';
+import { SHOT_ART } from '../world/shot-vfx.js';
+import { EMBER_BURST_RADIUS } from './brush.js';
+import { abilityById } from '../../../server/data/abilities.js';
+import { PROJECTILE_SPEED_SCALE } from '../../../server/player/stats.js';
+import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { ALL_DOTS } from '../../../server/data/damage-over-time.js';
 import { spriteSheet, sheetFrames } from './textures.js';
 import { MARK_REACH } from './meshes.js';
@@ -946,5 +951,101 @@ describe('puff and fire builders', () => {
     });
     expect(made.id).toBe('puff_test');
     expect(JSON.parse(JSON.stringify(made))).toEqual(made);
+  });
+});
+
+/**
+ * The shot the staff throws, and where it lands (spec 218).
+ *
+ * Two effects, and the properties worth pinning are the ones a still frame
+ * cannot show. `worldSpace` is the whole of the flight look and is a boolean
+ * nobody can see; "no smoke" is a request that has to survive a retune of a
+ * shared builder; and "a very short trail" is an adjective until it is a number
+ * of world units.
+ */
+describe('the ember shot (spec 218)', () => {
+  const byId = new Map(EFFECTS.map((effect) => [effect.id, effect]));
+  const flight = byId.get('shot_ember');
+  const burst = byId.get('ranged.ember.impact');
+  const emitter = (effect: typeof flight, id: string) =>
+    effect?.emitters.find((entry) => entry.id === id);
+
+  it('is in the registry under both ids', () => {
+    expect(flight, 'shot_ember').toBeDefined();
+    // Named for the ability, because that is the id the server has sent on a
+    // projectile's impact since spec 062 and the seam this reaches it by.
+    expect(burst, 'ranged.ember.impact').toBeDefined();
+  });
+
+  it('clings its fire to the ball and leaves its smoke behind', () => {
+    // The one property the whole look rests on, and the one that is invisible
+    // in a still frame. The compiled default is world space, and attaching an
+    // effect moves only the emission *origin* -- so on the two layers that are
+    // the fireball, `worldSpace: false` is what makes them travel with it, and
+    // on the trail its absence is what makes a mark stay where it was laid.
+    expect(emitter(flight, 'core')?.worldSpace).toBe(false);
+    expect(emitter(flight, 'licks')?.worldSpace).toBe(false);
+    expect(emitter(flight, 'trail')?.worldSpace).not.toBe(false);
+  });
+
+  it('runs until it is stopped, because a flight has no length of its own', () => {
+    // The driver owns both ends and owes the stop; a duration here would put the
+    // paint out partway through a long shot.
+    expect(flight?.durationTicks).toBe(0);
+  });
+
+  it('leaves a very short trail, in world units rather than in adjectives', () => {
+    const spec = abilityById('ranged.ember')?.projectile;
+    const perSecond = (spec?.speed ?? 0) * PROJECTILE_SPEED_SCALE;
+    const life = emitter(flight, 'trail')?.lifetimeTicks[1] ?? 0;
+    const behind = (perSecond / SERVER_TICK_RATE) * life;
+    // Long enough to read as a trail at all -- a few shot-radii...
+    expect(behind).toBeGreaterThan((spec?.radius ?? 0) * 3);
+    // ...and short enough that it is smoke coming off a shot rather than a line
+    // drawn across the arena. The bow's whole range is 420.
+    expect(behind).toBeLessThan(100);
+  });
+
+  it('has no smoke in its burst, and therefore no soot anywhere in it', () => {
+    // `smoke: 0` is the request read literally, and `brushExplosion` omits the
+    // emitter outright at zero rather than bursting nothing.
+    expect(emitter(burst, 'smoke')).toBeUndefined();
+    // The stronger form: soot is the smoke layer's colour and appears nowhere
+    // else in the builder, so this fails if a retune reintroduces it by another
+    // route. The transitional layer stays -- burnt orange into brown, drawn
+    // among the fire -- because it is what makes a painted explosion painted.
+    for (const entry of burst?.emitters ?? []) {
+      for (const [, key] of entry.color?.stops ?? []) {
+        expect(key, `${entry.id} reaches ${key}`).not.toBe('paintSoot');
+      }
+    }
+    expect(emitter(burst, 'transitional')).toBeDefined();
+  });
+
+  it('carries no light, because a light is the one length scale does not touch', () => {
+    // A light's radius goes straight into the light buffer (`system.ts`), so a
+    // lit preset is a light sized for whatever radius it was authored at
+    // whatever it is played at. The three lit explosion presets are played by
+    // nothing, so nothing has ever noticed.
+    for (const entry of burst?.emitters ?? []) expect(entry.light, entry.id).toBeUndefined();
+  });
+
+  it('is authored at the radius it is drawn at', () => {
+    // Since spec 218 those are the same statement: `scene.addEffect` plays an
+    // authored effect at scale 1. Small against a body -- a player's radius is
+    // 16 -- which is the request, and the same number `explosion_brush_small` is
+    // authored at, so this is the vocabulary's own small blast rather than a
+    // shrunk large one.
+    expect(EMBER_BURST_RADIUS).toBeGreaterThan((abilityById('ranged.ember')?.projectile?.radius ?? 0) * 2);
+    expect(EMBER_BURST_RADIUS).toBeLessThan(46);
+  });
+
+  it('draws its shot with paint the registry holds', () => {
+    // The same pair of directions `AFFLICTION_ART` is held to, so an effect
+    // authored and reached by nothing fails here rather than being previewed
+    // forever and never appearing in a game.
+    const named = new Set(Object.values(SHOT_ART));
+    const authored = EFFECTS.filter((effect) => effect.id.startsWith('shot_')).map((e) => e.id);
+    expect([...named].sort()).toEqual([...authored].sort());
   });
 });

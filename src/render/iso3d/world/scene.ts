@@ -60,6 +60,7 @@ import {
 } from './loot-drop.js';
 import { DROP_LIFETIME_TICKS } from '../../../server/data/loot.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
+import { monsterCritterFor } from './monster-critter.js';
 import { CRITTERS } from '../../critters/index.js';
 import { attachHighlight, type HighlightHandle } from '../highlight.js';
 import { pickHoveredUnit, type HoverTarget } from '../hover.js';
@@ -151,6 +152,7 @@ import {
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 import { AfflictionVfx } from './affliction-vfx.js';
+import { ShotVfx } from './shot-vfx.js';
 import { sampleCapsuleSurface } from '../vfx/shapes.js';
 import type { WorldAnchor } from './damage-popup.js';
 
@@ -337,7 +339,15 @@ const DROP_PICK_HEIGHT = 26;
 interface Body {
   readonly group: THREE.Group;
   readonly kind: 'player' | 'monster' | 'projectile';
-  readonly player?: CritterRig;
+  /**
+   * The critter rig drawing this body, for a player or for a monster that is an
+   * animal (see `monster-critter.ts`).
+   *
+   * One field rather than one per kind: what the update loop needs to know is
+   * *which rig to drive*, and a second field of the same type for the same job
+   * would be a second thing every frame had to remember to tick.
+   */
+  readonly critter?: CritterRig;
   readonly mech?: MechRig;
   readonly unit?: DrivenUnit;
   readonly shot?: ShotRig;
@@ -511,6 +521,13 @@ export class WorldScene {
    * with nothing left able to stop it.
    */
   private readonly afflictions: AfflictionVfx;
+  /**
+   * The paint a shot flies with (spec 218). A second driver rather than a
+   * branch in the one above, because the two answer different questions from
+   * different facts -- one reads a body's replicated statuses, the other reads
+   * what a projectile *is*.
+   */
+  private readonly shots: ShotVfx;
   /**
    * The groups `RetroPass` leaves out of the quantize (spec 138).
    *
@@ -762,6 +779,15 @@ export class WorldScene {
       // A cling is the lowest-priority thing in the game and the first the
       // instance pool evicts under pressure. Asking rather than assuming is what
       // lets the driver put it back afterwards (spec 215).
+      isLive: (handle) => this.vfx.system.isLive(handle),
+    });
+    // The paint a shot flies with (spec 218), on the same four calls and for the
+    // same reasons -- a persistent attached effect needs a handle it can find
+    // out has been evicted, and it needs somebody to owe it a stop.
+    this.shots = new ShotVfx({
+      play: (id, options) => this.vfx.play(id, options),
+      stop: (handle) => this.vfx.stop(handle),
+      has: (id) => this.vfx.system.has(id),
       isLive: (handle) => this.vfx.system.isLive(handle),
     });
     this.scene.add(this.vfx.root);
@@ -1229,13 +1255,40 @@ export class WorldScene {
         x,
         y: this.ground(x, y) + 2,
         z: y,
-        scale: Math.max(0.25, radius / 40),
+        // One, and an authored effect is therefore drawn at the size it was
+        // authored at (spec 218).
+        //
+        // The `max(0.25, radius / 40)` this replaces could not have worked, and
+        // not by a little. `scale` multiplies the shape's local coordinates and
+        // the size curve and **nothing else** -- a particle's speed, the
+        // constant push on it and its turbulence are integrated in world units
+        // -- so an explosion authored at radius R and played at a quarter is
+        // quarter-sized marks thrown at full-sized velocities, which is a
+        // scatter and not a burst. And a quarter is not an edge case: the radius
+        // a projectile's *direct hit* carries is the shot's own collision
+        // radius, 6 to 12 units against a nominal 40, so every direct hit in the
+        // game sat on that floor. The message's radius means two different
+        // things on its two branches -- the blast for a burst, the shot for a
+        // hit -- and one conversion cannot serve both.
+        //
+        // Changing it is free because this branch had never run: the server can
+        // send 46 effect ids (`${ability.id}.impact` and `.self` over
+        // `ALL_ABILITIES`) and until spec 218 the registry held none of them, so
+        // every ability in this game had drawn the ring below since spec 062.
+        //
+        // The day a *burst* wants its picture sized by its blast, the honest way
+        // is `brushExplosionRequest`, which already exists, already treats a
+        // radius as a length rather than as a multiplier, and already picks the
+        // preset nearest the size asked for so the scale stays near one.
+        scale: 1,
         // Derived from where it landed, so the same blast in the same place looks
         // the same on every client watching it.
         seed: (Math.round(x) * 73856093) ^ (Math.round(y) * 19349663),
       });
       return;
     }
+    // The fallback ring, which is what `radius` still sizes and the only thing
+    // it ever honestly could.
     const mesh = new THREE.Mesh(
       new THREE.CircleGeometry(Math.max(4, radius), 24),
       new THREE.MeshBasicMaterial({
@@ -1430,6 +1483,7 @@ export class WorldScene {
     // Before the layer goes: every handle it is holding names an instance in
     // that layer's system.
     this.afflictions.clear();
+    this.shots.clear();
     this.vfx.dispose();
     for (const body of this.bodies.values()) {
       this.scene.remove(body.group);
@@ -1644,12 +1698,20 @@ export class WorldScene {
 
       // Both rigs read their own gait out of the positions they are handed, so
       // neither needs the scene to remember where it drew them last frame.
-      body.player?.update(dt, { x, y }, -facing);
+      body.critter?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
       if (body.unit) this.driveAuthoredUnit(body.unit, entity, { x, y }, frame);
       // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
       // following rather than the one the deltas describe (spec 087).
       body.shot?.update(dt, x, y, ground);
+      // And the paint that flies with it (spec 218), off the same drawn pose.
+      // Only the initial position is passed -- after that the attach hook
+      // resolves `body.group.position` every tick, which the line above has
+      // already set -- but passing it means the first frame's marks are born on
+      // the shot rather than at wherever the last delta put it.
+      if (body.kind === 'projectile') {
+        this.shots.step({ entityId: entity.id, x, y: ground, z: y, radius: look.radius, look: look.look });
+      }
 
       // A corpse lies where it fell and stops animating, so a kill reads. The
       // squash is how that reads for the procedural rigs, which have no death
@@ -1726,6 +1788,10 @@ export class WorldScene {
       // stop is the caller's, so it is made here -- from the sweep that already
       // knows a body has left -- rather than inferred from an absence.
       this.afflictions.forget(id);
+      // The same obligation for a shot's paint, and it bites harder: a shot
+      // lives a second and a half, so an unstopped one is a leak that runs at
+      // the rate of the shooting (spec 218).
+      this.shots.forget(id);
       this.bodies.delete(id);
     }
   }
@@ -2279,7 +2345,7 @@ export class WorldScene {
       body = {
         group: player.group,
         kind: 'player',
-        player,
+        critter: player,
         highlight: attachHighlight(player.group),
         // Read off the species rather than measured: the metrics are what the
         // skeleton is built from, so a taller animal moves its own bar.
@@ -2304,19 +2370,44 @@ export class WorldScene {
       // the chassis body and `enemyColor`'s answer. The tuning is merged here
       // rather than in the table because `defaultMechTuning` lives in the rig
       // module, and the pure half of this directory does not import three.
-      const look = monsterLookFor(typeId);
-      const mech = new MechRig(typeId, undefined, {
-        tuning: { ...defaultMechTuning(), ...look?.tuning },
-        ...(look === null ? {} : { appearance: look.appearance }),
-      });
-      body = {
-        group: mech.group,
-        kind: 'monster',
-        mech,
-        highlight: attachHighlight(mech.group),
-        headroom: DEFAULT_HEADROOM,
-        radius,
-      };
+      // Some monsters are animals rather than machines, and no tuning of the
+      // mech rig makes one into the other -- so they are built by the same
+      // critter rig that draws the player, off a row in `monster-critter.ts`.
+      // A type with no row there falls through to the mech below, unchanged.
+      const animal = monsterCritterFor(typeId);
+      if (animal) {
+        const species = CRITTERS[animal.species];
+        const critter = new CritterRig(species, {
+          tuning: { ...defaultCritterTuning(), ...animal.figure },
+        });
+        body = {
+          group: critter.group,
+          kind: 'monster',
+          critter,
+          highlight: attachHighlight(critter.group),
+          // Off the species' own metrics and its own scale, the way the player's
+          // is -- `DEFAULT_HEADROOM` is a number tuned for the mech chassis and
+          // hangs the bar through a taller animal's head.
+          headroom:
+            (species.metrics.headY + species.metrics.headRadius) * animal.figure.bodyScale +
+            HEADROOM_GAP,
+          radius,
+        };
+      } else {
+        const look = monsterLookFor(typeId);
+        const mech = new MechRig(typeId, undefined, {
+          tuning: { ...defaultMechTuning(), ...look?.tuning },
+          ...(look === null ? {} : { appearance: look.appearance }),
+        });
+        body = {
+          group: mech.group,
+          kind: 'monster',
+          mech,
+          highlight: attachHighlight(mech.group),
+          headroom: DEFAULT_HEADROOM,
+          radius,
+        };
+      }
     }
 
     this.scene.add(body.group);

@@ -284,7 +284,11 @@
             { "kind": "spawner", "id": "spawner-3", "x": 581, "z": 390, "label": "grazer" },
             { "kind": "spawner", "id": "spawner-5", "x": 17, "z": 461, "label": "stalker" },
             { "kind": "spawner", "id": "spawner-6", "x": 124, "z": 512, "label": "stalker" },
-            { "kind": "spawner", "id": "spawner-1", "x": 225.106, "z": 12.165, "label": "grazer" }
+            { "kind": "spawner", "id": "spawner-1", "x": 225.106, "z": 12.165, "label": "grazer" },
+            { "kind": "spawner", "id": "spawner-sheep-1", "x": 272, "z": 252, "label": "sheep" },
+            { "kind": "spawner", "id": "spawner-sheep-2", "x": 342, "z": 272, "label": "sheep" },
+            { "kind": "spawner", "id": "spawner-sheep-3", "x": 297, "z": 327, "label": "sheep" },
+            { "kind": "spawner", "id": "spawner-sheep-4", "x": 367, "z": 327, "label": "sheep" }
           ]
         }
       ]

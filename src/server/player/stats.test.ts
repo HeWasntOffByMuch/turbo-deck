@@ -522,6 +522,31 @@ describe('the attack the main hand names', () => {
     );
   });
 
+  it("is the staff's ember shot for the staff (spec 218)", () => {
+    const stats = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'staff.emberwood' } }),
+    );
+    expect(stats.basicAttackId).toBe('ranged.ember');
+    // And it out-reaches the swing it replaces by a long way, which is the
+    // whole of what picking the staff up now changes about attacking.
+    expect(abilityById('ranged.ember')?.range ?? 0).toBeGreaterThan(
+      abilityById('melee.slash')?.range ?? 0,
+    );
+  });
+
+  it('leaves no weapon carrying a melee reach it can never use (spec 218)', () => {
+    // `attackRange` describes what a *swing* would have reached, and a weapon
+    // that names a shot never swings: the reach `autoAttack` chases to and
+    // `startCast` gates on is `abilityById(basicAttackId).range`. The staff
+    // carried 20 of it for a hundred and forty specs with nothing reading it,
+    // which is exactly the shape of thing this codebase deletes rather than
+    // documents. The bow and the stars have never carried one.
+    for (const item of ALL_ITEMS) {
+      if (item.basicAttackId === undefined) continue;
+      expect(item.modifiers.attackRange, item.id).toBeUndefined();
+    }
+  });
+
   it('falls back rather than leaving a character unable to attack', () => {
     const stats = computeEffectiveStats(
       player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'deleted.item' } }),

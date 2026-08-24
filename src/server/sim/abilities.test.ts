@@ -11,8 +11,9 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORLD } from '../../sim/collision.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
 import { abilityById, ALL_ABILITIES, totalCastTicks } from '../data/abilities.js';
+import { itemById } from '../data/items.js';
 import { monsterById } from '../data/monsters.js';
-import { computeEffectiveStats } from '../player/stats.js';
+import { BASE_ATTACK_TIME_TICKS, computeEffectiveStats } from '../player/stats.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
@@ -172,6 +173,85 @@ describe('the ability table', () => {
       }
       if (ability.kind === 'self') expect(ability.targeting).toBe('self');
     }
+  });
+});
+
+/**
+ * The shot the Emberwood Staff throws (spec 218).
+ *
+ * Every assertion here is an *ordering* rather than a number, because what the
+ * spec was asked for is an ordering: a shot shorter than the bow's, on the
+ * weapon that until now was the only main hand whose whole identity was
+ * `spellPower` and which changed nothing whatsoever about attacking.
+ *
+ * Retuning any of the three rows moves all of these together, which is the
+ * point -- a test that pinned 330 would fail the day somebody rebalanced the
+ * bow and would say nothing about whether the relationship still held.
+ */
+describe('the ember shot (spec 218)', () => {
+  const ember = abilityById('ranged.ember');
+  const shot = abilityById('ranged.shot');
+  const star = abilityById('ranged.star');
+
+  it('is a basic attack thrown by a weapon', () => {
+    expect(ember?.kind).toBe('projectile');
+    expect(ember?.basicAttack).toBe(true);
+    // Point-targeted, so a throw past the staff's reach is refused rather than
+    // loosed at nothing -- the same gate both other weapon shots sit behind.
+    expect(ember?.targeting).toBe('point');
+  });
+
+  it('reaches less far than the bow and further than the star', () => {
+    expect(ember?.range ?? 0).toBeLessThan(shot?.range ?? 0);
+    expect(ember?.range ?? 0).toBeGreaterThan(star?.range ?? 0);
+  });
+
+  it('flies slower than either weapon that already throws something', () => {
+    // A ball of fire is the slowest thing anybody throws here, which is what
+    // makes it a shot you can see coming -- spec 094's argument about wind-ups,
+    // moved into the flight.
+    const speed = ember?.projectile?.speed ?? Number.POSITIVE_INFINITY;
+    expect(speed).toBeLessThan(shot?.projectile?.speed ?? 0);
+    expect(speed).toBeLessThan(star?.projectile?.speed ?? 0);
+  });
+
+  it('leaves the cadence to the attack-speed stat', () => {
+    // Wind-up plus backswing has to sit inside the Base Attack Time, or the
+    // clip is what decides how often the staff throws rather than the stat
+    // (spec 088). The bow sits at 69 of 72 and this at 60.
+    expect(totalCastTicks(ember as NonNullable<typeof ember>)).toBeLessThan(BASE_ATTACK_TIME_TICKS);
+  });
+
+  it('commits for longer than a thrown star and less than a drawn bow', () => {
+    expect(ember?.windupTicks ?? 0).toBeGreaterThan(star?.windupTicks ?? 0);
+    expect(ember?.windupTicks ?? 0).toBeLessThan(shot?.windupTicks ?? 0);
+  });
+
+  it('leaves what it hits for to the weapon that throws it', () => {
+    // Since spec 217 a basic attack's damage is the weapon's own range, so a
+    // number here would be a number nothing reads -- the whole table carries a
+    // zero for the same reason.
+    expect(ember?.damage).toBe(0);
+    expect(shot?.damage).toBe(0);
+  });
+
+  it('is thrown by a weapon that out-rolls the bow and not the melee rares', () => {
+    // The ordering rather than the numbers, so a retune of any of the four
+    // moves them together. `{1, 2}` was the staff's range before this spec and
+    // was the weakest in the table, chosen when hitting somebody with the staff
+    // was explicitly the fallback rather than the plan.
+    const rangeOf = (id: string): { min: number; max: number } =>
+      itemById(id)?.damage ?? { min: 0, max: 0 };
+    const mean = (id: string): number => (rangeOf(id).min + rangeOf(id).max) / 2;
+    expect(mean('staff.emberwood')).toBeGreaterThan(mean('bow.hunting'));
+    expect(mean('staff.emberwood')).toBeLessThan(mean('sword.keen'));
+    expect(mean('staff.emberwood')).toBeLessThan(mean('maul.iron'));
+  });
+
+  it('is single-target: the explosion is a picture and not an area', () => {
+    // `ability.radius` is what puts a shot on `stepProjectiles`' burst branch.
+    // Absent, so the burst it draws on landing damages exactly the body it hit.
+    expect(ember?.radius).toBeUndefined();
   });
 });
 

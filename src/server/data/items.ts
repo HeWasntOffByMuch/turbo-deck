@@ -204,16 +204,37 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Emberwood Staff',
     slot: 'mainHand',
     levelRequirement: 4,
-    modifiers: { spellPower: 0.2, intelligence: 3, attackRange: 20 },
-    // The headline fix. +3 Intelligence, spell power, and two points of weapon
-    // damage -- and before spec 216 swinging it scaled off Strength, because
-    // every weapon did. `E` in Strength rather than `None` so that hitting
-    // something with a stick is still worth marginally more to a strong body.
+    // No `attackRange` (spec 218). The 20 this used to carry described what a
+    // melee swing would have reached, and a weapon that names a shot never
+    // melees -- the same reason the bow below carries none. What it reaches is
+    // `ranged.ember`'s own 330, which is what `autoAttack` chases to and what
+    // `startCast` gates on.
+    modifiers: { spellPower: 0.2, intelligence: 3 },
+    // `A` in Intelligence, which spec 216 chose for a stick swung by a magus and
+    // which spec 218 makes literal: the thing this weapon throws is fire, and
+    // the attribute that decides how much of it is the one the row already
+    // named. The `E` in Strength stays. It was justified as "hitting something
+    // with a stick is still worth marginally more to a strong body" and that
+    // sentence is now about an attack this weapon no longer makes -- but the
+    // grade is the bottom of the ladder, the arm still swings the staff, and
+    // re-lettering somebody else's row for a coefficient nobody can feel is not
+    // worth the churn.
     scaling: { strength: ScalingGrade.E, agility: ScalingGrade.None, intelligence: ScalingGrade.A },
-    // Barely a weapon, and meant to be: what this row is for is the +3
-    // Intelligence and the spell power, and hitting somebody with it is the
-    // fallback rather than the plan.
-    damage: { min: 1, max: 2 },
+    // Retuned by spec 218, because the premise the old number was chosen under
+    // is gone. `{1, 2}` was the weakest range in the table and said so: *"barely
+    // a weapon, and meant to be ... hitting somebody with it is the fallback
+    // rather than the plan"*. Hitting somebody with it **is** the plan now --
+    // this is the range an Ember Shot rolls, since spec 217 made a basic
+    // attack's damage the weapon's own.
+    //
+    // Between the bow's `{2, 4}` and the keen sword's `{3, 6}`: better than a
+    // level-1 common because it is a level-4 rare, and short of the level-5
+    // melee rares because it out-ranges every one of them by three hundred
+    // units. Three wide, which is the keen blade's spread rather than the maul's
+    // seven -- a thrown ball of fire carries a fixed payload, so what varies is
+    // where it catches you and not how hard it was swung.
+    damage: { min: 2, max: 5 },
+    basicAttackId: 'ranged.ember',
   },
   {
     id: 'bow.hunting',
@@ -507,6 +528,23 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 1,
     modifiers: {},
     maxStack: 10,
+  },
+  // What a sheep leaves. Nothing spins it yet -- crafting is its own spec -- and
+  // it is deliberately here anyway, because it is the first row in this table
+  // that is *only* a material: no slot, no modifiers, no skill, and a price that
+  // is the whole of what it does today. `sword.worn` is worth three of these.
+  //
+  // Stacks high. A material a player picks up in ones and twos over an
+  // afternoon and cannot use yet is the exact shape that fills a bag, and a bag
+  // full of wool is a worse first impression than no wool at all.
+  {
+    id: 'wool',
+    value: 4,
+    name: 'Wool',
+    slot: null,
+    levelRequirement: 1,
+    modifiers: {},
+    maxStack: 20,
   },
 ];
 
