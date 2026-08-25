@@ -14,6 +14,9 @@
  * clicks the real buttons and reads the numbers back out of the real DOM.
  *
  * It asserts what the page is for:
+ *  - a token that gets in without being typed (spec 226): junk and an expired
+ *    token refused, a live one on the clipboard pasted and connected on its own,
+ *    a field that selects itself when you click into it,
  *  - a live count that arrives without anybody clicking refresh,
  *  - a selection that survives the poll that lands a second later,
  *  - each of the six actions changing the number it claims to change,
@@ -124,6 +127,43 @@ async function readRows(page: Page): Promise<Row[]> {
 const rowFor = (rows: readonly Row[], playerId: string): Row | null =>
   rows.find((row) => row.playerId === playerId) ?? null;
 
+async function settle(ms = 300): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function setClipboard(page: Page, text: string): Promise<void> {
+  await page.evaluate((value) => navigator.clipboard.writeText(value), text);
+}
+
+/**
+ * What alt-tabbing back into the tab looks like from the page's side. The read
+ * behind it is a promise, so this waits long enough for it to have landed --
+ * every check that follows one is a state the page reached, not a timing.
+ */
+async function nudge(page: Page): Promise<void> {
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await settle();
+}
+
+const logText = async (page: Page): Promise<string> => (await page.textContent('#log')) ?? '';
+
+/** How many tokens the page says it has pasted, over the whole session. */
+async function pasteCount(page: Page): Promise<number> {
+  return ((await logText(page)).match(/pasted the token/g) ?? []).length;
+}
+
+interface Selection {
+  readonly start: number;
+  readonly end: number;
+  readonly length: number;
+}
+
+const selectionOf = async (page: Page, id: string): Promise<Selection> =>
+  page.$eval(id, (element) => {
+    const field = element as HTMLInputElement;
+    return { start: field.selectionStart ?? -1, end: field.selectionEnd ?? -1, length: field.value.length };
+  });
+
 /** Wait until the polled table says something, without clicking anything. */
 async function untilRow(
   page: Page,
@@ -157,7 +197,11 @@ async function main(): Promise<void> {
   let bots: ChildProcess | null = null;
 
   try {
-    const page = await browser.newPage();
+    // Granted rather than prompted: the automatic read is the feature under
+    // test, and a permission dialog nobody can click would read as a page that
+    // ignores the clipboard.
+    const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    const page = await context.newPage();
     const pageErrors: string[] = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     page.on('console', (message) => {
@@ -183,8 +227,101 @@ async function main(): Promise<void> {
     );
 
     await page.goto(`http://localhost:${PORT}/admin`);
-    await page.fill('#token', signToken({ sub: 'probe', role: 'admin' }, SECRET, Date.now()));
-    await page.click('#connect');
+    await page.bringToFront();
+
+    // The token the *last* boot printed, and the one this one did. The stale one
+    // is minted an hour ago with a minute of life, so it is expired by exactly
+    // the margin an operator's forgotten clipboard would be.
+    const token = signToken({ sub: 'probe', role: 'admin' }, SECRET, Date.now());
+    const stale = signToken({ sub: 'yesterday', role: 'admin' }, SECRET, Date.now() - 3_600_000, 60);
+
+    console.log('\nthe token (spec 226)');
+    // Every clipboard read is refused for a document that is not focused, so a
+    // failure here would otherwise land on each check below as a page that
+    // ignores the clipboard.
+    check('the document is focused', await page.evaluate(() => document.hasFocus()));
+
+    // --- something that is not a token ---
+    await setClipboard(page, 'hunter2 -- and a sentence somebody copied');
+    await nudge(page);
+    check('junk on the clipboard is not pasted', (await page.inputValue('#token')) === '');
+    check('...and opens no socket', (await page.textContent('#status')) === 'disconnected');
+
+    // --- a token that has expired ---
+    await setClipboard(page, stale);
+    await nudge(page);
+    check('an expired token is not pasted', (await page.inputValue('#token')) === '');
+    // The automatic read is silent about what it refused; the button is not.
+    await page.click('#paste');
+    await settle();
+    check(
+      '...and asking for it says it expired rather than sending it',
+      (await logText(page)).includes('expired'),
+    );
+    check('nothing was sent', (await page.textContent('#status')) === 'disconnected');
+
+    // --- the field selects itself ---
+    // Filled with the stale token, because that is the real state of this field
+    // on the second boot of the day: the last one is still in it.
+    await page.fill('#token', stale);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.click('#token');
+    const entered = await selectionOf(page, '#token');
+    check(
+      'clicking into the token field selects all of it',
+      entered.length > 0 && entered.start === 0 && entered.end === entered.length,
+      `selected ${entered.start}..${entered.end} of ${entered.length}`,
+    );
+    await page.click('#token');
+    const again = await selectionOf(page, '#token');
+    check('a second click inside it places a caret', again.start === again.end);
+
+    // --- the live token, while the operator has hold of the field ---
+    await setClipboard(page, token);
+    await nudge(page);
+    check(
+      'an automatic read stands down while the field has focus',
+      (await page.inputValue('#token')) === stale,
+    );
+
+    // --- and once they let go ---
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await nudge(page);
+    check('a live token on the clipboard is pasted over the stale one', (await page.inputValue('#token')) === token);
+    await waitFor('the clipboard token to connect', async () =>
+      (await page.textContent('#status')) === 'connected' ? true : null,
+    );
+    check('...and connects, with nothing typed and nothing clicked', true);
+
+    // Adopting fills the field, so the next read compares equal: this is what
+    // stops the alt-tab that follows from tearing the session down again.
+    const pasted = await pasteCount(page);
+    await nudge(page);
+    await nudge(page);
+    check('reading the same clipboard again pastes nothing', (await pasteCount(page)) === pasted, `${pasted} -> ${await pasteCount(page)}`);
+    check('...and leaves the session up', (await page.textContent('#status')) === 'connected');
+
+    check('the connect bar goes once authenticated', (await page.getAttribute('#conn', 'data-state')) === 'live');
+    check('...and the bar is really off the page', !(await page.isVisible('#conn')));
+    check(
+      'the header names who the token says you are',
+      (await page.textContent('#connSub'))?.trim() === 'probe',
+      (await page.textContent('#connSub')) ?? '',
+    );
+
+    // The way in and the way back out. Without the second one `change token` is
+    // a panel that opens over a live session with no way to close it.
+    await page.click('#change');
+    check('change token brings the bar back', (await page.getAttribute('#conn', 'data-state')) === 'open');
+    const reopened = await selectionOf(page, '#token');
+    check(
+      '...with the whole token selected, ready to be replaced',
+      reopened.length > 0 && reopened.start === 0 && reopened.end === reopened.length,
+    );
+    await page.keyboard.press('Escape');
+    await settle(150);
+    check('escape puts the bar away again', (await page.getAttribute('#conn', 'data-state')) === 'live');
+    check('...without disturbing the session', (await page.textContent('#status')) === 'connected');
 
     console.log('\nliveness');
     await waitFor('authentication', async () =>
@@ -302,6 +439,14 @@ async function main(): Promise<void> {
     // Photographed here rather than at the end: this is the page an operator
     // actually works in -- a live table, a selected row and a populated card.
     // The kick below is the last check because it empties all three.
+    //
+    // Scrolled back to the top first, because the header is sticky and a
+    // full-page capture composites a sticky element wherever the page happens to
+    // be scrolled to -- clicking the actions in the right-hand column scrolls it,
+    // and the first version of this photographed the header sitting on top of
+    // the row below it.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await settle(150);
     await page.screenshot({ path: '.claude/screenshots/admin-console.png', fullPage: true });
 
     // --- kill ---

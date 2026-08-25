@@ -5,6 +5,8 @@ import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { loadMapFile } from './map-file.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { spawnPointsFrom, SpawnerError } from './spawners.js';
+import { worldBoundsOf } from './build.js';
+import { MOVE_SPEED_HARD_MIN } from '../../sim/constants.js';
 
 /**
  * A two-chunk document with nothing in it but markers. Terrain is not what this
@@ -119,6 +121,9 @@ describe('reading spawners out of a map', () => {
 describe('the shipped map', () => {
   const shipped = loadMapFile().doc;
 
+  /** How long a walk from the spawn point still counts as content a player meets. */
+  const REACH_SECONDS = 20;
+
   it('places spawners, and every one names a monster in the table', () => {
     const points = spawnPointsFrom(shipped);
     expect(points.length).toBeGreaterThan(0);
@@ -127,13 +132,62 @@ describe('the shipped map', () => {
     }
   });
 
-  it('puts them inside the arena, where a player will actually meet them', () => {
-    const { arena } = shipped;
+  /**
+   * What this used to assert was containment in `doc.arena`, and that stopped
+   * being the right measure the moment a map put a monster past it on purpose.
+   *
+   * `arena` is the rectangle `bake-map.ts` writes at the first bake --
+   * `PLAY_WIDTH` by `PLAY_HEIGHT`, 1200 by 900 -- and it has never tracked the
+   * world since. Spec 165 grew the map to 18,480 by 16,632 and spec 210 grew a
+   * shore onto it, leaving that rectangle as 0.35% of one corner; `constants.ts`
+   * says so in as many words beside `ARENA_WIDTH`, and spec 221 deleted the
+   * hand-authored walls that used to make it a boundary. Nothing clamps to it:
+   * `worldBoundsOf` is what bounds movement, and it reads `layer.bounds`.
+   *
+   * So the rectangle is split into the two claims it was standing in for, and
+   * both are stronger than it was -- a spawner outside `arena` used to fail and
+   * a spawner in the far corner of the real world used to pass.
+   *
+   * What is deliberately NOT asserted any more: that a spawner sits in a
+   * non-pvp zone. `DEFAULT_ZONES` gives `arena`'s exact rectangle the name
+   * `greenmarch`, so the old assertion happened to keep every monster out of
+   * The Wilds, and a map may now put one there. That is a map author's decision
+   * rather than an invariant -- and it is a real one, so it is written down
+   * here rather than lost: the shipped map puts all seven of its hostile
+   * spawners in pvp ground and leaves only the sheep inside Greenmarch.
+   *
+   * Reachability is not asserted either, and that is also deliberate. The five
+   * sheep stand in a fenced pasture that is a disconnected nav component --
+   * `findPath` from the spawn point returns nothing for any of them -- and a
+   * pen you attack over the rail is the intended shape of that pasture.
+   */
+  it('puts them on the map, inside the ground the document declares', () => {
+    const bounds = worldBoundsOf(shipped);
     for (const point of spawnPointsFrom(shipped)) {
-      expect(point.x, point.id).toBeGreaterThanOrEqual(arena.minX);
-      expect(point.x, point.id).toBeLessThanOrEqual(arena.maxX);
-      expect(point.y, point.id).toBeGreaterThanOrEqual(arena.minZ);
-      expect(point.y, point.id).toBeLessThanOrEqual(arena.maxZ);
+      expect(point.x, point.id).toBeGreaterThanOrEqual(bounds.x);
+      expect(point.x, point.id).toBeLessThanOrEqual(bounds.x + bounds.w);
+      expect(point.y, point.id).toBeGreaterThanOrEqual(bounds.y);
+      expect(point.y, point.id).toBeLessThanOrEqual(bounds.y + bounds.h);
+    }
+  });
+
+  /**
+   * The other half: on the map is not the same as in the game. The world is
+   * 18,480 across and a spawner in the far corner of it is content nobody will
+   * ever walk to.
+   *
+   * The bound is derived rather than picked. `MOVE_SPEED_HARD_MIN` is the
+   * slowest anything in this game may ever move, so `MOVE_SPEED_HARD_MIN *
+   * REACH_SECONDS` is the distance even the slowest body covers in twenty
+   * seconds -- which makes it a distance *anybody* is inside twenty seconds of,
+   * rather than a number somebody liked. It is not a loose bound: that circle
+   * is 4% of the world's area, so the other 96% still fails.
+   */
+  it('puts them within a walk of the spawn point, where a player will actually meet them', () => {
+    const reach = MOVE_SPEED_HARD_MIN * REACH_SECONDS;
+    for (const point of spawnPointsFrom(shipped)) {
+      const away = Math.hypot(point.x - DEFAULT_SPAWN.x, point.y - DEFAULT_SPAWN.y);
+      expect(away, `${point.id} (${point.monsterId}) is ${Math.round(away)} out`).toBeLessThanOrEqual(reach);
     }
   });
 
