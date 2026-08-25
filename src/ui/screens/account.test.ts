@@ -24,6 +24,7 @@ import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
 import { Button } from '../widgets/button.js';
 import { Label } from '../widgets/label.js';
+import { Tab } from '../widgets/tabs.js';
 import { TextField } from '../widgets/text-field.js';
 import { AccountScreen, type AccountDraft, type AccountView } from './account.js';
 
@@ -90,6 +91,11 @@ function widget<T>(screen: AccountScreen, name: string, kind: new (...args: neve
 
 const field = (screen: AccountScreen, name: string): TextField => widget(screen, name, TextField);
 const button = (screen: AccountScreen, name: string): Button => widget(screen, name, Button);
+/**
+ * A mode header. `Tab` names itself `tab:<id>` (spec 124), so the id the screen
+ * gives it is the searchable half.
+ */
+const tab = (screen: AccountScreen, id: string): Tab => widget(screen, `tab:${id}`, Tab);
 
 /** Type into a field the way the widget does, so `onChange` fires. */
 function type(input: TextField, text: string): void {
@@ -185,7 +191,7 @@ describe('the form', () => {
 describe('signing in', () => {
   it('warns what it costs before it can be pressed', () => {
     const h = harness();
-    button(h.screen, 'account:modeSignIn').onPress?.(0);
+    tab(h.screen, 'account:modeSignIn').onSelect?.();
     h.root.update(0);
 
     const shown = texts(h.screen).join(' ');
@@ -196,7 +202,7 @@ describe('signing in', () => {
 
   it('drops the repeat and name fields, and asks for less', () => {
     const h = harness();
-    button(h.screen, 'account:modeSignIn').onPress?.(0);
+    tab(h.screen, 'account:modeSignIn').onSelect?.();
     type(field(h.screen, 'account:login'), 'ada');
     type(field(h.screen, 'account:password'), 'x');
     h.root.update(0);
@@ -212,7 +218,7 @@ describe('signing in', () => {
   it('forgets the password when the mode changes', () => {
     const h = harness();
     type(field(h.screen, 'account:password'), 'a decent password');
-    button(h.screen, 'account:modeSignIn').onPress?.(0);
+    tab(h.screen, 'account:modeSignIn').onSelect?.();
     // A password typed to create an account is not one typed to sign in with.
     expect(h.screen.draft.password).toBe('');
   });

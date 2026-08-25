@@ -39,6 +39,7 @@ import { uniformInsets } from '../core/geom.js';
 import type { Theme } from '../theme/theme.js';
 import { Button, Separator } from '../widgets/button.js';
 import { Label } from '../widgets/label.js';
+import { Tab, TabStrip } from '../widgets/tabs.js';
 import { TextField } from '../widgets/text-field.js';
 
 export type AccountMode = 'register' | 'signIn';
@@ -133,8 +134,24 @@ export class AccountScreen extends Column {
   onSignOut: (() => void) | null = null;
 
   private readonly status = new Label('', 'body');
-  private readonly registerTab: Button;
-  private readonly signInTab: Button;
+  /**
+   * Register and Sign in, in the framework's own tabs (spec 227).
+   *
+   * They were two `Button`s in a `Row`, each greying *itself* out to show which
+   * one you were on -- a second answer to a question `Tab` already answers, and
+   * one that read as two broken buttons rather than as a choice. The character
+   * sheet and the options window both draw `TabStrip`, so this is what a tab
+   * looks like here.
+   *
+   * `TabStrip` rather than `TabPanel`, and the difference is deliberate: a
+   * panel owns its tabs' *content* and builds each lazily, which would make the
+   * two modes two sets of fields and two half-typed drafts. There is one draft
+   * here on purpose -- switching modes keeps the login you have already typed
+   * and clears only the password -- so what is wanted is the header alone.
+   */
+  private readonly modes = new TabStrip('account:modes');
+  private readonly registerTab: Tab;
+  private readonly signInTab: Tab;
   private readonly loginField = field('login', 'account:login');
   private readonly passwordField = field('password', 'account:password', true);
   private readonly confirmField = field('repeat password', 'account:confirm', true);
@@ -160,10 +177,10 @@ export class AccountScreen extends Column {
     this.status.colorToken = 'accent';
     this.status.wrap = true;
 
-    this.registerTab = new Button('Register', 'account:modeRegister');
-    this.registerTab.onPress = (): void => this.setMode('register');
-    this.signInTab = new Button('Sign in', 'account:modeSignIn');
-    this.signInTab.onPress = (): void => this.setMode('signIn');
+    this.registerTab = new Tab('account:modeRegister', 'Register');
+    this.registerTab.onSelect = (): void => this.setMode('register');
+    this.signInTab = new Tab('account:modeSignIn', 'Sign in');
+    this.signInTab.onSelect = (): void => this.setMode('signIn');
 
     this.submit = new Button('', 'account:submit');
     this.submit.onPress = (): void => this.commit();
@@ -179,9 +196,7 @@ export class AccountScreen extends Column {
       input.onChange = (): void => this.refresh();
     }
 
-    const modes = new Row('account:modes');
-    modes.gap = theme.spacing.xs;
-    modes.addAll([this.registerTab, this.signInTab]);
+    this.modes.addAll([this.registerTab, this.signInTab]);
 
     this.confirmRow = labelled('Confirm', this.confirmField, theme);
     this.nameRow = labelled('Name', this.nameField, theme);
@@ -197,7 +212,7 @@ export class AccountScreen extends Column {
     this.addAll([
       this.status,
       new Separator('row'),
-      modes,
+      this.modes,
       this.explain,
       this.formRows,
       this.problem,
@@ -257,13 +272,18 @@ export class AccountScreen extends Column {
         : 'You are playing as a guest. This character is saved, but only this browser can reach it.',
     );
 
-    // The mode buttons disappear once there is nothing to choose: a signed-in
-    // session registers nothing and signs into nothing without signing out
-    // first, and two dead buttons say that worse than no buttons do.
-    this.registerTab.visible = !signedIn;
-    this.signInTab.visible = !signedIn;
-    this.registerTab.enabled = !registering && !view.busy;
-    this.signInTab.enabled = registering && !view.busy;
+    // The strip disappears once there is nothing to choose: a signed-in session
+    // registers nothing and signs into nothing without signing out first, and
+    // two dead tabs say that worse than no tabs do. Hidden as a *strip* rather
+    // than tab by tab, so nothing is left holding a row of empty space.
+    this.modes.visible = !signedIn;
+    this.registerTab.active = registering;
+    this.signInTab.active = !registering;
+    // Which one you are on is `active`, so `enabled` is free to mean what it
+    // means everywhere else: whether pressing it would do anything. A request
+    // in flight is the only time it would not.
+    this.registerTab.enabled = !view.busy;
+    this.signInTab.enabled = !view.busy;
 
     this.formRows.visible = !signedIn;
     this.confirmRow.visible = registering;

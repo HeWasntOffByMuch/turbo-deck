@@ -290,8 +290,8 @@ async function main(): Promise<void> {
     // the character the browser was playing is the one that got an account.
     const db = openDatabase({ file: dbFile });
     try {
-      const players = db.all<{ id: string; account_id: string | null }>(
-        'SELECT id, account_id FROM players',
+      const players = db.all<{ id: string; account_id: string | null; display_name: string }>(
+        'SELECT id, account_id, display_name FROM players',
       );
       const accounts = db.all<{ login: string }>('SELECT login FROM accounts');
       const owned = players.filter((row) => row.account_id !== null);
@@ -306,6 +306,16 @@ async function main(): Promise<void> {
         problems.push(`the claim left ${players.length} characters where there should be 1`);
       } else {
         console.log('  one character, and the account owns it');
+      }
+      // And it is called what was registered (spec 227). This is the durable
+      // half only -- the row is written inside the claim's transaction, so it
+      // is right here whether or not the live record was told. What the live
+      // half is worth is `auth/rename.test.ts`, which flushes and watches this
+      // very write get undone without it.
+      if (owned[0]?.display_name !== 'Probe Ada') {
+        problems.push(`the character is called ${owned[0]?.display_name ?? 'nothing'}, not Probe Ada`);
+      } else {
+        console.log('  and it is called Probe Ada');
       }
     } finally {
       db.close();
