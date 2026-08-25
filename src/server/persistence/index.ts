@@ -28,6 +28,15 @@ export interface PersistenceOptions {
   readonly now?: () => number;
   /** The zone a fresh character starts in; the server knows, this does not. */
   readonly startingZoneId?: string;
+  /**
+   * Forwarded to {@link AuthService} (spec 227): a player whose stored name has
+   * just changed, so whoever holds the live record can catch up.
+   *
+   * Forwarded rather than owned, because the thing that needs telling is the
+   * game server and it does not exist yet when this runs -- so `index.ts`
+   * passes a closure over the binding it is about to make.
+   */
+  readonly onPlayerRenamed?: (playerId: string, displayName: string) => void;
 }
 
 export interface Persistence {
@@ -64,6 +73,7 @@ export function openPersistence(options: PersistenceOptions): Persistence {
     ...(options.sessionTtlMs === undefined ? {} : { sessionTtlMs: options.sessionTtlMs }),
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.startingZoneId === undefined ? {} : { startingZoneId: options.startingZoneId }),
+    ...(options.onPlayerRenamed === undefined ? {} : { onPlayerRenamed: options.onPlayerRenamed }),
   });
 
   return { db, store, auth, authGate: auth, schemaVersion: LATEST_SCHEMA_VERSION };

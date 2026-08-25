@@ -240,6 +240,40 @@ export class PlayerManager {
   }
 
   /**
+   * Give a logged-in player a new display name (spec 227).
+   *
+   * The in-memory half of a claim, and the half without which the other one
+   * does not survive: the row is written inside the registration's transaction,
+   * and this record is what the autosave writes *over* it twenty-five seconds
+   * later. False when nobody is playing as that id, which is not a failure --
+   * the row is already right and there is nothing here to correct.
+   *
+   * The record is **replaced rather than mutated**, which is the rule every
+   * writer here follows and matters more than usual for this one: a flush that
+   * started before the rename holds the old object, so `clearDirtyIfUnchanged`
+   * compares identity and correctly refuses to clear the mark this just set.
+   * Mutating in place would make that comparison say the new name had been
+   * written when what went to disk was the old one.
+   *
+   * `session.displayName` moves with it. Both exist and are not redundant: the
+   * session's is what the connection announced itself as, the record's is what
+   * the character is called -- and `nameOf` reads the record, so that is the one
+   * every other client sees over the body.
+   */
+  rename(playerId: string, displayName: string): boolean {
+    const session = this.sessions.get(playerId);
+    if (!session || displayName === '') return false;
+    if (session.record.displayName === displayName && session.displayName === displayName) return false;
+    this.commit({
+      ...session,
+      displayName,
+      record: { ...session.record, displayName },
+    });
+    this.dirty.add(playerId);
+    return true;
+  }
+
+  /**
    * Clear the dirty mark, but only if the record has not moved since the
    * snapshot that was written.
    *

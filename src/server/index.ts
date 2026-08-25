@@ -131,9 +131,26 @@ const studio = createStudio({
  * gets missed.
  */
 const dbFile = process.env['TURBO_DECK_DB'] ?? join(here, '..', '..', DEFAULT_DB_FILE);
+
+/**
+ * Where a rename goes once there is a world to tell (spec 227).
+ *
+ * A box rather than a forward reference to `server`, which is declared a
+ * hundred lines below this: the closure is only ever called from an HTTP
+ * handler, long after both exist, but a binding read before its declaration is
+ * a temporal dead zone waiting for the first caller that moves. Null until the
+ * server is built; a registration before then is a registration by nobody who
+ * is playing, which is exactly what this has nothing to do.
+ */
+const renameSink: { push: ((playerId: string, displayName: string) => void) | null } = { push: null };
+
 const persistence = ((): ReturnType<typeof openPersistence> => {
   try {
-    return openPersistence({ file: dbFile, log: (line) => console.log(line) });
+    return openPersistence({
+      file: dbFile,
+      log: (line) => console.log(line),
+      onPlayerRenamed: (playerId, displayName) => renameSink.push?.(playerId, displayName),
+    });
   } catch (error) {
     console.error(`[server] cannot start: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
@@ -226,6 +243,15 @@ const server = new GameServer({
     console.error(`[db] save failed for ${playerId}: ${error instanceof Error ? error.message : String(error)}`);
   },
 });
+
+// The live half of a claim (spec 227). The row was written inside the
+// registration's transaction; this is the record the autosave would otherwise
+// write back over it.
+renameSink.push = (playerId, displayName): void => {
+  if (server.renamePlayer(playerId, displayName)) {
+    console.log(`[auth] ${playerId} is now ${displayName}`);
+  }
+};
 
 /**
  * The periodic flush (spec 226). Dirty players are written every

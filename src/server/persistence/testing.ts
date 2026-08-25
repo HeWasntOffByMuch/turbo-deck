@@ -61,10 +61,21 @@ export interface TestStack {
   dispose: () => void;
 }
 
-export function openTestStack(options: { readonly file?: string } = {}): TestStack {
+export function openTestStack(
+  options: {
+    readonly file?: string;
+    /** Carried into every reopen, so a restart test keeps its observer. */
+    readonly onPlayerRenamed?: (playerId: string, displayName: string) => void;
+  } = {},
+): TestStack {
   const temp = options.file === undefined ? tempDbFile() : null;
   const file = options.file ?? temp?.file ?? ':memory:';
-  const open = (): Persistence => openPersistence({ file, startingZoneId: 'hub' });
+  const open = (): Persistence =>
+    openPersistence({
+      file,
+      startingZoneId: 'hub',
+      ...(options.onPlayerRenamed === undefined ? {} : { onPlayerRenamed: options.onPlayerRenamed }),
+    });
 
   const stack: TestStack = {
     file,

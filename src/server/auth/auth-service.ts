@@ -128,6 +128,20 @@ export interface AuthServiceOptions {
    * a `ZoneManager`; the server passes its own, a test passes anything.
    */
   readonly startingZoneId?: string;
+  /**
+   * A player whose stored name has just changed (spec 227).
+   *
+   * An injected capability, exactly like `authGate` in the other direction:
+   * `auth/` cannot reach the game server and must not learn how to, and the
+   * server holds the authoritative in-memory record for anybody who is logged
+   * in. Without this a claim writes the new name to the row and the next
+   * autosave writes the old one back over it -- which is not a corner case,
+   * because being logged in while you register is what claiming *is*.
+   *
+   * Absent for every caller with nobody playing: the tests, and any use of
+   * this module without a running world.
+   */
+  readonly onPlayerRenamed?: (playerId: string, displayName: string) => void;
 }
 
 export class AuthService {
@@ -138,6 +152,7 @@ export class AuthService {
   private readonly ttl: number;
   private readonly now: () => number;
   private readonly startingZoneId: string;
+  private readonly onPlayerRenamed: (playerId: string, displayName: string) => void;
 
   constructor(options: AuthServiceOptions) {
     this.players = options.players;
@@ -147,6 +162,9 @@ export class AuthService {
     this.ttl = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
     this.now = options.now ?? ((): number => Date.now());
     this.startingZoneId = options.startingZoneId ?? '';
+    // A sink rather than an optional call site: lint refuses an empty function
+    // literal, and a caller with nobody playing is the common case in tests.
+    this.onPlayerRenamed = options.onPlayerRenamed ?? ((_id: string, _name: string): void => undefined);
   }
 
   // --- guests ------------------------------------------------------------
@@ -203,7 +221,7 @@ export class AuthService {
     const accountId = newId('acc');
     const guestToken = input.guestToken ?? '';
 
-    return this.transaction(() => {
+    const issued = this.transaction(() => {
       // Read inside the transaction, not before it: the guest's ownership is
       // the thing being changed, and checking it outside would put a gap
       // between the check and the claim.
@@ -240,6 +258,12 @@ export class AuthService {
       if (!this.players.attachToAccount(claiming.playerId, accountId)) {
         throw new AuthError('that character already belongs to an account', 'already_claimed');
       }
+      // The character takes the name the account was registered under
+      // (spec 227). Without this the account row, the session and the row's
+      // `display_name` disagree about who this is -- and the one the *game*
+      // reads is the one that stayed `Wanderer`. In the transaction, so a
+      // refusal below or a rollback above leaves the guest exactly as it was.
+      this.players.rename(claiming.playerId, displayName);
       // Rotate: every guest credential for this player stops working, including
       // the one used to claim it. The client is handed the new one in the same
       // response, so there is no window in which it holds nothing -- and a copy
@@ -247,6 +271,15 @@ export class AuthService {
       this.sessions.revokeAllForPlayer(claiming.playerId, this.now());
       return this.issue(claiming.playerId, accountId, 'account', displayName);
     });
+
+    // After the commit, never inside it. A registration that rolled back has
+    // renamed nobody on disk, and telling the world about a name that is not
+    // there would leave the live record and the row disagreeing until the next
+    // login -- with the *wrong* one winning, since an autosave writes memory
+    // over disk. Fired for the fresh-character case too, harmlessly: nobody is
+    // logged in as a player created a line ago, so it is a lookup that misses.
+    this.onPlayerRenamed(issued.playerId, issued.displayName);
+    return issued;
   }
 
   /**

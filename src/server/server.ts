@@ -625,6 +625,23 @@ export class GameServer implements AdminHost {
   dirtyPlayerCount(): number {
     return this.players.dirtyIds().length;
   }
+
+  /**
+   * Adopt a display name decided outside the sim (spec 227).
+   *
+   * The one thing `auth/` needs to reach in here, and it is a *push* rather
+   * than the server asking: registration happens over HTTP, on nobody's tick,
+   * and the player being renamed is usually mid-session. `index.ts` wires this
+   * to `AuthService.onPlayerRenamed`, which fires after that transaction has
+   * committed -- so what arrives here is already true on disk and this is the
+   * live copy catching up rather than a second decision.
+   *
+   * False when that player is not connected, which is the ordinary case for a
+   * registration with no guest token behind it.
+   */
+  renamePlayer(playerId: string, displayName: string): boolean {
+    return this.players.rename(playerId, displayName);
+  }
   // --- transport ---------------------------------------------------------
 
   /** Registers a connected channel. Public so a test can attach one directly. */

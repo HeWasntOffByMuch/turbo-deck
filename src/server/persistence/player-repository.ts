@@ -131,6 +131,30 @@ export class PlayerRepository {
     return row?.display_name ?? null;
   }
 
+  /**
+   * Give a player a new display name (spec 227).
+   *
+   * A column write rather than a `save`, and that is the point: `save` writes
+   * the *whole* record from a `PersistedPlayer`, and the only caller that has
+   * one here is the game server. This runs inside a claim's transaction, where
+   * what is to hand is a player id and a string, and where reading a save in to
+   * write it back out would put a parse of somebody's bag on the registration
+   * path -- the cost `displayNameOf` exists to avoid one line up.
+   *
+   * The boolean is whether a row moved, so a claim on a player that has since
+   * been deleted is a refusal rather than a silent success.
+   */
+  rename(id: string, displayName: string): boolean {
+    return (
+      this.db.run(
+        'UPDATE players SET display_name = ?, updated_at = ? WHERE id = ?',
+        displayName,
+        this.now(),
+        id,
+      ).changes > 0
+    );
+  }
+
   listIds(): readonly string[] {
     return this.db.all<{ id: string }>('SELECT id FROM players ORDER BY id').map((row) => row.id);
   }
