@@ -219,9 +219,13 @@ describe('two players in one world', () => {
           path = findPath(grid, { x: me.x, y: me.y }, { x: it.x, y: it.y });
           leg = 0;
         }
-        while (leg < path.length && Math.hypot(path[leg]!.x - me.x, path[leg]!.y - me.y) < 30) leg++;
+        for (;;) {
+          const next = path[leg];
+          if (!next || Math.hypot(next.x - me.x, next.y - me.y) >= 30) break;
+          leg++;
+        }
         // Past the last waypoint, or no route this tick: straight at the body.
-        const aim = leg < path.length ? path[leg]! : { x: it.x, y: it.y };
+        const aim = path[leg] ?? { x: it.x, y: it.y };
         const ax = aim.x - me.x;
         const ay = aim.y - me.y;
         const reach = Math.hypot(ax, ay) || 1;

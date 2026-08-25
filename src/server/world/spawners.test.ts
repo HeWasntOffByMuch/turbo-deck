@@ -118,11 +118,11 @@ describe('reading spawners out of a map', () => {
   });
 });
 
-/** How long a walk from the spawn point still counts as content a player meets. */
-const REACH_SECONDS = 20;
-
 describe('the shipped map', () => {
   const shipped = loadMapFile().doc;
+
+  /** How long a walk from the spawn point still counts as content a player meets. */
+  const REACH_SECONDS = 20;
 
   it('places spawners, and every one names a monster in the table', () => {
     const points = spawnPointsFrom(shipped);
@@ -178,9 +178,10 @@ describe('the shipped map', () => {
    *
    * The bound is derived rather than picked. `MOVE_SPEED_HARD_MIN` is the
    * slowest anything in this game may ever move, so `MOVE_SPEED_HARD_MIN *
-   * REACH_SECONDS` is the distance the slowest possible body covers in twenty
-   * seconds of walking -- an upper bound on the walk, whoever is doing it. It
-   * still refuses 89% of the world.
+   * REACH_SECONDS` is the distance even the slowest body covers in twenty
+   * seconds -- which makes it a distance *anybody* is inside twenty seconds of,
+   * rather than a number somebody liked. It is not a loose bound: that circle
+   * is 4% of the world's area, so the other 96% still fails.
    */
   it('puts them within a walk of the spawn point, where a player will actually meet them', () => {
     const reach = MOVE_SPEED_HARD_MIN * REACH_SECONDS;
