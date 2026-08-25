@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { TERRAIN_TOOLS } from './brush.js';
 import { fenceStep, FENCE_STYLES } from './fence.js';
-import { MARKER_KINDS } from './markers.js';
+import { MARKER_KINDS, patchMarker } from './markers.js';
 import { PAINT_MATERIALS } from './paint.js';
 import { SPAWNER_MONSTER_CHOICES,
+  clearSelection,
   createEditorSettings,
   cursorColor,
   cursorRadius,
@@ -13,6 +14,10 @@ import { SPAWNER_MONSTER_CHOICES,
   MARKER_CURSOR_RADIUS,
   markerKindEffect,
   MODE_CHOICES,
+  patchFromSelection,
+  selectionFrom,
+  SELECT_PICK_RADIUS,
+  SPAWNER_UNSET,
   MODE_COLORS,
   PAINT_COLORS,
   PAINT_MATERIAL_CHOICES,
@@ -21,6 +26,7 @@ import { SPAWNER_MONSTER_CHOICES,
   visibleGroups,
   type EditorMode,
   type EditorSettings,
+  type MarkerSelection,
 } from './tools.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 
@@ -41,9 +47,16 @@ describe('which settings a mode shows', () => {
   it('shows exactly one tool group per mode, and covers every mode', () => {
     for (const mode of EDITOR_MODES) {
       const show = visibleGroups(mode);
-      const groups = [show.terrain, show.paint, show.scatter, show.fence, show.marker, show.part, show.rock].filter(
-        Boolean,
-      ).length;
+      const groups = [
+        show.terrain,
+        show.paint,
+        show.scatter,
+        show.fence,
+        show.marker,
+        show.select,
+        show.part,
+        show.rock,
+      ].filter(Boolean).length;
       // The eraser has no settings of its own beyond the shared radius; every
       // other mode has exactly one group, and none has two.
       expect(groups).toBe(mode === 'erase' ? 0 : 1);
@@ -244,5 +257,141 @@ describe('the spawner monster picker', () => {
     // document treats as invalid.
     expect(SPAWNER_MONSTER_CHOICES.length).toBeGreaterThan(0);
     expect(SPAWNER_MONSTER_CHOICES[0]?.value).not.toBe('');
+  });
+});
+
+/**
+ * Spec 222. The select tool's panel is a *load and commit* cycle: selecting a
+ * marker writes its values into the settings, and editing one of them writes the
+ * lot back. So the property that matters is that the two are inverses -- select
+ * a marker, commit without touching anything, and nothing about it moved.
+ */
+describe('the select tool', () => {
+  const settings = (): EditorSettings => createEditorSettings();
+
+  const selectionOf = (s: EditorSettings): MarkerSelection => ({
+    selectedMarkerId: s.selectedMarkerId,
+    selKind: s.selKind,
+    selMonster: s.selMonster,
+    selLabel: s.selLabel,
+    selRespawnSeconds: s.selRespawnSeconds,
+    selLeashRadius: s.selLeashRadius,
+  });
+
+  it('opens with nothing selected', () => {
+    expect(settings().selectedMarkerId).toBe('');
+  });
+
+  it('shows its own folder and nobody else\'s', () => {
+    const show = visibleGroups('select');
+    expect(show.select).toBe(true);
+    expect(show.marker).toBe(false);
+    expect(show.terrain).toBe(false);
+    expect(show.scatter).toBe(false);
+  });
+
+  it('draws a ring the size of its own reach', () => {
+    const s = settings();
+    s.mode = 'select';
+    expect(cursorRadius(s)).toBe(SELECT_PICK_RADIUS);
+    expect(cursorColor(s)).toBe(MODE_COLORS.select);
+  });
+
+  /**
+   * The reach has to be wider than the disc a person is aiming at, or a click
+   * that missed the billboard by a pixel lands in a band where neither answer
+   * fires and the marker simply does not select.
+   */
+  it('reaches further on the ground than a marker\'s own ring', () => {
+    expect(SELECT_PICK_RADIUS).toBeGreaterThan(MARKER_CURSOR_RADIUS);
+  });
+
+  it('loads what the marker says', () => {
+    const loaded = selectionFrom(
+      { kind: 'spawner', id: 'spawner-3', x: 0, z: 0, label: 'ravager', spawner: { respawnSeconds: 45, leashRadius: 210 } },
+      selectionOf(settings()),
+    );
+    expect(loaded).toMatchObject({
+      selectedMarkerId: 'spawner-3',
+      selKind: 'spawner',
+      selMonster: 'ravager',
+      selRespawnSeconds: 45,
+      selLeashRadius: 210,
+    });
+  });
+
+  it('shows a marker with no overrides as unset rather than as zero seconds', () => {
+    const loaded = selectionFrom({ kind: 'spawner', id: 'spawner-1', x: 0, z: 0, label: 'grazer' }, selectionOf(settings()));
+    expect(loaded.selRespawnSeconds).toBe(SPAWNER_UNSET);
+    expect(loaded.selLeashRadius).toBe(SPAWNER_UNSET);
+  });
+
+  /**
+   * A spawner's label is a monster id chosen from the roster and every other
+   * kind's is free text, so they are two fields -- and the one this kind does
+   * not use keeps what the reader last had in it rather than being blanked.
+   */
+  it('puts a label in the field its kind reads', () => {
+    const base = selectionOf(settings());
+    expect(selectionFrom({ kind: 'trigger', id: 'trigger-1', x: 0, z: 0, label: 'boss-door' }, base).selLabel).toBe(
+      'boss-door',
+    );
+    expect(selectionFrom({ kind: 'trigger', id: 'trigger-1', x: 0, z: 0, label: 'boss-door' }, base).selMonster).toBe(
+      base.selMonster,
+    );
+  });
+
+  /** The property the whole load/commit cycle rests on. */
+  it.each(MARKER_KINDS)('is a no-op to select a %s and commit it untouched', (kind) => {
+    const marker =
+      kind === 'spawner'
+        ? { kind, id: `${kind}-1`, x: 10, z: 20, label: 'stalker', spawner: { respawnSeconds: 45, leashRadius: 210 } }
+        : { kind, id: `${kind}-1`, x: 10, z: 20, label: 'somewhere' };
+    const patch = patchFromSelection(selectionFrom(marker, selectionOf(settings())));
+    expect(patchMarker(marker, patch)).toEqual(marker);
+  });
+
+  it('writes an unset number as an absent one, not as a zero', () => {
+    const s = settings();
+    s.selKind = 'spawner';
+    s.selMonster = 'grazer';
+    s.selRespawnSeconds = SPAWNER_UNSET;
+    s.selLeashRadius = 300;
+    const patch = patchFromSelection(selectionOf(s));
+    expect(patch.spawner).toEqual({ leashRadius: 300 });
+  });
+
+  /**
+   * Handed over as an empty object rather than omitted, because an absent patch
+   * member means "leave what is there" -- so clearing the last override has to
+   * be said out loud.
+   */
+  it('clears the last override rather than leaving it behind', () => {
+    const s = settings();
+    s.selKind = 'spawner';
+    s.selMonster = 'grazer';
+    const was = { kind: 'spawner' as const, id: 'spawner-1', x: 0, z: 0, label: 'grazer', spawner: { leashRadius: 300 } };
+    expect(patchMarker(was, patchFromSelection(selectionOf(s))).spawner).toBeUndefined();
+  });
+
+  /**
+   * The reason the select tool has fields of its own: what I am about to place
+   * and what I have selected are two questions, and selecting a campfire must
+   * not re-arm the placement strip to place campfires.
+   */
+  it('does not disturb the marker tool\'s placement defaults', () => {
+    const s = createEditorSettings();
+    const before = { markerKind: s.markerKind, spawnerMonster: s.spawnerMonster };
+    Object.assign(s, selectionFrom({ kind: 'campfire', id: 'campfire-1', x: 0, z: 0 }, selectionOf(s)));
+    expect(s.markerKind).toBe(before.markerKind);
+    expect(s.spawnerMonster).toBe(before.spawnerMonster);
+  });
+
+  it('forgets the selection without forgetting the fields', () => {
+    const s = settings();
+    Object.assign(s, selectionFrom({ kind: 'trigger', id: 'trigger-1', x: 0, z: 0, label: 'boss-door' }, selectionOf(s)));
+    const cleared = clearSelection(selectionOf(s));
+    expect(cleared.selectedMarkerId).toBe('');
+    expect(cleared.selLabel).toBe('boss-door');
   });
 });

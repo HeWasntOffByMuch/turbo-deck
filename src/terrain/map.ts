@@ -117,6 +117,36 @@ export interface MapProp {
 
 export type MapMarkerKind = 'spawn' | 'objective' | 'campfire' | 'trigger' | 'spawner';
 
+/**
+ * What a `spawner` marker says past which monster stands there (spec 222).
+ *
+ * Both were global constants answering a per-spawner question: how long a kill
+ * stays dead was one `spawnIntervalTicks` for the whole map, and how far a body
+ * may be dragged was one `LEASH_RADIUS` in `sim/world.ts` -- so a boss and a
+ * rabbit came back on the same clock and were leashed alike.
+ *
+ * **Seconds rather than ticks**, because a map document is authored and reviewed
+ * by a person and a tick count is the sim's business. `spawnPointsFrom` is the
+ * one boundary that converts, and it is the same choice `lengthWorld` makes in
+ * the weapon document: a unit somebody can hold up against the thing beside it.
+ *
+ * Absent means "whatever the server would have done", never a number written in
+ * here -- so a default that moves reaches every map that did not override it,
+ * and a committed map only carries what somebody actually chose.
+ */
+export interface MapSpawnerSettings {
+  /** Seconds from the kill to the replacement. Absent = the server's default. */
+  readonly respawnSeconds?: number;
+  /**
+   * How far a body from this point may be dragged before it gives up. Absent =
+   * the sim's default, and the sim caps this at it either way -- the nav
+   * window's padding is derived from that constant, so a spawner may make a
+   * monster tighter on its leash and may not make it looser than the routing
+   * was sized for.
+   */
+  readonly leashRadius?: number;
+}
+
 /** A point of interest, positioned in its chunk's local space. */
 export interface MapMarker {
   readonly kind: MapMarkerKind;
@@ -128,6 +158,16 @@ export interface MapMarker {
    * spawns (spec 076), and the server refuses to boot on one it does not know.
    */
   readonly label?: string;
+  /**
+   * Spawner-only, and **refused by the parser on any other kind** (spec 222).
+   *
+   * Nested rather than two more optionals beside `label` because this codebase
+   * already states the rule they are subject to -- a row only names a number the
+   * behaviour it chose actually reads, which is why `Temperament` and `Idle` are
+   * unions. A `campfire` carrying a `leashRadius` is a number nothing will ever
+   * look at, and the parser says so rather than ignoring it.
+   */
+  readonly spawner?: MapSpawnerSettings;
 }
 
 export interface MapChunk {
@@ -414,6 +454,12 @@ export function exportMap(input: ExportMapInput): MapDocument {
           x: quantize(m.x - chunk.originX),
           z: quantize(m.z - chunk.originZ),
           ...(m.label === undefined ? {} : { label: m.label }),
+          // Field by field rather than by spreading `m`, because the input type
+          // carries a `layerId` the document must not: the bake is where what
+          // goes into a map is *decided*, and a spread would put whatever a
+          // caller happened to be holding in there. The cost is that a field
+          // added later needs a line here, which is what `map.test.ts` asserts.
+          ...(m.spawner === undefined ? {} : { spawner: m.spawner }),
         })),
       };
     });
@@ -507,9 +553,25 @@ function writeProp(prop: MapProp): string {
   );
 }
 
+/**
+ * A spawner's settings, or `''` when it has none (spec 222).
+ *
+ * Each member is written only when it is there, and the block itself only when
+ * at least one is -- so a marker nobody has overridden serializes exactly as it
+ * did before this spec existed, and every committed map is byte-identical.
+ */
+function writeSpawnerSettings(settings: MapSpawnerSettings | undefined): string {
+  if (!settings) return '';
+  const parts: string[] = [];
+  if (settings.respawnSeconds !== undefined) parts.push(`"respawnSeconds": ${settings.respawnSeconds}`);
+  if (settings.leashRadius !== undefined) parts.push(`"leashRadius": ${settings.leashRadius}`);
+  return parts.length === 0 ? '' : `, "spawner": { ${parts.join(', ')} }`;
+}
+
 function writeMarker(marker: MapMarker): string {
   const label = marker.label === undefined ? '' : `, "label": ${writeScalar(marker.label)}`;
-  return `{ "kind": ${writeScalar(marker.kind)}, "id": ${writeScalar(marker.id)}, "x": ${marker.x}, "z": ${marker.z}${label} }`;
+  const spawner = writeSpawnerSettings(marker.spawner);
+  return `{ "kind": ${writeScalar(marker.kind)}, "id": ${writeScalar(marker.id)}, "x": ${marker.x}, "z": ${marker.z}${label}${spawner} }`;
 }
 
 function writeList(items: readonly string[], indent: string): string {
@@ -697,18 +759,50 @@ function asPoint(value: unknown, what: string): MapPoint {
 
 const MARKER_KINDS: readonly MapMarkerKind[] = ['spawn', 'objective', 'campfire', 'trigger', 'spawner'];
 
+/**
+ * A spawner's settings block, or undefined (spec 222).
+ *
+ * An empty block normalizes to absent rather than to `{}`: "somebody wrote a
+ * block and put nothing in it" and "somebody wrote no block" are the same
+ * statement about the world, and keeping them apart would mean two documents
+ * that describe one map.
+ */
+function parseSpawnerSettings(value: unknown, what: string): MapSpawnerSettings | undefined {
+  const r = asRecord(value, what);
+  const respawn = r['respawnSeconds'];
+  const leash = r['leashRadius'];
+  const settings: { respawnSeconds?: number; leashRadius?: number } = {};
+  if (respawn !== undefined) settings.respawnSeconds = asNumber(respawn, `${what}.respawnSeconds`);
+  if (leash !== undefined) settings.leashRadius = asNumber(leash, `${what}.leashRadius`);
+  return settings.respawnSeconds === undefined && settings.leashRadius === undefined ? undefined : settings;
+}
+
 function parseMarker(value: unknown, what: string): MapMarker {
   const r = asRecord(value, what);
   const kind = asString(r['kind'], `${what}.kind`);
   if (!MARKER_KINDS.includes(kind as MapMarkerKind)) fail(`${what}.kind is not a known marker kind: ${kind}`);
   const label = r['label'];
+  const spawner = r['spawner'];
+  // Refused rather than ignored, and refused on the *kind* rather than on the
+  // contents: a `campfire` with a leash radius is a number nothing will ever
+  // read, and a document that carries one is a document somebody is going to
+  // spend an afternoon wondering about (spec 222).
+  if (spawner !== undefined && kind !== 'spawner') {
+    fail(`${what}.spawner is only for a spawner marker, not a ${kind}`);
+  }
   return {
     kind: kind as MapMarkerKind,
     id: asString(r['id'], `${what}.id`),
     x: asNumber(r['x'], `${what}.x`),
     z: asNumber(r['z'], `${what}.z`),
     ...(label === undefined ? {} : { label: asString(label, `${what}.label`) }),
+    ...(spawner === undefined ? {} : withKey('spawner', parseSpawnerSettings(spawner, `${what}.spawner`))),
   };
+}
+
+/** `{ key: value }`, or `{}` when the value is undefined. Keeps a spread honest. */
+function withKey<K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> {
+  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
 }
 
 function parseProp(value: unknown, what: string): MapProp {

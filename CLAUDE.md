@@ -1360,6 +1360,49 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  `nothing reads it yet` for the four that are sockets with
                  nothing plugged in, and placing one reports what it made:
                  `placed spawner-2: grazer`.
+                 Placing was still the *whole* vocabulary until spec 222, along
+                 with erasing: correcting a spawner meant erasing it and placing
+                 another, which comes back with a different id, since
+                 `nextMarkerId` reuses the lowest free number and the whole set
+                 can shuffle. The `select` mode is the third verb -- click a
+                 marker, and its kind, its monster or label, its respawn time,
+                 its leash and a Delete button are the panel; drag it and it
+                 moves.
+                 **The pick is against the billboards, not the ground**, and
+                 that is the decision the tool turns on. A marker's disc floats
+                 `STEM_HEIGHT` above the point it marks, so the ground under a
+                 cursor aimed at a disc is metres from the marker -- 129 units
+                 at the editor's own pitch, measured -- and *how far* depends on
+                 the camera's elevation, which means no ground radius is right
+                 at every angle. Aiming at the picture is exact at all of them,
+                 with a ground pick inside `SELECT_PICK_RADIUS` as the fallback
+                 so a click that missed the disc and landed by the stem still
+                 names the obvious thing.
+                 Three rules past that. **The selection is an id, never a
+                 reference**: the store hands back fresh marker objects on every
+                 `markers()` call and re-files a moved one into a different
+                 chunk, so anything held is stale the moment something is
+                 edited -- the rule the admin console's player table already
+                 follows. A selection whose marker has gone (erased, or taken
+                 back by an undo) is *noticed* rather than announced, in
+                 `refreshMarkers`, because that is the one function every path
+                 that changes the marker set already calls. **The select tool's
+                 fields are its own**, separate from the marker tool's placement
+                 defaults, since what I am about to place and what I have
+                 selected are two questions -- and `selectionFrom` /
+                 `patchFromSelection` are inverses, asserted over every kind, so
+                 selecting a marker and committing untouched is a no-op. And
+                 **`patchMarker` drops a spawner's numbers the moment the kind
+                 changes** to one that cannot read them: `parseMap` refuses that
+                 document, so keeping them would produce a map that saves and
+                 will not load.
+                 `MapChunkStore.updateMarker` is one primitive rather than
+                 three, because editing and moving are the same write -- a
+                 marker lives in the chunk that contains it, so changing its
+                 point can change which chunk owns it. It removes before it
+                 inserts and puts the marker back when the insert is refused,
+                 since an edit that ate the marker on its way to a point outside
+                 the map is the worst bug this could have.
                  camera.ts, brush.ts, paint.ts, scatter.ts, markers.ts, parts.ts
                  and history.ts are pure and tested headlessly; view.ts, cursor.ts and
                  marker-view.ts are the three.js scene; panel.ts is the lil-gui
@@ -1531,6 +1574,24 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  dev server, where it has to change the file on disk. The second
                  half backs the map up and puts it back, because there is no way
                  to check that a button writes the map without writing it.
+                 Since 222 it also selects a spawner, changes its monster, its
+                 respawn time and its leash, and reads the block back out of the
+                 file -- and two things in that half were learned by getting them
+                 wrong. **Every assertion polls `data-selected`** rather than
+                 waiting a fixed few hundred milliseconds: this environment paints
+                 at about five frames a second under software GL and that
+                 attribute is published from the frame, so the first cut reported
+                 three working edits as failures, each with the right answer in
+                 its own detail line, because the detail was read a moment later
+                 than the assertion. And **an empty patch of ground is searched
+                 for rather than guessed at**: the shipped map is covered in
+                 spawners, a fixed coordinate lands on one, and "the selection did
+                 not clear" is what "the selection moved to the marker under the
+                 second click" looks like. `panelRow` skips rows with no client
+                 rects, which is what tells the marker tool's Monster dropdown
+                 from the select tool's, since only the armed mode's folder is
+                 shown -- and is what that helper should have been doing all
+                 along, a hidden row being one nobody can use.
                  `npx tsx scripts/preview-paint.ts` is the same for the material
                  brush, and everything in it is measured off the **pixels**,
                  because the way this feature fails is "the store changed and the
@@ -2359,6 +2420,42 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  pause the player cannot act on is not a decision. Nothing of
                  this rides the wire: the tell is the body turning to face you
                  and standing still, and facing already replicates.
+                 How far that leash reaches, and how long a kill stays dead, are
+                 the spawner's own since spec 222. Both were global constants
+                 answering a per-spawner question -- one `spawnIntervalTicks` for
+                 the whole map and one `LEASH_RADIUS` for every body on it, so a
+                 boss and a rabbit came back on the same clock and were leashed
+                 alike -- and a `spawner` marker now carries an optional block
+                 saying either. Nested rather than two more optionals beside
+                 `label`, so `parseMarker` can refuse the block on a kind that
+                 cannot read it, which is the rule `Temperament` and `Idle` are
+                 unions for; **seconds rather than ticks**, because a map document
+                 is read by a person and `spawnPointsFrom` is the one boundary
+                 that converts; and absent rather than a written-in default, so a
+                 default that moves reaches every map that did not override it.
+                 An absent or empty block writes nothing, so no committed map file
+                 moved and no `mapId` did either.
+                 Two rules hold it to what it is. The marker's clock is a
+                 **base, not an escape from the live control**: `spawnRateMultiplier`
+                 still scales it and still stops it dead at 0, which is how the
+                 admin console halts repopulation without a restart, so a spawner
+                 that could opt out would make that button a lie. And the leash is
+                 **capped at `LEASH_RADIUS`, derived rather than chosen**:
+                 `NAV_WINDOW_PAD_TILES` is `ceil(max(LEASH_RADIUS, FLEE_DISTANCE)
+                 / CHUNK_SIZE)`, so a nav window is assembled exactly wide enough
+                 to hold both ends of a route home from the global reach, and a
+                 body leashed past it would hand `routeToward` a goal outside its
+                 own window -- which `nav-tiles.ts` refuses rather than clamps. A
+                 document may make a monster *tighter* and may not make it looser
+                 than the routing was sized for; raising the ceiling is one
+                 constant and the padding follows it for free, which is why that
+                 test asserts against the derivation rather than against 800.
+                 Nothing new crosses the wire, because the overlay's countdown is
+                 already `readyAtTick - tick`. What is deliberately still global
+                 is **how many bodies a spawner holds**: `SpawnerState.entityId`
+                 is one id and it is replicated as `SpawnerStates`, so a count is
+                 a change to the sim's spawner state, the wire and the overlay --
+                 a feature rather than a property of the marker in front of you.
                  Since spec 213 a flight also **commits to somewhere**.
                  `fleeFrom` used to re-derive "directly away from my attacker"
                  every tick from the attacker's *current* position, which is
