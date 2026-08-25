@@ -3,7 +3,7 @@ import { buildPropField, type PropFieldHandle } from '../props.js';
 import type { StructureKind } from '../../../terrain/index.js';
 
 /**
- * The building under the cursor, before it is put down (spec 223).
+ * The building under the cursor, before it is put down (spec 225).
  *
  * Beside `cursor.ts` and `marker-view.ts`: three.js, impure, and the thing a
  * ring cannot say. A footprint circle says *where* a hut will stand and nothing

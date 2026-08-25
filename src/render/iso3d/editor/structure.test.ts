@@ -228,7 +228,7 @@ describe('a placed building survives the map document', () => {
   });
 });
 
-describe('dragging a building out to size (spec 223)', () => {
+describe('dragging a building out to size (spec 225)', () => {
   it('makes the drag distance the footprint radius, so the ring is under the cursor', () => {
     for (const kind of STRUCTURE_KINDS) {
       const base = baseFootprint(kind);

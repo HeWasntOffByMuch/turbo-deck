@@ -105,7 +105,7 @@ export const PALETTE = {
   // Darker than the brick around it, so a joint reads as a shadow between
   // bricks rather than as a pale line drawn over them.
   mortar: 0x8e857a,
-  // A straw roof (spec 222), in three tones. Thatch has to be readable from
+  // A straw roof (spec 224), in three tones. Thatch has to be readable from
   // above at the game's bearing, because from up there a hut is very nearly all
   // roof -- so it is the warmest and lightest thing in this half of the palette
   // and cannot be mistaken for either the ground it stands on or the timber

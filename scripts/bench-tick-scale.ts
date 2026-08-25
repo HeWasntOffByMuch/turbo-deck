@@ -65,6 +65,8 @@ function points(n: number): SpawnPoint[] {
       monsterId: 'small_spider',
       x: ((i % cols) - half) * SPACING,
       y: (Math.floor(i / cols) - half) * SPACING,
+      respawnTicks: null,
+      leashRadius: null,
     });
   }
   return out;

@@ -46,7 +46,8 @@ export type StatusIconId =
   | 'corrosion'
   | 'shock'
   | 'frostbite'
-  | 'decay';
+  | 'decay'
+  | 'scorched';
 
 /**
  * Which way a status cuts.
@@ -270,6 +271,27 @@ const DEFINITIONS: readonly StatusVisual[] = [
     maxStacks: 1,
   },
   { id: StatusId.Decay, wire: 15, name: 'Decay', kind: 'affliction', icon: 'decay', maxStacks: 1 },
+
+  // --- the aura fields (spec 223) ----------------------------------------
+  //
+  // A **boon**, and the one row in this table whose colour is doing more work
+  // than usual: everybody in the fight can see this mark, and what it means to
+  // the body wearing it and to the body next to it are opposites. `kind` is
+  // read from the carrier's side, which is the side it is true of -- the fire
+  // is theirs.
+  //
+  // No `effect` sentence, for the reason the seven afflictions above have none:
+  // a field *is* a reach, an affliction and a linger in `data/aura-fields.ts`,
+  // so `describeStatus` derives its lines from that row and a sentence here
+  // would be a second copy of `radius` with nothing keeping it true.
+  {
+    id: StatusId.ScorchedEarth,
+    wire: 16,
+    name: 'Scorched Earth',
+    kind: 'boon',
+    icon: 'scorched',
+    maxStacks: 1,
+  },
 ];
 
 export const STATUS_VISUALS: readonly StatusVisual[] = DEFINITIONS;

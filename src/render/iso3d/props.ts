@@ -1055,7 +1055,7 @@ interface Box {
  *
  * Named for the shape rather than for the brick it was written for: a hut's four
  * corner posts and a well's two uprights want the same thing a course of bricks
- * does, which is to be one batch instead of one each (spec 222).
+ * does, which is to be one batch instead of one each (spec 224).
  */
 function boxesGeometry(boxes: readonly Box[]): THREE.BufferGeometry {
   const positions: number[] = [];
@@ -1432,7 +1432,7 @@ function buildFenceParts(kind: FenceKind): PropPart[] {
 }
 
 /**
- * The buildings (spec 222): a timber hut under a straw roof, and a well.
+ * The buildings (spec 224): a timber hut under a straw roof, and a well.
  *
  * Everything else in this file grows or fences something off. These two are the
  * first props somebody *lives* in, and what they are for is a playtest village

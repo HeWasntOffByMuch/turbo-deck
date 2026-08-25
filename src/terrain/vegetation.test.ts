@@ -90,7 +90,7 @@ describe('footprintRadius', () => {
   });
 });
 
-describe('what a building blocks (spec 222)', () => {
+describe('what a building blocks (spec 224)', () => {
   const at = (kind: PropKind, x: number, y: number, scale = 1): Prop => ({
     kind,
     x,

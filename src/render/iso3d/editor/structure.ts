@@ -9,7 +9,7 @@ import {
 } from '../../../terrain/index.js';
 
 /**
- * Putting a building down (spec 222). Pure: no three.js, no DOM, and -- unlike
+ * Putting a building down (spec 224). Pure: no three.js, no DOM, and -- unlike
  * every other prop tool here -- no `Rng` either.
  *
  * The scatter is seeded because where a stroke lands is *random* and a seeded

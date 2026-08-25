@@ -151,6 +151,7 @@ import {
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 import { AfflictionVfx } from './affliction-vfx.js';
+import { AuraVfx, fieldStatusesOn } from './aura-vfx.js';
 import { ShotVfx } from './shot-vfx.js';
 import { sampleCapsuleSurface } from '../vfx/shapes.js';
 import type { WorldAnchor } from './damage-popup.js';
@@ -520,6 +521,7 @@ export class WorldScene {
    * with nothing left able to stop it.
    */
   private readonly afflictions: AfflictionVfx;
+  private readonly auras: AuraVfx;
   /**
    * The paint a shot flies with (spec 218). A second driver rather than a
    * branch in the one above, because the two answer different questions from
@@ -777,6 +779,16 @@ export class WorldScene {
       // A cling is the lowest-priority thing in the game and the first the
       // instance pool evicts under pressure. Asking rather than assuming is what
       // lets the driver put it back afterwards (spec 215).
+      isLive: (handle) => this.vfx.system.isLive(handle),
+    });
+    // The ring under a body carrying an aura field (spec 223). The same four
+    // calls again, and for the third time the same two reasons: a persistent
+    // attached effect needs a handle it can find out has been evicted, and it
+    // needs somebody to owe it a stop.
+    this.auras = new AuraVfx({
+      play: (id, options) => this.vfx.play(id, options),
+      stop: (handle) => this.vfx.stop(handle),
+      has: (id) => this.vfx.system.has(id),
       isLive: (handle) => this.vfx.system.isLive(handle),
     });
     // The paint a shot flies with (spec 218), on the same four calls and for the
@@ -1041,6 +1053,21 @@ export class WorldScene {
   /** Region keys with props on the scene graph. For the drop pass to reconcile. */
   heldPropRegions(): readonly string[] {
     return this.propField?.heldRegions() ?? [];
+  }
+
+  /**
+   * Bodies with an aura ring running under them (spec 223).
+   *
+   * A readout and nothing else: `data-auras` is published from it, and nothing
+   * in the game reads it. Taken from the **driver's own held set** rather than
+   * from the replicated statuses, the rule `data-held-weapons` and
+   * `data-prop-regions` both keep -- a ring that was wanted and refused, or
+   * evicted, should read as absent, because that is the failure a probe exists
+   * to see. Reading the statuses back would report the thing that was asked for
+   * and tell nobody whether it arrived.
+   */
+  heldAuras(): readonly number[] {
+    return this.auras.entities();
   }
 
   refreshPropsWithin(rects: PropRect | readonly PropRect[]): void {
@@ -1481,6 +1508,7 @@ export class WorldScene {
     // Before the layer goes: every handle it is holding names an instance in
     // that layer's system.
     this.afflictions.clear();
+    this.auras.clear();
     this.shots.clear();
     this.vfx.dispose();
     for (const body of this.bodies.values()) {
@@ -1715,13 +1743,36 @@ export class WorldScene {
       // harnesses fabricate a `ClientView` by hand and do not know to set a
       // field added to `ReplicatedEntity`, and a frame that throws on a missing
       // one takes the whole render loop rather than one body's marks.
+      //
+      // The ring under a field's carrier goes on the same two branches and for
+      // the same reason (spec 223): a corpse's field is over, and a sigil left
+      // burning on the ground under a dead body would be a hazard nothing is
+      // producing.
       if (dead) {
         this.afflictions.forget(entity.id);
+        this.auras.forget(entity.id);
       } else {
         this.afflictions.step(
           { entityId: entity.id, x, y: ground, z: y, radius: look.radius },
           entity.statuses ?? [],
           frame.tick,
+        );
+        this.auras.step(
+          { entityId: entity.id, x, y: ground, z: y },
+          {
+            entityId: entity.id,
+            // The four `aurasFor` was written for in spec 121 and which this
+            // spec deliberately does not switch on. Each is its own decision --
+            // the selected ring would be a second answer to what `targetRing`
+            // already draws, and the other three are a look change nobody asked
+            // for -- so they are stated false rather than left to a default.
+            casting: false,
+            channelling: false,
+            selected: false,
+            telegraphing: false,
+            healthFraction: entity.maxHealth > 0 ? entity.health / entity.maxHealth : 1,
+            fields: fieldStatusesOn(entity.statuses ?? [], frame.tick),
+          },
         );
       }
       // Cleared here and turned back on by `syncHover`, so exactly one body is
@@ -1763,6 +1814,7 @@ export class WorldScene {
       // stop is the caller's, so it is made here -- from the sweep that already
       // knows a body has left -- rather than inferred from an absence.
       this.afflictions.forget(id);
+      this.auras.forget(id);
       // The same obligation for a shot's paint, and it bites harder: a shot
       // lives a second and a half, so an unstopped one is a leak that runs at
       // the rate of the shooting (spec 218).

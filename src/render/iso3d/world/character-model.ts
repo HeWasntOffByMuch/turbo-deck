@@ -75,6 +75,9 @@ const ABILITY_ICONS: Readonly<Record<string, string>> = {
   'skill.emberToss': 'ability:emberToss',
   'skill.rimeTouch': 'ability:rimeTouch',
   'skill.testStatuses': 'ability:testStatuses',
+  // The field (spec 223). A place rather than a blow, which is what the sprite
+  // draws: every other cell on the bar is something you do to a body.
+  'skill.scorchedEarth': 'ability:scorchedEarth',
   'self.hearthdraught': 'item:potion',
 };
 

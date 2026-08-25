@@ -63,7 +63,7 @@ describe('the visible status table (spec 186)', () => {
     }
   });
 
-  it('shows the sixteen conditions a player can act on', () => {
+  it('shows the seventeen conditions a player can act on', () => {
     for (const id of [
       StatusId.Flow,
       StatusId.Momentum,
@@ -85,11 +85,15 @@ describe('the visible status table (spec 186)', () => {
       StatusId.Shock,
       StatusId.Frostbite,
       StatusId.Decay,
+      // The field (spec 223). The first row whose condition is about the ground
+      // around the body wearing it, and the one this table's rule most obviously
+      // covers: everybody in the fight has to be able to see where the fire is.
+      StatusId.ScorchedEarth,
     ]) {
       expect(visualFor(id), id).not.toBeNull();
     }
     expect(visualFor(ADAPTED_ID)).not.toBeNull();
-    expect(STATUS_VISUALS).toHaveLength(16);
+    expect(STATUS_VISUALS).toHaveLength(17);
   });
 
   it('answers null for an index it has no row for', () => {

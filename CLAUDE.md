@@ -67,6 +67,7 @@ change a game outcome.
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
+| `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -74,8 +75,8 @@ change a game outcome.
 | `npx tsx scripts/probe-editor-ground.ts` | Whether the editor's ground window really meshes and evicts, in a browser (spec 212) |
 | `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
-| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 222) |
-| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 222) |
+| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
+| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 224) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -264,7 +265,7 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  grows an existing one by a chunk-snapped rectangle (spec 083),
                  stitching the join by copying shared corners exactly and easing
                  the recipe's field in over a short skirt.
-                 vegetation.ts also holds the **buildings** (spec 222): a
+                 vegetation.ts also holds the **buildings** (spec 224): a
                  timber hut under a straw roof, and a well. They are `PropKind`s
                  and nothing else, which is the whole design -- a structure is
                  written into the map document, streamed, collided against,
@@ -1381,6 +1382,49 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  `nothing reads it yet` for the four that are sockets with
                  nothing plugged in, and placing one reports what it made:
                  `placed spawner-2: grazer`.
+                 Placing was still the *whole* vocabulary until spec 222, along
+                 with erasing: correcting a spawner meant erasing it and placing
+                 another, which comes back with a different id, since
+                 `nextMarkerId` reuses the lowest free number and the whole set
+                 can shuffle. The `select` mode is the third verb -- click a
+                 marker, and its kind, its monster or label, its respawn time,
+                 its leash and a Delete button are the panel; drag it and it
+                 moves.
+                 **The pick is against the billboards, not the ground**, and
+                 that is the decision the tool turns on. A marker's disc floats
+                 `STEM_HEIGHT` above the point it marks, so the ground under a
+                 cursor aimed at a disc is metres from the marker -- 129 units
+                 at the editor's own pitch, measured -- and *how far* depends on
+                 the camera's elevation, which means no ground radius is right
+                 at every angle. Aiming at the picture is exact at all of them,
+                 with a ground pick inside `SELECT_PICK_RADIUS` as the fallback
+                 so a click that missed the disc and landed by the stem still
+                 names the obvious thing.
+                 Three rules past that. **The selection is an id, never a
+                 reference**: the store hands back fresh marker objects on every
+                 `markers()` call and re-files a moved one into a different
+                 chunk, so anything held is stale the moment something is
+                 edited -- the rule the admin console's player table already
+                 follows. A selection whose marker has gone (erased, or taken
+                 back by an undo) is *noticed* rather than announced, in
+                 `refreshMarkers`, because that is the one function every path
+                 that changes the marker set already calls. **The select tool's
+                 fields are its own**, separate from the marker tool's placement
+                 defaults, since what I am about to place and what I have
+                 selected are two questions -- and `selectionFrom` /
+                 `patchFromSelection` are inverses, asserted over every kind, so
+                 selecting a marker and committing untouched is a no-op. And
+                 **`patchMarker` drops a spawner's numbers the moment the kind
+                 changes** to one that cannot read them: `parseMap` refuses that
+                 document, so keeping them would produce a map that saves and
+                 will not load.
+                 `MapChunkStore.updateMarker` is one primitive rather than
+                 three, because editing and moving are the same write -- a
+                 marker lives in the chunk that contains it, so changing its
+                 point can change which chunk owns it. It removes before it
+                 inserts and puts the marker back when the insert is refused,
+                 since an edit that ate the marker on its way to a point outside
+                 the map is the worst bug this could have.
                  camera.ts, brush.ts, paint.ts, scatter.ts, markers.ts, parts.ts
                  and history.ts are pure and tested headlessly; view.ts, cursor.ts and
                  marker-view.ts are the three.js scene; panel.ts is the lil-gui
@@ -1393,7 +1437,7 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  for the same reason (spec 086): props.ts groups props into
                  square batches for culling, and an edit rebuilds only the
                  batches over the ground it touched.
-                 structure.ts is the ninth mode (spec 222), and it is the only
+                 structure.ts is the buildings tool (spec 224), and it is the only
                  prop tool here with no `Rng` in it at all. The scatter is
                  *seeded* because where a stroke lands is random and a seeded
                  stroke is one a test can assert on; a building is not random,
@@ -1417,7 +1461,7 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  draws and what the collider blocks are the same circle rather
                  than two numbers that agree until one is edited.
                  structure-ghost.ts is the building itself, drawn before it is
-                 put down (spec 223), and it is here rather than in `cursor.ts`
+                 put down (spec 225), and it is here rather than in `cursor.ts`
                  because a footprint circle cannot say which way a hut faces or
                  how far its eaves reach -- so laying out a village with the ring
                  alone was place, look, undo, adjust, place again. Three rules.
@@ -1460,7 +1504,7 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  is the number the panel would then display.
                  `npx tsx scripts/probe-structures.ts` is the half no headless
                  test can reach, and it is the reason any of the above is known
-                 to be wired to anything: a ninth entry in a mode array cannot
+                 to be wired to anything: one more entry in a mode array cannot
                  fail a typecheck and cannot fail a headless test, so every rule
                  about a structure could be green in Node beside a `view.ts`
                  that calls none of them -- which is exactly what spec 176 found
@@ -1474,7 +1518,7 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  about the wrong tool, and reported a working panel as a hidden
                  one. A row is found by its folder and its label, and a folder in
                  this build is itself a `.lil-gui` with its own `.lil-title`;
-                 there is no `.lil-folder` to ask for. Since spec 223 it also
+                 there is no `.lil-folder` to ask for. Since spec 225 it also
                  reads `data-ghost` mid-gesture, which is the half a saved file
                  cannot answer: a tool that ignored the drag and sized the
                  building at the release would leave exactly the same document
@@ -1651,6 +1695,24 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  dev server, where it has to change the file on disk. The second
                  half backs the map up and puts it back, because there is no way
                  to check that a button writes the map without writing it.
+                 Since 222 it also selects a spawner, changes its monster, its
+                 respawn time and its leash, and reads the block back out of the
+                 file -- and two things in that half were learned by getting them
+                 wrong. **Every assertion polls `data-selected`** rather than
+                 waiting a fixed few hundred milliseconds: this environment paints
+                 at about five frames a second under software GL and that
+                 attribute is published from the frame, so the first cut reported
+                 three working edits as failures, each with the right answer in
+                 its own detail line, because the detail was read a moment later
+                 than the assertion. And **an empty patch of ground is searched
+                 for rather than guessed at**: the shipped map is covered in
+                 spawners, a fixed coordinate lands on one, and "the selection did
+                 not clear" is what "the selection moved to the marker under the
+                 second click" looks like. `panelRow` skips rows with no client
+                 rects, which is what tells the marker tool's Monster dropdown
+                 from the select tool's, since only the armed mode's folder is
+                 shown -- and is what that helper should have been doing all
+                 along, a hidden row being one nobody can use.
                  `npx tsx scripts/preview-paint.ts` is the same for the material
                  brush, and everything in it is measured off the **pixels**,
                  because the way this feature fails is "the store changed and the
@@ -2479,6 +2541,42 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  pause the player cannot act on is not a decision. Nothing of
                  this rides the wire: the tell is the body turning to face you
                  and standing still, and facing already replicates.
+                 How far that leash reaches, and how long a kill stays dead, are
+                 the spawner's own since spec 222. Both were global constants
+                 answering a per-spawner question -- one `spawnIntervalTicks` for
+                 the whole map and one `LEASH_RADIUS` for every body on it, so a
+                 boss and a rabbit came back on the same clock and were leashed
+                 alike -- and a `spawner` marker now carries an optional block
+                 saying either. Nested rather than two more optionals beside
+                 `label`, so `parseMarker` can refuse the block on a kind that
+                 cannot read it, which is the rule `Temperament` and `Idle` are
+                 unions for; **seconds rather than ticks**, because a map document
+                 is read by a person and `spawnPointsFrom` is the one boundary
+                 that converts; and absent rather than a written-in default, so a
+                 default that moves reaches every map that did not override it.
+                 An absent or empty block writes nothing, so no committed map file
+                 moved and no `mapId` did either.
+                 Two rules hold it to what it is. The marker's clock is a
+                 **base, not an escape from the live control**: `spawnRateMultiplier`
+                 still scales it and still stops it dead at 0, which is how the
+                 admin console halts repopulation without a restart, so a spawner
+                 that could opt out would make that button a lie. And the leash is
+                 **capped at `LEASH_RADIUS`, derived rather than chosen**:
+                 `NAV_WINDOW_PAD_TILES` is `ceil(max(LEASH_RADIUS, FLEE_DISTANCE)
+                 / CHUNK_SIZE)`, so a nav window is assembled exactly wide enough
+                 to hold both ends of a route home from the global reach, and a
+                 body leashed past it would hand `routeToward` a goal outside its
+                 own window -- which `nav-tiles.ts` refuses rather than clamps. A
+                 document may make a monster *tighter* and may not make it looser
+                 than the routing was sized for; raising the ceiling is one
+                 constant and the padding follows it for free, which is why that
+                 test asserts against the derivation rather than against 800.
+                 Nothing new crosses the wire, because the overlay's countdown is
+                 already `readyAtTick - tick`. What is deliberately still global
+                 is **how many bodies a spawner holds**: `SpawnerState.entityId`
+                 is one id and it is replicated as `SpawnerStates`, so a count is
+                 a change to the sim's spawner state, the wire and the overlay --
+                 a feature rather than a property of the marker in front of you.
                  Since spec 213 a flight also **commits to somewhere**.
                  `fleeFrom` used to re-derive "directly away from my attacker"
                  every tick from the attacker's *current* position, which is
@@ -2980,6 +3078,55 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  a client works out the *schedule* of for itself, so the obvious
                  way to get it wrong is to let that derivation reach back into
                  something.
+                 `world/aura-vfx.ts` is the ring beside that paint (spec 223),
+                 and it is the first thing in this game that has ever played an
+                 aura. Spec 124 built the sigil -- three generated meshes,
+                 `uOrient` on the mesh batch for it, `hardStop` on the effect
+                 format for it -- and spec 121's `aurasFor` has carried a status
+                 parameter and the sentence *"the day a status list is
+                 replicated, this gains a branch and nothing else in the renderer
+                 changes"* since it was written. Spec 186 replicated them and
+                 nothing came back to collect, so for a hundred specs the whole
+                 path was reachable from the Studio tab and from nowhere else,
+                 with a complete green suite beside it the entire time. The branch
+                 is `AuraFacts.fields` -- status **ids** rather than a kind,
+                 because a field already names its own ring in
+                 `data/aura-fields.ts` beside the radius that ring is drawn at, so
+                 the mapping is a table lookup and not a rule. The other four
+                 facts the mount states `false` rather than leaving to a default:
+                 `aura_selected` would be a second answer to what `targetRing`
+                 already draws, and the rest are a look change with their own
+                 decision to make.
+                 That radius is **imported into `vfx/library.ts` rather than
+                 retyped**, which is the one thing about the ring worth arguing
+                 over: it is not decoration around the mechanic, it is where the
+                 fire is, and a player who cannot tell which bodies are inside it
+                 cannot play the skill. Two literals that have to agree is the
+                 drift `ground-decal.ts` exists to refuse one level down.
+                 The driver is built to `affliction-vfx.ts`'s three rules because
+                 the machinery and the failure modes are the same, and it cannot
+                 use `AuraTracker` for the reason that file states at length:
+                 **`play` returns 0 on refusal**, and a tracker recording *ids*
+                 cannot tell "asked for, did not start" from "started" -- which
+                 for a ring is worse than for a cling, since a missing one is not
+                 missing paint, it is a hazard nobody can see. So it holds
+                 handles, asks `isLive` every frame (a full instance pool
+                 *evicts* rather than refusing and bumps the slot's generation),
+                 and **owes a stop**: an aura particle is given `HELD` ticks --
+                 ten minutes -- so one left on a despawned body holds a slot for
+                 the session.
+                 `npx tsx scripts/probe-aura.ts` is the half no headless test can
+                 see, and on this feature that is not a formality: it reads
+                 `data-auras`, published from the driver's own held set rather
+                 than from the statuses that asked for a ring, so one refused by
+                 the budget or evicted by the pool reads as absent. Its **control**
+                 is worth as much as its measurement -- a probe whose "after" is
+                 right and whose "before" was never checked cannot tell a working
+                 driver from one that puts a ring under everything.
+                 `admin:triggerEvent 'field'` and `?field=` are the developer path,
+                 in the same register as spec 215's `'affliction'` and for its
+                 stated reason: the alternative is farming a level-6 exceptional
+                 sigil every time somebody wants to look at the ring.
                  `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
                  to a body because of the bodies around it (spec 187). Until they
                  existed nothing on the server knew that two units were in the
@@ -3201,6 +3348,60 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  answers about what a row does. `aimShape` was the third of the
                  same kind and had never read `ability.area` at all, so the one
                  ability kind that *is* a shape was the one kind you could not see.
+                 `data/aura-fields.ts` and `sim/aura-field.ts` are the affliction
+                 that is somewhere rather than on somebody (spec 223). Every
+                 landing this game has resolves **once** -- a body, a point, a
+                 shape, a flight -- and an affliction, the one thing that outlives
+                 its own delivery, is carried by whoever it was put on. Nothing
+                 could say *this ground is dangerous while I am standing on it*,
+                 which is a question about time and position together and so one a
+                 landing cannot answer. A field is `a reach + an affliction + a
+                 linger`, all three of them systems that already exist, so the
+                 table authors no rate, no cadence and no length: those are
+                 `data/damage-over-time.ts`'s to say whole, and spec 190's rule
+                 that every Burn in the game is the same Burn is exactly what
+                 makes "step out and it goes out shortly" a sentence a player can
+                 reason about. What a field *is* to the sim is a **boon its
+                 carrier wears**, applied by an ordinary `applyStatus` effect off
+                 a `self` skill -- `landSelf` has run `applyEffects` since 190, so
+                 the ability system needed nothing.
+                 The pass re-lays the affliction **every tick** a body is inside,
+                 and the two properties that fall out of that are the feature:
+                 standing in it never runs out, because `applyStatus` keeps
+                 `appliedAtTick` across a refresh so the pulses keep their own
+                 cadence rather than being ticked forever into the future; and
+                 stepping out leaves exactly the linger, so the fire goes out a
+                 second later wherever you went. Both halves of that were got
+                 wrong first and both live in `fieldLanding`, lifted out of the
+                 pass so a test asserts the decision rather than its own copy of
+                 it. **It never puts out a bigger fire**: `applyStatus` refreshes
+                 a clock in *both* directions -- the mistake 190 records making
+                 with Corrosion's Sundered -- so a body carrying four seconds of
+                 Burn from an Ember Toss that walked into a one-second field would
+                 have had three of them cancelled by the fire it was standing in,
+                 and the window is the larger of the two. **It never stacks with
+                 itself**, because a rule re-applied sixty times a second reaches
+                 a stacking affliction's ceiling in `maxStacks` ticks -- and a flat
+                 cap of one would cut a five-dart Poison down the moment its
+                 carrier walked past, so the ceiling handed on is
+                 `max(1, what is already there)`.
+                 It runs as **3c**, between the movement passes and the affliction
+                 pass, which is the one correctly bracketed slot: every body has
+                 finished moving so the positions are this tick's, and `pulsesOn`
+                 needs `elapsed > 0` so a body that steps in cannot also take a
+                 pulse for having done so. It draws **nothing from the Rng** and
+                 raises no events -- what it does is lay an affliction, and the
+                 pass below is what reports one -- and hostility is re-asked every
+                 tick, which matters more here than anywhere: a field is *live*, so
+                 a carrier who walked into a safe zone with one up would otherwise
+                 go on burning whoever was standing there.
+                 What lands goes through `landDot`, which came out of
+                 `damage-over-time.ts` for this so that the three ways an
+                 affliction can arrive -- applied whole, passed on by a spread,
+                 laid by a field -- are one description instead of three. That
+                 closed a divergence already in the tree: `spread` wrote its own
+                 `applyStatus` and skipped Corrosion's `Sundered` rider, invisible
+                 only because no row that spreads has one.
                  `data/status-visuals.ts` is which of those a player may see
                  (spec 186), and it exists because that map is deliberately
                  wider than anything anybody should be shown: some of what it

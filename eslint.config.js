@@ -295,7 +295,7 @@ const PURE_RENDER = [
   'src/render/iso3d/editor/markers.ts',
   'src/render/iso3d/editor/paint.ts',
   'src/render/iso3d/editor/scatter.ts',
-  // Where a building goes and how big a drag makes it (specs 222/223). Pure for
+  // Where a building goes and how big a drag makes it (specs 224/225). Pure for
   // the reason the scatter beside it is, and one step further: the scatter is
   // *seeded*, and this draws from nothing at all -- a press is a placement
   // somebody decided, so the same press twice has to be the same prop twice.
@@ -313,7 +313,7 @@ const PURE_RENDER = [
  * src/ui/render/, which is a visible decision rather than an omission.
  */
 /**
- * The one editor test that has to draw (spec 223).
+ * The one editor test that has to draw (spec 225).
  *
  * `editor/*.test.ts` is in PURE_RENDER because every rule the editor's pure
  * half states is meant to be assertable in Node, and that is worth keeping. The

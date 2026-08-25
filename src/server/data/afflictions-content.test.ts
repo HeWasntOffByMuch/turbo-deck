@@ -127,9 +127,13 @@ describe('the wire indices the marks cross on', () => {
     shock: 13,
     frostbite: 14,
     decay: 15,
+    // Appended by spec 223, which is the only way this list may ever grow: the
+    // index crosses the wire in place of the string, so a renumber silently
+    // re-labels every mark on a client that has not been rebuilt.
+    scorchedEarth: 16,
   };
 
-  it('carries exactly the sixteen ids it carried when they were written down', () => {
+  it('carries exactly the seventeen ids it carried when they were written down', () => {
     const actual = Object.fromEntries(STATUS_VISUALS.map((visual) => [visual.id, visual.wire]));
     expect(actual).toEqual(EXPECTED_WIRE);
   });

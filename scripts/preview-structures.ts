@@ -1,4 +1,4 @@
-// Dev-only: photograph the village props (spec 222) so a human -- or an agent
+// Dev-only: photograph the village props (spec 224) so a human -- or an agent
 // with no screen -- can see whether a box with a triangle on it actually reads
 // as a house. Not part of the app. `npx tsx scripts/preview-structures.ts`
 //

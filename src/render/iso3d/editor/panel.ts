@@ -15,6 +15,7 @@ import {
   ROCK_TOOL_CHOICES,
   ROCK_TOOL_COLORS,
   SPAWNER_MONSTER_CHOICES,
+  SPAWNER_UNSET,
   SPECIES_CHOICES,
   STRUCTURE_CHOICES,
   TERRAIN_TOOL_CHOICES,
@@ -153,6 +154,10 @@ export interface EditorPanelOptions {
   readonly partIds: () => readonly string[];
   /** The tier layers currently in the map, newest last (spec 123). */
   readonly rockLayerIds: () => readonly string[];
+  /** A field of the selected marker moved: write the panel's values onto it (spec 222). */
+  readonly onSelectionEdit: () => void;
+  /** Take the selected marker off the map. */
+  readonly onSelectionDelete: () => void;
 }
 
 export interface EditorPanel {
@@ -185,6 +190,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     for (const each of strips) each.refresh();
     applyVisibility(s.mode);
     markerArmed();
+    selectionArmed();
     opts.onArmChange();
   };
   gui.domElement.addEventListener('editor-armed', armed);
@@ -300,7 +306,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // what is already on the ground.
   fence.add(s, 'variedColor').name('Colour variety');
 
-  // One press puts one building down where the cursor is (spec 222). There is
+  // One press puts one building down where the cursor is (spec 224). There is
   // no density and no spacing here, which is the whole difference from the
   // scatter above: a village is a layout somebody decided.
   const structures = gui.addFolder('Buildings');
@@ -319,7 +325,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // `placeStructure` converts once, on the way into the document.
   structures.add(s, 'structureYaw', 0, 345, 15).name('Facing');
   // The bounds are the drag's own, from `structure.ts`, so the slider cannot
-  // offer a size the drag refuses or stop short of one it reaches (spec 223).
+  // offer a size the drag refuses or stop short of one it reaches (spec 225).
   const structureSize = structures
     .add(s, 'structureScale', STRUCTURE_SCALE_MIN, STRUCTURE_SCALE_MAX, STRUCTURE_SCALE_STEP)
     .name('Size');
@@ -354,6 +360,59 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     .name('Monster');
 
   markerArmed();
+
+  /**
+   * The selected marker (spec 222), and the panel's one *inspector*: every other
+   * folder here describes what the left button is about to do, and this one
+   * describes a thing already on the map.
+   *
+   * Every row writes straight through on change rather than into a form with an
+   * Apply button, which is what makes the map and the panel the same statement
+   * -- the map editor has never had a modal edit and this is not the place to
+   * introduce one. An edit with nothing selected is refused by `commitSelection`
+   * rather than guarded here.
+   */
+  const select = gui.addFolder('Selected marker');
+  const selected = { id: '(nothing selected)' };
+  const selectedRow = select.add(selected, 'id').name('Marker').disable();
+  strip(
+    select,
+    MARKER_CHOICES,
+    2,
+    () => s.selKind,
+    (kind) => {
+      s.selKind = kind;
+      // Through the same commit as every other row: changing a spawner into a
+      // campfire is what drops its numbers (`patchMarker`), and a kind change
+      // that only redrew the strip would leave the document saying something
+      // the panel has stopped showing.
+      opts.onSelectionEdit();
+    },
+    () => MODE_COLORS.select,
+  );
+  const selectedEffect = { does: '' };
+  const selectedEffectRow = select.add(selectedEffect, 'does').name('Does').disable();
+  // The same two-field split the marker folder makes, and for the same reason
+  // stated there: shown always so nothing below moves when the kind changes, and
+  // disabled rather than hidden, because live-looking and inert is the worst of
+  // the three states.
+  const selMonster = select
+    .add(s, 'selMonster', SPAWNER_MONSTER_CHOICES.map((c) => c.value))
+    .name('Monster')
+    .onChange(opts.onSelectionEdit);
+  const selLabel = select.add(s, 'selLabel').name('Label').onChange(opts.onSelectionEdit);
+  // `SPAWNER_UNSET` at the bottom of each range, so "the server decides" is
+  // where the slider starts rather than a value somebody has to know to type.
+  // The labels say so, because a slider reading 0 says "instantly" otherwise.
+  const selRespawn = select
+    .add(s, 'selRespawnSeconds', SPAWNER_UNSET, 600, 1)
+    .name('Respawn s (0=default)')
+    .onChange(opts.onSelectionEdit);
+  const selLeash = select
+    .add(s, 'selLeashRadius', SPAWNER_UNSET, 800, 10)
+    .name('Leash (0=default)')
+    .onChange(opts.onSelectionEdit);
+  select.add({ remove: opts.onSelectionDelete }, 'remove').name('Delete marker');
 
   const parts = gui.addFolder('Parts');
   strip(
@@ -462,6 +521,35 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
    * folder is built further down, so the alternative is a mutable hook for
    * every controller a refresh touches.
    */
+  /**
+   * Re-read everything the *selection* decides: which marker, and which of its
+   * rows are its kind's (spec 222).
+   *
+   * Hoisted for the reason `markerArmed` is -- `armed` is wired to the strips as
+   * they are built and this folder is built further down.
+   */
+  function selectionArmed(): void {
+    const has = s.selectedMarkerId !== '';
+    selected.id = has ? s.selectedMarkerId : '(nothing selected)';
+    selectedRow.updateDisplay();
+    selectedEffect.does = has ? markerKindEffect(s.selKind) : 'click a marker to select it';
+    selectedEffectRow.updateDisplay();
+    const spawner = has && s.selKind === 'spawner';
+    if (spawner) {
+      selMonster.enable();
+      selRespawn.enable();
+      selLeash.enable();
+    } else {
+      selMonster.disable();
+      selRespawn.disable();
+      selLeash.disable();
+    }
+    // The free-text label is every kind's *but* a spawner's, whose label is the
+    // monster above -- so the two rows are never live at once.
+    if (has && !spawner) selLabel.enable();
+    else selLabel.disable();
+  }
+
   function markerArmed(): void {
     markerEffect.does = markerKindEffect(s.markerKind);
     markerEffectRow.updateDisplay();
@@ -480,6 +568,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     fence.show(show.fence);
     structures.show(show.structure);
     markers.show(show.marker);
+    select.show(show.select);
     parts.show(show.part);
     rock.show(show.rock);
     // A folder that is hidden and closed comes back closed, which reads as an
@@ -491,6 +580,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       [fence, show.fence],
       [structures, show.structure],
       [markers, show.marker],
+      [select, show.select],
       [parts, show.part],
       [rock, show.rock],
     ] as const) {
@@ -513,6 +603,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       for (const each of strips) each.refresh();
       showTileLength();
       markerArmed();
+      selectionArmed();
       refreshPartIds();
       refreshRockLayers();
       applyVisibility(s.mode);

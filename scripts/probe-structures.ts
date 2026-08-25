@@ -1,12 +1,12 @@
 /**
  * Place a hut and a well in the Map editor, and read them back out of the saved
- * file (spec 222).
+ * file (spec 224).
  *
  * The half no headless test can reach, and the failure it exists to catch is
  * the one this repo keeps finding: every rule about a structure is green in Node
  * -- the store takes one, `serializeMap` writes it, the field builds its
  * geometry, `placeStructure` refuses the right things -- and all of that can be
- * true beside a `view.ts` that calls none of it. A ninth entry in a mode array
+ * true beside a `view.ts` that calls none of it. One more entry in a mode array
  * cannot fail a typecheck and cannot fail a headless test.
  *
  * So this drives the shipped build: opens the tab, arms the tool, presses on the
@@ -79,7 +79,7 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
 const readout = async (page: Page): Promise<string> => (await page.textContent('body')) ?? '';
 
 /**
- * What the ghost has on the scene graph, off `data-ghost` (spec 223).
+ * What the ghost has on the scene graph, off `data-ghost` (spec 225).
  *
  * Published from what is *attached and visible* rather than from what the frame
  * last asked for, so a preview built and hung on nothing, or one left up after
@@ -103,7 +103,7 @@ async function propCount(page: Page): Promise<number> {
  *
  * A **poll**, never a fixed wait, and the reason is measured rather than
  * cautious: this environment paints the editor at about five frames a second
- * under software GL, and a building now lands on the *release* (spec 223) --
+ * under software GL, and a building now lands on the *release* (spec 225) --
  * so half a second after the button comes up the frame that places it may not
  * have run. Waited out with a constant, the first cut of this probe read the
  * status line before the placement, set the facing slider before it, and
@@ -313,7 +313,7 @@ async function main(): Promise<void> {
     const before = structuresIn(await save(page));
     check('the shipped map has no buildings to begin with', before.length === 0, `${before.length} found`);
 
-    // The tool has to be reachable from the mode strip at all: a ninth entry in
+    // The tool has to be reachable from the mode strip at all: one more entry in
     // an array is exactly the kind of thing that typechecks and is wired to
     // nothing.
     await page.getByRole('button', { name: 'structure', exact: true }).click();
@@ -353,7 +353,7 @@ async function main(): Promise<void> {
     check('the well places too', await clickGround(page, 560, 560), await placed(page));
     check('and says so', /placed well/.test(await readout(page)), await placed(page));
 
-    // --- the preview (spec 223) --------------------------------------------
+    // --- the preview (spec 225) --------------------------------------------
     await page.mouse.move(430, 520);
     await page.waitForTimeout(500);
     check(
@@ -391,7 +391,7 @@ async function main(): Promise<void> {
     await page.getByRole('button', { name: 'structure', exact: true }).click();
     await page.waitForTimeout(400);
 
-    // --- the drag (spec 223) ------------------------------------------------
+    // --- the drag (spec 225) ------------------------------------------------
     const sizeBefore = Number((await panelRow(page, 'Buildings', 'Size'))?.value ?? Number.NaN);
     const reached = await dragOut(page, 300, 560, 150, 40);
     check(

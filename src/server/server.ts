@@ -67,6 +67,7 @@ import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from '.
 import { applyStatus, adaptedKey } from './sim/statuses.js';
 import { clearAfflictions } from './sim/damage-over-time.js';
 import { ALL_DOTS, dotById, dotDurationTicks } from './data/damage-over-time.js';
+import { ALL_AURA_FIELDS } from './data/aura-fields.js';
 import { ADAPTED_ID, STATUS_VISUALS } from './data/status-visuals.js';
 import {
   isRevealed,
@@ -3230,6 +3231,19 @@ export class GameServer implements AdminHost {
    */
   private static readonly AFFLICTION_DEMO_REACH = 300;
 
+  /**
+   * How long `admin:triggerEvent 'field'` leaves an aura field up (spec 223).
+   *
+   * The skill's own eight seconds rather than a demo window, and for the reason
+   * the affliction case gives about its own length: what is being looked at is
+   * the field, and a field that lasted a different time from the one the game
+   * ships would be a demo of something else. The reach is `magnitude`'s to
+   * carry here -- unlike the affliction case, which spends it naming a row --
+   * because the field's own radius is authored and this argument has nothing
+   * else to do.
+   */
+  private static readonly FIELD_DEMO_TICKS = 480;
+
   triggerEvent(eventName: string, x: number, y: number, magnitude: number): string {
     switch (eventName) {
       case 'raid': {
@@ -3390,6 +3404,47 @@ export class GameServer implements AdminHost {
         }
         const seconds = (duration / SERVER_TICK_RATE).toFixed(1);
         return `marked ${afflicted} bodies with ${row.name} x${row.maxStacks} for ${seconds}s`;
+      }
+      case 'field': {
+        // The developer path for spec 223's aura fields: the field's own status,
+        // on every body within `magnitude`, for the length the skill grants.
+        //
+        // It exists for the reason `status`'s comment gives about a Perception
+        // character: the alternative to this is farming a level-6 exceptional
+        // sigil every time somebody wants to look at the ring. And it is a
+        // third trigger rather than an argument to `status` because that one
+        // applies **every** visible row at once -- which for a field means
+        // every affliction in the game landing on the same body, and what a
+        // burning ring looks like is not recoverable from a body wearing seven
+        // clings.
+        //
+        // Like both of its neighbours it writes **only** into `statuses`, so it
+        // can no more change an outcome than the real thing can: the field is a
+        // status, `sim/aura-field.ts` reads it through the same `statusOf`, and
+        // what it lays on whoever is standing inside is what a cast lays. It
+        // draws nothing from `state.rng`.
+        //
+        // The one thing it does not supply is a `sourceId` on the *field*, and
+        // it does not need one: a field's affliction is credited to the body
+        // carrying it, which is a real entity here. So unlike a conjured
+        // poison, a kill by a triggered field does pay -- because the thing
+        // doing the killing is a body in the world rather than a console.
+        const reach = Math.max(1, magnitude);
+        let carried = 0;
+        for (const entity of [...this.state.entities.values()]) {
+          if (entity.kind !== EntityKindValue.Player && entity.kind !== EntityKindValue.Monster) {
+            continue;
+          }
+          if (Math.hypot(entity.position.x - x, entity.position.y - y) > reach) continue;
+          let statuses = entity.statuses;
+          for (const field of ALL_AURA_FIELDS) {
+            statuses = applyStatus(statuses, field.id, this.state.tick, GameServer.FIELD_DEMO_TICKS);
+          }
+          this.state = replaceEntity(this.state, { ...entity, statuses });
+          carried += 1;
+        }
+        const held = (GameServer.FIELD_DEMO_TICKS / SERVER_TICK_RATE).toFixed(1);
+        return `gave ${carried} bodies every aura field for ${held}s`;
       }
       case 'drop': {
         // The developer path (spec 158): a drop of a chosen tier, at a chosen

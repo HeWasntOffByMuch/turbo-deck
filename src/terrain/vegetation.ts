@@ -21,7 +21,7 @@ import { arenaBounds } from './world.js';
 /**
  * What a prop is. Trees and bushes are scattered over an area; the two fences
  * are laid along a path, one tile per prop (spec 058); the two structures are
- * put down one at a time, where somebody pointed (spec 222).
+ * put down one at a time, where somebody pointed (spec 224).
  */
 export type PropKind =
   | 'tree'
@@ -46,7 +46,7 @@ export function isFenceKind(kind: PropKind): kind is FenceKind {
 }
 
 /**
- * The kinds that are a building rather than a plant or a boundary (spec 222).
+ * The kinds that are a building rather than a plant or a boundary (spec 224).
  *
  * A hut to make a village out of and a well to put in the middle of it. They are
  * grouped for one reason: neither is *painted*. A tree is scattered by density
@@ -242,7 +242,7 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   'fence-brick': FENCE_TILE_LENGTH / 2,
   'fence-rubble': FENCE_TILE_LENGTH / 2,
   // The plan's **circumradius**, so every corner of the building is inside the
-  // circle and there is no way to stand in one (spec 222). That is the fence's
+  // circle and there is no way to stand in one (spec 224). That is the fence's
   // own rule -- a rectangle is not a circle and erring wide is the side that
   // keeps a wall a wall -- and the cost is stated rather than hidden: the circle
   // reaches about 30 units past the middle of each flat face, so a body stops

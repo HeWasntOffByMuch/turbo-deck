@@ -293,9 +293,13 @@ export const DROP_TABLES: ReadonlyMap<string, DropTable> = new Map<string, DropT
         // because a skill is worth roughly what a weapon is worth.
         { defId: 'sigil.stunningBlow', count: 1, weight: 3 },
         { defId: 'sigil.whirlwind', count: 1, weight: 3 },
-        // The one exceptional sigil, on the one body that could reasonably
-        // carry it (spec 190).
+        // The two exceptional sigils, on the one body that could reasonably
+        // carry either (specs 190, 222). Weighted below the rare pair beside
+        // them rather than given a table of their own: what makes an
+        // exceptional drop feel exceptional is that the same kill usually pays
+        // out something ordinary instead.
         { defId: 'sigil.blight', count: 1, weight: 1 },
+        { defId: 'sigil.scorchedEarth', count: 1, weight: 1 },
         { defId: 'trinket.bloodstone', count: 1, weight: 1 },
       ],
     },

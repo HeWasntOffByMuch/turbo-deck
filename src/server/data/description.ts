@@ -53,6 +53,7 @@ import {
   dotTotalDamage,
   type DotDefinition,
 } from './damage-over-time.js';
+import { auraFieldById, type AuraFieldDefinition } from './aura-fields.js';
 
 /**
  * Which register a line is in, so a surface can style the block without
@@ -838,6 +839,41 @@ function afflictionLines(dot: DotDefinition): readonly TechnicalLine[] {
 }
 
 /**
+ * The mechanical lines for a status that is an aura field (spec 223).
+ *
+ * Derived for the same reason {@link afflictionLines} is: a field *is* a reach,
+ * an affliction and a linger in `data/aura-fields.ts`, so a sentence authored
+ * beside it in `STATUS_VISUALS` would be a second copy of `radius` with nothing
+ * keeping it true.
+ *
+ * The affliction is **named, not restated**. Spec 190's rule is that the row is
+ * the affliction whole, so a reader gets the rate and the cadence from that
+ * condition's own tooltip -- exactly as an `applyDot` effect's line does -- and
+ * the field claims only the three numbers it owns.
+ */
+function auraFieldLines(field: AuraFieldDefinition): TechnicalLine[] {
+  const dot = dotById(field.dotId);
+  const out: TechnicalLine[] = [
+    {
+      tone: 'effect',
+      text: `Applies ${dot?.name ?? field.name} to enemies within ${amount(field.radius)} of you.`,
+    },
+  ];
+  // The linger is the mechanic, so it is stated as the thing a player acts on:
+  // not "it is reapplied every tick" -- which is how it is built -- but "it
+  // runs out this long after they get out", which is what they decide against.
+  out.push({
+    tone: 'effect',
+    text: `It is renewed while they stay inside, and runs out ${formatSeconds(field.lingerTicks)} after they leave.`,
+  });
+  out.push({
+    tone: 'note',
+    text: `Reaches at most ${amount(field.maxTargets)} enemies at once.`,
+  });
+  return out;
+}
+
+/**
  * The Technical Description for one status.
  *
  * The one place the writer reads an authored string as a *mechanical* line, and
@@ -847,11 +883,14 @@ function afflictionLines(dot: DotDefinition): readonly TechnicalLine[] {
  */
 export function describeStatus(visual: StatusVisual): TechnicalDescription {
   // An affliction is a rate, a cadence and a length, all of them in
-  // `data/damage-over-time.ts` -- so it is derived rather than authored, and
-  // `StatusVisual.effect` is absent on exactly those seven rows.
+  // `data/damage-over-time.ts`; a field is a reach, an affliction and a linger,
+  // all of them in `data/aura-fields.ts`. Both are derived rather than authored,
+  // and `StatusVisual.effect` is absent on exactly those rows.
   const dot = dotById(visual.id);
+  const field = auraFieldById(visual.id);
+  const derived = dot ? afflictionLines(dot) : field ? auraFieldLines(field) : null;
   const lines: TechnicalLine[] = [
-    ...(dot ? afflictionLines(dot) : [{ tone: 'effect' as const, text: visual.effect ?? '' }]),
+    ...(derived ?? [{ tone: 'effect' as const, text: visual.effect ?? '' }]),
     {
       tone: 'note',
       text: visual.kind === 'boon' ? 'Beneficial.' : 'Harmful.',

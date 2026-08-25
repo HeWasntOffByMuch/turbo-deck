@@ -501,6 +501,21 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     activeSkillId: 'skill.blight',
     value: 260,
   },
+  // --- the field sigil (spec 223) ---
+  //
+  // Exceptional, and it is the one sigil in the table that is not priced against
+  // what it does to a body: eight seconds of ground nothing can stand on is a
+  // *positional* answer, and there is nothing else in the game that gives one.
+  {
+    id: 'sigil.scorchedEarth',
+    rarity: 'exceptional',
+    name: 'Sigil of Scorched Earth',
+    slot: 'skill',
+    levelRequirement: 6,
+    modifiers: {},
+    activeSkillId: 'skill.scorchedEarth',
+    value: 280,
+  },
   // The test row's sigil (spec 190). Not content, and three fields say so:
   // `levelRequirement: 1` so any character can wear it, no `rarity` so it
   // announces itself as quietly as loot can, and `value: 0` -- which is what

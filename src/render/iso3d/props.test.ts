@@ -516,7 +516,7 @@ describe('the conifer trunk, as built', () => {
  * offsets and three.js's rotation convention, and only a real field exercises
  * all three at once.
  */
-describe('the buildings as they are actually built (spec 222)', () => {
+describe('the buildings as they are actually built (spec 224)', () => {
   const flat = (): number => 0;
 
   const structure = (kind: 'house' | 'well', rotation = 0, scale = 1): Prop => ({

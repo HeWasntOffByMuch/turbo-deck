@@ -128,7 +128,7 @@ function pulseDamageFor(held: StatusState, row: DotDefinition, entity: ServerEnt
  * the purposes of flying, a mote drifts, a drop lies there, and a corpse is
  * done.
  */
-function afflictable(entity: ServerEntity): boolean {
+export function afflictable(entity: ServerEntity): boolean {
   if (entity.health <= 0) return false;
   return entity.kind === EntityKindValue.Player || entity.kind === EntityKindValue.Monster;
 }
@@ -154,11 +154,54 @@ export function applyDot(
 ): ServerEntity {
   const row = dotById(dotId);
   if (!row || !afflictable(target)) return target;
-  const duration = dotDurationTicks(row);
-  let statuses = applyStatus(target.statuses, row.id, tick, duration, {
-    maxStacks: row.maxStacks,
-    magnitude: Math.max(0, source.stats.spellPower),
-    sourceId: source.id,
+  return {
+    ...target,
+    statuses: landDot(target.statuses, row, tick, {
+      durationTicks: dotDurationTicks(row),
+      maxStacks: row.maxStacks,
+      magnitude: Math.max(0, source.stats.spellPower),
+      sourceId: source.id,
+    }),
+  };
+}
+
+/** Everything an affliction landing on a body is, past deciding to land it. */
+export interface DotLanding {
+  /** How long this application is worth. The row's own, unless it is a hop. */
+  readonly durationTicks: number;
+  /** The concentration ceiling. The row's own, unless a caller may not stack. */
+  readonly maxStacks: number;
+  /** The applier's spell power, or a copy of it for an affliction passed on. */
+  readonly magnitude: number;
+  readonly sourceId: number;
+}
+
+/**
+ * One affliction onto one status map, whatever put it there (spec 223).
+ *
+ * The one description of what landing an affliction *is*, and there are three
+ * callers of it precisely because the three differ only in the window and the
+ * ceiling they hand it: {@link applyDot} lands the row whole, {@link spread}
+ * lands what is left of one on the next body along, and `sim/aura-field.ts`
+ * lands the linger a field is worth. Everything else about it -- the rider, the
+ * source rule, the refresh rule -- is the same question three times, and a
+ * second copy of it is how a hop ends up subtly unlike an application.
+ *
+ * That the rider was the divergence is not hypothetical: `spread` wrote its own
+ * `applyStatus` and did not apply Corrosion's `Sundered`, which is invisible
+ * only because no row that spreads has one. Routing all three through here
+ * closes it before a row does.
+ */
+export function landDot(
+  statuses: Statuses,
+  row: DotDefinition,
+  tick: number,
+  landing: DotLanding,
+): Statuses {
+  let next = applyStatus(statuses, row.id, tick, landing.durationTicks, {
+    maxStacks: landing.maxStacks,
+    magnitude: landing.magnitude,
+    sourceId: landing.sourceId,
   });
   // Corrosion's armour half, applied here rather than on each pulse.
   //
@@ -173,12 +216,12 @@ export function applyDot(
   // Through the status the game already has, so there is one armour-reduction
   // reader in `blow.ts` and not two.
   if (row.sunderMagnitude !== undefined && row.sunderMagnitude > 0) {
-    statuses = applyStatus(statuses, StatusId.Sundered, tick, duration, {
+    next = applyStatus(next, StatusId.Sundered, tick, landing.durationTicks, {
       magnitude: row.sunderMagnitude,
-      sourceId: source.id,
+      sourceId: landing.sourceId,
     });
   }
-  return { ...target, statuses };
+  return next;
 }
 
 /**
@@ -493,7 +536,8 @@ function spread(
   if (!caught) return;
   working.set(bestId, {
     ...caught,
-    statuses: applyStatus(caught.statuses, row.id, tick, remaining, {
+    statuses: landDot(caught.statuses, row, tick, {
+      durationTicks: remaining,
       maxStacks: row.maxStacks,
       magnitude: held.magnitude,
       sourceId: held.sourceId,

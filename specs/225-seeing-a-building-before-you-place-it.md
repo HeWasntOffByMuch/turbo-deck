@@ -1,8 +1,8 @@
-# 223 — Seeing a building before you place it
+# 225 — Seeing a building before you place it
 
 ## Problem
 
-Spec 222 gives the structure tool a press and a size slider, and both are
+Spec 224 gives the structure tool a press and a size slider, and both are
 worse than they look once somebody actually lays out a village.
 
 **You cannot see what you are about to place.** The cursor ring is the
@@ -73,7 +73,7 @@ continuous from the moment it engages and there is no jump to be surprised by.
 `view.ts` moves the placement from the press to the release, which is the cost
 of a drag gesture and is stated here rather than discovered. A press with no
 drag still places at the panel's size, so a plain click behaves exactly as it
-did in 222. The dragged size is written back into the panel on release, so the
+did in 224. The dragged size is written back into the panel on release, so the
 next building is the size of the last one and the slider says so.
 
 ## Invariants tested
