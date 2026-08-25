@@ -828,6 +828,17 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
    */
   const MARKER_DRAG_SLOP = 4;
 
+  /**
+   * The selected marker went away: re-read the panel (spec 222).
+   *
+   * The same hoisted-hook shape `onPartsChanged` uses below and for the same
+   * reason -- `refreshMarkers` is defined before the panel exists, and this is
+   * how it reaches one without a nullable handle.
+   */
+  let onSelectionCleared: () => void = () => {
+    // Replaced the moment the panel exists; nothing selects anything before then.
+  };
+
   const markerView = createMarkerView();
   scene.addOverlay(markerView.group);
   // A second ring, in the select tool's own colour, parked on the selected
@@ -922,7 +933,16 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     // because this is the one function every path that changes the marker set
     // already calls, so there is no way to change the set and skip the check.
     const selected = markers.find((m) => m.id === settings.selectedMarkerId) ?? null;
-    if (!selected) Object.assign(settings, clearSelection(settings));
+    if (!selected && settings.selectedMarkerId !== '') {
+      Object.assign(settings, clearSelection(settings));
+      // On the *transition* only. The eraser calls this every frame of a drag,
+      // and rebuilding the whole GUI sixty times a second to say the same thing
+      // is the sort of thing that reads as a stutter -- and the panel is stale
+      // rather than merely quiet if it is not told at all, which is the
+      // live-looking-and-inert state the Markers folder's own note argues
+      // against.
+      onSelectionCleared();
+    }
     markerView.render(markers, groundAt, settings.selectedMarkerId);
     if (selected) {
       selectionRing.moveTo(selected.x, selected.z, MARKER_CURSOR_RADIUS, groundAt);
@@ -1578,6 +1598,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     },
   });
   onPartsChanged = (): void => panel.refreshParts();
+  onSelectionCleared = (): void => panel.refresh();
   onPartsChanged();
   panelHost.appendChild(panel.element);
 

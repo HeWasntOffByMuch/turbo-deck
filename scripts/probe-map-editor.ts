@@ -272,6 +272,24 @@ async function clickGround(page: Page, x: number, y: number): Promise<void> {
   await page.waitForTimeout(400);
 }
 
+/**
+ * Press and *hold* on the ground, for a tool that works on the drag.
+ *
+ * `clickGround` is a press and a release 150ms apart, which is all a marker
+ * placement needs -- that happens on the press edge, and an edge survives until
+ * a frame consumes it. The eraser runs inside `input.isPainting`, so it needs a
+ * frame drawn *while the button is down*, and this environment paints at about
+ * five frames a second: a 150ms hold is less than one frame, and the eraser
+ * genuinely never runs.
+ */
+async function holdGround(page: Page, x: number, y: number, ms = 1500): Promise<void> {
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(ms);
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+}
+
 /** Press the write button and hand back what the status line then says. */
 async function saveToDisk(page: Page): Promise<string> {
   await page.click('button:has-text("Save to maps/")');
@@ -604,6 +622,32 @@ async function main(): Promise<void> {
       clearedAt !== null,
       clearedAt ? `cleared at ${clearedAt[0]},${clearedAt[1]}` : `every candidate hit a marker: ${landedOn.join('; ')}`,
     );
+
+    // The other way a selection goes away: the marker is taken off the map by
+    // something that is not the Delete button. `refreshMarkers` notices rather
+    // than being told, because it is the one function every path that changes
+    // the marker set already calls -- and the panel has to be told on the
+    // transition, or it goes on naming a marker that is not there.
+    await clickGround(page, 540, 400);
+    await waitForSelected(page, /^spawner-/);
+    await page.getByRole('button', { name: 'erase', exact: true }).click();
+    await page.waitForTimeout(400);
+    await holdGround(page, 540, 400);
+    const afterErase = await waitForSelected(page, /^none$/);
+    await page.getByRole('button', { name: 'select', exact: true }).click();
+    await page.waitForTimeout(400);
+    // The readout is the assertion; the panel row is reported beside it. Only
+    // the first is non-vacuous here -- arming a mode refreshes the whole panel,
+    // so a check on that row after switching back would pass whether or not
+    // `refreshMarkers` had told it anything.
+    const panelAfterErase = (await panelRow(page, 'Marker'))?.value ?? '(no row)';
+    check(
+      'erasing the selected marker is noticed, not announced',
+      afterErase === 'none',
+      `readout ${afterErase}, panel ${panelAfterErase}`,
+    );
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(1200);
 
     await clickGround(page, 540, 400);
     const doomed = await waitForSelected(page, /^spawner-/);
