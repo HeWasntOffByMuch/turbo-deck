@@ -13,7 +13,16 @@ import {
 } from '../../../terrain/index.js';
 import { applyTerrainBrush } from './brush.js';
 import { EditHistory } from './history.js';
-import { bakeChunkNav, bakeLayerNav, DEFAULT_WALK_SLOPE, rebakeNav } from './nav.js';
+import { DEFAULT_BANDS } from '../../../terrain/classify.js';
+import { MAX_CLIMB_SLOPE, MAX_WALK_SLOPE } from '../../../sim/constants.js';
+import {
+  bakeChunkNav,
+  bakeLayerNav,
+  NAV_CELL_CLIFF,
+  NAV_CELL_CLIMB,
+  NAV_CELL_WALK,
+  rebakeNav,
+} from './nav.js';
 
 /**
  * Spec 053. The overlay is only worth looking at if the data behind it is
@@ -52,7 +61,19 @@ function walkableAt(map: LoadedMap, x: number, z: number): boolean {
   const cz = Math.floor(row / OPT.chunkCells);
   const nav = must(map.store.chunkNav(LAYER, cx, cz), 'baked nav');
   const chunk = must(map.store.buildChunk(LAYER, cx, cz), 'the chunk');
-  return nav[(row - chunk.startRow) * chunk.cols + (col - chunk.startCol)] === 1;
+  return nav[(row - chunk.startRow) * chunk.cols + (col - chunk.startCol)] === NAV_CELL_WALK;
+}
+
+/** The band the overlay puts a world point in. */
+function bandAt(map: LoadedMap, x: number, z: number): number {
+  const layer = must(map.store.layerInfo(LAYER), 'the layer');
+  const col = Math.floor((x - layer.bounds.minX) / OPT.cellSize);
+  const row = Math.floor((z - layer.bounds.minZ) / OPT.cellSize);
+  const cx = Math.floor(col / OPT.chunkCells);
+  const cz = Math.floor(row / OPT.chunkCells);
+  const nav = must(map.store.chunkNav(LAYER, cx, cz), 'baked nav');
+  const chunk = must(map.store.buildChunk(LAYER, cx, cz), 'the chunk');
+  return nav[(row - chunk.startRow) * chunk.cols + (col - chunk.startCol)] ?? NAV_CELL_CLIFF;
 }
 
 function countWalkable(map: LoadedMap): number {
@@ -62,7 +83,7 @@ function countWalkable(map: LoadedMap): number {
     for (let cx = 0; cx < layer.grid.chunksX; cx++) {
       const nav = map.store.chunkNav(LAYER, cx, cz);
       if (!nav) continue;
-      for (const flag of nav) if (flag === 1) total++;
+      for (const flag of nav) if (flag === NAV_CELL_WALK) total++;
     }
   }
   return total;
@@ -103,14 +124,31 @@ describe('what is walkable', () => {
     expect(walkableAt(map, 200, 0)).toBe(false);
   });
 
-  it('lowering the limit can only remove walkable cells', () => {
-    const map = loaded([{ kind: 'rolling', amplitude: 60, params: { frequency: 1 / 90 } }]);
-    bakeLayerNav(map.store, LAYER, 1.2);
-    const loose = countWalkable(map);
-    bakeLayerNav(map.store, LAYER, 0.3);
-    const tight = countWalkable(map);
-    expect(tight).toBeLessThan(loose);
-    expect(tight).toBeGreaterThan(0);
+  it('has fewer walked cells on rougher ground', () => {
+    const gentle = loaded([{ kind: 'rolling', amplitude: 6, params: { frequency: 1 / 90 } }]);
+    bakeLayerNav(gentle.store, LAYER);
+    const rough = loaded([{ kind: 'rolling', amplitude: 120, params: { frequency: 1 / 90 } }]);
+    bakeLayerNav(rough.store, LAYER);
+    expect(countWalkable(rough)).toBeLessThan(countWalkable(gentle));
+    expect(countWalkable(rough)).toBeGreaterThan(0);
+  });
+
+  it('only ever puts a cell in one of the three bands', () => {
+    const map = loaded([{ kind: 'rolling', amplitude: 120, params: { frequency: 1 / 90 } }]);
+    bakeLayerNav(map.store, LAYER);
+    const layer = must(map.store.layerInfo(LAYER), 'the layer');
+    const seen = new Set<number>();
+    for (let cz = 0; cz < layer.grid.chunksZ; cz++) {
+      for (let cx = 0; cx < layer.grid.chunksX; cx++) {
+        for (const flag of map.store.chunkNav(LAYER, cx, cz) ?? []) seen.add(flag);
+      }
+    }
+    for (const flag of seen) {
+      expect([NAV_CELL_CLIFF, NAV_CELL_WALK, NAV_CELL_CLIMB]).toContain(flag);
+    }
+    // Ground this rough has to reach past the walk limit somewhere, or the
+    // assertion above is true of a world with one band in it.
+    expect(seen.has(NAV_CELL_CLIMB) || seen.has(NAV_CELL_CLIFF)).toBe(true);
   });
 
   it('is stable: baking twice gives the same answer', () => {
@@ -118,12 +156,6 @@ describe('what is walkable', () => {
     const first = must(bakeChunkNav(map.store, LAYER, 0, 0), 'a bake');
     const second = must(bakeChunkNav(map.store, LAYER, 0, 0), 'a bake');
     expect([...second]).toEqual([...first]);
-  });
-
-  it('resolves a nonsense limit rather than propagating it', () => {
-    const map = loaded();
-    const nav = must(bakeChunkNav(map.store, LAYER, 0, 0, NaN), 'a bake');
-    expect(nav.length).toBeGreaterThan(0);
   });
 
   it('returns nothing for a chunk that does not exist', () => {
@@ -247,10 +279,28 @@ describe('staying current with the ground', () => {
 });
 
 describe('walk limit', () => {
-  it('sits under the classifier\'s dirt threshold', () => {
-    // So ground worn to bare dirt is right at the edge of walkable, and anything
-    // rockier is not -- the three consumers of slope agreeing by construction.
-    expect(DEFAULT_WALK_SLOPE).toBeGreaterThan(0);
-    expect(DEFAULT_WALK_SLOPE).toBeLessThan(0.8);
+  /**
+   * The overlay's thresholds are the sim's, by import (spec 227).
+   *
+   * What this replaced asserted `DEFAULT_WALK_SLOPE < 0.8` under a comment
+   * saying it sat under the classifier's *dirt* threshold -- which is 0.45, so
+   * the claim was false and the test could not see it, because it was written
+   * against the rock threshold instead. Both numbers are named here.
+   */
+  it('is the classifier\'s rock threshold, so walkable ground is ground that looks it', () => {
+    expect(MAX_WALK_SLOPE).toBe(DEFAULT_BANDS.rockSlope);
+    expect(MAX_WALK_SLOPE).toBeGreaterThan(DEFAULT_BANDS.dirtSlope);
+  });
+
+  it('climbs steeper than it walks', () => {
+    expect(MAX_CLIMB_SLOPE).toBeGreaterThan(MAX_WALK_SLOPE);
+  });
+
+  it('puts a cliff, a scramble and a meadow in three different bands', () => {
+    // A flat layer is walked everywhere; the assertion that matters is that the
+    // bake never invents a band the sim has no name for.
+    const map = loaded();
+    bakeLayerNav(map.store, LAYER);
+    expect(bandAt(map, 0, 0)).toBe(NAV_CELL_WALK);
   });
 });

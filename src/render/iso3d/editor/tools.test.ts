@@ -186,7 +186,7 @@ describe('the settings object', () => {
     expect(s.mode).toBe('terrain');
     // Each tool reads its own slice, so a missing default is a tool that starts
     // broken rather than a type error.
-    for (const key of ['radius', 'strength', 'falloff', 'density', 'fenceScale', 'walkSlope'] as const) {
+    for (const key of ['radius', 'strength', 'falloff', 'density', 'fenceScale'] as const) {
       expect(Number.isFinite(s[key])).toBe(true);
     }
     expect(FENCE_STYLES).toContain(s.style);

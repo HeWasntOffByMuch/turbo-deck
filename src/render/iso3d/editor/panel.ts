@@ -466,7 +466,6 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   view.add(s, 'showArena').name('Arena bounds').onChange(opts.onArmChange);
   // Off by default: a diagnostic, not a view mode.
   view.add(s, 'showNav').name('Walkability').onChange(opts.onNavChange);
-  view.add(s, 'walkSlope', 0.05, 1.5, 0.05).name('Walk slope').onChange(opts.onNavRebake);
 
   const edit = gui.addFolder('Edit');
   edit.add({ undo: opts.onUndo }, 'undo').name('Undo (Ctrl+Z)');

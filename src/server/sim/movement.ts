@@ -36,6 +36,8 @@ import type { LiveConfig } from '../config.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { CorrectionReason } from '../net/protocol.js';
 import type { Vec3 } from '../state/types.js';
+import { CLIMB_PACE } from '../../sim/constants.js';
+import { gradeOfSlope, GroundGrade, groundSlopeAt } from '../../sim/slope.js';
 import { MAX_STEP_HEIGHT, WALKABLE_MIN_HEIGHT, type TerrainSampler } from '../world/terrain.js';
 import { moveScaleOf } from './statuses.js';
 import type { ServerEntity, ServerInput } from './types.js';
@@ -159,16 +161,106 @@ function clampDirection(moveX: number, moveY: number): Vec2 {
   return { x: moveX / length, y: moveY / length };
 }
 
-/** True when the ground at a point is somewhere a body may legally stand. */
+/**
+ * What a step onto some ground amounts to (spec 227).
+ *
+ * `Walk` is ordinary ground; `Climb` is steep enough to be crossed at
+ * {@link CLIMB_PACE} rather than at speed; `Refused` is water, a wall, or a
+ * hillside past {@link MAX_CLIMB_SLOPE}.
+ */
+export const StepGrade = { Walk: 0, Climb: 1, Refused: 2 } as const;
+export type StepGradeValue = (typeof StepGrade)[keyof typeof StepGrade];
+
+/** The magnitude a grade lets a body move at. */
+export function paceFor(grade: StepGradeValue): number {
+  return grade === StepGrade.Walk ? 1 : grade === StepGrade.Climb ? CLIMB_PACE : 0;
+}
+
+/**
+ * Grade the step from where a body is standing to where it wants to be.
+ *
+ * **Two rules, asking two different questions** (spec 227), and separating them
+ * is the whole change:
+ *
+ *  - {@link MAX_STEP_HEIGHT} on the *step*: can the body get over this lip?
+ *    Unchanged since spec 056, same value, and still what refuses a tier edge
+ *    and permits a stair riser.
+ *  - {@link groundSlopeAt} at the *destination*: is that ground a body can
+ *    stand on? This is the new half and the one that finally makes a maximum
+ *    walkable angle exist.
+ *
+ * They were one rule and it could only do one job honestly. A height per tick
+ * is an angle divided by how far the body travelled, so the same hillside came
+ * back at 69 degrees for a body at `MOVE_SPEED_HARD_MAX` and 88.4 for a grazer
+ * -- the slower body walking up the steeper ground -- and a player went up 83.9
+ * degrees head-on with nothing in the game refusing it.
+ *
+ * The ground rule is a property of the ground alone, so it is the same answer
+ * at every speed and from every direction: there is no approach angle that
+ * gets a body up a slope past `MAX_CLIMB_SLOPE`, which is what "maximum
+ * walkable angle" has to mean to be worth stating.
+ */
+export function gradeStep(
+  from: Vec3,
+  x: number,
+  y: number,
+  terrain: TerrainSampler,
+): StepGradeValue {
+  const height = terrain.heightAt(x, y);
+  if (height <= WALKABLE_MIN_HEIGHT) return StepGrade.Refused;
+
+  // The jump rule, unchanged since spec 056 and now the only thing it does.
+  if (Math.abs(height - from.z) > MAX_STEP_HEIGHT) return StepGrade.Refused;
+
+  const slope = groundSlopeAt(x, y, height, (sx, sy) => terrain.heightAt(sx, sy));
+  const grade = gradeOfSlope(slope);
+  if (grade === GroundGrade.Cliff) return StepGrade.Refused;
+  return grade === GroundGrade.Climb ? StepGrade.Climb : StepGrade.Walk;
+}
+
+/**
+ * True when the ground at a point is somewhere a body may legally stand.
+ *
+ * The yes-or-no half of {@link gradeStep}, kept for the callers that only want
+ * one -- a step it refuses is a step no pace makes legal.
+ */
 export function isWalkable(
   from: Vec3,
   x: number,
   y: number,
   terrain: TerrainSampler,
 ): boolean {
-  const height = terrain.heightAt(x, y);
-  if (height <= WALKABLE_MIN_HEIGHT) return false;
-  return Math.abs(height - from.z) <= MAX_STEP_HEIGHT;
+  return gradeStep(from, x, y, terrain) !== StepGrade.Refused;
+}
+
+/**
+ * Shorten a step to climbing pace (spec 227).
+ *
+ * An interpolation of the *already slid* landing rather than a second
+ * `slideCircle`: the collider answer for this direction is in hand, and moving
+ * less far along it is strictly less likely to be inside something than moving
+ * the whole way -- `pushOutOfObstacles` runs afterwards either way.
+ *
+ * The shortened landing is graded again and the full one kept if it comes back
+ * refused, which is the case that would otherwise pin a body. On smooth ground
+ * a shorter step over the same slope is the same gradient and this never fires;
+ * at a lip the full step cleared, the rise stays and the run shrinks, and the
+ * ratio can cross the ceiling the full step passed.
+ *
+ * Shared by the server and the client's predictor, so a climb is not a
+ * correction.
+ */
+export function climbStep(
+  standingOn: Vec3,
+  from: Vec2,
+  landed: Vec2,
+  terrain: TerrainSampler,
+): Vec2 {
+  const slowed = {
+    x: from.x + (landed.x - from.x) * CLIMB_PACE,
+    y: from.y + (landed.y - from.y) * CLIMB_PACE,
+  };
+  return gradeStep(standingOn, slowed.x, slowed.y, terrain) === StepGrade.Refused ? landed : slowed;
 }
 
 export function resolveMovement(
@@ -201,19 +293,33 @@ export function resolveMovement(
   // vegetation; it knows nothing about a cliff face or a lake, so those are
   // checked here and refused by simply not moving.
   let blockedByTerrain = false;
-  if ((landed.x !== from.x || landed.y !== from.y) && !isWalkable(entity.position, landed.x, landed.y, terrain)) {
+  let grade: StepGradeValue = StepGrade.Walk;
+  if (landed.x !== from.x || landed.y !== from.y) {
+    grade = gradeStep(entity.position, landed.x, landed.y, terrain);
+  }
+  if (grade === StepGrade.Refused) {
     // Try each axis alone before giving up, so running along a shoreline slides
     // rather than sticking.
     const alongX = { x: landed.x, y: from.y };
     const alongY = { x: from.x, y: landed.y };
-    if (alongX.x !== from.x && isWalkable(entity.position, alongX.x, alongX.y, terrain)) {
+    const gradeX =
+      alongX.x === from.x ? StepGrade.Refused : gradeStep(entity.position, alongX.x, alongX.y, terrain);
+    const gradeY =
+      alongY.y === from.y ? StepGrade.Refused : gradeStep(entity.position, alongY.x, alongY.y, terrain);
+    if (gradeX !== StepGrade.Refused) {
       landed = alongX;
-    } else if (alongY.y !== from.y && isWalkable(entity.position, alongY.x, alongY.y, terrain)) {
+      grade = gradeX;
+    } else if (gradeY !== StepGrade.Refused) {
       landed = alongY;
+      grade = gradeY;
     } else {
       landed = from;
+      grade = StepGrade.Walk;
       blockedByTerrain = true;
     }
+  }
+  if (grade === StepGrade.Climb) {
+    landed = climbStep(entity.position, from, landed, terrain);
   }
 
   const settled = pushOutOfObstacles(landed, entity.radius, world);

@@ -12,7 +12,6 @@ import { DEFAULT_FENCE, FENCE_STYLES, fenceStep, type FenceStyle } from './fence
 import { DEFAULT_STRUCTURE, structureFootprint } from './structure.js';
 import { MARKER_KINDS, type MarkerPatch } from './markers.js';
 import { TERRAIN_COLORS } from '../palette.js';
-import { DEFAULT_WALK_SLOPE } from './nav.js';
 import { DEFAULT_SCATTER } from './scatter.js';
 
 /**
@@ -190,7 +189,6 @@ export interface EditorSettings {
   selLeashRadius: number;
   // Nav
   showNav: boolean;
-  walkSlope: number;
   // Parts (spec 084)
   partTool: PartTool;
   /** Which of `maps/recipes/` the add tool bakes. */
@@ -264,7 +262,6 @@ export function createEditorSettings(): EditorSettings {
     selRespawnSeconds: SPAWNER_UNSET,
     selLeashRadius: SPAWNER_UNSET,
     showNav: false,
-    walkSlope: DEFAULT_WALK_SLOPE,
     partTool: 'add',
     recipe: '',
     partSeed: 1,

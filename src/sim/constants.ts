@@ -165,15 +165,101 @@ export const MAX_DAMAGE_REDUCTION = 0.85;
 export const SEPARATION_ITERATIONS = 4;
 
 // --- Walking on ground that has height (spec 056) ---
-// The steepest single-tick climb a body may make. A move that would gain more
-// height than this is a cliff, and refusing it is what stops a client walking up
-// a wall -- the heightfield half of collision, next to the collider half in
-// collision.ts.
+// The biggest *discontinuity* a body may cross in one tick: a stair riser, the
+// lip of a carved plateau, the edge `heightAt`'s max-over-layers produces where
+// one rock tier meets another. A jump bigger than this is a wall.
 //
 // Here rather than in the server since spec 130, because the router has to
 // refuse exactly the steps movement refuses. `src/server/world/terrain.ts`
 // re-exports it, so the sim's own callers are unchanged.
+//
+// What it is NOT, since spec 227, is how steep a hill may be. It was doing both
+// jobs and could only do one honestly: a height per tick is an *angle* divided
+// by how far the body travelled, so the same hillside answered 69 degrees for a
+// body at `MOVE_SPEED_HARD_MAX` and 88.4 for a grazer -- the slower the body,
+// the steeper the ground it walked up, which is backwards, and a player walked
+// up 83.9 degrees head-on. Steepness is `MAX_WALK_SLOPE` below; this is the
+// jump, and the value has not moved.
+//
+// The two do not interfere, and that is arithmetic rather than luck. Binding
+// this on smooth ground needs `perTick * gradient > MAX_STEP_HEIGHT`, which at
+// the hard max of 9.17 units a tick needs a gradient of 2.6 -- well past
+// `MAX_CLIMB_SLOPE`. On any ground the grade rule permits, this never fires.
+// `walkability.test.ts` asserts that rather than leaving it to be re-derived.
 export const MAX_STEP_HEIGHT = 24;
+
+/**
+ * The steepest ground a body walks up, as a gradient (rise over run).
+ *
+ * **Derived, not chosen**: this is `DEFAULT_BANDS.rockSlope` from
+ * `src/terrain/classify.ts`, the gradient at which the classifier stops drawing
+ * ground as dirt and starts drawing it as bare rock. So "you can walk on it"
+ * and "it looks like ground rather than rock" are one number, which is what
+ * `editor/nav.ts` has claimed since spec 053 and what no number in the tree was
+ * -- there were four of them (0.45, 0.55, 0.6, 0.8), two carrying comments
+ * asserting agreement with a constant they did not equal.
+ *
+ * Written as a literal for the reason `NAV_TILE_CELLS` is: the dependency arrow
+ * runs `terrain -> sim`, and the deterministic core importing the terrain
+ * classifier to learn how steep a hill may be would invert it.
+ * `walkability.test.ts` asserts the two agree, so it is checked rather than
+ * remembered.
+ */
+export const MAX_WALK_SLOPE = 0.8;
+
+/**
+ * The steepest ground a body gets up at all, at `CLIMB_PACE` (spec 227).
+ *
+ * Between this and {@link MAX_WALK_SLOPE} is the climb band: crossed slowly
+ * rather than refused, which is what makes the walk limit affordable. At
+ * `MAX_WALK_SLOPE` alone, 2.12% of the shipped map would be condemned outright;
+ * as a pace band, 0.32% is.
+ *
+ * **Chosen, at twice the walk gradient** -- and what makes it free to be chosen
+ * rather than derived is that it is not what refuses a wall.
+ * {@link MAX_STEP_HEIGHT} is, and it does that job on a discontinuity whatever
+ * this says. So this only has to answer "past here the ground reads as a cliff
+ * face and a body should not be on it", which is a design question about
+ * scrambling and not a structural one.
+ */
+export const MAX_CLIMB_SLOPE = MAX_WALK_SLOPE * 2;
+
+/**
+ * How far the samples that decide how steep ground is reach out (spec 227).
+ *
+ * **The body's own radius**: the ground a body is standing on is the ground
+ * under its own footprint, and sampling past that is asking about ground it is
+ * not on. Judging the slope over the step a body happened to take this tick
+ * cannot work at any threshold instead -- `slope.ts` carries the arithmetic --
+ * so it has to be a fixed distance, and this is the one distance the question
+ * is about.
+ *
+ * Both directions were measured against the game's own baked stair, which is
+ * the shape that punishes getting it wrong at either end. At `PLAYER_RADIUS`
+ * the stair reads 0.89; at 24 it reads 2.38 and at 32, 1.79 -- because a
+ * flight is 40 units wide, so samples reaching further than a body do not land
+ * on the stair at all, and a walkway comes back as steep as the drop beside it.
+ * Shorter, and a riser stops being smoothed by its own tread: the local
+ * gradient of a riser is 2.64.
+ */
+export const SLOPE_BASELINE = PLAYER_RADIUS;
+
+/** Those two as angles, for anything that talks to a person. */
+export const MAX_WALK_ANGLE_DEG = (Math.atan(MAX_WALK_SLOPE) * 180) / Math.PI;
+export const MAX_CLIMB_ANGLE_DEG = (Math.atan(MAX_CLIMB_SLOPE) * 180) / Math.PI;
+
+/**
+ * How fast a body crosses the climb band, as a fraction of its own speed.
+ *
+ * A magnitude on the step, which is the shape `IdleGoal.pace` already has and
+ * which `resolveMovement` honours and `applyCrowd` round-trips exactly -- so a
+ * climb needs no second speed stat, nothing on the wire, and no correction:
+ * both ends derive it from the same ground through the same function.
+ *
+ * `IDLE_PACE`'s value, and for a related reason: it is the pace that reads as
+ * deliberate rather than as a body that has stopped working.
+ */
+export const CLIMB_PACE = 0.45;
 // Ground at or below this is deep water; nothing walks there, and nothing is
 // routed through it.
 export const WALKABLE_MIN_HEIGHT = SEA_LEVEL;
@@ -218,6 +304,18 @@ export const NAV_CLEARANCE = 4;
 // comfortable detour wins over a squeeze whenever there is one, low enough that
 // a long squeeze still beats a hopeless-looking way round.
 export const NAV_TIGHT_COST = 3;
+/**
+ * What a step steeper than `MAX_WALK_SLOPE` costs, in ordinary steps (spec 227).
+ *
+ * `NAV_TIGHT_COST`'s shape and its argument: a level way round should win when
+ * there is one, and a climb should still beat a route that does not exist. The
+ * number is not `NAV_TIGHT_COST` itself and is not derived from it -- a squeeze
+ * and a scramble are different prices for different reasons -- but it lands in
+ * the same place, because `1 / CLIMB_PACE` is 2.22 and a route that also
+ * *looks* worse than it costs is what keeps a body off a hillside it has no
+ * business on.
+ */
+export const NAV_STEEP_COST = 3;
 // How far from a blocked start or goal to look for a stand-in cell. In world
 // units rather than cells, so shrinking NAV_CELL_SIZE does not quietly shorten
 // the reach: a click into a grove needs to find the ground outside it.

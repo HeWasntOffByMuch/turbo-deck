@@ -62,6 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 227) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
@@ -287,6 +288,85 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  already a circle, so that one is exact.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against.
+                 slope.ts is how steep ground is (spec 227), and it is one file
+                 because it used to be four numbers -- 0.45, 0.55, 0.6 and 0.8 --
+                 two of them under comments claiming agreement with a constant
+                 they did not equal, and the one a designer could *see* reaching
+                 nothing at all. Before it there was no maximum walkable angle:
+                 `isWalkable` compared a rise against `MAX_STEP_HEIGHT`, which is
+                 a height **per tick**, so the angle it enforced was that height
+                 divided by how far the body had travelled -- 69 degrees at
+                 `MOVE_SPEED_HARD_MAX` and **88.4 for a grazer**, the slower body
+                 walking up the steeper hill, with a player going up 83.9 degrees
+                 head-on and 89.5 by leaning into it. The router meanwhile
+                 refused between 67.4 and 73.6 depending on which way the hill
+                 faced, because one threshold was applied over a 10-unit run and
+                 a 14.14-unit one; and the editor baked a third answer at 28.8,
+                 condemning 7.93% of the shipped map where the game refused
+                 0.06%.
+                 The fix is that **there are two questions and they were one
+                 rule**. `MAX_STEP_HEIGHT` is the *jump*: the biggest lip a body
+                 gets over, unchanged at 24, still exactly what refuses a tier
+                 edge and permits a stair riser -- read as a height it is
+                 direction-independent, and reading it as a slope is the whole of
+                 where the anisotropy came from. `MAX_WALK_SLOPE` /
+                 `MAX_CLIMB_SLOPE` are the *ground*, and being a property of the
+                 ground alone they are the same answer at every speed and from
+                 every approach, which is what a maximum walkable angle has to
+                 mean to be worth stating. Measured after: 58.0 degrees in all
+                 twelve cells of the probe's table, and 0.0 degrees of swing
+                 across seven aspects.
+                 The walk limit is **derived** -- `classify.ts`'s `rockSlope`, so
+                 "you can walk on it" and "it looks like ground rather than rock"
+                 are one number, which `editor/nav.ts` has claimed since spec 053
+                 and which no number in the tree was. The ceiling is **chosen**,
+                 at twice it, and what makes it free to be chosen is that it is
+                 not what refuses a wall.
+                 Two rules in the measurement itself, each learned by writing the
+                 other one first. **It has to span a fixed distance, and that is
+                 provable rather than a preference**: a stair is flat treads with
+                 short steep risers, and over the game's own baked stair a riser
+                 is a gradient of 2.64 -- 69 degrees -- over eight units while the
+                 flight is 0.6, so from one (rise, run) pair a riser and a smooth
+                 69-degree hillside are the same reading. Nor does an allowance
+                 separate them: at 155 units a second it has to sit between 2.7
+                 and 10.5, and at a grazer's 40 between 0.6 and 2.7, and those
+                 windows do not overlap. And **it is the gentler side of each
+                 axis, never the average**, because a plateau's rim is a *crease*
+                 and `ground-decal.ts` already names why sampling cannot see one
+                 -- a central difference across a rim averages flat ground with a
+                 cliff, so a body on a level plateau is refused a body's width
+                 short of its own edge, an invisible wall guarding a drop the
+                 jump rule was never going to let it step off anyway.
+                 `SLOPE_BASELINE` is `PLAYER_RADIUS` and was measured at both
+                 ends against that same stair: at a body's radius the flight
+                 reads 0.89, at 24 it reads 2.38 and at 32, 1.79 -- a flight is
+                 40 units wide, so samples reaching further than a body do not
+                 land on the stair and a walkway comes back as steep as the drop
+                 beside it. A stair the sim refuses is not a stair.
+                 A climb costs **pace, not permission**: `CLIMB_PACE` is a
+                 magnitude on the step, `IdleGoal.pace`'s shape, so
+                 `resolveMovement` already honours it and `applyCrowd` already
+                 round-trips it exactly -- and both ends derive it from the same
+                 function over the same ground, so a slope is not on the wire and
+                 is not a correction. In the router it is `NAV_STEEP`, a *cell*
+                 grade rather than a step one, passable at `NAV_STEEP_COST`
+                 beside `NAV_TIGHT_COST`; the slope pass runs last and writes
+                 only over `NAV_OPEN`, so a cell that is both a squeeze and a
+                 scramble is charged once rather than nine times. `groundClear`
+                 refuses it too, because a search that pays to go round a slope
+                 and a string pull that treats it as ordinary hand back exactly
+                 the route the cost existed to avoid.
+                 On `maps/arena`: 0.57% of the ground is a scramble and 0.07% is
+                 refused, against the 0.06% the router already refused -- so what
+                 moved is that the number is an angle, not what is reachable.
+                 `npx tsx scripts/probe-walkability.ts` is the instrument, and it
+                 caught its own fixture being wrong twice: a ramp with a *foot*
+                 in it measures the crease rather than the hill and reported 77
+                 degrees where the rule enforces 58, and a success criterion
+                 counting ground *gained* reports the approach angle rather than
+                 the slope, since at 85 degrees off the fall line a body barely
+                 advances uphill however legal the ground is.
                  avoidance.ts is how two bodies get past each other (spec 187):
                  ORCA, van den Berg et al.'s reciprocal collision avoidance,
                  RVO2's 2D solver transcribed rather than invented. Each
