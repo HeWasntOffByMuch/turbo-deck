@@ -593,10 +593,18 @@ class ApproachBoard {
         y: entity.position.y,
         radius: entity.radius,
         standoff,
-        // A body inside its own reach has stopped: it holds the ground it is on
-        // and takes none of the correction. Measured the same way `monsterIntent`
-        // decides it is not closing, so the two cannot disagree about which
-        // bodies are walking.
+        // A body inside its own reach has stopped: it holds the ground it is
+        // on and takes none of the correction.
+        //
+        // This is the geometric half of `monsterIntent`'s `closing`, and
+        // deliberately not the whole of it: an alert body and a fleeing one
+        // are not walking to a ring either, and both are counted here as
+        // though they were. Copying the rest of that rule would put a second
+        // copy of "is this body closing" in a pass that runs before the one
+        // that owns the question, and what the approximation costs is that
+        // such a body holds the bearing it would take if it engaged, on the
+        // ring it would take it at. It is about to, or it is about to stop
+        // being an attacker at all.
         pinned: distance <= standoff,
       };
       if (list) list.push(approach);
@@ -2162,8 +2170,6 @@ function monsterIntent(
   const steer = closing
     ? routeToward(monster, target.position, tick, context, ring)
     : { direction: null, entity: forgetPath(monster) };
-  const entity = steer.entity;
-
   // Face where it is walking; face the target once it has stopped to swing.
   const facing = steer.direction
     ? Math.atan2(steer.direction.y, steer.direction.x)
@@ -2176,7 +2182,7 @@ function monsterIntent(
   // and as interruptible as anyone else's.
   const wantsToSwing = !alert && !closing && monster.cast === null && swing !== null;
   return {
-    entity,
+    entity: steer.entity,
     charging: target.id,
     input: {
       entityId: monster.id,

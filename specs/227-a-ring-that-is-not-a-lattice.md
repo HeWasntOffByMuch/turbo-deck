@@ -154,6 +154,14 @@ Through the real `step`, over spec 187's own five scenarios
 | `gate` all bodies past the wall | tick 1029 | **942** |
 | `cross` body-frames touching | 3.7% | **3.3%** |
 
+Cost, stated rather than hidden: the placement itself is about **0.5us per
+attacker per tick**, and a whole tick with a hundred bodies conjured onto one
+quarry (`npx tsx scripts/bench-crowd.ts`) went **1.40ms to 1.55ms** — under a
+hundredth of a frame, for a lattice's bit-mask claims replaced by a sort and an
+`acos` per pair. The shipped map fields fourteen spawners of one monster each,
+where `approachPoints` returns empty for a lone attacker and the whole thing is
+free.
+
 Jitter is unmoved where it matters — `gate` p95 0.025 → 0.024, `herd` p95 0.007
 → 0.008 — which is the number to read, since the metrics module says a maximum
 is one tick of one body and a crowd feature is about what a crowd does for

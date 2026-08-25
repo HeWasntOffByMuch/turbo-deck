@@ -3128,7 +3128,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stated reason: the alternative is farming a level-6 exceptional
                  sigil every time somebody wants to look at the ring.
                  `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
-                 to a body because of the bodies around it (spec 187). Until they
+                 to a body because of the bodies around it (specs 187, 227). Until they
                  existed nothing on the server knew that two units were in the
                  same place: `resolveMovement` is handed `{ world, terrain,
                  config }` and has never once looked at another entity, so a herd
@@ -3179,28 +3179,104 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  exists because avoidance alone cannot fix a pack: avoidance
                  answers "how do I not walk into you", and the problem when twelve
                  bodies chase one player is that everybody genuinely wants the
-                 same place. So the surroundings are cut into evenly spaced angles
-                 on a ring at the attacker's own standoff, one body to a slot, and
-                 an attacker aims at its slot **while it closes** and stops when
-                 it is in reach, wherever on the way that happens. The ring is an
-                 approach preference and never a destination -- marching to an
-                 exact standing position is what makes a pack of animals look like
-                 a drill squad, and what makes them shuffle forever when the
-                 target moves. Three rules. **The ring is cut once per target, for
-                 the widest body on it**: cut per attacker, a spider's ring is
-                 seventeen slots and a ravager's is six, the two sets of angles do
-                 not line up, neither excludes the other, and the pair stack on
-                 exactly the ground the ring exists to keep them off. **Claims are
-                 two passes, reservations then new claims**: "your held slot wins
-                 if it is free" only protects a body from those processed after
-                 it, and claims are taken in creation order, so an older body with
-                 no slot walked off with the angle a younger one had been walking
-                 toward for a second. A body stopped in reach reserves too,
-                 because its slot is the ground it is standing on. And **the board
-                 is rebuilt every tick, never released by event**, since a body
-                 leaves a fight in half a dozen ways no release covers -- it dies,
-                 it is dragged past its leash, it loses interest, its chunk stops
-                 being simulated.
+                 same place. So each attacker takes a **bearing** on its target
+                 and aims at that bearing at its own standoff **while it closes**,
+                 stopping when it is in reach, wherever on the way that happens.
+                 The ring is an approach preference and never a destination --
+                 marching to an exact standing position is what makes a pack of
+                 animals look like a drill squad, and what makes them shuffle
+                 forever when the target moves.
+                 Spec 187 cut the ring into evenly spaced *slots* instead and
+                 handed one to each attacker, and spec 227 replaced that with
+                 angular separation because a lattice has to decide its own
+                 granularity and every answer it can give is wrong for somebody.
+                 It was cut once per target for the **widest body on it** -- it
+                 has to be, since a spider's ring is seventeen slots and a
+                 ravager's is six, and two sets of angles that do not line up
+                 stack the pair on exactly the ground the ring exists to keep them
+                 off -- so **one ravager joining twelve spiders took the count
+                 from 17 to 6 and left seven of the thirteen with no slot at all**,
+                 aiming at the quarry's centre. Twenty stalkers were ten slots and
+                 ten denied. Its angles were in the world frame, so a body
+                 approaching from the west was snapped up to `pi / count` off its
+                 own bearing -- 30 degrees with a ravager in the fight -- whether
+                 or not anybody else was there, which is a lone monster sidling.
+                 The bearing a body is given now is the bearing it already has,
+                 and bearings are moved **only where two of them are closer than
+                 the two bodies can actually stand**. Four things follow, and each
+                 is something the lattice could not do. One attacker is left
+                 exactly where it was aiming, and so are two arriving from
+                 opposite sides. An attacker that dies does not re-shuffle the
+                 survivors, because a gap only ever grows. A body standing in its
+                 place keeps it, so **there is no hysteresis to hold on the
+                 entity** -- `ServerEntity.attackSlot` is gone, and holding still
+                 is a fixed point rather than a property the assignment has to be
+                 careful to preserve. And the granularity is per pair rather than
+                 per target, so nothing is coarsened by the biggest body present.
+                 `requiredGap` is that pair rule, and it is the law of cosines
+                 between the two rings the bodies are on rather than a sum of the
+                 angles they each subtend. That is worth an `acos` for the two
+                 answers a sum cannot give: **zero**, when the rings are far
+                 enough apart that no bearing can make the bodies touch -- a
+                 slinger at 252 units and a stalker at 68 are never in each
+                 other's way, and separating them makes the slinger sidle for
+                 nothing -- and **pi**, when they overlap even facing away, where
+                 no ring can help. On equal rings it reduces to the chord formula
+                 `slotCount` divided a turn by, so nothing about a pack of one
+                 species is re-derived.
+                 The placement is a **cumulative pass, not a relaxation**, and
+                 that is the one thing here that had to be measured rather than
+                 reasoned about. The obvious version -- sweep the ring pushing
+                 each crowded pair apart by half its shortfall, a dozen times --
+                 is what the abandoned branch this is taken from wrote, and it is
+                 diffusion: information travels one body per pass, so the passes
+                 grow with the *square* of the bodies. From the worst start there
+                 is, every body arriving on one bearing, a ring filled to capacity
+                 was still short of the room it wanted by **22% of the gap at nine
+                 bodies and 64% at fifty-seven**, after eight passes each. Cutting
+                 the circle at the pair with the most room to spare -- which
+                 always exists, since the slacks sum to `TAU - wanted` -- turns it
+                 into a chain, and a chain settles exactly in three O(n) passes:
+                 push every shortfall forward, pull the far end back in if the
+                 chain outgrew the circle, and turn the whole ring back so the
+                 average body has not moved. That last step is free, since every
+                 constraint is on a *difference* of bearings, and it is what makes
+                 a pair sharing a bearing part about it rather than one of them
+                 being pushed round behind the other for having sorted first.
+                 A body that has **stopped is a wall**: it holds its true bearing
+                 at its true distance, and the body closing onto it takes the
+                 whole correction. That is spec 187's "somebody else's
+                 reservation is as good as a claim" in this geometry, and pinning
+                 at the *actual* distance is what lets the pair rule tell a body
+                 standing in reach from one loitering three hundred units out.
+                 There is **one ring and no queue**, and the version with a second
+                 one further out was written and measured before it was dropped:
+                 `standoff + k * step` is past `monsterIntent`'s `closing` test,
+                 which asks whether a body is inside *its own reach* rather than
+                 whether it arrived where it was sent -- so an outer-ring body
+                 walks to a point it can never register as reaching and stands
+                 there twitching at an aim it is already on. `converge` went from
+                 18 of 20 bodies ending within reach to **9 of 20**, the other
+                 eleven parked outside the fight, and `gate`'s jitter p95 from
+                 0.025 to 0.193. A ring too small for its pack shares itself out
+                 instead -- every gap shrinks by the same factor -- and `crowd.ts`
+                 resolves the density that leaves, which is what this game has
+                 avoidance for. Standing a pack back so it never shoves was the
+                 abandoned branch's premise, not this one's.
+                 The board is still **rebuilt every tick, never released by
+                 event**, since a body leaves a fight in half a dozen ways no
+                 release covers -- it dies, it is dragged past its leash, it loses
+                 interest, its chunk stops being simulated -- and it is planned
+                 for every target *before* the movement pass, because angular
+                 separation is a question about a target's whole crowd: the answer
+                 for the third attacker depends on the first two, so asking them
+                 one at a time would make it depend on creation order. What it
+                 costs is stated rather than hidden: the placement is about 0.5us
+                 per attacker per tick, and a whole tick with a hundred bodies
+                 conjured onto one quarry went 1.40ms to 1.55ms -- under a
+                 hundredth of a frame, against `converge` ending with **no two
+                 bodies touching at all** where the lattice had them touching on
+                 19.7% of body-frames.
                  The ring aim only applies where the straight line to the target
                  is clear, and that is not a simplification either: a ring point
                  is a place nobody has checked, so it can be inside the wall the

@@ -40,8 +40,8 @@
  * animals look like a drill squad, and it is also what makes them shuffle
  * forever when the target moves.
  *
- * Pure and part of the deterministic core. Every ordering is total -- distance
- * then bearing then id -- and there is no clock and no randomness.
+ * Pure and part of the deterministic core. Its one ordering is total -- bearing
+ * then id -- and there is no clock and no randomness.
  */
 
 import type { Vec2 } from '../../sim/types.js';
@@ -137,37 +137,23 @@ export function approachPoints(
   const points = new Map<number, Vec2>();
   if (attackers.length < 2) return points;
 
-  // Rings are filled nearest-first, which is both the natural reading --
-  // whoever got there first gets the inside -- and the stable one: a body on
-  // the inner ring is by definition closer than the bodies outside it, so the
-  // ordering reproduces itself rather than churning. Distance then id, so the
-  // order is total and the answer does not depend on how the caller offered
-  // them.
-  const byDistance = attackers
-    .map((approach) => ({
-      approach,
-      distance: Math.hypot(approach.x - target.x, approach.y - target.y),
-    }))
-    .sort((a, b) =>
-      a.distance === b.distance
-        ? a.approach.attackerId - b.approach.attackerId
-        : a.distance - b.distance,
-    );
-
-  const members: Placed[] = byDistance.map(({ approach, distance }) => ({
+  const members: Placed[] = attackers.map((approach) => ({
     approach,
     // A body still walking is measured at the ring it is being sent to; one
     // that has stopped is measured where it actually is. That is what lets the
     // pair rule tell a body standing in reach from one loitering far out: the
     // first is in everybody's way and the second is in nobody's.
-    ring: approach.pinned ? distance : approach.standoff,
+    ring: approach.pinned
+      ? Math.hypot(approach.x - target.x, approach.y - target.y)
+      : approach.standoff,
     fixed: approach.pinned,
     angle: bearingOf(target, approach),
   }));
 
-  // Sorted once and never re-sorted: the placement moves bearings by small
-  // amounts, and a body that crossed its neighbour part-way through would swap
-  // the constraint it is being held by.
+  // Bearing then id, which is a total order, so the answer does not depend on
+  // the order the caller offered them in. Sorted once and never re-sorted: the
+  // placement moves bearings by small amounts, and a body that crossed its
+  // neighbour part-way through would swap the constraint it is being held by.
   members.sort((a, b) =>
     a.angle === b.angle ? a.approach.attackerId - b.approach.attackerId : a.angle - b.angle,
   );
