@@ -99,6 +99,31 @@ function bearer(request: IncomingMessage, body: Record<string, unknown>): string
   return text(body, 'token');
 }
 
+/**
+ * The path part of a request target, whatever form it arrived in (spec 226).
+ *
+ * `request.url` is the target *verbatim*, and RFC 9112 allows absolute-form --
+ * `POST http://host/api/auth/guest HTTP/1.1` -- which a proxy or a hand-written
+ * client may well send. Matched with `startsWith('/api/auth/')` that declines,
+ * and the request falls through to the server's own 404: a correct request,
+ * refused. Measured against a raw socket before this existed.
+ *
+ * Parsed against a fixed base rather than the `Host` header, deliberately. The
+ * studio router next door normalises with `new URL(request.url, base)` built
+ * from `Host`, and a malformed one makes that throw -- which is the crash the
+ * request chain in `index.ts` now contains. There is nothing here that needs to
+ * know the authority, so this asks for less and cannot throw.
+ */
+function pathnameOf(target: string): string {
+  const withoutQuery = target.split('?')[0]?.split('#')[0] ?? '/';
+  if (withoutQuery.startsWith('/')) return withoutQuery;
+  // Absolute-form: take everything from the first slash after the authority.
+  const afterScheme = withoutQuery.indexOf('//');
+  if (afterScheme === -1) return withoutQuery;
+  const slash = withoutQuery.indexOf('/', afterScheme + 2);
+  return slash === -1 ? '/' : withoutQuery.slice(slash);
+}
+
 /** HTTP status for each way auth can refuse. */
 function statusFor(code: AuthError['code']): number {
   switch (code) {
@@ -131,7 +156,7 @@ export function createAuthHttp(options: AuthHttpOptions): (
   const { auth } = options;
 
   return async function handle(request, response): Promise<boolean> {
-    const url = (request.url ?? '/').split('?')[0] ?? '/';
+    const url = pathnameOf(request.url ?? '/');
     if (!url.startsWith('/api/auth/')) return false;
 
     // The preflight a cross-origin `fetch` sends before a POST carrying JSON

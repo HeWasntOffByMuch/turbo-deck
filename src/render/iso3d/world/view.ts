@@ -360,8 +360,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // The one branch in this file that decides what kind of game this is
   // (spec 144). No `?server` is single-player over a loopback, exactly as
   // before; `?server` connects out and constructs no server at all.
-  const plan = planConnection(location.search, location, sessionStorage, () =>
-    crypto.randomUUID(),
+  const plan = planConnection(
+    location.search,
+    location,
+    // Per tab: which body this one drives, and the token that resumes it.
+    sessionStorage,
+    () => crypto.randomUUID(),
+    // Per person: the account session, read from where it is written.
+    localStorage,
   );
 
   /**
@@ -378,6 +384,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * `Hello` itself with a message the banner already knows how to show. Trying
    * anyway is what keeps this compatible with a server that predates it.
    */
+  // A `?server=` value that was not one of the four schemes is dropped and the
+  // page's own origin used instead (spec 226). Said out loud, because the
+  // silent version is a tab that connects somewhere nobody asked for.
+  if (plan.mode === 'remote' && plan.ignoredServerValue !== '') {
+    console.warn(
+      `[net] ignored ?server=${plan.ignoredServerValue} -- it must start with ws://, wss://, http:// or https://. ` +
+        `Connecting to ${plan.url} instead.`,
+    );
+  }
+
   let authToken = plan.mode === 'remote' ? plan.authToken : '';
   /**
    * What the account window is showing (spec 226).

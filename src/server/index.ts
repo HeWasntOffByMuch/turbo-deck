@@ -168,7 +168,31 @@ const http = createServer((request, response) => {
       return;
     }
     response.writeHead(404).end('not found');
-  });
+    })
+    /**
+     * A handler that throws must not take the server down (spec 226).
+     *
+     * The chain was fired with `void` and had no catch, so any rejection
+     * anywhere in it became an unhandled rejection -- which Node 22 turns into
+     * a process exit by default. That is reachable **unauthenticated**: a
+     * request with a malformed `Host` header makes the studio router's
+     * `new URL(request.url, base)` throw before its own per-route try/catch,
+     * and one such request kills the game server. Verified against a raw
+     * socket: `Host: local host` and the process is gone.
+     *
+     * So the chain answers 500 and logs instead. A request listener is exactly
+     * where this belongs -- it contains every handler on the chain rather than
+     * the one that happened to be found.
+     */
+    .catch((error: unknown) => {
+      console.error(
+        `[server] request failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+      );
+      // Only if nothing has been written yet; a handler that threw mid-response
+      // has already committed a status.
+      if (!response.headersSent) response.writeHead(500).end('internal error');
+      else response.end();
+    });
 });
 
 /**

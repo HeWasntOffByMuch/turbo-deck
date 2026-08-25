@@ -130,6 +130,32 @@ but the *browser* holds one token and signing in replaces it, so from where the
 player is sitting that character stops being reachable. The warning says so and
 names the alternative, which is why Register is the tab that opens first.
 
+## Reaching the endpoints from the page
+
+Three deployment shapes, and they resolve the auth origin differently. That is
+what made the first cut of this look finished when it was not.
+
+- **`npm run dev` / `vite preview`, bare `?server`.** The client dials its own
+  origin -- that is what "no port to type" means -- and `httpOriginOf` derives
+  the auth origin from the same URL. So the sign-in request goes to *vite*, and
+  it needs a `/api/auth` entry in `server.proxy`. Without it the socket connects
+  through the proxy and only sign-in 404s, which reads as a socket bug and is a
+  proxy-table bug. `preview.proxy` falls back to `server.proxy`, so one entry
+  serves both -- a whole-object fallback, so adding any `preview.proxy` key
+  silently drops all three inherited entries.
+- **Any page, explicit `?server=ws://host:port`.** The browser reaches the game
+  server directly and the CORS headers carry it. No proxy involved.
+- **A built `dist/` on a static host, bare `?server`.** Nothing forwards
+  anything; this configuration cannot work and the client says so. An explicit
+  `?server=` is the only option, and over https both halves must be TLS or the
+  browser refuses them as mixed content.
+
+The proxy target is `httpOriginOf(GAME_SERVER)` rather than the variable itself,
+and the conversion is load-bearing: `http-proxy` picks its transport with
+`target.protocol === 'https:'` while defaulting the port with `/^https|wss/`, so
+a `wss:` target sends **cleartext to port 443** -- a silent downgrade, not a
+failure. Measured against a real vite 6.4.3.
+
 ## Out of scope
 
 - Typing into the form from a browser probe. The fields are on a canvas with no

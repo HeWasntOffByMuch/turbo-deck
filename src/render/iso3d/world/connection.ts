@@ -63,6 +63,22 @@ export type ConnectionPlan =
        */
       readonly authToken: string;
       /**
+       * A `?server=` value that was typed and then ignored (spec 226).
+       *
+       * `explicitUrl` recognises four lowercase scheme prefixes and answers
+       * null for everything else, and null falls back to the page's own origin
+       * -- so `?server=localhost:8787` does **not** dial :8787, it dials
+       * whatever served the page, silently. That is the same shape of confusion
+       * as the missing proxy: the client goes somewhere the player did not ask
+       * for and says nothing.
+       *
+       * Reported rather than refused, because falling back is the right
+       * behaviour for a bare `?server` and there is no way to tell a typo from
+       * a deliberate bare one except by whether a value was given. Empty when
+       * nothing was ignored. `view.ts` is what warns; this file stays pure.
+       */
+      readonly ignoredServerValue: string;
+      /**
        * Where this tab's `/api/auth/*` calls go: the same host as `url`, over
        * http(s) rather than ws(s). Derived here rather than at the call site so
        * that the one place which decides which server this tab talks to decides
@@ -157,21 +173,56 @@ function identify(
  * purpose: the loopback tab is the one every other spec's preview script
  * drives, and it must not start needing a server to boot.
  */
+/**
+ * Two storages, because this function reads two identities with two lifetimes
+ * (spec 226).
+ *
+ * `tabStorage` is `sessionStorage`: which body this tab drives, and the resume
+ * token that comes back to it. Per tab *and* surviving a reload is exactly the
+ * lifetime "two tabs are two players" needs.
+ *
+ * `accountStorage` is `localStorage`: who the person is. An account is not
+ * per-tab, and a guest character you keep is worth nothing if closing the tab
+ * loses the only credential that reaches it.
+ *
+ * A second parameter rather than a default, and that is the whole point of the
+ * change: it was one storage, `sessionStorage` was passed, and every *writer*
+ * used `localStorage` -- so `authToken` came back empty on every load,
+ * `needsGuestSession` was always true, and **the page minted a brand-new
+ * character every time it was refreshed**. Signing into an account survived
+ * exactly until the reload that signing in itself triggers. Making the caller
+ * name both is what stops that being expressible.
+ */
 export function planConnection(
   search: string,
   origin: OriginLike,
-  storage: StorageLike,
+  tabStorage: StorageLike,
   newId: () => string,
+  accountStorage: StorageLike,
 ): ConnectionPlan {
   const params = new URLSearchParams(search);
   if (!params.has('server')) return { mode: 'loopback' };
 
   const asked = params.get('server') ?? '';
-  const url = explicitUrl(asked) ?? sameOrigin(origin);
-  const { playerId, displayName } = identify(params, storage, newId);
-  const resumeToken = read(storage, SESSION_TOKEN_KEY) ?? '';
-  const authToken = read(storage, AUTH_TOKEN_KEY) ?? '';
-  return { mode: 'remote', url, playerId, displayName, resumeToken, authToken, httpOrigin: httpOriginOf(url) };
+  const explicit = explicitUrl(asked);
+  const url = explicit ?? sameOrigin(origin);
+  // A value was given and none of the four schemes matched, so it was dropped.
+  const ignoredServerValue = explicit === null && asked !== '' ? asked : '';
+  const { playerId, displayName } = identify(params, tabStorage, newId);
+  const resumeToken = read(tabStorage, SESSION_TOKEN_KEY) ?? '';
+  // The one field that comes from the other storage. Read from where
+  // `rememberAuthToken` writes, which is what was wrong.
+  const authToken = read(accountStorage, AUTH_TOKEN_KEY) ?? '';
+  return {
+    mode: 'remote',
+    url,
+    playerId,
+    displayName,
+    resumeToken,
+    authToken,
+    ignoredServerValue,
+    httpOrigin: httpOriginOf(url),
+  };
 }
 
 /**
@@ -184,8 +235,17 @@ export function planConnection(
  */
 export function httpOriginOf(wsUrl: string): string {
   const swapped = wsUrl.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
-  const path = swapped.indexOf('/', swapped.indexOf('//') + 2);
-  return path === -1 ? swapped : swapped.slice(0, path);
+  const afterScheme = swapped.indexOf('//') + 2;
+  // The origin ends at the first of a path, a query or a fragment. Cutting on
+  // '/' alone kept a query on a URL that had no path -- `ws://h:8787?x=1`
+  // produced an "origin" of `http://h:8787?x=1`, so the endpoint appended to it
+  // landed on `/` with a mangled query and the auth handler refused it.
+  let end = swapped.length;
+  for (const mark of ['/', '?', '#']) {
+    const at = swapped.indexOf(mark, afterScheme);
+    if (at !== -1 && at < end) end = at;
+  }
+  return swapped.slice(0, end);
 }
 
 /** Store the session token this tab signed in with. */

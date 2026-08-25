@@ -897,6 +897,29 @@ src/server/auth/  accounts, sessions, guests and claiming (spec 226). An interna
                  checks none -- so locking the HTTP half down would have
                  protected nothing and broken `?server=` pointing anywhere, which
                  is the whole shape of this client.
+                 What CORS **cannot** do is the case that shipped broken: with a
+                 bare `?server` the client dials its own origin, so in
+                 development the sign-in request goes to *vite* and never leaves
+                 it. That needs an `/api/auth` entry in `vite.config.ts`'s
+                 `server.proxy`, and its target is `httpOriginOf(GAME_SERVER)`
+                 rather than the variable -- `http-proxy` picks its transport
+                 with `target.protocol === 'https:'` while defaulting the port
+                 with `/^https|wss/`, so a `wss:` target sends **cleartext to
+                 port 443**. The conversion is the client's own function,
+                 imported rather than repeated, so the proxy target and the URL
+                 the browser builds cannot disagree; `dev-proxy.test.ts` asserts
+                 that relationship, and re-imports the config under a stubbed
+                 `GAME_SERVER` because CI never sets one and the default is the
+                 one value that is right by accident.
+                 `pathnameOf` is the other thing a socket found and no test had:
+                 `request.url` is the target verbatim, and RFC 9112 allows
+                 absolute-form, which `startsWith('/api/auth/')` declines -- a
+                 correct request, refused, with the endpoint sitting right
+                 there. And `index.ts`'s request chain has a `.catch` now,
+                 because it had none and was fired with `void`: a malformed
+                 `Host` header makes the studio router's `new URL` throw before
+                 its own try/catch, and one such **unauthenticated** request
+                 killed the process. Both verified against raw sockets.
                  `src/ui/screens/account.ts` is where a player reaches any of it
                  (spec 226), and until it existed the claim was a feature nobody
                  could press: a guest's character is claimable by one POST, and

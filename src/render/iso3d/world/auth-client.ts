@@ -20,6 +20,19 @@
 import type { StorageLike } from '../../../ui/core/layout-store.js';
 import { forgetAuthToken, rememberAuthToken } from './connection.js';
 
+/**
+ * The prefix every auth request goes under (spec 226).
+ *
+ * A constant rather than five string literals, because it is the thing the dev
+ * proxy has to forward: with a bare `?server` the client asks its **own
+ * origin**, so in development this path has to reach the game server through
+ * `vite.config.ts`. `dev-proxy.test.ts` asserts the two agree, which is what
+ * makes changing it here impossible to do quietly -- the failure it is guarding
+ * against is a sign-in that 404s against the dev server while the socket beside
+ * it connects perfectly.
+ */
+export const AUTH_PATH_PREFIX = '/api/auth';
+
 /** What `/api/auth/guest` and `/api/auth/session` answer with. */
 interface SessionBody {
   readonly session?: { readonly token?: unknown; readonly playerId?: unknown };
@@ -111,7 +124,7 @@ export async function ensureAuthToken(
 ): Promise<SignInOutcome> {
   try {
     if (!needsGuestSession(storedToken)) {
-      const check = await post(`${httpOrigin}/api/auth/session`, {}, storedToken);
+      const check = await post(`${httpOrigin}${AUTH_PATH_PREFIX}/session`, {}, storedToken);
       if (check.ok) {
         return { ok: true, token: storedToken, fresh: false, identity: identityFrom(await check.json()) };
       }
@@ -124,9 +137,17 @@ export async function ensureAuthToken(
       forgetAuthToken(storage);
     }
 
-    const created = await post(`${httpOrigin}/api/auth/guest`, {});
+    const created = await post(`${httpOrigin}${AUTH_PATH_PREFIX}/guest`, {});
     if (created.status === 404) {
-      return { ok: false, reason: 'this server does not hand out sessions' };
+      // Names the origin, because "this server" is ambiguous in exactly the
+      // configuration that produces this: with a bare `?server` the request
+      // goes to the *page's* origin, so a 404 means either the game server is
+      // not running or nothing is forwarding `/api/auth` to it -- and which of
+      // those it is cannot be told from here, but the origin says where to look.
+      return {
+        ok: false,
+        reason: `no session endpoint at ${httpOrigin} -- is the game server running, and is ${AUTH_PATH_PREFIX} proxied to it?`,
+      };
     }
     if (!created.ok) {
       return { ok: false, reason: `the server refused a guest session (${created.status})` };
@@ -228,7 +249,7 @@ export async function registerAccount(
 ): Promise<CredentialOutcome> {
   try {
     return await credential(
-      await post(`${httpOrigin}/api/auth/register`, form, guestToken),
+      await post(`${httpOrigin}${AUTH_PATH_PREFIX}/register`, form, guestToken),
     );
   } catch (error) {
     return failed(error);
@@ -248,7 +269,7 @@ export async function signInToAccount(
   form: { readonly login: string; readonly password: string },
 ): Promise<CredentialOutcome> {
   try {
-    return await credential(await post(`${httpOrigin}/api/auth/login`, form, guestToken));
+    return await credential(await post(`${httpOrigin}${AUTH_PATH_PREFIX}/login`, form, guestToken));
   } catch (error) {
     return failed(error);
   }
@@ -268,7 +289,7 @@ export async function signOutOfAccount(
   storage: StorageLike,
 ): Promise<void> {
   try {
-    await post(`${httpOrigin}/api/auth/logout`, {}, token);
+    await post(`${httpOrigin}${AUTH_PATH_PREFIX}/logout`, {}, token);
   } catch {
     /* an unreachable server does not stop us letting go of the credential */
   }

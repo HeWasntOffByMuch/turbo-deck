@@ -76,7 +76,7 @@ describe('the http origin a tab signs in against', () => {
   });
 
   it('rides on the plan, so one decision settles both halves', () => {
-    const plan = planConnection('?server', { protocol: 'https:', host: 'play.example.com' }, storage(), () => 'id');
+    const plan = planConnection('?server', { protocol: 'https:', host: 'play.example.com' }, storage(), () => 'id', storage());
     if (plan.mode !== 'remote') throw new Error('expected remote');
     expect(plan.httpOrigin).toBe('https://play.example.com');
     expect(plan.authToken).toBe('');
@@ -134,10 +134,16 @@ describe('ensuring a token', () => {
     expect(store.map.get(AUTH_TOKEN_KEY)).toBe('tok-old');
   });
 
-  it('reports rather than throwing when the endpoint is missing entirely', async () => {
+  it('names the origin when nothing answers there, because "this server" is ambiguous', async () => {
+    // The configuration that produces this is a bare `?server`, where the
+    // request goes to the *page's* origin rather than the game server's -- so
+    // the message has to say which origin it tried and what would forward it.
     stubFetch([{ status: 404 }]);
-    const outcome = await ensureAuthToken('http://localhost:8787', '', storage());
+    const outcome = await ensureAuthToken('http://localhost:5173', '', storage());
     expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toContain('http://localhost:5173');
+    expect(outcome.reason).toContain('/api/auth');
   });
 
   it('reports rather than throwing when the network is gone', async () => {

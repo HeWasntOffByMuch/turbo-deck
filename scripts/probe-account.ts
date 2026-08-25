@@ -57,6 +57,32 @@ const CHROMIUM_ARGS = [
 const LOGIN = 'probe_ada';
 const PASSWORD = 'a decent playtest password';
 
+/**
+ * Refuse a port that already answers.
+ *
+ * The rule `probe-admin-console.ts` records, learned the same way: a run after
+ * a failed one connects to the *previous* run's leaked server, on the same
+ * port, and reports every check green while measuring older code.
+ * `--strictPort` makes the second bind fail rather than drift to another port,
+ * but it fails *silently* inside a spawned process nobody reads, so the probe
+ * carries on against the squatter.
+ *
+ * Not hypothetical: a deliberate mutation of the proxy table passed here
+ * because a preview server from an earlier run -- started when the table was
+ * still correct -- held the port.
+ */
+async function refuseIfTaken(url: string, what: string): Promise<void> {
+  try {
+    await fetch(url, { method: 'GET', signal: AbortSignal.timeout(1500) });
+  } catch {
+    return; // nothing there, which is what we want
+  }
+  throw new Error(
+    `${what} at ${url} is already answering. A leaked server from an earlier run would be ` +
+      'measured instead of this build; stop it and run again.',
+  );
+}
+
 async function waitForServer(url: string, timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -106,8 +132,37 @@ async function waitForPlayer(page: Page, timeoutMs = 90_000): Promise<string> {
   throw new Error('the client never got a body');
 }
 
+/**
+ * The player id the tab's stored credential resolves to, asked of the server.
+ *
+ * Through `/api/auth/session` rather than off any client state, so what is
+ * compared is the identity the *server* agrees this tab has.
+ */
+async function whoAmI(page: Page, gamePort: number): Promise<string> {
+  return page.evaluate(
+    async ([origin]) => {
+      const token = localStorage.getItem('turbo-deck.net.auth') ?? '';
+      if (token === '') return '';
+      const response = await fetch(`${origin}/api/auth/session`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return '';
+      const body = (await response.json()) as { identity?: { playerId?: string } };
+      return body.identity?.playerId ?? '';
+    },
+    [`http://localhost:${gamePort}`] as const,
+  );
+}
+
 async function main(): Promise<void> {
   const problems: string[] = [];
+
+  // Before anything is spawned: a port that already answers means a leaked
+  // server from an earlier run, and measuring that is worse than not measuring.
+  await refuseIfTaken(`http://localhost:${PAGE_PORT}/`, 'a page server');
+  await refuseIfTaken(`http://localhost:${GAME_PORT}/`, 'a game server');
+
   const dataDir = mkdtempSync(join(tmpdir(), 'probe-account-'));
   const dbFile = join(dataDir, 'game.db');
 
@@ -120,10 +175,22 @@ async function main(): Promise<void> {
     stdio: 'ignore',
     env: { ...process.env, PORT: String(GAME_PORT), TURBO_DECK_DB: dbFile, ADMIN_SECRET: 'probe' },
   });
-  const pages = spawn('npx', ['vite', 'preview', '--port', String(PAGE_PORT), '--strictPort'], {
-    cwd: root,
-    stdio: 'ignore',
-  });
+  // `GAME_SERVER` so the preview server's proxy forwards `/ws` and `/api/auth`
+  // to *this* probe's game server rather than the default :8787. `vite preview`
+  // resolves `preview.proxy ?? server.proxy`, so the dev table applies here.
+  // vite's own entry rather than `npx vite`, for the reason the game server is
+  // launched that way: `npx` is a supervisor, so a SIGTERM to it leaves the
+  // grandchild holding the port -- which is precisely how this probe leaked a
+  // preview server that a later run then measured instead of its own build.
+  const pages = spawn(
+    process.execPath,
+    [join(root, 'node_modules', 'vite', 'bin', 'vite.js'), 'preview', '--port', String(PAGE_PORT), '--strictPort'],
+    {
+      cwd: root,
+      stdio: 'ignore',
+      env: { ...process.env, GAME_SERVER: `ws://localhost:${GAME_PORT}` },
+    },
+  );
   const browser = await chromium.launch({
     args: CHROMIUM_ARGS,
     ...(existsSync(CHROMIUM_PATH) ? { executablePath: CHROMIUM_PATH } : {}),
@@ -136,9 +203,14 @@ async function main(): Promise<void> {
 
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await context.newPage();
-    await page.goto(`http://localhost:${PAGE_PORT}/?server=ws://localhost:${GAME_PORT}/ws`, {
-      waitUntil: 'domcontentloaded',
-    });
+    // A **bare** `?server`, deliberately, and it is the whole reason this probe
+    // is worth running. An explicit `?server=ws://host:port/ws` points the auth
+    // origin straight at the game server and never touches the proxy -- which
+    // is what this probe used to do, and is exactly why it stayed green while
+    // `npm run dev` reported "this server does not hand out sessions". Bare is
+    // what a developer types, and it makes the page sign in against its own
+    // origin, through the proxy, the way a player's tab does.
+    await page.goto(`http://localhost:${PAGE_PORT}/?server`, { waitUntil: 'domcontentloaded' });
 
     const at = await waitForPlayer(page);
     console.log(`  playing as a guest, standing at ${at}`);
@@ -148,6 +220,21 @@ async function main(): Promise<void> {
     // this probe exists for, and it is invisible from the screen.
     const playerId = await page.evaluate(() => localStorage.getItem('turbo-deck.net.auth') ?? '');
     if (playerId === '') problems.push('the tab stored no session token');
+
+    // **A reload comes back to the same character.** This is the other failure
+    // that was invisible from the screen: the auth token was read out of
+    // `sessionStorage` and written to `localStorage`, so every load minted a
+    // fresh guest and a refresh silently abandoned everything on the old one.
+    // Every unit test passed throughout, because they hand the storage in.
+    const before = await whoAmI(page, GAME_PORT);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForPlayer(page);
+    const after = await whoAmI(page, GAME_PORT);
+    if (before === '' || before !== after) {
+      problems.push(`a reload changed character: ${before || '(none)'} -> ${after || '(none)'}`);
+    } else {
+      console.log(`  a reload came back to ${after}`);
+    }
 
     // `guest` because nothing has been registered, `idle` because no request is
     // in flight, and **`remote` because the window's buttons reach something**.
