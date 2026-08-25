@@ -160,9 +160,20 @@ export interface WelcomeInfo {
 }
 
 export interface GameClientOptions {
+  /**
+   * Who to ask to be.
+   *
+   * Advisory against a server with an auth gate: it answers with the player its
+   * own session record names, and `WelcomeInfo.playerId` is the one to believe.
+   */
   readonly playerId: string;
   readonly displayName?: string;
   readonly token?: string;
+  /**
+   * The session token from `/api/auth/*` (spec 224). Required by a server that
+   * authenticates; ignored by one that does not.
+   */
+  readonly authToken?: string;
   /**
    * The asset manifest hash this build was made against (spec 113).
    *
@@ -914,6 +925,10 @@ export class GameClient {
         // Empty on a first connection; set once a `Welcome` has issued one
         // and we are coming back to the same body (spec 150).
         resumeToken: this.token,
+        // The session this client signed in with (spec 224). Empty when there
+        // is nothing to sign into -- the in-tab server and the bot harness --
+        // and in that case the server falls back to `playerId` above.
+        authToken: this.options.authToken ?? '',
       }),
     );
     return pending;
