@@ -21,7 +21,14 @@ import { LOBED, slabLayout, trunkProfile } from './lobe.js';
 import { PALETTE } from './palette.js';
 import { fenceRotation } from './editor/fence.js';
 import { PLAYER_RADIUS } from '../../sim/constants.js';
-import { FENCE_KINDS, FENCE_TILE_LENGTH } from '../../terrain/vegetation.js';
+import {
+  FENCE_KINDS,
+  FENCE_TILE_LENGTH,
+  footprintRadius,
+  HOUSE_PLAN,
+  STRUCTURE_KINDS,
+  WELL_RADIUS,
+} from '../../terrain/vegetation.js';
 import { worldVegetation } from '../../terrain/vegetation.js';
 import { createArenaWorld } from '../../terrain/world.js';
 import type { Prop } from '../../terrain/vegetation.js';
@@ -509,6 +516,191 @@ describe('the conifer trunk, as built', () => {
  * offsets and three.js's rotation convention, and only a real field exercises
  * all three at once.
  */
+describe('the buildings as they are actually built (spec 224)', () => {
+  const flat = (): number => 0;
+
+  const structure = (kind: 'house' | 'well', rotation = 0, scale = 1): Prop => ({
+    kind,
+    x: 0,
+    y: 0,
+    scale,
+    rotation,
+    tint: 0,
+  });
+
+  interface Part {
+    readonly min: THREE.Vector3;
+    readonly max: THREE.Vector3;
+    readonly color: THREE.Color;
+  }
+
+  /**
+   * Every vertex a prop puts in the world, gathered per batch.
+   *
+   * Off the built field rather than off the part list, because what is being
+   * asked is where the geometry *lands* -- an offset applied the wrong way or a
+   * roof left at its own origin is invisible in a part table and obvious here.
+   */
+  function partsOf(prop: Prop): Part[] {
+    const field = buildPropField([prop], flat);
+    const matrix = new THREE.Matrix4();
+    const point = new THREE.Vector3();
+    const parts: Part[] = [];
+    field.group.updateMatrixWorld(true);
+    field.group.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh)) return;
+      const position = object.geometry.getAttribute('position');
+      const color = new THREE.Color();
+      if (object.instanceColor) object.getColorAt(0, color);
+      const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+      const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+      for (let i = 0; i < object.count; i++) {
+        object.getMatrixAt(i, matrix);
+        matrix.premultiply(object.matrixWorld);
+        for (let v = 0; v < position.count; v++) {
+          point.set(position.getX(v), position.getY(v), position.getZ(v)).applyMatrix4(matrix);
+          min.min(point);
+          max.max(point);
+        }
+      }
+      parts.push({ min, max, color: color.clone() });
+    });
+    field.dispose();
+    return parts;
+  }
+
+  /**
+   * The batch drawn in one palette tone.
+   *
+   * A part is named by what it is *made of*, which is the only unambiguous
+   * handle a built field offers: the geometry has been merged and instanced by
+   * then, and every rule of thumb about height or width picks up a neighbour --
+   * the first cut of this asked for "the widest thing under the eaves" and got
+   * the corner posts, which are wider than the walls by exactly the half of
+   * themselves that stands proud of each one.
+   *
+   * Exact rather than near: a prop at tint 0 takes the base colour untouched,
+   * so the two hexes are the same number or the part is not the one asked for.
+   */
+  function toned(parts: readonly Part[], hex: number): Part[] {
+    const want = new THREE.Color().setHex(hex);
+    return parts.filter((p) => p.color.getHex() === want.getHex());
+  }
+
+  /** The union of some parts, as one box. */
+  function span(parts: readonly Part[]): { min: THREE.Vector3; max: THREE.Vector3 } {
+    const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+    const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    for (const part of parts) {
+      min.min(part.min);
+      max.max(part.max);
+    }
+    return { min, max };
+  }
+
+  it('draws both kinds, and gives each more than a box', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      const parts = partsOf(structure(kind));
+      expect(parts.length).toBeGreaterThan(3);
+      expect(span(parts).max.y).toBeGreaterThan(60);
+    }
+  });
+
+  it('builds the hut\'s walls to the plan its collider is derived from', () => {
+    // The one number both halves read. A wall drawn wider than `HOUSE_PLAN` is
+    // a building somebody can stand in the side of, whatever the circle says.
+    const walls = toned(partsOf(structure('house')), PALETTE.hutWall);
+    expect(walls).toHaveLength(1);
+    const box = span(walls);
+    expect(box.max.x - box.min.x).toBeCloseTo(HOUSE_PLAN.width, 3);
+    expect(box.max.z - box.min.z).toBeCloseTo(HOUSE_PLAN.depth, 3);
+  });
+
+  it('sinks a building into the ground, so a slope shows no daylight under it', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      // Ground is at 0 here, so anything below it is buried skirt.
+      expect(span(partsOf(structure(kind))).min.y).toBeLessThan(-4);
+    }
+  });
+
+  it('stands the straw on the walls, with no gap and nothing floating', () => {
+    // The failure this is written against is a roof left at its own origin -- a
+    // hut with a slab of thatch lying on the grass beside it -- and its
+    // neighbour, a roof a few units clear of the wall because an offset was
+    // measured from the wrong datum.
+    const parts = partsOf(structure('house'));
+    const walls = span(toned(parts, PALETTE.hutWall));
+    const straw = span([
+      ...toned(parts, PALETTE.thatch),
+      ...toned(parts, PALETTE.thatchDeep),
+      ...toned(parts, PALETTE.thatchPale),
+    ]);
+    expect(straw.min.y).toBeCloseTo(walls.max.y, 6);
+    // ...and it reaches past the walls on every side, or the roof reads as a
+    // lid sitting exactly on a box.
+    expect(straw.min.x).toBeLessThan(-HOUSE_PLAN.width / 2);
+    expect(straw.max.x).toBeGreaterThan(HOUSE_PLAN.width / 2);
+    expect(straw.min.z).toBeLessThan(-HOUSE_PLAN.depth / 2);
+    expect(straw.max.z).toBeGreaterThan(HOUSE_PLAN.depth / 2);
+  });
+
+  it('puts the door in the wall it faces, not through it', () => {
+    // The door is the one part whose *side* matters: it says which way a hut is
+    // turned, and the editor's facing slider turns it. Front is local +Z.
+    const door = span(toned(partsOf(structure('house')), PALETTE.hollow));
+    expect(door.min.z).toBeGreaterThan(HOUSE_PLAN.depth / 2 - 3);
+    expect(door.min.y).toBeCloseTo(0, 6);
+  });
+
+  it('keeps the well\'s kerb inside the circle that blocks it', () => {
+    // The well is the one prop here whose collider is exact rather than erring
+    // wide, so the stonework must not reach past it -- stone you can walk
+    // through is the same bug as air you cannot, in the other direction. The
+    // batter at the foot is the buried part and is allowed its 3 units.
+    const kerb = span(toned(partsOf(structure('well')), PALETTE.drystone));
+    const reach = Math.max(-kerb.min.x, kerb.max.x, -kerb.min.z, kerb.max.z);
+    expect(reach).toBeLessThanOrEqual(WELL_RADIUS + 3.001);
+    expect(footprintRadius(structure('well'))).toBeCloseTo(WELL_RADIUS, 6);
+  });
+
+  it('turns the whole building, walls and roof together', () => {
+    // A quarter turn swaps the plan's two spans. If a part's local offsets
+    // turned the opposite way to its mesh -- the mistake a fence tile catches
+    // at once -- the straw would come off the hut instead.
+    const upright = span(partsOf(structure('house')));
+    const turned = span(partsOf(structure('house', Math.PI / 2)));
+    expect(turned.max.x - turned.min.x).toBeCloseTo(upright.max.z - upright.min.z, 3);
+    expect(turned.max.z - turned.min.z).toBeCloseTo(upright.max.x - upright.min.x, 3);
+    expect(turned.max.y).toBeCloseTo(upright.max.y, 6);
+    // ...and the door has come round with it.
+    const door = span(toned(partsOf(structure('house', Math.PI / 2)), PALETTE.hollow));
+    expect(door.min.x).toBeGreaterThan(HOUSE_PLAN.depth / 2 - 3);
+  });
+
+  it('scales a building whole, so a bigger hut is the same hut', () => {
+    const one = span(partsOf(structure('house')));
+    const big = span(partsOf(structure('house', 0, 2)));
+    expect(big.max.y).toBeCloseTo(one.max.y * 2, 4);
+    expect(big.max.x - big.min.x).toBeCloseTo((one.max.x - one.min.x) * 2, 4);
+  });
+
+  it('does not sway: a house is not a tree', () => {
+    // `buildRegionInstances` produces sway buffers only where every instance in
+    // a batch leans, and a building that leaned in the wind would be a building
+    // falling down.
+    const region = buildRegionInstances([structure('house'), structure('well')], flat);
+    expect(region.batches.length).toBeGreaterThan(0);
+    for (const batch of region.batches) expect(batch.sway).toBeNull();
+  });
+
+  it('is a kind the field knows it can draw', () => {
+    // The counterpart to the batch above: an unknown kind is counted as undrawn
+    // and warned about, and a building that landed there would be a prop saved
+    // into the map and never seen again.
+    expect(buildRegionInstances([structure('house'), structure('well')], flat).undrawnKinds).toEqual([]);
+  });
+});
+
 describe('fence tiles as they are actually built', () => {
   const flat = (): number => 0;
 

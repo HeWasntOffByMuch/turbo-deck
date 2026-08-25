@@ -22,7 +22,7 @@ import {
   TREE_SPECIES,
   type PropShading,
 } from './props.js';
-import { FENCE_KINDS } from '../../terrain/vegetation.js';
+import { FENCE_KINDS, STRUCTURE_KINDS } from '../../terrain/vegetation.js';
 import type { Prop } from '../../terrain/vegetation.js';
 
 const SMOOTH: PropShading = { smooth: true, creaseAngle: (50 * Math.PI) / 180, swayNormals: true };
@@ -49,8 +49,8 @@ function instancedIn(group: THREE.Object3D): THREE.InstancedMesh[] {
 }
 
 describe('the batch enumeration means the same thing on both sides', () => {
-  it('covers every species, the bush and every fence kind, and nothing else', () => {
-    expect(PROP_GROUP_COUNT).toBe(TREE_SPECIES.length + 1 + FENCE_KINDS.length);
+  it('covers every species, the bush, every fence kind and every structure, and nothing else', () => {
+    expect(PROP_GROUP_COUNT).toBe(TREE_SPECIES.length + 1 + FENCE_KINDS.length + STRUCTURE_KINDS.length);
   });
 
   it('answers with a part list for every group and none outside it', () => {

@@ -1,5 +1,6 @@
 import GUI from 'lil-gui';
 import { fenceStep } from './fence.js';
+import { STRUCTURE_SCALE_MAX, STRUCTURE_SCALE_MIN, STRUCTURE_SCALE_STEP } from './structure.js';
 import {
   FENCE_STYLE_CHOICES,
   MARKER_CHOICES,
@@ -16,6 +17,7 @@ import {
   SPAWNER_MONSTER_CHOICES,
   SPAWNER_UNSET,
   SPECIES_CHOICES,
+  STRUCTURE_CHOICES,
   TERRAIN_TOOL_CHOICES,
   TOOL_COLORS,
   visibleGroups,
@@ -163,6 +165,15 @@ export interface EditorPanel {
   refresh(): void;
   /** Re-read the parts list, after one has been added or removed (spec 084). */
   refreshParts(): void;
+  /**
+   * Re-read the building size, which the editor writes back after a drag.
+   *
+   * Its own hook rather than `refresh()`, because that one force-opens every
+   * folder it shows -- right when a mode is armed, and wrong on every
+   * placement: collapse the terrain folder, put a hut down, and it would
+   * spring back open.
+   */
+  syncStructureSize(): void;
   destroy(): void;
 }
 
@@ -294,6 +305,30 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // Set per tile as it is laid, so it changes what you paint next rather than
   // what is already on the ground.
   fence.add(s, 'variedColor').name('Colour variety');
+
+  // One press puts one building down where the cursor is (spec 224). There is
+  // no density and no spacing here, which is the whole difference from the
+  // scatter above: a village is a layout somebody decided.
+  const structures = gui.addFolder('Buildings');
+  strip(
+    structures,
+    STRUCTURE_CHOICES,
+    2,
+    () => s.structure,
+    (kind) => {
+      s.structure = kind;
+    },
+    () => MODE_COLORS.structure,
+  );
+  // Fifteen-degree steps, so a row of huts can be squared up to a street by
+  // eye. Degrees because that is the unit somebody turning a house thinks in;
+  // `placeStructure` converts once, on the way into the document.
+  structures.add(s, 'structureYaw', 0, 345, 15).name('Facing');
+  // The bounds are the drag's own, from `structure.ts`, so the slider cannot
+  // offer a size the drag refuses or stop short of one it reaches (spec 225).
+  const structureSize = structures
+    .add(s, 'structureScale', STRUCTURE_SCALE_MIN, STRUCTURE_SCALE_MAX, STRUCTURE_SCALE_STEP)
+    .name('Size');
 
   const markers = gui.addFolder('Markers');
   strip(
@@ -531,6 +566,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     paint.show(show.paint);
     scatter.show(show.scatter);
     fence.show(show.fence);
+    structures.show(show.structure);
     markers.show(show.marker);
     select.show(show.select);
     parts.show(show.part);
@@ -542,6 +578,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       [paint, show.paint],
       [scatter, show.scatter],
       [fence, show.fence],
+      [structures, show.structure],
       [markers, show.marker],
       [select, show.select],
       [parts, show.part],
@@ -557,6 +594,9 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     refreshParts: (): void => {
       refreshPartIds();
       refreshRockLayers();
+    },
+    syncStructureSize: (): void => {
+      structureSize.updateDisplay();
     },
     refresh(): void {
       gui.controllersRecursive().forEach((c) => c.updateDisplay());
