@@ -16,7 +16,16 @@ import { markerCaption, MARKER_COLORS, MARKER_GLYPHS } from './markers.js';
 
 /** Billboard size in world units, and how high it floats above its point. */
 const BILLBOARD_SIZE = 46;
-const STEM_HEIGHT = 90;
+/**
+ * How high a billboard floats above the point it marks.
+ *
+ * Exported since spec 222 for `probe-map-editor.ts`, which has to click on a
+ * *disc* to prove the select tool's billboard raycast fired rather than its
+ * ground fallback -- and the disc is this far above the ground the fallback
+ * would measure from. A probe that hardcoded 90 would go on passing after
+ * somebody changed it here, which is the failure a probe exists to prevent.
+ */
+export const STEM_HEIGHT = 90;
 
 /** Texture resolution for the generated disc. Small: it is a disc and a letter. */
 const TEXTURE_PX = 64;
