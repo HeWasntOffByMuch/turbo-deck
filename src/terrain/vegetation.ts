@@ -20,7 +20,8 @@ import { arenaBounds } from './world.js';
 
 /**
  * What a prop is. Trees and bushes are scattered over an area; the two fences
- * are laid along a path, one tile per prop (spec 058).
+ * are laid along a path, one tile per prop (spec 058); the two structures are
+ * put down one at a time, where somebody pointed (spec 222).
  */
 export type PropKind =
   | 'tree'
@@ -28,7 +29,9 @@ export type PropKind =
   | 'fence-wood'
   | 'fence-boards'
   | 'fence-brick'
-  | 'fence-rubble';
+  | 'fence-rubble'
+  | 'house'
+  | 'well';
 
 /**
  * The kinds that are a length of fence rather than a plant: a regular one and a
@@ -41,6 +44,48 @@ export type FenceKind = (typeof FENCE_KINDS)[number];
 export function isFenceKind(kind: PropKind): kind is FenceKind {
   return (FENCE_KINDS as readonly string[]).includes(kind);
 }
+
+/**
+ * The kinds that are a building rather than a plant or a boundary (spec 222).
+ *
+ * A hut to make a village out of and a well to put in the middle of it. They are
+ * grouped for one reason: neither is *painted*. A tree is scattered by density
+ * and a fence is laid along a path, and a building goes in one spot, turned to
+ * face a square -- so the editor gives them a press-to-place tool of their own
+ * and this is the list it offers.
+ */
+export const STRUCTURE_KINDS = ['house', 'well'] as const;
+export type StructureKind = (typeof STRUCTURE_KINDS)[number];
+
+export function isStructureKind(kind: PropKind): kind is StructureKind {
+  return (STRUCTURE_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * The hut's plan at scale 1, in world units, along its own local axes: the
+ * ridge runs down `width`, and the front wall faces `depth`.
+ *
+ * Here beside the kinds rather than in either of the two modules that want it,
+ * for the reason {@link FENCE_TILE_LENGTH} is: the renderer builds the walls
+ * from it and `FOOTPRINT_BASE` derives the collider from it, and if those two
+ * ever disagree the game gets a building you can stand inside or an invisible
+ * wall around one.
+ *
+ * Sized against the body it has to look right next to -- a unit is about 56 tall
+ * and 32 across -- so this is roughly four and a half bodies wide and a little
+ * under two tall to the eaves. Small enough that a handful make a village rather
+ * than a city block.
+ */
+export const HOUSE_PLAN = { width: 148, depth: 124 } as const;
+
+/**
+ * The well's kerb radius at scale 1: what you cannot walk through, and what the
+ * renderer builds the stonework out of.
+ *
+ * A little over half a hut across. Smaller and it reads as a bucket from the
+ * height this camera sits at, which is where the first cut of it landed.
+ */
+export const WELL_RADIUS = 44;
 
 /**
  * How long one fence tile runs, in world units at scale 1.
@@ -196,6 +241,16 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   'fence-boards': FENCE_TILE_LENGTH / 2,
   'fence-brick': FENCE_TILE_LENGTH / 2,
   'fence-rubble': FENCE_TILE_LENGTH / 2,
+  // The plan's **circumradius**, so every corner of the building is inside the
+  // circle and there is no way to stand in one (spec 222). That is the fence's
+  // own rule -- a rectangle is not a circle and erring wide is the side that
+  // keeps a wall a wall -- and the cost is stated rather than hidden: the circle
+  // reaches about 30 units past the middle of each flat face, so a body stops
+  // roughly two of its own radii short of the wall there. A building somebody
+  // can stand in the corner of is the worse of the two.
+  house: Math.hypot(HOUSE_PLAN.width, HOUSE_PLAN.depth) / 2,
+  // A well *is* a circle, so this one is exact.
+  well: WELL_RADIUS,
 };
 /**
  * Fallback for a kind this build has no footprint for -- a map written by a
