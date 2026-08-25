@@ -568,7 +568,7 @@ describe('persistence never carries a derived stat', () => {
     expect(armed?.stats.armor).toBeGreaterThan(session.stats.armor);
 
     // Flushed explicitly, because an equip marks the player dirty rather than
-    // writing inline (spec 224). What this test is about is the *shape* of what
+    // writing inline (spec 226). What this test is about is the *shape* of what
     // reaches the store, and that is unchanged -- so the flush is a line of
     // setup rather than a change to the property being asserted.
     await manager.persistNow(['p1']);

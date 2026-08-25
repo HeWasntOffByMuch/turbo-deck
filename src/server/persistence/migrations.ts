@@ -1,5 +1,5 @@
 /**
- * The schema, as a list of numbered steps (spec 224).
+ * The schema, as a list of numbered steps (spec 226).
  *
  * A real mechanism rather than `CREATE TABLE IF NOT EXISTS` forever, and the
  * difference that matters is not the table -- it is that an *edit* to an

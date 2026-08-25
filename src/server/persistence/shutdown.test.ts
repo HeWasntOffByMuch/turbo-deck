@@ -1,5 +1,5 @@
 /**
- * Shutdown flushing, at the service level (spec 224).
+ * Shutdown flushing, at the service level (spec 226).
  *
  * The shape requirement 9 asks for: a dirty player, a shutdown, a reopened
  * database, and the latest state on disk. Driven through the real

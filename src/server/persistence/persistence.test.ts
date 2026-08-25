@@ -1,5 +1,5 @@
 /**
- * Player persistence and restart durability (spec 224).
+ * Player persistence and restart durability (spec 226).
  *
  * The claim this file exists to make is the one the whole feature rests on:
  * **a character written before a restart is the same character after it.** So

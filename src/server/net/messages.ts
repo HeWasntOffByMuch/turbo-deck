@@ -79,7 +79,7 @@ export interface HelloMessage {
    */
   readonly resumeToken: string;
   /**
-   * The session token this client holds (spec 224).
+   * The session token this client holds (spec 226).
    *
    * Obtained out of band -- `POST /api/auth/guest`, `/register` or `/login` --
    * and presented on every connection. When the server has an auth gate, this

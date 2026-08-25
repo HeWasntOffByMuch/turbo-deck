@@ -106,7 +106,7 @@ const studio = createStudio({
 
 /**
  * The database, opened and migrated before anything can take a connection
- * (spec 224).
+ * (spec 226).
  *
  * At the top level rather than inside a `try` that carries on: an unreadable
  * file, a failed migration or a schema from a newer build all mean the same
@@ -184,7 +184,7 @@ const server = new GameServer({
   assetManifestHash: assetManifestHash(),
   store: persistence.store,
   // With this supplied, a `Hello` must carry a session token and the player id
-  // on the frame is ignored (spec 224). This is the difference between the
+  // on the frame is ignored (spec 226). This is the difference between the
   // thing on a port and the one running in a player's own tab.
   authGate: persistence.authGate,
   onSaveError: (playerId, error) => {
@@ -193,7 +193,7 @@ const server = new GameServer({
 });
 
 /**
- * The periodic flush (spec 224). Dirty players are written every
+ * The periodic flush (spec 226). Dirty players are written every
  * `AUTOSAVE_MS`; trades and purchases do not wait for it and write when they
  * happen.
  */
@@ -247,7 +247,7 @@ http.listen(port, () => {
 });
 
 /**
- * Graceful shutdown (spec 224).
+ * Graceful shutdown (spec 226).
  *
  * The sequence itself is `persistence/shutdown.ts`, so that "runs once" and
  * "cannot hang" are properties with tests rather than two lines here nobody can

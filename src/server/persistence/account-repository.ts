@@ -1,5 +1,5 @@
 /**
- * Accounts (spec 224). The only file that knows the `accounts` table exists.
+ * Accounts (spec 226). The only file that knows the `accounts` table exists.
  *
  * It stores a password *hash* and nothing else about a password: there is no
  * method here that takes or returns a plaintext one, which is what makes

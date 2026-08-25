@@ -124,7 +124,7 @@ export const INTEREST_CHUNK_RADIUS = 3;
  * list per chunk sent to every client, and its only reader was the editor's nav
  * overlay -- which loads the map off disk and has never streamed. Removed from
  * the document in the same change, so there is nothing left to send.
- * 20: `Hello` carries an `authToken` (spec 224). A trailing string, so an older
+ * 20: `Hello` carries an `authToken` (spec 226). A trailing string, so an older
  * client's frame decodes as far as `resumeToken` and then runs out -- which is
  * a decode error rather than a silent misread, and is why this is a version
  * bump rather than an append somebody could get away with. What it is *for* is
@@ -544,7 +544,7 @@ function clampConfigValue(key: LiveConfigKey, value: number): number {
 }
 
 /**
- * Where the database lives, relative to the repository root (spec 224).
+ * Where the database lives, relative to the repository root (spec 226).
  *
  * `data/game.db` because it is the obvious place and there was no existing
  * convention to follow -- the only sibling is `.studio/`, which is hidden
@@ -559,7 +559,7 @@ export const DEFAULT_DB_FILE = 'data/game.db';
 
 /**
  * How long the graceful shutdown gets before the process is killed anyway
- * (spec 224).
+ * (spec 226).
  *
  * A bound rather than a hope: the flush and the close are awaited, and a
  * database that has wedged -- a lock nobody releases, a disk that stopped
@@ -576,7 +576,7 @@ export const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 /**
  * How often the server sweeps expired sessions out of the database
- * (spec 224).
+ * (spec 226).
  *
  * Hourly, because the table only grows with connections and nothing reads an
  * expired row. Deliberately not on the tick loop's clock: it is housekeeping

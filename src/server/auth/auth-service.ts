@@ -1,6 +1,6 @@
 /**
  * Register, login, logout, guests, and turning a guest into an account
- * (spec 224).
+ * (spec 226).
  *
  * An internal module, not a server: it is a class the game server constructs,
  * holding repositories, with no port of its own. The three concepts it keeps

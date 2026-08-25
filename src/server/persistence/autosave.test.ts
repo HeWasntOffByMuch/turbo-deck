@@ -1,5 +1,5 @@
 /**
- * Dirty tracking and the periodic flush (spec 224).
+ * Dirty tracking and the periodic flush (spec 226).
  *
  * The four properties `autosave.ts` claims, asserted rather than described. The
  * third and fourth are the ones worth having tests for, because they are the

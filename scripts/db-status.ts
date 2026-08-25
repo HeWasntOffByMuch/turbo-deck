@@ -1,5 +1,5 @@
 /**
- * What is in the database (spec 224): `npx tsx scripts/db-status.ts`.
+ * What is in the database (spec 226): `npx tsx scripts/db-status.ts`.
  *
  * The one script this feature earns. Everything else about it is testable in
  * Node, but "which database is my server actually using, what schema is it at,

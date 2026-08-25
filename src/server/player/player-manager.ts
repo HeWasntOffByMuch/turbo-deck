@@ -191,7 +191,7 @@ export class PlayerManager {
   private readonly byEntity = new Map<number, string>();
   /**
    * Logged-in players whose record has changed since it was last written
-   * (spec 224).
+   * (spec 226).
    *
    * A set of ids rather than a flag on the session, because a session is
    * replaced wholesale on every `commit` and a flag on it would be copied
@@ -348,7 +348,7 @@ export class PlayerManager {
    * End a session, flushing whatever it had not saved.
    *
    * The disconnect flush is a *safety net* rather than the save mechanism
-   * (spec 224): the autosave loop has already written this player within the
+   * (spec 226): the autosave loop has already written this player within the
    * interval, and this catches the seconds since. So a failure here is logged
    * and swallowed rather than thrown -- the session is over either way, and
    * throwing out of a disconnect handler would take the connection teardown
@@ -412,7 +412,7 @@ export class PlayerManager {
    * Re-derive stats from a session's record and clamp the live pools to the new
    * ceilings. Pure: it commits nothing and writes nothing.
    *
-   * Split out of {@link recalculate} for one caller (spec 224). A trade has to
+   * Split out of {@link recalculate} for one caller (spec 226). A trade has to
    * persist *before* it commits to memory, so that a failed write leaves both
    * bags exactly as they were -- which means it needs the finished session
    * before anything has been made true, and `recalculate` only hands one back
@@ -449,7 +449,7 @@ export class PlayerManager {
    *
    * It used to end in `store.savePlayer` (spec 056), which made every equip,
    * unequip, allocation and purchase a synchronous write of the whole record.
-   * Against a Map that was free; against a database it is the pattern spec 224
+   * Against a Map that was free; against a database it is the pattern spec 226
    * exists to replace. It marks the player dirty instead, and
    * `persistence/autosave.ts` writes them in batches -- with the operations
    * that must not wait (a trade, a purchase) calling {@link persistNow}
@@ -617,7 +617,7 @@ export class PlayerManager {
     const updated = await this.recalculate(playerId);
     if (!updated) return { ok: false, reason: 'not logged in' };
     // A purchase moves currency, so it is written now rather than at the next
-    // flush (spec 224). Judgement rather than a rule applied everywhere: an
+    // flush (spec 226). Judgement rather than a rule applied everywhere: an
     // equip or a spent skill point neither creates nor destroys anything and
     // can wait, and a crash that rewinds one is a crash that rewinds a choice.
     // A crash that rewinds a *sale* hands back an item that was paid for.
@@ -698,7 +698,7 @@ export class PlayerManager {
    * not, in memory or on disk.
    *
    * The order is **persist, then commit**, and it is the opposite of what the
-   * first version did (spec 224). Committing first and saving after leaves a
+   * first version did (spec 226). Committing first and saving after leaves a
    * failed write with the exchange already true in memory and false on disk --
    * so a crash before the next autosave un-does half a trade that both players
    * watched happen, and the half it un-does depends on which record the loop
@@ -925,7 +925,7 @@ export class PlayerManager {
 }
 
 /**
- * A brand-new character, as data (spec 224).
+ * A brand-new character, as data (spec 226).
  *
  * Module-level so that `auth/` can create the player row a guest session has to
  * reference without reaching into a manager, a zone map or a world. There is

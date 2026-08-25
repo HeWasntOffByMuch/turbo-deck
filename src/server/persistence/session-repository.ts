@@ -1,5 +1,5 @@
 /**
- * Sessions (spec 224). The only file that knows the `sessions` table exists.
+ * Sessions (spec 226). The only file that knows the `sessions` table exists.
  *
  * The rule the whole table is shaped around: **what is stored is a hash, never
  * a token.** `create` is handed a hash and the caller keeps the one copy of the

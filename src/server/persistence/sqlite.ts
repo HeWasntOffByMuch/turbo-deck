@@ -1,5 +1,5 @@
 /**
- * Opening, configuring and closing the database (spec 224).
+ * Opening, configuring and closing the database (spec 226).
  *
  * `node:sqlite` rather than a native dependency, and that is the whole reason
  * this file is three functions long: the driver ships with the runtime, so

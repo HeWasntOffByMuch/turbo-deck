@@ -12,7 +12,7 @@ dist/
 # does get committed is what Export writes into assets/units/.
 .studio/
 
-# The live database (spec 224). A developer's save file, not source: the schema
+# The live database (spec 226). A developer's save file, not source: the schema
 # is in src/server/persistence/migrations.ts and is what gets reviewed. WAL and
 # shared-memory sidecars go with it.
 data/

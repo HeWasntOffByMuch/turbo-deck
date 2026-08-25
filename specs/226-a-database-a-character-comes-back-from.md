@@ -1,4 +1,4 @@
-# 224 — A database a character comes back from
+# 226 — A database a character comes back from
 
 ## Problem
 
@@ -96,12 +96,47 @@ Three decisions worth arguing over, stated so they can be:
   second claim refused, and a failed registration leaving the guest intact.
 - Logging into an existing account does not overwrite its player.
 - A dirty player, `server.stop()`, a reopened database, latest state present.
+- The account form's button is live exactly when the server would take the
+  request -- asserted by running both against the same drafts, not by trusting
+  that two copies of a bound agree.
+- Registering emits and changes nothing; the screen says "account" only when it
+  is told. A password is masked on screen and unmasked to its owner.
+- In a real browser: the binding opens the window, the window reports that its
+  buttons reach a server rather than nothing, and a claim lands on the character
+  being played rather than making a second one beside it.
+
+## The account window
+
+Added after the rest of it, because the rest of it was a feature nobody could
+reach: a guest's character is claimable by one `POST` and there was no way to
+press that from inside the game, so every playtester stayed anonymous and one
+cleared browser away from losing everything.
+
+`src/ui/screens/account.ts` is the form and it is pure like every other screen.
+Two departures, both stated rather than assumed. It **holds the draft**, because
+what somebody is half way through typing is not something a server knows. And
+its **validation is injected** -- `world/account-model.ts` runs the server's own
+`validateLogin`/`validatePassword`, so the greyed-out button and the refused
+request cannot come to different answers, which is the rule
+`inventory-model.ts` already follows.
+
+The window opens on `KeyU`, and the mount takes an optional `AccountCapability`
+-- absent for the in-tab server, which has nobody to sign into, exactly as
+`authGate` is absent on that server's own side.
+
+The line the screen exists to get right is the warning under Sign in. The server
+never merges and never deletes, so the guest character is genuinely still there;
+but the *browser* holds one token and signing in replaces it, so from where the
+player is sitting that character stops being reachable. The warning says so and
+names the alternative, which is why Register is the tab that opens first.
 
 ## Out of scope
 
-- The renderer acquiring a token. The endpoints and the wire field are here; the
-  Play tab still runs an in-tab server with no gate, which is the only mode
-  `npm run dev` has.
+- Typing into the form from a browser probe. The fields are on a canvas with no
+  published boxes, and every rule they apply is asserted against the real
+  widgets in Node; what a browser is for here is the wiring.
+- Password reset. There is none, which is why the form asks for the password
+  twice.
 - Persisting the world: ground drops, monsters and spawner clocks are still
   per-process. Only players, moderation and the audit log outlive a boot.
 - Password reset, email, rate limiting on `/api/auth/*`, and multiple characters

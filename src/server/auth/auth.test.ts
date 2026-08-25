@@ -1,5 +1,5 @@
 /**
- * Registration, login and sessions (spec 224).
+ * Registration, login and sessions (spec 226).
  *
  * The distinction the whole module is built on -- account, player, session --
  * is what most of these assert: that a login gets *that account's* player, that

@@ -180,7 +180,7 @@ export interface GameServerOptions {
   readonly adminVerifier?: AdminTokenVerifier;
   readonly store?: DataStore;
   /**
-   * Who a connection is (spec 224).
+   * Who a connection is (spec 226).
    *
    * An injected capability, exactly like `adminVerifier` above and for the same
    * reason. **Supplied**, a `Hello` must carry a session token this gate
@@ -195,7 +195,7 @@ export interface GameServerOptions {
    */
   readonly authGate?: AuthGate;
   /**
-   * Called when a save fails, with the player it was for (spec 224).
+   * Called when a save fails, with the player it was for (spec 226).
    *
    * A callback rather than a `console` because `GameServer` runs in a browser
    * tab as well as in Node; the entrypoint decides what a log line looks like.
@@ -231,7 +231,7 @@ interface Connection {
   playerId: string | null;
   /**
    * The account behind this connection, or null for a guest or an
-   * unauthenticated server (spec 224).
+   * unauthenticated server (spec 226).
    *
    * Recorded rather than used: no game rule reads it, and that is the point --
    * gameplay keys on `playerId`. It is here so an admin listing and an audit
@@ -581,7 +581,7 @@ export class GameServer implements AdminHost {
 
   /**
    * Stop taking work, write everything down, and close the database
-   * (spec 224).
+   * (spec 226).
    *
    * The order is the whole of it and each step is there for a reason:
    *
@@ -1112,7 +1112,7 @@ export class GameServer implements AdminHost {
       });
       return;
     }
-    // Who this connection actually is (spec 224).
+    // Who this connection actually is (spec 226).
     //
     // With a gate configured, the identity comes out of the session token and
     // the `playerId` on the frame is discarded -- which is the whole of
@@ -1259,7 +1259,7 @@ export class GameServer implements AdminHost {
     const stale = this.lingering.get(playerId);
     if (stale) await this.reap(playerId, stale.entityId);
 
-    // A load can fail (spec 224), and what happens then is a decision rather
+    // A load can fail (spec 226), and what happens then is a decision rather
     // than an oversight.
     //
     // The two ways it does are a database that has gone away and a save that
@@ -1556,7 +1556,7 @@ export class GameServer implements AdminHost {
   /**
    * Returns the teardown, which every caller but one deliberately ignores.
    *
-   * The one that does not is {@link stop} (spec 224): a disconnect ends in
+   * The one that does not is {@link stop} (spec 226): a disconnect ends in
    * `players.logout`, which *writes*, and shutdown closes the database a few
    * lines later. With today's synchronous store the write lands before this
    * function returns, so awaiting changes nothing -- and that is an accident of

@@ -1,5 +1,5 @@
 /**
- * Guest play and claiming (spec 224).
+ * Guest play and claiming (spec 226).
  *
  * Requirements 5 and 6, which are the two halves of one promise: **you can play
  * without registering, and registering later does not cost you what you did.**

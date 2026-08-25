@@ -1,5 +1,5 @@
 /**
- * Session tokens and the ids beside them (spec 224).
+ * Session tokens and the ids beside them (spec 226).
  *
  * The rule: **the server generates the credential and stores only its hash.**
  * A token is 32 bytes from `randomBytes` -- 256 bits, so guessing one is not a

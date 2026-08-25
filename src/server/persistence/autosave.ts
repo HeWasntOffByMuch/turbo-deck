@@ -1,5 +1,5 @@
 /**
- * The periodic flush (spec 224).
+ * The periodic flush (spec 226).
  *
  * The rule it exists to hold: **a gameplay mutation marks a player dirty, and
  * this is the only thing that turns dirty into a write.** Before it, every

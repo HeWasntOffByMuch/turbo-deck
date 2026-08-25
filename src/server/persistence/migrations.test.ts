@@ -1,5 +1,5 @@
 /**
- * The migration mechanism (spec 224).
+ * The migration mechanism (spec 226).
  *
  * What is asserted is what requirement 9 asks for: an empty database
  * initializes, running the migrations repeatedly does not corrupt anything, and

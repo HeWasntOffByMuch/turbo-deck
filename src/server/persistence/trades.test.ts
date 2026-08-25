@@ -1,5 +1,5 @@
 /**
- * Trades commit atomically, or not at all (spec 224).
+ * Trades commit atomically, or not at all (spec 226).
  *
  * The requirement in one sentence: **there must never be a committed state
  * where one half of a trade happened and the other did not.** So the tests do

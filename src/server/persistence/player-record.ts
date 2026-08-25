@@ -1,5 +1,5 @@
 /**
- * `PersistedPlayer` <-> a row in `players` (spec 224).
+ * `PersistedPlayer` <-> a row in `players` (spec 226).
  *
  * The one file that knows the storage shape of a player, which is what keeps
  * requirement "no raw SQL scattered through gameplay code" true in the other

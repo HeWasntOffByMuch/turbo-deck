@@ -1,5 +1,5 @@
 /**
- * Standing the persistence and auth stack up (spec 224).
+ * Standing the persistence and auth stack up (spec 226).
  *
  * One function, so `index.ts` reads as "open the database, build the server"
  * rather than as six lines of wiring nobody can check the order of. It is also

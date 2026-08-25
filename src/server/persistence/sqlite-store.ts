@@ -1,5 +1,5 @@
 /**
- * `DataStore` over SQLite (spec 224).
+ * `DataStore` over SQLite (spec 226).
  *
  * Spec 056 wrote the seam and said a real store would be "a new class
  * implementing the same shape, and no caller changes". This is that class, and

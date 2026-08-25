@@ -20,7 +20,7 @@ export const PLAYER_NAME_KEY = 'turbo-deck.net.name';
 /** The resume token from this tab's last session (spec 150). */
 export const SESSION_TOKEN_KEY = 'turbo-deck.net.session';
 /**
- * The auth session token this tab signed in with (spec 224).
+ * The auth session token this tab signed in with (spec 226).
  *
  * `localStorage`, not `sessionStorage`, and it is the one identity here that
  * deliberately does not follow the "two tabs are two players" rule above: an
@@ -57,7 +57,7 @@ export type ConnectionPlan =
        */
       readonly resumeToken: string;
       /**
-       * The session token to present in `Hello` (spec 224). Empty when this tab
+       * The session token to present in `Hello` (spec 226). Empty when this tab
        * has never signed in; `ensureAuthToken` is what fills it, and a server
        * with no auth gate ignores it either way.
        */

@@ -32,7 +32,7 @@ export interface DataStore {
   savePlayer(player: PersistedPlayer): Promise<void>;
   /**
    * Write several players so that either all of them land or none do
-   * (spec 224).
+   * (spec 226).
    *
    * On the interface rather than reached for by casting the SQLite store,
    * because it is the primitive a trade rests on: "there must never be a
@@ -46,7 +46,7 @@ export interface DataStore {
   listPlayerIds(): Promise<readonly string[]>;
 
   /**
-   * Run `body` with everything it writes in one transaction (spec 224).
+   * Run `body` with everything it writes in one transaction (spec 226).
    *
    * Synchronous by signature, and that is the constraint rather than an
    * oversight: a SQLite transaction belongs to a connection, so an `await`

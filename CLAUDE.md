@@ -80,7 +80,9 @@ change a game outcome.
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
-| `npm run server` | The authoritative server, plus the admin console. Opens and migrates `data/game.db` itself (spec 224); there is no database to start |
+| `npm run server` | The authoritative server, plus the admin console. Opens and migrates `data/game.db` itself (spec 226); there is no database to start |
+| `npx tsx scripts/db-status.ts` | What is in `data/game.db`: schema version, row counts, and which migrations have run (spec 226). Never prints a token or a hash |
+| `npm run build && npx tsx scripts/probe-account.ts` | Claim a guest character through the shipped page and read the database back to check the account owns *that* character (spec 226) |
 | `npm run server:bots` | Headless bot clients, for load and for watching prediction |
 
 CI (`.github/workflows/ci.yml`) runs typecheck + lint + test on every push
@@ -738,7 +740,7 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  import scale is measured rather than invented. It exists so the
                  preview, the deformation checks and the screenshot baselines
                  have a subject before a credit is spent.
-src/server/persistence/  SQLite, and the seam it sits behind (spec 224). Nothing
+src/server/persistence/  SQLite, and the seam it sits behind (spec 226). Nothing
                  in `sim/`, `world/`, `player/` or `data/` knows this directory
                  exists: spec 056 wrote `DataStore` and said a real store would
                  be "a new class implementing the same shape, and no caller
@@ -813,7 +815,7 @@ src/server/persistence/  SQLite, and the seam it sits behind (spec 224). Nothing
                  position and progression per player, and **never** a trade or a
                  purchase. Verified against a real `kill -9` -- committed
                  transactions survive and `PRAGMA integrity_check` says `ok`.
-src/server/auth/  accounts, sessions, guests and claiming (spec 224). An internal
+src/server/auth/  accounts, sessions, guests and claiming (spec 226). An internal
                  module rather than a server: a class the game server
                  constructs, holding repositories, with no port of its own.
                  The three concepts it keeps apart are the design, and they are
@@ -884,7 +886,46 @@ src/server/auth/  accounts, sessions, guests and claiming (spec 224). An interna
                  unknown login is verified against a **dummy hash** so it costs
                  the same as a real one -- the generic error message is only half
                  the defence against an account-existence oracle, and the timing
-                 is the other half.
+                 is the other half. Its headers are deliberately **open** to any
+                 origin, and the reason is that nothing here is authenticated by
+                 an ambient credential: there is no cookie, every request carries
+                 its bearer token explicitly, so a hostile page can make a
+                 browser send a request and cannot make it send somebody else's
+                 token. `Access-Control-Allow-Credentials` is absent for that
+                 reason and must stay absent if a cookie is ever added. The
+                 socket beside it already accepts any origin -- `WebSocketTransport`
+                 checks none -- so locking the HTTP half down would have
+                 protected nothing and broken `?server=` pointing anywhere, which
+                 is the whole shape of this client.
+                 `src/ui/screens/account.ts` is where a player reaches any of it
+                 (spec 226), and until it existed the claim was a feature nobody
+                 could press: a guest's character is claimable by one POST, and
+                 every playtester stayed anonymous and one cleared browser away
+                 from losing everything. Pure like every screen, with two stated
+                 departures. It **holds the draft**, because what somebody is
+                 half way through typing is not something a server knows or
+                 should -- the account itself still arrives through `setAccount`
+                 and is never inferred from a button having been pressed. And its
+                 **validation is injected**: `world/account-model.ts` runs the
+                 server's own `validateLogin`/`validatePassword` against the
+                 draft, so a greyed-out button and a refused request cannot
+                 disagree about what a legal login is. The one rule the screen
+                 adds is that the two password fields match, which is a fact
+                 about a form -- there is one password on the wire.
+                 The line it exists to get right is the warning under Sign in.
+                 `AuthService.login` never merges and never deletes, so the guest
+                 character genuinely is still there; but the **browser holds one
+                 token and signing in replaces it**, so from where the player is
+                 sitting that character stops being reachable. A warning that
+                 said "it stays where it is" would be true about the database and
+                 a lie about their evening, so it says so plainly and names the
+                 alternative -- which is why Register is the tab that opens first.
+                 `TextField.masked` is the one widget change, and it is a
+                 *painting* rule only: `text` still answers what was typed and
+                 the caret still counts real characters, because a mask that
+                 reached the value would be a second, lossy copy of it. `*`
+                 rather than a bullet, since this font has a fixed symbol set and
+                 a missing glyph draws as a solid block.
 src/server/studio/  the unit authoring service (spec 108). Node-only, wired in from
                  src/server/index.ts and imported by nothing in the server's
                  portable half, because this is where the Tripo API key lives.

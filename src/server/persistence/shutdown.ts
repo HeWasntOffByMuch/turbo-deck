@@ -1,5 +1,5 @@
 /**
- * The graceful shutdown sequence (spec 224).
+ * The graceful shutdown sequence (spec 226).
  *
  * Out of `index.ts` and into a module so it can be *tested*. Requirement 11
  * asks for a handler that cannot run twice and cannot hang, and both are

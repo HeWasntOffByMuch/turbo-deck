@@ -1,5 +1,5 @@
 /**
- * Reading and writing players (spec 224).
+ * Reading and writing players (spec 226).
  *
  * The only file in the codebase that knows the `players` table exists. Gameplay
  * asks `PlayerManager`, `PlayerManager` asks `DataStore`, and `SqliteDataStore`

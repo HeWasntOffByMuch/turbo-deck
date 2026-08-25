@@ -1,5 +1,5 @@
 /**
- * Test scaffolding for the persistence and auth suites (spec 224).
+ * Test scaffolding for the persistence and auth suites (spec 226).
  *
  * The rule it exists to enforce, which is requirement 9's and is not negotiable:
  * **a test never touches the developer's database.** Every helper here opens a

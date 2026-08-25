@@ -1,5 +1,5 @@
 /**
- * What the game server knows about authentication (spec 224).
+ * What the game server knows about authentication (spec 226).
  *
  * Two small types and no implementation, which is the point: `server.ts` is the
  * portable half -- it runs in a browser tab for single player, so it may not

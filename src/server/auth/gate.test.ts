@@ -1,5 +1,5 @@
 /**
- * The auth gate, through the real message path (spec 224).
+ * The auth gate, through the real message path (spec 226).
  *
  * The claim being tested is the one the acceptance criteria state and no unit
  * test of `AuthService` can make: **against a server that authenticates,

@@ -1,5 +1,5 @@
 /**
- * The migration runner (spec 224).
+ * The migration runner (spec 226).
  *
  * Small enough to read in one sitting, which is the point: a one-developer game
  * wants a mechanism it can debug at 2am, not a framework. What it guarantees:
