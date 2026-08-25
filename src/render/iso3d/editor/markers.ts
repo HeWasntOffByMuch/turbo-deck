@@ -1,4 +1,10 @@
-import type { ChunkCoord, MapChunkStore, MapMarker, MapMarkerKind } from '../../../terrain/index.js';
+import type {
+  ChunkCoord,
+  MapChunkStore,
+  MapMarker,
+  MapMarkerKind,
+  MapSpawnerSettings,
+} from '../../../terrain/index.js';
 
 /**
  * Placing and clearing markers (spec 052). Pure: no three.js, no DOM.
@@ -138,4 +144,124 @@ export function eraseMarkers(
     for (const c of store.chunksWithin(layerId, at.x, at.z, at.radius)) onTouchChunk(c.cx, c.cz);
   }
   return store.removeMarkersWithin(layerId, at.x, at.z, at.radius);
+}
+
+/**
+ * The marker nearest a world point, within `radius`, or null (spec 222).
+ *
+ * Used to answer "which marker did that click name" for a pick that came back
+ * as a *ground* point rather than as a billboard -- and as the pure statement of
+ * the rule the billboard pick has to agree with.
+ *
+ * Nearest rather than first, and ties broken on id, because a tie is not a
+ * hypothetical here: markers are dropped at cursor positions and two of them
+ * can sit on the same spot exactly. An answer that depended on the order chunks
+ * happen to iterate in would make clicking the same place twice select two
+ * different things.
+ */
+export function markerAt(
+  markers: readonly MapMarker[],
+  x: number,
+  z: number,
+  radius: number,
+): MapMarker | null {
+  if (!(radius > 0) || !Number.isFinite(x) || !Number.isFinite(z)) return null;
+  const r2 = radius * radius;
+  let best: MapMarker | null = null;
+  let bestD2 = Infinity;
+  for (const marker of markers) {
+    const d2 = (marker.x - x) ** 2 + (marker.z - z) ** 2;
+    if (d2 > r2) continue;
+    if (d2 < bestD2 || (d2 === bestD2 && best !== null && marker.id < best.id)) {
+      best = marker;
+      bestD2 = d2;
+    }
+  }
+  return best;
+}
+
+/** What the select tool may change about a marker. Every field optional. */
+export interface MarkerPatch {
+  readonly kind?: MapMarkerKind;
+  readonly label?: string;
+  readonly x?: number;
+  readonly z?: number;
+  readonly spawner?: MapSpawnerSettings;
+}
+
+/**
+ * The marker `patch` turns `marker` into, with the document's own rules applied.
+ *
+ * Pure, and separate from the store write below it, because everything worth
+ * getting right here is a *decision* and nothing here is a mutation:
+ *
+ * - **A kind that cannot read a spawner's numbers does not carry them.** The
+ *   parser refuses that document (spec 222), so a select tool that let somebody
+ *   turn a spawner into a campfire and kept its leash radius would produce a map
+ *   that saves and will not load. Dropped here rather than checked at the save,
+ *   because the moment a kind changes is the moment it stops being true.
+ * - **An empty label is absent, not `''`.** A spawner's label is the monster it
+ *   spawns and the rest are free text; storing an empty string would put a key
+ *   in the document meaning nothing, which `placeMarker` already avoids on the
+ *   way in.
+ * - **An empty settings block is absent**, on the same terms, and for the same
+ *   reason the parser normalizes one: a block somebody emptied and no block are
+ *   the same statement.
+ */
+export function patchMarker(marker: MapMarker, patch: MarkerPatch): MapMarker {
+  const kind = patch.kind ?? marker.kind;
+  const label = patch.label ?? marker.label;
+  const spawner = patch.spawner ?? marker.spawner;
+  const kept =
+    kind !== 'spawner' || spawner === undefined
+      ? undefined
+      : spawner.respawnSeconds === undefined && spawner.leashRadius === undefined
+        ? undefined
+        : spawner;
+  return {
+    kind,
+    id: marker.id,
+    x: patch.x ?? marker.x,
+    z: patch.z ?? marker.z,
+    ...(label === undefined || label.trim() === '' ? {} : { label }),
+    ...(kept === undefined ? {} : { spawner: kept }),
+  };
+}
+
+export interface UpdateMarkerResult {
+  /** What the marker became, or null if nothing holds that id or it landed nowhere. */
+  readonly marker: MapMarker | null;
+  readonly dirty: readonly ChunkCoord[];
+}
+
+/**
+ * Apply a patch to the marker with this id (spec 222).
+ *
+ * The one write the select tool makes, whether it is renaming a spawner or
+ * dragging it across the map -- `MapChunkStore.updateMarker` re-files it when
+ * the point moved, so a move is not a special case here or anywhere above.
+ *
+ * Chunks are announced *before* the write, exactly as `placeMarker` does, so an
+ * undo entry captures the state the edit is about to replace. Both the chunk it
+ * came from and the one it is going to, since a drag across a seam changes two.
+ */
+export function updateMarker(
+  store: MapChunkStore,
+  layerId: string,
+  id: string,
+  patch: MarkerPatch,
+  onTouchChunk?: (cx: number, cz: number) => void,
+): UpdateMarkerResult {
+  const current = store.markers(layerId).find((m) => m.id === id);
+  if (!current) return { marker: null, dirty: [] };
+  const next = patchMarker(current, patch);
+
+  if (onTouchChunk) {
+    const reach = Math.max(1, store.cellSize);
+    for (const c of store.chunksWithin(layerId, current.x, current.z, reach)) onTouchChunk(c.cx, c.cz);
+    for (const c of store.chunksWithin(layerId, next.x, next.z, reach)) onTouchChunk(c.cx, c.cz);
+  }
+
+  const dirty = store.updateMarker(layerId, id, next);
+  return dirty ? { marker: next, dirty } : { marker: null, dirty: [] };
 }

@@ -1,9 +1,9 @@
-import type { MapMarkerKind, PropKind } from '../../../terrain/index.js';
+import type { MapMarker, MapMarkerKind, PropKind } from '../../../terrain/index.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 import { DEFAULT_BRUSH, TERRAIN_TOOLS, type TerrainTool } from './brush.js';
 import { DEFAULT_PAINT_MATERIAL, PAINT_MATERIALS, type PaintMaterial } from './paint.js';
 import { DEFAULT_FENCE, FENCE_STYLES, fenceStep, type FenceStyle } from './fence.js';
-import { MARKER_KINDS } from './markers.js';
+import { MARKER_KINDS, type MarkerPatch } from './markers.js';
 import { TERRAIN_COLORS } from '../palette.js';
 import { DEFAULT_WALK_SLOPE } from './nav.js';
 import { DEFAULT_SCATTER } from './scatter.js';
@@ -26,6 +26,7 @@ export type EditorMode =
   | 'scatter'
   | 'fence'
   | 'marker'
+  | 'select'
   | 'erase'
   | 'part'
   | 'rock';
@@ -39,6 +40,10 @@ export const EDITOR_MODES: readonly EditorMode[] = [
   'scatter',
   'fence',
   'marker',
+  // Beside the marker tool for the same reason paint is beside terrain: placing
+  // one and correcting one are the two halves of the same question, and until
+  // spec 222 only the first half existed.
+  'select',
   'erase',
   'part',
   'rock',
@@ -73,6 +78,9 @@ export const MODE_COLORS: Record<EditorMode, number> = {
   scatter: 0x8fe0b4,
   fence: 0xd8a878,
   marker: 0xd0d0e8,
+  // Cyan: the one tool here that changes nothing by itself, so it wants a colour
+  // no other ring on the ground is wearing.
+  select: 0x6fd8e0,
   erase: 0xe08f8f,
   part: 0x9fb8e8,
   rock: 0x9aa4b0,
@@ -146,6 +154,21 @@ export interface EditorSettings {
   /** Which monster a `spawner` marker spawns (spec 076). Ignored by other kinds. */
   spawnerMonster: string;
   showArena: boolean;
+  // Select (spec 222). Deliberately its own set rather than reusing the marker
+  // tool's above: what I am about to *place* and what I have *selected* are two
+  // questions, and selecting a campfire must not silently re-arm the placement
+  // dropdown to place campfires.
+  /** The id of the selected marker, or `''` for nothing. Never a reference. */
+  selectedMarkerId: string;
+  selKind: MapMarkerKind;
+  /** A spawner's monster, chosen from the roster rather than typed. */
+  selMonster: string;
+  /** Every other kind's free text -- a `trigger` named `boss-door` is worth reading. */
+  selLabel: string;
+  /** Seconds before this spawner refills. {@link SPAWNER_UNSET} = the server's own. */
+  selRespawnSeconds: number;
+  /** How far its body may be dragged. {@link SPAWNER_UNSET} = the sim's own. */
+  selLeashRadius: number;
   // Nav
   showNav: boolean;
   walkSlope: number;
@@ -212,6 +235,12 @@ export function createEditorSettings(): EditorSettings {
     markerKind: 'spawner',
     spawnerMonster: SPAWNER_MONSTER_CHOICES[0]?.value ?? '',
     showArena: true,
+    selectedMarkerId: '',
+    selKind: 'spawner',
+    selMonster: SPAWNER_MONSTER_CHOICES[0]?.value ?? '',
+    selLabel: '',
+    selRespawnSeconds: SPAWNER_UNSET,
+    selLeashRadius: SPAWNER_UNSET,
     showNav: false,
     walkSlope: DEFAULT_WALK_SLOPE,
     partTool: 'add',
@@ -243,6 +272,30 @@ export function cursorColor(settings: EditorSettings): number {
 export const MARKER_CURSOR_RADIUS = 30;
 
 /**
+ * How far a *ground* click reaches for a marker to select (spec 222).
+ *
+ * The select tool aims at the billboards first, which is exact and is what a
+ * person is actually pointing at. This is the fallback for a click that hit no
+ * billboard, and it is generous on purpose: a marker's disc floats
+ * `STEM_HEIGHT` above the point it marks, so somebody aiming a little low hits
+ * ground that is some way from the marker, and how far depends on the camera's
+ * pitch. Wider than the billboard is, so the two answers overlap rather than
+ * leaving a band where neither fires.
+ */
+export const SELECT_PICK_RADIUS = 70;
+
+/**
+ * The value of a spawner's number meaning "the server decides" (spec 222).
+ *
+ * Zero rather than a separate "override this?" toggle, because both numbers are
+ * refused at zero by `spawnPointsFrom` -- an instant respawn and a leash of
+ * nothing are not settings anybody could have meant -- so the value is free to
+ * mean the one thing left. One control per number rather than two, and a slider
+ * that starts where "unset" is.
+ */
+export const SPAWNER_UNSET = 0;
+
+/**
  * How wide the ring on the ground is drawn.
  *
  * Not always `settings.radius`, because not every tool works under a circle. A
@@ -252,6 +305,10 @@ export const MARKER_CURSOR_RADIUS = 30;
  */
 export function cursorRadius(settings: EditorSettings): number {
   if (settings.mode === 'fence') return fenceStep(settings) / 2;
+  // The select tool's ring says how far a click on the *ground* reaches for a
+  // marker, which is what the pick falls back to when it missed every billboard
+  // -- so it is a real footprint rather than a "here", and it is its own number.
+  if (settings.mode === 'select') return SELECT_PICK_RADIUS;
   if (settings.mode === 'marker') return MARKER_CURSOR_RADIUS;
   // A part is a rectangle drawn by its own outline, so the ring says only
   // "here", not how big the thing about to land is. A tier is dragged out the
@@ -277,6 +334,7 @@ export interface ToolVisibility {
   readonly scatter: boolean;
   readonly fence: boolean;
   readonly marker: boolean;
+  readonly select: boolean;
   readonly part: boolean;
   readonly rock: boolean;
 }
@@ -294,6 +352,7 @@ export function visibleGroups(mode: EditorMode): ToolVisibility {
     scatter: mode === 'scatter',
     fence: mode === 'fence',
     marker: mode === 'marker',
+    select: mode === 'select',
     part: mode === 'part',
     rock: mode === 'rock',
   };
@@ -366,3 +425,74 @@ export const FENCE_STYLE_CHOICES = choices(FENCE_STYLES, { wood: 'picket' });
  * tile at a time along a path and would be nonsense sprinkled over an area.
  */
 export const SPECIES_CHOICES = choices(['tree', 'bush'] as const satisfies readonly PropKind[]);
+
+/** The settings fields the select tool owns, as one object (spec 222). */
+export type MarkerSelection = Pick<
+  EditorSettings,
+  'selectedMarkerId' | 'selKind' | 'selMonster' | 'selLabel' | 'selRespawnSeconds' | 'selLeashRadius'
+>;
+
+/**
+ * What selecting this marker loads into the panel (spec 222).
+ *
+ * Pure, so "the panel shows what the marker says" is a fact a test can assert
+ * rather than something to check by clicking. The one judgement in it: a
+ * marker's label goes into **one of two fields** depending on its kind, because
+ * a spawner's label is a monster id chosen from the roster and every other
+ * kind's is free text -- one field would mean a dropdown that can hold
+ * `boss-door` or a text box that can hold a typo the server refuses to boot on.
+ *
+ * The field that is not this kind's is deliberately **left as it was** rather
+ * than blanked: selecting a campfire and then a spawner should put the monster
+ * dropdown back where the reader last had it, not on the first row of the table.
+ */
+export function selectionFrom(marker: MapMarker, previous: MarkerSelection): MarkerSelection {
+  const label = marker.label ?? '';
+  return {
+    selectedMarkerId: marker.id,
+    selKind: marker.kind,
+    selMonster: marker.kind === 'spawner' && label !== '' ? label : previous.selMonster,
+    selLabel: marker.kind === 'spawner' ? previous.selLabel : label,
+    selRespawnSeconds: marker.spawner?.respawnSeconds ?? SPAWNER_UNSET,
+    selLeashRadius: marker.spawner?.leashRadius ?? SPAWNER_UNSET,
+  };
+}
+
+/** Nothing selected: what the panel holds when a click landed on empty ground. */
+export function clearSelection(previous: MarkerSelection): MarkerSelection {
+  return { ...previous, selectedMarkerId: '' };
+}
+
+/**
+ * What the panel's current values mean as an edit (spec 222).
+ *
+ * The inverse of {@link selectionFrom}, and the two are inverses on purpose:
+ * selecting a marker and committing without touching anything must be a no-op,
+ * which is what `tools.test.ts` asserts over every kind. Anything the round trip
+ * does not preserve is a field the panel is quietly rewriting.
+ *
+ * `SPAWNER_UNSET` becomes an **absent** member rather than a zero, since zero is
+ * a number `spawnPointsFrom` refuses -- so "the server decides" and "wait no
+ * time at all" cannot be confused in the document even though they share a
+ * value on the slider.
+ */
+export function patchFromSelection(selection: MarkerSelection): MarkerPatch {
+  const spawner =
+    selection.selKind !== 'spawner'
+      ? {}
+      : {
+          ...(selection.selRespawnSeconds > SPAWNER_UNSET
+            ? { respawnSeconds: selection.selRespawnSeconds }
+            : {}),
+          ...(selection.selLeashRadius > SPAWNER_UNSET ? { leashRadius: selection.selLeashRadius } : {}),
+        };
+  return {
+    kind: selection.selKind,
+    label: selection.selKind === 'spawner' ? selection.selMonster : selection.selLabel,
+    // Always handed over, even when empty: `patchMarker` drops a spawner block
+    // on a kind that cannot read it, and an *absent* patch member means "leave
+    // what is there" -- so clearing the last override has to be said out loud
+    // rather than by omission.
+    spawner,
+  };
+}

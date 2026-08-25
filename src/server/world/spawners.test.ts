@@ -3,6 +3,7 @@ import type { MapDocument, MapMarker } from '../../terrain/index.js';
 import { monsterById, noticeRangeOf } from '../data/monsters.js';
 import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { loadMapFile } from './map-file.js';
+import { SERVER_TICK_RATE } from '../config.js';
 import { spawnPointsFrom, SpawnerError } from './spawners.js';
 
 /**
@@ -62,7 +63,9 @@ describe('reading spawners out of a map', () => {
         ],
       }),
     );
-    expect(points).toEqual([{ id: 'spawner-1', monsterId: 'grazer', x: -90, y: -80 }]);
+    expect(points).toEqual([
+      { id: 'spawner-1', monsterId: 'grazer', x: -90, y: -80, respawnTicks: null, leashRadius: null },
+    ]);
   });
 
   it('converts chunk-local coordinates to world space', () => {
@@ -170,5 +173,69 @@ describe('the shipped map', () => {
       expect(away, `${point.id} (${point.monsterId}) sees ${sight} and is ${Math.round(away)} out`)
         .toBeGreaterThan(sight + MARGIN);
     }
+  });
+});
+
+/**
+ * Spec 222. The document may now say two things past which monster stands
+ * where, and this file is the one boundary that reads them -- so it is also the
+ * one place that decides what "the author did not say" means, and what a number
+ * that cannot possibly have been meant costs.
+ */
+describe("a spawner's own numbers", () => {
+  const withSettings = (settings: Record<string, unknown>): MapDocument =>
+    doc({ '0,0': [{ ...spawner('spawner-1', 'grazer', 10, 20), spawner: settings }] });
+
+  it('says nothing where the document says nothing', () => {
+    const point = spawnPointsFrom(doc({ '0,0': [spawner('spawner-1', 'grazer', 10, 20)] }))[0];
+    expect(point?.respawnTicks).toBeNull();
+    expect(point?.leashRadius).toBeNull();
+  });
+
+  /**
+   * The conversion is here and nowhere else: the document is authored in
+   * seconds because a person reads it, and the sim counts ticks.
+   */
+  it('converts the authored seconds into ticks', () => {
+    expect(spawnPointsFrom(withSettings({ respawnSeconds: 30 }))[0]?.respawnTicks).toBe(30 * SERVER_TICK_RATE);
+    expect(spawnPointsFrom(withSettings({ respawnSeconds: 2.5 }))[0]?.respawnTicks).toBe(150);
+  });
+
+  /** A sub-tick wait is a wait of zero, and nobody meant that. */
+  it('floors a wait too short to count at one tick', () => {
+    expect(spawnPointsFrom(withSettings({ respawnSeconds: 0.001 }))[0]?.respawnTicks).toBe(1);
+  });
+
+  it('passes the leash through untouched -- the cap is the sim\'s', () => {
+    expect(spawnPointsFrom(withSettings({ leashRadius: 240 }))[0]?.leashRadius).toBe(240);
+    // Deliberately past `LEASH_RADIUS`: this file reports what the document
+    // asked for, and `sim/world.ts` is where the ceiling lives, beside the nav
+    // padding derived from it.
+    expect(spawnPointsFrom(withSettings({ leashRadius: 99_999 }))[0]?.leashRadius).toBe(99_999);
+  });
+
+  it('takes each of the two without inventing the other', () => {
+    expect(spawnPointsFrom(withSettings({ respawnSeconds: 30 }))[0]?.leashRadius).toBeNull();
+    expect(spawnPointsFrom(withSettings({ leashRadius: 240 }))[0]?.respawnTicks).toBeNull();
+  });
+
+  /**
+   * Refused at boot, on the same terms as an unknown monster: a spawner with a
+   * zero respawn time or a negative leash looks, from inside the game, exactly
+   * like a patch of ground behaving strangely.
+   */
+  it.each([
+    ['respawnSeconds', 0],
+    ['respawnSeconds', -5],
+    ['respawnSeconds', Number.NaN],
+    ['leashRadius', 0],
+    ['leashRadius', -100],
+    ['leashRadius', Number.POSITIVE_INFINITY],
+  ])('refuses a %s of %s', (field, value) => {
+    expect(() => spawnPointsFrom(withSettings({ [field]: value }))).toThrow(SpawnerError);
+    // Named, because "somewhere in the map" is not a bug report.
+    expect(() => spawnPointsFrom(withSettings({ [field]: value }))).toThrow(
+      new RegExp(`spawner-1.*${field}`),
+    );
   });
 });

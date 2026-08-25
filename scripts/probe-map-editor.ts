@@ -35,6 +35,8 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from 'playwright';
+import { STEM_HEIGHT } from '../src/render/iso3d/editor/marker-view.js';
+import { SELECT_PICK_RADIUS } from '../src/render/iso3d/editor/tools.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
@@ -72,6 +74,7 @@ interface Marker {
   readonly kind: string;
   readonly id: string;
   readonly label?: string;
+  readonly spawner?: { readonly respawnSeconds?: number; readonly leashRadius?: number };
 }
 
 interface MapFile {
@@ -135,6 +138,13 @@ async function panelRow(page: Page, label: string): Promise<{ value: string; ena
   return page.evaluate((wanted) => {
     for (const row of Array.from(document.querySelectorAll('.lil-controller'))) {
       if (row.querySelector('.lil-name')?.textContent?.trim() !== wanted) continue;
+      // Only rows on screen. Since spec 222 the panel holds two rows called
+      // `Monster` -- the marker tool's and the select tool's -- and only one of
+      // them is ever shown, because `applyVisibility` hides the folder that is
+      // not the armed mode's. A hidden row is not a row anybody can use, so
+      // skipping it is both what disambiguates these two and what this function
+      // should have been doing all along.
+      if (row.getClientRects().length === 0) continue;
       const select = row.querySelector('select');
       const input = row.querySelector('input');
       const field = select ?? input;
@@ -159,6 +169,88 @@ async function markerEffect(page: Page): Promise<string> {
   return (await panelRow(page, 'Does'))?.value ?? '(no row)';
 }
 
+/**
+ * What the editor says the selected marker *is*, out of the document (spec 222).
+ *
+ * `data-selected` rather than the panel's own fields, and read off the store
+ * rather than off the settings at the point it is published -- so a panel that
+ * believes it edited something and wrote nothing reads here as unedited.
+ */
+async function selectedMarker(page: Page): Promise<string> {
+  return page.evaluate(
+    () => document.querySelector('[data-selected]')?.getAttribute('data-selected') ?? '(no readout)',
+  );
+}
+
+/**
+ * Poll `data-selected` until it matches, and hand back what it finally said.
+ *
+ * A *poll*, not a wait, and that is not tidiness. This environment paints the
+ * page at about five frames a second under software GL, and `data-selected` is
+ * published from the frame -- so a fixed few hundred milliseconds is less than
+ * one frame, and every check about an edit reads the state from before the click
+ * that caused it. Its first cut did exactly that and reported three working
+ * edits as failures, each with the right answer in its own detail line, because
+ * the detail was read a moment later than the assertion.
+ */
+async function waitForSelected(page: Page, want: RegExp, timeoutMs = 15_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let last = '';
+  while (Date.now() < deadline) {
+    last = await selectedMarker(page);
+    if (want.test(last)) return last;
+    await page.waitForTimeout(200);
+  }
+  return last;
+}
+
+/** The camera's own numbers, so a click can be aimed in world units. */
+async function camera(page: Page): Promise<{ span: number; pitchDeg: number; width: number }> {
+  const text = await readout(page);
+  const span = Number(/span (\d+)/.exec(text)?.[1] ?? 0);
+  const pitchDeg = Number(/pitch (\d+)/.exec(text)?.[1] ?? 0);
+  const width = await page.evaluate(() => document.querySelector('canvas')?.clientWidth ?? 0);
+  return { span, pitchDeg, width };
+}
+
+/** Set a lil-gui number row by the label it shows, and let the panel commit it. */
+async function setPanelNumber(page: Page, label: string, value: number): Promise<void> {
+  await page.evaluate(
+    ({ wanted, next }) => {
+      for (const row of Array.from(document.querySelectorAll('.lil-controller'))) {
+        if (row.querySelector('.lil-name')?.textContent?.trim() !== wanted) continue;
+        if (row.getClientRects().length === 0) continue;
+        const input = row.querySelector('input');
+        if (!input) return;
+        input.value = String(next);
+        // lil-gui's number controller commits on `input`, so this is the event a
+        // person typing would produce rather than a synthetic shortcut.
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
+    },
+    { wanted: label, next: value },
+  );
+}
+
+/** Choose an option in a lil-gui dropdown by the label its row shows. */
+async function setPanelOption(page: Page, label: string, value: string): Promise<void> {
+  await page.evaluate(
+    ({ wanted, next }) => {
+      for (const row of Array.from(document.querySelectorAll('.lil-controller'))) {
+        if (row.querySelector('.lil-name')?.textContent?.trim() !== wanted) continue;
+        if (row.getClientRects().length === 0) continue;
+        const select = row.querySelector('select');
+        if (!select) return;
+        select.value = next;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return;
+      }
+    },
+    { wanted: label, next: value },
+  );
+}
+
 const markerCount = async (page: Page): Promise<number> =>
   Number(/(\d+) markers/.exec(await readout(page))?.[1] ?? -1);
 
@@ -178,6 +270,24 @@ async function clickGround(page: Page, x: number, y: number): Promise<void> {
   await page.waitForTimeout(150);
   await page.mouse.up();
   await page.waitForTimeout(400);
+}
+
+/**
+ * Press and *hold* on the ground, for a tool that works on the drag.
+ *
+ * `clickGround` is a press and a release 150ms apart, which is all a marker
+ * placement needs -- that happens on the press edge, and an edge survives until
+ * a frame consumes it. The eraser runs inside `input.isPainting`, so it needs a
+ * frame drawn *while the button is down*, and this environment paints at about
+ * five frames a second: a 150ms hold is less than one frame, and the eraser
+ * genuinely never runs.
+ */
+async function holdGround(page: Page, x: number, y: number, ms = 1500): Promise<void> {
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(ms);
+  await page.mouse.up();
+  await page.waitForTimeout(600);
 }
 
 /** Press the write button and hand back what the status line then says. */
@@ -389,6 +499,166 @@ async function main(): Promise<void> {
         .filter((m) => !shipped.some((s) => s.id === m.id))
         .map((m) => `${m.kind} ${m.id}${m.label ? ` (${m.label})` : ''}`)
         .join(', ') || 'nothing new',
+    );
+
+    // --- selecting one and editing it (spec 222) ---------------------------
+    //
+    // Every rule about the select tool is asserted in Node -- which marker a
+    // click names, what a patch does to a kind that cannot read a spawner's
+    // numbers, that the two halves of the panel are inverses -- and none of them
+    // can say whether the frame loop calls any of it. This is that question, on
+    // the marker that was just placed.
+    await page.getByRole('button', { name: 'select', exact: true }).click();
+    await page.waitForTimeout(400);
+    const openedWith = await selectedMarker(page);
+    check('nothing is selected before anything is clicked', openedWith === 'none', openedWith);
+
+    // Aimed at the **disc**, not at the ground under it, which is the decision
+    // the whole tool turns on. The disc floats STEM_HEIGHT above the marker, so
+    // its screen position is that height projected -- and the ground under that
+    // pixel is `STEM_HEIGHT / tan(pitch)` away from the marker, which is checked
+    // here rather than assumed. If that distance is beyond SELECT_PICK_RADIUS
+    // then a selection from this click cannot have come from the ground
+    // fallback, so this measures the billboard raycast and nothing else.
+    const cam = await camera(page);
+    const pitch = (cam.pitchDeg * Math.PI) / 180;
+    const unitsPerPixel = cam.span / (cam.width / 2);
+    const discPixelsUp = (STEM_HEIGHT * Math.cos(pitch)) / unitsPerPixel;
+    const groundUnderDisc = STEM_HEIGHT / Math.tan(pitch);
+    check(
+      'the disc sits over ground the fallback could not reach',
+      groundUnderDisc > SELECT_PICK_RADIUS,
+      `${Math.round(groundUnderDisc)} units away, fallback reaches ${SELECT_PICK_RADIUS}`,
+    );
+
+    await clickGround(page, 540, 400 - Math.round(discPixelsUp));
+    const bySprite = await waitForSelected(page, /^spawner-/);
+    // What this claims is exactly what it measures: a click that high selects a
+    // marker, and the ground under it is further from any marker's own point
+    // than the fallback reaches -- so the billboard raycast is what answered.
+    // What it deliberately does not claim is *which* marker: sprites are 138
+    // world units wide and the shipped map has eighteen spawners, so several
+    // discs overlap that pixel and the nearest to the camera wins.
+    check(
+      'a click at the disc height selects a marker, out of the fallback\'s reach',
+      /^spawner-/.test(bySprite),
+      `${bySprite} (clicked ${Math.round(discPixelsUp)}px up, ground ${Math.round(groundUnderDisc)} units off)`,
+    );
+
+    // And the fallback, which is the other half: a click by the stem rather than
+    // on the disc still names the obvious thing.
+    await clickGround(page, 700, 460);
+    await clickGround(page, 540, 400);
+    const underCursor = await waitForSelected(page, /^spawner-/);
+    check('clicking the ground under it selects a marker too', /^spawner-/.test(underCursor), underCursor);
+    // Whatever that turned out to be, rather than the one this run placed: the
+    // shipped map has eighteen spawners of its own and these coordinates land on
+    // whichever is nearest. What the next few checks are about is that an edit
+    // reaches the document, and any real marker answers that.
+    const editedId = underCursor.split(' ')[0] ?? '';
+
+    // The three properties this spec is about, one row at a time.
+    await setPanelOption(page, 'Monster', 'stalker');
+    const named = await waitForSelected(page, /label:stalker/);
+    check('changing the monster reaches the document', /label:stalker/.test(named), named);
+
+    await setPanelNumber(page, 'Respawn s (0=default)', 90);
+    const waited = await waitForSelected(page, /respawn:90/);
+    check('a respawn time reaches the document', /respawn:90/.test(waited), waited);
+
+    await setPanelNumber(page, 'Leash (0=default)', 240);
+    const leashed = await waitForSelected(page, /leash:240/);
+    check('a leash radius reaches the document', /leash:240/.test(leashed), leashed);
+
+    const edited = await save(page);
+    const editedSpawner = markersIn(edited.doc).find((m) => m.id === editedId);
+    check(
+      'the saved file carries what was edited',
+      editedSpawner?.label === 'stalker' &&
+        editedSpawner.spawner?.respawnSeconds === 90 &&
+        editedSpawner.spawner.leashRadius === 240,
+      JSON.stringify(editedSpawner ?? null),
+    );
+
+    // Undo takes an edit back, which is the claim that the panel opens and
+    // closes a history entry per change rather than per stroke -- there is no
+    // stroke here to close one.
+    await page.keyboard.press('Control+z');
+    const undone = await waitForSelected(page, /leash:0/);
+    check('Ctrl+Z takes the last edit back', /leash:0/.test(undone), undone);
+
+    // Empty ground clears it, which is what makes a selection dismissable
+    // without a second control.
+    //
+    // *Searched* rather than guessed, because the shipped map is covered in
+    // spawners and a fixed coordinate lands on one -- which reads as "the
+    // selection did not clear" when what really happened is that it moved to the
+    // marker under the second click. A run where every candidate hits something
+    // is reported as such rather than as a pass.
+    const candidates: readonly (readonly [number, number])[] = [
+      [900, 620],
+      [1000, 200],
+      [300, 640],
+      [1050, 700],
+      [250, 220],
+      [820, 180],
+    ];
+    let clearedAt: readonly [number, number] | null = null;
+    const landedOn: string[] = [];
+    for (const [x, y] of candidates) {
+      await clickGround(page, x, y);
+      // Either answer is an arrival, so this polls for *a change* rather than
+      // for one of them -- a click that has not been drawn yet still reads as
+      // whatever the last one selected.
+      const now = await waitForSelected(page, new RegExp(`^(?!${editedId}\\b).`));
+      if (now === 'none') {
+        clearedAt = [x, y];
+        break;
+      }
+      landedOn.push(`${x},${y} -> ${now.split(' ')[0] ?? '?'}`);
+    }
+    check(
+      'clicking empty ground clears the selection',
+      clearedAt !== null,
+      clearedAt ? `cleared at ${clearedAt[0]},${clearedAt[1]}` : `every candidate hit a marker: ${landedOn.join('; ')}`,
+    );
+
+    // The other way a selection goes away: the marker is taken off the map by
+    // something that is not the Delete button. `refreshMarkers` notices rather
+    // than being told, because it is the one function every path that changes
+    // the marker set already calls -- and the panel has to be told on the
+    // transition, or it goes on naming a marker that is not there.
+    await clickGround(page, 540, 400);
+    await waitForSelected(page, /^spawner-/);
+    await page.getByRole('button', { name: 'erase', exact: true }).click();
+    await page.waitForTimeout(400);
+    await holdGround(page, 540, 400);
+    const afterErase = await waitForSelected(page, /^none$/);
+    await page.getByRole('button', { name: 'select', exact: true }).click();
+    await page.waitForTimeout(400);
+    // The readout is the assertion; the panel row is reported beside it. Only
+    // the first is non-vacuous here -- arming a mode refreshes the whole panel,
+    // so a check on that row after switching back would pass whether or not
+    // `refreshMarkers` had told it anything.
+    const panelAfterErase = (await panelRow(page, 'Marker'))?.value ?? '(no row)';
+    check(
+      'erasing the selected marker is noticed, not announced',
+      afterErase === 'none',
+      `readout ${afterErase}, panel ${panelAfterErase}`,
+    );
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(1200);
+
+    await clickGround(page, 540, 400);
+    const doomed = await waitForSelected(page, /^spawner-/);
+    const beforeDelete = await markerCount(page);
+    await page.click('button:has-text("Delete marker")');
+    const cleared = await waitForSelected(page, /^none$/);
+    const afterDelete = await markerCount(page);
+    check(
+      'Delete takes the selected marker off the map',
+      afterDelete === beforeDelete - 1 && cleared === 'none',
+      `${doomed.split(' ')[0] ?? '?'}: ${beforeDelete} -> ${afterDelete} markers, selection ${cleared}`,
     );
 
     // The other source still works, and says so in its own name: a generated

@@ -98,6 +98,46 @@ describe('splitting the shipped map', () => {
     expect(serializeMap(rejoined)).toBe(serializeMap(SHIPPED));
   });
 
+  /**
+   * Spec 222. The split is what the server actually loads, so a spawner's own
+   * numbers surviving `serializeMap` is not enough on its own -- they have to
+   * survive being cut into region files and put back. The shipped map has none,
+   * so one is added rather than hoped for.
+   */
+  it('carries a spawner\'s own settings through a region file', () => {
+    const layer = SHIPPED.layers[0];
+    if (!layer) throw new Error('no layer');
+    const withSpawner = layer.chunks.findIndex((c) => c.markers.some((m) => m.kind === 'spawner'));
+    if (withSpawner < 0) throw new Error('the shipped map has no spawner');
+    const edited: MapDocument = {
+      ...SHIPPED,
+      layers: SHIPPED.layers.map((l, i) =>
+        i !== 0
+          ? l
+          : {
+              ...l,
+              chunks: l.chunks.map((chunk, j) =>
+                j !== withSpawner
+                  ? chunk
+                  : {
+                      ...chunk,
+                      markers: chunk.markers.map((m) =>
+                        m.kind === 'spawner' ? { ...m, spawner: { respawnSeconds: 90, leashRadius: 240 } } : m,
+                      ),
+                    },
+              ),
+            },
+      ),
+    };
+    const cut = splitMap(edited);
+    const rejoined = joinMap(cut.manifest, readerFor(cut.regions));
+    const back = rejoined.layers[0]?.chunks[withSpawner]?.markers.find((m) => m.kind === 'spawner');
+    expect(back?.spawner).toEqual({ respawnSeconds: 90, leashRadius: 240 });
+    // And the world it belongs to is a different world, since a spawner that
+    // comes back on its own clock is not the map it was cut from.
+    expect(cut.manifest.mapId).not.toBe(split.manifest.mapId);
+  });
+
   it('samples the same ground after a round trip', () => {
     const rejoined = joinMap(split.manifest, readerFor(split.regions));
     const before = loadMap(SHIPPED);

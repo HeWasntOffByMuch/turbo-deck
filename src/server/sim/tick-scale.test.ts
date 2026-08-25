@@ -67,6 +67,8 @@ function line(n: number, gap: number): SpawnPoint[] {
     monsterId: 'small_spider',
     x: i * gap,
     y: 0,
+    respawnTicks: null,
+    leashRadius: null,
   }));
 }
 
@@ -123,7 +125,9 @@ describe('the population cap', () => {
       state = made.state;
       bodies.push(made.entity.id);
     }
-    const points: SpawnPoint[] = [{ id: 's0', monsterId: 'small_spider', x: 30, y: 30 }];
+    const points: SpawnPoint[] = [
+      { id: 's0', monsterId: 'small_spider', x: 30, y: 30, respawnTicks: null, leashRadius: null },
+    ];
     const ctx = context(activeAt(0, 0), points, {
       config: { ...DEFAULT_LIVE_CONFIG, maxEntitiesPerChunk: cap },
     });
