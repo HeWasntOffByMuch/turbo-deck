@@ -3892,7 +3892,24 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  icons.ts (how big the HUD is on a finger and what the weapon
                  switch and the window buttons draw, specs 094/140 -- the sizes
                  are a sum, so "eight buttons still fit across a phone, clear of
-                 both corner rows" fails in Node rather than in a screenshot),
+                 both corner rows" fails in Node rather than in a screenshot.
+                 Since spec 227 that includes the **account button**, bottom-left
+                 above the weapon switch: the same box, border and caption face
+                 as the three window buttons in the opposite corner, drawn by one
+                 `buildSystemStyleButton` so "the same style" is a fact about one
+                 function rather than two copies. Its label is the state --
+                 `REGISTER` for a guest, the account's own name once signed in --
+                 which is the one thing that made it more than a fourth entry in
+                 `SYSTEM_BUTTONS`, and `accountButtonCaption` is the arithmetic:
+                 a name that fits is drawn whole, one that does not falls back to
+                 its **first word** (the default name is the login, and a login
+                 has no spaces, so this only fires on a name somebody typed one
+                 into), and only a single over-long word is cut, with a full stop
+                 so it reads as a shortening. `ADA LOVELA` was the version
+                 without the middle rule. Clicking it goes through the same
+                 `openHandler` the three window buttons use, so a button and a
+                 key cannot come to mean different things, and it lights up while
+                 its window is open off the same one list),
                  health-bar.ts (the white chunk a blow leaves on a floating bar,
                  spec 145: the fill is replicated health and is never delayed,
                  and the ground it gave up is held behind it for a beat so the

@@ -118,6 +118,28 @@ async function account(page: Page): Promise<string> {
   });
 }
 
+/**
+ * Whether the account window is on screen, polled rather than waited out.
+ *
+ * A poll because this environment paints the page at about five frames a
+ * second under software GL and `data-ui-frames` is published from the frame --
+ * a fixed wait is a guess about a frame rate, and the wrong guess reads a
+ * working window as a missing one. The same rule `probe-drop.ts` records
+ * learning the hard way.
+ */
+async function windowIsOpen(page: Page, timeoutMs = 4000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const frames = await page.evaluate(() => {
+      const host = document.querySelector<HTMLElement>('[data-ui-frames]');
+      return host?.dataset['uiFrames'] ?? '';
+    });
+    if (frames.includes('account')) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 /** Wait until the client has a body in the world, so there is a character. */
 async function waitForPlayer(page: Page, timeoutMs = 90_000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
@@ -248,18 +270,44 @@ async function main(): Promise<void> {
     // The window opens on its binding, which is the half no headless test can
     // see: `ui.account` reaching `registerWindow` is one line in the mount.
     await page.keyboard.press('KeyU');
-    await page.waitForTimeout(600);
-
-    // Typing goes through the page rather than through the widget, so what is
-    // exercised is the real focus routing and the real text-entry context.
-    const typed = await page.evaluate(() => {
-      const host = document.querySelector<HTMLElement>('[data-ui-frames]');
-      return host?.dataset['uiFrames'] ?? '';
-    });
-    if (!typed.includes('account')) {
-      problems.push(`KeyU did not open the account window (frames: ${typed || 'none'})`);
+    const openedByKey = await windowIsOpen(page);
+    if (!openedByKey) {
+      problems.push('KeyU did not open the account window');
     } else {
       console.log('  account window opened on KeyU');
+    }
+    await page.keyboard.press('Escape');
+
+    /**
+     * And on the button, which is the other half nothing in Node can reach
+     * (spec 227). One more entry in a button list cannot fail a typecheck and
+     * cannot fail a headless test -- every rule about the caption is asserted
+     * in `hud-layout.test.ts` beside a `createHud` that might wire it to
+     * nothing, which is exactly the state spec 176 found for markers.
+     *
+     * The label is read first, because a guest who is offered anything other
+     * than `Register` is being offered the wrong thing.
+     */
+    const button = await page.$('[data-account-button]');
+    if (button === null) {
+      problems.push('there is no account button in the corner');
+    } else {
+      const label = await button.evaluate((node) => (node as HTMLElement).dataset['accountButton'] ?? '');
+      if (label !== 'Register') problems.push(`the guest's button says ${JSON.stringify(label)}, not Register`);
+      const box = await button.boundingBox();
+      if (box === null) {
+        problems.push('the account button is not laid out');
+      } else if (box.x > 200) {
+        // Bottom *left*: the window row is in the opposite corner, and a button
+        // that quietly joined it would still pass every other check here.
+        problems.push(`the account button is at x=${Math.round(box.x)}, which is not the left edge`);
+      }
+      await button.click();
+      if (!(await windowIsOpen(page))) {
+        problems.push('clicking the account button did not open the account window');
+      } else {
+        console.log(`  and on the button, which says ${JSON.stringify(label)} at x=${Math.round(box?.x ?? -1)}`);
+      }
     }
 
     // Claim, through the endpoint the screen calls. Driven here rather than by

@@ -117,4 +117,20 @@ describe('the window icons', () => {
       expect(icon.match(/<(path|circle)\b/g)?.length).toBe(icon.match(/\/>/g)?.length);
     }
   });
+
+  /**
+   * The account button (spec 227) is not one of `SYSTEM_BUTTONS` -- it lives
+   * in the opposite corner -- so nothing above walks its icon. Its own shape
+   * has to be checked the same three ways: distinct from `character`'s head
+   * and shoulders, well-formed, and painted in `currentColor` like the rest.
+   */
+  it('draws the account key as its own distinct, well-formed shape', () => {
+    expect(SYSTEM_ICONS.account).not.toBe(SYSTEM_ICONS.character);
+    const icon = systemIconSvg('account', { size: 24 });
+    expect(icon.startsWith('<svg ')).toBe(true);
+    expect(icon.endsWith('</svg>')).toBe(true);
+    expect(icon).toContain('stroke="currentColor"');
+    expect(icon).not.toContain('color:');
+    expect(icon.match(/<(path|circle)\b/g)?.length).toBe(icon.match(/\/>/g)?.length);
+  });
 });

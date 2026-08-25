@@ -24,6 +24,7 @@ import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
 import { Button } from '../widgets/button.js';
 import { Label } from '../widgets/label.js';
+import { BODY_FONT, isDrawable } from '../text/font.js';
 import { Tab } from '../widgets/tabs.js';
 import { TextField } from '../widgets/text-field.js';
 import { AccountScreen, type AccountDraft, type AccountView } from './account.js';
@@ -128,6 +129,61 @@ function texts(screen: AccountScreen): string[] {
   }
   return out;
 }
+
+describe('every word this screen can draw', () => {
+  /**
+   * The face is ASCII, and {@link glyphFor} falls back silently -- so a
+   * character it has no glyph for is not a wrong shape, it is a hole, and
+   * nothing short of photographing the window shows it.
+   *
+   * This screen is where that bit: the sign-in warning was authored with a
+   * curly apostrophe and an em dash, and drew `account s character` and
+   * `reach it   register instead` from spec 226 until spec 227's goldens made
+   * it visible. It is the single most important line here, so it is also the
+   * worst one to have holes in.
+   */
+  it('has a glyph for, in every state the screen has', () => {
+    const undrawable: string[] = [];
+    const check = (h: Harness): void => {
+      for (const line of texts(h.screen)) {
+        if (!isDrawable(BODY_FONT, line)) undrawable.push(line);
+      }
+      for (const found of h.screen.walk()) {
+        if (found instanceof TextField && showing(found) && !isDrawable(BODY_FONT, found.placeholder)) {
+          undrawable.push(found.placeholder);
+        }
+      }
+    };
+
+    const registering = harness();
+    check(registering);
+
+    const signingIn = harness();
+    tab(signingIn.screen, 'account:modeSignIn').onSelect?.();
+    signingIn.root.update(0);
+    check(signingIn);
+
+    const refused = harness();
+    type(field(refused.screen, 'account:login'), 'ab');
+    refused.root.update(0);
+    check(refused);
+
+    const signedIn = harness();
+    signedIn.screen.setAccount({ signedInAs: 'Ada Lovelace', busy: false, message: 'Signed in.', tone: 'good' });
+    signedIn.root.update(0);
+    check(signedIn);
+
+    expect(undrawable).toEqual([]);
+  });
+
+  it('would have caught the two characters that were actually wrong', () => {
+    // The guard is only worth having if it fails on the thing it was written
+    // for, so the two are named here rather than trusted.
+    expect(isDrawable(BODY_FONT, 'account\u2019s character')).toBe(false);
+    expect(isDrawable(BODY_FONT, 'reach it \u2014 register')).toBe(false);
+    expect(isDrawable(BODY_FONT, "account's character -- register")).toBe(true);
+  });
+});
 
 describe('the form', () => {
   it('opens on Register, because claiming is the thing a guest came here to do', () => {

@@ -3293,6 +3293,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());
+    // Read off the same session state the account window itself renders
+    // (spec 227), so the button in the corner and the window it opens cannot
+    // disagree about who is signed in.
+    hud.setAccount({ signedInAs: authState.signedInAs });
 
     // Last, so what it reports is a whole frame's work rather than the part of
     // one that happens before the world is drawn (spec 165). `stats()` is only

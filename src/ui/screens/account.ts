@@ -106,7 +106,8 @@ const TONE_COLORS: Readonly<Record<AccountView['tone'], string>> = {
  * reason Register is the tab that opens first.
  */
 const SIGN_IN_WARNING =
-  'Loads that account’s character. This one stays a guest and this browser will no longer be able to reach it — register instead to keep it.';
+  "Loads that account's character. This one stays a guest and this browser will no longer be " +
+  'able to reach it -- register instead to keep it.';
 
 const CLAIM_PROMISE = 'Keeps the character you are playing now, with everything on it.';
 
@@ -155,7 +156,11 @@ export class AccountScreen extends Column {
   private readonly loginField = field('login', 'account:login');
   private readonly passwordField = field('password', 'account:password', true);
   private readonly confirmField = field('repeat password', 'account:confirm', true);
-  private readonly nameField = field('display name (optional)', 'account:name');
+  // 'optional' rather than 'display name (optional)': the row beside it is
+  // already captioned `Name`, so the only thing left for the placeholder to say
+  // is that it may be left blank -- and the longer version did not fit
+  // `columns`, so what was drawn was `display name (opti`.
+  private readonly nameField = field('optional', 'account:name');
   private readonly confirmRow: Row;
   private readonly nameRow: Row;
   private readonly explain = caption('', 'textDim');
