@@ -46,7 +46,7 @@
 
 import type { WireStatus } from '../../../server/net/messages.js';
 import { visualByWire } from '../../../server/data/status-visuals.js';
-import { auraFieldById } from '../../../server/data/aura-fields.js';
+import { ALL_AURA_FIELDS, auraFieldById } from '../../../server/data/aura-fields.js';
 import { aurasFor, type AuraFacts } from './auras.js';
 import { seedFor, type VfxPlayer } from './affliction-vfx.js';
 
@@ -165,4 +165,29 @@ export class AuraVfx {
       attach: { kind: 'entity', entityId: body.entityId },
     });
   }
+}
+
+// --- reaching one from the shipped page --------------------------------------
+
+/**
+ * Whether `?field=` asks for an aura field to be forced on (spec 222).
+ *
+ * The developer path, in the same register as `?afflict=` and for the same
+ * reason: the alternative to it is farming a level-6 exceptional sigil every
+ * time somebody wants to look at the ring in the game. It answers a boolean
+ * rather than a list, because there is one field -- `triggerEvent('field')`
+ * grants every row and a per-row switch would be a list with one entry in it.
+ *
+ * Read by `view.ts`, which turns it into `server.triggerEvent('field', ...)` on
+ * the player's own position. Loopback only, because that is where a server this
+ * thread can ask exists at all.
+ */
+export function fieldsWantedByQuery(search: string): boolean {
+  const raw = new URLSearchParams(search).get('field');
+  if (raw === null) return false;
+  const value = raw.trim().toLowerCase();
+  if (value === '' || value === '1' || value === 'true' || value === 'all') return true;
+  // A named row, so `?field=scorchedEarth` reads as what it does rather than as
+  // a switch -- and so a second row is a name somebody can already type.
+  return ALL_AURA_FIELDS.some((field) => field.id.toLowerCase() === value);
 }

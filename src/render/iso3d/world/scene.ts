@@ -1055,6 +1055,21 @@ export class WorldScene {
     return this.propField?.heldRegions() ?? [];
   }
 
+  /**
+   * Bodies with an aura ring running under them (spec 222).
+   *
+   * A readout and nothing else: `data-auras` is published from it, and nothing
+   * in the game reads it. Taken from the **driver's own held set** rather than
+   * from the replicated statuses, the rule `data-held-weapons` and
+   * `data-prop-regions` both keep -- a ring that was wanted and refused, or
+   * evicted, should read as absent, because that is the failure a probe exists
+   * to see. Reading the statuses back would report the thing that was asked for
+   * and tell nobody whether it arrived.
+   */
+  heldAuras(): readonly number[] {
+    return this.auras.entities();
+  }
+
   refreshPropsWithin(rects: PropRect | readonly PropRect[]): void {
     if (!this.map || !this.propField) return;
     if (Array.isArray(rects) && rects.length === 0) return;

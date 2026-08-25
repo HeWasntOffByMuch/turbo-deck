@@ -26,6 +26,7 @@
 import { GameClient } from '../../../server/client/game-client.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { afflictionsFromQuery } from './affliction-vfx.js';
+import { fieldsWantedByQuery } from './aura-vfx.js';
 
 /**
  * How often `?afflict=` re-applies what it was asked for, in ticks (spec 215).
@@ -454,6 +455,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * takes the paint with you and whatever you walk up to gets it too.
    */
   let afflictAgainAtTick = 0;
+  /**
+   * Whether `?field=` asks for an aura field on the player (spec 222).
+   *
+   * Loopback only, exactly as the afflictions above are and for the same stated
+   * reason. Topped up on the same cadence, which is comfortably inside the
+   * eight seconds `FIELD_DEMO_TICKS` grants -- so the ring stays up while
+   * somebody walks around under it rather than going out mid-look.
+   */
+  const forcedField = server === null ? false : fieldsWantedByQuery(location.search);
+  let fieldAgainAtTick = 0;
   let wireConditions: WireConditions = parseWire(new URLSearchParams(location.search).get('wire'));
   const wire = new UnreliableChannel(channel, () => wireConditions, Rng.fromSeed(seed));
 
@@ -1028,9 +1039,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // nothing should read as absent, which is the failure this number exists to
     // make visible (spec 215).
     const regionsDrawn = scene.heldPropRegions().length;
+    // Bodies wearing an aura ring (spec 222), from the driver's held set rather
+    // than from the statuses that asked for one -- so a ring refused by the
+    // effect budget or evicted by the instance pool reads as absent.
+    const aurasDrawn = scene.heldAuras().length;
     const meshState =
       `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}` +
-      `:${ingest.dirtyRegionCount}:${propsRefused}:${navGeneration}:${navAdopted}:${navStale}`;
+      `:${ingest.dirtyRegionCount}:${propsRefused}:${navGeneration}:${navAdopted}:${navStale}` +
+      `:${aurasDrawn}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
@@ -1039,6 +1055,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       root.dataset['propRegions'] = String(regionsDrawn);
       root.dataset['propDirty'] = String(ingest.dirtyRegionCount);
       root.dataset['propRefused'] = String(propsRefused);
+      root.dataset['auras'] = String(aurasDrawn);
       root.dataset['nav'] =
         `gen=${String(navGeneration)} asked=${String(navAsked)}` +
         ` adopted=${String(navAdopted)} refused=${String(navStale)}`;
@@ -2896,6 +2913,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
               server.triggerEvent('affliction', at.x, at.y, ordinal);
             }
           }
+        }
+      }
+      // And the same for a forced aura field (spec 222). A tight reach, because
+      // the trigger's magnitude is its radius and what is wanted is the ring on
+      // the player rather than on everything they walked past -- which would be
+      // several fields overlapping and no way to tell whose is whose.
+      if (server !== null && forcedField) {
+        fieldAgainAtTick -= 1;
+        if (fieldAgainAtTick <= 0) {
+          fieldAgainAtTick = FORCED_AFFLICTION_EVERY_TICKS;
+          const at = client.view().self;
+          if (at) server.triggerEvent('field', at.x, at.y, 1);
         }
       }
       // The client keeps its own clock (spec 065's follow-up): deltas are
