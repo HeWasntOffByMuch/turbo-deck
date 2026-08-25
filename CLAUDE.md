@@ -83,7 +83,7 @@ change a game outcome.
 | `npm run server` | The authoritative server, plus the admin console. Opens and migrates `data/game.db` itself (spec 226); there is no database to start. Runs as `node --import tsx`, so it is **one** process rather than a `tsx` supervisor in front of the real one -- the wrapper cost a second runtime and swallowed signal bursts before the shutdown handler saw them |
 | `npx tsx scripts/db-status.ts` | What is in `data/game.db`: schema version, row counts, and which migrations have run (spec 226). Never prints a token or a hash |
 | `npm run build && npx tsx scripts/probe-account.ts` | Claim a guest character through the shipped page and read the database back to check the account owns *that* character (spec 226) |
-| `npm run server:bots` | Headless bot clients, for load and for watching prediction |
+| `npm run server:bots` | Headless bot clients, for load and for watching prediction. Each mints its own guest character over `POST /api/auth/guest` first (spec 226), since a gated server refuses a `Hello` with no session token -- so a run leaves that many disposable players in the database |
 
 CI (`.github/workflows/ci.yml`) runs typecheck + lint + test on every push
 and must be green before merging.
