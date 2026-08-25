@@ -161,6 +161,22 @@ export const StatusId = {
   Frostbite: 'frostbite',
   /** Slow, and nothing heals properly while it is running. */
   Decay: 'decay',
+
+  // --- the aura fields (spec 222) ----------------------------------------
+  //
+  // The first status here that is about the ground around its carrier rather
+  // than about the body carrying it. It is a **boon** and it is in this map
+  // rather than in a field system of its own for the reason the header gives:
+  // what a field *is* is a timed state on a body, and one map with one expiry
+  // rule is one place to get right. What it does to everybody else is a row in
+  // `data/aura-fields.ts`, read by `sim/aura-field.ts` and by nothing else.
+  //
+  // It carries no magnitude. A field's reach and its affliction are the row's,
+  // whole -- the same rule spec 190 keeps for an affliction -- so there is no
+  // number here that could depend on who cast it.
+
+  /** Fire underfoot: whoever stands near the carrier catches, briefly. */
+  ScorchedEarth: 'scorchedEarth',
 } as const;
 
 /** Adaptation is per ability id: `adapt:bolt.arcane`. */

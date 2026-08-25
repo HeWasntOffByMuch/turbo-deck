@@ -704,6 +704,29 @@ export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
     '..T..TT..T..',
   ],
   /**
+   * Scorched earth (spec 222): a ring of ground with fire standing on it.
+   *
+   * The one skill sprite here that draws a *place* rather than a blow. Which is
+   * what it has to do: every other cell on the bar is a thing you do to a body,
+   * and this one is somewhere a body cannot be. The ring is `T` so the ground
+   * reads at 12px, and the flames are `A` because accent is what the whole set
+   * uses for the part that is actually happening.
+   */
+  scorchedEarth: [
+    '......A.....',
+    '.....AA.....',
+    '..A..AA..A..',
+    '.AA.AAAA.AA.',
+    '.AA.AAAA.AA.',
+    '..A.AAAA..A.',
+    '..TTTTTTTT..',
+    '.TT......TT.',
+    'TT........TT',
+    'TT........TT',
+    '.TT......TT.',
+    '..TTTTTTTT..',
+  ],
+  /**
    * The test skill (spec 196 on main): a checklist.
    *
    * It is a developer path and it still needs art, because the alternative is

@@ -187,10 +187,11 @@ stated handle reason. `aurasFor` gains its promised branch and is finally
   are untouched.
 - Hostility is re-asked every tick, so a field cannot carry a wilderness fight
   across a safe-zone line.
-- **Determinism**: the `Rng` state after twenty seconds of a field over six
-  bodies equals the state after twenty seconds with no field at all; the same
-  seed and inputs replay to bit-identical state.
-- The pass costs nothing when nobody is carrying a field.
+- **Determinism**: through the real `step`, the `Rng` does not move from the
+  tick a field starts burning a body to four hundred ticks later; the same seed
+  and the same frames replay to bit-identical state.
+- A carrier whose own status has expired reaches nobody, and `fieldsOn` answers
+  null — the early-out that makes the pass cost nothing in the common case.
 
 **The content**
 

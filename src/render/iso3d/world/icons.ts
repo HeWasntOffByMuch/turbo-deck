@@ -262,6 +262,20 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
   // on purpose: what this affliction costs is not the damage, it is that the
   // thing you would normally do about damage stops working.
   decay: '<path d="M12 5.5v13"/><path d="M5.5 12h13"/><path d="M4.8 19.2 19.2 4.8"/>',
+
+  // --- the aura fields (spec 222) ----------------------------------------
+  // Scorched Earth -- a ring with flames standing on it, which is the one shape
+  // in this table that is a picture of the *ground* rather than of a body. It
+  // has to sit clear of Burn's single tongue eight rows up and of Attuned's
+  // concentric rings: the ring is open at the top where the flames stand, so
+  // the silhouette is a bowl and not a circle, and the flames are three small
+  // points rather than one large one. That the mark echoes the sigil drawn on
+  // the ground in the world is the point -- it is the same fire, said twice.
+  scorched:
+    '<path d="M3.5 16.5a8.5 4.5 0 0 0 17 0"/>'
+    + '<path d="M12 4.5c2.4 2.3 3.3 3.7 3.3 5.3a3.3 3.3 0 0 1-6.6 0c0-1.2.6-2.2 1.6-3.2 0 1 .4 1.5 1 1.7-.5-1.4-.4-2.7.7-3.8z"/>'
+    + '<path d="M6.6 12.6c1.1 1.1 1.5 1.7 1.5 2.4a1.5 1.5 0 0 1-3 0c0-.7.4-1.3 1.5-2.4z"/>'
+    + '<path d="M17.4 12.6c1.1 1.1 1.5 1.7 1.5 2.4a1.5 1.5 0 0 1-3 0c0-.7.4-1.3 1.5-2.4z"/>',
 };
 
 /** One status mark, as markup ready to drop into the HUD. */

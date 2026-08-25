@@ -25,6 +25,7 @@ import { ORDER_MARK_ARM, brushCross } from './brush.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
+import { SCORCHED_EARTH } from '../../../server/data/aura-fields.js';
 
 // --- fire --------------------------------------------------------------------
 
@@ -818,6 +819,30 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // The one a player must never miss. Louder in the same language: a still sigil
   // ringed with shafts, never a different vocabulary.
   aura({ id: 'aura_telegraph', color: 'auraTelegraph', radius: 110, spin: 0, shafts: 10, priority: 3 }),
+  // The field (spec 222), and the one aura here whose radius is **not an art
+  // decision**: it is the reach in `data/aura-fields.ts`, imported rather than
+  // retyped, because this ring is not decoration around the mechanic -- it is
+  // where the fire is, and a player who cannot tell which bodies are inside it
+  // cannot play the skill at all. Two literals that have to agree is the drift
+  // `ground-decal.ts` exists to refuse one level down.
+  //
+  // Widest in the set by some way and therefore last, which keeps the
+  // separation rule above holding by construction: it cannot smear into
+  // anything, because nothing else is near it.
+  //
+  // Shafts and no diamonds. A diamond floats *above* a sigil -- it is a mote
+  // over a body, and this sigil is not under one body, it is a region.
+  // `priority: 3` for the reason the telegraph has it: a player standing in
+  // fire needs to see the fire more than they need to see anything else in the
+  // instance pool.
+  aura({
+    id: 'aura_scorched',
+    color: 'fireAmber',
+    radius: SCORCHED_EARTH.radius,
+    spin: 0.12,
+    shafts: 9,
+    priority: 3,
+  }),
 
   // --- healing ---------------------------------------------------------------
   // What restoring health looks like (spec 157). Played at the healed body's
