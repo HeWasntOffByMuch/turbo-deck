@@ -7,12 +7,16 @@ import { createArenaWorld } from './world.js';
 import {
   FENCE_KINDS,
   footprintRadius,
+  HOUSE_PLAN,
+  STRUCTURE_KINDS,
   vegetationColliders,
+  WELL_RADIUS,
   worldVegetation,
   scatterProps,
   scatterInBounds,
   type BoundsScatterOptions,
   type Prop,
+  type PropKind,
 } from './vegetation.js';
 
 const W = 1200;
@@ -83,6 +87,50 @@ describe('footprintRadius', () => {
 
   it('scales linearly with the prop scale', () => {
     expect(footprintRadius(prop('tree', 2))).toBeCloseTo(footprintRadius(prop('tree', 1)) * 2, 5);
+  });
+});
+
+describe('what a building blocks (spec 224)', () => {
+  const at = (kind: PropKind, x: number, y: number, scale = 1): Prop => ({
+    kind,
+    x,
+    y,
+    scale,
+    rotation: 0,
+    tint: 0,
+  });
+
+  it('covers every corner of the hut, at every size', () => {
+    // The hut is a rectangle and the collider is a circle, so one of the two
+    // errors has to be chosen. Erring **wide** is the side that keeps a wall a
+    // wall -- the fence's own argument -- and this is the half of it that has
+    // to be true rather than merely preferred: a corner inside the circle means
+    // there is no way to stand in a building.
+    for (const scale of [0.5, 1, 2.4]) {
+      const corner = Math.hypot(HOUSE_PLAN.width / 2, HOUSE_PLAN.depth / 2) * scale;
+      expect(footprintRadius(at('house', 0, 0, scale))).toBeGreaterThanOrEqual(corner - 1e-9);
+    }
+  });
+
+  it('is the well\'s own kerb, exactly, because a well is already a circle', () => {
+    expect(footprintRadius(at('well', 0, 0))).toBeCloseTo(WELL_RADIUS, 9);
+    expect(footprintRadius(at('well', 0, 0, 1.5))).toBeCloseTo(WELL_RADIUS * 1.5, 9);
+  });
+
+  it('stops a body walking through one, with no new plumbing', () => {
+    // The whole reason a building is a `Prop`: the sim, the nav lattice and the
+    // unwalkable overlay all read `vegetationColliders`, and none of them asks
+    // what kind a prop is.
+    for (const kind of STRUCTURE_KINDS) {
+      const props = [at(kind, 400, 400)];
+      const world = createWorldColliders([], vegetationColliders(props));
+      expect(vegetationColliders(props)).toHaveLength(1);
+      expect(circleBlocked({ x: 400, y: 400 }, PLAYER_RADIUS, world)).toBe(true);
+      // ...and clear ground a good way off it still is.
+      expect(circleBlocked({ x: 400 + footprintRadius(props[0] as Prop) + PLAYER_RADIUS + 20, y: 400 }, PLAYER_RADIUS, world)).toBe(
+        false,
+      );
+    }
   });
 });
 

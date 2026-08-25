@@ -105,6 +105,22 @@ export const PALETTE = {
   // Darker than the brick around it, so a joint reads as a shadow between
   // bricks rather than as a pale line drawn over them.
   mortar: 0x8e857a,
+  // A straw roof (spec 224), in three tones. Thatch has to be readable from
+  // above at the game's bearing, because from up there a hut is very nearly all
+  // roof -- so it is the warmest and lightest thing in this half of the palette
+  // and cannot be mistaken for either the ground it stands on or the timber
+  // under it. The deep tone is the underside and the shaded slope; the pale one
+  // is the ridge roll, which is the line that says which way a roof runs.
+  thatch: 0xcaa858,
+  thatchDeep: 0x9d7f3a,
+  thatchPale: 0xdfc37c,
+  // A hut's timber, one shade darker and greyer than a fence's sawn plank: a
+  // wall is weathered where a rail is replaced.
+  hutWall: 0x9c7746,
+  // The doorway, and the water at the bottom of a well. Near-black rather than
+  // simply dark, because both are holes: what says "you could go in there" is
+  // that nothing is lit inside, and a merely dark brown reads as another plank.
+  hollow: 0x241d18,
 } as const;
 
 /**
