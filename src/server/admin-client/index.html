@@ -18,6 +18,19 @@
       selection rather than an id typed into a box beside it. Before spec 154 the
       table and the actions were two unconnected halves of the page and you
       retyped an id per action, correctly, or you moderated the wrong person.
+
+      How a token gets in (spec 226). The server signs a throwaway one per boot,
+      so pasting a JWT is not a first-run chore -- it is the first thing an
+      operator does every restart, over a remembered token the reboot guaranteed
+      is wrong. Three rules, and the first two are not conveniences:
+
+        - **The clipboard is offered, never trusted.** `readToken` parses the
+          same fields `admin/auth.ts` does, minus the signature, and something
+          that is not an admin token is never put in the field and never sent.
+        - **Nothing automatic disturbs a live session, or a field being typed
+          in.** The button is the explicit ask and is the path that always works.
+        - **A token the page already has is not adopted again**, which is what
+          stops a paste-and-connect loop by construction.
     -->
     <style>
       :root {
@@ -40,14 +53,24 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 14px 16px 24px;
+        padding: 0 16px 24px;
         background: var(--bg);
         color: var(--text);
         font: 13px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
       }
 
       /* --- header ------------------------------------------------------- */
-      header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+      /*
+        Sticky, because the two things an operator watches -- whether the socket
+        is up and how many people are on -- used to scroll away with everything
+        else the moment the roster got long.
+      */
+      header {
+        position: sticky; top: 0; z-index: 5;
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        margin: 0 0 12px; padding: 12px 0 10px;
+        background: var(--bg); border-bottom: 1px solid var(--line-soft);
+      }
       h1 {
         font-size: 13px; margin: 0; letter-spacing: 0.09em; text-transform: uppercase;
         color: var(--dim); font-weight: 600;
@@ -62,20 +85,25 @@
       .pill.down { color: var(--err); border-color: #472a2d; background: #241618; }
       .pill.count { color: var(--text); }
       .pill.count b { color: var(--accent); }
+      /* A url and a token subject are not labels: they keep their own case. */
+      .pill.plain { text-transform: none; letter-spacing: 0; font-weight: 500; }
+      .pill.plain b { color: var(--text); font-weight: 600; }
 
       /* --- panels ------------------------------------------------------- */
       .panel {
         background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
         padding: 12px 13px 13px;
       }
-      .panel > h2, .group > h3 {
+      .panel h2, .group > h3 {
         margin: 0 0 9px; font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase;
         color: var(--dimmer); font-weight: 600;
       }
+      .panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+      .panel-head h2 { margin: 0; }
       .group { border-top: 1px solid var(--line-soft); margin-top: 13px; padding-top: 11px; }
       .group:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
 
-      .columns { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; }
+      .columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: 12px; align-items: start; }
       @media (max-width: 1000px) { .columns { grid-template-columns: minmax(0, 1fr); } }
 
       /* --- controls ----------------------------------------------------- */
@@ -97,11 +125,43 @@
       .row > * { flex: 1; }
       .row > button { flex: 0 0 auto; }
       .row + .row { margin-top: 7px; }
+      /*
+        A field is a label over a control, so the control is the width of the
+        field -- without this an input keeps its own default width whatever share
+        of the row it was given, which is why the token box was narrower than the
+        server box beside it and why two number fields in the same panel came out
+        different sizes.
+      */
       .field { min-width: 0; }
-      .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+      .field > input, .field > select { width: 100%; }
+      button.ghost { background: transparent; border-color: var(--line); color: var(--dim); padding: 3px 8px; font-size: 11px; }
+      button.ghost:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+
+      /* --- the connect bar ---------------------------------------------- */
+      /*
+        A url, a 200-character secret and the buttons that use them are worth a
+        row of the page for about four seconds a boot. So once the token is
+        accepted the bar is *gone* rather than collapsed, and what survives of it
+        -- who the token says you are, what it has left, and the way back -- is
+        two pills and a button in the header, which is where the rest of the
+        connection already lives.
+      */
+      #conn { margin-bottom: 12px; }
+      #conn[data-state='live'] { display: none; }
+      #token { font-family: var(--mono); font-size: 12px; }
+      .hint { margin-top: 8px; font-size: 11px; color: var(--dimmer); }
 
       /* --- the player table --------------------------------------------- */
       .scroll { overflow-x: auto; }
+      /*
+        Bounded, so a busy server cannot push the actions beside it off the
+        bottom of the page -- and the head sticks to the top of that region
+        rather than to the page, so the columns stay named while it scrolls. The
+        underline is a shadow because a collapsed border does not travel with a
+        sticky cell.
+      */
+      .roster { max-height: min(58vh, 520px); overflow: auto; }
+      .roster thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: inset 0 -1px 0 var(--line); }
       table { border-collapse: collapse; width: 100%; font-size: 12px; }
       th, td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
       th { color: var(--dimmer); font-weight: 600; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; }
@@ -137,37 +197,47 @@
       .tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
 
       /* --- log ---------------------------------------------------------- */
+      #logPanel { margin-top: 12px; }
       #log {
-        margin-top: 12px; height: 150px; overflow: auto; padding: 8px 10px;
-        background: #0c0e12; border: 1px solid var(--line); border-radius: 8px;
+        height: 160px; min-height: 54px; resize: vertical; overflow: auto; padding: 8px 10px;
+        background: #0c0e12; border: 1px solid var(--line); border-radius: 6px;
         font: 12px/1.6 var(--mono);
       }
       #log div { white-space: pre-wrap; }
       #log .t { color: #4c5666; }
-      .ok { color: var(--ok); } .err { color: var(--err); } .dim { color: var(--dimmer); }
+      .ok { color: var(--ok); } .err { color: var(--err); }
+      .warn { color: var(--warn); } .dim { color: var(--dimmer); }
     </style>
   </head>
   <body>
     <header>
       <h1>turbo-deck admin</h1>
+      <span id="status" class="pill down">disconnected</span>
       <span id="count" class="pill count" hidden><b>0</b>&nbsp;online</span>
       <span class="spacer"></span>
-      <span id="status" class="pill down">disconnected</span>
+      <span id="where" class="pill plain" hidden></span>
+      <span id="connWho" class="pill plain" hidden><b id="connSub"></b><span id="connTtl"></span></span>
+      <button id="change" class="ghost" hidden>change token</button>
+      <button id="disconnect" class="ghost" disabled>disconnect</button>
     </header>
 
-    <div class="panel" style="margin-bottom: 12px">
+    <div id="conn" class="panel" data-state="open">
       <div class="row">
-        <div class="field"><label for="url">server</label><input id="url" placeholder="ws://localhost:8787" /></div>
-        <div class="field" style="flex: 2"><label for="token">admin token</label><input id="token" placeholder="the JWT the server printed on boot" /></div>
+        <div class="field"><label for="url">server</label><input id="url" placeholder="ws://localhost:8787" spellcheck="false" autocomplete="off" /></div>
+        <div class="field" style="flex: 3">
+          <label for="token">admin token</label>
+          <input id="token" placeholder="the JWT the server printed on boot" spellcheck="false" autocomplete="off" />
+        </div>
+        <button id="paste">paste token</button>
         <button id="connect" class="primary">connect</button>
-        <button id="disconnect" disabled>disconnect</button>
       </div>
+      <div id="hint" class="hint"></div>
     </div>
 
     <div class="columns">
       <div class="panel">
         <h2>players &mdash; click one to act on it</h2>
-        <div class="scroll">
+        <div class="scroll roster">
           <table id="players">
             <thead>
               <tr>
@@ -315,7 +385,14 @@
       </div>
     </details>
 
-    <div id="log"></div>
+    <div id="logPanel" class="panel">
+      <div class="panel-head">
+        <h2>log</h2>
+        <span class="spacer"></span>
+        <button id="clearLog" class="ghost">clear</button>
+      </div>
+      <div id="log"></div>
+    </div>
 
     <script>
       // --- the wire, by hand ---------------------------------------------
@@ -357,11 +434,68 @@
         str() { const n = this.varuint(); const s = new TextDecoder().decode(this.b.subarray(this.o, this.o + n)); this.o += n; return s; }
       }
 
+      // --- the token, by hand ---------------------------------------------
+      /*
+        The page has no secret, so it cannot check a signature and has no business
+        judging one -- `verifyAdminToken` on the server is the only thing that
+        grants anything, and that does not change. What the page CAN do is read
+        the same fields `auth.ts` reads, which is enough to know whether a string
+        is a token this console could use at all.
+
+        That is the whole guard on the clipboard: a clipboard usually holds
+        something that is not an admin token -- a password, an ssh key, a url, the
+        last line of a chat -- and something that is not an admin token is never
+        put in the field and never sent anywhere.
+
+        (`atob` decodes bytes rather than utf-8, so a non-ascii `sub` would come
+        back mangled or throw inside the JSON parse and be refused. Every subject
+        this server mints is a name; a token that lost the argument here is one
+        the operator can still paste by hand.)
+      */
+      function fromBase64url(segment) {
+        const padded = segment.replace(/-/g, '+').replace(/_/g, '/');
+        return atob(padded.padEnd(padded.length + ((4 - (padded.length % 4)) % 4), '='));
+      }
+
+      /** The claims, or null unless this is a token this page could use. */
+      function readToken(text) {
+        const raw = String(text ?? '').trim();
+        const parts = raw.split('.');
+        if (parts.length !== 3) return null;
+        let header, body;
+        try {
+          header = JSON.parse(fromBase64url(parts[0]));
+          body = JSON.parse(fromBase64url(parts[1]));
+        } catch {
+          return null;
+        }
+        if (!header || header.typ !== 'JWT') return null;
+        if (!body || typeof body.sub !== 'string' || body.role !== 'admin') return null;
+        if (typeof body.exp !== 'number' || typeof body.iat !== 'number') return null;
+        return { raw, sub: body.sub, role: body.role, iat: body.iat, exp: body.exp };
+      }
+
+      /** A span, never a clock time: "11h 58m", "4m", "12s". */
+      function span(seconds) {
+        const total = Math.max(0, Math.round(seconds));
+        if (total < 60) return total + 's';
+        if (total < 3600) return Math.floor(total / 60) + 'm';
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        return minutes > 0 ? hours + 'h ' + minutes + 'm' : hours + 'h';
+      }
+
+      const secondsLeft = (claims) => claims.exp - Date.now() / 1000;
+
       // --- state ----------------------------------------------------------
       const $ = (id) => document.getElementById(id);
       const val = (id) => $(id).value.trim();
       const num = (id) => Number($(id).value);
       const STORE = 'turbo-deck.admin';
+      /** The last profile that authenticated. Never throws: a corrupt one is no profile. */
+      const readStore = () => {
+        try { return JSON.parse(localStorage.getItem(STORE) ?? '{}') ?? {}; } catch { return {}; }
+      };
 
       let socket = null;
       let authenticated = false;
@@ -403,6 +537,151 @@
         send(build(player));
       }
 
+      // --- where a token comes from ---------------------------------------
+      /**
+       * Disarmed by the first refusal, and re-armed by the button. Every browser
+       * guards `readText` differently -- Chromium wants a permission, Firefox and
+       * Safari want a gesture -- and a page that re-asks on every alt-tab is worse
+       * than one that asks once and then offers a button.
+       */
+      let clipboardArmed = true;
+      /** Set by `change token`: holds the bar open over a live session. */
+      let connOpen = false;
+
+      function adopt(claims, source) {
+        $('token').value = claims.raw;
+        log(
+          'pasted the token for ' + claims.sub + ' from ' + source +
+            ' (' + span(secondsLeft(claims)) + ' left)',
+          'ok',
+        );
+        connOpen = false;
+        renderToken();
+        connect();
+      }
+
+      /**
+       * The one rule for a token arriving from anywhere -- the clipboard read,
+       * the paste button, or an ordinary ctrl+v into the field.
+       *
+       * `announce` is false for the automatic read and true for anything the
+       * operator asked for: a clipboard usually holds something that is not a
+       * token, and a line about it on every alt-tab is noise, while a button that
+       * appears to do nothing is worse.
+       */
+      function offerToken(text, source, announce) {
+        const claims = readToken(text);
+        if (!claims) {
+          if (announce) log(source + ' does not hold an admin token', 'err');
+          return 'invalid';
+        }
+        const left = secondsLeft(claims);
+        if (left <= 0) {
+          // Refused here rather than at the server: "bad token" and "you copied
+          // yesterday's token" are one message and two different fixes. Refused
+          // rather than pasted, because writing a dead token over a possibly-live
+          // one is destructive.
+          if (announce) log(source + ' holds a token that expired ' + span(-left) + ' ago', 'err');
+          return 'expired';
+        }
+        // The whole of "paste it if the page has not got it" -- and what stops a
+        // paste-and-connect loop by construction, since adopting fills the field.
+        if (claims.raw === val('token')) {
+          if (announce) log('that token is already in the field', 'dim');
+          return 'same';
+        }
+        adopt(claims, source);
+        return 'adopted';
+      }
+
+      /** Never throws and never reports: a browser that says no is an answer. */
+      async function readClipboard() {
+        if (!navigator.clipboard || !navigator.clipboard.readText) return null;
+        try {
+          return await navigator.clipboard.readText();
+        } catch {
+          return null;
+        }
+      }
+
+      /**
+       * An opportunity, never a requirement. Two things it may not do:
+       *
+       *  - **disturb a live session.** A token copied while connected is the
+       *    operator's to apply, through the button.
+       *  - **overwrite a field somebody is typing in.**
+       *
+       * The `hasFocus` guard is there rather than a caught rejection because a
+       * read for an unfocused document is refused outright, and a spent attempt
+       * is a permission prompt nobody got anything for.
+       */
+      async function offerClipboard() {
+        if (!clipboardArmed || authenticated) return;
+        if (!document.hasFocus() || document.activeElement === $('token')) return;
+        const text = await readClipboard();
+        if (text === null) {
+          clipboardArmed = false;
+          renderHint();
+          return;
+        }
+        offerToken(text, 'the clipboard', false);
+      }
+
+      function renderHint() {
+        $('hint').textContent = clipboardArmed
+          ? 'the server signs a fresh token every boot \u2014 copy one and it is pasted here on its own'
+          : 'this browser will not hand the clipboard over on its own \u2014 press paste token, or ctrl+v into the field';
+      }
+
+      /**
+       * Where the connection is stated: the bar while it is being made, the
+       * header once it is. Both facts in the header come from the token the page
+       * is already holding, so neither of them crosses the wire.
+       */
+      function renderToken() {
+        const claims = readToken(val('token'));
+        const done = authenticated && !connOpen;
+        $('conn').dataset.state = done ? 'live' : 'open';
+
+        $('where').hidden = !done;
+        $('where').textContent = val('url');
+        $('change').hidden = !done;
+        $('connWho').hidden = !done;
+        $('connSub').textContent = claims ? claims.sub : 'connected';
+        if (claims) {
+          const left = secondsLeft(claims);
+          $('connTtl').textContent = left > 0 ? ' \u00b7 ' + span(left) + ' left' : ' \u00b7 expired';
+          // Amber under a quarter of an hour, because a token that lapses
+          // mid-session stops working on the next message rather than at the
+          // next reconnect -- `verifyAdminToken` is called on every one of them.
+          $('connTtl').className = left <= 0 ? 'err' : left < 900 ? 'warn' : 'dim';
+        } else {
+          $('connTtl').textContent = '';
+        }
+        renderHint();
+      }
+
+      /**
+       * The click that *enters* one of these fields selects all of it; a click
+       * inside an already-focused one still places a caret, so a correction to a
+       * single character works as it always did.
+       *
+       * Selecting on `focus` alone does not survive -- the mouseup that ends the
+       * click collapses the selection to a caret -- so the mouseup that entered
+       * the field is defaulted out, and only that one, or a deliberate
+       * drag-select inside the field would go with it.
+       */
+      function selectOnEntry(input) {
+        let entering = false;
+        input.addEventListener('mousedown', () => { entering = document.activeElement !== input; });
+        input.addEventListener('focus', () => input.select());
+        input.addEventListener('mouseup', (event) => {
+          if (entering) event.preventDefault();
+          entering = false;
+        });
+        input.addEventListener('blur', () => { entering = false; });
+      }
+
       // --- connection -----------------------------------------------------
       function setStatus(text, cls) {
         $('status').textContent = text;
@@ -438,6 +717,7 @@
           $('disconnect').disabled = true;
           players = [];
           renderPlayers();
+          renderToken();
           $('playersEmpty').textContent = 'not connected';
         };
         socket.onerror = () => log('socket error -- is the server running on that port?', 'err');
@@ -447,7 +727,9 @@
       /** Everything that happens once the token is accepted. */
       function onAuthenticated() {
         authenticated = true;
+        connOpen = false;
         setStatus('connected', 'live');
+        renderToken();
         localStorage.setItem(STORE, JSON.stringify({ url: val('url'), token: val('token') }));
         // The catalog is asked for once; the list is polled.
         send(new W().u8(T.getItems).out());
@@ -458,7 +740,11 @@
       }
 
       function refresh() {
-        if (authenticated) send(new W().u8(T.listPlayers).out());
+        if (!authenticated) return;
+        send(new W().u8(T.listPlayers).out());
+        // What is left of the token is drawn from the token, so the poll is the
+        // only thing that can keep it honest. Nothing about it crosses the wire.
+        renderToken();
       }
 
       // --- replies --------------------------------------------------------
@@ -744,10 +1030,70 @@
       $('connect').onclick = connect;
       $('disconnect').onclick = () => { if (socket) socket.close(); };
       $('getAudit').onclick = () => send(new W().u8(T.getAudit).u16(50).out());
+      $('clearLog').onclick = () => $('log').replaceChildren();
+      $('change').onclick = () => {
+        connOpen = true;
+        renderToken();
+        $('token').focus();
+      };
+
+      // The explicit ask. It re-arms the automatic path, because a browser that
+      // refused before the operator granted the permission will answer now.
+      $('paste').onclick = async () => {
+        const text = await readClipboard();
+        if (text === null) {
+          clipboardArmed = false;
+          renderHint();
+          log('the browser would not hand over the clipboard \u2014 paste into the field with ctrl+v', 'err');
+          return;
+        }
+        clipboardArmed = true;
+        renderHint();
+        offerToken(text, 'the clipboard', true);
+      };
+
+      // A native paste needs no permission from anybody, so this is the path
+      // that always works. Anything that is not a whole live token is left to
+      // the browser to paste and to the operator to look at.
+      $('token').addEventListener('paste', (event) => {
+        const text = event.clipboardData ? event.clipboardData.getData('text') : '';
+        const claims = readToken(text);
+        if (!claims || claims.raw === val('token')) return;
+        if (secondsLeft(claims) <= 0) {
+          log('that token expired ' + span(-secondsLeft(claims)) + ' ago', 'err');
+          return;
+        }
+        event.preventDefault();
+        adopt(claims, 'the field');
+      });
+
+      // The way back out of `change token`, which is otherwise a panel with no
+      // close: the stored profile is the token the live session is actually on,
+      // so escape restores it rather than leaving half of a new one in the field.
+      $('token').addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || !authenticated) return;
+        const stored = readStore();
+        if (stored.token) $('token').value = stored.token;
+        connOpen = false;
+        $('token').blur();
+        renderToken();
+      });
+
+      selectOnEntry($('token'));
+      selectOnEntry($('url'));
+
+      // Enter in either connection field connects, rather than reaching for the
+      // first button in the row -- which is `paste token`, and is not what
+      // somebody who has just finished typing a url is asking for.
+      for (const input of [$('url'), $('token')]) {
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') connect();
+        });
+      }
 
       // Enter in any action field runs that section's first button, so a count
       // can be typed and applied without reaching for the mouse.
-      for (const input of document.querySelectorAll('input')) {
+      for (const input of document.querySelectorAll('input:not(#url):not(#token)')) {
         input.onkeydown = (event) => {
           if (event.key !== 'Enter') return;
           const button = input.closest('.row')?.querySelector('button') ?? input.closest('.panel')?.querySelector('button');
@@ -755,15 +1101,32 @@
         };
       }
 
+      // The moment the operator alt-tabs back from the terminal they copied it
+      // in. Both events fire on that in some combination, and `offerToken` is
+      // idempotent, so a double is nothing.
+      window.addEventListener('focus', () => { void offerClipboard(); });
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) void offerClipboard();
+      });
+
       // --- boot -----------------------------------------------------------
       // The server signs a throwaway key per boot unless ADMIN_SECRET is set, so
       // pasting a JWT is otherwise the first thing an operator does every time.
-      const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE) ?? '{}'); } catch { return {}; } })();
+      const saved = readStore();
       $('url').value = saved.url || (location.protocol === 'https:' ? 'wss://' + location.host : 'ws://' + (location.host || 'localhost:8787'));
       $('token').value = saved.token || '';
       setActionsEnabled(false);
       $('playersEmpty').hidden = false;
-      if ($('token').value) connect();
+      renderToken();
+
+      // The clipboard gets first refusal, because a remembered token is the one
+      // thing on this page that a reboot guarantees is wrong -- and adopting one
+      // connects, so this is also the connect. The saved token gets its turn only
+      // if the clipboard had nothing to say, which is what `socket` asks: it is
+      // set by the `connect` inside `adopt`.
+      void offerClipboard().then(() => {
+        if (!socket && $('token').value) connect();
+      });
     </script>
   </body>
 </html>
