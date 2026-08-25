@@ -40,6 +40,7 @@ import { rally } from './aggro.js';
 import { MIN_MOVE_SCALE } from './movement.js';
 import { moveScaleOf, statusOf, StatusId } from './statuses.js';
 import { STATUS_VISUALS, visualFor } from '../data/status-visuals.js';
+import { SCORCHED_EARTH } from '../data/aura-fields.js';
 import {
   ActivityValue,
   AggroValue,
@@ -1331,6 +1332,130 @@ describe('determinism holds with afflictions in play', () => {
     }
     expect(quiet).not.toBeNull();
     expect(JSON.stringify(current.rng.getState())).toBe(quiet);
+  });
+});
+
+/**
+ * The field, end to end (spec 223).
+ *
+ * `aura-field.test.ts` is the pass's own arithmetic; what is asserted here is
+ * the half that only exists once the whole tick is running -- that casting the
+ * skill actually starts a field, that the field burns what is standing in it
+ * through the real `step`, and that adding one to a fight moves no Rng draw.
+ */
+describe('a skill that makes the ground dangerous', () => {
+  const FIELD_SIGIL: Equipment = wearing('sigil.scorchedEarth');
+
+  /** A caster wearing the sigil, and a dummy inside the field's reach. */
+  function field(gap = 60): {
+    state: ServerWorldState;
+    casterId: number;
+    targetId: number;
+  } {
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450, statsFor(FIELD_SIGIL));
+    const target = withDummy(caster.state, 600 + gap, 450);
+    return { state: target.state, casterId: caster.id, targetId: target.id };
+  }
+
+  function cast_(state: ServerWorldState, casterId: number, ticks: number): Run {
+    return run(state, ticks, { 0: [input(casterId, { castAbilityId: 'skill.scorchedEarth' })] });
+  }
+
+  it('puts the field on the caster and nothing on anybody else', () => {
+    const { state, casterId, targetId } = field();
+    const windup = abilityById('skill.scorchedEarth')?.windupTicks ?? 0;
+    const landed = cast_(state, casterId, windup + 2);
+    const caster = landed.state.entities.get(casterId);
+    expect(statusOf(caster?.statuses ?? {}, StatusId.ScorchedEarth, landed.state.tick)).not.toBeNull();
+    // The *field* is the caster's; what the target gets is the affliction.
+    const target = landed.state.entities.get(targetId);
+    expect(statusOf(target?.statuses ?? {}, StatusId.ScorchedEarth, landed.state.tick)).toBeNull();
+  });
+
+  it('burns what is standing in it, through the real tick', () => {
+    const { state, casterId, targetId } = field();
+    const windup = abilityById('skill.scorchedEarth')?.windupTicks ?? 0;
+    const landed = cast_(state, casterId, windup + 4);
+    const target = landed.state.entities.get(targetId);
+    const burn = statusOf(target?.statuses ?? {}, StatusId.Burn, landed.state.tick);
+    expect(burn).not.toBeNull();
+    // Credited to the caster, which is what makes a field's kill pay somebody.
+    expect(burn?.sourceId).toBe(casterId);
+    // And it is really pulsing: the health bar moves without a second cast.
+    const later = run(landed.state, SERVER_TICK_RATE);
+    expect(hits(later.events).some((hit) => hit.targetId === targetId && hit.periodic)).toBe(true);
+  });
+
+  it('leaves a body outside its reach alone', () => {
+    const away = SCORCHED_EARTH.radius + 200;
+    const { state, casterId, targetId } = field(away);
+    const windup = abilityById('skill.scorchedEarth')?.windupTicks ?? 0;
+    const landed = cast_(state, casterId, windup + 4);
+    const target = landed.state.entities.get(targetId);
+    expect(statusOf(target?.statuses ?? {}, StatusId.Burn, landed.state.tick)).toBeNull();
+  });
+
+  it('stops burning once the field has run out', () => {
+    // Eight seconds of field plus the linger, and then some. The affliction has
+    // to be gone, or the field is a permanent burn with a delay on the front.
+    const { state, casterId, targetId } = field();
+    const ability = abilityById('skill.scorchedEarth');
+    const held = ability?.effects?.[0];
+    const duration = held && held.kind === 'applyStatus' ? held.durationTicks : 0;
+    expect(duration).toBeGreaterThan(0);
+    const windup = ability?.windupTicks ?? 0;
+    const landed = cast_(state, casterId, windup + duration + SERVER_TICK_RATE * 2);
+    const target = landed.state.entities.get(targetId);
+    expect(statusOf(target?.statuses ?? {}, StatusId.Burn, landed.state.tick)).toBeNull();
+    expect(
+      statusOf(landed.state.entities.get(casterId)?.statuses ?? {}, StatusId.ScorchedEarth, landed.state.tick),
+    ).toBeNull();
+  });
+
+  /**
+   * The property that makes adding this pass to the tick safe at all: it draws
+   * **nothing**. Measured from the tick the field is up -- by which point the
+   * cast has rolled whatever it was going to -- through four hundred more ticks
+   * of it burning a body.
+   */
+  it('never touches the Rng while it burns', () => {
+    const { state, casterId, targetId } = field();
+    const ctx = context();
+    let current = state;
+    let quiet: string | null = null;
+    for (let i = 0; i < 400; i++) {
+      current = step(
+        current,
+        i === 0 ? [input(casterId, { castAbilityId: 'skill.scorchedEarth' })] : [],
+        ctx,
+      ).state;
+      const burning = statusOf(
+        current.entities.get(targetId)?.statuses ?? {},
+        StatusId.Burn,
+        current.tick,
+      );
+      if (quiet === null && burning) quiet = JSON.stringify(current.rng.getState());
+    }
+    expect(quiet).not.toBeNull();
+    expect(JSON.stringify(current.rng.getState())).toBe(quiet);
+  });
+
+  it('replays the same seed and the same frames to bit-identical state', () => {
+    const scripted = (): ServerWorldState => {
+      const { state, casterId } = field();
+      return run(state, 300, {
+        0: [input(casterId, { castAbilityId: 'skill.scorchedEarth' })],
+      }).state;
+    };
+    const snapshot = (state: ServerWorldState): string =>
+      JSON.stringify({
+        tick: state.tick,
+        nextEntityId: state.nextEntityId,
+        rng: state.rng.getState(),
+        entities: [...state.entities.values()],
+      });
+    expect(snapshot(scripted())).toBe(snapshot(scripted()));
   });
 });
 

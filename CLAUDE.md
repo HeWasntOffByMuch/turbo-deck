@@ -67,6 +67,7 @@ change a game outcome.
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
+| `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -2956,6 +2957,55 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  a client works out the *schedule* of for itself, so the obvious
                  way to get it wrong is to let that derivation reach back into
                  something.
+                 `world/aura-vfx.ts` is the ring beside that paint (spec 223),
+                 and it is the first thing in this game that has ever played an
+                 aura. Spec 124 built the sigil -- three generated meshes,
+                 `uOrient` on the mesh batch for it, `hardStop` on the effect
+                 format for it -- and spec 121's `aurasFor` has carried a status
+                 parameter and the sentence *"the day a status list is
+                 replicated, this gains a branch and nothing else in the renderer
+                 changes"* since it was written. Spec 186 replicated them and
+                 nothing came back to collect, so for a hundred specs the whole
+                 path was reachable from the Studio tab and from nowhere else,
+                 with a complete green suite beside it the entire time. The branch
+                 is `AuraFacts.fields` -- status **ids** rather than a kind,
+                 because a field already names its own ring in
+                 `data/aura-fields.ts` beside the radius that ring is drawn at, so
+                 the mapping is a table lookup and not a rule. The other four
+                 facts the mount states `false` rather than leaving to a default:
+                 `aura_selected` would be a second answer to what `targetRing`
+                 already draws, and the rest are a look change with their own
+                 decision to make.
+                 That radius is **imported into `vfx/library.ts` rather than
+                 retyped**, which is the one thing about the ring worth arguing
+                 over: it is not decoration around the mechanic, it is where the
+                 fire is, and a player who cannot tell which bodies are inside it
+                 cannot play the skill. Two literals that have to agree is the
+                 drift `ground-decal.ts` exists to refuse one level down.
+                 The driver is built to `affliction-vfx.ts`'s three rules because
+                 the machinery and the failure modes are the same, and it cannot
+                 use `AuraTracker` for the reason that file states at length:
+                 **`play` returns 0 on refusal**, and a tracker recording *ids*
+                 cannot tell "asked for, did not start" from "started" -- which
+                 for a ring is worse than for a cling, since a missing one is not
+                 missing paint, it is a hazard nobody can see. So it holds
+                 handles, asks `isLive` every frame (a full instance pool
+                 *evicts* rather than refusing and bumps the slot's generation),
+                 and **owes a stop**: an aura particle is given `HELD` ticks --
+                 ten minutes -- so one left on a despawned body holds a slot for
+                 the session.
+                 `npx tsx scripts/probe-aura.ts` is the half no headless test can
+                 see, and on this feature that is not a formality: it reads
+                 `data-auras`, published from the driver's own held set rather
+                 than from the statuses that asked for a ring, so one refused by
+                 the budget or evicted by the pool reads as absent. Its **control**
+                 is worth as much as its measurement -- a probe whose "after" is
+                 right and whose "before" was never checked cannot tell a working
+                 driver from one that puts a ring under everything.
+                 `admin:triggerEvent 'field'` and `?field=` are the developer path,
+                 in the same register as spec 215's `'affliction'` and for its
+                 stated reason: the alternative is farming a level-6 exceptional
+                 sigil every time somebody wants to look at the ring.
                  `sim/crowd.ts` and `sim/attack-slots.ts` are what a tick does
                  to a body because of the bodies around it (spec 187). Until they
                  existed nothing on the server knew that two units were in the
@@ -3177,6 +3227,60 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  answers about what a row does. `aimShape` was the third of the
                  same kind and had never read `ability.area` at all, so the one
                  ability kind that *is* a shape was the one kind you could not see.
+                 `data/aura-fields.ts` and `sim/aura-field.ts` are the affliction
+                 that is somewhere rather than on somebody (spec 223). Every
+                 landing this game has resolves **once** -- a body, a point, a
+                 shape, a flight -- and an affliction, the one thing that outlives
+                 its own delivery, is carried by whoever it was put on. Nothing
+                 could say *this ground is dangerous while I am standing on it*,
+                 which is a question about time and position together and so one a
+                 landing cannot answer. A field is `a reach + an affliction + a
+                 linger`, all three of them systems that already exist, so the
+                 table authors no rate, no cadence and no length: those are
+                 `data/damage-over-time.ts`'s to say whole, and spec 190's rule
+                 that every Burn in the game is the same Burn is exactly what
+                 makes "step out and it goes out shortly" a sentence a player can
+                 reason about. What a field *is* to the sim is a **boon its
+                 carrier wears**, applied by an ordinary `applyStatus` effect off
+                 a `self` skill -- `landSelf` has run `applyEffects` since 190, so
+                 the ability system needed nothing.
+                 The pass re-lays the affliction **every tick** a body is inside,
+                 and the two properties that fall out of that are the feature:
+                 standing in it never runs out, because `applyStatus` keeps
+                 `appliedAtTick` across a refresh so the pulses keep their own
+                 cadence rather than being ticked forever into the future; and
+                 stepping out leaves exactly the linger, so the fire goes out a
+                 second later wherever you went. Both halves of that were got
+                 wrong first and both live in `fieldLanding`, lifted out of the
+                 pass so a test asserts the decision rather than its own copy of
+                 it. **It never puts out a bigger fire**: `applyStatus` refreshes
+                 a clock in *both* directions -- the mistake 190 records making
+                 with Corrosion's Sundered -- so a body carrying four seconds of
+                 Burn from an Ember Toss that walked into a one-second field would
+                 have had three of them cancelled by the fire it was standing in,
+                 and the window is the larger of the two. **It never stacks with
+                 itself**, because a rule re-applied sixty times a second reaches
+                 a stacking affliction's ceiling in `maxStacks` ticks -- and a flat
+                 cap of one would cut a five-dart Poison down the moment its
+                 carrier walked past, so the ceiling handed on is
+                 `max(1, what is already there)`.
+                 It runs as **3c**, between the movement passes and the affliction
+                 pass, which is the one correctly bracketed slot: every body has
+                 finished moving so the positions are this tick's, and `pulsesOn`
+                 needs `elapsed > 0` so a body that steps in cannot also take a
+                 pulse for having done so. It draws **nothing from the Rng** and
+                 raises no events -- what it does is lay an affliction, and the
+                 pass below is what reports one -- and hostility is re-asked every
+                 tick, which matters more here than anywhere: a field is *live*, so
+                 a carrier who walked into a safe zone with one up would otherwise
+                 go on burning whoever was standing there.
+                 What lands goes through `landDot`, which came out of
+                 `damage-over-time.ts` for this so that the three ways an
+                 affliction can arrive -- applied whole, passed on by a spread,
+                 laid by a field -- are one description instead of three. That
+                 closed a divergence already in the tree: `spread` wrote its own
+                 `applyStatus` and skipped Corrosion's `Sundered` rider, invisible
+                 only because no row that spreads has one.
                  `data/status-visuals.ts` is which of those a player may see
                  (spec 186), and it exists because that map is deliberately
                  wider than anything anybody should be shown: some of what it

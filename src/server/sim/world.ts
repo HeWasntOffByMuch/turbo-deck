@@ -51,6 +51,7 @@ import {
 } from './crowd.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
 import { healingScaleOf, pulseDots } from './damage-over-time.js';
+import { pulseAuraFields } from './aura-field.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
 import { regenPoise, staggered } from './poise.js';
 import {
@@ -1306,7 +1307,23 @@ export function step(
     events.push({ kind: 'despawned', entityId: entity.id });
   }
 
-  // --- 3c: what is already in the blood (spec 190) -----------------------
+  // --- 3c: the ground under an aura (spec 223) ---------------------------
+  //
+  // The first rule in this sim that reads a status on one body and reaches the
+  // bodies *around* it. Here rather than anywhere else because this is the slot
+  // bracketed correctly at both ends: every body has finished moving (1c, 1d),
+  // so the positions it measures are this tick's -- and `pulsesOn` needs
+  // `elapsed > 0`, so a body that steps into a field on this tick cannot also
+  // take a pulse for having done so.
+  //
+  // It draws nothing from the Rng and raises no events: what it does is lay an
+  // affliction, and the pass below is what reports one.
+  pulseAuraFields(working, tick, {
+    isHostile: (a, b) => isHostile(a, b, context.zones),
+    isSimulated,
+  });
+
+  // --- 3d: what is already in the blood (spec 190) -----------------------
   //
   // Every affliction in the world, one tick on. Here rather than anywhere else
   // because this is the one slot bracketed correctly at both ends: everything
@@ -1324,7 +1341,7 @@ export function step(
     }),
   );
 
-  // --- 3d: what the dead are worth (spec 156) ----------------------------
+  // --- 3e: what the dead are worth (spec 156) ----------------------------
   // Between the fighting and the sweep, because it reads bodies that are about
   // to be removed: a `died` event names a victim whose position, spawner and
   // assist marks all disappear on the next pass. Driven off events rather than
@@ -1334,10 +1351,10 @@ export function step(
   nextEntityId = credited.nextEntityId;
   events.push(...credited.events);
 
-  // --- 3e: motes drift, are collected, and fade -------------------------
+  // --- 3f: motes drift, are collected, and fade -------------------------
   events.push(...advanceMotes(working, tick, context));
 
-  // --- 3f: the herd answers (spec 163) ----------------------------------
+  // --- 3g: the herd answers (spec 163) ----------------------------------
   // Driven off this tick's `hit` events, which is what bounds it: a body rallied
   // here was not itself hit, so it raises no call of its own and the shout
   // carries exactly one hop per blow. Before the sweep below, deliberately --

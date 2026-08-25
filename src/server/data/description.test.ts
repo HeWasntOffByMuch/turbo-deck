@@ -12,6 +12,7 @@ import { ALL_ABILITIES, abilityById } from './abilities.js';
 import { ALL_ITEMS } from './items.js';
 import { STATUS_VISUALS } from './status-visuals.js';
 import { ALL_DOTS, dotById, dotPulseDamage } from './damage-over-time.js';
+import { ALL_AURA_FIELDS, auraFieldById } from './aura-fields.js';
 import { ALL_SKILLS } from './skills.js';
 import {
   GRANT_LABELS,
@@ -471,10 +472,38 @@ describe('afflictions are derived, never authored (spec 190)', () => {
     // affliction *is* its row in `data/damage-over-time.ts`, so authoring a
     // sentence beside it would be a second copy of `damagePerSecond` with
     // nothing keeping it true -- and a row with neither source says nothing.
+    //
+    // Two derived sources now rather than one (spec 223): an aura field is a
+    // reach, an affliction and a linger in `data/aura-fields.ts`, which is the
+    // same rule with a different table under it. A *third* would be worth
+    // stopping to think about; this one is the same shape exactly.
     for (const visual of STATUS_VISUALS) {
-      const derived = dotById(visual.id) !== null;
+      const derived = dotById(visual.id) !== null || auraFieldById(visual.id) !== null;
       const authored = visual.effect !== undefined;
       expect(derived !== authored, `${visual.id}: derived=${String(derived)} authored=${String(authored)}`).toBe(true);
+    }
+  });
+
+  it('derives an aura field’s reach, affliction and linger off its own row (spec 223)', () => {
+    for (const field of ALL_AURA_FIELDS) {
+      const visual = STATUS_VISUALS.find((row) => row.id === field.id);
+      expect(visual, field.id).toBeDefined();
+      if (!visual) continue;
+      const text = technicalText(describeStatus(visual));
+      // The reach, because it is the number a player positions against.
+      expect(text, field.id).toContain(String(field.radius));
+      // The affliction by **name** and never by its numbers: spec 190's rule is
+      // that the row is the affliction whole, so the field names it and the
+      // reader gets the rate from that condition's own tooltip.
+      const dot = dotById(field.dotId);
+      expect(dot, field.dotId).not.toBeNull();
+      if (dot) {
+        expect(text, field.id).toContain(dot.name);
+        expect(text, field.id).not.toContain(String(dot.damagePerSecond));
+      }
+      // And the linger, in seconds, which is the whole of what a player decides
+      // against: leaving works, and this is how long it takes to work.
+      expect(text, field.id).toContain(formatSeconds(field.lingerTicks));
     }
   });
 

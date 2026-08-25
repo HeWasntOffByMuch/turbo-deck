@@ -721,6 +721,51 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Decay }],
     description: 'A patch of rot. Little damage, and nothing they do about it works properly.',
   },
+  // --- the field (spec 223) ----------------------------------------------
+  //
+  // The first skill in the table whose landing does **nothing to anybody**. It
+  // is a `self` cast with one `applyStatus` in it, which is the whole of the
+  // feature at this end: `landSelf` has run `applyEffects` since spec 190, so a
+  // buff on the caster needed no new ability machinery at all. What the status
+  // then does to everything standing near them is a row in
+  // `data/aura-fields.ts`, read by `sim/aura-field.ts`.
+  //
+  // Which is why its `damage` is 0 and it names no `range`, no `radius` and no
+  // `area`. The reach a player cares about is the *field's*, and putting a
+  // second copy of it here would be a number nothing reads and everything could
+  // disagree with.
+  {
+    id: 'skill.scorchedEarth',
+    name: 'Scorched Earth',
+    // Twelve characters over what a 92px slot held before spec 196 moved the
+    // bar onto the canvas, and still the longest name on it -- so it says the
+    // half that identifies it.
+    shortName: 'Scorch',
+    kind: 'self',
+    targeting: 'self',
+    skill: true,
+    // Long enough to be a commitment and short enough to throw as something
+    // closes. Nothing about the cast is aimed, so the wind-up is the only thing
+    // an opponent gets to read.
+    windupTicks: seconds(0.6),
+    // The longest in the table bar Stunning Blow's. What it buys is eight
+    // seconds of a fight being fought on your terms, which is not something to
+    // have available every nine.
+    cooldownTicks: seconds(24),
+    cost: 7,
+    range: 0,
+    damage: 0,
+    effects: [
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.ScorchedEarth,
+        // The one number the *skill* owns. How far it reaches and what it does
+        // to whoever is inside are the field's.
+        durationTicks: seconds(8),
+      },
+    ],
+    description: 'The ground remembers. Make somewhere they cannot follow you.',
+  },
   // --- the test row (spec 190) -------------------------------------------
   //
   // Not content. It exists to put **every mark the client can draw** on one
@@ -841,6 +886,17 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       { kind: 'applyDot', dotId: StatusId.Shock },
       { kind: 'applyDot', dotId: StatusId.Frostbite },
       { kind: 'applyDot', dotId: StatusId.Decay },
+      // The field (spec 223), and it is an `applyStatus` because that is what a
+      // field *is*: a boon its carrier wears, which `sim/aura-field.ts` reads.
+      // So this line does not merely draw the mark -- it puts a real, working
+      // field on whatever was hit, which is the only way to look at the ring
+      // from outside the one body that can cast it.
+      //
+      // That means the thing being tested burns whoever is hostile to it,
+      // including the tester. On a training dummy, which is what this row is
+      // aimed at, that is nothing: it is `sentinel`, it fights nobody, and
+      // `pulseAuraFields` asks `isHostile` from the *carrier's* side.
+      { kind: 'applyStatus', statusId: StatusId.ScorchedEarth, durationTicks: TEST_STATUS_TICKS },
       // **`secondWind.spent` and `perfectExit.spent` are absent on purpose.**
       // They are inverted -- carrying one means the mechanic has fired and has
       // not re-armed -- so applying them would silently switch two mechanics off
