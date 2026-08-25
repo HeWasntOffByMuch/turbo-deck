@@ -53,6 +53,30 @@ export class MemoryDataStore implements DataStore {
     return Promise.resolve();
   }
 
+  /**
+   * Atomic here for free: the loop is synchronous and a Map assignment cannot
+   * fail part way, so there is no interleaving point between the two writes.
+   * The signature exists so that a caller written against the seam gets the
+   * same guarantee from both implementations -- one by construction, one by
+   * transaction.
+   */
+  savePlayers(players: readonly PersistedPlayer[]): Promise<void> {
+    for (const player of players) this.players.set(player.id, clonePlayer(player));
+    return Promise.resolve();
+  }
+
+  /**
+   * There is nothing to begin and nothing to roll back: every write below is a
+   * synchronous Map assignment, so a body that returns has already had all of
+   * its writes applied and one that throws has had exactly the ones before the
+   * throw. That is weaker than the SQLite store's promise, and it is the one
+   * place these two implementations genuinely differ -- so anything relying on
+   * a rollback is tested against SQLite, which is where it runs.
+   */
+  transaction<T>(body: () => T): T {
+    return body();
+  }
+
   listPlayerIds(): Promise<readonly string[]> {
     return Promise.resolve([...this.players.keys()]);
   }

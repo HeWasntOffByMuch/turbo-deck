@@ -30,7 +30,35 @@ export interface DataStore {
   // --- players ---
   loadPlayer(id: string): Promise<PersistedPlayer | null>;
   savePlayer(player: PersistedPlayer): Promise<void>;
+  /**
+   * Write several players so that either all of them land or none do
+   * (spec 224).
+   *
+   * On the interface rather than reached for by casting the SQLite store,
+   * because it is the primitive a trade rests on: "there must never be a
+   * committed state where one half of a trade happened and the other did not"
+   * is a claim about a single COMMIT, and a caller looping over `savePlayer`
+   * cannot make it however carefully it is written. A store with no
+   * transactions answers it by writing them one at a time, which is what the
+   * in-memory one does and is exactly as atomic as a Map assignment is.
+   */
+  savePlayers(players: readonly PersistedPlayer[]): Promise<void>;
   listPlayerIds(): Promise<readonly string[]>;
+
+  /**
+   * Run `body` with everything it writes in one transaction (spec 224).
+   *
+   * Synchronous by signature, and that is the constraint rather than an
+   * oversight: a SQLite transaction belongs to a connection, so an `await`
+   * inside one would let an unrelated caller's write interleave into it. A body
+   * that cannot be expressed synchronously is a body that should not be one
+   * transaction.
+   *
+   * The guest claim is what wants it -- an account row, a player's ownership
+   * and two sessions, which have to be one commit or a failure half way leaves
+   * an account owning nothing.
+   */
+  transaction<T>(body: () => T): T;
 
   // --- moderation ---
   getBan(playerId: string): Promise<Ban | null>;

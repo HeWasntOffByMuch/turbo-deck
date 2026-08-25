@@ -5,7 +5,7 @@
   "description": "Action-roguelite with a deckbuilding layer: deterministic sim + thin renderer.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "scripts": {
     "test": "vitest run",
@@ -19,6 +19,7 @@
     "dev": "vite",
     "server": "tsx src/server/index.ts",
     "server:bots": "tsx scripts/server-bot.ts",
+    "db:status": "tsx scripts/db-status.ts",
     "bake:ui-goldens": "tsx scripts/bake-ui-goldens.ts",
     "balance": "tsx scripts/balance-builds.ts",
     "check:bundle": "tsx scripts/check-bundle.ts"
