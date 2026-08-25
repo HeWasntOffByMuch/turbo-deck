@@ -1,7 +1,16 @@
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { hashUnit2 } from '../../shared/hash.js';
-import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
+import {
+  FENCE_KINDS,
+  FENCE_TILE_LENGTH,
+  HOUSE_PLAN,
+  STRUCTURE_KINDS,
+  WELL_RADIUS,
+  type FenceKind,
+  type Prop,
+  type StructureKind,
+} from '../../terrain/vegetation.js';
 import { propRegionKey, propRegionKeysIn } from './prop-regions.js';
 import { applySwayBuffers, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
 import { DEFAULT_CREASE_ANGLE, weldedNormals } from './shading.js';
@@ -1041,8 +1050,14 @@ interface Box {
   readonly d: number;
 }
 
-/** Boxes merged into one buffer, wound so every face points out of its box. */
-function brickGeometry(boxes: readonly Box[]): THREE.BufferGeometry {
+/**
+ * Boxes merged into one buffer, wound so every face points out of its box.
+ *
+ * Named for the shape rather than for the brick it was written for: a hut's four
+ * corner posts and a well's two uprights want the same thing a course of bricks
+ * does, which is to be one batch instead of one each (spec 222).
+ */
+function boxesGeometry(boxes: readonly Box[]): THREE.BufferGeometry {
   const positions: number[] = [];
   for (const b of boxes) {
     const x0 = b.x - b.w / 2;
@@ -1147,7 +1162,7 @@ function brickFenceParts(): PropPart[] {
   bands.forEach((boxes, i) => {
     if (boxes.length === 0) return;
     parts.push({
-      geometry: brickGeometry(boxes),
+      geometry: boxesGeometry(boxes),
       offsetY: 0,
       color: BRICK_TONES[i] ?? PALETTE.brick,
       uniformColor: PALETTE.brick,
@@ -1416,6 +1431,325 @@ function buildFenceParts(kind: FenceKind): PropPart[] {
   }
 }
 
+/**
+ * The buildings (spec 222): a timber hut under a straw roof, and a well.
+ *
+ * Everything else in this file grows or fences something off. These two are the
+ * first props somebody *lives* in, and what they are for is a playtest village
+ * -- a handful of huts round a square with a well in the middle -- so they are
+ * built to read at the game's isometric bearing from a hundred units up, and
+ * not to be looked at closely.
+ *
+ * They are ordinary `PropPart` lists and nothing about them is special-cased
+ * anywhere: same batching, same per-instance tint, same region grid. The one
+ * thing they deliberately do *not* set is `sway`. A tree leans in the wind
+ * because it is alive; a house that did would be a house falling down.
+ */
+
+/** How far a building's walls are buried, so a slope shows no daylight under
+ *  them. The fence's `FENCE_SINK` for the same reason, a little deeper because
+ *  a building's footprint is wider and so spans more fall. */
+const BUILDING_SINK = 9;
+
+/**
+ * Eaves height, and how far the ridge stands above them.
+ *
+ * Measured against the body, not chosen: a unit is about 56 tall, so eaves at
+ * 58 put the roofline at head height and the doorway under it -- a hut somebody
+ * would have to duck into, which reads as a toy rather than as a house. 64
+ * clears a standing figure with the door under it, and the ridge takes the
+ * silhouette to a little over two bodies, which is what a one-room cottage is.
+ */
+const HOUSE_WALL_HEIGHT = 64;
+const HOUSE_RIDGE_RISE = 62;
+/**
+ * How far the thatch reaches past the walls on every side.
+ *
+ * The number that does most of the work in the silhouette: from above -- which
+ * is most of what this camera sees -- a hut is very nearly all roof, and an
+ * overhang is what stops the roof reading as a lid sitting exactly on a box.
+ */
+const HOUSE_EAVE = 16;
+/** How thick the straw is at the eaves. A thatch edge is a slab, not a line. */
+const THATCH_LIP = 11;
+
+/**
+ * A gabled straw roof, as two geometries.
+ *
+ * The slopes and the gable ends are separate parts because they want separate
+ * tones: the slopes face the sky and the ends face along the ridge, so on a
+ * single-colour roof the ends go the same value as the slope beside them and
+ * the whole thing flattens into one lump. Two tones and it reads as a roof.
+ *
+ * Both are closed against the eaves plate below them, so the underside is never
+ * seen and is drawn anyway -- two triangles against a hole in a silhouette if
+ * anybody ever looks up a hillside at one.
+ */
+function gableRoof(halfLength: number, halfDepth: number, rise: number): {
+  slopes: THREE.BufferGeometry;
+  gables: THREE.BufferGeometry;
+} {
+  const l = halfLength;
+  const d = halfDepth;
+  const slopeMesh = meshBuilder();
+  // Wound counter-clockwise seen from outside, so `computeVertexNormals` reads
+  // the winding and gives each face a normal pointing out of the roof.
+  slopeMesh.quad([-l, 0, d], [l, 0, d], [l, rise, 0], [-l, rise, 0]);
+  slopeMesh.quad([l, 0, -d], [-l, 0, -d], [-l, rise, 0], [l, rise, 0]);
+  slopeMesh.quad([-l, 0, -d], [l, 0, -d], [l, 0, d], [-l, 0, d]);
+
+  const gableMesh = meshBuilder();
+  gableMesh.tri([l, 0, d], [l, 0, -d], [l, rise, 0]);
+  gableMesh.tri([-l, 0, -d], [-l, 0, d], [-l, rise, 0]);
+
+  return { slopes: slopeMesh.build(), gables: gableMesh.build() };
+}
+
+/** The straw parts of a roof, at `eaves` above the prop's ground point. */
+function thatchParts(
+  halfLength: number,
+  halfDepth: number,
+  rise: number,
+  eaves: number,
+  lip: number,
+): PropPart[] {
+  const { slopes, gables } = gableRoof(halfLength, halfDepth, rise);
+  return [
+    {
+      // The eaves plate: the thickness of the straw where it is cut off, and
+      // what the prism above stands on. Dark, because it is the one face of a
+      // roof that is always in its own shadow.
+      geometry: new THREE.BoxGeometry(halfLength * 2, lip, halfDepth * 2),
+      offsetY: eaves + lip / 2,
+      color: PALETTE.thatchDeep,
+      foliage: false,
+      tintAmount: 0.08,
+    },
+    { geometry: slopes, offsetY: eaves + lip, color: PALETTE.thatch, foliage: false, tintAmount: 0.1 },
+    { geometry: gables, offsetY: eaves + lip, color: PALETTE.thatchDeep, foliage: false, tintAmount: 0.1 },
+    {
+      // The ridge roll. Pale, and the only part of a hut that says which way it
+      // is turned once the camera is high enough that the walls are a sliver.
+      geometry: new THREE.BoxGeometry(halfLength * 2, 9, 13),
+      offsetY: eaves + lip + rise - 3,
+      color: PALETTE.thatchPale,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+  ];
+}
+
+let HOUSE_PARTS: PropPart[] | null = null;
+function houseParts(): PropPart[] {
+  HOUSE_PARTS ??= buildHouseParts();
+  return HOUSE_PARTS;
+}
+
+/**
+ * One hut: a timber box with a door in its front wall and a straw roof over it.
+ *
+ * The plan comes from {@link HOUSE_PLAN} rather than from numbers typed here,
+ * because the collider is derived from the same constant -- a wall drawn
+ * somewhere its footprint does not reach is a building you can stand inside.
+ * The ridge runs down the plan's `width` and the door faces its `depth`, which
+ * is what the editor's yaw turns.
+ */
+function buildHouseParts(): PropPart[] {
+  const hw = HOUSE_PLAN.width / 2;
+  const hd = HOUSE_PLAN.depth / 2;
+  const wallSpan = HOUSE_WALL_HEIGHT + BUILDING_SINK;
+  // Tall enough for the body that walks through it. See HOUSE_WALL_HEIGHT.
+  const doorHeight = 50;
+  const doorWidth = 34;
+  const parts: PropPart[] = [
+    {
+      geometry: new THREE.BoxGeometry(HOUSE_PLAN.width, wallSpan, HOUSE_PLAN.depth),
+      offsetY: wallSpan / 2 - BUILDING_SINK,
+      color: PALETTE.hutWall,
+      foliage: false,
+      // A little more drift than a fence rail gets: a row of huts wants to look
+      // like separate houses somebody built, and this is the whole of what
+      // separates one from the next.
+      tintAmount: 0.14,
+    },
+    {
+      // Four corner posts, merged: one batch rather than four, for the reason a
+      // course of bricks is one. Centred *on* the corner, so half of each post
+      // stands proud of both walls it meets and the box reads as framed.
+      geometry: boxesGeometry(
+        [-1, 1].flatMap((sx) =>
+          [-1, 1].map((sz) => ({
+            x: sx * hw,
+            y: (wallSpan + 4) / 2 - BUILDING_SINK,
+            z: sz * hd,
+            w: 12,
+            h: wallSpan + 4,
+            d: 12,
+          })),
+        ),
+      ),
+      offsetY: 0,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    {
+      // The doorway. Near-black and standing a little proud of the wall, which
+      // is a cheat and the right one: a recess would need a hole in the wall
+      // box, and at this size what says "door" is the dark rectangle rather
+      // than the depth of it.
+      geometry: new THREE.BoxGeometry(doorWidth, doorHeight, 5),
+      offsetY: doorHeight / 2,
+      offsetZ: hd + 1,
+      color: PALETTE.hollow,
+      foliage: false,
+    },
+    {
+      // Lintel and jambs, as one merged geometry: the frame is what stops the
+      // dark rectangle reading as a stain on the wall.
+      geometry: boxesGeometry([
+        { x: 0, y: doorHeight + 3, z: hd + 2, w: doorWidth + 14, h: 7, d: 7 },
+        { x: -(doorWidth / 2 + 3.5), y: doorHeight / 2, z: hd + 2, w: 7, h: doorHeight, d: 7 },
+        { x: doorWidth / 2 + 3.5, y: doorHeight / 2, z: hd + 2, w: 7, h: doorHeight, d: 7 },
+      ]),
+      offsetY: 0,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+  ];
+  parts.push(
+    ...thatchParts(hw + HOUSE_EAVE, hd + HOUSE_EAVE, HOUSE_RIDGE_RISE, HOUSE_WALL_HEIGHT, THATCH_LIP),
+  );
+  return parts;
+}
+
+/** The well's stonework, and how high its uprights carry the roof. */
+const WELL_KERB_HEIGHT = 40;
+/**
+ * How high the uprights carry the roof.
+ *
+ * A little over a body, and no more. The first cut was 96 -- more than two
+ * kerbs -- and photographed in the editor as a stone ring with a hat floating
+ * above it, because at that separation nothing connects the two: the posts are
+ * a few pixels wide at the zoom the game plays at, and the mass at the bottom
+ * and the mass at the top read as two props.
+ */
+const WELL_POST_HEIGHT = 84;
+/**
+ * How far the roof reaches across the well, as a fraction of the kerb.
+ *
+ * **Under one, and that is the whole of what makes a well readable.** A roof
+ * wide enough to actually keep rain off is a roof that, seen from a camera
+ * looking down at the ground, covers the drum, the uprights, the winch and the
+ * bucket completely -- and a well whose stonework you cannot see is a tan slab
+ * floating over a village square. The first cut was 1.05 and photographed as
+ * exactly that. Under one, the kerb stands out in front of the eaves at every
+ * bearing this camera has.
+ */
+const WELL_ROOF_REACH = 0.86;
+/** Radial segments in the kerb. Ten reads as laid stone at the zoom the game
+ *  plays at; smooth would read as a pipe. */
+const WELL_SIDES = 10;
+
+let WELL_PARTS: PropPart[] | null = null;
+function wellParts(): PropPart[] {
+  WELL_PARTS ??= buildWellParts();
+  return WELL_PARTS;
+}
+
+/**
+ * The well: a stone drum, two uprights carrying a small straw roof, a winch
+ * across them and a bucket on the rope.
+ *
+ * The bucket is not decoration. A stone ring with a roof over it is a shrine or
+ * a planter; what makes it a well is the thing on the end of the rope, and it
+ * costs one part.
+ *
+ * What the shaft is *not* is a hole. The kerb is a solid drum with a dark disc
+ * standing a little proud of its rim, because the roof is directly over the
+ * opening and no camera in this game can see down it -- an open annulus would
+ * be three more parts and two more inner walls to draw, all of them for a view
+ * nobody has.
+ */
+function buildWellParts(): PropPart[] {
+  const kerbSpan = WELL_KERB_HEIGHT + BUILDING_SINK;
+  const postSpan = WELL_POST_HEIGHT + BUILDING_SINK;
+  // On the rim rather than inside it, and thick enough to be seen: a 10-unit
+  // post is six pixels at the zoom this is looked at, and a roof held up by
+  // something invisible is a roof floating in the air.
+  const postAt = WELL_RADIUS - 4;
+  const postWidth = 14;
+  // Just under the eaves, so the rope has the whole drop to hang down.
+  const winchAt = WELL_POST_HEIGHT - 12;
+  const bucketHeight = 15;
+  const bucketAt = WELL_KERB_HEIGHT + 10;
+  const ropeTop = winchAt;
+  const ropeFoot = bucketAt + bucketHeight / 2;
+  // Lying along the prop's own X, between the two uprights: a cylinder is built
+  // standing up, and a part has no fixed rotation of its own, so the turn is
+  // baked into the buffer.
+  const drum = new THREE.CylinderGeometry(7, 7, postAt * 2, 8);
+  drum.rotateZ(Math.PI / 2);
+  return [
+    {
+      // Battered slightly -- wider at the foot than at the rim -- which is how
+      // drystone is laid and what stops the drum reading as a barrel.
+      geometry: new THREE.CylinderGeometry(WELL_RADIUS, WELL_RADIUS + 3, kerbSpan, WELL_SIDES),
+      offsetY: kerbSpan / 2 - BUILDING_SINK,
+      color: PALETTE.drystone,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    {
+      geometry: new THREE.CylinderGeometry(WELL_RADIUS - 9, WELL_RADIUS - 9, 4, WELL_SIDES),
+      offsetY: WELL_KERB_HEIGHT,
+      color: PALETTE.hollow,
+      foliage: false,
+    },
+    {
+      geometry: boxesGeometry(
+        [-1, 1].map((sx) => ({
+          x: sx * postAt,
+          y: postSpan / 2 - BUILDING_SINK,
+          z: 0,
+          w: postWidth,
+          h: postSpan,
+          d: postWidth,
+        })),
+      ),
+      offsetY: 0,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    { geometry: drum, offsetY: winchAt, color: PALETTE.plank, foliage: false, tintAmount: 0.12 },
+    {
+      // Rope and bucket, hung in the gap between the winch and the rim -- which
+      // is the only place either of them is visible, and why the winch sits
+      // just under the eaves rather than halfway down the posts.
+      geometry: new THREE.BoxGeometry(2.6, ropeTop - ropeFoot, 2.6),
+      offsetY: (ropeTop + ropeFoot) / 2,
+      color: PALETTE.post,
+      foliage: false,
+    },
+    {
+      geometry: new THREE.CylinderGeometry(9, 7.5, bucketHeight, 8),
+      offsetY: bucketAt,
+      color: PALETTE.plank,
+      foliage: false,
+      tintAmount: 0.12,
+    },
+    ...thatchParts(
+      WELL_RADIUS + 8,
+      WELL_RADIUS * WELL_ROOF_REACH,
+      30,
+      WELL_POST_HEIGHT,
+      7,
+    ),
+  ];
+}
+
 /** Warm autumn foliage, for the fraction of trees that turn. */
 const AUTUMN = [0xb8502a, 0xd0722c, 0xe0a334] as const;
 /** Tint above which a prop goes autumn. ~18% of them, so it stays an accent. */
@@ -1593,7 +1927,7 @@ export interface PropFieldHandle {
 }
 
 /** The kinds `buildPropField` knows how to draw. */
-const DRAWN_KINDS: ReadonlySet<string> = new Set<string>(['tree', 'bush', ...FENCE_KINDS]);
+const DRAWN_KINDS: ReadonlySet<string> = new Set<string>(['tree', 'bush', ...FENCE_KINDS, ...STRUCTURE_KINDS]);
 
 /** The unit surface normal of the ground, for props that lie along it. */
 export type NormalAt = (x: number, z: number) => readonly [number, number, number];
@@ -1760,10 +2094,14 @@ const PROP_GROUPS: readonly (
   | { readonly kind: 'tree'; readonly species: TreeSpecies }
   | { readonly kind: 'bush' }
   | { readonly kind: 'fence'; readonly fence: FenceKind }
+  | { readonly kind: 'structure'; readonly structure: StructureKind }
 )[] = [
   ...TREE_SPECIES.map((species) => ({ kind: 'tree' as const, species })),
   { kind: 'bush' as const },
   ...FENCE_KINDS.map((fence) => ({ kind: 'fence' as const, fence })),
+  // Appended, never inserted: an index into this list crosses a thread, so a
+  // group that moved would hand the worker's matrices to the wrong geometry.
+  ...STRUCTURE_KINDS.map((structure) => ({ kind: 'structure' as const, structure })),
 ];
 
 /** How many batches a region can have, before its props are looked at. */
@@ -1775,6 +2113,7 @@ export function propGroupParts(group: number): readonly PropPart[] {
   if (!of) return [];
   if (of.kind === 'tree') return treeParts(of.species);
   if (of.kind === 'bush') return bushParts();
+  if (of.kind === 'structure') return of.structure === 'well' ? wellParts() : houseParts();
   return fenceParts(of.fence);
 }
 
@@ -1790,6 +2129,7 @@ function propGroupMembers(
     return bucket.filter((p) => p.kind === 'tree' && variants.get(p)?.species === of.species);
   }
   if (of.kind === 'bush') return bucket.filter((p) => p.kind === 'bush');
+  if (of.kind === 'structure') return bucket.filter((p) => p.kind === of.structure);
   return bucket.filter((p) => p.kind === of.fence);
 }
 
