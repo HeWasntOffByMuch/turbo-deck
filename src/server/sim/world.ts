@@ -38,7 +38,7 @@ import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { bolt, notice, playersOf, rally, settle } from './aggro.js';
 import { idle } from './idle.js';
-import { SlotBoard, slotAngle, slotNearest } from './attack-slots.js';
+import { approachPoints, type Approach } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import {
   AVOID_HORIZON_SECONDS,
@@ -165,7 +165,6 @@ function blankEntity(id: number): ServerEntity {
     pathIndex: 0,
     repathAtTick: 0,
     pathGoal: null,
-    attackSlot: -1,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
@@ -339,7 +338,6 @@ export function spawnEntity(
     pathIndex: 0,
     repathAtTick: 0,
     pathGoal: null,
-    attackSlot: -1,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
@@ -551,7 +549,92 @@ const NO_EVENTS: readonly ServerSimEvent[] = [];
  * the pass that uses them, so nothing survives a tick.
  */
 const CROWD = createCrowdScratch();
-const SLOTS = new SlotBoard();
+/**
+ * Where every attacker in the world is walking to, for one tick (spec 227).
+ *
+ * Gathered before the movement pass and off start-of-tick positions, because
+ * angular separation is a question about a *target's whole crowd* and cannot be
+ * answered one body at a time: the answer for the third attacker depends on the
+ * first two, and asking them in creation order would make the answer depend on
+ * that order. One sweep to group, one `approachPoints` per target.
+ *
+ * Rebuilt rather than carried, for the reason spec 187 gave for rebuilding the
+ * slot board: a body leaves a fight in half a dozen ways that no release event
+ * covers -- it dies, it is dragged past its leash, it loses interest, its chunk
+ * stops being simulated. Nothing here survives a tick, and nothing is held on
+ * the entity: the bearing a body is assigned is the bearing it already has, so
+ * there is no hysteresis to carry.
+ */
+class ApproachBoard {
+  /** attackerId -> the target it was computed against, and where to aim. */
+  private readonly aims = new Map<number, { targetId: number; aim: Vec2 }>();
+  private readonly byTarget = new Map<number, Approach[]>();
+
+  plan(
+    entities: ReadonlyMap<number, ServerEntity>,
+    simulated: (entity: ServerEntity) => boolean,
+  ): void {
+    this.aims.clear();
+    this.byTarget.clear();
+    for (const entity of entities.values()) {
+      if (entity.kind === EntityKindValue.Player || entity.health <= 0) continue;
+      if (entity.targetId === null || !simulated(entity)) continue;
+      const target = entities.get(entity.targetId);
+      if (!target || target.health <= 0) continue;
+      const standoff = standoffFrom(entity, target);
+      const distance = Math.hypot(
+        target.position.x - entity.position.x,
+        target.position.y - entity.position.y,
+      );
+      const list = this.byTarget.get(entity.targetId);
+      const approach: Approach = {
+        attackerId: entity.id,
+        x: entity.position.x,
+        y: entity.position.y,
+        radius: entity.radius,
+        standoff,
+        // A body inside its own reach has stopped: it holds the ground it is
+        // on and takes none of the correction.
+        //
+        // This is the geometric half of `monsterIntent`'s `closing`, and
+        // deliberately not the whole of it: an alert body and a fleeing one
+        // are not walking to a ring either, and both are counted here as
+        // though they were. Copying the rest of that rule would put a second
+        // copy of "is this body closing" in a pass that runs before the one
+        // that owns the question, and what the approximation costs is that
+        // such a body holds the bearing it would take if it engaged, on the
+        // ring it would take it at. It is about to, or it is about to stop
+        // being an attacker at all.
+        pinned: distance <= standoff,
+      };
+      if (list) list.push(approach);
+      else this.byTarget.set(entity.targetId, [approach]);
+    }
+
+    for (const [targetId, attackers] of this.byTarget) {
+      const target = entities.get(targetId);
+      if (!target) continue;
+      const points = approachPoints({ x: target.position.x, y: target.position.y }, attackers);
+      for (const [attackerId, aim] of points) this.aims.set(attackerId, { targetId, aim });
+    }
+  }
+
+  /**
+   * Where `attackerId` should aim while it is still fighting `targetId`, or
+   * null.
+   *
+   * The target is checked rather than assumed, because `settle` and `notice`
+   * can change a body's mind between the plan and the walk -- and an aim taken
+   * against somebody else is a body walking to a ring round a fight it has left.
+   * That is exactly the condition spec 187 offered a held slot back under.
+   */
+  aimFor(attackerId: number, targetId: number): Vec2 | null {
+    const held = this.aims.get(attackerId);
+    return held && held.targetId === targetId ? held.aim : null;
+  }
+}
+
+const APPROACHES = new ApproachBoard();
 
 /** How far ahead a body plans its way round another. See `crowd.ts`. */
 const AVOIDANCE: AvoidanceParams = {
@@ -773,7 +856,7 @@ export function step(
   // half a dozen ways that no release event covers -- it dies, it is dragged
   // past its leash, it loses interest, its chunk stops being simulated
   // (spec 187).
-  openSlotBoard(SLOTS, state.entities, isSimulated);
+  APPROACHES.plan(state.entities, isSimulated);
   // Gathered once for the whole tick rather than rediscovered per monster
   // (spec 206). `notice` used to walk the entire entity map to find a handful of
   // players, once for every calm monster that could see anything -- so what it
@@ -814,7 +897,7 @@ export function step(
     } else {
       // A monster's route is entity state, so deciding where to walk can change
       // the entity -- see `monsterIntent`.
-      const decision = monsterIntent(current, working, players, tick, context, SLOTS);
+      const decision = monsterIntent(current, working, players, tick, context, APPROACHES);
       rawIntent = decision.input;
       steered = decision.entity;
       charging = decision.charging;
@@ -1982,36 +2065,6 @@ function standoffFrom(monster: ServerEntity, target: ServerEntity): number {
   return ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
 }
 
-/**
- * Open this tick's slot board: measure every target's ring, then hold every
- * slot somebody is already standing in or walking to (spec 187).
- *
- * Two sweeps rather than one because the two facts depend on each other -- how
- * finely a ring is cut is decided by the widest body fighting that target, and
- * a reservation is a bit in a mask whose width is that number. Both are read
- * off entity state at the top of the tick, so neither depends on anything any
- * body decides afterwards.
- */
-function openSlotBoard(
-  board: SlotBoard,
-  entities: ReadonlyMap<number, ServerEntity>,
-  simulated: (entity: ServerEntity) => boolean,
-): void {
-  board.clear();
-  for (const entity of entities.values()) {
-    if (entity.kind === EntityKindValue.Player || entity.health <= 0) continue;
-    if (entity.targetId === null || !simulated(entity)) continue;
-    const target = entities.get(entity.targetId);
-    if (!target || target.health <= 0) continue;
-    board.note(entity.targetId, standoffFrom(entity, target), entity.radius);
-  }
-  for (const entity of entities.values()) {
-    if (entity.attackSlot < 0 || entity.targetId === null) continue;
-    if (entity.health <= 0 || !simulated(entity)) continue;
-    board.reserve(entity.targetId, entity.attackSlot);
-  }
-}
-
 /** What a monster decided this tick: how to move, and any route state it changed. */
 interface MonsterDecision {
   /** Null when there is nothing to chase; the body simply stands. */
@@ -2042,12 +2095,8 @@ function monsterIntent(
   players: readonly ServerEntity[],
   tick: number,
   context: StepContext,
-  slots: SlotBoard,
+  approaches: ApproachBoard,
 ): MonsterDecision {
-  // Read before `settle` and `notice` get a say, because it is what the held
-  // attack slot was taken against: a slot means nothing once the body has
-  // changed its mind about who it is fighting (spec 187).
-  const heldSlotFor = monster.targetId;
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
 
@@ -2109,41 +2158,18 @@ function monsterIntent(
   const alert = monster.aggro === AggroValue.Alert;
   const closing = !alert && distance > reach;
 
-  // Where on the ring around this target to walk (spec 187). Not a destination
-  // -- the body still stops the moment it is in reach, wherever on the way that
-  // happens -- but an *offset aim*, so a pack closing from one side fans out
-  // across the near arc instead of arriving one behind another on the same
-  // bearing. The slot nearest where the body is already coming from is the one
-  // it asks for, so the assignment agrees with the walk already in progress and
-  // nobody is ever sent the long way round.
-  let slot = -1;
-  let ring: Vec2 | null = null;
-  if (closing) {
-    const cuts = slots.cuts(target.id);
-    const approach = Math.atan2(-dy, -dx);
-    slot = slots.take(
-      target.id,
-      slotNearest(approach, cuts),
-      heldSlotFor === target.id ? monster.attackSlot : -1,
-    );
-    if (slot >= 0) {
-      const angle = slotAngle(slot, cuts);
-      ring = {
-        x: target.position.x + Math.cos(angle) * reach,
-        y: target.position.y + Math.sin(angle) * reach,
-      };
-    }
-  }
+  // Where on the ring around this target to walk (specs 187, 227). Not a
+  // destination -- the body still stops the moment it is in reach, wherever on
+  // the way that happens -- but an *offset aim*, so a pack closing from one
+  // side fans out across the near arc instead of arriving one behind another on
+  // the same bearing. The bearing it is given is the bearing it already has,
+  // moved only as far as the bodies around it require, so the aim agrees with
+  // the walk already in progress and nobody is ever sent the long way round.
+  const ring = closing ? approaches.aimFor(monster.id, target.id) : null;
 
   const steer = closing
     ? routeToward(monster, target.position, tick, context, ring)
     : { direction: null, entity: forgetPath(monster) };
-  // A body that has stopped in reach keeps the slot it held. It claims nothing
-  // more this tick -- it is not walking anywhere -- but `openSlotBoard`
-  // reserved it at the top of the tick, which is what stops a newcomer being
-  // routed onto the ground it is standing on.
-  const entity = closing ? { ...steer.entity, attackSlot: slot } : steer.entity;
-
   // Face where it is walking; face the target once it has stopped to swing.
   const facing = steer.direction
     ? Math.atan2(steer.direction.y, steer.direction.x)
@@ -2156,7 +2182,7 @@ function monsterIntent(
   // and as interruptible as anyone else's.
   const wantsToSwing = !alert && !closing && monster.cast === null && swing !== null;
   return {
-    entity,
+    entity: steer.entity,
     charging: target.id,
     input: {
       entityId: monster.id,

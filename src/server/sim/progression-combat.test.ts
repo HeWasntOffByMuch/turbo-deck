@@ -98,7 +98,6 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
     aggro: AggroValue.Calm,
     aggroUntilTick: 0,
     velocity: { x: 0, y: 0 },
-    attackSlot: -1,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
