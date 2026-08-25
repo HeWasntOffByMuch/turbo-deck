@@ -32,7 +32,7 @@
 
 import { pushOutOfObstacles, slideCircle } from '../../sim/collision.js';
 import type { WorldColliders } from '../../sim/types.js';
-import { climbStep, gradeStep, StepGrade, type StepGradeValue } from '../sim/movement.js';
+import { isWalkable } from '../sim/movement.js';
 import type { TerrainSampler } from '../world/terrain.js';
 
 export interface PredictedInput {
@@ -132,37 +132,19 @@ export function createWorldPredictor(options: {
       knows === undefined ||
       (knows.call(options.terrain, from.x, from.y) && knows.call(options.terrain, landed.x, landed.y));
     const standingOn = { x: from.x, y: from.y, z: options.terrain.heightAt(from.x, from.y) };
-    if (covered) {
-      // Graded rather than merely refused (spec 227), and it has to be: a climb
-      // is a *pace*, so a client that only knew "walkable" would predict full
-      // speed up a slope the server is walking at `CLIMB_PACE` and take a
-      // correction on every tick of it. Both ends derive it from the same
-      // ground through the same function, so there is nothing on the wire and
-      // nothing to disagree about.
-      let grade: StepGradeValue = StepGrade.Walk;
-      if (landed.x !== from.x || landed.y !== from.y) {
-        grade = gradeStep(standingOn, landed.x, landed.y, options.terrain);
-      }
-      if (grade === StepGrade.Refused) {
-        const alongX = { x: landed.x, y: from.y };
-        const alongY = { x: from.x, y: landed.y };
-        const gradeX =
-          alongX.x === from.x ? StepGrade.Refused : gradeStep(standingOn, alongX.x, alongX.y, options.terrain);
-        const gradeY =
-          alongY.y === from.y ? StepGrade.Refused : gradeStep(standingOn, alongY.x, alongY.y, options.terrain);
-        if (gradeX !== StepGrade.Refused) {
-          landed = alongX;
-          grade = gradeX;
-        } else if (gradeY !== StepGrade.Refused) {
-          landed = alongY;
-          grade = gradeY;
-        } else {
-          landed = from;
-          grade = StepGrade.Walk;
-        }
-      }
-      if (grade === StepGrade.Climb) {
-        landed = climbStep(standingOn, from, landed, options.terrain);
+    if (
+      covered &&
+      (landed.x !== from.x || landed.y !== from.y) &&
+      !isWalkable(standingOn, landed.x, landed.y, options.terrain)
+    ) {
+      const alongX = { x: landed.x, y: from.y };
+      const alongY = { x: from.x, y: landed.y };
+      if (alongX.x !== from.x && isWalkable(standingOn, alongX.x, alongX.y, options.terrain)) {
+        landed = alongX;
+      } else if (alongY.y !== from.y && isWalkable(standingOn, alongY.x, alongY.y, options.terrain)) {
+        landed = alongY;
+      } else {
+        landed = from;
       }
     }
 

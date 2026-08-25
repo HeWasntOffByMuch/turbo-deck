@@ -1,6 +1,11 @@
 /**
  * How steep is too steep (spec 227).
  *
+ * There is one threshold and no band above it: ground is walked on at full
+ * speed or it is not walked on. A reduced-pace "climb" was in the first cut and
+ * came out again -- it is a movement state, a movement state wants an
+ * animation, and there is none and none planned.
+ *
  * The first test `isWalkable` has ever had of its own. Before this the rule was
  * reached incidentally by `rock.test.ts` and `gear-speed.test.ts`, neither of
  * which is about slope, and the thing nobody was asserting is the one that was
@@ -16,24 +21,21 @@ import { describe, expect, it } from 'vitest';
 
 import { createWorldColliders } from '../../sim/collision.js';
 import {
-  CLIMB_PACE,
-  MAX_CLIMB_ANGLE_DEG,
-  MAX_CLIMB_SLOPE,
   MAX_STEP_HEIGHT,
   MAX_WALK_ANGLE_DEG,
   MAX_WALK_SLOPE,
   MOVE_SPEED_HARD_MAX,
   NAV_CELL_SIZE,
   PLAYER_RADIUS,
+  SLOPE_BASELINE,
 } from '../../sim/constants.js';
-import { createNavGrid, findPath, type NavGround } from '../../sim/pathfinding.js';
-import { DEFAULT_BANDS } from '../../terrain/classify.js';
+import { createNavGrid, findPath, NAV_BLOCKED, type NavGround } from '../../sim/pathfinding.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
 import { createWorldPredictor } from '../client/prediction.js';
 import { monsterById } from '../data/monsters.js';
 import type { Vec2 } from '../../sim/types.js';
 import type { TerrainSampler } from '../world/terrain.js';
-import { gradeStep, paceFor, resolveMovement, StepGrade } from './movement.js';
+import { isWalkable, resolveMovement } from './movement.js';
 import { EntityKindValue, type ServerEntity, type ServerInput } from './types.js';
 import { createWorldState, spawnEntity } from './world.js';
 
@@ -156,68 +158,60 @@ describe('the walk limit is an angle', () => {
   it('stops every body at the same gradient, whatever its speed', () => {
     const speeds = [MOVE_SPEED_HARD_MAX, 155, 95, 40];
     const limits = speeds.map((speed) => steepest(speed));
-    for (const limit of limits) expect(limit).toBeCloseTo(MAX_CLIMB_SLOPE, 2);
+    for (const limit of limits) expect(limit).toBeCloseTo(MAX_WALK_SLOPE, 2);
     // And they agree with each other, which is the same claim said the way the
     // failure would actually read: a 19.3-degree spread was what was there.
     expect(Math.max(...limits) - Math.min(...limits)).toBeLessThan(0.01);
   });
 
-  it('never lets a slower body climb what a faster one cannot', () => {
-    const gradient = MAX_CLIMB_SLOPE * 1.2;
+  it('never lets a slower body walk up what a faster one cannot', () => {
+    const gradient = MAX_WALK_SLOPE * 1.2;
     for (const speed of [MOVE_SPEED_HARD_MAX, 155, 95, 40]) {
       expect(walksUp(speed, gradient)).toBe(false);
     }
   });
 
-  it('walks up to the walk angle, climbs past it, and refuses past the ceiling', () => {
-    const bands: [number, number][] = [
-      [MAX_WALK_SLOPE * 0.9, StepGrade.Walk],
-      [(MAX_WALK_SLOPE + MAX_CLIMB_SLOPE) / 2, StepGrade.Climb],
-      [MAX_CLIMB_SLOPE * 1.2, StepGrade.Refused],
-    ];
-    for (const [gradient, want] of bands) {
+  it('walks up to the walk angle and refuses past it, with nothing in between', () => {
+    for (const [gradient, want] of [
+      [MAX_WALK_SLOPE * 0.9, true],
+      [MAX_WALK_SLOPE * 1.1, false],
+    ] as const) {
       const terrain = ramp(gradient);
       const here = { x: 2000, y: 2000, z: terrain.heightAt(2000, 2000) };
-      expect(gradeStep(here, 2002, 2000, terrain)).toBe(want);
+      expect(isWalkable(here, 2002, 2000, terrain)).toBe(want);
     }
   });
 
-  it('states the two angles it is enforcing', () => {
+  it('states the angle it is enforcing', () => {
     expect(Math.atan(MAX_WALK_SLOPE) * DEG).toBeCloseTo(MAX_WALK_ANGLE_DEG, 6);
-    expect(Math.atan(MAX_CLIMB_SLOPE) * DEG).toBeCloseTo(MAX_CLIMB_ANGLE_DEG, 6);
-    expect(MAX_WALK_ANGLE_DEG).toBeLessThan(MAX_CLIMB_ANGLE_DEG);
   });
 
-  it('takes the walk limit from the classifier, so walkable ground looks walkable', () => {
-    expect(MAX_WALK_SLOPE).toBe(DEFAULT_BANDS.rockSlope);
+  it('derives the limit from the step and the nav cell', () => {
+    expect(MAX_WALK_SLOPE).toBe(MAX_STEP_HEIGHT / NAV_CELL_SIZE);
   });
 });
 
-describe('a climb costs pace, not permission', () => {
-  it('crosses the climb band, slowly', () => {
-    const gradient = (MAX_WALK_SLOPE + MAX_CLIMB_SLOPE) / 2;
-    const climbing = climbed(155, gradient);
-    const walking = climbed(155, 0);
-    expect(climbing.gained).toBeGreaterThan(40);
-    expect(climbing.gained).toBeLessThan(walking.gained);
+describe('there is no climb', () => {
+  /**
+   * Spec 227 shipped a band between two thresholds where a body crossed steep
+   * ground at a reduced pace. That is a movement state, and a movement state
+   * wants an animation, and there is none and none planned -- so ground is
+   * walked on at full speed or it is not walked on. These pin that there is no
+   * third thing left.
+   */
+  it('walks legal ground at exactly the speed it walks flat ground', () => {
+    for (const gradient of [0, MAX_WALK_SLOPE * 0.5, MAX_WALK_SLOPE * 0.95]) {
+      expect(climbed(155, gradient).travelled).toBeCloseTo(climbed(155, 0).travelled, 6);
+    }
   });
 
-  it('slows by exactly CLIMB_PACE', () => {
-    const gradient = (MAX_WALK_SLOPE + MAX_CLIMB_SLOPE) / 2;
-    const flat = climbed(155, 0).travelled;
-    const uphill = climbed(155, gradient).travelled;
-    expect(uphill / flat).toBeCloseTo(CLIMB_PACE, 2);
+  it('refuses the tick outright past the limit rather than slowing it', () => {
+    expect(climbed(155, MAX_WALK_SLOPE * 1.1).travelled).toBe(0);
   });
 
-  it('grades a step of no length as a walk rather than dividing by it', () => {
+  it('grades a step of no length as walkable rather than dividing by it', () => {
     const flat: TerrainSampler = { heightAt: () => 100 };
-    expect(gradeStep({ x: 5, y: 5, z: 100 }, 5, 5, flat)).toBe(StepGrade.Walk);
-  });
-
-  it('gives each grade its own pace, and refuses to move on a refusal', () => {
-    expect(paceFor(StepGrade.Walk)).toBe(1);
-    expect(paceFor(StepGrade.Climb)).toBe(CLIMB_PACE);
-    expect(paceFor(StepGrade.Refused)).toBe(0);
+    expect(isWalkable({ x: 5, y: 5, z: 100 }, 5, 5, flat)).toBe(true);
   });
 });
 
@@ -266,12 +260,12 @@ describe('a wall is not a hillside', () => {
 
   /**
    * The two rules do not interfere, as arithmetic rather than as luck: binding
-   * the jump rule on smooth ground needs a gradient past `MAX_CLIMB_SLOPE`, so
+   * the jump rule on smooth ground needs a gradient past `MAX_WALK_SLOPE`, so
    * on any ground the grade rule permits it never fires.
    */
-  it('never binds the jump rule on ground the grade rule allows', () => {
+  it('never binds the jump rule on ground the slope rule allows', () => {
     const perTick = MOVE_SPEED_HARD_MAX / SERVER_TICK_RATE;
-    expect(perTick * MAX_CLIMB_SLOPE).toBeLessThan(MAX_STEP_HEIGHT);
+    expect(perTick * MAX_WALK_SLOPE).toBeLessThan(MAX_STEP_HEIGHT);
   });
 });
 
@@ -306,7 +300,7 @@ describe('the router', () => {
    */
   it('refuses the same hill whichever way it faces', () => {
     const limits = [0, 15, 30, 45, 60, 75, 90].map((a) => steepestRoute((a * Math.PI) / 180));
-    for (const limit of limits) expect(limit).toBeCloseTo(MAX_CLIMB_SLOPE, 0);
+    for (const limit of limits) expect(limit).toBeCloseTo(MAX_WALK_SLOPE, 0);
     // The whole finding, as a number: this used to swing 6.2 degrees on nothing
     // but where the lattice fell across the hill.
     const swing =
@@ -318,35 +312,59 @@ describe('the router', () => {
     expect(steepestRoute(0)).toBeCloseTo(steepest(155), 0);
   });
 
-  it('prefers a level way round to a climb, and takes the climb when there is none', () => {
-    // A ridge across the middle with one flat notch through it.
+  it('goes through a notch rather than over a ridge it cannot walk', () => {
+    // A ridge across the middle, too steep to walk, with one level notch in it.
     const NOTCH = { from: 2100, to: 2200 };
     const ridged: NavGround = {
       heightAt: (x: number, y: number) => {
         if (y >= NOTCH.from && y <= NOTCH.to) return 100;
-        const into = Math.max(0, 200 - Math.abs(x - 2000));
-        return 100 + into * ((MAX_WALK_SLOPE + MAX_CLIMB_SLOPE) / 2);
+        return 100 + Math.max(0, 200 - Math.abs(x - 2000)) * MAX_WALK_SLOPE * 1.4;
       },
     };
     const grid = createNavGrid(OPEN, PLAYER_RADIUS, NAV_CELL_SIZE, ridged);
     const path = findPath(grid, { x: 1700, y: 2000 }, { x: 2300, y: 2000 });
     expect(path.length).toBeGreaterThan(0);
-    // It arrives, and it does so by going through the notch rather than over
-    // the ridge: some waypoint has to leave the straight line to do that.
-    const detoured = path.some((p) => p.y > NOTCH.from - NAV_CELL_SIZE);
-    expect(detoured).toBe(true);
+    expect(path.some((p) => p.y > NOTCH.from - NAV_CELL_SIZE)).toBe(true);
   });
 
-  it('routes straight over the same ridge when the notch is closed', () => {
+  it('refuses outright when the ridge has no notch in it', () => {
     const walled: NavGround = {
       heightAt: (x: number) =>
-        100 + Math.max(0, 200 - Math.abs(x - 2000)) * ((MAX_WALK_SLOPE + MAX_CLIMB_SLOPE) / 2),
+        100 + Math.max(0, 200 - Math.abs(x - 2000)) * MAX_WALK_SLOPE * 1.4,
     };
     const grid = createNavGrid(OPEN, PLAYER_RADIUS, NAV_CELL_SIZE, walled);
     const path = findPath(grid, { x: 1700, y: 2000 }, { x: 2300, y: 2000 });
-    expect(path.length).toBeGreaterThan(0);
     const end = path[path.length - 1];
-    expect(end?.x).toBeCloseTo(2300, 0);
+    // Either no route at all, or one that stops short: what it must not do is
+    // hand back the far side of a wall nothing can walk over.
+    expect(end === undefined || end.x < 2000).toBe(true);
+  });
+
+  /**
+   * The bug this pins was silent and total: `gradeGroundSlope` clamped its two
+   * sample offsets independently, so a column-zero cell got a west neighbour of
+   * itself, `0 / 0` is NaN, and `NaN <= limit` is false -- every cell along a
+   * grid's own rim came back too steep to stand on, on ground that was flat.
+   */
+  it('does not block the grid\'s own rim on flat ground', () => {
+    const flat: NavGround = { heightAt: () => 100 };
+    const grid = createNavGrid(OPEN, PLAYER_RADIUS, NAV_CELL_SIZE, flat);
+    let blocked = 0;
+    for (const cell of grid.cells) if (cell === NAV_BLOCKED) blocked++;
+    // The world's rim is marked blocked by `markRim` for the body's own radius,
+    // and that is all: nothing else on a level world may be.
+    const rim = grid.cols * grid.rows - (grid.cols - 4) * (grid.rows - 4);
+    expect(blocked).toBeLessThanOrEqual(rim);
+    // And a route straight across it still works, which is the failure as a
+    // player would meet it.
+    expect(findPath(grid, { x: 200, y: 2000 }, { x: 3800, y: 2000 }).length).toBeGreaterThan(0);
+  });
+
+  it('leaves the stair the game builds walkable, which is what sets the limit', () => {
+    // `bakeStair`'s steepest flight measures 1.50 through `slope.ts`. A limit
+    // under that is a stair the sim refuses, which is not a stair.
+    expect(MAX_WALK_SLOPE).toBeGreaterThan(1.5);
+    expect(SLOPE_BASELINE).toBe(PLAYER_RADIUS);
   });
 });
 
@@ -357,7 +375,7 @@ describe('prediction', () => {
    * where a client that only knew "walkable" would take a correction every tick.
    */
   it('lands where the server does, over a slope', () => {
-    const gradient = (MAX_WALK_SLOPE + MAX_CLIMB_SLOPE) / 2;
+    const gradient = MAX_WALK_SLOPE * 0.8;
     const terrain = ramp(gradient);
     let entity = bodyAt(155, FOOT, 2000, terrain);
     const predict = createWorldPredictor({

@@ -1,4 +1,4 @@
-# 227 — A slope you can actually climb
+# 227 — A maximum walkable angle
 
 ## Problem
 
@@ -65,36 +65,21 @@ What the shipped map actually is, for scale — 635,036 solid cells, steepest
 ## Shape
 
 **Walkability is an angle, and it is a property of the ground rather than of
-how fast you happened to be going.** One threshold pair, read by movement, by
+how fast you happened to be going.** One threshold, read by movement, by
 prediction, by the router and by the editor's overlay.
 
 ```ts
 // src/sim/constants.ts
-export const MAX_WALK_SLOPE = 0.8;              // 38.66 deg — classify.ts's rockSlope
-export const MAX_CLIMB_SLOPE = MAX_WALK_SLOPE * 2;   // 57.99 deg
+export const MAX_WALK_SLOPE = MAX_STEP_HEIGHT / NAV_CELL_SIZE;  // 2.4 — 67.38 deg
 export const MAX_WALK_ANGLE_DEG: number;
-export const MAX_CLIMB_ANGLE_DEG: number;
-export const SLOPE_BASELINE = PLAYER_RADIUS * 2;
-export const CLIMB_PACE = 0.45;
-export const NAV_STEEP_COST = 3;
+export const SLOPE_BASELINE = PLAYER_RADIUS;
 ```
 
-`MAX_WALK_SLOPE` is **derived**: it is `classify.ts`'s `rockSlope`, the gradient
-at which the terrain classifier already stops drawing ground as dirt and starts
-drawing it as bare rock. That makes *"you can walk on it"* and *"it looks like
-ground"* one number rather than two that drift — which is what `nav.ts`'s
-docstring has claimed since spec 053 and has never been true of any number in
-it. Written as a literal because the dependency arrow runs `terrain -> sim`;
-asserted equal in a test, the way `NAV_TILE_CELLS` is.
-
-`MAX_CLIMB_SLOPE` is **chosen**, at twice the walk gradient, and what makes it
-free to be chosen rather than derived is that it is not what refuses a wall.
-`MAX_STEP_HEIGHT` is, and it does that job on a discontinuity whatever this
-says, so this only has to answer *"past here the ground reads as a cliff face"*.
-Measured against `maps/arena` it refuses **0.07%** of the ground, against the
-**0.06%** the router already refused — so what changes is that the number is
-now an angle rather than an accident of speed and lattice, not what is
-reachable.
+**There is no band above it.** An earlier cut of this spec had a second
+threshold with a reduced-pace *climb* between the two. That is a movement
+state, a movement state wants an animation, and there is neither one nor a plan
+for one — so ground is walked on at full speed or it is not walked on, and
+`NAV_STEEP`, `NAV_STEEP_COST` and `CLIMB_PACE` are gone with it.
 
 ### Two rules, because there are two questions
 
@@ -102,7 +87,7 @@ reachable.
 // src/sim/slope.ts — the one description of "how steep is this ground"
 export function slopeFrom(centre, west, east, north, south, xBase, yBase): number;
 export function groundSlopeAt(x, y, centre, heightAt, baseline?): number;
-export function gradeOfSlope(slope): GroundGradeValue;  // Walk | Climb | Cliff
+export function walkableSlope(slope): boolean;
 ```
 
 - **`MAX_STEP_HEIGHT` on the *step*** — can the body get over this lip?
@@ -113,41 +98,64 @@ export function gradeOfSlope(slope): GroundGradeValue;  // Walk | Climb | Cliff
   on? This is the new half, and the one that makes a maximum walkable angle
   exist at all.
 
-A body must pass both. The ground rule is a property of the ground alone, so
-it is the same answer at every speed and from every direction: **there is no
-approach angle that gets a body up a slope past `MAX_CLIMB_SLOPE`**, which is
+A body must pass both. The ground rule is a property of the ground alone, so it
+is the same answer at every speed and from every direction: **there is no
+approach angle that gets a body up a slope past `MAX_WALK_SLOPE`**, which is
 what "maximum walkable angle" has to mean to be worth stating.
 
-### The baseline is the body's own footprint, at both ends measured
+### The threshold is loose, and this game's own stairs are why
+
+`MAX_STEP_HEIGHT / NAV_CELL_SIZE` reads as *one nav cell of run against one
+whole step of rise* — the steepest ground that can still be described as a
+sequence of steps at the resolution routes are planned in. It is also, exactly,
+what the router already refused along a grid axis, so the shipped map's routing
+is preserved rather than tightened: **0.03%** of its ground is refused.
+
+The line that would *mean* something is `classify.ts`'s `rockSlope` — 0.8, 38.7
+degrees, where the classifier stops drawing ground as dirt and starts drawing
+it as bare rock, so that "you can walk on it" and "it looks like ground" would
+be one number. **`bakeStair` forbids it.** Measured through this very function,
+the steepest flight the generator will build reads **1.50 (56.3 degrees)**,
+because a riser is a whole `MAX_STEP_HEIGHT` over about a cell of run and the
+baseline only smooths it so far:
+
+| climb | run | steepest reading |
+|---|---|---|
+| 30 | 60 (minimum) | 0.44 — 23.9° |
+| 60 | 80 (minimum) | 1.25 — 51.3° |
+| 90 | 100 (minimum) | 1.41 — 54.6° |
+| 120 | 120 (minimum) | **1.50 — 56.3°** |
+
+A stair the sim refuses is not a stair, so the limit clears the steepest one
+the game can author with room for another map's jitter. Bringing it down is a
+change to how a flight is cut — more risers over a longer run — and not a
+change to this constant. That is named as the follow-up rather than done here,
+because it moves map content.
+
+### The baseline is the body's own footprint, measured at both ends
 
 `SLOPE_BASELINE` is `PLAYER_RADIUS`: the ground a body stands on is the ground
 under its own footprint, and sampling past that asks about ground it is not on.
-Both directions were measured against the game's own baked stair, which is the
-shape that punishes getting it wrong either way. At `PLAYER_RADIUS` the flight
-reads **0.89**; at 24 it reads **2.38** and at 32, **1.79** — because a flight
-is 40 units wide, so samples reaching further than a body do not land on the
-stair at all and a walkway comes back as steep as the drop beside it. Shorter,
-and a riser stops being smoothed by its own tread: a riser's local gradient is
-**2.64**. A stair the sim refuses is not a stair, which is the same shape of
-constraint `NAV_WINDOW_PAD_TILES` takes from `LEASH_RADIUS`.
+Measured against that same stair, which punishes getting it wrong either way —
+at `PLAYER_RADIUS` a flight reads 0.89, at 24 it reads 2.38 and at 32, 1.79,
+because a flight is 40 units wide and samples reaching further than a body do
+not land on the stair at all, so a walkway comes back as steep as the drop
+beside it.
 
 ### The measurement must span a fixed distance, and that is provable
 
 The first cut graded the step itself — rise over the distance actually
 travelled, no extra terrain samples, speed-independent. It is wrong, and the
-thing that proves it is a **stair**. Measured over the arena's own baked stair,
-a riser is a gradient of **2.64 (69 degrees) over about eight units** while the
-flight as a whole is 0.6. A smooth 69-degree hillside is 2.64 everywhere. From
-one (rise, run) pair the two are the same reading.
+thing that proves it is a **stair**: a riser is a gradient of 2.64 over about
+eight units while the flight as a whole is 0.6, and a smooth 69-degree
+hillside is 2.64 everywhere. From one (rise, run) pair the two are the same
+reading.
 
-Nor does an absolute allowance separate them, and this is the part worth
-keeping: to tell a riser from a hillside at 155 units a second the allowance
-has to sit between **2.7 and 10.5**; at a grazer's 40 it has to sit between
-**0.6 and 2.7**. The windows do not overlap. Any per-step rule is therefore
-either speed-dependent or unable to tell a stair from a cliff. So the samples
-span a fixed distance, and the baseline is a **body's own width**
-(`PLAYER_RADIUS * 2`): a rise narrower than the body is something it steps
-over, a slope wider than the body is terrain it walks on.
+Nor does an absolute allowance separate them: to tell a riser from a hillside
+at 155 units a second the allowance has to sit between **2.7 and 10.5**; at a
+grazer's 40 it has to sit between **0.6 and 2.7**. The windows do not overlap.
+Any per-step rule is therefore either speed-dependent or unable to tell a stair
+from a cliff.
 
 ### The gentler side of each axis, not the average
 
@@ -161,15 +169,6 @@ one-sided differences, and the two combine as a magnitude. It still refuses a
 sustained slope, where both sides are steep by construction, and it now lets a
 body reach a rim, stand on a ledge, and walk up to the foot of a cliff.
 
-### A climb costs pace, not permission
-
-`CLIMB_PACE` is a magnitude on the step, the shape `IdleGoal.pace` already has
-and which `resolveMovement` honours and `applyCrowd` round-trips exactly. Steep
-ground is crossed slowly rather than refused, which is what makes the walk
-limit affordable. Both ends compute it from the same function over the same
-ground, so it is not on the wire and it is not a correction; `moveScale` is
-untouched, being a replicated *status*, and where you are standing is not one.
-
 ### The router asks the same question in the same units
 
 `climbable` stays exactly what it is — a **jump** rule, `MAX_STEP_HEIGHT`
@@ -178,86 +177,88 @@ a height it is direction-independent, which is what removes the anisotropy:
 reading it as a slope over two different runs is what made it 67.4 degrees
 along an axis and 73.6 diagonally.
 
-Steepness becomes a **cell** grade, `NAV_STEEP`, written by `gradeNavCells`
-from the same `slopeFrom`. Passable at `NAV_STEEP_COST` alongside
-`NAV_TIGHT_COST` and for the same stated reason; ground past the ceiling is
-`NAV_BLOCKED`, because "cannot stand here" is what that already means.
-`NAV_STEEP` is 3, added *above* `NAV_BLOCKED` so every `=== NAV_BLOCKED` test
-in the file still means what it did.
+Steepness becomes a property of the **cell**, graded by `gradeGroundSlope`
+through the same `slopeFrom` and marked `NAV_BLOCKED` — not a grade of its own, because
+nothing walks it and "cannot stand here" is what that already means. So the
+component flood knows a hillside walls one place off from another exactly as it
+already knows a lake does, and nothing that reads a cell value changes.
 
-Two consequences that had to be decided rather than fallen into. The slope pass
-runs **last** and writes `NAV_STEEP` only over `NAV_OPEN`, so the stronger
-claim always wins and a cell that is both steep and inside a trunk's margin
-stays tight — charged once rather than nine times, which is what multiplying
-the two costs would do to a route. And `groundClear` refuses `NAV_STEEP` as
-well as `NAV_BLOCKED`: the search pays to go round a slope, and a string pull
-that treated steep ground as ordinary would straighten the detour out again and
-hand back the route the cost existed to avoid.
+It is a **separate pass from `gradeNavCells`, run after it and never per tile**,
+because a cell's slope is read from neighbours `SLOPE_BASELINE` away and a tile
+clamped at its own rim answers with the wrong ones — the same reason
+`labelComponents` runs over the assembled window or nowhere. Graded per tile it
+disagreed with the world grid on 2,821 cells, which `nav-tiles.test.ts` is
+built to catch and did.
 
 ### The overlay draws what the game enforces
 
 `DEFAULT_WALK_SLOPE` and the *Walk slope* slider go. `editor/nav.ts` bakes
-three states through `slopeFrom` and `gradeOfSlope` — the same functions — and
-`nav-view.ts` paints walked, climbed and cliff in three colours. The bake stays
-out of the document, as spec 204 left it.
+through `slopeFrom` and `walkableSlope` — the same functions — so the red the
+overlay paints is the ground the sim refuses. The bake stays out of the
+document, as spec 204 left it.
 
 ## Invariants tested
 
 - **The walk limit is an angle.** A body at `MOVE_SPEED_HARD_MAX`, at a
   player's speed, at a ravager's and at a grazer's all stop at the same
-  gradient on the same hill, and the spread between them is under 0.01 — the
-  property the old rule failed by 19.3 degrees.
-- **Slower is never steeper.** No body climbs a hill a faster body is refused.
-- **The three bands are the three bands**: under the walk limit is a walk,
-  between is a climb, past the ceiling is refused.
-- **A climb is slower, not refused**: crossing the climb band arrives, at
-  exactly `CLIMB_PACE` of the distance the same body covers on the flat.
+  gradient on the same hill, spread under 0.01 — the property the old rule
+  failed by 19.3 degrees.
+- **Slower is never steeper.** No body walks up a hill a faster body is refused.
+- **There is no climb.** Every legal gradient is walked at exactly the speed
+  the same body covers flat ground, and the first illegal one refuses the tick
+  outright rather than slowing it.
 - **A discontinuity is refused from every approach angle**, 0 to 88 degrees off
   it, and a riser shorter than `MAX_STEP_HEIGHT` is still stepped over.
 - **`MAX_STEP_HEIGHT` never binds on legal ground**, as the arithmetic:
-  `MOVE_SPEED_HARD_MAX / tickRate * MAX_CLIMB_SLOPE < MAX_STEP_HEIGHT`.
+  `MOVE_SPEED_HARD_MAX / tickRate * MAX_WALK_SLOPE < MAX_STEP_HEIGHT`.
 - **The router is isotropic.** The steepest routable gradient is the same for a
   hill facing along an axis and one facing diagonally, swept over seven
   aspects, within a degree — today a 6.2-degree swing.
 - **The router and movement agree** on the same hills, to the sampling
   difference.
-- **A climb costs more than a walk**: given a level way round the route takes
-  it, and given none it takes the climb rather than failing.
+- **A wall routes round, not over**: given a notch through a ridge too steep to
+  walk the route takes it, and given none the route does not hand back the far
+  side.
+- **The limit clears the steepest stair the generator builds**, asserted
+  against the measured 1.50 — the constraint that sets the number.
 - **The existing ground tests still hold** unchanged — a sealed plateau is
   sealed, a ramp is a way up, a baked stair is walked and routed and the rim
   beside it still refuses. None of those fixtures move, which is the evidence
   that the jump rule kept its job.
 - **Prediction and the server land on the same point** over a slope, tick for
-  tick, with no corrections raised — the property `gear-speed.test.ts` asserts
-  on the flat, over ground that now has a grade in it.
-- **The editor overlay's thresholds and measurement are the sim's**, by import
-  rather than by two literals agreeing, and `MAX_WALK_SLOPE` is asserted equal
-  to `DEFAULT_BANDS.rockSlope`.
+  tick, with no corrections raised.
+- **The editor overlay's threshold and measurement are the sim's**, by import
+  rather than by two literals agreeing.
+- **A grid's own rim is not blocked on flat ground**, and a route crosses it.
+  Clamping the two sample offsets independently divides by zero in the corner --
+  `0 / 0` is NaN, `NaN <= limit` is false, and every cell along a rim came back
+  too steep to stand on. The reach shortens symmetrically instead, and a cell
+  with no room on both sides is left alone.
 - **Determinism**: nothing here draws from the `Rng` or reads a clock.
 
 ## Out of scope
 
 - **Retuning the map.** `maps/arena` is unchanged: measured through the rule
-  itself rather than through a raw per-cell gradient, **0.57%** of its ground
-  becomes a scramble and **0.07%** is refused, against the 0.06% the router
-  already refused. Whether a hillside *should* be a scramble is a design
-  decision made in the editor, and the overlay now shows it truthfully.
+  itself, **0.03%** of its ground is refused, against the 0.06% the router
+  already refused along an axis. What changes is that the number is an angle,
+  not what is reachable.
+- **Cutting gentler stairs.** The steepest flight `bakeStair` builds reads 1.50
+  and is the whole reason the limit is 2.4 rather than `rockSlope`'s 0.8. More
+  risers over a longer run would let it come down, and that is a change to
+  `minStairRun` and to every map holding a stair.
 - **`scatter.maxSlope`.** It is 0.6 against `rockSlope`'s 0.8 and its comment
   claims they agree, which is the same drift — but where a tree may be planted
   is an authoring preference, not walkability, and folding them together is a
   change to what the world looks like.
-- **A climb animation, or a climb that is not walking.** A climb is a slower
-  walk. Hands on rock is a clip nobody has authored and a state machine that
-  has no such state.
-- **Per-body climbing ability.** Every body climbs the same grades. A goat that
-  goes where a player cannot is a trait on `TraitStats` and a second threshold
-  on the wire; this spec makes that expressible and does not spend it.
+- **Climbing, in any form.** Steep ground is refused, not crossed slowly and
+  not scrambled up. There is no clip for it and no state in the machine that
+  drives one, and a movement state with no animation behind it is a body
+  sliding uphill in its walk cycle.
+- **Per-body walking ability.** Every body walks the same ground. A goat that
+  goes where a player cannot is a trait on `TraitStats` and a threshold on the
+  wire; this spec makes that expressible and does not spend it.
 - **Downhill.** The rule is symmetric on `|dh|` as it is today. A fall is its
   own mechanic and this game has no gravity.
-- **Stacking the two costs.** A cell that is both a squeeze and a scramble is
-  charged once. Whether a squeeze *on* a slope should cost more than either is
-  a question about route shape, and the answer that falls out of multiplying
-  them (nine ordinary steps) is not it.
 - **Bringing `chunk.nav` back into the map format.** Spec 204's reasoning
   stands: a nav grid wants heights at 10-unit cells with a clearance term, and
   a per-cell walk bit at 22 units is not it.

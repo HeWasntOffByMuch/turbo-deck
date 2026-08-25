@@ -5,13 +5,12 @@ import {
   NAV_TILE_CELLS,
   NAV_CLEARANCE,
   NAV_RELOCATE_RADIUS,
-  NAV_STEEP_COST,
   NAV_TIGHT_COST,
   SLOPE_BASELINE,
   PATH_MAX_NODES,
   WALKABLE_MIN_HEIGHT,
 } from './constants.js';
-import { gradeOfSlope, GroundGrade, slopeFrom } from './slope.js';
+import { slopeFrom, walkableSlope } from './slope.js';
 import type { Vec2, WorldColliders } from './types.js';
 
 /**
@@ -46,22 +45,16 @@ import type { Vec2, WorldColliders } from './types.js';
 export const NAV_OPEN = 0;
 /** The body fits; the margin does not. Passable, at a price. */
 export const NAV_TIGHT = 1;
-/** A body of the grid's radius cannot stand here at all. */
-export const NAV_BLOCKED = 2;
 /**
- * The ground here is steeper than `MAX_WALK_SLOPE` (spec 227). Passable, at a
- * price, exactly as {@link NAV_TIGHT} is.
+ * A body of the grid's radius cannot stand here at all.
  *
- * A *cell* grade rather than a step one, because steepness is a property of the
- * ground rather than of the direction crossing it -- which is the whole of what
- * makes a maximum walkable angle a number worth stating. Ground past
- * `MAX_CLIMB_SLOPE` is `NAV_BLOCKED` and not a fourth grade: nothing gets up
- * it, and "cannot stand here" is what that already means.
- *
- * Added above `NAV_BLOCKED` rather than between the others so that every
- * `=== NAV_BLOCKED` test in the file still means exactly what it did.
+ * Since spec 227 that includes ground steeper than `MAX_WALK_SLOPE`, graded as
+ * a property of the *cell* rather than of a step across it -- which is the
+ * whole of what makes a maximum walkable angle a number worth stating. It is
+ * `NAV_BLOCKED` and not a grade of its own, because nothing walks it and
+ * "cannot stand here" is what that already means.
  */
-export const NAV_STEEP = 3;
+export const NAV_BLOCKED = 2;
 
 /**
  * The ground a route is planned over (spec 130).
@@ -632,38 +625,57 @@ export function gradeNavCells(
       );
     }
   }
+}
 
-  // How steep the ground is, one cell at a time (spec 227).
-  //
-  // Last, and writing `NAV_STEEP` only over `NAV_OPEN`, so the stronger claim
-  // always wins: a cliff blocks whatever else the cell was, and a cell that is
-  // both steep and inside a trunk's margin stays tight. That conflation is
-  // deliberate rather than a limit of the byte. `NAV_TIGHT_COST` and
-  // `NAV_STEEP_COST` exist for the same reason -- prefer the comfortable way
-  // round -- so a squeeze on a slope is charged once; multiplied it would cost
-  // nine ordinary steps and send a route absurdly far to avoid one cell.
-  //
-  // Sampled at whole cells rather than at exactly `SLOPE_BASELINE`, since the
-  // heights are only known at cell centres; the true offset is what the
-  // gradient is divided by, so the rounding costs resolution and never
-  // correctness. Indices are clamped into the grid, which matters for a
-  // *window* (spec 205), whose heights stop at its own rim.
-  //
-  // Ground the sampler admits it does not have is left alone, for the reason
-  // the water pass gives: on a streaming client an unarrived neighbour
-  // extrapolates the held extent and reads as a cliff, and walling the map off
-  // along the edge of what has loaded is worse than routing optimistically.
+
+
+/**
+ * Mark ground too steep to stand on as blocked (spec 227).
+ *
+ * Separate from {@link gradeNavCells} and run **after** it, because it is not a
+ * tile-local question: a cell's slope is read from neighbours `SLOPE_BASELINE`
+ * away, and a tile clamped at its own rim answers with the wrong ones. That is
+ * the same reason `labelComponents` runs over the assembled window or nowhere,
+ * and `nav-tiles.test.ts` is what catches getting it wrong -- a window graded
+ * per tile disagreed with the world grid on 2,821 cells.
+ *
+ * Sampled at whole cells rather than at exactly `SLOPE_BASELINE`, since the
+ * heights are only known at cell centres; the true offset is what the gradient
+ * is divided by, so the rounding costs resolution and never correctness. Near
+ * the rim the reach shortens symmetrically and a cell with no room on both
+ * sides is left alone -- there is no more ground to read there, and refusing to
+ * guess is the optimistic direction this file argues for everywhere else.
+ *
+ * Ground the sampler admits it does not have is left alone, for the reason the
+ * water pass gives: on a streaming client an unarrived neighbour extrapolates
+ * the held extent and reads as a cliff, and walling the map off along the edge
+ * of what has loaded is worse than routing optimistically.
+ */
+export function gradeGroundSlope(shape: NavShape, heights: Float32Array, ground: NavGround): void {
+  const { cells, cols, cellSize, originX, originY } = shape;
+  const knowsGround = ground.knows;
+  // Blocked ground, so the component flood knows a hillside walls one place off
+  // from another the way it already knows a lake does.
   const step = Math.max(1, Math.round(SLOPE_BASELINE / cellSize));
   const rows = cells.length / cols;
   for (let index = 0; index < cells.length; index++) {
     if (cells[index] === NAV_BLOCKED) continue;
     const col = index % cols;
     const row = (index - col) / cols;
-    const west = Math.max(0, col - step);
-    const east = Math.min(cols - 1, col + step);
-    const north = Math.max(0, row - step);
-    const south = Math.min(rows - 1, row + step);
-    if (east === west || south === north) continue;
+    // Shortened *symmetrically* near the rim, and skipped when there is no room
+    // on both sides at all. Clamping the two ends independently is the obvious
+    // version and it divides by zero in the corner: a column-zero cell gets a
+    // west neighbour of itself, `0 / 0` is NaN, and `NaN <= limit` is false --
+    // so every cell along a grid's own rim came back too steep to stand on,
+    // silently, on ground that was perfectly flat. `nav-tiles.test.ts` caught
+    // it as a corridor that had stopped reaching the window's edge.
+    const dx = Math.min(step, col, cols - 1 - col);
+    const dy = Math.min(step, row, rows - 1 - row);
+    if (dx === 0 || dy === 0) continue;
+    const west = col - dx;
+    const east = col + dx;
+    const north = row - dy;
+    const south = row + dy;
     if (knowsGround !== undefined) {
       const x = originX + (col + 0.5) * cellSize;
       const y = originY + (row + 0.5) * cellSize;
@@ -683,16 +695,11 @@ export function gradeNavCells(
       heights[row * cols + east] ?? centre,
       heights[north * cols + col] ?? centre,
       heights[south * cols + col] ?? centre,
-      (col - west) * cellSize,
-      (row - north) * cellSize,
+      dx * cellSize,
+      dy * cellSize,
     );
-    const grade = gradeOfSlope(slope);
-    if (grade === GroundGrade.Cliff) cells[index] = NAV_BLOCKED;
-    else if (grade === GroundGrade.Climb && cells[index] === NAV_OPEN) cells[index] = NAV_STEEP;
+    if (!walkableSlope(slope)) cells[index] = NAV_BLOCKED;
   }
-
-  // A cliff is blocking, so what it walls off has to be measured *after* it is
-  // known. Nothing here reads `components`; `createNavGrid` labels next.
 }
 
 /**
@@ -797,6 +804,7 @@ export function createNavGrid(
   const heights = heightsFor(ground, cols, rows, bounds.x, bounds.y, cellSize);
 
   gradeNavCells(shape, bounds, world.rects, world.circles, radius, heights, ground);
+  gradeGroundSlope(shape, heights, ground);
 
   const { components, componentSizes, componentAtEdge } = labelComponents(cols, rows, cells, heights);
 
@@ -894,6 +902,19 @@ export function assembleNavGrid(
       }
     }
   }
+
+  gradeGroundSlope(
+    {
+      cellSize,
+      cols,
+      rows,
+      originX: rect.minTx * NAV_TILE_CELLS * cellSize,
+      originY: rect.minTz * NAV_TILE_CELLS * cellSize,
+      cells,
+    },
+    heights,
+    ground,
+  );
 
   const { components, componentSizes, componentAtEdge } = labelComponents(cols, rows, cells, heights);
 
@@ -1156,14 +1177,6 @@ function standable(grid: NavGrid, point: Vec2): boolean {
  * route is exactly the shape a string pull loves to straighten: the search
  * climbs it honestly, `segmentClear` reports no trunk between the foot and the
  * top, and the pull replaces the climb with a leap off the plateau.
- *
- * `NAV_STEEP` is refused here as well as `NAV_BLOCKED` (spec 227), and it is
- * the same argument one step further on. The search pays `NAV_STEEP_COST` to
- * cross a slope and will go a long way round instead; a pull that treated steep
- * ground as ordinary would straighten that detour out again and hand back
- * exactly the route the cost existed to avoid. The price is that a route which
- * genuinely has to cross a slope keeps its grid-stepped waypoints there rather
- * than being smoothed, which is a slightly longer walk and not a wrong one.
  */
 function groundClear(grid: NavGrid, a: Vec2, b: Vec2): boolean {
   if (grid.ground === FLAT_GROUND) return true;
@@ -1174,17 +1187,13 @@ function groundClear(grid: NavGrid, a: Vec2, b: Vec2): boolean {
   // is a cliff the pull did not see. Under `cellSize / sqrt(2)` no cell the line
   // passes through can be missed, and the samples are array reads either way.
   const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (grid.cellSize * 0.5)));
-  const walked = (cell: number): boolean => {
-    const value = grid.cells[cell] ?? NAV_BLOCKED;
-    return value !== NAV_BLOCKED && value !== NAV_STEEP;
-  };
   let previousCell = cellOf(grid, a);
-  if (!walked(previousCell)) return false;
+  if ((grid.cells[previousCell] ?? NAV_BLOCKED) === NAV_BLOCKED) return false;
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const cell = cellOf(grid, { x: a.x + dx * t, y: a.y + dy * t });
     if (cell === previousCell) continue;
-    if (!walked(cell)) return false;
+    if ((grid.cells[cell] ?? NAV_BLOCKED) === NAV_BLOCKED) return false;
     if (!climbable(grid.heights, previousCell, cell)) return false;
     previousCell = cell;
   }
@@ -1506,13 +1515,8 @@ export function findPath(grid: NavGrid, from: Vec2, to: Vec2): readonly Vec2[] {
           if (!climbable(grid.heights, current, acrossRow)) continue;
         }
         // A squeeze costs more than open ground, so the search prefers room and
-        // takes the gap only when the gap is the way through. Steep ground costs
-        // the same way and for the same reason (spec 227): a level way round
-        // wins when there is one, and the climb is taken when it is the way up.
-        const step =
-          (diagonal ? DIAGONAL_COST : 1) *
-          (grade === NAV_TIGHT ? NAV_TIGHT_COST : 1) *
-          (grade === NAV_STEEP ? NAV_STEEP_COST : 1);
+        // takes the gap only when the gap is the way through.
+        const step = (diagonal ? DIAGONAL_COST : 1) * (grade === NAV_TIGHT ? NAV_TIGHT_COST : 1);
         const tentative = scoreAt(current) + step;
         if (tentative >= scoreAt(next)) continue;
         seen[next] = generation;

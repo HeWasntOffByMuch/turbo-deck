@@ -1,42 +1,37 @@
 import * as THREE from 'three';
-import { MAX_CLIMB_ANGLE_DEG, MAX_WALK_ANGLE_DEG } from '../../../sim/constants.js';
+import { MAX_WALK_ANGLE_DEG } from '../../../sim/constants.js';
 import { footprintRadius, type MapChunkStore } from '../../../terrain/index.js';
-import { NAV_CELL_CLIMB, NAV_CELL_WALK } from './nav.js';
+import { NAV_CELL_WALK } from './nav.js';
 
 /**
  * The nav overlay (spec 053) — the picture that answers "why can't units path
  * here".
  *
- * Three colours, because there are three answers (spec 227). **Steep** ground is
- * crossed at `CLIMB_PACE` and routed at `NAV_STEEP_COST`; **cliff** is ground
- * nothing gets up at all; **prop footprints** are drawn on top of both but never
- * baked, because a tree is not terrain and re-baking nav every time a bush is
- * planted would be absurd. Seeing them apart is the whole point: "that is a
- * scramble", "that is a cliff" and "that is a tree" are three different problems
- * with three different fixes, and the overlay used to say only the last two --
- * against a threshold the game did not use.
+ * Two colours, because there are two answers. Unwalkable **ground** is what
+ * `bakeChunkNav` decides, through the sim's own `MAX_WALK_SLOPE` since spec 227
+ * rather than through a threshold of the editor's own that the game did not
+ * use; **prop footprints** are drawn on top of it but never baked, because a
+ * tree is not terrain and re-baking nav every time a bush is planted would be
+ * absurd. Seeing them apart is the whole point: "that is too steep" and "that
+ * is a tree" are different problems with different fixes.
  *
  * Unwalkable cells are drawn at their own four jittered corners, so the overlay
  * lies exactly on the surface it describes rather than hovering over it in a
  * lattice the mesh does not actually use.
  */
 
-/** A cliff, ground that is only a scramble, and the ring a prop blocks. */
+/** Unwalkable ground, and the ring a prop blocks. */
 const GROUND_COLOR = 0xff5c5c;
-const CLIMB_COLOR = 0x4c9cff;
 const PROP_COLOR = 0xffc04c;
 
 /**
- * What the two bands are, in degrees, for whoever is reading the picture.
+ * The angle the red means, for whoever is reading the picture.
  *
  * Exported rather than printed here because `nav-view.ts` is the three.js half
- * and the panel is where a legend belongs -- and because the numbers are the
- * sim's, so nothing here may spell them out.
+ * and a legend belongs on the panel -- and because the number is the sim's, so
+ * nothing here may spell it out.
  */
-export const NAV_LEGEND = {
-  walkUpToDeg: MAX_WALK_ANGLE_DEG,
-  climbUpToDeg: MAX_CLIMB_ANGLE_DEG,
-} as const;
+export const NAV_LEGEND = { walkUpToDeg: MAX_WALK_ANGLE_DEG } as const;
 
 /** How far the overlay floats above the surface, to clear z-fighting. */
 const LIFT = 1.6;
@@ -78,7 +73,6 @@ export function createNavView(): NavViewHandle {
       const positions: number[] = [];
       const colors: number[] = [];
       const ground = new THREE.Color(GROUND_COLOR);
-      const climb = new THREE.Color(CLIMB_COLOR);
       const prop = new THREE.Color(PROP_COLOR);
 
       const tri = (
@@ -103,18 +97,16 @@ export function createNavView(): NavViewHandle {
           };
           for (let j = 0; j < chunk.rows; j++) {
             for (let i = 0; i < chunk.cols; i++) {
-              // Only the cells that cost a unit something; a map is mostly
-              // walkable, so drawing the complement would be most of the world.
-              const cell = nav[j * chunk.cols + i];
-              if (cell === NAV_CELL_WALK) continue;
+              // Only the cells a unit cannot cross; a map is mostly walkable, so
+              // drawing the complement would be most of the world.
+              if (nav[j * chunk.cols + i] === NAV_CELL_WALK) continue;
               if (!store.cellSolid(layerId, chunk.startCol + i, chunk.startRow + j)) continue;
-              const colour = cell === NAV_CELL_CLIMB ? climb : ground;
               const c00 = corner(i, j);
               const c10 = corner(i + 1, j);
               const c01 = corner(i, j + 1);
               const c11 = corner(i + 1, j + 1);
-              tri(c00, c01, c11, colour);
-              tri(c00, c11, c10, colour);
+              tri(c00, c01, c11, ground);
+              tri(c00, c11, c10, ground);
             }
           }
         }

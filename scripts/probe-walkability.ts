@@ -3,9 +3,10 @@
  *
  *   npx tsx scripts/probe-walkability.ts [--map maps/arena]
  *
- * Three readers decide whether a body may stand somewhere, and none of them is
- * written in the unit the question is asked in. This measures all three against
- * the same ramps and prints the angle each one really enforces.
+ * Three readers decide whether a body may stand somewhere. This measures all
+ * three against the same ramps and prints the angle each one really enforces,
+ * which should be one number: there is no climb band, so ground is walked on at
+ * full speed or it is refused.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -18,14 +19,13 @@ import { EntityKindValue, type ServerInput } from '../src/server/sim/types.js';
 import { monsterById } from '../src/server/data/monsters.js';
 import { createWorldColliders } from '../src/sim/collision.js';
 import {
-  MAX_CLIMB_SLOPE,
   MAX_STEP_HEIGHT,
   MAX_WALK_SLOPE,
   NAV_CELL_SIZE,
   PLAYER_RADIUS,
   SLOPE_BASELINE,
 } from '../src/sim/constants.js';
-import { gradeOfSlope, GroundGrade, slopeFrom } from '../src/sim/slope.js';
+import { slopeFrom, walkableSlope } from '../src/sim/slope.js';
 import { CHARACTERS } from '../src/sim/characters.js';
 import { createNavGrid, findPath, type NavGround } from '../src/sim/pathfinding.js';
 import { joinMap, MANIFEST_PATH, parseManifest } from '../src/terrain/regions.js';
@@ -166,8 +166,7 @@ function steepestRoute(aspect: number): number {
 
 interface SlopeCensus {
   readonly cells: number;
-  readonly climb: number;
-  readonly cliff: number;
+  readonly refused: number;
   readonly steepest: number;
   readonly percentiles: readonly { readonly p: number; readonly slope: number }[];
 }
@@ -190,8 +189,7 @@ function census(mapDir: string): SlopeCensus | null {
   const step = Math.max(1, Math.round(SLOPE_BASELINE / cell));
 
   const slopes: number[] = [];
-  let climb = 0;
-  let cliff = 0;
+  let refused = 0;
   let steepest = 0;
 
   for (const layer of doc.layers) {
@@ -220,9 +218,7 @@ function census(mapDir: string): SlopeCensus | null {
           );
           slopes.push(s);
           if (s > steepest) steepest = s;
-          const grade = gradeOfSlope(s);
-          if (grade === GroundGrade.Cliff) cliff++;
-          else if (grade === GroundGrade.Climb) climb++;
+          if (!walkableSlope(s)) refused++;
         }
       }
     }
@@ -233,8 +229,7 @@ function census(mapDir: string): SlopeCensus | null {
     slopes[Math.min(slopes.length - 1, Math.floor((p / 100) * slopes.length))] ?? 0;
   return {
     cells: slopes.length,
-    climb,
-    cliff,
+    refused,
     steepest,
     percentiles: [50, 90, 99, 99.9].map((p) => ({ p, slope: at(p) })),
   };
@@ -252,7 +247,7 @@ function main(): void {
 
   console.log('=== 1. movement: the steepest ground a body walks up ===');
   console.log('Since spec 227 this is a property of the ground, so every column should');
-  console.log('read MAX_CLIMB_ANGLE_DEG. Before it, the same table ran 69.1 to 89.9.\n');
+  console.log('read MAX_WALK_ANGLE_DEG. Before it, the same table ran 69.1 to 89.9.\n');
   console.log('  body                 speed   u/tick   head-on   at 60 deg   at 85 deg');
   const bodies: { name: string; speed: number }[] = [
     { name: 'MOVE_SPEED_HARD_MAX', speed: 550 },
@@ -271,7 +266,7 @@ function main(): void {
     );
   }
   console.log(
-    `\n  All of it should be ${deg(MAX_CLIMB_SLOPE).toFixed(1)} deg: one angle, ` +
+    `\n  All of it should be ${deg(MAX_WALK_SLOPE).toFixed(1)} deg: one angle, ` +
       'at every speed and from every approach.',
   );
 
@@ -292,15 +287,13 @@ function main(): void {
   );
   console.log('  over two different runs; what is left is the cell lattice.');
 
-  console.log('\n=== 3. the thresholds, as authored ===');
+  console.log('\n=== 3. the threshold, as authored ===');
   console.log(
-    `  MAX_WALK_SLOPE  ${MAX_WALK_SLOPE.toFixed(2)}   ${deg(MAX_WALK_SLOPE).toFixed(1).padStart(5)} deg  ` +
-      '(the classifier\'s rockSlope; the editor overlay imports it)',
+    `  MAX_WALK_SLOPE ${MAX_WALK_SLOPE.toFixed(2)}    ${deg(MAX_WALK_SLOPE).toFixed(1).padStart(5)} deg  ` +
+      '(MAX_STEP_HEIGHT / NAV_CELL_SIZE; the editor overlay imports it)',
   );
-  console.log(
-    `  MAX_CLIMB_SLOPE ${MAX_CLIMB_SLOPE.toFixed(2)}   ${deg(MAX_CLIMB_SLOPE).toFixed(1).padStart(5)} deg  ` +
-      '(past here nothing gets up at all)',
-  );
+  console.log(`  SLOPE_BASELINE ${String(SLOPE_BASELINE)}      the body's own radius`);
+  console.log('  There is no band above it: steep ground is refused, never slowed.');
 
   console.log('\n=== 4. the shipped map, measured against all three ===');
   const report = census(mapDir);
@@ -312,15 +305,14 @@ function main(): void {
     for (const { p, slope } of report.percentiles) {
       console.log(`    p${String(p).padEnd(5)} ${deg(slope).toFixed(1).padStart(5)} deg`);
     }
-    console.log(`  steep enough to be climbed      ${pct(report.climb).padStart(7)}`);
-    console.log(`  refused outright                ${pct(report.cliff).padStart(7)}`);
+    console.log(`  too steep to walk               ${pct(report.refused).padStart(7)}`);
   }
 
-  console.log('\n=== 5. the jump rule never binds on ground the grade rule allows ===');
+  console.log('\n=== 5. the jump rule never binds on ground the slope rule allows ===');
   const perTick = 550 / SERVER_TICK_RATE;
   console.log(
-    `  at MOVE_SPEED_HARD_MAX, ${perTick.toFixed(2)} u/tick x ${MAX_CLIMB_SLOPE.toFixed(2)} = ` +
-      `${(perTick * MAX_CLIMB_SLOPE).toFixed(2)} against MAX_STEP_HEIGHT ${String(MAX_STEP_HEIGHT)}`,
+    `  at MOVE_SPEED_HARD_MAX, ${perTick.toFixed(2)} u/tick x ${MAX_WALK_SLOPE.toFixed(2)} = ` +
+      `${(perTick * MAX_WALK_SLOPE).toFixed(2)} against MAX_STEP_HEIGHT ${String(MAX_STEP_HEIGHT)}`,
   );
   const flat = { heightAt: () => 0 };
   console.log(`  flat ground is still walkable: ${String(isWalkable({ x: 0, y: 0, z: 0 }, 1, 0, flat))}`);

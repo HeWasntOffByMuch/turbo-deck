@@ -1,5 +1,5 @@
 import { SLOPE_BASELINE } from '../../../sim/constants.js';
-import { gradeOfSlope, GroundGrade, slopeFrom } from '../../../sim/slope.js';
+import { slopeFrom, walkableSlope } from '../../../sim/slope.js';
 import type { ChunkCoord, LayerInfo, MapChunkStore } from '../../../terrain/index.js';
 
 /**
@@ -31,7 +31,6 @@ import type { ChunkCoord, LayerInfo, MapChunkStore } from '../../../terrain/inde
 /** What the overlay says about a cell. Zero is "cliff", so an unset byte is one. */
 export const NAV_CELL_CLIFF = 0;
 export const NAV_CELL_WALK = 1;
-export const NAV_CELL_CLIMB = 2;
 
 /**
  * Steepness at a cell, measured the way the sim measures it.
@@ -71,8 +70,8 @@ function cellHeight(store: MapChunkStore, layer: LayerInfo, col: number, row: nu
  * Walkability for one chunk, one byte per cell in the chunk's own cell order.
  *
  * A cell is walked when the layer has ground there, it is above the water line
- * and it is no steeper than `MAX_WALK_SLOPE`; climbed up to `MAX_CLIMB_SLOPE`;
- * a cliff past that. Returns null if the chunk does not exist.
+ * and it is no steeper than `MAX_WALK_SLOPE`. Returns null if the chunk does
+ * not exist.
  */
 export function bakeChunkNav(
   store: MapChunkStore,
@@ -91,9 +90,8 @@ export function bakeChunkNav(
       const row = chunk.startRow + j;
       if (!store.cellSolid(layerId, col, row)) continue;
       if (layer.waterLevel !== null && cellHeight(store, layer, col, row) <= layer.waterLevel) continue;
-      const grade = gradeOfSlope(cellSlope(store, layer, col, row));
-      if (grade === GroundGrade.Cliff) continue;
-      nav[j * chunk.cols + i] = grade === GroundGrade.Climb ? NAV_CELL_CLIMB : NAV_CELL_WALK;
+      if (!walkableSlope(cellSlope(store, layer, col, row))) continue;
+      nav[j * chunk.cols + i] = NAV_CELL_WALK;
     }
   }
   return nav;

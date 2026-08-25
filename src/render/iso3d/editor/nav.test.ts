@@ -13,16 +13,8 @@ import {
 } from '../../../terrain/index.js';
 import { applyTerrainBrush } from './brush.js';
 import { EditHistory } from './history.js';
-import { DEFAULT_BANDS } from '../../../terrain/classify.js';
-import { MAX_CLIMB_SLOPE, MAX_WALK_SLOPE } from '../../../sim/constants.js';
-import {
-  bakeChunkNav,
-  bakeLayerNav,
-  NAV_CELL_CLIFF,
-  NAV_CELL_CLIMB,
-  NAV_CELL_WALK,
-  rebakeNav,
-} from './nav.js';
+import { MAX_STEP_HEIGHT, MAX_WALK_SLOPE, NAV_CELL_SIZE } from '../../../sim/constants.js';
+import { bakeChunkNav, bakeLayerNav, NAV_CELL_CLIFF, NAV_CELL_WALK, rebakeNav } from './nav.js';
 
 /**
  * Spec 053. The overlay is only worth looking at if the data behind it is
@@ -127,14 +119,16 @@ describe('what is walkable', () => {
   it('has fewer walked cells on rougher ground', () => {
     const gentle = loaded([{ kind: 'rolling', amplitude: 6, params: { frequency: 1 / 90 } }]);
     bakeLayerNav(gentle.store, LAYER);
-    const rough = loaded([{ kind: 'rolling', amplitude: 120, params: { frequency: 1 / 90 } }]);
+    // Rough enough to pass `MAX_WALK_SLOPE`, which is the sim's 2.4 -- steep
+    // ground has to actually be steep, not merely uneven.
+    const rough = loaded([{ kind: 'rolling', amplitude: 900, params: { frequency: 1 / 25 } }]);
     bakeLayerNav(rough.store, LAYER);
     expect(countWalkable(rough)).toBeLessThan(countWalkable(gentle));
     expect(countWalkable(rough)).toBeGreaterThan(0);
   });
 
-  it('only ever puts a cell in one of the three bands', () => {
-    const map = loaded([{ kind: 'rolling', amplitude: 120, params: { frequency: 1 / 90 } }]);
+  it('only ever says walked or cliff', () => {
+    const map = loaded([{ kind: 'rolling', amplitude: 900, params: { frequency: 1 / 25 } }]);
     bakeLayerNav(map.store, LAYER);
     const layer = must(map.store.layerInfo(LAYER), 'the layer');
     const seen = new Set<number>();
@@ -143,12 +137,10 @@ describe('what is walkable', () => {
         for (const flag of map.store.chunkNav(LAYER, cx, cz) ?? []) seen.add(flag);
       }
     }
-    for (const flag of seen) {
-      expect([NAV_CELL_CLIFF, NAV_CELL_WALK, NAV_CELL_CLIMB]).toContain(flag);
-    }
+    for (const flag of seen) expect([NAV_CELL_CLIFF, NAV_CELL_WALK]).toContain(flag);
     // Ground this rough has to reach past the walk limit somewhere, or the
-    // assertion above is true of a world with one band in it.
-    expect(seen.has(NAV_CELL_CLIMB) || seen.has(NAV_CELL_CLIFF)).toBe(true);
+    // assertion above is true of a world with one answer in it.
+    expect(seen.has(NAV_CELL_CLIFF)).toBe(true);
   });
 
   it('is stable: baking twice gives the same answer', () => {
@@ -229,9 +221,15 @@ describe('staying current with the ground', () => {
   it('a raised cliff becomes unwalkable, and undo makes it walkable again', () => {
     // The property the overlay's usefulness rests on: after an edit it describes
     // the ground as it is now, not as it was when the map was baked.
+    //
+    // Counted rather than sampled at one coordinate, and the brush is a wall
+    // rather than a mound: `MAX_WALK_SLOPE` is the sim's since spec 227, where
+    // the editor used to pick its own at 0.55, so where the flank of a hill
+    // crosses it is a different place and a fixed probe point measures the
+    // fixture instead of the rule.
     const map = loaded();
     bakeLayerNav(map.store, LAYER);
-    expect(walkableAt(map, 60, 0)).toBe(true);
+    const level = countWalkable(map);
 
     const history = new EditHistory();
     history.beginStroke();
@@ -239,7 +237,7 @@ describe('staying current with the ground', () => {
     for (let i = 0; i < 40; i++) {
       dirty = applyTerrainBrush(
         map.store,
-        { tool: 'raise', radius: 70, strength: 400, falloff: 0.9 },
+        { tool: 'raise', radius: 60, strength: 4000, falloff: 0 },
         {
           layerId: LAYER,
           x: 0,
@@ -252,11 +250,11 @@ describe('staying current with the ground', () => {
     }
     history.endStroke();
     rebakeNav(map.store, LAYER, dirty);
-    expect(walkableAt(map, 60, 0)).toBe(false);
+    expect(countWalkable(map)).toBeLessThan(level);
 
     const { remeshed: restored } = history.undo(map.store);
     rebakeNav(map.store, LAYER, restored);
-    expect(walkableAt(map, 60, 0)).toBe(true);
+    expect(countWalkable(map)).toBe(level);
   });
 
   it('re-bakes each dirty chunk once, however many times it is listed', () => {
@@ -280,25 +278,19 @@ describe('staying current with the ground', () => {
 
 describe('walk limit', () => {
   /**
-   * The overlay's thresholds are the sim's, by import (spec 227).
+   * The overlay's threshold is the sim's, by import (spec 227).
    *
    * What this replaced asserted `DEFAULT_WALK_SLOPE < 0.8` under a comment
    * saying it sat under the classifier's *dirt* threshold -- which is 0.45, so
    * the claim was false and the test could not see it, because it was written
-   * against the rock threshold instead. Both numbers are named here.
+   * against the rock threshold instead. There is one number now and it is not
+   * the editor's to pick.
    */
-  it('is the classifier\'s rock threshold, so walkable ground is ground that looks it', () => {
-    expect(MAX_WALK_SLOPE).toBe(DEFAULT_BANDS.rockSlope);
-    expect(MAX_WALK_SLOPE).toBeGreaterThan(DEFAULT_BANDS.dirtSlope);
+  it('is the sim\'s own, derived from the step and the nav cell', () => {
+    expect(MAX_WALK_SLOPE).toBe(MAX_STEP_HEIGHT / NAV_CELL_SIZE);
   });
 
-  it('climbs steeper than it walks', () => {
-    expect(MAX_CLIMB_SLOPE).toBeGreaterThan(MAX_WALK_SLOPE);
-  });
-
-  it('puts a cliff, a scramble and a meadow in three different bands', () => {
-    // A flat layer is walked everywhere; the assertion that matters is that the
-    // bake never invents a band the sim has no name for.
+  it('walks level ground', () => {
     const map = loaded();
     bakeLayerNav(map.store, LAYER);
     expect(bandAt(map, 0, 0)).toBe(NAV_CELL_WALK);

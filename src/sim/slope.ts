@@ -1,4 +1,4 @@
-import { MAX_CLIMB_SLOPE, MAX_WALK_SLOPE, SLOPE_BASELINE } from './constants.js';
+import { MAX_WALK_SLOPE, SLOPE_BASELINE } from './constants.js';
 
 /**
  * How steep the ground is at a point (spec 227).
@@ -34,16 +34,24 @@ import { MAX_CLIMB_SLOPE, MAX_WALK_SLOPE, SLOPE_BASELINE } from './constants.js'
  * What it deliberately does not do is refuse a *jump*. That is
  * `MAX_STEP_HEIGHT`'s job, on the step rather than on the ground, and it is why
  * a stair riser and a tier edge are both still decided exactly as they were.
+ *
+ * The answer is a **yes or no**. An earlier cut of spec 227 had a band between
+ * two thresholds where a body moved at a reduced pace, which is a movement
+ * state, which wants an animation, which does not exist and is not planned. So
+ * ground is walked on or it is not, and `MAX_WALK_SLOPE` is the whole of it.
  */
 
-/** The three bands ground falls in. Ordered, so a comparison is meaningful. */
-export const GroundGrade = { Walk: 0, Climb: 1, Cliff: 2 } as const;
-export type GroundGradeValue = (typeof GroundGrade)[keyof typeof GroundGrade];
-
-/** Which band a gradient is in. */
-export function gradeOfSlope(slope: number): GroundGradeValue {
-  if (slope > MAX_CLIMB_SLOPE) return GroundGrade.Cliff;
-  return slope > MAX_WALK_SLOPE ? GroundGrade.Climb : GroundGrade.Walk;
+/**
+ * True when ground at this gradient is ground a body may walk on.
+ *
+ * `<=` rather than `<`, and the direction it fails in is deliberate: a NaN
+ * gradient answers **false**, so a measurement that could not be made blocks
+ * rather than quietly passing. Callers are expected not to hand one over --
+ * `gradeGroundSlope` refuses a cell it has no room to measure instead -- and
+ * this is what makes that a bug that shows up rather than one that does not.
+ */
+export function walkableSlope(slope: number): boolean {
+  return slope <= MAX_WALK_SLOPE;
 }
 
 /**
