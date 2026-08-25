@@ -8,6 +8,8 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  ACCOUNT_GUEST_LABEL,
+  accountButtonCaption,
   bottomEdge,
   centredClearance,
   errorLineWidth,
@@ -27,6 +29,8 @@ import {
   readoutShown,
   stripHeight,
   stripWidth,
+  windowButtonCaptionFits,
+  windowButtonCaptionMaxChars,
 } from './hud-layout.js';
 import { BAR_SLOT_COUNT } from './action-bar.js';
 import { barWidth } from '../../../ui/screens/action-bar.js';
@@ -317,5 +321,67 @@ describe('the HUD layout', () => {
     );
     // Empty is the margin the outline lives in, not a negative box.
     expect(errorLineWidth(desktop, '')).toBe(2 * desktop.errorScale);
+  });
+
+  /**
+   * The account button (spec 227): the same box a system button draws, above
+   * the weapon switch. Its caption is the one along this edge that is not
+   * authored -- a display name is unrestricted in length -- so what fits has
+   * to come from the arithmetic rather than from a name somebody chose to be
+   * short.
+   */
+  describe('the account button', () => {
+    it('fits every caption the button can actually draw, at both layouts', () => {
+      for (const layout of [desktop, compact]) {
+        const max = windowButtonCaptionMaxChars(layout);
+        // A caption of exactly the longest length that fits, fits; one
+        // character more does not. Walked off the arithmetic itself rather
+        // than a hand-picked string, so this is the same check
+        // `windowButtonCaptionMaxChars` is derived from, run in the other
+        // direction.
+        if (max > 0) expect(windowButtonCaptionFits(layout, 'M'.repeat(max))).toBe(true);
+        expect(windowButtonCaptionFits(layout, 'M'.repeat(max + 1))).toBe(false);
+      }
+      // The compact button is icon-only (spec 140): there is no room left
+      // over for a caption at all, which is the honest answer for a 46px
+      // square holding a 24px icon -- and matches that no caption is ever
+      // drawn there.
+      expect(windowButtonCaptionMaxChars(compact)).toBe(0);
+      // The desktop button captions every window it opens; the guest label
+      // has to be one of the captions that actually fits, or the feature
+      // this button exists for is unreadable from the first session.
+      expect(windowButtonCaptionMaxChars(desktop)).toBeGreaterThan(0);
+      expect(windowButtonCaptionFits(desktop, ACCOUNT_GUEST_LABEL.toUpperCase())).toBe(true);
+    });
+
+    it('labels the button REGISTER for a guest and the account name once signed in', () => {
+      expect(accountButtonCaption(null, desktop)).toBe('REGISTER');
+      // Short enough to need no truncation, so this also pins the "just the
+      // name, uppercased" case separately from the one below.
+      expect(accountButtonCaption('Ada', desktop)).toBe('ADA');
+    });
+
+    it('falls back to the first word before it cuts anything, and cuts with a stop', () => {
+      // `displayNameFrom` allows 48 characters of anything (spec 226), so what
+      // matters is that every answer is legible rather than merely bounded.
+      const max = windowButtonCaptionMaxChars(desktop);
+
+      // A name too long to draw whole is drawn as its first word, which is what
+      // a spaced display name is a first word of. `ADA LOVELA` was the version
+      // that cut instead.
+      expect(accountButtonCaption('Ada Lovelace', desktop)).toBe('ADA');
+
+      // Only a single word with nowhere to break is cut, and then it says so.
+      const long = 'AVeryLongDisplayNameNobodyWouldActuallyPick';
+      expect(long.length).toBeGreaterThan(max);
+      const cut = accountButtonCaption(long, desktop);
+      expect(cut).toBe(`${long.toUpperCase().slice(0, max - 1)}.`);
+      expect(cut.endsWith('.')).toBe(true);
+
+      // Whatever rule produced it, it fits the box it is drawn in.
+      for (const name of ['Ada Lovelace', long, 'Ada', null]) {
+        expect(windowButtonCaptionFits(desktop, accountButtonCaption(name, desktop))).toBe(true);
+      }
+    });
   });
 });

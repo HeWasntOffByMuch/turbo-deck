@@ -124,8 +124,14 @@ export const INTEREST_CHUNK_RADIUS = 3;
  * list per chunk sent to every client, and its only reader was the editor's nav
  * overlay -- which loads the map off disk and has never streamed. Removed from
  * the document in the same change, so there is nothing left to send.
+ * 20: `Hello` carries an `authToken` (spec 226). A trailing string, so an older
+ * client's frame decodes as far as `resumeToken` and then runs out -- which is
+ * a decode error rather than a silent misread, and is why this is a version
+ * bump rather than an append somebody could get away with. What it is *for* is
+ * that the server can now decide which player a connection is from a credential
+ * it issued, instead of from a name the client chose for itself.
  */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
@@ -536,3 +542,44 @@ function clampConfigValue(key: LiveConfigKey, value: number): number {
       return Math.max(1, Math.min(100000, Math.floor(value)));
   }
 }
+
+/**
+ * Where the database lives, relative to the repository root (spec 226).
+ *
+ * `data/game.db` because it is the obvious place and there was no existing
+ * convention to follow -- the only sibling is `.studio/`, which is hidden
+ * because nobody is meant to look in it, and the opposite is true here. The
+ * whole directory is gitignored: a live database is a developer's save file,
+ * not source.
+ *
+ * `TURBO_DECK_DB` overrides it, which is what a second playtest world or a
+ * throwaway database is.
+ */
+export const DEFAULT_DB_FILE = 'data/game.db';
+
+/**
+ * How long the graceful shutdown gets before the process is killed anyway
+ * (spec 226).
+ *
+ * A bound rather than a hope: the flush and the close are awaited, and a
+ * database that has wedged -- a lock nobody releases, a disk that stopped
+ * answering -- would otherwise leave `npm run server` unkillable by Ctrl-C and
+ * force the kill -9 the flush exists to avoid.
+ *
+ * Ten seconds is far past what flushing a playtest's worth of players costs
+ * (measured in milliseconds) and short enough that nobody waits on it wondering
+ * whether it has hung. What is lost when it fires is the same thing a kill -9
+ * loses: up to one autosave interval per player, and never a trade or a
+ * purchase, which are committed when they happen.
+ */
+export const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+/**
+ * How often the server sweeps expired sessions out of the database
+ * (spec 226).
+ *
+ * Hourly, because the table only grows with connections and nothing reads an
+ * expired row. Deliberately not on the tick loop's clock: it is housekeeping
+ * about wall time, not about the world.
+ */
+export const SESSION_SWEEP_MS = 60 * 60 * 1000;

@@ -403,7 +403,20 @@ describe('who hears an input', () => {
     // field is hidden. An invisible widget is one no press can land on and one
     // `FocusManager.focus` refuses outright, so the unfiltered walk finds a
     // field the rest of this test cannot possibly be about.
-    const field = [...screens.root.content.walk()].find((widget) => widget.focusOnPress && widget.visible);
+    //
+    // Asked of the whole ancestor chain rather than of the widget's own flag
+    // (spec 226). A window closed by `window.visible = false` leaves every
+    // field inside it flagged visible, so the account window's login field --
+    // registered before the shop's -- was found here by a walk that only
+    // checked one flag. The chat's field happens to clear its own, which is why
+    // one flag was enough until there was a second window with a field on it.
+    const showing = (widget: { visible: boolean; parent: unknown } | null): boolean => {
+      for (let node = widget; node !== null; node = node.parent as typeof node) {
+        if (!node.visible) return false;
+      }
+      return true;
+    };
+    const field = [...screens.root.content.walk()].find((widget) => widget.focusOnPress && showing(widget));
     if (!field) throw new Error('the options window has no text field on it');
     screens.handlePointer('down', { x: field.rect.x + 2, y: field.rect.y + 2 }, 0, NONE);
     expect(screens.root.focus.focused).toBe(field);
@@ -1193,6 +1206,7 @@ describe('the saved layout', () => {
     if (!manager) return;
     const captured = captureLayout(manager);
     expect(captured.windows.map((entry) => entry.id).sort()).toEqual([
+      'account',
       'character',
       'inventory',
       'options',

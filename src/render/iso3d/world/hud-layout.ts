@@ -14,6 +14,15 @@
 
 import { GLYPH_HEIGHT, textWidth } from './pixel-font.js';
 
+/**
+ * What the account button says while nobody is signed in (spec 227).
+ *
+ * Title case, the same register `SYSTEM_BUTTONS`' names are authored in --
+ * `aria-label` and the caption both derive from this one string, uppercasing
+ * only where the 5x7 face demands it.
+ */
+export const ACCOUNT_GUEST_LABEL = 'Register';
+
 /** A phone held sideways -- the frame `scripts/preview-touch.ts` drives. */
 export const PHONE_LANDSCAPE = { width: 844, height: 390 } as const;
 
@@ -384,6 +393,88 @@ export function poolLabelFits(layout: HudLayout, longest: string): boolean {
   const height = (GLYPH_HEIGHT + 2) * layout.poolScale;
   const width = (textWidth(longest) + 2) * layout.poolScale;
   return height <= layout.pool.height && width <= layout.pool.width;
+}
+
+/**
+ * The padding either side of a captioned window-style button, and the gap
+ * between its icon and its caption, in CSS px (spec 140).
+ *
+ * Both buttons that draw this way -- the weapon switch and the window row --
+ * share the same two numbers, which is why the account button (spec 227) can
+ * borrow the box outright rather than measuring one of its own. Named
+ * constants rather than the literals still written into `hud.ts`'s template
+ * strings, because {@link windowButtonCaptionFits} has to agree with the DOM
+ * exactly or "fits" is a claim about a box that is not the one drawn.
+ */
+const WINDOW_BUTTON_PADDING_X = 8;
+const WINDOW_BUTTON_ICON_GAP = 6;
+
+/**
+ * Whether a window button's caption fits beside its icon, in the game's own
+ * font (spec 227).
+ *
+ * The same shape as {@link poolLabelFits}, and it has to be its own function
+ * rather than a call to that one: a pool label spans its whole track, where
+ * this caption shares `layout.systemButton`'s box with an icon, a gap and
+ * padding on both sides -- what is left over is the space being asked about.
+ */
+export function windowButtonCaptionFits(layout: HudLayout, text: string): boolean {
+  const height = (GLYPH_HEIGHT + 2) * layout.captionScale;
+  if (height > layout.systemButton.height) return false;
+  const available =
+    layout.systemButton.width -
+    2 * WINDOW_BUTTON_PADDING_X -
+    layout.systemIconPx -
+    WINDOW_BUTTON_ICON_GAP;
+  const width = (textWidth(text) + 2) * layout.captionScale;
+  return width <= available;
+}
+
+/**
+ * How many characters of a window button's caption fit, at most (spec 227).
+ *
+ * Walked up from zero against {@link windowButtonCaptionFits} itself rather
+ * than solved algebraically, so there is no inverse formula that could
+ * disagree with the check it is derived from -- every glyph in this font is
+ * the same width, so the character used to probe it does not matter. This is
+ * the "caption-fit arithmetic" the account button's truncation is picked
+ * from, rather than a guessed number.
+ */
+export function windowButtonCaptionMaxChars(layout: HudLayout): number {
+  let count = 0;
+  while (windowButtonCaptionFits(layout, 'M'.repeat(count + 1))) count += 1;
+  return count;
+}
+
+/**
+ * The account button's label (spec 227): `REGISTER` while nobody is signed
+ * in, or the account's own name once they are.
+ *
+ * Uppercased, because the 5x7 face is one case -- `ErrorLog` already does this
+ * before a refusal reaches it, and this is the same rule applied to a name
+ * nobody authored. Bounded by {@link windowButtonCaptionMaxChars} rather than
+ * by a guessed length: every other caption along this edge was *authored*
+ * short enough to fit its box, and this is the first one a player types.
+ *
+ * Three rules, and the middle one is why this is not one line. A name that
+ * fits is drawn whole. A name that does not falls back to its **first word**,
+ * which is what a long display name almost always is a first word of -- the
+ * default name is the login, and a login has no spaces at all, so this only
+ * ever fires on a name somebody deliberately typed with one. Only a single
+ * word too long for the box is cut, and then it is cut with a full stop, so
+ * what is drawn reads as a shortening rather than as a caption that ran out
+ * of room. `ADA LOVELA` was the version without the middle rule.
+ */
+export function accountButtonCaption(signedInAs: string | null, layout: HudLayout): string {
+  const full = (signedInAs ?? ACCOUNT_GUEST_LABEL).toUpperCase();
+  if (windowButtonCaptionFits(layout, full)) return full;
+
+  const first = full.split(' ')[0] ?? '';
+  if (first !== '' && windowButtonCaptionFits(layout, first)) return first;
+
+  // The stop costs a character of its own, so it is measured with one.
+  const max = Math.max(0, windowButtonCaptionMaxChars(layout) - 1);
+  return max === 0 ? '' : `${full.slice(0, max)}.`;
 }
 
 /**

@@ -122,6 +122,7 @@ import {
   type MovedStacks,
   type Trade,
 } from './player/trades.js';
+import type { AuthGate } from './net/auth-gate.js';
 import { MemoryDataStore } from './state/memory-store.js';
 import type { DataStore } from './state/store.js';
 import type { ItemStack, SlotAddress, Vec3 } from './state/types.js';
@@ -179,6 +180,28 @@ export interface GameServerOptions {
   readonly adminVerifier?: AdminTokenVerifier;
   readonly store?: DataStore;
   /**
+   * Who a connection is (spec 226).
+   *
+   * An injected capability, exactly like `adminVerifier` above and for the same
+   * reason. **Supplied**, a `Hello` must carry a session token this gate
+   * recognises and the `playerId` on the message is ignored entirely -- so
+   * knowing somebody's player id buys nothing. **Omitted**, the client names
+   * itself, which is the behaviour this server has always had and the right one
+   * for the three callers that have nobody to authenticate against: a server
+   * running inside a player's own browser tab, the bot harness, and the tests.
+   *
+   * `src/server/index.ts` supplies one, so the thing on a port is the thing
+   * that authenticates.
+   */
+  readonly authGate?: AuthGate;
+  /**
+   * Called when a save fails, with the player it was for (spec 226).
+   *
+   * A callback rather than a `console` because `GameServer` runs in a browser
+   * tab as well as in Node; the entrypoint decides what a log line looks like.
+   */
+  readonly onSaveError?: (playerId: string, error: unknown) => void;
+  /**
    * The asset manifest hash this server serves (spec 113).
    *
    * Omit and every client is let through, whatever it claims -- which is right
@@ -206,6 +229,17 @@ export interface GameServerOptions {
 interface Connection {
   readonly channel: Channel;
   playerId: string | null;
+  /**
+   * The account behind this connection, or null for a guest or an
+   * unauthenticated server (spec 226).
+   *
+   * Recorded rather than used: no game rule reads it, and that is the point --
+   * gameplay keys on `playerId`. It is here so an admin listing and an audit
+   * line can say *who* rather than only *which character*.
+   */
+  accountId: string | null;
+  /** The session row this connection authenticated with. Empty when none. */
+  sessionId: string;
   entityId: number;
   readonly delta: DeltaTracker;
   readonly admin: AdminConnectionState;
@@ -421,6 +455,10 @@ export class GameServer implements AdminHost {
   /** Announced in the welcome so a client can build the same ground (spec 063). */
   private readonly worldSeed: number;
   private readonly store: DataStore;
+  /** Null when this server authenticates nobody. See `GameServerOptions`. */
+  private readonly authGate: AuthGate | null;
+  /** Where a persistence failure is reported. Null in a tab and in tests. */
+  private readonly onSaveError: ((playerId: string, error: unknown) => void) | null;
   /**
    * The asset manifest hash this server is serving, or '' when it has none.
    *
@@ -482,6 +520,9 @@ export class GameServer implements AdminHost {
         ? new ServerNav(this.colliders, this.terrain, ROUTING_RADII)
         : null;
     this.players = new PlayerManager(this.store, this.zones);
+    this.onSaveError = options.onSaveError ?? null;
+    this.players.onSaveError = this.onSaveError;
+    this.authGate = options.authGate ?? null;
     this.audit = new AuditLog(this.store);
     this.transport = options.transport ?? new NullTransport();
     this.admin = new AdminRouter(this, this.audit, options.adminVerifier ?? DENY_ALL_ADMIN);
@@ -538,13 +579,69 @@ export class GameServer implements AdminHost {
     this.loop.start();
   }
 
+  /**
+   * Stop taking work, write everything down, and close the database
+   * (spec 226).
+   *
+   * The order is the whole of it and each step is there for a reason:
+   *
+   *  1. **The loop stops**, so no tick can dirty a player after the flush.
+   *  2. **Connections are dropped**, so no message can either. `drop` sends a
+   *     Disconnect and closes the channel; the close handlers it triggers reach
+   *     `disconnect`, which is why the flush comes after rather than before.
+   *  3. **Every dirty player is written**, in one pass, before anything closes.
+   *  4. **The store closes**, checkpointing the WAL.
+   *
+   * It used to be 1, 2, 4 -- with no 3, because there was nothing to flush: the
+   * old `PlayerManager` wrote the whole record on every mutation, so shutdown
+   * had nothing left to do. Dirty tracking is what makes this step necessary
+   * and it is why it exists.
+   *
+   * `onFlush` is supplied by the entrypoint (the autosave's `flush`). Without
+   * one -- an in-tab server, a test -- there is nothing keeping state between
+   * sessions anyway.
+   */
   async stop(): Promise<void> {
     this.loop.stop();
-    for (const connection of [...this.connections]) this.drop(connection, 'server shutting down');
+    // Awaited, so every disconnect's own save has landed before the flush runs
+    // and long before the store closes. `allSettled`, because one connection
+    // whose teardown throws must not leave the rest of them undropped and the
+    // database open.
+    await Promise.allSettled(
+      [...this.connections].map((connection) => this.drop(connection, 'server shutting down')),
+    );
     this.transport.close();
+    if (this.onFlush !== null) await this.onFlush();
     await this.store.close();
   }
 
+  /**
+   * Called during {@link stop}, between the last connection closing and the
+   * store closing. Set by whoever owns the autosave.
+   */
+  onFlush: (() => Promise<void>) | null = null;
+
+  /** The players with unsaved changes right now. For a log line, and a test. */
+  dirtyPlayerCount(): number {
+    return this.players.dirtyIds().length;
+  }
+
+  /**
+   * Adopt a display name decided outside the sim (spec 227).
+   *
+   * The one thing `auth/` needs to reach in here, and it is a *push* rather
+   * than the server asking: registration happens over HTTP, on nobody's tick,
+   * and the player being renamed is usually mid-session. `index.ts` wires this
+   * to `AuthService.onPlayerRenamed`, which fires after that transaction has
+   * committed -- so what arrives here is already true on disk and this is the
+   * live copy catching up rather than a second decision.
+   *
+   * False when that player is not connected, which is the ordinary case for a
+   * registration with no guest token behind it.
+   */
+  renamePlayer(playerId: string, displayName: string): boolean {
+    return this.players.rename(playerId, displayName);
+  }
   // --- transport ---------------------------------------------------------
 
   /** Registers a connected channel. Public so a test can attach one directly. */
@@ -552,6 +649,8 @@ export class GameServer implements AdminHost {
     const connection: Connection = {
       channel,
       playerId: null,
+      accountId: null,
+      sessionId: '',
       entityId: -1,
       delta: new DeltaTracker(),
       admin: createAdminConnectionState(),
@@ -615,7 +714,7 @@ export class GameServer implements AdminHost {
 
     // Silently, because answering a flood is participating in it (spec 151).
     if (!connection.limiter.allow(frame[0] ?? 0, this.state.tick)) {
-      if (connection.limiter.flooding) this.drop(connection, 'flooding');
+      if (connection.limiter.flooding) void this.drop(connection, 'flooding');
       return;
     }
     const type = frame[0] ?? 0;
@@ -663,6 +762,7 @@ export class GameServer implements AdminHost {
           message.displayName.slice(0, MAX_NAME_LENGTH),
           message.assetManifest,
           message.resumeToken,
+          message.authToken,
         );
         break;
 
@@ -991,6 +1091,7 @@ export class GameServer implements AdminHost {
     displayName: string,
     assetManifest = '',
     resumeToken = '',
+    authToken = '',
   ): Promise<void> {
     if (protocolVersion !== PROTOCOL_VERSION) {
       this.send(connection, {
@@ -998,7 +1099,7 @@ export class GameServer implements AdminHost {
         code: ErrorCode.BadProtocolVersion,
         message: `server speaks protocol ${PROTOCOL_VERSION}`,
       });
-      this.drop(connection, 'protocol mismatch');
+      void this.drop(connection, 'protocol mismatch');
       return;
     }
 
@@ -1012,7 +1113,7 @@ export class GameServer implements AdminHost {
     if (refusesConnection(verdict)) {
       const message = mismatchMessage(assetManifest, this.assetManifestHash);
       this.send(connection, { type: ServerMessageType.Error, code: ErrorCode.BadProtocolVersion, message });
-      this.drop(connection, 'asset manifest mismatch');
+      void this.drop(connection, 'asset manifest mismatch');
       return;
     }
     // One Hello per connection (spec 145). A second one used to log in again on
@@ -1028,6 +1129,45 @@ export class GameServer implements AdminHost {
       });
       return;
     }
+    // Who this connection actually is (spec 226).
+    //
+    // With a gate configured, the identity comes out of the session token and
+    // the `playerId` on the frame is discarded -- which is the whole of
+    // "credentials cannot be forged merely from knowing a player id". Without
+    // one, the client names itself: that is this server's original behaviour
+    // and the right answer for the three callers with nobody to authenticate
+    // against -- a sim inside the player's own tab, the bot harness, and the
+    // tests.
+    //
+    // The display name follows the same rule. A registered player's is their
+    // account's, not whatever the client typed into the frame.
+    //
+    // This runs *before* the id is validated, and the order is load-bearing: a
+    // real client's first `Hello` carries an empty `playerId`, because it does
+    // not have one and is not supposed to invent one. Validating first refused
+    // exactly the clients that were doing the right thing.
+    if (this.authGate !== null) {
+      const identity = this.authGate.resolve(authToken);
+      if (identity === null) {
+        this.send(connection, {
+          type: ServerMessageType.Error,
+          code: ErrorCode.RejectedAction,
+          // Deliberately one message for "absent", "unknown", "revoked" and
+          // "expired": which of the four it is tells a stranger something and
+          // tells the legitimate client nothing it can act on differently.
+          message: 'not signed in: obtain a session from POST /api/auth/guest or /api/auth/login',
+        });
+        void this.drop(connection, 'unauthenticated');
+        return;
+      }
+      playerId = identity.playerId;
+      displayName = identity.displayName;
+      connection.accountId = identity.accountId;
+      connection.sessionId = identity.sessionId;
+    }
+
+    // Only reachable when the client named itself, since an id off a session
+    // record is the server's own and cannot be malformed.
     if (playerId.length === 0 || playerId.length > 64) {
       this.send(connection, {
         type: ServerMessageType.Error,
@@ -1044,7 +1184,7 @@ export class GameServer implements AdminHost {
         code: ErrorCode.Banned,
         message: `banned: ${ban.reason}`,
       });
-      this.drop(connection, 'banned');
+      void this.drop(connection, 'banned');
       return;
     }
 
@@ -1136,7 +1276,36 @@ export class GameServer implements AdminHost {
     const stale = this.lingering.get(playerId);
     if (stale) await this.reap(playerId, stale.entityId);
 
-    const session = await this.players.login(playerId, displayName);
+    // A load can fail (spec 226), and what happens then is a decision rather
+    // than an oversight.
+    //
+    // The two ways it does are a database that has gone away and a save that
+    // will not parse, and the answer to both is the same: **refuse this
+    // connection, and touch nothing.** Starting them on a fresh character would
+    // silently destroy the save -- and the next autosave would write the empty
+    // one over it, which turns a recoverable problem into a permanent one. So
+    // the row is left exactly as it is, for somebody to look at.
+    //
+    // Caught here rather than left to float, because `receive` is called as
+    // `void this.receive(...)` from the socket handler: an escaping rejection
+    // is an unhandled one, which is a process-level crash for what is at worst
+    // one broken character.
+    let session;
+    try {
+      session = await this.players.login(playerId, displayName);
+    } catch (error) {
+      this.onSaveError?.(playerId, error);
+      this.send(connection, {
+        type: ServerMessageType.Error,
+        code: ErrorCode.RejectedAction,
+        // Named plainly: this is a server-side fault and the player can do
+        // nothing about it, so "try again" would be a lie.
+        message: 'your character could not be loaded; the server has logged it',
+      });
+      this.drop(connection, 'player load failed');
+      return;
+    }
+
     // Not on top of whoever is already standing there (spec 145). A saved
     // position that is clear comes back unchanged, so this only ever moves
     // somebody who would have logged in inside another body.
@@ -1401,7 +1570,19 @@ export class GameServer implements AdminHost {
     }
   }
 
-  private drop(connection: Connection, reason: string): void {
+  /**
+   * Returns the teardown, which every caller but one deliberately ignores.
+   *
+   * The one that does not is {@link stop} (spec 226): a disconnect ends in
+   * `players.logout`, which *writes*, and shutdown closes the database a few
+   * lines later. With today's synchronous store the write lands before this
+   * function returns, so awaiting changes nothing -- and that is an accident of
+   * the implementation rather than a property of the seam, which has promised
+   * since spec 056 that a save might not be free. Awaiting it makes "no write
+   * is in flight when the database closes" true by construction instead of by
+   * timing.
+   */
+  private drop(connection: Connection, reason: string): Promise<void> {
     this.send(connection, { type: ServerMessageType.Disconnect, reason });
     // Before the close, which fires a handler that reaches `disconnect` first.
     connection.leaving = true;
@@ -1410,7 +1591,7 @@ export class GameServer implements AdminHost {
     // protocol version and a banned login are all decisions rather than
     // accidents, and a kicked player who stayed in the world for thirty
     // seconds would be a kick that did not work.
-    void this.disconnect(connection, { intentional: true });
+    return this.disconnect(connection, { intentional: true });
   }
 
   private send(connection: Connection, message: ServerMessage): void {
@@ -3019,7 +3200,7 @@ export class GameServer implements AdminHost {
   kick(playerId: string, reason: string): boolean {
     const connection = this.connectionForPlayer(playerId);
     if (!connection) return false;
-    this.drop(connection, `kicked: ${reason}`);
+    void this.drop(connection, `kicked: ${reason}`);
     return true;
   }
 

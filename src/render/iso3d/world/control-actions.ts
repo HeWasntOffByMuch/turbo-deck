@@ -31,7 +31,7 @@ import type { InputMap, Modifiers } from '../../../ui/input/input-map.js';
  * decision that had to import the DOM half to name its own result would be a
  * decision that could not be tested in Node.
  */
-export type WindowId = 'inventory' | 'character' | 'shop' | 'trade' | 'options';
+export type WindowId = 'inventory' | 'character' | 'shop' | 'trade' | 'options' | 'account';
 
 /**
  * Which window an action opens.
@@ -50,6 +50,10 @@ const UI_WINDOWS: Readonly<Record<string, WindowId | undefined>> = {
   // step for no gain.
   'ui.keybindings': 'options',
   'ui.shop': 'shop',
+  // Spec 226. A window rather than a page of the options screen, because it is
+  // not a setting -- it is the difference between a character that exists only
+  // in this browser's storage and one that has an account behind it.
+  'ui.account': 'account',
 };
 
 /** What the Play tab should do about one action firing. */

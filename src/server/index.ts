@@ -1,6 +1,17 @@
 /**
  * The Node server CLI (spec 056, retooled by 057): `npm run server`.
  *
+ * Run as `node --import tsx` rather than through the `tsx` binary, and that is
+ * not a style preference. `tsx` is a **supervisor**: it spawns the real process
+ * and sits in front of it, which costs a second Node runtime (~62MB measured
+ * beside a 168MB server) and puts a signal-forwarder between a Ctrl-C and the
+ * shutdown handler below. Both halves of that have bitten: a machine short on
+ * memory denies the *supervisor* its next semi-space and kills the pair with a
+ * heap far too small to be the server's, and a burst of signals kills the
+ * wrapper before it forwards any of them, so the graceful shutdown never runs.
+ * `--import` loads the same TypeScript hook in-process: one pid, one runtime,
+ * and signals that arrive where they are handled.
+ *
  * This file owns everything that keeps `GameServer` itself portable: the `ws`
  * transport, the `node:crypto` admin verifier, the HTTP server for the admin
  * page, and the signing secret. `src/server/` below this file imports no
@@ -13,6 +24,9 @@
  *   TURBO_DECK_MAP   map directory to serve (default maps/arena; `none` falls
  *                    back to the generator, for a bare load test)
  *   ADMIN_SECRET     HMAC secret for admin tokens (default: random per boot)
+ *   TURBO_DECK_DB    SQLite file (default data/game.db; `:memory:` for a
+ *                    throwaway world that keeps nothing)
+ *   AUTOSAVE_MS      how often dirty players are flushed (default 25000)
  *
  * The unit authoring service reads its own (spec 108); see `studio/config.ts`.
  * The one that matters is TRIPO_API_KEY, which lives here and never reaches a
@@ -28,7 +42,16 @@ import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHmacAdminVerifier, signToken } from './admin/auth.js';
-import { BROADCAST_RATE, SERVER_TICK_RATE } from './config.js';
+import { createAuthHttp } from './auth/http.js';
+import {
+  BROADCAST_RATE,
+  DEFAULT_DB_FILE,
+  SERVER_TICK_RATE,
+  SESSION_SWEEP_MS,
+  SHUTDOWN_TIMEOUT_MS,
+} from './config.js';
+import { DEFAULT_AUTOSAVE_MS, openPersistence, PlayerAutosave } from './persistence/index.js';
+import { createShutdown } from './persistence/shutdown.js';
 import { WebSocketTransport } from './net/transport-ws.js';
 import { GameServer } from './server.js';
 import { createStudio } from './studio/index.js';
@@ -92,10 +115,61 @@ const studio = createStudio({
   adminSecret,
 });
 
+/**
+ * The database, opened and migrated before anything can take a connection
+ * (spec 226).
+ *
+ * At the top level rather than inside a `try` that carries on: an unreadable
+ * file, a failed migration or a schema from a newer build all mean the same
+ * thing, which is that this process must not start. A game server running
+ * without the database it thinks it has takes play it cannot keep, and the
+ * first anybody would know is a player asking where their character went.
+ *
+ * `node:sqlite` is experimental in Node 22 and prints a warning on first use.
+ * That is the cost of not adding a native dependency, and it is written down
+ * here rather than suppressed, because suppressing warnings is how the next one
+ * gets missed.
+ */
+const dbFile = process.env['TURBO_DECK_DB'] ?? join(here, '..', '..', DEFAULT_DB_FILE);
+
+/**
+ * Where a rename goes once there is a world to tell (spec 227).
+ *
+ * A box rather than a forward reference to `server`, which is declared a
+ * hundred lines below this: the closure is only ever called from an HTTP
+ * handler, long after both exist, but a binding read before its declaration is
+ * a temporal dead zone waiting for the first caller that moves. Null until the
+ * server is built; a registration before then is a registration by nobody who
+ * is playing, which is exactly what this has nothing to do.
+ */
+const renameSink: { push: ((playerId: string, displayName: string) => void) | null } = { push: null };
+
+const persistence = ((): ReturnType<typeof openPersistence> => {
+  try {
+    return openPersistence({
+      file: dbFile,
+      log: (line) => console.log(line),
+      onPlayerRenamed: (playerId, displayName) => renameSink.push?.(playerId, displayName),
+    });
+  } catch (error) {
+    console.error(`[server] cannot start: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+})();
+
+const authHttp = createAuthHttp({
+  auth: persistence.auth,
+  log: (line) => console.log(line),
+});
+
 const http = createServer((request, response) => {
   // The studio router answers first and reports whether the request was its
-  // own, so neither half has to know the other's paths.
-  void studio.handle(request, response).then((handled) => {
+  // own, so neither half has to know the other's paths. Auth is the same
+  // contract, chained behind it.
+  void studio
+    .handle(request, response)
+    .then((handled) => (handled ? true : authHttp(request, response)))
+    .then((handled) => {
     if (handled) return;
 
     const url = request.url ?? '/';
@@ -111,7 +185,31 @@ const http = createServer((request, response) => {
       return;
     }
     response.writeHead(404).end('not found');
-  });
+    })
+    /**
+     * A handler that throws must not take the server down (spec 226).
+     *
+     * The chain was fired with `void` and had no catch, so any rejection
+     * anywhere in it became an unhandled rejection -- which Node 22 turns into
+     * a process exit by default. That is reachable **unauthenticated**: a
+     * request with a malformed `Host` header makes the studio router's
+     * `new URL(request.url, base)` throw before its own per-route try/catch,
+     * and one such request kills the game server. Verified against a raw
+     * socket: `Host: local host` and the process is gone.
+     *
+     * So the chain answers 500 and logs instead. A request listener is exactly
+     * where this belongs -- it contains every handler on the chain rather than
+     * the one that happened to be found.
+     */
+    .catch((error: unknown) => {
+      console.error(
+        `[server] request failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+      );
+      // Only if nothing has been written yet; a handler that threw mid-response
+      // has already committed a status.
+      if (!response.headersSent) response.writeHead(500).end('internal error');
+      else response.end();
+    });
 });
 
 /**
@@ -136,7 +234,64 @@ const server = new GameServer({
   transport: new WebSocketTransport({ port, httpServer: http }),
   adminVerifier: createHmacAdminVerifier(adminSecret),
   assetManifestHash: assetManifestHash(),
+  store: persistence.store,
+  // With this supplied, a `Hello` must carry a session token and the player id
+  // on the frame is ignored (spec 226). This is the difference between the
+  // thing on a port and the one running in a player's own tab.
+  authGate: persistence.authGate,
+  onSaveError: (playerId, error) => {
+    console.error(`[db] save failed for ${playerId}: ${error instanceof Error ? error.message : String(error)}`);
+  },
 });
+
+// The live half of a claim (spec 227). The row was written inside the
+// registration's transaction; this is the record the autosave would otherwise
+// write back over it.
+renameSink.push = (playerId, displayName): void => {
+  if (server.renamePlayer(playerId, displayName)) {
+    console.log(`[auth] ${playerId} is now ${displayName}`);
+  }
+};
+
+/**
+ * The periodic flush (spec 226). Dirty players are written every
+ * `AUTOSAVE_MS`; trades and purchases do not wait for it and write when they
+ * happen.
+ */
+const autosave = new PlayerAutosave({
+  players: server.playerManager,
+  store: persistence.store,
+  intervalMs: Number(process.env['AUTOSAVE_MS'] ?? DEFAULT_AUTOSAVE_MS),
+  onError: (error, ids) => {
+    // Loud, and it does not clear the dirty marks -- the next pass retries.
+    console.error(
+      `[db] autosave failed for ${ids.length} player(s) [${ids.join(', ')}]: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  },
+  onFlushed: (count, ms) => {
+    console.log(`[db] autosaved ${count} player(s) in ${ms}ms`);
+  },
+});
+// What `GameServer.stop` calls between the last connection closing and the
+// database closing. `force` waits for a pass already in flight rather than
+// skipping it, which is the difference between "flush everything" and "flush
+// everything unless something else happened to be flushing".
+server.onFlush = async (): Promise<void> => {
+  const result = await autosave.flush({ force: true });
+  if (result.saved > 0) console.log(`[db] flushed ${result.saved} player(s) on shutdown`);
+  if (result.failed > 0) console.error(`[db] ${result.failed} player(s) could NOT be flushed on shutdown`);
+};
+
+/**
+ * Housekeeping on wall time rather than on the tick loop: expired session rows
+ * are the one table that grows with connections and nothing reads one.
+ */
+const sessionSweep = setInterval(() => {
+  const dropped = persistence.auth.sweepExpiredSessions();
+  if (dropped > 0) console.log(`[db] swept ${dropped} expired session(s)`);
+}, SESSION_SWEEP_MS);
+sessionSweep.unref();
 
 http.listen(port, () => {
   server.start();
@@ -152,14 +307,32 @@ http.listen(port, () => {
   }
 });
 
-const shutdown = (): void => {
-  console.log('\n[server] shutting down');
-  studio.stop();
-  void server.stop().then(() => {
+/**
+ * Graceful shutdown (spec 226).
+ *
+ * The sequence itself is `persistence/shutdown.ts`, so that "runs once" and
+ * "cannot hang" are properties with tests rather than two lines here nobody can
+ * exercise without killing the test runner. This is the wiring: what to stop,
+ * how long it gets, and what a signal means.
+ *
+ * `server.stop` is the ordered part -- it stops the loop, drops the
+ * connections, runs `onFlush` and closes the store, in that order, so nothing
+ * can dirty a player after the flush and nothing writes after the close.
+ */
+const shutdown = createShutdown({
+  timeoutMs: SHUTDOWN_TIMEOUT_MS,
+  before: (): void => {
+    clearInterval(sessionSweep);
+    autosave.stop();
+    studio.stop();
+  },
+  stop: async (): Promise<void> => {
+    await server.stop();
     http.close();
-    process.exit(0);
-  });
-};
+  },
+  strandedPlayers: (): number => server.dirtyPlayerCount(),
+  exit: (code): void => process.exit(code),
+});
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
