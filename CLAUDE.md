@@ -1416,6 +1416,48 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  ring is the building's own `footprintRadius`, so what the ring
                  draws and what the collider blocks are the same circle rather
                  than two numbers that agree until one is edited.
+                 structure-ghost.ts is the building itself, drawn before it is
+                 put down (spec 223), and it is here rather than in `cursor.ts`
+                 because a footprint circle cannot say which way a hut faces or
+                 how far its eaves reach -- so laying out a village with the ring
+                 alone was place, look, undo, adjust, place again. Three rules.
+                 **It is the thing, not a stand-in**: the geometry comes from
+                 `buildPropField`, the same function every prop in the map goes
+                 through, so a box roughed out for the preview cannot drift from
+                 the hut it is previewing. **Following the cursor is a transform,
+                 never a rebuild** -- a prop's placement is exactly
+                 `T(x, ground, z) . R(yaw) . S(scale)` over its parts' local
+                 offsets, which is what `buildRegionInstances` composes term for
+                 term, so one prefab built at the origin and moved is the same
+                 geometry for the cost of a matrix. That equivalence is asserted
+                 vertex for vertex rather than reasoned about, and it is the one
+                 test in this directory allowed to import three.js: get the
+                 transform order wrong and it still looks like a hut, just one
+                 somewhere else. And **the translucency is safe only because
+                 materials are not shared** -- `props.ts` makes one per batch, so
+                 a ghost's are its own; the same edit against a shared material
+                 would turn every tree in the world see-through, in the editor,
+                 for whoever happened to arm this tool.
+                 The gesture moved with it: a building lands on the **release**,
+                 and the drag between the two is its size, because every other
+                 radius here is dragged out under the cursor and
+                 `structureScale` was a number set beforehand in units of
+                 nothing. The drag distance *is* the footprint radius, clamped
+                 and stepped by the same three constants the panel's slider is
+                 built from -- so the two controls cannot disagree about which
+                 sizes exist, and a drag cannot write a number into that slider
+                 nobody could have set it to. A press with no drag still places
+                 at the panel's size, so a plain click is what it always was.
+                 Two numbers in it are derived rather than chosen, and both
+                 exist to take a step out of the gesture: sizing engages at the
+                 *smallest ring*, so the first size a drag can ever produce is
+                 the minimum and it climbs continuously from there -- a threshold
+                 picked independently would jump from whatever the panel said
+                 straight to the minimum, which reads as the building collapsing
+                 rather than as a size being set; and the step is a **count of
+                 steps to the unit** rather than a width, because
+                 `Math.round(r / 0.05) * 0.05` is `1.1500000000000001` and that
+                 is the number the panel would then display.
                  `npx tsx scripts/probe-structures.ts` is the half no headless
                  test can reach, and it is the reason any of the above is known
                  to be wired to anything: a ninth entry in a mode array cannot
@@ -1432,7 +1474,24 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  about the wrong tool, and reported a working panel as a hidden
                  one. A row is found by its folder and its label, and a folder in
                  this build is itself a `.lil-gui` with its own `.lil-title`;
-                 there is no `.lil-folder` to ask for.
+                 there is no `.lil-folder` to ask for. Since spec 223 it also
+                 reads `data-ghost` mid-gesture, which is the half a saved file
+                 cannot answer: a tool that ignored the drag and sized the
+                 building at the release would leave exactly the same document
+                 as one that grew it under the cursor the whole way. Two things
+                 in that half were learned by getting them wrong. Every wait is
+                 a **poll**, because a building now lands on the release and this
+                 environment paints the editor at about five frames a second --
+                 waited out with a constant, the probe read the status line
+                 before the placement, moved the facing slider before it, and
+                 reported three huts placed at one facing as a broken slider.
+                 And the "no ground under the cursor" case is staged at the
+                 **corner** of a zoomed-out view: the middle stays meshed however
+                 far you zoom, because the keep window grows around what was
+                 already there, so hovering it reported a working refusal as a
+                 preview that would not go away. It is checked as a round trip --
+                 gone, then back -- since "the ghost is hidden" on its own is
+                 also what a broken ghost looks like.
                  paint.ts is the material brush (spec 179), and it is beside
                  brush.ts rather than inside it because brush.ts is what a stroke
                  does to the *height* array and every one of its four tools reads

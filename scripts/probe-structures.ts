@@ -10,9 +10,15 @@
  * cannot fail a typecheck and cannot fail a headless test.
  *
  * So this drives the shipped build: opens the tab, arms the tool, presses on the
- * ground three times, and checks the *file that came out*. The file is the
+ * ground, drags one out, and checks the *file that came out*. The file is the
  * deliverable -- a building the editor draws and does not save is exactly the
  * bug spec 176 turned out to be.
+ *
+ * Spec 223 adds the half a file cannot answer. A preview lives entirely in the
+ * scene graph and a drag's size is only visible while the button is down, so
+ * both are read off `data-ghost` mid-gesture: a tool that ignored the drag and
+ * sized the building at the release would leave exactly the same document as
+ * one that grew it under the cursor the whole way.
  *
  *   npm run build && npx tsx scripts/probe-structures.ts
  *
@@ -71,6 +77,82 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
 }
 
 const readout = async (page: Page): Promise<string> => (await page.textContent('body')) ?? '';
+
+/**
+ * What the ghost has on the scene graph, off `data-ghost` (spec 223).
+ *
+ * Published from what is *attached and visible* rather than from what the frame
+ * last asked for, so a preview built and hung on nothing, or one left up after
+ * the tool was disarmed, reads as wrong here.
+ */
+async function ghost(page: Page): Promise<string> {
+  return (await page.getAttribute('[data-ghost]', 'data-ghost')) ?? '(no readout)';
+}
+
+const ghostScale = async (page: Page): Promise<number> =>
+  Number(/scale:([\d.]+)/.exec(await ghost(page))?.[1] ?? Number.NaN);
+
+/** How many props the editor says the map holds. The one unambiguous signal
+ *  that a placement has actually been processed. */
+async function propCount(page: Page): Promise<number> {
+  return Number(/([\d,]+) props/.exec(await readout(page))?.[1]?.replace(/,/g, '') ?? Number.NaN);
+}
+
+/**
+ * Wait until the editor has actually taken the gesture.
+ *
+ * A **poll**, never a fixed wait, and the reason is measured rather than
+ * cautious: this environment paints the editor at about five frames a second
+ * under software GL, and a building now lands on the *release* (spec 223) --
+ * so half a second after the button comes up the frame that places it may not
+ * have run. Waited out with a constant, the first cut of this probe read the
+ * status line before the placement, set the facing slider before it, and
+ * reported three huts placed at one facing as a broken facing slider.
+ */
+/** Spin the wheel over the canvas, and let the ground catch up. */
+async function zoom(page: Page, notches: number, delta: number): Promise<void> {
+  await page.mouse.move(500, 400);
+  for (let i = 0; i < notches; i++) {
+    await page.mouse.wheel(0, delta);
+    await page.waitForTimeout(120);
+  }
+  await page.waitForTimeout(2500);
+}
+
+/**
+ * Poll `data-ghost` over a point until it says what is wanted, or give up.
+ *
+ * Which point matters, and the first cut of this got it wrong: it hovered the
+ * middle of the view, where ground stays meshed however far you zoom out --
+ * the keep window grows around what was already there -- and reported a
+ * working refusal as a preview that would not go away. Unmeshed ground is at
+ * the *corners*, which is where a zoomed-out view has ground it has not caught
+ * up with yet.
+ */
+async function ghostBecomes(page: Page, want: 'hidden' | 'drawn', at: readonly [number, number]): Promise<boolean> {
+  for (let i = 0; i < 60; i++) {
+    // Nudged by a pixel each time, because the preview is placed from a pointer
+    // event as well as from the frame: parked perfectly still, a poll can read
+    // the same stale frame sixty times.
+    await page.mouse.move(at[0] + (i % 2), at[1]);
+    await page.waitForTimeout(400);
+    const now = await ghost(page);
+    if (want === 'hidden' ? now === 'hidden' : /meshes:[1-9]/.test(now)) return true;
+  }
+  return false;
+}
+
+/** The far corner of the canvas, and the middle of it. */
+const CORNER: readonly [number, number] = [60, 110];
+const MIDDLE: readonly [number, number] = [480, 400];
+
+async function settled(page: Page, was: number): Promise<boolean> {
+  for (let i = 0; i < 80; i++) {
+    if ((await propCount(page)) > was) return true;
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
 
 /**
  * One row of the panel, by the folder it is in and the label it shows.
@@ -150,13 +232,40 @@ async function openEditor(page: Page): Promise<void> {
   await page.waitForTimeout(3000);
 }
 
-/** One press on the ground, which is the whole of placing a building. */
-async function clickGround(page: Page, x: number, y: number): Promise<void> {
+/** One press on the ground: a building at whatever size the panel says. */
+async function clickGround(page: Page, x: number, y: number): Promise<boolean> {
+  const was = await propCount(page);
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.waitForTimeout(150);
   await page.mouse.up();
-  await page.waitForTimeout(500);
+  return settled(page, was);
+}
+
+/**
+ * Press, drag out, release -- and report the size the ghost had reached at the
+ * far end, before the button came up.
+ *
+ * Read *during* the drag rather than after it, because that is the half no
+ * saved file can answer: a tool that ignored the drag and sized the building at
+ * the release would leave exactly the same document as one that grew it under
+ * the cursor the whole way.
+ */
+async function dragOut(page: Page, x: number, y: number, dx: number, dy: number): Promise<number> {
+  const was = await propCount(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(200);
+  // In steps, so the page gets pointermove events rather than one teleport --
+  // at a few frames a second a single jump can land between two of them.
+  await page.mouse.move(x + dx, y + dy, { steps: 8 });
+  // Long enough for a frame to have drawn the ghost at the far end of the drag,
+  // which is the one thing that has to be read while the button is still down.
+  await page.waitForTimeout(1200);
+  const reached = await ghostScale(page);
+  await page.mouse.up();
+  await settled(page, was);
+  return reached;
 }
 
 /** Press Save to file and hand back what the browser downloaded. */
@@ -224,8 +333,8 @@ async function main(): Promise<void> {
     // Two huts at different facings, so the one thing a slider could get wrong
     // -- turning the prop and not the panel, or the other way about -- shows up
     // in the file rather than only on screen.
-    await clickGround(page, 400, 330);
-    check('a press says what it placed', /placed house facing 0/.test(await readout(page)), await placed(page));
+    check('a press puts a building down', await clickGround(page, 400, 330), await placed(page));
+    check('and says what it placed', /placed house facing 0/.test(await readout(page)), await placed(page));
 
     await setNumber(page, 'Buildings', 'Facing', 90);
     check(
@@ -233,7 +342,7 @@ async function main(): Promise<void> {
       (await panelRow(page, 'Buildings', 'Facing'))?.value === '90',
       'Facing = 90',
     );
-    await clickGround(page, 760, 300);
+    check('a second press lands too', await clickGround(page, 760, 300), await placed(page));
     check('and says the facing it placed at', /placed house facing 90/.test(await readout(page)), await placed(page));
 
     await page.getByRole('button', { name: 'well', exact: true }).click();
@@ -241,8 +350,67 @@ async function main(): Promise<void> {
     // Well clear of both huts: the first cut put the well where the second
     // hut's roof came down over it, and a prop hidden behind another prop is a
     // screenshot that says nothing about either.
-    await clickGround(page, 560, 560);
-    check('the well places too', /placed well/.test(await readout(page)), await placed(page));
+    check('the well places too', await clickGround(page, 560, 560), await placed(page));
+    check('and says so', /placed well/.test(await readout(page)), await placed(page));
+
+    // --- the preview (spec 223) --------------------------------------------
+    await page.mouse.move(430, 520);
+    await page.waitForTimeout(500);
+    check(
+      'the ghost stands under the cursor before anything is pressed',
+      /^well meshes:[1-9]/.test(await ghost(page)),
+      await ghost(page),
+    );
+    await page.getByRole('button', { name: 'house', exact: true }).click();
+    await page.waitForTimeout(400);
+    await page.mouse.move(440, 525);
+    await page.waitForTimeout(500);
+    check('switching kind switches what is previewed', /^house meshes:[1-9]/.test(await ghost(page)), await ghost(page));
+
+    // The preview going away *is* the refusal, seen before the click rather than
+    // as a status line after it. Staged by zooming out past what the editor has
+    // meshed: `scene.pick` finds nothing, which is exactly the case spec 212
+    // says a tool must go on refusing rather than act on at the flat plane's
+    // height. Checked as a **round trip** -- gone, then back -- because "the
+    // ghost is hidden" on its own is also what a broken ghost looks like.
+    const span = /span (\d+)/.exec(await readout(page))?.[1] ?? '?';
+    await zoom(page, 6, 400);
+    check(
+      'the preview goes away where there is no ground under the cursor',
+      await ghostBecomes(page, 'hidden', CORNER),
+      `span ${span} -> ${/span (\d+)/.exec(await readout(page))?.[1] ?? '?'}: ${await ghost(page)}`,
+    );
+    await zoom(page, 6, -400);
+    check('and comes back when there is', await ghostBecomes(page, 'drawn', MIDDLE), await ghost(page));
+
+    await page.getByRole('button', { name: 'marker', exact: true }).click();
+    await page.waitForTimeout(400);
+    await page.mouse.move(440, 525);
+    await page.waitForTimeout(500);
+    check('and away entirely when the tool is not armed', (await ghost(page)) === 'hidden', await ghost(page));
+    await page.getByRole('button', { name: 'structure', exact: true }).click();
+    await page.waitForTimeout(400);
+
+    // --- the drag (spec 223) ------------------------------------------------
+    const sizeBefore = Number((await panelRow(page, 'Buildings', 'Size'))?.value ?? Number.NaN);
+    const reached = await dragOut(page, 300, 560, 150, 40);
+    check(
+      'dragging out grows the preview past the size the panel was set to',
+      Number.isFinite(reached) && reached > sizeBefore,
+      `${sizeBefore} -> ${reached.toFixed(2)} mid-drag`,
+    );
+    const sizeAfter = Number((await panelRow(page, 'Buildings', 'Size'))?.value ?? Number.NaN);
+    const shown = (await panelRow(page, 'Buildings', 'Size'))?.value ?? '';
+    check(
+      'and the panel is told, so the next building is the size of the last',
+      Math.abs(sizeAfter - reached) < 1e-9,
+      `Size = ${shown}`,
+    );
+    check(
+      'as a number somebody could also have set the slider to',
+      /^\d+(\.\d{1,2})?$/.test(shown),
+      shown,
+    );
 
     await page.screenshot({ path: join(outDir, 'editor-structures.png') });
 
@@ -251,19 +419,32 @@ async function main(): Promise<void> {
     const after = structuresIn(await save(page));
     const houses = after.filter((p) => p.species === 'house');
     const wells = after.filter((p) => p.species === 'well');
-    check('the saved map has both huts and the well', houses.length === 2 && wells.length === 1, `${houses.length} houses, ${wells.length} wells`);
+    check(
+      'the saved map has every hut and the well',
+      houses.length === 3 && wells.length === 1,
+      `${houses.length} houses, ${wells.length} wells`,
+    );
+    const dragged = houses.filter((h) => Math.abs((h.scale ?? 1) - reached) < 0.06);
+    check(
+      'the dragged hut was saved at the size the drag reached',
+      dragged.length === 1,
+      `${dragged.length} at ${reached.toFixed(2)}x of ${houses.map((h) => (h.scale ?? 1).toFixed(2)).join(', ')}`,
+    );
 
     const turned = houses.filter((h) => Math.abs((h.rotation ?? 0) - Math.PI / 2) < 0.01);
     const square = houses.filter((h) => Math.abs(h.rotation ?? 0) < 0.01);
     check(
       'each hut was saved at the facing it was placed at',
-      turned.length === 1 && square.length === 1,
+      turned.length === 2 && square.length === 1,
       `${square.length} at 0, ${turned.length} at 90 degrees`,
+    );
+    const spread = houses.flatMap((a, i) =>
+      houses.slice(i + 1).map((b) => Math.hypot(a.x - b.x, a.z - b.z)),
     );
     check(
       'the buildings landed apart, where they were pressed',
-      houses.length === 2 && Math.hypot((houses[0]?.x ?? 0) - (houses[1]?.x ?? 0), (houses[0]?.z ?? 0) - (houses[1]?.z ?? 0)) > 50,
-      'not stacked',
+      spread.length > 0 && Math.min(...spread) > 50,
+      `closest pair ${Math.round(Math.min(...spread))} units`,
     );
 
     check('the page logged no errors', problems.length === 0, problems.slice(0, 3).join(' | '));
