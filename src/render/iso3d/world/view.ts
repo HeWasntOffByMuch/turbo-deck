@@ -57,6 +57,7 @@ const FORCED_AFFLICTION_EVERY_TICKS = 180;
 import { connectChannel } from '../../../server/net/transport-browser.js';
 import { GameServer } from '../../../server/server.js';
 import { planConnection, rememberSession } from './connection.js';
+import { ensureAuthToken } from './auth-client.js';
 import { ReconnectingChannel } from '../../../server/net/reconnecting.js';
 import { createConnectionBanner } from './connection-banner.js';
 import { createGroundPredictor, emptyGround, fillGround } from './prediction-ground.js';
@@ -356,6 +357,27 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   );
 
   /**
+   * Sign in before dialling, so a server that authenticates will talk to us
+   * (spec 224).
+   *
+   * `POST /api/auth/guest` asks for nothing and hands back a character, which
+   * is what makes "play without registering" true in the client rather than
+   * only in the API. Awaited here because `Hello` carries the token and the
+   * socket is opened a few lines below.
+   *
+   * A failure is **not** fatal and does not stop the connection: a server with
+   * no auth gate ignores the token entirely, and one that wanted it refuses the
+   * `Hello` itself with a message the banner already knows how to show. Trying
+   * anyway is what keeps this compatible with a server that predates it.
+   */
+  let authToken = plan.mode === 'remote' ? plan.authToken : '';
+  if (plan.mode === 'remote') {
+    const signedIn = await ensureAuthToken(plan.httpOrigin, plan.authToken, localStorage);
+    if (signedIn.ok) authToken = signedIn.token;
+    else console.warn(`[net] could not sign in: ${signedIn.reason}`);
+  }
+
+  /**
    * The bundled map -- built for single-player, and for nothing else (spec 146).
    *
    * A remote client does not read this file at all now. Its ground arrives as
@@ -474,6 +496,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // A token from this tab's last load, so a reload comes back to the same
     // body rather than spawning a second one beside it (spec 150).
     ...(plan.mode === 'remote' ? { resumeToken: plan.resumeToken } : {}),
+    // Who this tab signed in as (spec 224). A server with an auth gate reads
+    // the player off this and ignores `playerId` above; one without ignores
+    // this instead, which is why the loopback path never sets it.
+    ...(authToken === '' ? {} : { authToken }),
     // What this build's assets hash to (spec 113). The in-tab server has no
     // manifest of its own, so it always passes there; a real server compares it
     // and refuses a mismatch, which is why the banner has to be able to say a

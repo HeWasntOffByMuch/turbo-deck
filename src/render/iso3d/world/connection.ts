@@ -19,6 +19,17 @@ export const PLAYER_ID_KEY = 'turbo-deck.net.playerId';
 export const PLAYER_NAME_KEY = 'turbo-deck.net.name';
 /** The resume token from this tab's last session (spec 150). */
 export const SESSION_TOKEN_KEY = 'turbo-deck.net.session';
+/**
+ * The auth session token this tab signed in with (spec 224).
+ *
+ * `localStorage`, not `sessionStorage`, and it is the one identity here that
+ * deliberately does not follow the "two tabs are two players" rule above: an
+ * *account* is a person, so a second tab is the same person, and a guest
+ * character you keep is worth nothing if closing the tab loses the credential
+ * that reaches it. Which body each tab drives is still settled per tab, by the
+ * resume token beside it.
+ */
+export const AUTH_TOKEN_KEY = 'turbo-deck.net.auth';
 
 /**
  * The path a browser client dials. The server accepts the upgrade on any path
@@ -45,6 +56,19 @@ export type ConnectionPlan =
        * there is none, which is every first load.
        */
       readonly resumeToken: string;
+      /**
+       * The session token to present in `Hello` (spec 224). Empty when this tab
+       * has never signed in; `ensureAuthToken` is what fills it, and a server
+       * with no auth gate ignores it either way.
+       */
+      readonly authToken: string;
+      /**
+       * Where this tab's `/api/auth/*` calls go: the same host as `url`, over
+       * http(s) rather than ws(s). Derived here rather than at the call site so
+       * that the one place which decides which server this tab talks to decides
+       * both halves of it.
+       */
+      readonly httpOrigin: string;
     };
 
 /** Just the two fields of `location` this needs, so a test can pass a literal. */
@@ -146,5 +170,34 @@ export function planConnection(
   const url = explicitUrl(asked) ?? sameOrigin(origin);
   const { playerId, displayName } = identify(params, storage, newId);
   const resumeToken = read(storage, SESSION_TOKEN_KEY) ?? '';
-  return { mode: 'remote', url, playerId, displayName, resumeToken };
+  const authToken = read(storage, AUTH_TOKEN_KEY) ?? '';
+  return { mode: 'remote', url, playerId, displayName, resumeToken, authToken, httpOrigin: httpOriginOf(url) };
+}
+
+/**
+ * The http(s) origin for a ws(s) url.
+ *
+ * A string swap rather than `new URL`, because the two schemes map one to one
+ * and the rest of the url is already whatever `explicitUrl`/`sameOrigin`
+ * settled on -- including the `/ws` path, which is dropped here since the auth
+ * endpoints hang off the root.
+ */
+export function httpOriginOf(wsUrl: string): string {
+  const swapped = wsUrl.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
+  const path = swapped.indexOf('/', swapped.indexOf('//') + 2);
+  return path === -1 ? swapped : swapped.slice(0, path);
+}
+
+/** Store the session token this tab signed in with. */
+export function rememberAuthToken(storage: StorageLike, token: string): void {
+  write(storage, AUTH_TOKEN_KEY, token);
+}
+
+/** Forget it, after a server has refused it. */
+export function forgetAuthToken(storage: StorageLike): void {
+  try {
+    storage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    /* a storage that will not delete is not a reason to fail a connection */
+  }
 }

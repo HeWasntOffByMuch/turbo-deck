@@ -78,7 +78,7 @@ change a game outcome.
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
-| `npm run server` | The authoritative server, plus the admin console |
+| `npm run server` | The authoritative server, plus the admin console. Opens and migrates `data/game.db` itself (spec 224); there is no database to start |
 | `npm run server:bots` | Headless bot clients, for load and for watching prediction |
 
 CI (`.github/workflows/ci.yml`) runs typecheck + lint + test on every push
@@ -716,6 +716,153 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  import scale is measured rather than invented. It exists so the
                  preview, the deformation checks and the screenshot baselines
                  have a subject before a credit is spent.
+src/server/persistence/  SQLite, and the seam it sits behind (spec 224). Nothing
+                 in `sim/`, `world/`, `player/` or `data/` knows this directory
+                 exists: spec 056 wrote `DataStore` and said a real store would
+                 be "a new class implementing the same shape, and no caller
+                 changes", and `SqliteDataStore` is that class -- the claim held,
+                 and not one file under those four moved to make it work.
+                 `node:sqlite` rather than a native dependency, which is the one
+                 decision here worth arguing over and comes down to what
+                 `npm install` costs: the driver ships with the runtime, so there
+                 is nothing to compile and nothing to start. The price is a floor
+                 of Node 22.5 (`engines` says so) and an experimental-feature
+                 warning on first use, written down in `index.ts` rather than
+                 suppressed. WAL, foreign keys, a 5s busy timeout and
+                 `synchronous = NORMAL` are set per connection in `sqlite.ts`,
+                 each with its reason beside it -- foreign keys especially, since
+                 SQLite enforces them only when asked and half this schema's
+                 integrity claims are foreign keys.
+                 `migrations.ts` is the schema as a numbered list and
+                 `migrate.ts` runs it: each migration in its own transaction, the
+                 applied set in `schema_migrations` so a shell can answer "what
+                 has this database had done to it", and `PRAGMA user_version`
+                 mirroring the highest applied version because that is the one
+                 piece of schema state a person can read in one line. A database
+                 from a *newer* build is refused rather than downgraded -- there
+                 is no down-migration and inventing one silently is worse than
+                 saying so.
+                 The rule that decides what is a column and what is JSON:
+                 **a field is a column when something other than the player asks
+                 about it.** Currency, level and experience are what an economy
+                 audit queries and what a CHECK can defend; everything else --
+                 the bag, the worn gear, the attribute spread, the position -- is
+                 one document in `players.data`, because none of it is queried
+                 across players and all of it is written together. Normalising a
+                 24-slot fixed array into 24 rows buys nothing: the atomicity a
+                 trade needs comes from the transaction that writes **both
+                 players' rows**, not from the granularity of either.
+                 `autosave.ts` is the other half of that, and it is the behaviour
+                 change rather than the database. `PlayerManager.recalculate`
+                 used to end in `store.savePlayer` -- an equip, an unequip, a
+                 purchase and a spent skill point all funnelled through it, which
+                 is free against a Map and a synchronous disk write against a
+                 database -- while *position*, the fastest-changing persistent
+                 field there is, was written only at logout. Now a mutation marks
+                 a player dirty and this is the only thing that turns dirty into
+                 a write. Four rules, each a test: a successful save clears the
+                 mark **only if the record has not moved since the snapshot that
+                 was written** (identity comparison, because records are replaced
+                 rather than mutated, so an edit landing during the await stays
+                 dirty); a **failed** save does not clear it, which is the
+                 failure mode that matters, since a clean flag over an unwritten
+                 change is a save never attempted again; saves for one player
+                 never overlap; and two passes never run at once. The clock is
+                 injected and the driver is the caller's, so a test drives it by
+                 calling `flush()` and never waits for a timer -- and the *dirty
+                 marking* lives in `player/`, which is deterministic core and may
+                 not read a clock, so **when** to flush is this directory's
+                 question and **what** is that one's.
+                 What does *not* wait for the loop is anything that moves value:
+                 `applyTrade` and the shop settle write immediately. A trade is
+                 **persist, then commit** -- both records in one transaction, and
+                 only assigned to memory if it lands. The opposite order leaves a
+                 failed write with the exchange true in memory and false on disk,
+                 so a crash before the next flush un-does half a trade both
+                 players watched happen, and which half depends on which record
+                 the loop reached first. Judgement rather than a rule applied
+                 everywhere: an equip neither creates nor destroys anything and
+                 can ride the autosave.
+                 `shutdown.ts` is the sequence, out here rather than in
+                 `index.ts` so that "runs once" and "cannot hang" are properties
+                 with tests instead of two lines nobody can exercise without
+                 killing the test runner. What a forced termination costs is
+                 documented rather than assumed: up to one autosave interval of
+                 position and progression per player, and **never** a trade or a
+                 purchase. Verified against a real `kill -9` -- committed
+                 transactions survive and `PRAGMA integrity_check` says `ok`.
+src/server/auth/  accounts, sessions, guests and claiming (spec 224). An internal
+                 module rather than a server: a class the game server
+                 constructs, holding repositories, with no port of its own.
+                 The three concepts it keeps apart are the design, and they are
+                 separate because the interesting cases are exactly where they
+                 do not line up: an **account** is who somebody is, a **player**
+                 is game progression, a **session** authenticates one client. A
+                 guest is a player and a session with no account. A claim is an
+                 account arriving *under* a player that already exists. And
+                 logging into an existing account while playing as a guest is two
+                 players and one person -- a question no design that conflated
+                 them can even ask.
+                 **Nothing below this directory learns about a password or a
+                 login.** What leaves is an `AuthenticatedIdentity` -- ids and a
+                 display name -- so game systems operate on stable identifiers,
+                 and `net/auth-gate.ts` is all `server.ts` imports, which is what
+                 keeps that half portable enough to run in a browser tab.
+                 The gate is an **injected capability, exactly like
+                 `adminVerifier`**. Supplied (`index.ts`), a `Hello` must carry a
+                 session token and the `playerId` on the frame is *ignored* --
+                 which is the whole of "credentials cannot be forged merely from
+                 knowing a player id". Omitted, the client names itself, which is
+                 this server's original behaviour and the right answer for the
+                 three callers with nobody to authenticate against: the in-tab
+                 single-player server, the bot harness, and the tests. One
+                 ordering in `hello` is load-bearing and was got wrong first: the
+                 gate resolves **before** the player id is validated, because a
+                 real client's first `Hello` carries an empty one -- it does not
+                 have an id and is not supposed to invent one -- so validating
+                 first refused exactly the clients doing the right thing.
+                 `passwords.ts` is scrypt from `node:crypto`: RFC 7914,
+                 memory-hard, in the standard library, so no native build and no
+                 third implementation of "hash a password" in the tree. The
+                 encoded form is self-describing (`scrypt$N$r$p$salt$hash`), so
+                 raising the cost later leaves every existing hash verifiable --
+                 `verify` reads the parameters out of the stored string rather
+                 than assuming today's -- and comparison is `timingSafeEqual`,
+                 never `===`, because a byte-at-a-time comparison of a hash is a
+                 byte-at-a-time oracle for it. `tokens.ts` is the other half and
+                 the difference is the input: a password is low-entropy and
+                 guessable so hashing it has to be *slow*, where a 256-bit random
+                 token has nothing to guess, so its only job is that a stolen
+                 database is not a set of working credentials -- sha256, because
+                 a token lookup happens on every connection and scrypt there
+                 would be 100ms of the handshake. What is stored is the hash;
+                 the token is returned once and never written down.
+                 A claim is one transaction and cannot happen twice, and that is
+                 two mechanisms rather than one: `attachToAccount` carries an
+                 `account_id IS NULL` guard **in its WHERE clause** (a
+                 check-then-write is two statements with a gap; this is one
+                 statement whose own answer says whether it won), and
+                 `players.account_id` is `UNIQUE`. A refusal throws, which rolls
+                 back the account row inserted above it -- so a failed
+                 registration leaves the guest player exactly as it was, still
+                 unowned and still playable.
+                 The conservative half: **logging into an existing account never
+                 merges and never deletes.** It loads that account's own player;
+                 the guest character is untouched, its session still valid, and
+                 `retainedGuestPlayerId` reports it so the UI can say what is not
+                 coming with them. An automatic progression merge is deliberately
+                 not invented.
+                 `http.ts` is the surface -- `POST /api/auth/{guest,register,
+                 login,logout,session}` -- and it is HTTP rather than six new
+                 wire messages for three reasons: the handshake already has to
+                 happen before a socket is useful so there is no ordering to
+                 invent, `curl` is a debugging tool a developer has on day one
+                 where a binary frame needs a harness, and the `Hello` frame
+                 stays one field wider instead of six messages heavier. An
+                 unknown login is verified against a **dummy hash** so it costs
+                 the same as a real one -- the generic error message is only half
+                 the defence against an account-existence oracle, and the timing
+                 is the other half.
 src/server/studio/  the unit authoring service (spec 108). Node-only, wired in from
                  src/server/index.ts and imported by nothing in the server's
                  portable half, because this is where the Tripo API key lives.
