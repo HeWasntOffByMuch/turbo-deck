@@ -3224,7 +3224,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  scripts/bench-crowd.ts` the cost; both share
                  `scripts/crowd-scenarios.ts` with `sim/crowd.test.ts`, so a panel
                  that looks wrong and a green test cannot both be true. The
-                 shipped map cannot field these crowds -- fourteen spawners, one
+                 shipped map cannot field these crowds -- twelve spawners, one
                  monster each, five self-initiating attackers at the tightest
                  cluster -- so the bodies are placed, which is what an admin
                  conjuring a fight does.
