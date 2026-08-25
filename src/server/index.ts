@@ -1,6 +1,17 @@
 /**
  * The Node server CLI (spec 056, retooled by 057): `npm run server`.
  *
+ * Run as `node --import tsx` rather than through the `tsx` binary, and that is
+ * not a style preference. `tsx` is a **supervisor**: it spawns the real process
+ * and sits in front of it, which costs a second Node runtime (~62MB measured
+ * beside a 168MB server) and puts a signal-forwarder between a Ctrl-C and the
+ * shutdown handler below. Both halves of that have bitten: a machine short on
+ * memory denies the *supervisor* its next semi-space and kills the pair with a
+ * heap far too small to be the server's, and a burst of signals kills the
+ * wrapper before it forwards any of them, so the graceful shutdown never runs.
+ * `--import` loads the same TypeScript hook in-process: one pid, one runtime,
+ * and signals that arrive where they are handled.
+ *
  * This file owns everything that keeps `GameServer` itself portable: the `ws`
  * transport, the `node:crypto` admin verifier, the HTTP server for the admin
  * page, and the signing secret. `src/server/` below this file imports no

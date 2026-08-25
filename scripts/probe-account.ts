@@ -112,13 +112,13 @@ async function main(): Promise<void> {
   const dbFile = join(dataDir, 'game.db');
 
   // A throwaway database, so the probe can never touch a real one.
-  const game = spawn('node_modules/.bin/tsx', ['src/server/index.ts'], {
+  // `node --import tsx` rather than the `tsx` binary, which is a supervisor that
+  // spawns the real process: one server, one pid, and a SIGTERM that reaches
+  // the shutdown handler instead of a wrapper that may or may not forward it.
+  const game = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
     cwd: root,
     stdio: 'ignore',
     env: { ...process.env, PORT: String(GAME_PORT), TURBO_DECK_DB: dbFile, ADMIN_SECRET: 'probe' },
-    // Its own process group: a SIGTERM to `npx` leaves the grandchild holding
-    // the port, which is the trap `probe-admin-console.ts` records.
-    detached: true,
   });
   const pages = spawn('npx', ['vite', 'preview', '--port', String(PAGE_PORT), '--strictPort'], {
     cwd: root,
@@ -240,16 +240,8 @@ async function main(): Promise<void> {
   } finally {
     await browser.close();
     pages.kill('SIGTERM');
-    // The whole group, or tsx's child keeps the port -- the trap
-    // `probe-admin-console.ts` records. Falls back to the child alone when the
-    // pid has already gone.
-    const group = game.pid;
-    try {
-      if (group === undefined) game.kill('SIGTERM');
-      else process.kill(-group, 'SIGTERM');
-    } catch {
-      game.kill('SIGTERM');
-    }
+    // One process, so one signal. No group kill and no orphan holding the port.
+    game.kill('SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, 500));
     rmSync(dataDir, { recursive: true, force: true });
   }

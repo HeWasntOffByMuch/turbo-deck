@@ -80,7 +80,7 @@ change a game outcome.
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
-| `npm run server` | The authoritative server, plus the admin console. Opens and migrates `data/game.db` itself (spec 226); there is no database to start |
+| `npm run server` | The authoritative server, plus the admin console. Opens and migrates `data/game.db` itself (spec 226); there is no database to start. Runs as `node --import tsx`, so it is **one** process rather than a `tsx` supervisor in front of the real one -- the wrapper cost a second runtime and swallowed signal bursts before the shutdown handler saw them |
 | `npx tsx scripts/db-status.ts` | What is in `data/game.db`: schema version, row counts, and which migrations have run (spec 226). Never prints a token or a hash |
 | `npm run build && npx tsx scripts/probe-account.ts` | Claim a guest character through the shipped page and read the database back to check the account owns *that* character (spec 226) |
 | `npm run server:bots` | Headless bot clients, for load and for watching prediction |
