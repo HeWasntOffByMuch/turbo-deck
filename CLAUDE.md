@@ -74,6 +74,8 @@ change a game outcome.
 | `npx tsx scripts/probe-editor-ground.ts` | Whether the editor's ground window really meshes and evicts, in a browser (spec 212) |
 | `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
+| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 222) |
+| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 222) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -262,6 +264,26 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  grows an existing one by a chunk-snapped rectangle (spec 083),
                  stitching the join by copying shared corners exactly and easing
                  the recipe's field in over a short skirt.
+                 vegetation.ts also holds the **buildings** (spec 222): a
+                 timber hut under a straw roof, and a well. They are `PropKind`s
+                 and nothing else, which is the whole design -- a structure is
+                 written into the map document, streamed, collided against,
+                 batched per region and taken out by the eraser without one line
+                 of any of those asking what kind a prop is. What they are *not*
+                 is painted: a tree is scattered by density and a fence laid
+                 along a path, and a building goes in one spot turned to face a
+                 square, so the editor gives them a press-to-place tool of their
+                 own. `HOUSE_PLAN` is the load-bearing number, here beside the
+                 kinds for the reason `FENCE_TILE_LENGTH` is: the renderer builds
+                 the walls from it and `FOOTPRINT_BASE` derives the collider from
+                 it, and two files disagreeing about a hut's plan is a building
+                 somebody can stand inside or an invisible wall around one. The
+                 collider is the plan's **circumradius**, and the cost is stated
+                 rather than hidden -- a rectangle is not a circle, so the choice
+                 is between a body that stops about two of its own radii short of
+                 a flat wall and a body that can stand in a corner, and erring
+                 wide is the fence's own answer to the same question. A well is
+                 already a circle, so that one is exact.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against.
                  avoidance.ts is how two bodies get past each other (spec 187):
@@ -1371,6 +1393,46 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  for the same reason (spec 086): props.ts groups props into
                  square batches for culling, and an edit rebuilds only the
                  batches over the ground it touched.
+                 structure.ts is the ninth mode (spec 222), and it is the only
+                 prop tool here with no `Rng` in it at all. The scatter is
+                 *seeded* because where a stroke lands is random and a seeded
+                 stroke is one a test can assert on; a building is not random,
+                 which is the stronger claim -- it goes where the cursor is, at
+                 the panel's size and facing, one per press. That is the marker
+                 tool's gesture rather than the scatter's, and for the marker's
+                 stated reason: dragging would leave a street of forty huts under
+                 one stroke. Three things it deliberately does not do. It does
+                 **not** check crowding, because the spacing rule exists to stop
+                 a density brush piling props on one spot and a single press
+                 cannot; a well belongs next to the houses round it, and a tool
+                 that refused there would make the one arrangement this feature
+                 is for impossible to build. It does **not** clear what is under
+                 it -- a place tool that silently deleted the well you set down a
+                 moment ago is a worse surprise than a tree through a roof, and
+                 the eraser is one mode button away. And a refusal is **said out
+                 loud**, the way the marker tool's "no ground there" is, because
+                 a click that does nothing with no word about why is
+                 indistinguishable from a tool that does not work. The cursor
+                 ring is the building's own `footprintRadius`, so what the ring
+                 draws and what the collider blocks are the same circle rather
+                 than two numbers that agree until one is edited.
+                 `npx tsx scripts/probe-structures.ts` is the half no headless
+                 test can reach, and it is the reason any of the above is known
+                 to be wired to anything: a ninth entry in a mode array cannot
+                 fail a typecheck and cannot fail a headless test, so every rule
+                 about a structure could be green in Node beside a `view.ts`
+                 that calls none of them -- which is exactly what spec 176 found
+                 for markers. It drives the shipped build, arms the tool, presses
+                 three times and checks the **file that came out**, because a
+                 building the editor draws and does not save is the bug. What it
+                 got wrong first is worth keeping: panel rows are **not uniquely
+                 named** -- the fence's tile size and a building's size are both
+                 `Size`, correctly, since neither is on screen while the other is
+                 -- so a lookup across every `.lil-controller` answers questions
+                 about the wrong tool, and reported a working panel as a hidden
+                 one. A row is found by its folder and its label, and a folder in
+                 this build is itself a `.lil-gui` with its own `.lil-title`;
+                 there is no `.lil-folder` to ask for.
                  paint.ts is the material brush (spec 179), and it is beside
                  brush.ts rather than inside it because brush.ts is what a stroke
                  does to the *height* array and every one of its four tools reads

@@ -1,8 +1,9 @@
-import type { MapMarkerKind, PropKind } from '../../../terrain/index.js';
+import { STRUCTURE_KINDS, type MapMarkerKind, type PropKind, type StructureKind } from '../../../terrain/index.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 import { DEFAULT_BRUSH, TERRAIN_TOOLS, type TerrainTool } from './brush.js';
 import { DEFAULT_PAINT_MATERIAL, PAINT_MATERIALS, type PaintMaterial } from './paint.js';
 import { DEFAULT_FENCE, FENCE_STYLES, fenceStep, type FenceStyle } from './fence.js';
+import { DEFAULT_STRUCTURE, structureFootprint } from './structure.js';
 import { MARKER_KINDS } from './markers.js';
 import { TERRAIN_COLORS } from '../palette.js';
 import { DEFAULT_WALK_SLOPE } from './nav.js';
@@ -25,6 +26,7 @@ export type EditorMode =
   | 'paint'
   | 'scatter'
   | 'fence'
+  | 'structure'
   | 'marker'
   | 'erase'
   | 'part'
@@ -38,6 +40,10 @@ export const EDITOR_MODES: readonly EditorMode[] = [
   'paint',
   'scatter',
   'fence',
+  // Between the fence and the marker: the three tools that put a *thing* down
+  // rather than reshaping ground, in order of how much of one each press makes
+  // -- a run of tiles, one building, one point.
+  'structure',
   'marker',
   'erase',
   'part',
@@ -72,6 +78,8 @@ export const MODE_COLORS: Record<EditorMode, number> = {
   paint: 0xc8823f,
   scatter: 0x8fe0b4,
   fence: 0xd8a878,
+  // The straw the roofs are made of, so the ring says what is about to land.
+  structure: 0xe0c070,
   marker: 0xd0d0e8,
   erase: 0xe08f8f,
   part: 0x9fb8e8,
@@ -141,6 +149,11 @@ export interface EditorSettings {
   style: FenceStyle;
   fenceScale: number;
   variedColor: boolean;
+  // Structures (spec 222)
+  structure: StructureKind;
+  structureScale: number;
+  /** Where the front faces, in degrees. See `structure.ts`. */
+  structureYaw: number;
   // Markers
   markerKind: MapMarkerKind;
   /** Which monster a `spawner` marker spawns (spec 076). Ignored by other kinds. */
@@ -206,6 +219,9 @@ export function createEditorSettings(): EditorSettings {
     style: DEFAULT_FENCE.style,
     fenceScale: DEFAULT_FENCE.fenceScale,
     variedColor: DEFAULT_FENCE.variedColor,
+    structure: DEFAULT_STRUCTURE.structure,
+    structureScale: DEFAULT_STRUCTURE.structureScale,
+    structureYaw: DEFAULT_STRUCTURE.structureYaw,
     // The one kind with a reader, so the first marker somebody places does
     // something (spec 178). It used to be `spawn`, which is written to the map
     // and read by nothing.
@@ -252,6 +268,11 @@ export const MARKER_CURSOR_RADIUS = 30;
  */
 export function cursorRadius(settings: EditorSettings): number {
   if (settings.mode === 'fence') return fenceStep(settings) / 2;
+  // The building's own footprint, so the ring is the ground it will block --
+  // and the same circle the collider is, since both come from
+  // `footprintRadius`. A brush radius would mean nothing to a tool that places
+  // one thing of a fixed size.
+  if (settings.mode === 'structure') return structureFootprint(settings);
   if (settings.mode === 'marker') return MARKER_CURSOR_RADIUS;
   // A part is a rectangle drawn by its own outline, so the ring says only
   // "here", not how big the thing about to land is. A tier is dragged out the
@@ -276,6 +297,7 @@ export interface ToolVisibility {
   readonly paint: boolean;
   readonly scatter: boolean;
   readonly fence: boolean;
+  readonly structure: boolean;
   readonly marker: boolean;
   readonly part: boolean;
   readonly rock: boolean;
@@ -293,6 +315,7 @@ export function visibleGroups(mode: EditorMode): ToolVisibility {
     paint: mode === 'paint',
     scatter: mode === 'scatter',
     fence: mode === 'fence',
+    structure: mode === 'structure',
     marker: mode === 'marker',
     part: mode === 'part',
     rock: mode === 'rock',
@@ -366,3 +389,12 @@ export const FENCE_STYLE_CHOICES = choices(FENCE_STYLES, { wood: 'picket' });
  * tile at a time along a path and would be nonsense sprinkled over an area.
  */
 export const SPECIES_CHOICES = choices(['tree', 'bush'] as const satisfies readonly PropKind[]);
+/**
+ * What the structure tool may put down (spec 222).
+ *
+ * Its own strip rather than two more buttons on the scatter's, for the reason
+ * the fence has its own tool: a building is placed, not painted, and a density
+ * brush loaded with houses would sprinkle them at random over the ground with
+ * no way to say where any one of them goes.
+ */
+export const STRUCTURE_CHOICES = choices(STRUCTURE_KINDS);

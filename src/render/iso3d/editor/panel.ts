@@ -18,6 +18,7 @@ import {
   TERRAIN_TOOL_CHOICES,
   TOOL_COLORS,
   visibleGroups,
+  STRUCTURE_CHOICES,
   type EditorMode,
   type EditorSettings,
   type ToolChoice,
@@ -289,6 +290,26 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // what is already on the ground.
   fence.add(s, 'variedColor').name('Colour variety');
 
+  // One press puts one building down where the cursor is (spec 222). There is
+  // no density and no spacing here, which is the whole difference from the
+  // scatter above: a village is a layout somebody decided.
+  const structures = gui.addFolder('Buildings');
+  strip(
+    structures,
+    STRUCTURE_CHOICES,
+    2,
+    () => s.structure,
+    (kind) => {
+      s.structure = kind;
+    },
+    () => MODE_COLORS.structure,
+  );
+  // Fifteen-degree steps, so a row of huts can be squared up to a street by
+  // eye. Degrees because that is the unit somebody turning a house thinks in;
+  // `placeStructure` converts once, on the way into the document.
+  structures.add(s, 'structureYaw', 0, 345, 15).name('Facing');
+  structures.add(s, 'structureScale', 0.5, 2, 0.05).name('Size');
+
   const markers = gui.addFolder('Markers');
   strip(
     markers,
@@ -443,6 +464,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     paint.show(show.paint);
     scatter.show(show.scatter);
     fence.show(show.fence);
+    structures.show(show.structure);
     markers.show(show.marker);
     parts.show(show.part);
     rock.show(show.rock);

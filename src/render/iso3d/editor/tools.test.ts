@@ -41,9 +41,16 @@ describe('which settings a mode shows', () => {
   it('shows exactly one tool group per mode, and covers every mode', () => {
     for (const mode of EDITOR_MODES) {
       const show = visibleGroups(mode);
-      const groups = [show.terrain, show.paint, show.scatter, show.fence, show.marker, show.part, show.rock].filter(
-        Boolean,
-      ).length;
+      const groups = [
+        show.terrain,
+        show.paint,
+        show.scatter,
+        show.fence,
+        show.structure,
+        show.marker,
+        show.part,
+        show.rock,
+      ].filter(Boolean).length;
       // The eraser has no settings of its own beyond the shared radius; every
       // other mode has exactly one group, and none has two.
       expect(groups).toBe(mode === 'erase' ? 0 : 1);
@@ -55,6 +62,7 @@ describe('which settings a mode shows', () => {
     expect(visibleGroups('paint')).toMatchObject({ terrain: false, paint: true, scatter: false, fence: false });
     expect(visibleGroups('scatter')).toMatchObject({ terrain: false, scatter: true, fence: false, marker: false });
     expect(visibleGroups('fence')).toMatchObject({ terrain: false, scatter: false, fence: true, marker: false });
+    expect(visibleGroups('structure')).toMatchObject({ scatter: false, fence: false, structure: true, marker: false });
     expect(visibleGroups('marker')).toMatchObject({ terrain: false, scatter: false, fence: false, marker: true });
   });
 

@@ -83,6 +83,7 @@ import {
 } from './rock.js';
 import { fenceStroke, NO_FENCE_PATH, type FencePath } from './fence.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
+import { placeStructure } from './structure.js';
 
 /**
  * The map editor tab (spec 049).
@@ -1561,6 +1562,29 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
         const under = partAt(scene.map.store, at.x, at.z);
         if (under) commitRemove(under.id);
         else status = 'no part under the cursor';
+      }
+      if (at && settings.mode === 'structure') {
+        // On the press, like a marker and for the marker's reason: a building
+        // is not a bulk thing, and dragging would leave a street of forty of
+        // them under one stroke.
+        const out = placeStructure(scene.map.store, layerId, settings, { x: at.x, z: at.z }, capture);
+        if (out.placed) {
+          strokeChangedProps = true;
+          // Rebuilt here rather than left to the drag's throttle: this tool has
+          // no drag, so the throttled rebuild below never runs for it and the
+          // building would not appear until the next stroke of some other tool.
+          const span = boundingChunkRect(out.dirty);
+          const world = span && chunkRectWorld(scene.map.store, layerId, span);
+          if (world) scene.refreshPropsWithin(world);
+          else scene.refreshProps();
+          propsRebuiltAt = time;
+          // Said out loud, with the facing, because a hut turned 180 degrees
+          // from the one beside it is the mistake this tool actually produces
+          // and the yaw slider is the only thing that says which way is which.
+          status = `placed ${out.placed.kind} facing ${Math.round(settings.structureYaw)}\u00b0`;
+        } else if (out.refused) {
+          status = out.refused;
+        }
       }
       if (at && settings.mode === 'marker') {
         const placed = placeMarker(
