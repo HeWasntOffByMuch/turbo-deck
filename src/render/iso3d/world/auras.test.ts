@@ -66,7 +66,7 @@ describe('aurasFor', () => {
   });
 });
 
-describe('the field branch (spec 222)', () => {
+describe('the field branch (spec 223)', () => {
   it('shows a field’s own ring for a body carrying it', () => {
     expect(aurasFor(facts({ fields: [StatusId.ScorchedEarth] }))).toEqual([
       SCORCHED_EARTH.auraEffectId,

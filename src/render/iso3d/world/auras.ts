@@ -30,7 +30,7 @@
  * list is replicated, {@link aurasFor} gains a branch and nothing else in the
  * renderer changes.
  *
- * ## What the client knows now (spec 222)
+ * ## What the client knows now (spec 223)
  *
  * The status list **is** replicated: spec 186 put it on `EntityDelta`, and the
  * paragraph above is kept as written because it is the reason this module has
@@ -66,7 +66,7 @@ export interface AuraFacts {
    */
   readonly statuses?: readonly StatusKind[];
   /**
-   * Status ids of the **aura fields** this body is carrying (spec 222).
+   * Status ids of the **aura fields** this body is carrying (spec 223).
    *
    * Ids rather than a kind, because a field already names the ring it wears:
    * `AuraFieldDefinition.auraEffectId` sits beside the radius that ring is drawn
@@ -104,7 +104,7 @@ export const AURA_ORDER: readonly string[] = [
   'aura_channel',
   'aura_telegraph',
   // Outermost, because it is the only ring here whose radius means something in
-  // the world: it is where the fire is (spec 222), so it cannot be moved to
+  // the world: it is where the fire is (spec 223), so it cannot be moved to
   // make room for anything and everything else is inside it anyway.
   'aura_scorched',
 ];
@@ -129,7 +129,7 @@ export function aurasFor(facts: AuraFacts): readonly string[] {
     if (id) wanted.add(id);
   }
 
-  // The branch this module's header has promised since spec 121 (spec 222).
+  // The branch this module's header has promised since spec 121 (spec 223).
   // A field names its own ring, so there is nothing to decide here.
   for (const statusId of facts.fields ?? []) {
     const field = auraFieldById(statusId);

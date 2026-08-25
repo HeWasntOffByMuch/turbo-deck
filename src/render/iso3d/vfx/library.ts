@@ -819,7 +819,7 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // The one a player must never miss. Louder in the same language: a still sigil
   // ringed with shafts, never a different vocabulary.
   aura({ id: 'aura_telegraph', color: 'auraTelegraph', radius: 110, spin: 0, shafts: 10, priority: 3 }),
-  // The field (spec 222), and the one aura here whose radius is **not an art
+  // The field (spec 223), and the one aura here whose radius is **not an art
   // decision**: it is the reach in `data/aura-fields.ts`, imported rather than
   // retyped, because this ring is not decoration around the mechanic -- it is
   // where the fire is, and a player who cannot tell which bodies are inside it

@@ -177,7 +177,7 @@ export interface DotLanding {
 }
 
 /**
- * One affliction onto one status map, whatever put it there (spec 222).
+ * One affliction onto one status map, whatever put it there (spec 223).
  *
  * The one description of what landing an affliction *is*, and there are three
  * callers of it precisely because the three differ only in the window and the

@@ -1,5 +1,5 @@
 /**
- * The ring under a body carrying an aura field (spec 222).
+ * The ring under a body carrying an aura field (spec 223).
  *
  * `aurasFor` decides *which* rings a body should be wearing and has since spec
  * 121; this is what starts and stops them. The two are separate for the reason
@@ -170,7 +170,7 @@ export class AuraVfx {
 // --- reaching one from the shipped page --------------------------------------
 
 /**
- * Whether `?field=` asks for an aura field to be forced on (spec 222).
+ * Whether `?field=` asks for an aura field to be forced on (spec 223).
  *
  * The developer path, in the same register as `?afflict=` and for the same
  * reason: the alternative to it is farming a level-6 exceptional sigil every

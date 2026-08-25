@@ -162,7 +162,7 @@ export const StatusId = {
   /** Slow, and nothing heals properly while it is running. */
   Decay: 'decay',
 
-  // --- the aura fields (spec 222) ----------------------------------------
+  // --- the aura fields (spec 223) ----------------------------------------
   //
   // The first status here that is about the ground around its carrier rather
   // than about the body carrying it. It is a **boon** and it is in this map

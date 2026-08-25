@@ -67,7 +67,7 @@ change a game outcome.
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
-| `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 222) |
+| `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -2957,7 +2957,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  a client works out the *schedule* of for itself, so the obvious
                  way to get it wrong is to let that derivation reach back into
                  something.
-                 `world/aura-vfx.ts` is the ring beside that paint (spec 222),
+                 `world/aura-vfx.ts` is the ring beside that paint (spec 223),
                  and it is the first thing in this game that has ever played an
                  aura. Spec 124 built the sigil -- three generated meshes,
                  `uOrient` on the mesh batch for it, `hardStop` on the effect
@@ -3228,7 +3228,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  same kind and had never read `ability.area` at all, so the one
                  ability kind that *is* a shape was the one kind you could not see.
                  `data/aura-fields.ts` and `sim/aura-field.ts` are the affliction
-                 that is somewhere rather than on somebody (spec 222). Every
+                 that is somewhere rather than on somebody (spec 223). Every
                  landing this game has resolves **once** -- a body, a point, a
                  shape, a flight -- and an affliction, the one thing that outlives
                  its own delivery, is carried by whoever it was put on. Nothing

@@ -721,7 +721,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Decay }],
     description: 'A patch of rot. Little damage, and nothing they do about it works properly.',
   },
-  // --- the field (spec 222) ----------------------------------------------
+  // --- the field (spec 223) ----------------------------------------------
   //
   // The first skill in the table whose landing does **nothing to anybody**. It
   // is a `self` cast with one `applyStatus` in it, which is the whole of the
@@ -886,7 +886,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       { kind: 'applyDot', dotId: StatusId.Shock },
       { kind: 'applyDot', dotId: StatusId.Frostbite },
       { kind: 'applyDot', dotId: StatusId.Decay },
-      // The field (spec 222), and it is an `applyStatus` because that is what a
+      // The field (spec 223), and it is an `applyStatus` because that is what a
       // field *is*: a boon its carrier wears, which `sim/aura-field.ts` reads.
       // So this line does not merely draw the mark -- it puts a real, working
       // field on whatever was hit, which is the only way to look at the ring

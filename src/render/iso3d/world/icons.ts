@@ -263,7 +263,7 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
   // thing you would normally do about damage stops working.
   decay: '<path d="M12 5.5v13"/><path d="M5.5 12h13"/><path d="M4.8 19.2 19.2 4.8"/>',
 
-  // --- the aura fields (spec 222) ----------------------------------------
+  // --- the aura fields (spec 223) ----------------------------------------
   // Scorched Earth -- a ring with flames standing on it, which is the one shape
   // in this table that is a picture of the *ground* rather than of a body. It
   // has to sit clear of Burn's single tongue eight rows up and of Attuned's

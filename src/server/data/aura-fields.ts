@@ -1,5 +1,5 @@
 /**
- * The aura fields, as data (spec 222).
+ * The aura fields, as data (spec 223).
  *
  * A field is `a reach + an affliction + a linger`, and all three of those are
  * systems this game already has -- so this is one table rather than a mechanic,

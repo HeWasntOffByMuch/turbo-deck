@@ -839,7 +839,7 @@ function afflictionLines(dot: DotDefinition): readonly TechnicalLine[] {
 }
 
 /**
- * The mechanical lines for a status that is an aura field (spec 222).
+ * The mechanical lines for a status that is an aura field (spec 223).
  *
  * Derived for the same reason {@link afflictionLines} is: a field *is* a reach,
  * an affliction and a linger in `data/aura-fields.ts`, so a sentence authored

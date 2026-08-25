@@ -1,9 +1,9 @@
 /**
- * Is the aura ring actually on the ground, in the real Play tab? (spec 222)
+ * Is the aura ring actually on the ground, in the real Play tab? (spec 223)
  *
  *   npx tsx scripts/probe-aura.ts
  *
- * Everything spec 222 decides is asserted in Node already: the pass's arithmetic
+ * Everything spec 223 decides is asserted in Node already: the pass's arithmetic
  * (`sim/aura-field.test.ts`), the field end to end through the real `step`
  * (`sim/active-skills.test.ts`), the ring's radius against the field's own
  * (`world/auras.test.ts`), and the driver's whole start/stop/evict/forget

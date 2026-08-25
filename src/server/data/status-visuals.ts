@@ -272,7 +272,7 @@ const DEFINITIONS: readonly StatusVisual[] = [
   },
   { id: StatusId.Decay, wire: 15, name: 'Decay', kind: 'affliction', icon: 'decay', maxStacks: 1 },
 
-  // --- the aura fields (spec 222) ----------------------------------------
+  // --- the aura fields (spec 223) ----------------------------------------
   //
   // A **boon**, and the one row in this table whose colour is doing more work
   // than usual: everybody in the fight can see this mark, and what it means to

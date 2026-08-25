@@ -704,7 +704,7 @@ export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
     '..T..TT..T..',
   ],
   /**
-   * Scorched earth (spec 222): a ring of ground with fire standing on it.
+   * Scorched earth (spec 223): a ring of ground with fire standing on it.
    *
    * The one skill sprite here that draws a *place* rather than a blow. Which is
    * what it has to do: every other cell on the bar is a thing you do to a body,

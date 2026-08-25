@@ -781,7 +781,7 @@ export class WorldScene {
       // lets the driver put it back afterwards (spec 215).
       isLive: (handle) => this.vfx.system.isLive(handle),
     });
-    // The ring under a body carrying an aura field (spec 222). The same four
+    // The ring under a body carrying an aura field (spec 223). The same four
     // calls again, and for the third time the same two reasons: a persistent
     // attached effect needs a handle it can find out has been evicted, and it
     // needs somebody to owe it a stop.
@@ -1056,7 +1056,7 @@ export class WorldScene {
   }
 
   /**
-   * Bodies with an aura ring running under them (spec 222).
+   * Bodies with an aura ring running under them (spec 223).
    *
    * A readout and nothing else: `data-auras` is published from it, and nothing
    * in the game reads it. Taken from the **driver's own held set** rather than
@@ -1745,7 +1745,7 @@ export class WorldScene {
       // one takes the whole render loop rather than one body's marks.
       //
       // The ring under a field's carrier goes on the same two branches and for
-      // the same reason (spec 222): a corpse's field is over, and a sigil left
+      // the same reason (spec 223): a corpse's field is over, and a sigil left
       // burning on the ground under a dead body would be a hazard nothing is
       // producing.
       if (dead) {

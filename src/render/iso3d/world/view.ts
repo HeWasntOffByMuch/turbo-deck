@@ -456,7 +456,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   let afflictAgainAtTick = 0;
   /**
-   * Whether `?field=` asks for an aura field on the player (spec 222).
+   * Whether `?field=` asks for an aura field on the player (spec 223).
    *
    * Loopback only, exactly as the afflictions above are and for the same stated
    * reason. Topped up on the same cadence, which is comfortably inside the
@@ -1039,7 +1039,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // nothing should read as absent, which is the failure this number exists to
     // make visible (spec 215).
     const regionsDrawn = scene.heldPropRegions().length;
-    // Bodies wearing an aura ring (spec 222), from the driver's held set rather
+    // Bodies wearing an aura ring (spec 223), from the driver's held set rather
     // than from the statuses that asked for one -- so a ring refused by the
     // effect budget or evicted by the instance pool reads as absent.
     const aurasDrawn = scene.heldAuras().length;
@@ -2915,7 +2915,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           }
         }
       }
-      // And the same for a forced aura field (spec 222). A tight reach, because
+      // And the same for a forced aura field (spec 223). A tight reach, because
       // the trigger's magnitude is its radius and what is wanted is the ring on
       // the player rather than on everything they walked past -- which would be
       // several fields overlapping and no way to tell whose is whose.

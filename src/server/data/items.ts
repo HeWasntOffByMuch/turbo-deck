@@ -501,7 +501,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     activeSkillId: 'skill.blight',
     value: 260,
   },
-  // --- the field sigil (spec 222) ---
+  // --- the field sigil (spec 223) ---
   //
   // Exceptional, and it is the one sigil in the table that is not priced against
   // what it does to a body: eight seconds of ground nothing can stand on is a

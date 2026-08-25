@@ -473,7 +473,7 @@ describe('afflictions are derived, never authored (spec 190)', () => {
     // sentence beside it would be a second copy of `damagePerSecond` with
     // nothing keeping it true -- and a row with neither source says nothing.
     //
-    // Two derived sources now rather than one (spec 222): an aura field is a
+    // Two derived sources now rather than one (spec 223): an aura field is a
     // reach, an affliction and a linger in `data/aura-fields.ts`, which is the
     // same rule with a different table under it. A *third* would be worth
     // stopping to think about; this one is the same shape exactly.
@@ -484,7 +484,7 @@ describe('afflictions are derived, never authored (spec 190)', () => {
     }
   });
 
-  it('derives an aura field’s reach, affliction and linger off its own row (spec 222)', () => {
+  it('derives an aura field’s reach, affliction and linger off its own row (spec 223)', () => {
     for (const field of ALL_AURA_FIELDS) {
       const visual = STATUS_VISUALS.find((row) => row.id === field.id);
       expect(visual, field.id).toBeDefined();

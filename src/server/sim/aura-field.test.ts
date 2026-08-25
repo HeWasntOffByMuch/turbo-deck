@@ -1,5 +1,5 @@
 /**
- * Aura fields (spec 222).
+ * Aura fields (spec 223).
  *
  * The edges here are not the ones a landing has, because a field is not a
  * landing: it re-applies every tick, so what goes wrong with one is what goes
@@ -102,7 +102,7 @@ const BURN = (() => {
   return found;
 })();
 
-describe('the field table (spec 222)', () => {
+describe('the field table (spec 223)', () => {
   it('names a status, an affliction and a ring that all exist', () => {
     for (const field of ALL_AURA_FIELDS) {
       expect(dotById(field.dotId), field.dotId).not.toBeNull();

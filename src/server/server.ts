@@ -3232,7 +3232,7 @@ export class GameServer implements AdminHost {
   private static readonly AFFLICTION_DEMO_REACH = 300;
 
   /**
-   * How long `admin:triggerEvent 'field'` leaves an aura field up (spec 222).
+   * How long `admin:triggerEvent 'field'` leaves an aura field up (spec 223).
    *
    * The skill's own eight seconds rather than a demo window, and for the reason
    * the affliction case gives about its own length: what is being looked at is
@@ -3406,7 +3406,7 @@ export class GameServer implements AdminHost {
         return `marked ${afflicted} bodies with ${row.name} x${row.maxStacks} for ${seconds}s`;
       }
       case 'field': {
-        // The developer path for spec 222's aura fields: the field's own status,
+        // The developer path for spec 223's aura fields: the field's own status,
         // on every body within `magnitude`, for the length the skill grants.
         //
         // It exists for the reason `status`'s comment gives about a Perception

@@ -1,5 +1,5 @@
 /**
- * The ring under a body carrying a field (spec 222).
+ * The ring under a body carrying a field (spec 223).
  *
  * Everything here is about the *bookkeeping*, because that is the whole of what
  * this driver is: `aurasFor` decides which rings are wanted, and the only way

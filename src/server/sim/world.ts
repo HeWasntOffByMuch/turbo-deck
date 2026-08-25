@@ -1307,7 +1307,7 @@ export function step(
     events.push({ kind: 'despawned', entityId: entity.id });
   }
 
-  // --- 3c: the ground under an aura (spec 222) ---------------------------
+  // --- 3c: the ground under an aura (spec 223) ---------------------------
   //
   // The first rule in this sim that reads a status on one body and reaches the
   // bodies *around* it. Here rather than anywhere else because this is the slot

@@ -1336,7 +1336,7 @@ describe('determinism holds with afflictions in play', () => {
 });
 
 /**
- * The field, end to end (spec 222).
+ * The field, end to end (spec 223).
  *
  * `aura-field.test.ts` is the pass's own arithmetic; what is asserted here is
  * the half that only exists once the whole tick is running -- that casting the

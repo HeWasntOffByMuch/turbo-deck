@@ -1,5 +1,5 @@
 /**
- * A status that reaches the bodies around its carrier (spec 222).
+ * A status that reaches the bodies around its carrier (spec 223).
  *
  * Every landing this game has resolves **once**: `landOnTarget` names a body,
  * `landBlast` a point, `landArea` a shape, `launchProjectile` a flight, and each
