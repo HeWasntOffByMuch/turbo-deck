@@ -1,5 +1,5 @@
 /**
- * Signing a tab in (spec 224).
+ * Signing a tab in (spec 226).
  *
  * The rule worth testing here is the one that decides whether the client works
  * against a server that predates auth: **a sign-in failure is not fatal.** The
@@ -15,7 +15,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StorageLike } from '../../../ui/core/layout-store.js';
 import { AUTH_TOKEN_KEY, httpOriginOf, planConnection } from './connection.js';
-import { ensureAuthToken, needsGuestSession } from './auth-client.js';
+import {
+  ensureAuthToken,
+  needsGuestSession,
+  registerAccount,
+  signInToAccount,
+  signOutOfAccount,
+} from './auth-client.js';
 
 function storage(initial: Record<string, string> = {}): StorageLike & { map: Map<string, string> } {
   const map = new Map(Object.entries(initial));
@@ -163,5 +169,116 @@ describe('ensuring a token', () => {
     // again and gets a different character. The same rule `planConnection`
     // already follows for a refused player id.
     await expect(ensureAuthToken('http://localhost:8787', '', hostile)).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe('creating an account', () => {
+  it('sends the form and presents the guest token, which is what makes it a claim', async () => {
+    const calls = stubFetch([
+      { status: 201, body: { session: { token: 'tok-new', playerId: 'p_1', displayName: 'Ada L' } } },
+    ]);
+    const outcome = await registerAccount('http://localhost:8787', 'guest-tok', {
+      login: 'ada',
+      password: 'a decent password',
+      displayName: 'Ada L',
+    });
+
+    expect(outcome).toMatchObject({ ok: true, token: 'tok-new', playerId: 'p_1', displayName: 'Ada L' });
+    expect(calls[0]?.url).toBe('http://localhost:8787/api/auth/register');
+    // Without this header the server makes a *new* character beside the
+    // account instead of claiming the one being played.
+    expect(calls[0]?.authorization).toBe('Bearer guest-tok');
+  });
+
+  it('reports the refusal in the server’s own words', async () => {
+    stubFetch([{ status: 409, body: { error: 'that login is already taken', code: 'login_taken' } }]);
+    const outcome = await registerAccount('http://localhost:8787', 'guest-tok', {
+      login: 'ada',
+      password: 'a decent password',
+      displayName: '',
+    });
+    expect(outcome).toEqual({ ok: false, reason: 'that login is already taken' });
+  });
+
+  it('falls back to the status when the server sent no message', async () => {
+    stubFetch([{ status: 500, body: {} }]);
+    const outcome = await registerAccount('http://localhost:8787', '', {
+      login: 'ada',
+      password: 'a decent password',
+      displayName: '',
+    });
+    expect(outcome).toMatchObject({ ok: false });
+    if (!outcome.ok) expect(outcome.reason).toContain('500');
+  });
+
+  it('refuses a success with no token rather than reporting one', async () => {
+    stubFetch([{ status: 201, body: { session: { playerId: 'p_1' } } }]);
+    const outcome = await registerAccount('http://localhost:8787', '', {
+      login: 'ada',
+      password: 'a decent password',
+      displayName: '',
+    });
+    expect(outcome.ok).toBe(false);
+  });
+
+  it('reports rather than throwing when the network is gone', async () => {
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('connection refused')));
+    const outcome = await registerAccount('http://localhost:8787', '', {
+      login: 'ada',
+      password: 'a decent password',
+      displayName: '',
+    });
+    expect(outcome).toEqual({ ok: false, reason: 'connection refused' });
+  });
+});
+
+describe('signing in', () => {
+  it('reports the guest character the server kept, so the UI can say what stayed behind', async () => {
+    stubFetch([
+      {
+        status: 200,
+        body: {
+          session: { token: 'tok-acct', playerId: 'p_account', displayName: 'Ada L' },
+          retainedGuestPlayerId: 'p_guest',
+        },
+      },
+    ]);
+    const outcome = await signInToAccount('http://localhost:8787', 'guest-tok', {
+      login: 'ada',
+      password: 'a decent password',
+    });
+    expect(outcome).toMatchObject({ ok: true, playerId: 'p_account', retainedGuestPlayerId: 'p_guest' });
+  });
+
+  it('reports null when there was no guest to retain', async () => {
+    stubFetch([{ status: 200, body: { session: { token: 't', playerId: 'p', displayName: 'A' } } }]);
+    const outcome = await signInToAccount('http://localhost:8787', '', { login: 'a', password: 'b' });
+    if (!outcome.ok) throw new Error('expected success');
+    expect(outcome.retainedGuestPlayerId).toBeNull();
+  });
+
+  it('gives the generic refusal back unchanged', async () => {
+    stubFetch([{ status: 401, body: { error: 'login or password is incorrect' } }]);
+    const outcome = await signInToAccount('http://localhost:8787', '', { login: 'a', password: 'b' });
+    expect(outcome).toEqual({ ok: false, reason: 'login or password is incorrect' });
+  });
+});
+
+describe('signing out', () => {
+  it('revokes at the server and forgets the token here', async () => {
+    const store = storage({ [AUTH_TOKEN_KEY]: 'tok' });
+    const calls = stubFetch([{ status: 200, body: { revoked: true } }]);
+    await signOutOfAccount('http://localhost:8787', 'tok', store);
+    expect(calls[0]?.url).toBe('http://localhost:8787/api/auth/logout');
+    expect(store.map.has(AUTH_TOKEN_KEY)).toBe(false);
+  });
+
+  it('forgets it anyway when the server cannot be reached', async () => {
+    // Otherwise a sign-out on a dropped connection is a button that visibly
+    // does nothing, and the next load signs straight back in.
+    const store = storage({ [AUTH_TOKEN_KEY]: 'tok' });
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('offline')));
+    await signOutOfAccount('http://localhost:8787', 'tok', store);
+    expect(store.map.has(AUTH_TOKEN_KEY)).toBe(false);
   });
 });

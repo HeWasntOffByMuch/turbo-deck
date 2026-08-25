@@ -24,12 +24,35 @@ import { StyledWidget } from './base.js';
 /** Milliseconds per caret half-cycle. */
 const CARET_PERIOD = 500;
 
+/**
+ * What a masked character is drawn as.
+ *
+ * `*` because it is in `BODY_GLYPHS` and a bullet is not: this font has one
+ * case and a fixed symbol set, so a character with no glyph draws as a solid
+ * block -- which would still hide the password, and would look like a bug.
+ */
+const MASK_GLYPH = '*';
+
 export class TextField extends StyledWidget {
   onChange: ((text: string) => void) | null = null;
   onSubmit: ((text: string) => void) | null = null;
   fontId: FontId = 'body';
   placeholder = '';
   maxLength = 64;
+  /**
+   * Draw the value as `*` rather than as itself (spec 226).
+   *
+   * A *painting* rule and nothing else: `text` still answers the real value,
+   * the caret still counts real characters, and editing is untouched. That is
+   * the whole of what masking is, and keeping it to `paintSelf` is what stops
+   * it becoming a second, lossy copy of the value that the owner then has to
+   * read back correctly.
+   *
+   * The placeholder is deliberately *not* masked -- it is not the value, it is
+   * the field saying what it is for, and a row of asterisks where "password"
+   * should be tells nobody anything.
+   */
+  masked = false;
   /** Columns the field asks for when it has no content to size against. */
   columns = 12;
 
@@ -203,7 +226,12 @@ export class TextField extends StyledWidget {
     out.pushClip(inner);
 
     const showPlaceholder = this.textValue.length === 0 && this.placeholder.length > 0;
-    const shown = showPlaceholder ? this.placeholder : this.textValue;
+    // One `*` per character, so the caret arithmetic below -- which counts
+    // characters, not pixels -- is right for the masked string too. A fixed-
+    // width mask would put the caret in the wrong place the moment the two
+    // lengths differed.
+    const value = this.masked ? MASK_GLYPH.repeat(this.textValue.length) : this.textValue;
+    const shown = showPlaceholder ? this.placeholder : value;
     const color = showPlaceholder ? context.theme.color('textDim') : state.text;
     const y = centerTextY(font, this.rect);
 

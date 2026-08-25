@@ -56,8 +56,16 @@ import { fieldsWantedByQuery } from './aura-vfx.js';
 const FORCED_AFFLICTION_EVERY_TICKS = 180;
 import { connectChannel } from '../../../server/net/transport-browser.js';
 import { GameServer } from '../../../server/server.js';
-import { planConnection, rememberSession } from './connection.js';
-import { ensureAuthToken } from './auth-client.js';
+import { planConnection, rememberAuthToken, rememberSession } from './connection.js';
+import {
+  ensureAuthToken,
+  registerAccount,
+  signInToAccount,
+  signOutOfAccount,
+  type CredentialOutcome,
+} from './auth-client.js';
+import { accountViewFrom, draftProblem, GUEST_STATE, type AuthState } from './account-model.js';
+import type { AccountView } from '../../../ui/screens/account.js';
 import { ReconnectingChannel } from '../../../server/net/reconnecting.js';
 import { createConnectionBanner } from './connection-banner.js';
 import { createGroundPredictor, emptyGround, fillGround } from './prediction-ground.js';
@@ -358,7 +366,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
   /**
    * Sign in before dialling, so a server that authenticates will talk to us
-   * (spec 224).
+   * (spec 226).
    *
    * `POST /api/auth/guest` asks for nothing and hands back a character, which
    * is what makes "play without registering" true in the client rather than
@@ -371,11 +379,108 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * anyway is what keeps this compatible with a server that predates it.
    */
   let authToken = plan.mode === 'remote' ? plan.authToken : '';
+  /**
+   * What the account window is showing (spec 226).
+   *
+   * Held here rather than in the screen, because it is a fact about the
+   * *session* and the screen's rule is that it renders what it is handed.
+   */
+  let authState: AuthState = GUEST_STATE;
   if (plan.mode === 'remote') {
     const signedIn = await ensureAuthToken(plan.httpOrigin, plan.authToken, localStorage);
-    if (signedIn.ok) authToken = signedIn.token;
-    else console.warn(`[net] could not sign in: ${signedIn.reason}`);
+    if (signedIn.ok) {
+      authToken = signedIn.token;
+      // A stored token the server recognised says who it belongs to, which is
+      // how a returning account holder's window opens with their name on it
+      // rather than telling them they are a guest.
+      if (signedIn.identity?.kind === 'account') {
+        authState = { ...authState, signedInAs: signedIn.identity.displayName };
+      }
+    } else console.warn(`[net] could not sign in: ${signedIn.reason}`);
   }
+
+  /**
+   * Where an account update goes once there is an interface to put it in.
+   *
+   * A sink assigned after the mount rather than a direct call on `ui`, which is
+   * declared several hundred lines below this: reaching it from here would be a
+   * temporal dead zone the moment anything called `setAuthState` early. Null
+   * until then, and nothing does call it early -- every caller is a button.
+   */
+  // A box rather than a bare `let`: assigned only below the mount, TypeScript
+  // narrows a nullable binding to `null` for every reader above it.
+  const accountSink: { push: ((view: AccountView) => void) | null } = { push: null };
+  const setAuthState = (next: AuthState): void => {
+    authState = next;
+    accountSink.push?.(accountViewFrom(next));
+    /**
+     * What a browser harness can ask about the account (spec 226).
+     *
+     * Published from the state the window is *given* rather than from what was
+     * clicked, so a registration that failed reads as a guest -- the same rule
+     * `data-held-weapons` follows about publishing what is attached rather than
+     * what was wanted. `scripts/probe-account.ts` is the only reader; the whole
+     * of this state is closure variables in this file, which is exactly why a
+     * probe has nothing else to ask.
+     */
+    root.dataset['account'] =
+      `${next.signedInAs ?? 'guest'}|${next.busy ? 'busy' : 'idle'}|` +
+      // Whether this tab has anywhere to sign in *at all*. A window whose
+      // buttons reach nothing is the failure this repository keeps finding --
+      // a complete screen beside a mount that never wired it up -- and it is
+      // invisible from a screenshot, because the form looks identical either
+      // way. `local` is the honest answer for single player.
+      `${plan.mode === 'remote' ? 'remote' : 'local'}`;
+  };
+
+  /**
+   * Run one auth request, with the busy flag and the failure path in one place.
+   *
+   * The three callbacks differ only in which endpoint they call and what a
+   * success means, so everything else -- refusing to overlap, storing the
+   * rotated token, reporting the server's own words on a refusal -- lives here
+   * and cannot be got right in two of the three.
+   */
+  const runAuth = async (
+    request: () => Promise<CredentialOutcome>,
+    succeeded: (outcome: Extract<CredentialOutcome, { ok: true }>) => {
+      message: string;
+      tone: AuthState['tone'];
+      signedInAs: string | null;
+      reload: boolean;
+    },
+  ): Promise<void> => {
+    // A second press while one is in flight would race two claims of the same
+    // guest -- which the server refuses correctly, and which would still put a
+    // confusing refusal on screen.
+    if (authState.busy) return;
+    setAuthState({ ...authState, busy: true, message: 'Talking to the server…', tone: 'neutral' });
+
+    const outcome = await request();
+    if (!outcome.ok) {
+      // The server's own sentence, which is written for the person who typed
+      // the form. Inventing a second wording here would be a worse copy of it.
+      setAuthState({ ...authState, busy: false, message: outcome.reason, tone: 'bad' });
+      return;
+    }
+
+    // Stored before anything else: the credential this browser holds is the
+    // only thing that reaches the character, and a reload below must find it.
+    authToken = outcome.token;
+    rememberAuthToken(localStorage, outcome.token);
+
+    const result = succeeded(outcome);
+    setAuthState({
+      signedInAs: result.signedInAs,
+      // Left busy through a reload, so the window cannot be pressed again in
+      // the moment between asking for one and getting it.
+      busy: result.reload,
+      message: result.message,
+      tone: result.tone,
+    });
+    if (result.reload) location.reload();
+  };
+
 
   /**
    * The bundled map -- built for single-player, and for nothing else (spec 146).
@@ -496,7 +601,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // A token from this tab's last load, so a reload comes back to the same
     // body rather than spawning a second one beside it (spec 150).
     ...(plan.mode === 'remote' ? { resumeToken: plan.resumeToken } : {}),
-    // Who this tab signed in as (spec 224). A server with an auth gate reads
+    // Who this tab signed in as (spec 226). A server with an auth gate reads
     // the player off this and ignores `playerId` above; one without ignores
     // this instead, which is why the loopback path never sets it.
     ...(authToken === '' ? {} : { authToken }),
@@ -1617,6 +1722,64 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       ui.setMaxZoom(choice);
       saveMaxZoom(bindingStorage, choice);
     },
+    /**
+     * Signing in from inside the game (spec 226).
+     *
+     * Supplied only in remote mode, and the absence is the feature: an in-tab
+     * single-player session has no server to have an account on, so the window
+     * opens, says what it is, and every button in it does nothing rather than
+     * failing against an endpoint that is not there.
+     *
+     * `validate` is `draftProblem`, which runs the server's own
+     * `validateLogin`/`validatePassword` -- so the greyed-out button and the
+     * refused request cannot disagree.
+     */
+    ...(plan.mode === 'remote'
+      ? {
+          account: {
+            validate: draftProblem,
+            onRegister: (login: string, password: string, displayName: string): void => {
+              void runAuth(
+                () => registerAccount(plan.httpOrigin, authToken, { login, password, displayName }),
+                // A claim keeps the same player, so nothing about this session
+                // changes: same body, same bag, same connection. Only the
+                // credential rotates, and storing it is the whole of the work.
+                (outcome) => ({
+                  message: `Account created. This character is yours — ${outcome.displayName}.`,
+                  tone: 'good' as const,
+                  signedInAs: outcome.displayName,
+                  reload: false,
+                }),
+              );
+            },
+            onSignIn: (login: string, password: string): void => {
+              void runAuth(
+                () => signInToAccount(plan.httpOrigin, authToken, { login, password }),
+                // A sign-in changes *which character this is*, and a live
+                // connection cannot become a different body: the world, the
+                // bag and the entity all belong to the session that is open.
+                // So the token is stored and the page is reloaded, which is
+                // the one operation that honestly re-runs the handshake.
+                () => ({
+                  message: 'Signed in. Loading that character…',
+                  tone: 'good' as const,
+                  signedInAs: null,
+                  reload: true,
+                }),
+              );
+            },
+            onSignOut: (): void => {
+              void (async (): Promise<void> => {
+                setAuthState({ ...authState, busy: true, message: 'Signing out…', tone: 'neutral' });
+                await signOutOfAccount(plan.httpOrigin, authToken, localStorage);
+                // Reloaded rather than patched, for the reason a sign-in is:
+                // the next session is a different character -- a fresh guest.
+                location.reload();
+              })();
+            },
+          },
+        }
+      : {}),
     // The one place the platform is asked, beside the media queries.
     scale: loadScale(bindingStorage),
     showFps: loadShowFps(bindingStorage),
@@ -1649,6 +1812,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       pressAbility(abilityId);
     },
   });
+
+  // The account window can be shown now (spec 226). Assigned rather than called
+  // through `ui` from above, and pushed once here so a session that opened
+  // holding an account's token says so before anybody presses anything.
+  accountSink.push = (view): void => ui.setAccount(view);
+  // Through `setAuthState` rather than straight at `ui`, so the initial state
+  // goes down *both* paths: the window, and the `data-account` readout a probe
+  // reads. Publishing only on change left that attribute empty until somebody
+  // pressed something, which is exactly the state a harness starts measuring in.
+  setAuthState(authState);
 
   // The bar is on the interface canvas now (spec 196), so two facts have to
   // cross once at the mount: what the frame's floor already holds -- the

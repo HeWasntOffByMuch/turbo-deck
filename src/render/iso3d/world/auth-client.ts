@@ -1,5 +1,5 @@
 /**
- * Signing this tab in, so a remote server will talk to it (spec 224).
+ * Signing this tab in, so a remote server will talk to it (spec 226).
  *
  * The whole of the client half. A server with an auth gate refuses a `Hello`
  * with no session token, and the endpoint that hands one out asks for nothing:
@@ -10,11 +10,11 @@
  * The `fetch` is the only impure thing here; the decision of *whether* to fetch
  * is `needsGuestSession`, which is pure and tested.
  *
- * Registering and logging in are deliberately not here. They need a form, and a
- * form is a screen -- `POST /api/auth/register` with the stored guest token
- * claims this character, and `src/ui/screens/` is where that goes when somebody
- * builds it. What this file guarantees is that there is a character worth
- * claiming by then.
+ * Registering, signing in and signing out sit beside it, because they are the
+ * same three lines of `fetch` against the same base url and splitting them
+ * across two files would put half the endpoint names in each. What decides
+ * *when* to call them is `src/ui/screens/account.ts`, which cannot reach the
+ * network at all.
  */
 
 import type { StorageLike } from '../../../ui/core/layout-store.js';
@@ -23,10 +23,30 @@ import { forgetAuthToken, rememberAuthToken } from './connection.js';
 /** What `/api/auth/guest` and `/api/auth/session` answer with. */
 interface SessionBody {
   readonly session?: { readonly token?: unknown; readonly playerId?: unknown };
+  readonly identity?: { readonly displayName?: unknown; readonly kind?: unknown };
+}
+
+/** Who a token belongs to, when the server was able to say. */
+export interface TokenIdentity {
+  readonly displayName: string;
+  readonly kind: 'guest' | 'account';
 }
 
 export type SignInOutcome =
-  | { readonly ok: true; readonly token: string; readonly fresh: boolean }
+  | {
+      readonly ok: true;
+      readonly token: string;
+      readonly fresh: boolean;
+      /**
+       * What the server said this token is, when it was asked.
+       *
+       * Null for a token it just minted (a guest, by definition) and for a
+       * server that does not do auth. Present when a *stored* token was
+       * checked, which is the case that matters: it is how a returning account
+       * holder's window opens saying their name rather than "you are a guest".
+       */
+      readonly identity: TokenIdentity | null;
+    }
   /**
    * Four ways this fails and one message would name none of them: no server
    * there, a server that refused, a body that made no sense, and a server that
@@ -58,6 +78,14 @@ async function post(url: string, body: unknown, token = ''): Promise<Response> {
   });
 }
 
+function identityFrom(body: unknown): TokenIdentity | null {
+  const identity = (body as SessionBody | null)?.identity;
+  const displayName = identity?.displayName;
+  const kind = identity?.kind;
+  if (typeof displayName !== 'string' || (kind !== 'guest' && kind !== 'account')) return null;
+  return { displayName, kind };
+}
+
 function tokenFrom(body: unknown): string {
   const session = (body as SessionBody | null)?.session;
   const token = session?.token;
@@ -84,11 +112,13 @@ export async function ensureAuthToken(
   try {
     if (!needsGuestSession(storedToken)) {
       const check = await post(`${httpOrigin}/api/auth/session`, {}, storedToken);
-      if (check.ok) return { ok: true, token: storedToken, fresh: false };
+      if (check.ok) {
+        return { ok: true, token: storedToken, fresh: false, identity: identityFrom(await check.json()) };
+      }
       if (check.status === 404) {
         // A server that does not do auth at all. Nothing to sign into, and the
         // stored token is meaningless rather than wrong -- so it is left alone.
-        return { ok: true, token: storedToken, fresh: false };
+        return { ok: true, token: storedToken, fresh: false, identity: null };
       }
       // 401: expired, revoked, or rotated by a claim on another device.
       forgetAuthToken(storage);
@@ -105,10 +135,142 @@ export async function ensureAuthToken(
     if (token === '') return { ok: false, reason: 'the server sent a session with no token in it' };
 
     rememberAuthToken(storage, token);
-    return { ok: true, token, fresh: true };
+    // A token this call just minted is a guest's by construction, so there is
+    // nothing to ask and nothing to report.
+    return { ok: true, token, fresh: true, identity: null };
   } catch (error) {
     // A network failure, a CORS refusal, or a body that would not parse. The
     // socket is about to be tried anyway and will give the better message.
     return { ok: false, reason: error instanceof Error ? error.message : 'could not reach the server' };
   }
+}
+
+/**
+ * What a sign-in or a claim answers with.
+ *
+ * The token is stored by the caller rather than here, because *when* it becomes
+ * this browser's identity differs between the two: a claim keeps the same
+ * player so it takes effect immediately, and a sign-in changes which character
+ * this is, which only the next connection can honour.
+ */
+export type CredentialOutcome =
+  | {
+      readonly ok: true;
+      readonly token: string;
+      readonly playerId: string;
+      readonly displayName: string;
+      /** The guest character left behind by a sign-in, when there was one. */
+      readonly retainedGuestPlayerId: string | null;
+    }
+  | { readonly ok: false; readonly reason: string };
+
+interface CredentialBody {
+  readonly session?: {
+    readonly token?: unknown;
+    readonly playerId?: unknown;
+    readonly displayName?: unknown;
+  };
+  readonly retainedGuestPlayerId?: unknown;
+  readonly error?: unknown;
+}
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Read an auth reply, whether it succeeded or not.
+ *
+ * The server's own message is used verbatim on a refusal -- "that login is
+ * already taken", "login or password is incorrect" -- because it is written to
+ * be read by the person who typed it and inventing a second wording here would
+ * be a second, worse copy of the same sentence.
+ */
+async function credential(response: Response): Promise<CredentialOutcome> {
+  let body: CredentialBody = {};
+  try {
+    body = (await response.json()) as CredentialBody;
+  } catch {
+    /* a body that will not parse is handled by the checks below */
+  }
+  if (!response.ok) {
+    const reason = text(body.error);
+    return { ok: false, reason: reason.length > 0 ? reason : `the server refused (${response.status})` };
+  }
+  const token = text(body.session?.token);
+  if (token === '') return { ok: false, reason: 'the server sent a session with no token in it' };
+  return {
+    ok: true,
+    token,
+    playerId: text(body.session?.playerId),
+    displayName: text(body.session?.displayName),
+    retainedGuestPlayerId: typeof body.retainedGuestPlayerId === 'string' ? body.retainedGuestPlayerId : null,
+  };
+}
+
+function failed(error: unknown): CredentialOutcome {
+  return { ok: false, reason: error instanceof Error ? error.message : 'could not reach the server' };
+}
+
+/**
+ * Create an account.
+ *
+ * **`guestToken` is what makes this a claim rather than a fresh start.** With
+ * one, the character being played becomes the new account's, progression
+ * intact; without one the server makes a new character alongside the account.
+ * So the caller passes whatever this browser holds and lets the server decide,
+ * which is also why a player who is already signed in never reaches here.
+ */
+export async function registerAccount(
+  httpOrigin: string,
+  guestToken: string,
+  form: { readonly login: string; readonly password: string; readonly displayName: string },
+): Promise<CredentialOutcome> {
+  try {
+    return await credential(
+      await post(`${httpOrigin}/api/auth/register`, form, guestToken),
+    );
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+/**
+ * Sign into an existing account.
+ *
+ * The guest token rides along so the server can report `retainedGuestPlayerId`
+ * -- what it does *not* do is merge anything, and the screen says so before
+ * this is ever called.
+ */
+export async function signInToAccount(
+  httpOrigin: string,
+  guestToken: string,
+  form: { readonly login: string; readonly password: string },
+): Promise<CredentialOutcome> {
+  try {
+    return await credential(await post(`${httpOrigin}/api/auth/login`, form, guestToken));
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+/**
+ * Revoke this session at the server and forget it here.
+ *
+ * The local half runs whatever the server said, and that ordering is the point:
+ * a sign-out that failed to reach the server but left the token in storage
+ * would be a button that visibly does nothing. The session is revoked or it is
+ * unreachable; either way this browser stops using it.
+ */
+export async function signOutOfAccount(
+  httpOrigin: string,
+  token: string,
+  storage: StorageLike,
+): Promise<void> {
+  try {
+    await post(`${httpOrigin}/api/auth/logout`, {}, token);
+  } catch {
+    /* an unreachable server does not stop us letting go of the credential */
+  }
+  forgetAuthToken(storage);
 }

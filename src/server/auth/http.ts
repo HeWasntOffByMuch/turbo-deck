@@ -1,5 +1,5 @@
 /**
- * The auth endpoints (spec 224).
+ * The auth endpoints (spec 226).
  *
  * HTTP rather than new wire messages, for three reasons. The handshake already
  * has to happen before a socket is useful, so there is no ordering to invent.
@@ -21,8 +21,36 @@ import { AuthError, type AuthService } from './auth-service.js';
 /** Bodies are small; anything larger is refused rather than buffered. */
 const MAX_BODY_BYTES = 4096;
 
+/**
+ * Cross-origin headers (spec 226).
+ *
+ * Open, and that is a considered position rather than a shortcut. The page and
+ * the game server are *expected* to be different origins here -- `?server=`
+ * points a build anywhere, which is the whole shape of this client -- and the
+ * WebSocket endpoint beside these already accepts a connection from any origin,
+ * because `WebSocketTransport` checks none. Locking down the HTTP half while
+ * the socket half is open would protect nothing and would break exactly the
+ * configuration the game supports.
+ *
+ * What makes it safe to be open is that **nothing here is authenticated by
+ * ambient credentials**. There is no cookie and no session on the connection:
+ * every request carries its bearer token explicitly, so a hostile page can make
+ * a browser send a request but cannot make it send *somebody else's token* --
+ * which is the entire class of attack same-origin policy is defending against.
+ * `Access-Control-Allow-Credentials` is deliberately absent for the same
+ * reason, and must stay absent if a cookie is ever added.
+ */
+function cors(response: ServerResponse): void {
+  response.setHeader('access-control-allow-origin', '*');
+  response.setHeader('access-control-allow-methods', 'POST, OPTIONS');
+  response.setHeader('access-control-allow-headers', 'content-type, authorization');
+  // A day, so a claim's preflight is not re-asked on every keystroke of a form.
+  response.setHeader('access-control-max-age', '86400');
+}
+
 function json(response: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
+  cors(response);
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(text),
@@ -105,6 +133,16 @@ export function createAuthHttp(options: AuthHttpOptions): (
   return async function handle(request, response): Promise<boolean> {
     const url = (request.url ?? '/').split('?')[0] ?? '/';
     if (!url.startsWith('/api/auth/')) return false;
+
+    // The preflight a cross-origin `fetch` sends before a POST carrying JSON
+    // and an Authorization header. Answered before the method check, since it
+    // is an OPTIONS and would otherwise be refused as "use POST" -- which the
+    // browser reports as a CORS failure with no hint of what actually happened.
+    if (request.method === 'OPTIONS') {
+      cors(response);
+      response.writeHead(204).end();
+      return true;
+    }
 
     if (request.method !== 'POST') {
       json(response, 405, { error: 'use POST' });

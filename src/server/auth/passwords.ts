@@ -1,5 +1,5 @@
 /**
- * Password hashing (spec 224).
+ * Password hashing (spec 226).
  *
  * **scrypt**, from `node:crypto`. Not invented here -- it is RFC 7914, it is
  * memory-hard, and it is in the standard library, which for a one-developer
@@ -38,16 +38,6 @@ const SCRYPT_P = 1;
 const KEY_BYTES = 32;
 const SALT_BYTES = 16;
 const MAX_MEM = 192 * SCRYPT_N * SCRYPT_R;
-
-/**
- * The longest password accepted.
- *
- * A bound rather than a preference: scrypt's cost is in N, not in the input
- * length, but hashing is the one endpoint an unauthenticated caller can make
- * the server do arbitrary work at, and megabyte passwords are not a use case.
- */
-export const MAX_PASSWORD_LENGTH = 256;
-export const MIN_PASSWORD_LENGTH = 8;
 
 function derive(password: string, salt: Buffer, n: number, r: number, p: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {

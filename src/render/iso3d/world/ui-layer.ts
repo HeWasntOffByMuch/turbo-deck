@@ -35,6 +35,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import type { WindowId } from './control-actions.js';
 import type { MaxZoomChoice } from '../../../ui/input/display-store.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
+import type { AccountView } from '../../../ui/screens/account.js';
 import type { ActionSlot } from './action-bar.js';
 import { NO_ACTION_BAR, type ActionBarBox } from './hud-layout.js';
 import { DEFAULT_SHOW_FPS, type ScaleChoice } from '../../../ui/input/display-store.js';
@@ -240,6 +241,11 @@ export class UiLayer {
    * the interface is. All it does is keep the page's tick in step with what the
    * mount decided.
    */
+  /** What the server says this session is (spec 226). Straight through. */
+  setAccount(view: AccountView): void {
+    this.screens.setAccount(view);
+  }
+
   setShowFps(show: boolean): void {
     this.screens.setShowFps(show);
   }

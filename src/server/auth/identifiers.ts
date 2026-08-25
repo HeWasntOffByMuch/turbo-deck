@@ -1,5 +1,5 @@
 /**
- * Normalizing and validating what somebody types to log in with (spec 224).
+ * Normalizing and validating what somebody types to log in with (spec 226).
  *
  * Pure, and separate from the service, because these are the rules a test wants
  * to state directly: what counts as the same login, and what is refused.
@@ -11,7 +11,24 @@
  * "ada" both register and then makes it a coin toss which one a login finds.
  */
 
-import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from './passwords.js';
+/**
+ * The password bounds live here rather than in `passwords.ts`, and that is not
+ * filing (spec 226).
+ *
+ * This module is **pure** -- no `node:crypto`, no driver, nothing a browser
+ * cannot run -- which is what lets `render/iso3d/world/account-model.ts` import
+ * it and answer "is this button live" with the server's own rule instead of a
+ * second copy. `passwords.ts` imports `node:crypto`, so one constant living
+ * there pulled scrypt into the renderer's bundle through this file and broke
+ * `npm run build`. They are validation, and validation is here.
+ *
+ * The upper bound is a real bound rather than a preference: scrypt's cost is in
+ * N and not in the input length, but hashing is the one thing an
+ * unauthenticated caller can make the server do work for, and megabyte
+ * passwords are not a use case.
+ */
+export const MIN_PASSWORD_LENGTH = 8;
+export const MAX_PASSWORD_LENGTH = 256;
 
 export const MIN_LOGIN_LENGTH = 3;
 export const MAX_LOGIN_LENGTH = 32;
