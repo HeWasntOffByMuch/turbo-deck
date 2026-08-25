@@ -295,6 +295,11 @@ const PURE_RENDER = [
   'src/render/iso3d/editor/markers.ts',
   'src/render/iso3d/editor/paint.ts',
   'src/render/iso3d/editor/scatter.ts',
+  // Where a building goes and how big a drag makes it (specs 222/223). Pure for
+  // the reason the scatter beside it is, and one step further: the scatter is
+  // *seeded*, and this draws from nothing at all -- a press is a placement
+  // somebody decided, so the same press twice has to be the same prop twice.
+  'src/render/iso3d/editor/structure.ts',
   'src/render/iso3d/editor/*.test.ts',
 ];
 
@@ -307,6 +312,21 @@ const PURE_RENDER = [
  * covered the moment it exists, and the only way to opt out is to put it in
  * src/ui/render/, which is a visible decision rather than an omission.
  */
+/**
+ * The one editor test that has to draw (spec 223).
+ *
+ * `editor/*.test.ts` is in PURE_RENDER because every rule the editor's pure
+ * half states is meant to be assertable in Node, and that is worth keeping. The
+ * building preview's one load-bearing claim is the exception it cannot be: that
+ * a prefab built at the origin and moved by a group transform lands every
+ * vertex where `buildRegionInstances` would put it. That is a statement about
+ * three.js matrix composition and there is no way to make it without three.js.
+ *
+ * Named as one file rather than loosened to a glob, so the next editor test
+ * that wants a rendering library has to come here and say why.
+ */
+const EDITOR_DRAWING_TESTS = ['src/render/iso3d/editor/structure-ghost.test.ts'];
+
 const UI_PURE = ['src/ui/**/*.ts'];
 const UI_IMPURE = ['src/ui/render/canvas2d.ts'];
 /** The one bridge to the game's renderer: the 5x7 glyph table. See below. */
@@ -532,6 +552,7 @@ export default tseslint.config(
   },
   {
     files: PURE_RENDER,
+    ignores: EDITOR_DRAWING_TESTS,
     rules: {
       'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS],
       'no-restricted-globals': ['error', ...NO_WALL_CLOCK_OR_DOM],
