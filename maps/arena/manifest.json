@@ -4684,112 +4684,76 @@
       ],
       "spawners": [
         {
+          "id": "spawner-1",
+          "monsterId": "small_spider",
+          "x": -660.548,
+          "z": -205.723
+        },
+        {
           "id": "spawner-2",
           "monsterId": "small_spider",
-          "x": 244.69500000000005,
-          "z": 239.62599999999998
-        },
-        {
-          "id": "spawner-12",
-          "monsterId": "small_spider",
-          "x": 74.25,
-          "z": 713.5219999999999
-        },
-        {
-          "id": "spawner-13",
-          "monsterId": "small_spider",
-          "x": 100.74799999999999,
-          "z": 812.601
-        },
-        {
-          "id": "spawner-14",
-          "monsterId": "small_spider",
-          "x": 138.394,
-          "z": 801.231
+          "x": -652.552,
+          "z": -310.92
         },
         {
           "id": "spawner-3",
-          "monsterId": "grazer",
-          "x": 829,
-          "z": 638
-        },
-        {
-          "id": "spawner-5",
-          "monsterId": "stalker",
-          "x": 265,
-          "z": 709
-        },
-        {
-          "id": "spawner-6",
-          "monsterId": "stalker",
-          "x": 372,
-          "z": 760
-        },
-        {
-          "id": "spawner-1",
-          "monsterId": "grazer",
-          "x": 473.106,
-          "z": 260.165
-        },
-        {
-          "id": "spawner-sheep-1",
-          "monsterId": "sheep",
-          "x": 520,
-          "z": 500
-        },
-        {
-          "id": "spawner-sheep-2",
-          "monsterId": "sheep",
-          "x": 590,
-          "z": 520
-        },
-        {
-          "id": "spawner-sheep-3",
-          "monsterId": "sheep",
-          "x": 545,
-          "z": 575
-        },
-        {
-          "id": "spawner-sheep-4",
-          "monsterId": "sheep",
-          "x": 615,
-          "z": 575
+          "monsterId": "small_spider",
+          "x": -612.01,
+          "z": -236.589
         },
         {
           "id": "spawner-4",
-          "monsterId": "grazer",
-          "x": 934,
-          "z": 570
+          "monsterId": "small_spider",
+          "x": -593.797,
+          "z": -169.382
         },
         {
-          "id": "spawner-9",
-          "monsterId": "ravager",
-          "x": 1080,
-          "z": 780
-        },
-        {
-          "id": "spawner-7",
-          "monsterId": "grazer",
-          "x": 874.281,
-          "z": 269.529
+          "id": "spawner-5",
+          "monsterId": "small_spider",
+          "x": -592.1030000000001,
+          "z": -285.95
         },
         {
           "id": "spawner-8",
-          "monsterId": "grazer",
-          "x": 961.182,
-          "z": 248.56
+          "monsterId": "sheep",
+          "x": 275.159,
+          "z": 44.00200000000001
+        },
+        {
+          "id": "spawner-9",
+          "monsterId": "sheep",
+          "x": 282.052,
+          "z": 78.71199999999999
         },
         {
           "id": "spawner-10",
-          "monsterId": "grazer",
-          "x": 953.4,
-          "z": 328.19
+          "monsterId": "sheep",
+          "x": 339.058,
+          "z": 86.57499999999999
         },
         {
           "id": "spawner-11",
-          "monsterId": "slinger",
-          "x": 1131,
-          "z": 592
+          "monsterId": "sheep",
+          "x": 374.595,
+          "z": 46.303
+        },
+        {
+          "id": "spawner-12",
+          "monsterId": "sheep",
+          "x": 496.14099999999996,
+          "z": 77.39600000000002
+        },
+        {
+          "id": "spawner-6",
+          "monsterId": "ravager",
+          "x": -87.45499999999998,
+          "z": 823.523
+        },
+        {
+          "id": "spawner-7",
+          "monsterId": "ravager",
+          "x": -106.07900000000001,
+          "z": 750.837
         }
       ],
       "regions": [
@@ -5408,19 +5372,19 @@
         {
           "rx": 0,
           "rz": 0,
-          "hash": "2b2be437",
+          "hash": "4697b7ad",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 0,
-          "hash": "fc8e2cd0",
+          "hash": "5640ff8a",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 0,
-          "hash": "066744de",
+          "hash": "05f859ed",
           "cells": 3136
         },
         {
@@ -5504,19 +5468,19 @@
         {
           "rx": 0,
           "rz": 1,
-          "hash": "e1f2aaa0",
+          "hash": "10385441",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 1,
-          "hash": "932a8552",
+          "hash": "2adb674c",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 1,
-          "hash": "c89f669a",
+          "hash": "ef284a52",
           "cells": 3136
         },
         {
@@ -5600,19 +5564,19 @@
         {
           "rx": 0,
           "rz": 2,
-          "hash": "fe62989c",
+          "hash": "d205583b",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 2,
-          "hash": "2bb395e0",
+          "hash": "868336bb",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 2,
-          "hash": "308c400d",
+          "hash": "d91056fa",
           "cells": 3136
         },
         {
@@ -6140,5 +6104,5 @@
       ]
     }
   ],
-  "mapId": "5354d27b"
+  "mapId": "714240f8"
 }
