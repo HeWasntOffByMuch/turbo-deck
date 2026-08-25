@@ -179,7 +179,6 @@ describe('the crowd pass is part of the deterministic core', () => {
       expect(b?.position.x).toBe(a?.position.x);
       expect(b?.position.y).toBe(a?.position.y);
       expect(b?.facing).toBe(a?.facing);
-      expect(b?.attackSlot).toBe(a?.attackSlot);
     }
   });
 

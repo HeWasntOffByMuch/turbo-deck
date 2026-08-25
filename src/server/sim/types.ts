@@ -457,20 +457,6 @@ export interface ServerEntity {
   readonly repathAtTick: number;
   /** Where the target was when `path` was planned, to notice it moving away. */
   readonly pathGoal: Vec2 | null;
-  /**
-   * Which slot on its target's ring this body is walking to, or -1 (spec 187).
-   *
-   * Held on the entity rather than recomputed, because the recomputation is
-   * correct every tick and that is exactly the problem: a body that took the
-   * best free slot each tick would be shuffled round the ring by whoever
-   * happened to ask before it and would never arrive anywhere. Holding it is
-   * the hysteresis.
-   *
-   * Only meaningful against the target the body had when it was taken, so it is
-   * offered back to {@link SlotBoard.take} only while {@link targetId} has not
-   * changed.
-   */
-  readonly attackSlot: number;
   /** Ability resource. Live, clamped to `stats.maxResource` on recalculation. */
   readonly resource: number;
   /** The cast in progress, or null when free (spec 062). */
