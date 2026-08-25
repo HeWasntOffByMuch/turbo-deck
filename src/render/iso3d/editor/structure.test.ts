@@ -14,7 +14,17 @@ import {
   type Rect,
 } from '../../../terrain/index.js';
 import { EditHistory } from './history.js';
-import { DEFAULT_STRUCTURE, placeStructure, structureFootprint, type StructureSettings } from './structure.js';
+import {
+  baseFootprint,
+  DEFAULT_STRUCTURE,
+  dragScale,
+  placeStructure,
+  STRUCTURE_SCALE_MAX,
+  STRUCTURE_SCALE_MIN,
+  STRUCTURE_SCALE_STEP,
+  structureFootprint,
+  type StructureSettings,
+} from './structure.js';
 
 /**
  * Spec 222. The scatter's tests are about a *distribution*; these are about the
@@ -215,5 +225,102 @@ describe('a placed building survives the map document', () => {
     // the way out, which is a fact about the format rather than about this tool.
     expect(props[0]?.scale).toBeCloseTo(1.3, 2);
     expect(props[0]?.rotation).toBeCloseTo(Math.PI / 4, 2);
+  });
+});
+
+describe('dragging a building out to size (spec 223)', () => {
+  it('makes the drag distance the footprint radius, so the ring is under the cursor', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      const base = baseFootprint(kind);
+      // Anywhere between the clamps, the ring the drag draws is the ring the
+      // building will block -- which is the whole claim of the gesture.
+      for (const scale of [0.6, 1, 1.4, 1.9]) {
+        const wanted = base * scale;
+        expect(dragScale(kind, wanted)).toBeCloseTo(scale, 9);
+        expect(structureFootprint({ ...settings({ structure: kind }), structureScale: scale })).toBeCloseTo(
+          wanted,
+          9,
+        );
+      }
+    }
+  });
+
+  it('lands on a size the panel could also have been set to', () => {
+    // Or the drag writes a number into that slider nobody could have typed, and
+    // the *next* building goes down at it.
+    for (const kind of STRUCTURE_KINDS) {
+      const base = baseFootprint(kind);
+      for (const distance of [base * 0.77, base * 1.013, base * 1.4449, base * 1.9992]) {
+        const scale = dragScale(kind, distance);
+        expect(scale).not.toBeNull();
+        const steps = (scale as number) / STRUCTURE_SCALE_STEP;
+        expect(steps).toBeCloseTo(Math.round(steps), 9);
+        // And prints as one, which is the half the panel actually shows: a
+        // slider field reading `1.1500000000000001` is a number nobody set.
+        expect(String(scale)).toMatch(/^\d+(\.\d{1,2})?$/);
+        // ...and it is the nearest one, so the ring is still under the cursor.
+        expect(Math.abs((scale as number) - distance / base)).toBeLessThanOrEqual(STRUCTURE_SCALE_STEP / 2 + 1e-9);
+      }
+    }
+  });
+
+  it('answers null for a drag too short to be one, so a click keeps the panel\'s size', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      const base = baseFootprint(kind);
+      expect(dragScale(kind, 0)).toBeNull();
+      expect(dragScale(kind, base * STRUCTURE_SCALE_MIN - 0.001)).toBeNull();
+    }
+  });
+
+  it('engages continuously: the first size it ever answers is the smallest one', () => {
+    // The reason the threshold is the smallest ring rather than some chosen
+    // number of units. Picked independently, crossing it would jump from
+    // whatever the panel said straight to the minimum -- which reads as the
+    // building collapsing rather than as a size being set.
+    for (const kind of STRUCTURE_KINDS) {
+      const engages = baseFootprint(kind) * STRUCTURE_SCALE_MIN;
+      expect(dragScale(kind, engages)).toBeCloseTo(STRUCTURE_SCALE_MIN, 9);
+    }
+  });
+
+  it('clamps at the top and never past it, however far the cursor goes', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      const base = baseFootprint(kind);
+      expect(dragScale(kind, base * STRUCTURE_SCALE_MAX)).toBeCloseTo(STRUCTURE_SCALE_MAX, 9);
+      expect(dragScale(kind, base * 40)).toBeCloseTo(STRUCTURE_SCALE_MAX, 9);
+      expect(dragScale(kind, Number.POSITIVE_INFINITY)).toBeCloseTo(STRUCTURE_SCALE_MAX, 9);
+    }
+  });
+
+  it('never decreases as the drag grows', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      let last = 0;
+      for (let d = 0; d < baseFootprint(kind) * 3; d += 3) {
+        const now = dragScale(kind, d) ?? STRUCTURE_SCALE_MIN;
+        expect(now).toBeGreaterThanOrEqual(last - 1e-9);
+        last = now;
+      }
+    }
+  });
+
+  it('refuses a distance that is not a number rather than answering NaN', () => {
+    expect(dragScale('house', Number.NaN)).toBeNull();
+  });
+
+  it('places at the size the drag reached, at the point the press landed', () => {
+    // The two halves of the gesture, together: the press said where and the
+    // drag said how big, and it is the *anchor* that ends up in the document.
+    const map = loaded();
+    const base = baseFootprint('house');
+    const scale = dragScale('house', base * 1.5);
+    expect(scale).toBeCloseTo(1.5, 9);
+    const out = placeStructure(
+      map.store,
+      LAYER,
+      settings({ structureScale: scale ?? 1 }),
+      { x: 40, z: -25 },
+    );
+    expect(out.placed).toMatchObject({ x: 40, y: -25 });
+    expect(out.placed?.scale).toBeCloseTo(1.5, 9);
   });
 });

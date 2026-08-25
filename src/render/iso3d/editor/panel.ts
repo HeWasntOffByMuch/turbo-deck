@@ -1,5 +1,6 @@
 import GUI from 'lil-gui';
 import { fenceStep } from './fence.js';
+import { STRUCTURE_SCALE_MAX, STRUCTURE_SCALE_MIN, STRUCTURE_SCALE_STEP } from './structure.js';
 import {
   FENCE_STYLE_CHOICES,
   MARKER_CHOICES,
@@ -15,10 +16,10 @@ import {
   ROCK_TOOL_COLORS,
   SPAWNER_MONSTER_CHOICES,
   SPECIES_CHOICES,
+  STRUCTURE_CHOICES,
   TERRAIN_TOOL_CHOICES,
   TOOL_COLORS,
   visibleGroups,
-  STRUCTURE_CHOICES,
   type EditorMode,
   type EditorSettings,
   type ToolChoice,
@@ -159,6 +160,15 @@ export interface EditorPanel {
   refresh(): void;
   /** Re-read the parts list, after one has been added or removed (spec 084). */
   refreshParts(): void;
+  /**
+   * Re-read the building size, which the editor writes back after a drag.
+   *
+   * Its own hook rather than `refresh()`, because that one force-opens every
+   * folder it shows -- right when a mode is armed, and wrong on every
+   * placement: collapse the terrain folder, put a hut down, and it would
+   * spring back open.
+   */
+  syncStructureSize(): void;
   destroy(): void;
 }
 
@@ -308,7 +318,11 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // eye. Degrees because that is the unit somebody turning a house thinks in;
   // `placeStructure` converts once, on the way into the document.
   structures.add(s, 'structureYaw', 0, 345, 15).name('Facing');
-  structures.add(s, 'structureScale', 0.5, 2, 0.05).name('Size');
+  // The bounds are the drag's own, from `structure.ts`, so the slider cannot
+  // offer a size the drag refuses or stop short of one it reaches (spec 223).
+  const structureSize = structures
+    .add(s, 'structureScale', STRUCTURE_SCALE_MIN, STRUCTURE_SCALE_MAX, STRUCTURE_SCALE_STEP)
+    .name('Size');
 
   const markers = gui.addFolder('Markers');
   strip(
@@ -475,6 +489,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       [paint, show.paint],
       [scatter, show.scatter],
       [fence, show.fence],
+      [structures, show.structure],
       [markers, show.marker],
       [parts, show.part],
       [rock, show.rock],
@@ -489,6 +504,9 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     refreshParts: (): void => {
       refreshPartIds();
       refreshRockLayers();
+    },
+    syncStructureSize: (): void => {
+      structureSize.updateDisplay();
     },
     refresh(): void {
       gui.controllersRecursive().forEach((c) => c.updateDisplay());

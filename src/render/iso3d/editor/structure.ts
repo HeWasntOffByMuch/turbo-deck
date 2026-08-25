@@ -44,6 +44,71 @@ export const DEFAULT_STRUCTURE: StructureSettings = {
   structureYaw: 0,
 };
 
+/**
+ * The sizes a building may be put down at.
+ *
+ * One pair for both controls: the panel's slider is built from these and the
+ * drag clamps to them, so the two cannot come to different answers about which
+ * sizes exist -- a slider that offered a size the drag refused would be a
+ * building you could set down one way and not the other.
+ */
+export const STRUCTURE_SCALE_MIN = 0.5;
+export const STRUCTURE_SCALE_MAX = 2;
+/**
+ * The sizes in between, as a count of steps to the unit.
+ *
+ * A drag lands on one of these rather than on whatever real number the cursor
+ * happened to be at, and that is the shared-bounds rule one step further in:
+ * the panel offers sizes in twentieths, so a drag that produced
+ * `1.1401525949033495` would put a number in that slider it could not have been
+ * set to, and place the *next* building at it. Two huts dragged to about the
+ * same size coming out the same size is the point of a step rather than a side
+ * effect of one.
+ *
+ * A **count** rather than a width, because the rounding is done with it and the
+ * two forms do not agree in binary: `Math.round(r / 0.05) * 0.05` is
+ * `1.1500000000000001`, which is the number the panel would then display, while
+ * `Math.round(r * 20) / 20` is the double that prints as `1.15`. The width is
+ * derived from it for the slider, and `1 / 20` is exactly the double `0.05`.
+ */
+export const STRUCTURE_SCALE_STEPS_PER_UNIT = 20;
+export const STRUCTURE_SCALE_STEP = 1 / STRUCTURE_SCALE_STEPS_PER_UNIT;
+
+/** What a building of this kind blocks at scale 1. */
+export function baseFootprint(kind: StructureKind): number {
+  return footprintRadius({ kind, x: 0, y: 0, scale: 1, rotation: 0, tint: 0 });
+}
+
+/**
+ * The scale a drag of this length means, or **null** for a drag too short to
+ * be one -- in which case the panel's size stands and the gesture is a click.
+ *
+ * The distance **is** the footprint radius, so the ring stays under the cursor
+ * rather than tracking some multiple of where it went. Every other radius in
+ * this editor is dragged out the same way.
+ *
+ * Where sizing engages is derived rather than chosen, and that is what keeps
+ * the gesture from having a step in it: the threshold is the *smallest ring*,
+ * so the first scale this can ever return is `STRUCTURE_SCALE_MIN` and the
+ * value climbs continuously from there. A threshold picked independently --
+ * "a dozen units", say -- would jump from whatever the panel said straight to
+ * the minimum the moment it was crossed, which reads as the building
+ * collapsing rather than as a size being set.
+ */
+export function dragScale(kind: StructureKind, distance: number): number | null {
+  const base = baseFootprint(kind);
+  // NaN specifically, rather than "not finite": the clamp below already handles
+  // a distance of any size, and refusing an infinite one would be the gesture
+  // silently falling back to the panel at the far end of its own range.
+  if (!(base > 0) || Number.isNaN(distance)) return null;
+  if (distance < base * STRUCTURE_SCALE_MIN) return null;
+  // Snapped to the step, then clamped. Either order gives the same answer,
+  // because both bounds are whole steps -- which is worth keeping true.
+  const steps = Math.round((distance / base) * STRUCTURE_SCALE_STEPS_PER_UNIT);
+  const snapped = steps / STRUCTURE_SCALE_STEPS_PER_UNIT;
+  return Math.min(STRUCTURE_SCALE_MAX, Math.max(STRUCTURE_SCALE_MIN, snapped));
+}
+
 export interface StructureResult {
   readonly placed: Prop | null;
   /** Chunks whose contents changed: the one the building was filed into. */

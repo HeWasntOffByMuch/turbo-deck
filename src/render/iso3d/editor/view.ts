@@ -83,7 +83,8 @@ import {
 } from './rock.js';
 import { fenceStroke, NO_FENCE_PATH, type FencePath } from './fence.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
-import { placeStructure } from './structure.js';
+import { dragScale, placeStructure, structureFootprint } from './structure.js';
+import { createStructureGhost } from './structure-ghost.js';
 
 /**
  * The map editor tab (spec 049).
@@ -794,6 +795,10 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   const rockOutline = createArenaOutline(0x9aa4b0);
   rockOutline.object.visible = false;
   scene.addOverlay(rockOutline.object);
+
+  // The building under the cursor, before it is put down (spec 223).
+  const structureGhost = createStructureGhost();
+  scene.addOverlay(structureGhost.object);
   const navView = createNavView();
   scene.addOverlay(navView.object);
 
@@ -810,6 +815,28 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
   let partAnchor: { x: number; z: number } | null = null;
   /** Where a tier drag started (spec 123). Null when none is in progress. */
   let rockAnchor: { x: number; z: number } | null = null;
+  /**
+   * Where a building's press landed, while the drag that sizes it is still
+   * going on (spec 223).
+   *
+   * The building goes at the **anchor**, never at where the cursor ended up:
+   * the drag says how big, and a press already said where.
+   */
+  let structureAnchor: { x: number; z: number } | null = null;
+
+  /**
+   * The size a building would be put down at right now.
+   *
+   * The drag's, once it has left the smallest ring; the panel's until then, and
+   * whenever there is no drag. One function, three readers -- the cursor ring,
+   * the ghost and the commit -- because a preview that showed one size and
+   * placed another would be worse than no preview at all.
+   */
+  const armedStructureScale = (to: { x: number; z: number } | null): number => {
+    if (!structureAnchor || !to) return settings.structureScale;
+    const distance = Math.hypot(to.x - structureAnchor.x, to.z - structureAnchor.z);
+    return dragScale(settings.structure, distance) ?? settings.structureScale;
+  };
   /**
    * The first of a stair's two edges, waiting for the second (spec 132).
    *
@@ -1521,11 +1548,41 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     // that is there, and letting them aim into the void would silently do
     // nothing at a point they could not have meant.
     const at = onTerrain ?? (settings.mode === 'part' ? scene.pickPlane(mouse.x, mouse.y) : null);
-    if (at) {
-      cursor.moveTo(at.x, at.z, cursorRadius(settings), (x, z) => scene.map.world.heightAt(x, z));
+    // A building being dragged out owns the ring: centred where the press
+    // landed rather than under the cursor, at the size the drag has reached
+    // (spec 223). Every other tool works under the cursor, so `at` is both.
+    const armedScale = settings.mode === 'structure' ? armedStructureScale(at) : settings.structureScale;
+    // Scoped to the mode rather than to whether an anchor happens to be set: an
+    // anchor only outlives its own gesture if the mode changed mid-drag, and a
+    // terrain brush drawing its ring where a building's press landed would be a
+    // strange thing to have to explain.
+    const ringAt = settings.mode === 'structure' ? (structureAnchor ?? at) : at;
+    const ringRadius =
+      settings.mode === 'structure'
+        ? structureFootprint({ ...settings, structureScale: armedScale })
+        : cursorRadius(settings);
+    if (ringAt) {
+      cursor.moveTo(ringAt.x, ringAt.z, ringRadius, (x, z) => scene.map.world.heightAt(x, z));
       cursor.setVisible(true);
     } else {
       cursor.setVisible(false);
+    }
+
+    // The ghost stands wherever the ring does, which is the point of it: the
+    // ring says the footprint and this says the building. It goes away exactly
+    // where `placeStructure` would refuse -- no ground under the cursor -- so
+    // the preview vanishing *is* the refusal, seen before the click.
+    if (settings.mode === 'structure' && ringAt) {
+      structureGhost.showAt(
+        settings.structure,
+        ringAt.x,
+        ringAt.z,
+        (settings.structureYaw * Math.PI) / 180,
+        armedScale,
+        (x, z) => scene.map.world.heightAt(x, z),
+      );
+    } else {
+      structureGhost.hide();
     }
 
     const capture = (cx: number, cz: number): void => {
@@ -1563,29 +1620,11 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
         if (under) commitRemove(under.id);
         else status = 'no part under the cursor';
       }
-      if (at && settings.mode === 'structure') {
-        // On the press, like a marker and for the marker's reason: a building
-        // is not a bulk thing, and dragging would leave a street of forty of
-        // them under one stroke.
-        const out = placeStructure(scene.map.store, layerId, settings, { x: at.x, z: at.z }, capture);
-        if (out.placed) {
-          strokeChangedProps = true;
-          // Rebuilt here rather than left to the drag's throttle: this tool has
-          // no drag, so the throttled rebuild below never runs for it and the
-          // building would not appear until the next stroke of some other tool.
-          const span = boundingChunkRect(out.dirty);
-          const world = span && chunkRectWorld(scene.map.store, layerId, span);
-          if (world) scene.refreshPropsWithin(world);
-          else scene.refreshProps();
-          propsRebuiltAt = time;
-          // Said out loud, with the facing, because a hut turned 180 degrees
-          // from the one beside it is the mistake this tool actually produces
-          // and the yaw slider is the only thing that says which way is which.
-          status = `placed ${out.placed.kind} facing ${Math.round(settings.structureYaw)}\u00b0`;
-        } else if (out.refused) {
-          status = out.refused;
-        }
-      }
+      // A building lands on the *release*: the drag between the two is what
+      // sizes it (spec 223). Only the anchor is taken here, because a press has
+      // already said where the hut goes and the cursor is about to wander off
+      // to say how big.
+      structureAnchor = settings.mode === 'structure' && at ? { x: at.x, z: at.z } : null;
       if (at && settings.mode === 'marker') {
         const placed = placeMarker(
           scene.map.store,
@@ -1703,11 +1742,43 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
         else scene.refreshProps();
         propsRebuiltAt = time;
       }
-      // The ring reads the surface it may just have moved, so redraw it after.
-      cursor.moveTo(at.x, at.z, cursorRadius(settings), (x, z) => scene.map.world.heightAt(x, z));
+      // The ring reads the surface it may just have moved, so redraw it after --
+      // at whatever this frame decided its centre and radius are, or a building
+      // being dragged out would have its ring snapped back under the cursor.
+      cursor.moveTo(ringAt?.x ?? at.x, ringAt?.z ?? at.z, ringRadius, (x, z) => scene.map.world.heightAt(x, z));
     }
 
     if (input.takePaintEnd()) {
+      // A building lands here rather than on the press, because the drag
+      // between them is its size (spec 223). At the **anchor**: the press said
+      // where, and the cursor has since wandered off to say how big.
+      if (settings.mode === 'structure' && structureAnchor) {
+        const scale = armedStructureScale(at);
+        const out = placeStructure(
+          scene.map.store,
+          layerId,
+          { ...settings, structureScale: scale },
+          structureAnchor,
+          capture,
+        );
+        if (out.placed) {
+          // The rebuild, the autosave and the edit marker are the block below
+          // this one -- a building is an ordinary prop edit, which is exactly
+          // what moving it onto the release bought.
+          strokeChangedProps = true;
+          // The drag is where the size came from, so the panel is told: the
+          // next building is the size of the last one, and the slider says so.
+          settings.structureScale = scale;
+          panel.syncStructureSize();
+          status =
+            `placed ${out.placed.kind} facing ${Math.round(settings.structureYaw)}\u00b0` +
+            ` at ${scale.toFixed(2)}x`;
+        } else if (out.refused) {
+          status = out.refused;
+        }
+      }
+      structureAnchor = null;
+
       if (settings.mode === 'part') {
         partOutline.object.visible = false;
         const rect = at && partAnchor ? chunkRectFrom(scene.map.store, layerId, partAnchor, at) : null;
@@ -1772,6 +1843,15 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     // whether the frame loop calls any of it. `meshed` is counted off the scene
     // graph, so ground built and hung on nothing reads as absent.
     readout.dataset.ground = `meshed:${String(scene.groundMeshedCount)} held:${String(scene.groundHeldCount)} of:${String(chunkCount())}`;
+    // The building preview (spec 223), and the same argument again: every rule
+    // about the ghost's transform is asserted in Node, and none of them can say
+    // whether the frame loop shows it, hides it where the tool would refuse, or
+    // grows it while a drag is running. Off the scene graph, so a ghost built
+    // and hung on nothing reads as absent.
+    const ghost = structureGhost.drawn();
+    readout.dataset.ghost = ghost
+      ? `${ghost.kind} meshes:${String(ghost.meshes)} scale:${ghost.scale.toFixed(2)}`
+      : 'hidden';
     readout.innerHTML =
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
@@ -1807,7 +1887,11 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
       window.removeEventListener('keydown', onKeyDown, true);
       root.removeEventListener('dragover', onDragOver);
       root.removeEventListener('drop', onDrop);
-      // A stroke interrupted by a tab switch still closes its undo entry.
+      // A stroke interrupted by a tab switch still closes its undo entry, and a
+      // building half-dragged when the tab went away is given up on rather than
+      // resumed against an anchor from a session ago.
+      structureAnchor = null;
+      structureGhost.hide();
       history.endStroke();
     },
   };
