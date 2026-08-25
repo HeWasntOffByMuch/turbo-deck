@@ -285,6 +285,11 @@ describe('the manager', () => {
 
     const ok = await manager.allocateAttribute('p1', 'constitution');
     expect(ok.ok).toBe(true);
+    // An allocation marks the player dirty rather than writing inline
+    // (spec 224): it neither creates nor destroys anything, so it rides the
+    // autosave. That it *reaches* storage is still the point of this test.
+    expect(manager.isDirty('p1')).toBe(true);
+    await manager.persistNow(['p1']);
     const saved = await store.loadPlayer('p1');
     expect(saved?.baseStats.constitution).toBe(STARTING_ATTRIBUTE + 1);
 
@@ -295,6 +300,7 @@ describe('the manager', () => {
 
     const bad = await manager.allocateAttribute('p1', 'luck');
     expect(bad.ok).toBe(false);
+    await manager.persistNow(['p1']);
     expect((await store.loadPlayer('p1'))?.baseStats.constitution).toBe(STARTING_ATTRIBUTE + 1);
   });
 
