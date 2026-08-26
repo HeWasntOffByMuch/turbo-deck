@@ -36,6 +36,7 @@ import type { LiveConfig } from '../config.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { CorrectionReason } from '../net/protocol.js';
 import type { Vec3 } from '../state/types.js';
+import { groundSlopeAt, walkableSlope } from '../../sim/slope.js';
 import { MAX_STEP_HEIGHT, WALKABLE_MIN_HEIGHT, type TerrainSampler } from '../world/terrain.js';
 import { moveScaleOf } from './statuses.js';
 import type { ServerEntity, ServerInput } from './types.js';
@@ -159,7 +160,30 @@ function clampDirection(moveX: number, moveY: number): Vec2 {
   return { x: moveX / length, y: moveY / length };
 }
 
-/** True when the ground at a point is somewhere a body may legally stand. */
+/**
+ * True when the ground at a point is somewhere a body may legally stand.
+ *
+ * **Two rules, asking two different questions** (spec 228), and separating them
+ * is the whole change:
+ *
+ *  - {@link MAX_STEP_HEIGHT} on the *step*: can the body get over this lip?
+ *    Unchanged since spec 056, same value, and still what refuses a tier edge
+ *    and permits a stair riser.
+ *  - {@link groundSlopeAt} at the *destination*: is that ground a body can
+ *    stand on? This is the new half and the one that makes a maximum walkable
+ *    angle exist.
+ *
+ * They were one rule and it could only do one job honestly. A height per tick
+ * is an angle divided by how far the body travelled, so the same hillside came
+ * back at 69 degrees for a body at `MOVE_SPEED_HARD_MAX` and 88.4 for a grazer
+ * -- the slower body walking up the steeper ground -- and a player went up 83.9
+ * degrees head-on with nothing in the game refusing it.
+ *
+ * The ground rule is a property of the ground alone, so it is the same answer
+ * at every speed and from every direction: there is no approach angle that gets
+ * a body up a slope past `MAX_WALK_SLOPE`, which is what "maximum walkable
+ * angle" has to mean to be worth stating.
+ */
 export function isWalkable(
   from: Vec3,
   x: number,
@@ -168,7 +192,11 @@ export function isWalkable(
 ): boolean {
   const height = terrain.heightAt(x, y);
   if (height <= WALKABLE_MIN_HEIGHT) return false;
-  return Math.abs(height - from.z) <= MAX_STEP_HEIGHT;
+
+  // The jump rule, unchanged since spec 056 and now the only thing it does.
+  if (Math.abs(height - from.z) > MAX_STEP_HEIGHT) return false;
+
+  return walkableSlope(groundSlopeAt(x, y, height, (sx, sy) => terrain.heightAt(sx, sy)));
 }
 
 export function resolveMovement(
@@ -201,7 +229,10 @@ export function resolveMovement(
   // vegetation; it knows nothing about a cliff face or a lake, so those are
   // checked here and refused by simply not moving.
   let blockedByTerrain = false;
-  if ((landed.x !== from.x || landed.y !== from.y) && !isWalkable(entity.position, landed.x, landed.y, terrain)) {
+  if (
+    (landed.x !== from.x || landed.y !== from.y) &&
+    !isWalkable(entity.position, landed.x, landed.y, terrain)
+  ) {
     // Try each axis alone before giving up, so running along a shoreline slides
     // rather than sticking.
     const alongX = { x: landed.x, y: from.y };

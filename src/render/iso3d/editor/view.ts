@@ -947,7 +947,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     navView.setVisible(settings.showNav);
     if (!settings.showNav) return;
     if (!navBaked) {
-      bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+      bakeLayerNav(scene.map.store, layerId);
       navBaked = true;
     }
     navView.refresh(scene.map.store, layerId, groundAt);
@@ -1159,7 +1159,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     // world that just grew would otherwise be ground you can see and cannot
     // pan to (spec 084).
     scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
-    rebakeNav(scene.map.store, layerId, touched, settings.walkSlope);
+    rebakeNav(scene.map.store, layerId, touched);
     // Only the batches over the ground that changed, not every batch in the
     // world: the field is grouped into regions for culling, and this makes that
     // grouping the unit of invalidation too (spec 086).
@@ -1469,7 +1469,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     markEdited();
     for (const c of groundRemeshed) scene.rebuildChunk(c.layerId, c.cx, c.cz);
     // Nav describes the ground, so undoing the ground has to undo nav with it.
-    rebakeNav(scene.map.store, layerId, groundRemeshed, settings.walkSlope);
+    rebakeNav(scene.map.store, layerId, groundRemeshed);
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
@@ -1620,7 +1620,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     onNavChange: refreshNav,
     onNavRebake: () => {
       // The one place a bake is asked for outright: the panel's own button.
-      bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+      bakeLayerNav(scene.map.store, layerId);
       navBaked = true;
       refreshNav();
     },
@@ -2051,7 +2051,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
       if (strokeMovedGround || strokeChangedMarkers) refreshMarkers();
       // Nav is re-baked for exactly the chunks the stroke dirtied, so the
       // overlay never describes ground that has since moved.
-      if (strokeMovedGround) rebakeNav(scene.map.store, layerId, strokeDirty, settings.walkSlope);
+      if (strokeMovedGround) rebakeNav(scene.map.store, layerId, strokeDirty);
       if (strokeMovedGround || strokeChangedProps) refreshNav();
       // A repaint counts as an edit -- the autosave and the disk both want it --
       // and owes nothing above it: walkability is ground, solidity and the water

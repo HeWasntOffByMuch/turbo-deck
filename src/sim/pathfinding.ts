@@ -6,9 +6,11 @@ import {
   NAV_CLEARANCE,
   NAV_RELOCATE_RADIUS,
   NAV_TIGHT_COST,
+  SLOPE_BASELINE,
   PATH_MAX_NODES,
   WALKABLE_MIN_HEIGHT,
 } from './constants.js';
+import { slopeFrom, walkableSlope } from './slope.js';
 import type { Vec2, WorldColliders } from './types.js';
 
 /**
@@ -43,7 +45,15 @@ import type { Vec2, WorldColliders } from './types.js';
 export const NAV_OPEN = 0;
 /** The body fits; the margin does not. Passable, at a price. */
 export const NAV_TIGHT = 1;
-/** A body of the grid's radius cannot stand here at all. */
+/**
+ * A body of the grid's radius cannot stand here at all.
+ *
+ * Since spec 228 that includes ground steeper than `MAX_WALK_SLOPE`, graded as
+ * a property of the *cell* rather than of a step across it -- which is the
+ * whole of what makes a maximum walkable angle a number worth stating. It is
+ * `NAV_BLOCKED` and not a grade of its own, because nothing walks it and
+ * "cannot stand here" is what that already means.
+ */
 export const NAV_BLOCKED = 2;
 
 /**
@@ -239,18 +249,17 @@ function markRim(
 /**
  * True when a body may step between two cells at these heights (spec 130).
  *
- * `MAX_STEP_HEIGHT` is a per-*tick* allowance rather than a slope: movement
- * compares this tick's ground to last tick's, and a tick carries a body
- * `moveSpeed / 60` units. Applying it between cell centres `NAV_CELL_SIZE` (10)
- * apart is therefore the movement rule evaluated for a body that covers ten
- * units in a tick -- 600 u/s, just past the `MOVE_SPEED_HARD_MAX` of 550.
+ * A **jump** rule and nothing else, which is what it always was and since spec
+ * 227 is all it claims to be: `MAX_STEP_HEIGHT` is the biggest lip a body gets
+ * over, so this refuses a tier edge and permits a stair riser, both exactly as
+ * before. It is read as a height rather than as a slope, so it is the same
+ * answer for an orthogonal neighbour and a diagonal one -- reading it as a
+ * slope is what used to make it two different angles, 67.4 degrees along an
+ * axis and 73.6 diagonally, and put a 6.2 degree swing on whether a hill could
+ * be routed up depending on where the lattice fell across it.
  *
- * Erring at the cap is deliberate and the direction matters. Every body in the
- * game is slower than that, samples the ground more finely than the grid does,
- * and can climb at least what the grid says it can. A grid that is too
- * permissive plans a route into a wall and leaves a monster grinding on it
- * forever; a grid that is too strict declines an eighty-degree slope a slow body
- * could have crawled up. Only one of those is a bug somebody notices.
+ * How steep the ground *is* is a property of a cell rather than of a step, and
+ * `gradeNavCells` grades it there -- see `slope.ts`.
  */
 function climbable(heights: Float32Array, a: number, b: number): boolean {
   return Math.abs((heights[a] ?? 0) - (heights[b] ?? 0)) <= MAX_STEP_HEIGHT;
@@ -618,6 +627,81 @@ export function gradeNavCells(
   }
 }
 
+
+
+/**
+ * Mark ground too steep to stand on as blocked (spec 228).
+ *
+ * Separate from {@link gradeNavCells} and run **after** it, because it is not a
+ * tile-local question: a cell's slope is read from neighbours `SLOPE_BASELINE`
+ * away, and a tile clamped at its own rim answers with the wrong ones. That is
+ * the same reason `labelComponents` runs over the assembled window or nowhere,
+ * and `nav-tiles.test.ts` is what catches getting it wrong -- a window graded
+ * per tile disagreed with the world grid on 2,821 cells.
+ *
+ * Sampled at whole cells rather than at exactly `SLOPE_BASELINE`, since the
+ * heights are only known at cell centres; the true offset is what the gradient
+ * is divided by, so the rounding costs resolution and never correctness. Near
+ * the rim the reach shortens symmetrically and a cell with no room on both
+ * sides is left alone -- there is no more ground to read there, and refusing to
+ * guess is the optimistic direction this file argues for everywhere else.
+ *
+ * Ground the sampler admits it does not have is left alone, for the reason the
+ * water pass gives: on a streaming client an unarrived neighbour extrapolates
+ * the held extent and reads as a cliff, and walling the map off along the edge
+ * of what has loaded is worse than routing optimistically.
+ */
+export function gradeGroundSlope(shape: NavShape, heights: Float32Array, ground: NavGround): void {
+  const { cells, cols, cellSize, originX, originY } = shape;
+  const knowsGround = ground.knows;
+  // Blocked ground, so the component flood knows a hillside walls one place off
+  // from another the way it already knows a lake does.
+  const step = Math.max(1, Math.round(SLOPE_BASELINE / cellSize));
+  const rows = cells.length / cols;
+  for (let index = 0; index < cells.length; index++) {
+    if (cells[index] === NAV_BLOCKED) continue;
+    const col = index % cols;
+    const row = (index - col) / cols;
+    // Shortened *symmetrically* near the rim, and skipped when there is no room
+    // on both sides at all. Clamping the two ends independently is the obvious
+    // version and it divides by zero in the corner: a column-zero cell gets a
+    // west neighbour of itself, `0 / 0` is NaN, and `NaN <= limit` is false --
+    // so every cell along a grid's own rim came back too steep to stand on,
+    // silently, on ground that was perfectly flat. `nav-tiles.test.ts` caught
+    // it as a corridor that had stopped reaching the window's edge.
+    const dx = Math.min(step, col, cols - 1 - col);
+    const dy = Math.min(step, row, rows - 1 - row);
+    if (dx === 0 || dy === 0) continue;
+    const west = col - dx;
+    const east = col + dx;
+    const north = row - dy;
+    const south = row + dy;
+    if (knowsGround !== undefined) {
+      const x = originX + (col + 0.5) * cellSize;
+      const y = originY + (row + 0.5) * cellSize;
+      if (
+        !knowsGround.call(ground, originX + (west + 0.5) * cellSize, y) ||
+        !knowsGround.call(ground, originX + (east + 0.5) * cellSize, y) ||
+        !knowsGround.call(ground, x, originY + (north + 0.5) * cellSize) ||
+        !knowsGround.call(ground, x, originY + (south + 0.5) * cellSize)
+      ) {
+        continue;
+      }
+    }
+    const centre = heights[index] ?? 0;
+    const slope = slopeFrom(
+      centre,
+      heights[row * cols + west] ?? centre,
+      heights[row * cols + east] ?? centre,
+      heights[north * cols + col] ?? centre,
+      heights[south * cols + col] ?? centre,
+      dx * cellSize,
+      dy * cellSize,
+    );
+    if (!walkableSlope(slope)) cells[index] = NAV_BLOCKED;
+  }
+}
+
 /**
  * Label every passable cell with the region it belongs to, and measure each
  * region (spec 073).
@@ -685,7 +769,7 @@ function labelComponents(
             if ((cells[acrossRow] ?? NAV_BLOCKED) === NAV_BLOCKED) continue;
             // The corner rule, applied to height as well: a body must not slip
             // diagonally off a plateau's corner past two cells it could not have
-            // stepped onto.
+            // stepped onto. Both corners are orthogonal neighbours of `current`.
             if (!climbable(heights, current, acrossCol)) continue;
             if (!climbable(heights, current, acrossRow)) continue;
           }
@@ -720,6 +804,7 @@ export function createNavGrid(
   const heights = heightsFor(ground, cols, rows, bounds.x, bounds.y, cellSize);
 
   gradeNavCells(shape, bounds, world.rects, world.circles, radius, heights, ground);
+  gradeGroundSlope(shape, heights, ground);
 
   const { components, componentSizes, componentAtEdge } = labelComponents(cols, rows, cells, heights);
 
@@ -817,6 +902,19 @@ export function assembleNavGrid(
       }
     }
   }
+
+  gradeGroundSlope(
+    {
+      cellSize,
+      cols,
+      rows,
+      originX: rect.minTx * NAV_TILE_CELLS * cellSize,
+      originY: rect.minTz * NAV_TILE_CELLS * cellSize,
+      cells,
+    },
+    heights,
+    ground,
+  );
 
   const { components, componentSizes, componentAtEdge } = labelComponents(cols, rows, cells, heights);
 
@@ -1399,11 +1497,12 @@ export function findPath(grid: NavGrid, from: Vec2, to: Vec2): readonly Vec2[] {
         const next = nextRow * grid.cols + nextCol;
         const grade = grid.cells[next] ?? NAV_BLOCKED;
         if (grade === NAV_BLOCKED || closed[next] === generation) continue;
-        // The cliff rule (spec 130). Must match `labelComponents` exactly, or
-        // the O(1) reachability rejection above and the search below would
+        // The cliff rule (specs 130, 228). Must match `labelComponents` exactly,
+        // or the O(1) reachability rejection above and the search below would
         // disagree about which routes exist.
+        const diagonal = dx !== 0 && dy !== 0;
         if (!climbable(grid.heights, current, next)) continue;
-        if (dx !== 0 && dy !== 0) {
+        if (diagonal) {
           // No corner cutting: both orthogonal neighbours must be passable. Tight
           // ground is passable, so a diagonal through a squeeze is allowed --
           // only a body-blocking cell refuses the corner. Height corners the
@@ -1417,7 +1516,7 @@ export function findPath(grid: NavGrid, from: Vec2, to: Vec2): readonly Vec2[] {
         }
         // A squeeze costs more than open ground, so the search prefers room and
         // takes the gap only when the gap is the way through.
-        const step = (dx !== 0 && dy !== 0 ? DIAGONAL_COST : 1) * (grade === NAV_TIGHT ? NAV_TIGHT_COST : 1);
+        const step = (diagonal ? DIAGONAL_COST : 1) * (grade === NAV_TIGHT ? NAV_TIGHT_COST : 1);
         const tentative = scoreAt(current) + step;
         if (tentative >= scoreAt(next)) continue;
         seen[next] = generation;

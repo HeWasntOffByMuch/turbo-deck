@@ -132,7 +132,11 @@ export function createWorldPredictor(options: {
       knows === undefined ||
       (knows.call(options.terrain, from.x, from.y) && knows.call(options.terrain, landed.x, landed.y));
     const standingOn = { x: from.x, y: from.y, z: options.terrain.heightAt(from.x, from.y) };
-    if (covered && (landed.x !== from.x || landed.y !== from.y) && !isWalkable(standingOn, landed.x, landed.y, options.terrain)) {
+    if (
+      covered &&
+      (landed.x !== from.x || landed.y !== from.y) &&
+      !isWalkable(standingOn, landed.x, landed.y, options.terrain)
+    ) {
       const alongX = { x: landed.x, y: from.y };
       const alongY = { x: from.x, y: landed.y };
       if (alongX.x !== from.x && isWalkable(standingOn, alongX.x, alongX.y, options.terrain)) {
