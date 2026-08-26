@@ -23,12 +23,14 @@
  * nor the tab can read.
  */
 
-import { renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
 
 import { parseCatalog, unassignedEvents } from '../src/render/audio/catalog.js';
+import { bakedNameFor, resolveImport, urlForBaked } from '../src/render/audio/paths.js';
+import { bakeAudio } from './bake-audio.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -71,6 +73,81 @@ export function writeCatalogFile(text: string, root = repoRoot): WriteResult {
   };
 }
 
+/** Where an imported take lands. Gitignored, and the bake's input. */
+export const SOURCE_DIR = join('assets', 'audio', 'raw');
+
+/**
+ * How big a single take may be.
+ *
+ * The largest in the delivered library is 7.7 MB of 96kHz 24-bit stereo. 64 MB
+ * is room for a long ambient bed at the same quality and still refuses a body
+ * that could only be a mistake or a browser sending the wrong thing.
+ */
+export const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
+
+export interface ImportResult {
+  readonly ok: boolean;
+  readonly detail: string;
+  /** The URL this take will have once baked. Empty on a refusal. */
+  readonly url: string;
+}
+
+/**
+ * Write one uploaded take into the source tree.
+ *
+ * Every rule about *where* is `resolveImport`'s, which is pure and shared with
+ * the tab -- so the URL the browser predicts and the path the disk gets cannot
+ * disagree, and there is no traversal to check for because the segments are
+ * slugged rather than merely inspected.
+ *
+ * The write is a rename, like the catalog's: a half-written `.wav` is a file
+ * ffmpeg refuses and a picker offers.
+ */
+export function writeSourceFile(
+  folder: string,
+  fileName: string,
+  bytes: Buffer,
+  root = repoRoot,
+): ImportResult {
+  if (bytes.length === 0) return { ok: false, detail: 'empty file', url: '' };
+  if (bytes.length > MAX_SOURCE_BYTES) {
+    return { ok: false, detail: `${String(bytes.length)} bytes, over the limit`, url: '' };
+  }
+  const target = resolveImport(folder, fileName);
+  if ('refusal' in target) return { ok: false, detail: target.refusal, url: '' };
+
+  const path = join(root, SOURCE_DIR, ...target.path.split('/'));
+  const temporary = `${path}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(temporary, bytes);
+    renameSync(temporary, path);
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `could not write: ${error instanceof Error ? error.message : String(error)}`,
+      url: '',
+    };
+  }
+  return {
+    ok: true,
+    detail: `wrote ${SOURCE_DIR}/${target.path} (${String(bytes.length)} bytes)`,
+    url: urlForBaked(bakedNameFor(target.path)),
+  };
+}
+
+async function readBytes(request: NodeJS.ReadableStream): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer);
+    size += buffer.length;
+    if (size > MAX_SOURCE_BYTES) throw new Error('file too large');
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function readBody(request: NodeJS.ReadableStream): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -111,6 +188,69 @@ export function sfxWritePlugin(root = repoRoot): Plugin {
       return [];
     },
     configureServer(server) {
+      /**
+       * `POST /api/sfx/import?folder=…&name=…` -- one take into the source tree.
+       *
+       * Registered **before** `/api/sfx`, because vite's middleware matching is
+       * by prefix and `/api/sfx` would otherwise swallow both of these and try
+       * to parse a `.wav` as a catalog.
+       *
+       * The body is the file's bytes and nothing else: no multipart, because a
+       * multipart parser is a dependency and a boundary to get right for a form
+       * with one field, and `fetch(url, { body: file })` sends a `File` as its
+       * bytes with no ceremony at all.
+       */
+      server.middlewares.use('/api/sfx/import', (request, response, next) => {
+        if (request.method !== 'POST') {
+          next();
+          return;
+        }
+        const query = new URL(request.url ?? '', 'http://localhost').searchParams;
+        void readBytes(request)
+          .then((bytes) => {
+            const result = writeSourceFile(query.get('folder') ?? '', query.get('name') ?? '', bytes, root);
+            response.statusCode = result.ok ? 200 : 400;
+            response.setHeader('content-type', 'application/json; charset=utf-8');
+            response.end(JSON.stringify(result));
+            server.config.logger.info(`[sfx] ${result.ok ? result.detail : `refused: ${result.detail}`}`);
+          })
+          .catch((error: unknown) => {
+            response.statusCode = 500;
+            response.end(error instanceof Error ? error.message : String(error));
+          });
+      });
+
+      /**
+       * `POST /api/sfx/bake` -- run the offline build from the tab.
+       *
+       * In process rather than spawning `npm run bake:audio`, because the bake
+       * is already a function and a child process would turn "ffmpeg is not
+       * installed" into an exit code and a log somebody has to go and read. Here
+       * it is an exception with a sentence in it, and the sentence reaches the
+       * status line the person is looking at.
+       *
+       * It blocks the dev server for as long as it runs, and that is acceptable
+       * *because it is incremental*: dropping in one take is one ffmpeg call.
+       * A cold bake of the whole library is ten seconds, once.
+       */
+      server.middlewares.use('/api/sfx/bake', (request, response, next) => {
+        if (request.method !== 'POST') {
+          next();
+          return;
+        }
+        response.setHeader('content-type', 'application/json; charset=utf-8');
+        try {
+          const result = bakeAudio({ log: (line) => server.config.logger.info(`[sfx] ${line}`) });
+          response.statusCode = 200;
+          response.end(JSON.stringify({ ok: true, ...result }));
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          response.statusCode = 500;
+          response.end(JSON.stringify({ ok: false, detail }));
+          server.config.logger.error(`[sfx] bake failed: ${detail}`);
+        }
+      });
+
       server.middlewares.use('/api/sfx', (request, response, next) => {
         if (request.method !== 'POST') {
           next();
