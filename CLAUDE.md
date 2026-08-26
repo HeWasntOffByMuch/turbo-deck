@@ -61,9 +61,9 @@ change a game outcome.
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
-| `npm run bake:audio` | The offline sound build (spec 229): production WAVs in `assets/audio/raw/`, game-ready `.ogg` out into `public/audio/`, plus the manifest the SFX tab's picker reads. Measured on the delivered library: **51.56 MB to 1.36 MB**. Wants ffmpeg, and is the only thing in the repo that does |
+| `npm run bake:audio` | The offline sound build (spec 229): production WAVs in `assets/audio/raw/`, game-ready `.ogg` out into `public/audio/`, plus the manifest the SFX tab's picker reads. **Discovers** rather than being told -- every audio file under the source tree is baked, at the name `bakedNameFor` derives from where it sits -- and is **incremental**, so dropping in one take costs one ffmpeg call. `-- --force` re-encodes; `-- --prune` deletes outputs with no source, which nothing else ever does (the sources are gitignored, so an uninvited tidy-up would delete the whole committed library on a fresh clone). Measured on the delivered library: **51.56 MB to 1.36 MB**. Wants ffmpeg, and is the only thing in the repo that does |
 | `npm run audio:report` | Which sound hooks exist, which are silent, and which baked clips nothing references (spec 229). `--strict` for an exit code |
-| `npm run build && npx tsx scripts/probe-audio.ts` | Whether any of the audio framework is wired to anything (spec 229). Walks, swings and casts in the shipped page and reads what the engine says **started a voice** -- not what a call site asked for. It found the bug that made every once-only sound silent: the catalog lands before the first click, so the whole warm ran against a context that did not exist yet |
+| `npm run build && npx tsx scripts/probe-audio.ts` | Whether any of the audio framework is wired to anything (spec 229). Walks, swings and casts in the shipped page and reads what the engine says **started a voice** -- not what a call site asked for. It found the bug that made every once-only sound silent: the catalog lands before the first click, so the whole warm ran against a context that did not exist yet. Runs twice, `probe-map-editor.ts`'s shape: once over `dist/`, where Save must *say* there is no dev server, and once against a real `npx vite`, where a file chosen in the tab has to reach `assets/audio/raw/`, be encoded, be offered by the picker, be assigned, and land in the catalog on disk |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
@@ -186,6 +186,25 @@ assets/audio/    the sound library (spec 229). `sfx.json` is the **catalog** -- 
                  committed is what the bake writes. They live on the
                  `raw-audio-files` branch; `git checkout raw-audio-files --
                  assets/audio` brings them back.
+                 What decides where a take ends up is `src/render/audio/paths.ts`
+                 and it is one module because **three places have to agree**: the
+                 bake writes the file, the dev server decides where an upload may
+                 land, and the SFX tab predicts the URL so it can assign the take
+                 the instant the bake finishes. If they ever drifted the failure
+                 would be an import that succeeds, a bake that succeeds, and a
+                 variant pointing at a URL that 404s the first time somebody
+                 swings a sword. The name is the source tree's own structure,
+                 slugged -- so a folder is a folder and adding a sound is adding a
+                 file. `BAKED_NAMES` is a **rename map for the delivered 74
+                 alone**, and it is not tidiness either: those paths are
+                 referenced by `sfx.json`, so a dropped row would re-derive a
+                 different perfectly valid name and take the sound out of the game
+                 with every test green. Everything since goes through derivation.
+                 That map is what the bake's own table used to be, and moving it
+                 here is the whole change: adding a sound was a **code edit**,
+                 which is exactly the friction the events/catalog split exists to
+                 remove -- it is absurd for the *file* half to have it when the
+                 *assignment* half does not.
 public/audio/    what the bake writes, and vite's `publicDir` -- so one tree is
                  served in dev and copied verbatim into `dist/`, at the same
                  `/audio/...` URL in both. 74 clips, 1.36 MB, 48kHz Vorbis, and
@@ -1728,6 +1747,40 @@ src/render/iso3d/sfx/  the SFX tab (spec 229), the seventh in the shell: a tree
                  wire at all -- the catalog is one document with one home, which
                  is a stronger guarantee than any traversal check: a parameter
                  that does not exist cannot be abused.
+                 Since the same spec it also **imports**, which is what makes
+                 adding a sound a thing a person does in a tool rather than in a
+                 terminal: choose or drop files on the editor pane and they are
+                 written under `assets/audio/raw/`, baked, and assigned as
+                 variants of the selected event, in one gesture. Three steps, and
+                 they are three only from the inside. `POST /api/sfx/import` takes
+                 the bytes **as the body** rather than as multipart -- a multipart
+                 parser is a dependency and a boundary to get right for a form
+                 with one field, and `fetch(url, { body: file })` sends a `File`
+                 as its bytes with no ceremony -- and `POST /api/sfx/bake` calls
+                 `bakeAudio` **in process**, so "ffmpeg is not installed" is a
+                 sentence in the status line rather than an exit code and a log
+                 somebody has to go and read. Both are registered *before*
+                 `/api/sfx`, because vite matches middleware by prefix and that
+                 one would otherwise swallow them and try to parse a `.wav` as a
+                 catalog.
+                 The folder is **derived from the event id** rather than asked
+                 for, and shown rather than hidden: somebody importing three takes
+                 for one event should not have to invent a folder, nor remember
+                 where they put the last one. Every segment is slugged, so
+                 traversal cannot escape the source root whatever is sent -- and a
+                 segment with no alphanumeric in it is **refused anyway**, because
+                 the difference between neutralising an attempt and refusing it is
+                 that one of them quietly writes junk somewhere harmless and the
+                 other says what it thought it was doing. A rebake of the picker
+                 is cache-busted with a version query, since `manifest.json` is a
+                 `publicDir` file with no hash in its name: without it you can bake
+                 a file and be handed the manifest from before it existed, which
+                 reads exactly like a bake that silently did nothing. And only
+                 URLs the manifest **actually lists** are assigned, so a take
+                 ffmpeg refused does not become a variant pointing at nothing.
+                 `dragover` is cancelled because without `preventDefault` the
+                 browser's own default wins, navigates the tab to the file, and
+                 takes every unsaved edit on the page with it.
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor. iso3d/shell-tabs.ts is the one
                  decision in the shell worth failing a test over (spec 140): a
