@@ -61,6 +61,9 @@ change a game outcome.
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
+| `npm run bake:audio` | The offline sound build (spec 229): production WAVs in `assets/audio/raw/`, game-ready `.ogg` out into `public/audio/`, plus the manifest the SFX tab's picker reads. Measured on the delivered library: **51.56 MB to 1.36 MB**. Wants ffmpeg, and is the only thing in the repo that does |
+| `npm run audio:report` | Which sound hooks exist, which are silent, and which baked clips nothing references (spec 229). `--strict` for an exit code |
+| `npm run build && npx tsx scripts/probe-audio.ts` | Whether any of the audio framework is wired to anything (spec 229). Walks, swings and casts in the shipped page and reads what the engine says **started a voice** -- not what a call site asked for. It found the bug that made every once-only sound silent: the catalog lands before the first click, so the whole warm ran against a context that did not exist yet |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
@@ -155,6 +158,45 @@ docs/            durable direction that outlives one spec. vfx-plan.md, ui/, and
                  claiming a lobbed shot flies over what is in its way when
                  `sim/world.ts` says an arc "buys nothing mechanical" and
                  `projectileHits` has no height term in it at all.
+assets/audio/    the sound library (spec 229). `sfx.json` is the **catalog** -- one
+                 entry per sound event that has files behind it, holding the
+                 variants and whatever a person tuned by ear. Committed, so a mix
+                 change reviews as a diff the way `maps/arena.json` makes the
+                 world review as one; written by the SFX tab through a
+                 `POST /api/sfx` the dev server answers and a build has not got.
+                 The decision the whole framework rests on is the split it makes
+                 with `src/render/audio/events.ts`: **the event set is code and
+                 the assignment of files to events is data.** Gameplay says
+                 `audio.play('combat.hit.flesh', at)` and a typo is a build
+                 error; which `.ogg` that turns into is this file, and nothing in
+                 gameplay reads it. So adding a sound to a skill is an edit in a
+                 tool, and adding a *kind* of moment to the game is a row in the
+                 vocabulary plus one call site.
+                 An entry stores `variants` and **only the fields that differ
+                 from `SOUND_DEFAULTS`**, which is not tidiness: a file where
+                 every entry restates `"rolloff": 1` is a file nobody reads, and
+                 a default written into forty entries is a default that can never
+                 be changed again. An event with **no entry at all** is silent,
+                 and that is the honest encoding of "nobody has assigned a file
+                 to this yet" -- not an error, not a warning, and deliberately
+                 not a placeholder beep.
+                 `raw/` is the production takes and is **gitignored**, for the
+                 reason `.studio/` is: 51.56 MB of 96kHz 24-bit stereo WAV is the
+                 raw intermediate rather than the deliverable, and what gets
+                 committed is what the bake writes. They live on the
+                 `raw-audio-files` branch; `git checkout raw-audio-files --
+                 assets/audio` brings them back.
+public/audio/    what the bake writes, and vite's `publicDir` -- so one tree is
+                 served in dev and copied verbatim into `dist/`, at the same
+                 `/audio/...` URL in both. 74 clips, 1.36 MB, 48kHz Vorbis, and
+                 **mono for anything spatial**: a `PannerNode` downmixes a stereo
+                 buffer before it pans it, so stereo would be twice the bytes for
+                 a stereo image that is discarded and replaced. `manifest.json`
+                 beside them is the index the SFX tab's picker reads -- written by
+                 the bake rather than globbed by vite, because a `publicDir` file
+                 is copied verbatim and never enters the module graph, so
+                 `import.meta.glob` cannot see one and a static host offers no
+                 directory listing.
 schemas/         JSON Schema (draft-07) for the three unit documents and the weapon
                  document (spec 140), committed
                  and validated against in CI. additionalProperties is false
@@ -1565,6 +1607,127 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `popClip` quietly cropped in the browser and perfect in Node.
                  `npm run bake:ui-goldens` accepts a visual change; CI re-bakes and
                  requires no diff, like the unit manifest.
+src/render/audio/  the audio framework (spec 229), and the one place in this repo
+                 that owns an `AudioContext`. It exists because every seam an
+                 audio system plugs into was already cut and connected to
+                 nothing: `src/ui/core/sound.ts` declared a `SoundSink` and a
+                 closed `UiSoundId` vocabulary in spec 133 and nothing ever
+                 assigned the sink, so every widget in the game emitted into
+                 `SILENT`; `server/data/loot.ts` authors four cue **names** under
+                 the words *"the renderer decides what a name sounds and looks
+                 like"* and `playCue` dropped all four; `vfx/types.ts` has had
+                 `SoundSpec { cue, on }` on every emitter since spec 121,
+                 compiled and fired at three sites into a `VfxHooks.sound` that
+                 `scene.ts` did not supply, with the comment *"a sink today;
+                 there is no audio system to wire it to"*; and `onCastStarted`
+                 has carried the ability id, the phase and all three ticks since
+                 spec 144 with **no listener in the shipped renderer**. Four
+                 finished halves of four features.
+                 The split is `src/ui/render/`'s, one layer up: everything is
+                 pure except `engine.ts`. `events.ts` is the vocabulary -- a
+                 closed table of 57 rows, each naming a moment that **already
+                 happens** in this game, with a bus, a section, a placement and a
+                 sentence saying what fires it. There is no `player.jump` because
+                 nothing jumps and no per-monster voice because the roster is
+                 seven rows. `catalog.ts` is the document format, `variants.ts`
+                 is which take at what pitch, `mix.ts` is the per-bus levels over
+                 an injected `StorageLike`, and `sink.ts` is the `Audio`
+                 interface plus a `SILENT_AUDIO` -- which is what `npm test`
+                 runs, so `presentation-only.test.ts` drives the whole layer in
+                 Node with no `AudioContext` anywhere.
+                 Four decisions are worth knowing.
+                 **The listener sits at the player, not the camera.** This camera
+                 is orthographic and parks a *constant* 6,000 units from its
+                 focus -- only the two orbit angles are reachable from a slider
+                 -- so across the visible frame its distance to a source varies
+                 by under 7%. A camera-mounted listener gives every sound in the
+                 game identical attenuation and collapses every pan angle onto
+                 the view axis. Two systems here already hit that and rebased
+                 onto the focus: `inkOrigin` says so in as many words, and the
+                 animation LOD's comment records every unit in the game reading
+                 as maximally distant. The *orientation* is the camera's bearing
+                 flattened onto the ground plane, and that is not an
+                 approximation of the camera's own basis -- `camera.up` is never
+                 assigned, so the camera's right vector is exactly horizontal at
+                 every elevation and `forward x up` reproduces it exactly. What
+                 it buys is that the Height slider's 10-to-85 degrees cannot
+                 start re-mapping altitude into depth. Read from
+                 `camOffsetCurrent` rather than `camera.position`, because
+                 `applyPixelSnap` moves the camera onto the virtual pixel lattice
+                 for the draw and sub-pixel jitter in a pan is the same hazard
+                 picking is deliberately kept off the snapped matrix for.
+                 **`maxDistance` is a cull, not a fade.** The Web Audio `inverse`
+                 model clamps distance into `[ref, max]` and never reaches zero,
+                 so a source at the far edge plays forever at a small non-zero
+                 gain and forty of them is a wash of noise from things nobody can
+                 see. Culling at the moment a voice would have been allocated is
+                 what makes the range mean what a designer thinks it means, and
+                 it costs nothing -- one decision, once, and a sound already
+                 playing is never cut so there is no boundary artefact.
+                 **There is no voice pool**, and that is a fact about the API
+                 rather than a shortcut: `AudioBufferSourceNode` is single-use by
+                 spec and is designed to be cheap to allocate for that reason.
+                 What exists instead is a voice **cap**, the distance **cull**,
+                 and a per-event **cooldown** -- because the thing that actually
+                 goes wrong is `skill.whirlwind` resolving against eight bodies
+                 on one tick, and eight copies of one recording starting on the
+                 same sample are not eight sounds, they are one sound about 2.5x
+                 as loud with a comb filter across it. The extension point is
+                 stated rather than left to be guessed: if the cap ever starts
+                 refusing sounds a player wanted, the fix is priority (refuse the
+                 *furthest* live voice and steal its slot), not a pool.
+                 And **randomness and time are arguments**. `variants.ts` takes a
+                 `Random`, the throttle takes a `nowMs`. The sim's own rule for a
+                 weaker but real reason: nothing here can change a game outcome,
+                 but "a footstep never repeats immediately" is exactly the kind of
+                 claim that is true in the three cases somebody tried by hand and
+                 false in the fourth -- and the mapping that makes it true
+                 (`drawn >= previous ? drawn + 1 : drawn`, over a draw from
+                 `count - 1`) is one character away from a version that returns
+                 the previous index outright.
+                 `engine.ts` creates **nothing** at mount: a browser refuses to
+                 let a page make noise before an interaction, and a context built
+                 anyway starts `suspended` and stays there in a way that is
+                 invisible until a playtester says there is no sound. So the
+                 context is built by the first `resume()`, which the Play tab
+                 arms off the first real input, and a `play` before that is
+                 dropped rather than queued -- a queue would empty itself into
+                 the first click as a burst of everything that happened while the
+                 page was silent. A cache miss is likewise dropped rather than
+                 played late, and `warm` exists so the buses that fire in the
+                 first ten seconds never take that path: a hit that arrives 200ms
+                 after the blow is worse than one that did not arrive.
+src/render/iso3d/sfx/  the SFX tab (spec 229), the seventh in the shell: a tree
+                 down the left, one event's editor on the right, and a Save that
+                 writes `assets/audio/sfx.json`. Hand-rolled DOM, which is the
+                 idiom `studio/view.ts` and `studio/vfx-view.ts` use for a
+                 *form*; `lil-gui` is the other one in this repo and is right for
+                 a wall of sliders over a viewport and wrong here, because half
+                 of this tab is an ordered list with per-row buttons and lil-gui
+                 has no row of that shape. `model.ts` is the pure half -- what
+                 the tree is, what a filter matches, what an edit does to the
+                 document -- and every edit returns a **new** catalog rather than
+                 mutating one, because the engine is handed the catalog and holds
+                 resolved copies of it.
+                 It edits a document rather than the running game, and says so:
+                 the Play tab reads the catalog once at mount, so a change is
+                 heard after a reload. What it does have is its own engine, so
+                 Preview and *Play event* are the real decode and the real
+                 variant-and-pitch draw -- tuning against something that flatters
+                 is the failure `studio/preview.ts` names, which moves numbers in
+                 the wrong direction and does it convincingly.
+                 `POST /api/sfx` is `apply: 'serve'` like `POST /api/map`, so a
+                 built page has no such endpoint and Save falls back to a
+                 download -- and the four outcomes are told apart, because "there
+                 is no dev server here", "the server said no" and "nothing
+                 answered" have three different fixes and one message for all
+                 three names none of them. The body goes through `parseCatalog`
+                 before anything is written and the write is a rename, so the
+                 file the game boots from cannot be replaced by something that
+                 will not load or by half a document. There is no *name* on that
+                 wire at all -- the catalog is one document with one home, which
+                 is a stronger guarantee than any traversal check: a parameter
+                 that does not exist cannot be abused.
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor. iso3d/shell-tabs.ts is the one
                  decision in the shell worth failing a test over (spec 140): a
@@ -3992,6 +4155,66 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  with it is the fallback rather than the plan"* -- to a `{2, 5}`
                  between the bow and the keen sword, because since 217 that
                  range **is** what an Ember Shot hits for)
+                 audio-wire.ts, footsteps.ts and audio-driver.ts (what the
+                 Play tab hears, spec 229). The wire is `vfx-wire.ts`'s shape and
+                 sits beside it for its reason: handed plain facts, answers what
+                 to play, and no `if` in it changes a game outcome. The one thing
+                 harder than the picture is that a blow's wire message carries
+                 **no ability id and no damage type** -- which is why
+                 `view.ts:1547` has hardcoded `damageType: 'physical'` since spec
+                 121 and five of the six `DAMAGE_EFFECTS` rows have been
+                 unreachable ever since. Audio solves it from the other end: the
+                 element comes from `onEffect`, whose `effectId` is
+                 `${ability.id}.impact` and is the only place an ability id
+                 reaches the client at impact time. So a blow makes the sound of
+                 a blow and an elemental ability makes its element's sound on its
+                 own message, a fraction of a tick apart -- against widening the
+                 combat frame by a byte for a presentation problem.
+                 `footsteps.ts` is a distance accumulator rather than an
+                 animation event, and the choice is forced twice over. The event
+                 machinery is complete and has no consumer -- `driveUnit` returns
+                 `readonly FiredEvent[]` and `scene.ts` calls it as a bare
+                 statement -- but `walk` and `run` in the shipped clip library
+                 carry `events: []`, and only the *player* is an authored unit at
+                 all: every monster draws with a MechRig or a CritterRig and has
+                 no machine, so an event-driven footstep would be a footstep for
+                 one body in the game. Worse, locomotion clips do **not** scale
+                 their rate with speed (`setActionRate` is one-shots only), so a
+                 stride is a fixed 1.19s at the walk threshold and 1.30s at the
+                 run one -- about 40 units of ground per footfall at one end and
+                 100 at the other, and an event-driven step would slide against
+                 the ground exactly as the pace changed. Distance cannot. The
+                 stride is 48, taken from `rigs.ts`'s own `STRIDE_LEN` rather
+                 than invented, and two refusals are load-bearing: a jump over
+                 `MAX_FRAME_UNITS` is a correction snap and resets rather than
+                 banking thirty strides, and a stunned or dead body banks nothing
+                 because `resolveCrowding` is still shoving it around.
+                 `audio-driver.ts` is pure -- it takes the `Audio` *interface* --
+                 which is what lets the whole layer be driven in Node against a
+                 recorder. It holds both kinds of sound `auras.ts` names in one
+                 sentence: a **hit** needs an edge, and a stagger has no wire
+                 event at all (`poiseBroken` never crosses), so it gets
+                 `StaggerFlinches`' previous-read track for that file's stated
+                 reason -- the window is many ticks long and firing on each of
+                 them is a machine gun. A **state** needs a handle, and the three
+                 rules spec 215 and 218 learned are not optional here either:
+                 handles rather than ids (`hold` returns 0 on refusal, and a
+                 driver recording ids cannot tell "asked for, did not start" from
+                 "started"), `isLive` every frame (a full pool *evicts* rather
+                 than refusing and bumps the slot's generation), and the stop is
+                 **owed** -- made from the sweep that knows a body has left,
+                 never inferred from an absence.
+                 What the *interface* emits is the other half, and it needed one
+                 small change to a socket that had been open since spec 133:
+                 `Widget.sounds` is set on **one** node -- `UiRoot` sets it on
+                 its content -- and every descendant finds it by walking `parent`,
+                 which is the same "only the ancestor chain knows" rule a tab's
+                 rows already live by. `Button.sounds` used to be a field
+                 defaulting to `SILENT`, which is the same guard-free emission
+                 with one difference that mattered: nothing ever assigned it. The
+                 alternative -- hand the sink to every screen and have each pass
+                 it to every button it builds -- is one chance per widget to
+                 forget, across eleven screens with lazily-built tabs.
                  unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
                  monsters are drawn from an authored unit, the pure function from
                  replicated facts to machine commands -- handed a snapshot and not
