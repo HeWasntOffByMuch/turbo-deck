@@ -50,10 +50,15 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { chromium, type Page } from 'playwright';
+import { copyFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium, type Browser, type Page } from 'playwright';
 
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4331;
+/** The second half runs against a real `npm run dev`, on a port of its own. */
+const DEV_PORT = 4332;
 const CHROMIUM_PATH = process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium';
 const CHROMIUM_ARGS = [
   '--use-gl=angle',
@@ -139,11 +144,166 @@ async function settles(
   return seen;
 }
 
+/**
+ * Poll until the body's own position has held still for two readings.
+ *
+ * `data-self-at` is rounded world units, published from the frame and only when
+ * it changes -- so two equal readings a beat apart is the page saying the body
+ * is not moving, rather than this script guessing how long a stop takes.
+ */
+async function stopped(page: Page, timeoutMs = 8000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last = '';
+  let same = 0;
+  while (Date.now() < deadline) {
+    const at = await page.getAttribute('[data-self-at]', 'data-self-at');
+    if (at !== null && at === last) {
+      same += 1;
+      if (same >= 2) return;
+    } else {
+      same = 0;
+    }
+    last = at ?? '';
+    await page.waitForTimeout(250);
+  }
+}
+
 const count = (readout: AudioReadout, id: string): number => readout.started[id] ?? 0;
 
 /** How many voices started in total, across every event. */
 const total = (readout: AudioReadout): number =>
   Object.values(readout.started).reduce((sum, value) => sum + value, 0);
+
+/**
+ * The half that closes the loop: a real `npx vite`, Import, Bake, Save.
+ *
+ * The built page above establishes that the framework is wired to the *game*.
+ * This establishes the other thing spec 229 promises, which is that **adding a
+ * sound is not a code edit**: a file chosen in the tab is written under
+ * `assets/audio/raw/`, encoded by ffmpeg, offered by the picker and assigned to
+ * an event, and Save puts that in the document the game boots from. Every rule
+ * behind that is pure and asserted in `npm test` -- and all of it would be green
+ * beside a tab whose button called none of it, which is the entire reason this
+ * file exists. Two runs, the shape `probe-map-editor.ts` arrived at for the same
+ * reason on the same kind of endpoint.
+ *
+ * **The take is `public/audio/ui/denied.ogg`**, which is committed, tiny, and a
+ * format the bake reads. Importing one of the gitignored production `.wav`s
+ * would make this probe unrunnable on a fresh clone -- which is the state CI and
+ * anybody who has not checked out `raw-audio-files` is in.
+ *
+ * Everything it touches is put back in a `finally`, because there is no way to
+ * check that a button writes the catalog without writing it.
+ */
+async function devHalf(browser: Browser, problems: string[]): Promise<void> {
+  const CATALOG = join(root, 'assets', 'audio', 'sfx.json');
+  const MANIFEST = join(root, 'public', 'audio', 'manifest.json');
+  // A silent event, so "a variant appeared" is unambiguous rather than a count
+  // that has to be differenced. Its import folder is derived from the id.
+  const EVENT = 'combat.death';
+  const SOURCE = join(root, 'public', 'audio', 'ui', 'denied.ogg');
+  const TAKE = 'probe_take.ogg';
+  const rawTake = join(root, 'assets', 'audio', 'raw', 'combat', 'death', TAKE);
+  const bakedTake = join(root, 'public', 'audio', 'combat', 'death', TAKE);
+  const bakedUrl = '/audio/combat/death/probe_take.ogg';
+
+  const catalogBackup = `${CATALOG}.probe-backup`;
+  const manifestBackup = `${MANIFEST}.probe-backup`;
+  copyFileSync(CATALOG, catalogBackup);
+  copyFileSync(MANIFEST, manifestBackup);
+
+  // `node_modules/.bin/vite` in its own process group rather than `npx vite`:
+  // `npx` is a wrapper, and a SIGTERM to it leaves the grandchild holding the
+  // port -- the trap `probe-admin-console.ts` documents and `probe-map-editor.ts`
+  // repeats.
+  const dev = spawn(join(root, 'node_modules', '.bin', 'vite'), ['--port', String(DEV_PORT), '--strictPort'], {
+    cwd: root,
+    stdio: 'ignore',
+    detached: true,
+  });
+  try {
+    await waitForServer(`http://localhost:${DEV_PORT}/`, 60_000);
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    page.on('pageerror', (error) => problems.push(String(error)));
+    await page.goto(`http://localhost:${DEV_PORT}/`, { waitUntil: 'load' });
+    await page.getByRole('button', { name: 'SFX', exact: true }).click();
+    await page.waitForSelector('#sfx-tab [data-sfx-row]', { timeout: 60_000 });
+    await page.click(`#sfx-tab [data-sfx-row="${EVENT}"]`);
+
+    const wasSilent = /None\. This event is silent\./.test((await page.textContent('#sfx-tab')) ?? '');
+    if (!wasSilent) {
+      problems.push(`${EVENT} already has files -- pick another event for the import check`);
+      await page.close();
+      return;
+    }
+
+    // The gesture. `setInputFiles` on the tab's own hidden input is the same
+    // path the Import button opens; the drop handler hands the same list to the
+    // same function, so this covers both. Named so a leftover is obviously the
+    // probe's rather than somebody's take.
+    const chooser = await page.$('#sfx-tab input[type=file]');
+    if (chooser === null) throw new Error('the SFX editor has no file input -- Import is not mounted');
+    await chooser.setInputFiles([{ name: TAKE, mimeType: 'audio/ogg', buffer: readFileSync(SOURCE) }]);
+
+    // A poll, not a wait: the import is an upload, an ffmpeg call and a re-read
+    // of the manifest, and this page paints a few frames a second.
+    await page.waitForFunction(
+      (event) => new RegExp(`added \\d+ to ${event}|failed|refused|no dev server`).test(
+        document.querySelector('#sfx-tab')?.textContent ?? '',
+      ),
+      EVENT,
+      { timeout: 120_000 },
+    );
+    const said = (await page.textContent('#sfx-tab')) ?? '';
+    const imported = new RegExp(`added \\d+ to ${EVENT}`).test(said);
+    console.log(`  import:            ${imported ? 'added a take' : 'DID NOT'}`);
+    if (!imported) {
+      problems.push(`Import said something other than success: ${/(?:failed|refused|no dev server)[^\n]{0,80}/.exec(said)?.[0] ?? '(nothing)'}`);
+    }
+
+    // Three separate claims, because three separate things could have failed
+    // silently: the upload, the bake, and the assignment. A tab that assigned a
+    // URL the bake never produced is the failure mode `paths.ts` exists to
+    // prevent, and it looks exactly like success from inside the browser.
+    console.log(`  source written:    ${existsSync(rawTake) ? 'yes' : 'NO'}`);
+    if (!existsSync(rawTake)) problems.push('the take never reached assets/audio/raw/');
+    console.log(`  baked on disk:     ${existsSync(bakedTake) ? 'yes' : 'NO'}`);
+    if (!existsSync(bakedTake)) problems.push('the take was uploaded but never encoded into public/audio/');
+    const listed = (await page.textContent('#sfx-tab'))?.includes('probe_take') ?? false;
+    console.log(`  shown as a variant:${listed ? ' yes' : ' NO'}`);
+    if (!listed) problems.push('the baked take was not assigned as a variant of the event');
+
+    // And Save writes it, against the endpoint the built page does not have --
+    // the other half of the message the first run checked.
+    await page.getByRole('button', { name: /^Save to assets\/?/ }).click();
+    await page.waitForFunction(
+      () => /wrote assets|no-endpoint|refused|unreachable/.test(document.querySelector('#sfx-tab')?.textContent ?? ''),
+      undefined,
+      { timeout: 30_000 },
+    );
+    const wrote = ((await page.textContent('#sfx-tab')) ?? '').includes('wrote assets');
+    const onDisk = readFileSync(CATALOG, 'utf8').includes(bakedUrl);
+    console.log(`  save on dev:       ${wrote ? 'wrote assets/audio/sfx.json' : 'said something else'}`);
+    console.log(`  catalog on disk:   ${onDisk ? 'has the new variant' : 'DOES NOT'}`);
+    if (!wrote) problems.push('Save against a real dev server did not report a write');
+    if (!onDisk) problems.push('the catalog on disk does not name the imported take -- the write did not land');
+    await page.close();
+  } finally {
+    copyFileSync(catalogBackup, CATALOG);
+    copyFileSync(manifestBackup, MANIFEST);
+    rmSync(catalogBackup, { force: true });
+    rmSync(manifestBackup, { force: true });
+    rmSync(rawTake, { force: true });
+    rmSync(bakedTake, { force: true });
+    if (dev.pid !== undefined) {
+      try {
+        process.kill(-dev.pid, 'SIGTERM');
+      } catch {
+        dev.kill('SIGTERM');
+      }
+    }
+  }
+}
 
 async function main(): Promise<void> {
   const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
@@ -190,17 +350,36 @@ async function main(): Promise<void> {
     console.log(`  walking:           ${String(steps)} footsteps`);
     if (steps === 0) problems.push('walking produced no footstep');
 
-    // ...and the other half of the control: standing still produces none.
-    // Without this, a driver that played a footstep every frame passes above.
+    // ...and the other half of the control: a body that is not walking does not
+    // make walking noises. Without this, a driver that played a footstep every
+    // frame passes everything above.
+    //
+    // The baseline is taken **after the player has actually stopped**, not at
+    // the moment the key came up. A release is not an instant halt from the
+    // page's side -- the keyup has to reach the client, the input has to reach
+    // the server, and the readout is published from a frame this environment
+    // draws about five times a second -- so a window that straddles the release
+    // contains real ground covered at a run and banks two or three perfectly
+    // honest footsteps. That is the probe measuring its own latency.
+    await stopped(page);
     const rested = await readAudio(page);
     await page.waitForTimeout(2500);
     const stillRested = await readAudio(page);
     const drift = count(stillRested, 'player.footstep') - count(rested, 'player.footstep');
     console.log(`  standing still:    ${String(drift)} footsteps over 2.5s`);
-    // Not zero: the body eases to a stop over a few frames after the key is
-    // released, and one step banked on the way is honest. More than a couple is
-    // a body making noise while it is not moving.
-    if (drift > 2) problems.push(`standing still produced ${String(drift)} footsteps`);
+    // And it is bounded rather than zero, because `player.footstep` is what
+    // *any* walking body plays and the arena's monsters mill about when nobody
+    // is fighting them (spec 213). A handful of steps from a grazer wandering
+    // past the listener is the feature working. What this separates it from is
+    // the bug: one per body per frame is a dozen frames times every walking
+    // thing in range, which is an order of magnitude above anything a few idle
+    // monsters can produce. Measured at 1-3 across runs.
+    const IDLE_STEP_BUDGET = 6;
+    if (drift > IDLE_STEP_BUDGET) {
+      problems.push(
+        `${String(drift)} footsteps over 2.5s with the player stationary -- more than wandering monsters explain`,
+      );
+    }
 
     // --- a swing: the wind-up, not the contact -----------------------------
     const beforeSwing = await readAudio(page);
@@ -310,6 +489,14 @@ async function main(): Promise<void> {
       .sort((a, b) => b[1] - a[1])
       .map(([id, n]) => `${id}=${String(n)}`);
     console.log(`\n  heard: ${heard.join(' ')}`);
+    await page.close();
+
+    // --- the second run: a real dev server ---------------------------------
+    //
+    // The preview server is still up and does not matter; what follows needs
+    // the `apply: 'serve'` endpoints, which only `npx vite` has.
+    console.log('\nagainst a real dev server:');
+    await devHalf(browser, problems);
   } finally {
     await browser.close();
     server.kill('SIGTERM');
@@ -321,7 +508,10 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log('\naudio is wired: a context, decoded buffers, and a voice for each of four real events.');
+  console.log(
+    '\naudio is wired: a context, decoded buffers, a voice for each of four real events,\n' +
+      'and a take that went from a file chooser to the catalog without a terminal.',
+  );
 }
 
 void main();
