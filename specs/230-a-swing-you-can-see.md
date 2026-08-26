@@ -5,179 +5,128 @@
 Nothing in this game draws a swing. `slash_arc` has been in the library since
 spec 121 — an `arc` emitter of stretched sparks, authored, compiled, asserted to
 exist — and has never had a caller. Every melee skill in the table is a blood
-spatter that appears on a body, with no gesture in front of it: Guard Break,
-Stunning Blow, Crippling Strike, Rending Cut and Test Statuses send no effect
-message at all, and Whirlwind — *"one turn, all the way round, blade out"* — is
-a 160-unit sweep drawn as `scene.addEffect`'s orange debug ring.
+spatter that appears on a body with no gesture in front of it, and Whirlwind —
+*"one turn, all the way round, blade out"* — is drawn as `scene.addEffect`'s
+orange debug disc, which is what every skill in the table draws.
 
-The painted vocabulary is the house style for combat (specs 158-161: blood,
-explosions, afflictions, shots are all brush marks) and it has no way to say
-"a stroke swept along an arc". Two things stop it, and both are in the engine
-rather than in the authoring:
+## The false start, because it decides everything below
 
-**`ORIENT.ground` cannot follow a sweep.** `orientOf` is a pure function of the
-mesh shape, and `brush-mark` is hard-wired to ground orientation, whose yaw
-comes from the `rotation` *curve* — one curve per emitter, shared by every
-particle it spawns. So an `arc` emitter of brush marks lays them along the
-curve all pointing the same way: a fence, not a swing.
+The first implementation of this spec invented a `brush-sweep` mesh shape and an
+`ORIENT.groundVelocity` to go with it, and laid the marks **flat on the ground**
+along an arc. It shipped green: 6975 tests, typecheck and lint clean.
 
-**And `groundBasis(iRotation)` ignores the instance rotation.** `system.ts`
-turns an emitter's `offset` and its spawn *direction* by the effect's rotation
-about Y, and never touches `pool.rot`. Positions rotate, yaws do not. Nothing
-has caught it because the only ground-oriented effect in the game is
-`order_move`, which is a click mark played at rotation 0 — but an aimed swing
-is the case that needs it.
+It was wrong in the way that matters. The vocabulary this game paints combat in
+is marks **in the air** — `bloodHit` throws `brush-slash` at `cardVelocity`,
+`brushExplosion` composes lobes of them, the afflictions cling to a body — and a
+flat ring on the floor is the same object as the debug disc it replaced, only in
+paint. Whirlwind at a full turn was literally a painted circle on the ground.
+
+Two lessons are worth more than the code:
+
+- **Reason from the effect you are sitting beside, not the nearest builder.** It
+  was modelled on `brushCross`, which correctly lies flat because a click marker
+  is a mark on the floor. A swing is not.
+- **A green suite says nothing about a picture.** This is the one spec in the
+  tree whose acceptance is an image, so the image is a deliverable rather than a
+  courtesy — `preview-brush-vfx.ts` grows a sheet, and it is looked at before
+  anything is pushed.
 
 ## Shape
 
-**One new orientation mode**, which is the whole engine change:
-
-```ts
-// vfx/meshes.ts
-export const ORIENT = {
-  /* … */
-  ground: 6,
-  /** Flat in the ground plane, yawed by the ground track of its velocity. */
-  groundVelocity: 7,
-};
-```
-
-```glsl
-// vfx/batches.ts — reusing groundBasis rather than building a second basis
-mat3 groundVelocityBasis(vec3 vel) {
-  vec2 flat = vec2(vel.x, vel.z);
-  float speed = length(flat);
-  vec2 dir = speed > 0.0001 ? flat / speed : vec2(0.0, 1.0);
-  // groundBasis' local +Y is (sin, 0, -cos), so this is the yaw that puts it
-  // along `dir`. One basis definition, so handedness cannot drift between them.
-  return groundBasis(atan2(dir.x, -dir.y));
-}
-```
-
-`ORIENT.ground`'s own doc says *"a placed mark has no velocity to be aimed by"*,
-which is true of a cross somebody clicked and is exactly what a swept mark is
-not. Both problems close at once, because the `arc` emitter shape already
-writes a **tangent** spawn direction (`shapes.ts`, `SHAPE.arc`) and `system.ts`
-already turns that direction by the instance rotation — so the mark follows the
-curve *and* the whole arc aims, with nothing else touched.
-
-**One new mesh shape**, `brush-sweep`, carrying `brush-mark`'s geometry — the
-centred stroke with no flecks — and this orientation. Centred is right for the
-same reason it is right for the cross: a sweep mark is placed *at* a point on a
-path rather than thrown from one. A shape rather than a flag on the emitter,
-because `orientOf` is how this codebase already decides orientation and a second
-mechanism beside it would be two answers to one question.
-
-**One builder**, in the painted vocabulary beside `brushCross`:
+**No engine change at all.** `fan` already throws marks along a bearing and
+lifts them out of the ground plane, and its `bearing` field already lets several
+fans compose a shape — which is exactly how `brushExplosion` gets its lobes. The
+whole feature is one builder in the existing vocabulary.
 
 ```ts
 // vfx/brush.ts
-export interface BrushArcParams {
+export interface BrushSwingParams {
   readonly id: string;
-  /** How far from the origin the marks are laid. */
-  readonly radius: number;
-  /** Total angle covered, centred on the effect's own bearing. Radians. */
+  /** How far the blade reaches. The one size knob. */
+  readonly reach: number;
+  /** Total angle covered, centred on the effect's bearing. Radians. */
   readonly sweep: number;
-  readonly marks?: number;
-  readonly length?: number;
+  readonly lobes?: number;
   readonly lifetimeTicks?: number;
+  /** How high off the ground the blade passes. A chest, not a pair of boots. */
+  readonly lift?: number;
   readonly bright?: PaletteKey;
+  readonly mid?: PaletteKey;
   readonly deep?: PaletteKey;
   readonly priority?: Priority;
 }
-export function brushArc(params: BrushArcParams): EffectDefinition;
+export function brushSwing(params: BrushSwingParams): EffectDefinition;
 ```
 
-One `arc` emitter with a `burst`, not one emitter per mark: `SHAPE.arc` reads
-the particle's index *within its burst* to place it, so marks laid over several
-spawns would restart that index and scramble the order. The gesture still reads
-in sequence, because `VFX_STROKE` draws every mark out along its own path
-(specs 158-159) and a blade covers its arc in about six ticks regardless.
+Three decisions in it, each visible on the sheet:
 
-A small tangential `speed` and **no gravity**: the velocity is what the yaw is
-read from, so zero speed would fall back to a fixed bearing, and a vertical
-component would be integrated into a `vel.y` the ground basis correctly ignores
-while the mark drifted upward out of the ground plane.
+**Lobes, not a spread.** `brushExplosion` states the argument and it holds along
+an arc: a single wide fan samples uniformly, so however different the marks are
+the silhouette comes out an even star. Every other lobe is a dominant
+`brush-slash` and the rest are `brush-flick` company — the first render was
+all-flick and read as **petals** rather than as an edge.
+
+**Born out on the arc, not at the body.** Each lobe is `offset` to 72% of the
+reach, so the marks are where the blade was rather than streaming out of the
+caster's chest. `system.ts` turns an emitter's offset by the effect's rotation,
+so the composition aims with nothing else to do — the same mechanism that points
+a blood hit away from its attacker.
+
+**The lift belongs to the effect, not the call site.** `offset.y` is
+`reach * 0.22`, so a caller plays a swing at ground level and the height a blade
+passes at is a property of the definition. Every call site adding its own lift
+is how the ground version happened.
 
 **Two callers.**
 
-*Whirlwind* needs no call-site change at all. `landArea` already sends
-`skill.whirlwind.impact` at the caster's own feet, before the target loop, so it
-fires on a sweep that caught nobody — which is what a swing is. A registry entry
-under that id is the whole of it, at `sweep: 2π` and the skill's own radius.
+*Whirlwind* needs no call-site change at all: `landArea` already sends
+`skill.whirlwind.impact` at the caster's own feet, **before** the target loop, so
+it draws on a turn that caught nobody — which is what a swing is. Registering
+the id is the whole of the wiring.
 
 *The melee skills* need a driver, and it does **not** go in `effectsForBlow`.
-Two reasons, and the first is the design one: **a swing happens whether or not
-it connects**, and `effectsForBlow` runs only on a hit, so a whiffed Rending Cut
-would draw nothing while a landed one drew a sweep. The second is budget — that
-function is at its `MAX_BLOW_EFFECTS` of three on a bleeding body, and a swing
-is not the thing that should evict the element.
+**A swing happens whether or not it connects**, and that function runs only on a
+hit, so a whiffed Rending Cut would draw nothing while a landed one drew a
+sweep. It is also already at its `MAX_BLOW_EFFECTS` of three on a bleeding body,
+and a sweep is not what should evict the element.
 
 So `world/swing-vfx.ts`, in the shape `shot-vfx.ts` and `affliction-vfx.ts`
-already share: pure, handed a snapshot rather than a `GameClient`, holding the
-diff itself.
-
-```ts
-export interface SwingBody {
-  readonly entityId: number;
-  readonly x: number; readonly y: number; readonly z: number;
-  /** Which way the body is pointing, which is what the swing sweeps across. */
-  readonly facing: number;
-  readonly abilityId: string;
-  readonly releaseTick: number;
-}
-/** Which melee abilities draw a sweep, and how wide. Absent draws none. */
-export const SWING_ART: Readonly<Record<string, { effect: string }>>;
-export class SwingVfx {
-  step(bodies: readonly SwingBody[], tick: number): void;
-  forget(entityId: number): void;
-}
-```
-
-It fires on an **edge** — the release tick crossing — which makes it a *contact*
-in `stagger-flinch.ts`'s sense rather than a *state* in `stun-icon.ts`'s: a body
-that walks into view mid-swing has no release for this client to have watched,
-and inventing one would draw a blade that already fell. It holds no handle,
-because a sweep is a one-shot with a duration of its own and there is nothing to
-stop.
+share: pure, handed a snapshot rather than a `GameClient`, holding the diff
+itself. It fires on the **release-tick edge** — a *contact* in
+`stagger-flinch.ts`'s sense rather than a *state* in `stun-icon.ts`'s, because a
+body that walks into view mid-swing has no release this client watched. It holds
+no handle: a sweep is a one-shot the system retires itself, so the three rules
+spec 215 and 218 are built on do not apply and pretending they did would be
+bookkeeping guarding nothing.
 
 ## Invariants tested
 
-- `groundVelocityBasis` puts a mark's own +Y along the ground track of its
-  velocity, and its +Z along world up — asserted as a matrix against
-  `groundBasis` at the equivalent yaw, so the two cannot drift apart.
-- A zero or purely vertical velocity falls back to a fixed bearing rather than
-  producing a NaN basis, which is what a division by a zero-length `flat` gives
-  and what would silently delete the mark.
-- `orientOf('brush-sweep')` is `ORIENT.groundVelocity`, and every other shape's
-  orientation is unchanged — the mapping is asserted whole, so adding a shape
-  cannot quietly re-point an existing one.
-- `brush-sweep` is a `strokeShape`, so it is unlit and gets the `VFX_STROKE`
-  path, like every other mark in the painted vocabulary.
-- `brushArc` lays its marks along the arc **in emission order** and within
-  `radius` of the origin, at the authored count.
-- Its emitters carry no gravity and a non-zero speed, since the yaw is read off
-  the velocity — asserted directly, because a later tune that zeroed the speed
-  would silently return every mark to one bearing and still look plausible.
+- `brushSwing` composes one emitter per lobe, each thrown along its own bearing,
+  and every lobe's marks are a stroke shape.
+- Its lobes are lifted out of the ground plane, asserted on the offset — the
+  regression that would put the swing back on the floor.
+- A full-turn sweep does not stack its last lobe on its first; a partial sweep is
+  centred on the effect's own bearing.
 - `skill.whirlwind.impact` is in the registry, so `scene.addEffect` takes the
   authored branch rather than the debug ring.
 - `SwingVfx` plays once per release and not again while the same cast runs on.
-- A body first seen mid-swing draws nothing; the next swing it starts draws.
-- `forget` stops a despawned body from drawing a swing it had queued, and a body
-  that is forgotten and comes back may swing again.
+- A body first seen after its release draws nothing more that swing.
+- `forget` stops a despawned body drawing, and a forgotten body may swing again.
 - Every id in `SWING_ART` exists in the registry, and every ability it names is
-  `kind: 'melee'` — a sweep on a projectile would be a blade swung at nothing.
+  `kind: 'melee'` — a sweep on a projectile is a blade swung at nothing.
+- Whirlwind is **absent** from `SWING_ART`, because its own impact message draws
+  it and a row there as well would paint the turn twice.
 
 ## Out of scope
 
-- **Repainting `slash_arc`.** It stays as it is, still uncalled: it is a
-  particle effect and this spec's callers want paint, and deleting it is a
-  decision for whoever finds a use for a spark sweep.
-- **The remaining `.impact` fallback rings** — Arc Lash, Rime Touch, Blight,
-  Ember Toss, Scorched Earth. Specs 231 and 232.
-- **Aimed cone and lane pictures.** Acid Spray and Arc Lash need a rotation on
-  the effect message, which is spec 231. This spec's aiming works because a
-  swing's origin is a body whose facing is already replicated.
-- **A trail that follows the weapon mesh.** The arc is authored at a radius, not
-  sampled from where the blade actually went; `weapon-rig.ts` parents the weapon
+- **The remaining debug rings.** Ember Toss wants a painted explosion, Arc Lash
+  an electric arc, Rime Touch a frost burst, Blight a rot cloud, Scorched Earth
+  an ignition. Each is its own authored effect and its own look decision; a
+  blanket route of every unregistered `.impact` into `spawnBrushExplosion` would
+  draw a fire blast for a frost skill, which is worse than the ring.
+- **`slash_arc`.** Left as it is and still uncalled: it is a particle effect and
+  these callers want paint. Deleting it is for whoever finds a use for a spark
+  sweep.
+- **A trail sampled from the weapon mesh.** The sweep is authored at a reach, not
+  taken from where the blade actually went; `weapon-rig.ts` parents the weapon
   into the pose graph and nothing samples it per frame on purpose (spec 140).

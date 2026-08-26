@@ -262,6 +262,7 @@ async function main(): Promise<void> {
   const bloodRows: Row[] = [];
   const boomRows: Row[] = [];
   const shotRows: Row[] = [];
+  const swingRows: Row[] = [];
 
   try {
     await waitForServer(`http://localhost:${PORT}/brush-scene.html`);
@@ -283,7 +284,7 @@ async function main(): Promise<void> {
 
     interface Shot {
       readonly label: string;
-      readonly kind: 'blood' | 'explosion' | 'shot';
+      readonly kind: 'blood' | 'explosion' | 'shot' | 'swing';
       readonly seed: number;
       readonly ticks: number;
       /**
@@ -300,6 +301,8 @@ async function main(): Promise<void> {
       /** `shot` only: world units a second, along the flight. */
       readonly speed?: number;
       readonly from?: number;
+      /** `swing` only: which way the body is facing. */
+      readonly facing?: number;
       readonly radius?: number;
       readonly intensity?: number;
       readonly dissipates?: boolean;
@@ -356,6 +359,11 @@ async function main(): Promise<void> {
             ...(input.from === undefined ? {} : { from: input.from }),
             ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
             ...(input.dissipates === undefined ? {} : { dissipates: input.dissipates }),
+          });
+        } else if (input.kind === 'swing') {
+          api.swing(input.effectId ?? 'swing_arc', {
+            seed: input.seed,
+            ...(input.facing === undefined ? {} : { facing: input.facing }),
           });
         } else if (input.kind === 'shot') {
           api.shot(input.effectId ?? 'shot_ember', {
@@ -621,6 +629,73 @@ async function main(): Promise<void> {
       ]),
     });
 
+    // --- swings -----------------------------------------------------------
+    // The sheet this spec exists to be judged on. The first cut of these was
+    // laid flat on the ground and read as a painted debug ring, which every
+    // headless test passed and only a picture could say.
+    const swingTicks = [2, 5, 9, 14, 20, 28];
+    swingRows.push({
+      title: 'a melee swing over its own life (ticks)',
+      tiles: await series(
+        swingTicks.map((tick) => ({
+          label: `t=${tick}`,
+          kind: 'swing' as const,
+          effectId: 'swing_arc',
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          halfHeight: 130,
+        })),
+      ),
+    });
+    swingRows.push({
+      title: 'the same swing from six camera bearings',
+      check: 'bearings',
+      tiles: await series(
+        Array.from({ length: COLUMNS }, (_, i) => ({
+          label: `cam ${Math.round((i / COLUMNS) * 360)}deg`,
+          kind: 'swing' as const,
+          effectId: 'swing_arc',
+          seed: SEEDS[0] ?? 1,
+          ticks: 8,
+          azimuth: (i / COLUMNS) * Math.PI * 2,
+          halfHeight: 130,
+        })),
+      ),
+    });
+    swingRows.push({
+      title: 'the swing aimed six ways, camera fixed -- it must follow the body',
+      tiles: await series(
+        Array.from({ length: COLUMNS }, (_, i) => ({
+          label: `face ${Math.round((i / COLUMNS) * 360)}deg`,
+          kind: 'swing' as const,
+          effectId: 'swing_arc',
+          seed: SEEDS[0] ?? 1,
+          ticks: 8,
+          facing: (i / COLUMNS) * Math.PI * 2,
+          halfHeight: 130,
+        })),
+      ),
+    });
+    swingRows.push({
+      title: 'heavy beside standard, and Whirlwind: louder in the same language',
+      tiles: await series([
+        { label: 'swing_arc', kind: 'swing' as const, effectId: 'swing_arc', seed: SEEDS[1] ?? 2, ticks: 8, halfHeight: 130 },
+        { label: 'heavy', kind: 'swing' as const, effectId: 'swing_arc_heavy', seed: SEEDS[1] ?? 2, ticks: 8, halfHeight: 130 },
+        { label: 'whirl t=4', kind: 'swing' as const, effectId: 'skill.whirlwind.impact', seed: SEEDS[1] ?? 2, ticks: 4, halfHeight: 210 },
+        { label: 'whirl t=9', kind: 'swing' as const, effectId: 'skill.whirlwind.impact', seed: SEEDS[1] ?? 2, ticks: 9, halfHeight: 210 },
+        { label: 'whirl t=16', kind: 'swing' as const, effectId: 'skill.whirlwind.impact', seed: SEEDS[1] ?? 2, ticks: 16, halfHeight: 210 },
+        { label: 'whirl t=26', kind: 'swing' as const, effectId: 'skill.whirlwind.impact', seed: SEEDS[1] ?? 2, ticks: 26, halfHeight: 210 },
+      ]),
+    });
+    swingRows.push({
+      title: 'six seeds, one camera',
+      check: 'seeds',
+      tiles: await series(
+        SEEDS.map((seed, i) => ({ label: `#${i}`, kind: 'swing' as const, effectId: 'swing_arc', seed, ticks: 8, halfHeight: 130 })),
+      ),
+    });
+
+
     const shaderProblems = logs.filter((line) => /error|could not compile|shader/i.test(line) && !/favicon|404/i.test(line));
     if (shaderProblems.length > 0) problems.push(...shaderProblems);
   } finally {
@@ -631,6 +706,7 @@ async function main(): Promise<void> {
   writeFileSync(join(shots, 'brush-blood.png'), PNG.sync.write(sheet(bloodRows)));
   writeFileSync(join(shots, 'brush-explosion.png'), PNG.sync.write(sheet(boomRows)));
   writeFileSync(join(shots, 'brush-shot.png'), PNG.sync.write(sheet(shotRows)));
+  writeFileSync(join(shots, 'brush-swing.png'), PNG.sync.write(sheet(swingRows)));
   console.log(`wrote ${join(shots, 'brush-blood.png')}`);
   console.log(`wrote ${join(shots, 'brush-explosion.png')}`);
   console.log(`wrote ${join(shots, 'brush-shot.png')}`);

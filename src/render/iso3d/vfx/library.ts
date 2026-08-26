@@ -21,7 +21,7 @@
  * here departs from it, the reason is in a comment.
  */
 
-import { ORDER_MARK_ARM, brushCross } from './brush.js';
+import { ORDER_MARK_ARM, brushCross, brushSwing } from './brush.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
@@ -956,6 +956,39 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // own input, two particles cost nothing, and a click whose answer was dropped
   // under budget pressure reads as a click that missed.
   brushCross({ id: 'order_move', arm: ORDER_MARK_ARM, priority: 3 }),
+
+  // --- swings ----------------------------------------------------------------
+  // Painted, in the air, in the vocabulary the blood and the explosions are
+  // already in (spec 230). What these replace is `scene.addEffect`'s orange
+  // debug disc, which is what every skill in the table drew.
+  //
+  // Whirlwind needs no call-site change at all: `landArea` already sends
+  // `skill.whirlwind.impact` at the caster's own feet, *before* the target loop,
+  // so this draws on a turn that caught nobody -- which is what a swing is.
+  // Registering the id is the whole of the wiring.
+  brushSwing({
+    id: 'skill.whirlwind.impact',
+    // Inside the ability's own 160: the marks are thrown outward from 72% of the
+    // reach, so a swing authored at the reach paints past it -- and the one
+    // thing a player must read off this picture is who was caught.
+    reach: 132,
+    sweep: Math.PI * 2,
+    // Ten rather than seven: at this radius the circumference is 830 units, and
+    // seven lobes left gaps a body could stand in -- a full turn has to read as
+    // a turn rather than as a few bursts that happen to be arranged in a ring.
+    lobes: 10,
+    lifetimeTicks: 30,
+    priority: 3,
+  }),
+  // The melee skills, played by `world/swing-vfx.ts` at the attacker on the tick
+  // the blow lands -- whether or not it landed on anybody. One sweep for four
+  // skills, because what differs between a cripple and a rend is the
+  // *affliction*, which is painted on the body it landed on; the blade going
+  // past is the same blade.
+  brushSwing({ id: 'swing_arc', reach: 74, sweep: 2.1, lobes: 4 }),
+  // Louder in the same language, never a different one: Stunning Blow is wound
+  // up from the shoulder over 0.9s and telegraphed the whole way.
+  brushSwing({ id: 'swing_arc_heavy', reach: 88, sweep: 2.7, lobes: 5, lifetimeTicks: 32, priority: 3 }),
 
   // --- explosions ------------------------------------------------------------
   // The reference, at full size: a crystal that opens, throws rock and leaves a

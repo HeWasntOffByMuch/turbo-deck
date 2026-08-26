@@ -17,6 +17,7 @@ import {
   brushExplosionRequest,
   BRUSH_EFFECTS,
   brushCross,
+  brushSwing,
   BLOOD_HIT_SCALE,
   BRUSH_EXPLOSION_RADIUS,
   CROSS_YAWS,
@@ -903,6 +904,82 @@ describe('the cross (spec 175)', () => {
       expect(fromAxis, String(yaw)).toBeGreaterThan(0.05);
       const fromView = Math.min(...[Math.PI / 4, (3 * Math.PI) / 4].map((axis) => Math.abs(yaw - axis)));
       expect(fromView, String(yaw)).toBeGreaterThan(0.5);
+    }
+  });
+});
+
+/**
+ * The swing (spec 230).
+ *
+ * The regression these exist for is the one the first implementation shipped
+ * green: marks laid flat on the ground, which reads as the debug disc they
+ * replaced. So the lift is asserted directly, on the offset, rather than trusted
+ * to a comment.
+ */
+describe('brushSwing', () => {
+  const swing = brushSwing({ id: 'test_swing', reach: 74, sweep: 2.1, lobes: 4 });
+
+  it('composes one emitter per lobe', () => {
+    expect(swing.emitters).toHaveLength(4);
+  });
+
+  it('throws every lobe along its own bearing', () => {
+    // A single wide fan samples uniformly and comes out an even star, whatever
+    // the marks are. Distinct bearings are what make it a composition.
+    const bearings = swing.emitters.map((emitter) =>
+      emitter.shape.kind === 'fan' ? emitter.shape.bearing : undefined,
+    );
+    expect(bearings.every((bearing) => bearing !== undefined)).toBe(true);
+    expect(new Set(bearings).size).toBe(bearings.length);
+  });
+
+  it('lifts its marks off the ground', () => {
+    // THE regression. A swing on the floor is the debug ring in paint.
+    for (const emitter of swing.emitters) {
+      expect(emitter.offset?.y ?? 0, emitter.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('paints, in the vocabulary the blood is in', () => {
+    for (const emitter of swing.emitters) {
+      expect(emitter.render).toBe('mesh');
+      expect(strokeShape(emitter.mesh?.shape ?? 'blob'), emitter.id).toBe(true);
+      expect(emitter.blend).toBe('alpha');
+    }
+    // Some of it has to be the dominant mark: all-flick reads as petals, which
+    // is what the first render of the sheet showed.
+    const shapes = swing.emitters.map((emitter) => emitter.mesh?.shape);
+    expect(shapes).toContain('brush-slash');
+  });
+
+  it('centres a partial sweep on the effect bearing', () => {
+    const bearings = swing.emitters
+      .map((emitter) => (emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0))
+      .sort((a, b) => a - b);
+    const first = bearings[0] ?? 0;
+    const last = bearings[bearings.length - 1] ?? 0;
+    // Symmetric about the bearing, allowing for the constant lead each lobe is
+    // given toward the direction the edge is travelling.
+    expect(Math.abs(first + last - 2 * 0.5)).toBeLessThan(1e-6);
+  });
+
+  it('does not stack a full turn back onto its own first lobe', () => {
+    const turn = brushSwing({ id: 'test_turn', reach: 130, sweep: Math.PI * 2, lobes: 8 });
+    const bearings = turn.emitters.map((emitter) =>
+      emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0,
+    );
+    // Divided by the count rather than by the gaps, or the last lobe lands on
+    // the first and a full turn is a turn with a hole and a double in it.
+    const spread = Math.max(...bearings) - Math.min(...bearings);
+    expect(spread).toBeLessThan(Math.PI * 2);
+    expect(new Set(bearings.map((b) => b.toFixed(4))).size).toBe(bearings.length);
+  });
+
+  it('places its lobes out on the arc rather than at the body', () => {
+    for (const emitter of swing.emitters) {
+      const dx = emitter.offset?.x ?? 0;
+      const dz = emitter.offset?.z ?? 0;
+      expect(Math.hypot(dx, dz), emitter.id).toBeGreaterThan(74 * 0.5);
     }
   });
 });

@@ -787,6 +787,136 @@ export function brushCross(params: BrushCrossParams): EffectDefinition {
   };
 }
 
+export interface BrushSwingParams {
+  readonly id: string;
+  /** How far the blade reaches, in world units. The one size knob. */
+  readonly reach: number;
+  /** Total angle the swing covers, centred on the effect's bearing. Radians. */
+  readonly sweep: number;
+  /** How many lobes the sweep is composed of. */
+  readonly lobes?: number;
+  readonly lifetimeTicks?: number;
+  /** How high off the ground the blade passes. A chest, not a pair of boots. */
+  readonly lift?: number;
+  readonly bright?: PaletteKey;
+  readonly mid?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+}
+
+/**
+ * A swing, painted (spec 230).
+ *
+ * ## The false start, because it is the whole reason this looks the way it does
+ *
+ * The first version of this invented a `brush-sweep` mesh shape and an
+ * `ORIENT.groundVelocity` to go with it, and laid the marks **flat on the
+ * ground** along an arc. It was wrong in the way that matters: the vocabulary
+ * this game paints combat in is marks *in the air* -- `bloodHit` throws
+ * `brush-slash` at `cardVelocity`, `brushExplosion` composes lobes of them --
+ * and a flat ring on the floor is the same object as the debug disc
+ * `scene.addEffect` falls back to, only in paint. Whirlwind at a full turn was
+ * literally a painted circle on the ground.
+ *
+ * So this is built the way the effects it has to sit beside are built, and it
+ * needs **no engine change at all**: `fan` already throws marks along a bearing
+ * and lifts them out of the ground plane, and `bearing` already lets several of
+ * them compose a shape.
+ *
+ * ## Lobes, not a spread
+ *
+ * `brushExplosion` states the argument and it holds here: a single wide fan
+ * samples directions uniformly, so however different the marks are the
+ * silhouette comes out an even star. A swing is composed of a few clusters with
+ * gaps between them, and the counts step down across the sweep so one part of
+ * it carries more weight than the rest -- which is what a blade accelerating
+ * through an arc actually leaves.
+ *
+ * ## Born out on the arc, not at the body
+ *
+ * Each lobe is `offset` most of the way out to the reach, so the marks are where
+ * the blade was rather than streaming out of the caster's chest. `system.ts`
+ * turns an emitter's offset by the effect's rotation, so the whole composition
+ * aims with nothing else to do -- the same mechanism that makes a blood hit
+ * point away from its attacker.
+ */
+export function brushSwing(params: BrushSwingParams): EffectDefinition {
+  const reach = params.reach;
+  const lobes = Math.max(2, params.lobes ?? 5);
+  const life = params.lifetimeTicks ?? 26;
+  const lift = params.lift ?? reach * 0.22;
+  const bright = params.bright ?? 'physicalBone';
+  const mid = params.mid ?? 'dustPale';
+  const deep = params.deep ?? 'dustStone';
+  // Thrown at a fraction of the reach a second: fast enough to read as a blade
+  // rather than a puff, and `velocityScale` takes it out almost at once so the
+  // marks stop where the blade was instead of sailing off it.
+  const velocity = reach * 5.2;
+
+  const emitters: Emitter[] = [];
+  for (let index = 0; index < lobes; index += 1) {
+    // Across the sweep, centred on the effect's own bearing. A full turn wraps,
+    // so the last lobe is not laid on top of the first: the span is divided by
+    // the count rather than by the gaps between them.
+    const wraps = params.sweep >= Math.PI * 1.98;
+    const step = params.sweep / (wraps ? lobes : Math.max(1, lobes - 1));
+    const theta = wraps ? index * step : -params.sweep / 2 + index * step;
+    // Uneven, so the sweep has weight somewhere rather than being an even star
+    // -- `brushExplosion`'s argument, applied along an arc instead of around a
+    // point. Every other lobe is a dominant `brush-slash`, and the rest are
+    // `brush-flick` company: all-flick reads as petals rather than as an edge,
+    // which is what the first render of this sheet showed.
+    const heavy = index % 2 === 0;
+    emitters.push({
+      id: `lobe_${index}`,
+      // Out on the arc rather than at the caster (see the header), and lifted to
+      // the height a blade actually passes at.
+      offset: { x: Math.cos(theta) * reach * 0.72, y: lift, z: Math.sin(theta) * reach * 0.72 },
+      // Thrown outward *and along* the turn: half a radian ahead of its own
+      // bearing, which is the direction the edge is travelling at that point of
+      // the arc. Purely radial marks read as an explosion; purely tangential
+      // ones read as a ring.
+      shape: { kind: 'fan', angle: 0.5, radius: reach * 0.06, rise: 0.16, bearing: theta + 0.5 },
+      emission: { kind: 'burst', count: heavy ? 4 : 2 },
+      lifetimeTicks: [Math.round(life * 0.55), life],
+      speed: [velocity * 0.7, velocity * 1.15],
+      spreadRadians: 0.18,
+      // Light, for `bloodHit`'s reason: these marks carry a *direction* and that
+      // is the information in them, so enough gravity to turn one mid-flight
+      // makes it a vertical mark that says nothing about where the blade went.
+      gravity: -260,
+      drag: 6,
+      velocityScale: { keys: [[0, 1], [0.28, 0.14], [1, 0.03]] },
+      // A stroke's size *is* its length. The dominant marks are most of a
+      // body across, which is what makes them read as an edge going past rather
+      // than as debris coming off one.
+      size: (() => {
+        const peak = reach * (heavy ? 0.72 : 0.42);
+        return { keys: [[0, peak * 0.92], [0.35, peak], [1, peak * 0.9]] } as const;
+      })(),
+      // Opaque while it matters, like every mark in this file: overlapping
+      // translucent strokes make a third colour at every crossing that is in
+      // neither of them.
+      alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
+      color: { stops: [[0, bright], [0.5, bright], [0.78, mid], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: heavy ? 'brush-slash' : 'brush-flick' },
+      blend: 'alpha',
+      // Retract, which is spec 161's rule for anything fast: these are thrown
+      // marks rooted at their butts, so the erosion walking from root to tip is
+      // the stroke being finished rather than the mark sliding off its point.
+      strokeDecay: 'retract',
+    });
+  }
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1600,
+    emitters,
+  };
+}
+
 /**
  * How long each arm of the order cross is, in world units (spec 175).
  *
