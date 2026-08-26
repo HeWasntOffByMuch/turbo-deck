@@ -1,10 +1,10 @@
 /**
  * The offline audio build (spec 229): production sources in, game-ready `.ogg` out.
  *
- * The sources under `assets/audio/` are what a sound library ships -- 96kHz
+ * The sources under `assets/audio/raw/` are what a sound library ships -- 96kHz
  * 24-bit stereo, one file per take, named for the session that recorded it. None
  * of that is wrong; it is just not what a browser should be asked to download.
- * Measured on the delivered set: 51.6 MB across 74 files, of which a single
+ * Measured on the delivered set: 51.56 MB across 74 files, of which a single
  * footstep is 1.85 MB for **0.2 seconds of content followed by 2.3 seconds of
  * digital silence**, and the whole library is 130 seconds of audio.
  *
@@ -18,33 +18,59 @@
  *   thrown away on decode.
  * - **Mono for anything spatial.** A `PannerNode` downmixes a stereo buffer to
  *   mono before it pans it, so a stereo source is half the bytes for *nothing*:
- *   the stereo image is discarded and replaced by the panner's. UI sounds are
- *   the exception and stay stereo, because they are the ones that never reach a
- *   panner.
+ *   the stereo image is discarded and replaced by the panner's. The interface
+ *   and the ambient bed are the exceptions and stay stereo, because they are the
+ *   ones that never reach a panner (`isStereoPath`).
  * - **The tail is trimmed.** Trailing digital silence is decoded into memory as
  *   zeroes and held there for as long as the buffer is cached. Leading silence
- *   is deliberately *not* trimmed and is not present in this library anyway --
- *   trimming the head would move the transient, and a footstep that fires late
- *   is worse than a footstep that is large.
+ *   is deliberately *not* trimmed -- trimming the head would move the transient,
+ *   and a footstep that fires late is worse than a footstep that is large.
  *
  * What it does **not** do is normalise. How loud a sound is relative to the rest
  * of the game is a mix decision, and the mix lives in `assets/audio/sfx.json`
  * where the SFX tab can change it without re-encoding anything. Baking a level
  * in would be the same number written down twice.
  *
+ * ## It discovers; it is not told
+ *
+ * Every audio file under `assets/audio/raw/` is baked, and where it lands is
+ * `bakedNameFor` -- the source tree's own structure, slugged. There used to be a
+ * hand-written table of 74 rows here, which made **adding a sound a code edit**:
+ * exactly the friction the split between the vocabulary and the catalog exists
+ * to remove. The table survives in `paths.ts` as `BAKED_NAMES`, a rename map for
+ * the delivered library alone, because those 74 paths are referenced by
+ * `sfx.json` and are not free to move.
+ *
+ * ## Incremental, and it does not delete
+ *
+ * A take whose `.ogg` is newer than its source is skipped, so a re-bake after
+ * dropping in one file costs one ffmpeg call rather than 74. `--force` re-encodes
+ * everything.
+ *
+ * Nothing is ever removed without `--prune`, and that is a deliberate reversal:
+ * the sources are gitignored, so a fresh clone has *none* of them, and a bake
+ * that deleted what it could not account for would delete the entire committed
+ * library the first time somebody ran it before checking the raws out. Orphans
+ * are reported instead. `--prune` is the "I renamed something" button.
+ *
  * ## Running it
  *
  * ```sh
- * git checkout raw-audio-files -- assets/audio   # the sources, if you have not got them
- * # (they arrive as assets/audio/{UI,combat,events,steps}; move them under assets/audio/raw/)
- * npm run bake:audio
+ * npm run bake:audio            # everything new or changed
+ * npm run bake:audio -- --force # re-encode everything
+ * npm run bake:audio -- --prune # and delete outputs with no source
  * ```
  *
- * `assets/audio/raw/` is gitignored for the reason `.studio/` is: it is the
- * raw intermediate, not the deliverable. What gets committed is what this writes
+ * The SFX tab has an Import button that writes a file here and calls this, so
+ * the ordinary path never touches a terminal at all.
+ *
+ * `assets/audio/raw/` is gitignored for the reason `.studio/` is: it is the raw
+ * intermediate, not the deliverable. What gets committed is what this writes
  * into `public/audio/`, which is `publicDir` -- so one tree is served in dev by
  * vite and copied verbatim into `dist/` by a build, and the URL is the same
- * `/audio/...` in both.
+ * `/audio/...` in both. The delivered takes live on the `raw-audio-files`
+ * branch: `git checkout raw-audio-files -- assets/audio`, then move the four
+ * folders under `assets/audio/raw/`.
  *
  * ffmpeg is the one external tool this repo asks for, and only here: it is an
  * offline authoring step, like the Tripo calls behind `src/server/studio/`, and
@@ -52,127 +78,16 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { bakedNameFor, isSourceName, isStereoPath, urlForBaked } from '../src/render/audio/paths.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_DIR = join(repoRoot, 'assets', 'audio', 'raw');
 const OUT_DIR = join(repoRoot, 'public', 'audio');
-
-/**
- * One source take and where it lands.
- *
- * A table rather than a rule that derives the name, because the sources are
- * named by five different libraries with five different conventions and any rule
- * that covered them would be longer than the table and would silently
- * mis-classify the next one. A missing source is an error rather than a skip:
- * a bake that quietly produced 60 files instead of 74 is a bake nobody notices.
- */
-interface Take {
-  /** Path under `assets/audio/`. */
-  readonly from: string;
-  /** Path under `public/audio/`, without the extension. */
-  readonly to: string;
-}
-
-const STEPS = 'steps';
-const SWORD = 'combat/Sword';
-const ELEM = 'combat/elemental effects';
-
-function numbered(fromDir: string, fromStem: string, toDir: string, toStem: string, count: number, pad = 3): readonly Take[] {
-  return Array.from({ length: count }, (_unused, i) => {
-    const n = String(i + 1).padStart(pad, '0');
-    const out = String(i + 1).padStart(2, '0');
-    return { from: `${fromDir}/${fromStem}${n}.wav`, to: `${toDir}/${toStem}_${out}` };
-  });
-}
-
-const TAKES: readonly Take[] = [
-  // --- player -------------------------------------------------------------
-  // Two surfaces, kept apart rather than merged into one bag of twelve: which
-  // set a body walks on is a thing the catalog chooses, and a boot and a sandal
-  // in one variant list is a player whose shoes change every other step.
-  ...numbered(`${STEPS}/generic`, 'FEETMisc_STEP-Boots on Generic Ground 1_HY_PC-', 'player/footsteps', 'boots', 6),
-  ...numbered(`${STEPS}/other`, 'FEETMisc_STEP-Sandals on Ground_HY_PC-', 'player/footsteps', 'sandals', 6),
-
-  // --- combat: swings -----------------------------------------------------
-  ...numbered(`${SWORD}/2. Sword Slash`, 'Sword Slash ', 'combat/swings', 'sword_slash', 3, 2),
-  ...numbered(`${SWORD}/3. Sword Swoosh`, 'Sword Swoosh Light ', 'combat/swings', 'sword_swoosh_light', 3, 2),
-  ...numbered(`${SWORD}/3. Sword Swoosh`, 'Sword Swoosh Heavy ', 'combat/swings', 'sword_swoosh_heavy', 3, 2),
-  ...numbered(`${SWORD}/1. Sword Stab`, 'Sword Stab Light ', 'combat/swings', 'sword_stab_light', 3, 2),
-  ...numbered(`${SWORD}/1. Sword Stab`, 'Sword Stab Heavy ', 'combat/swings', 'sword_stab_heavy', 3, 2),
-  ...numbered('combat/Generic Swoosh', 'Punch Swoosh ', 'combat/swings', 'punch', 3, 2),
-
-  // --- combat: contact ----------------------------------------------------
-  ...numbered('combat/Generic Hit', 'Hammer Hit ', 'combat/hits', 'blunt', 3, 2),
-  ...numbered(`${SWORD}/4. Sword Clash`, 'Sword Clash ', 'combat/hits', 'sword_clash', 3, 2),
-  {
-    from: 'events/death/DSGNErie_NoiseBoxHit_36_InMotionAudio_SinisterTextures4.wav',
-    to: 'combat/death/death_01',
-  },
-
-  // --- elemental: fire ----------------------------------------------------
-  ...numbered('combat/magical attack', 'Fire_AttackF', 'elemental/fire', 'cast', 3, 1),
-  ...numbered('combat/magical hit', 'Fire_ImpactF', 'elemental/fire', 'impact', 3, 1),
-  { from: `${ELEM}/Mgc_Fire_Cast_01.wav`, to: 'elemental/fire/cast_long_01' },
-  { from: `${ELEM}/Mgc_Fire_Hold_01.wav`, to: 'elemental/fire/hold_01' },
-  { from: `${ELEM}/Mgc_Fire_Throw_01.wav`, to: 'elemental/fire/throw_01' },
-  { from: `${ELEM}/Mgc_Fire_Impact_01.wav`, to: 'elemental/fire/impact_heavy_01' },
-  { from: `${ELEM}/Mgc_Fading_Drops_Fire_01.wav`, to: 'elemental/fire/embers_01' },
-  {
-    from: 'combat/Skills/fire/FIREWhsh_Whoosh Fire Deep Growl Monster Saturated Crisp 03_ESM_EMWI.wav',
-    to: 'elemental/fire/whoosh_01',
-  },
-
-  // --- elemental: ice -----------------------------------------------------
-  { from: `${ELEM}/Mgc_Ice_Ball_Cast_01.wav`, to: 'elemental/ice/cast_01' },
-  { from: `${ELEM}/Mgc_Ice_Arrow_Cast_01.wav`, to: 'elemental/ice/arrow_cast_01' },
-  { from: `${ELEM}/Mgc_Ice_Arrow_Fly_01.wav`, to: 'elemental/ice/arrow_fly_01' },
-  { from: `${ELEM}/Mgc_Ice_Arrow_Hit_01.wav`, to: 'elemental/ice/arrow_hit_01' },
-  { from: `${ELEM}/Mgc_Glacier_Cast_01.wav`, to: 'elemental/ice/glacier_cast_01' },
-  { from: `${ELEM}/Mgc_Glacier_Impact_01.wav`, to: 'elemental/ice/glacier_impact_01' },
-
-  // --- elemental: lightning ------------------------------------------------
-  { from: `${ELEM}/Mgc_Electric_Throw_01.wav`, to: 'elemental/lightning/throw_01' },
-  { from: `${ELEM}/Mgc_Electric_Hit_01.wav`, to: 'elemental/lightning/hit_01' },
-  { from: `${ELEM}/Mgc_Electric_Impact_01.wav`, to: 'elemental/lightning/impact_01' },
-
-  // --- elemental: water ----------------------------------------------------
-  { from: `${ELEM}/Mgc_Water_Cast_01.wav`, to: 'elemental/water/cast_01' },
-  { from: `${ELEM}/Mgc_Water_Throw_01.wav`, to: 'elemental/water/throw_01' },
-  { from: `${ELEM}/Mgc_Water_Throw_02.wav`, to: 'elemental/water/throw_02' },
-  { from: `${ELEM}/Mgc_Water_Hit_01.wav`, to: 'elemental/water/hit_01' },
-  { from: `${ELEM}/Mgc_Water_Hit_Short_01.wav`, to: 'elemental/water/hit_short_01' },
-  { from: `${ELEM}/Mgc_Water_Impact_01.wav`, to: 'elemental/water/impact_01' },
-
-  // --- ui -----------------------------------------------------------------
-  ...(
-    [
-      'attribute_up',
-      'denied',
-      'drop_item',
-      'equip_item_skill',
-      'move_item',
-      'pick_up_item',
-      'skill_equip_cancelled',
-      'skill_up',
-      'trade_complete',
-      'trade_request',
-    ] as const
-  ).map((name) => ({ from: `UI/${name}.wav`, to: `ui/${name}` })),
-];
-
-/**
- * Whether a baked file keeps two channels.
- *
- * Only the sounds that never reach a `PannerNode`. Everything else is downmixed
- * by the panner anyway, so shipping stereo would be twice the bytes for a stereo
- * image that is discarded on the way in.
- */
-function isStereo(to: string): boolean {
-  return to.startsWith('ui/');
-}
+const MANIFEST = join(OUT_DIR, 'manifest.json');
 
 /**
  * Trim the tail, and only the tail.
@@ -185,11 +100,70 @@ function isStereo(to: string): boolean {
  */
 const TRIM = 'areverse,silenceremove=start_periods=1:start_threshold=-60dB:start_duration=0,areverse';
 
-interface Baked {
-  readonly to: string;
+export interface BakeOptions {
+  readonly force?: boolean;
+  readonly prune?: boolean;
+  /** Where progress goes. The dev endpoint collects it; the CLI prints it. */
+  readonly log?: (line: string) => void;
+}
+
+export interface BakeResult {
+  readonly encoded: number;
+  readonly skipped: number;
+  readonly clips: number;
+  readonly orphans: readonly string[];
+  readonly pruned: readonly string[];
   readonly sourceBytes: number;
   readonly bakedBytes: number;
   readonly seconds: number;
+  readonly lines: readonly string[];
+}
+
+/** Every file under `dir`, as paths relative to it, in a stable order. */
+function walk(dir: string, prefix = ''): readonly string[] {
+  if (!existsSync(dir)) return [];
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) found.push(...walk(join(dir, entry.name), path));
+    else found.push(path);
+  }
+  return found;
+}
+
+function probeSeconds(path: string): number {
+  const out = execFileSync(
+    'ffprobe',
+    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', path],
+    { encoding: 'utf8' },
+  );
+  const seconds = Number.parseFloat(out.trim());
+  return Number.isFinite(seconds) ? seconds : 0;
+}
+
+function encode(from: string, to: string, stereo: boolean): void {
+  mkdirSync(dirname(to), { recursive: true });
+  execFileSync(
+    'ffmpeg',
+    [
+      '-v', 'error', '-y',
+      '-i', from,
+      '-af', TRIM,
+      '-ac', stereo ? '2' : '1',
+      '-ar', '48000',
+      '-c:a', 'libvorbis',
+      '-q:a', '4',
+      to,
+    ],
+    { stdio: ['ignore', 'ignore', 'pipe'] },
+  );
+}
+
+interface ClipEntry {
+  readonly url: string;
+  readonly seconds: number;
+  readonly bytes: number;
+  readonly channels: 1 | 2;
 }
 
 /**
@@ -202,119 +176,149 @@ interface Baked {
  * without this the picker would be a text box you type a path into and find out
  * later whether you got it right.
  *
- * It carries the duration and the size because those are what a person choosing
- * between two takes wants to know, and both are free here and impossible in the
- * browser without fetching and decoding the file.
+ * Built by scanning the output tree rather than from the takes just encoded, so
+ * it describes what is actually *there* -- which after an incremental bake is
+ * not the same list. Durations are reused from the previous manifest wherever
+ * the byte count is unchanged, because `ffprobe` on 74 files is most of what an
+ * incremental bake would otherwise cost.
  */
-interface ClipEntry {
-  /** The URL, exactly as a catalog entry names it. */
-  readonly url: string;
-  readonly seconds: number;
-  readonly bytes: number;
-  readonly channels: 1 | 2;
-}
-
-function writeManifest(baked: readonly Baked[]): void {
-  const clips: readonly ClipEntry[] = [...baked]
-    .sort((a, b) => a.to.localeCompare(b.to))
-    .map((b) => ({
-      url: `/audio/${b.to}.ogg`,
-      seconds: Number(b.seconds.toFixed(3)),
-      bytes: b.bakedBytes,
-      channels: isStereo(b.to) ? (2 as const) : (1 as const),
-    }));
-  writeFileSync(join(OUT_DIR, 'manifest.json'), `${JSON.stringify({ version: 1, clips }, null, 2)}\n`);
-}
-
-function probeSeconds(path: string): number {
-  const out = execFileSync(
-    'ffprobe',
-    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', path],
-    { encoding: 'utf8' },
-  );
-  return Number.parseFloat(out.trim());
-}
-
-function bake(take: Take): Baked {
-  const from = join(SOURCE_DIR, take.from);
-  if (!existsSync(from)) {
-    throw new Error(
-      `missing source: assets/audio/${take.from}\n` +
-        '  the raw takes live on the raw-audio-files branch:\n' +
-        '  git checkout raw-audio-files -- assets/audio && mv assets/audio/{UI,combat,events,steps} assets/audio/raw/',
-    );
+function writeManifest(): { clips: number; bytes: number; seconds: number } {
+  const known = new Map<string, ClipEntry>();
+  try {
+    const raw = JSON.parse(readFileSync(MANIFEST, 'utf8')) as { clips?: readonly ClipEntry[] };
+    for (const clip of raw.clips ?? []) known.set(clip.url, clip);
+  } catch {
+    // No manifest yet, or an unreadable one. Everything is probed.
   }
-  const to = join(OUT_DIR, `${take.to}.ogg`);
-  mkdirSync(dirname(to), { recursive: true });
-  execFileSync(
-    'ffmpeg',
-    [
-      '-v', 'error', '-y',
-      '-i', from,
-      '-af', TRIM,
-      '-ac', isStereo(take.to) ? '2' : '1',
-      '-ar', '48000',
-      '-c:a', 'libvorbis',
-      '-q:a', '4',
-      to,
-    ],
-    { stdio: ['ignore', 'ignore', 'inherit'] },
-  );
+
+  const clips: ClipEntry[] = [];
+  for (const name of walk(OUT_DIR)) {
+    if (!name.endsWith('.ogg')) continue;
+    const baked = name.replace(/\.ogg$/, '');
+    const url = urlForBaked(baked);
+    const bytes = statSync(join(OUT_DIR, name)).size;
+    const cached = known.get(url);
+    clips.push({
+      url,
+      seconds: cached?.bytes === bytes ? cached.seconds : Number(probeSeconds(join(OUT_DIR, name)).toFixed(3)),
+      bytes,
+      channels: isStereoPath(baked) ? 2 : 1,
+    });
+  }
+  clips.sort((a, b) => a.url.localeCompare(b.url));
+  mkdirSync(OUT_DIR, { recursive: true });
+  writeFileSync(MANIFEST, `${JSON.stringify({ version: 1, clips }, null, 2)}\n`);
   return {
-    to: take.to,
-    sourceBytes: statSync(from).size,
-    bakedBytes: statSync(to).size,
-    seconds: probeSeconds(to),
+    clips: clips.length,
+    bytes: clips.reduce((sum, clip) => sum + clip.bytes, 0),
+    seconds: clips.reduce((sum, clip) => sum + clip.seconds, 0),
   };
 }
 
-/** Every `.ogg` already under `public/audio/`, as paths without the extension. */
-function existingBaked(dir: string, prefix = ''): readonly string[] {
-  if (!existsSync(dir)) return [];
-  const found: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
-    if (entry.isDirectory()) found.push(...existingBaked(join(dir, entry.name), path));
-    else if (entry.name.endsWith('.ogg')) found.push(path.replace(/\.ogg$/, ''));
+export function bakeAudio(options: BakeOptions = {}): BakeResult {
+  const lines: string[] = [];
+  const say = (line: string): void => {
+    lines.push(line);
+    options.log?.(line);
+  };
+
+  const sources = walk(SOURCE_DIR).filter(isSourceName);
+  const wanted = new Map<string, string>();
+  for (const source of sources) {
+    const baked = bakedNameFor(source);
+    const clash = wanted.get(baked);
+    if (clash !== undefined) {
+      throw new Error(`two sources bake to ${baked}.ogg:\n  ${clash}\n  ${source}`);
+    }
+    wanted.set(baked, source);
   }
-  return found;
+
+  let encoded = 0;
+  let skipped = 0;
+  let sourceBytes = 0;
+  for (const [baked, source] of wanted) {
+    const from = join(SOURCE_DIR, source);
+    const to = join(OUT_DIR, `${baked}.ogg`);
+    sourceBytes += statSync(from).size;
+    // Newer than its source, so nothing about it has changed. `mtimeMs` rather
+    // than a hash: this is a local build step over files a person just dropped
+    // in, and hashing 51 MB to avoid re-encoding is the wrong side of the trade.
+    if (!options.force && existsSync(to) && statSync(to).mtimeMs >= statSync(from).mtimeMs) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      encode(from, to, isStereoPath(baked));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `ffmpeg could not encode ${source}\n  ${detail.split('\n').slice(-3).join('\n  ')}\n` +
+          '  (is ffmpeg installed and on PATH? it is the one external tool this repo needs)',
+      );
+    }
+    encoded += 1;
+    say(`  + ${baked}.ogg`);
+  }
+
+  // An output with no source: a take that was renamed, or removed, or one that
+  // is simply not checked out. Never deleted unless asked -- the sources are
+  // gitignored, so a fresh clone has none of them, and a bake that tidied up
+  // after itself would delete the whole committed library on its first run.
+  const orphans = walk(OUT_DIR)
+    .filter((name) => name.endsWith('.ogg'))
+    .map((name) => name.replace(/\.ogg$/, ''))
+    .filter((baked) => !wanted.has(baked));
+  const pruned: string[] = [];
+  if (options.prune) {
+    for (const baked of orphans) {
+      rmSync(join(OUT_DIR, `${baked}.ogg`));
+      pruned.push(baked);
+      say(`  - ${baked}.ogg (pruned)`);
+    }
+  }
+
+  const manifest = writeManifest();
+  const mb = (bytes: number): string => `${(bytes / 1048576).toFixed(2)} MB`;
+  say(
+    `baked ${String(encoded)} take${encoded === 1 ? '' : 's'}, skipped ${String(skipped)} already current; ` +
+      `${String(manifest.clips)} clips in ${relative(repoRoot, OUT_DIR)}/`,
+  );
+  if (sourceBytes > 0) {
+    say(
+      `  ${mb(sourceBytes)} of sources -> ${mb(manifest.bytes)} ` +
+        `(${(100 - (manifest.bytes / sourceBytes) * 100).toFixed(1)}% smaller), ` +
+        `${manifest.seconds.toFixed(1)}s of audio`,
+    );
+  }
+  if (sources.length === 0) {
+    say('  no sources under assets/audio/raw/ -- nothing was encoded, and nothing was removed');
+  }
+  for (const baked of orphans.filter((name) => !pruned.includes(name))) {
+    say(`  ? ${baked}.ogg has no source (--prune to remove)`);
+  }
+
+  return {
+    encoded,
+    skipped,
+    clips: manifest.clips,
+    orphans,
+    pruned,
+    sourceBytes,
+    bakedBytes: manifest.bytes,
+    seconds: manifest.seconds,
+    lines,
+  };
 }
 
 function main(): void {
-  const duplicates = TAKES.map((t) => t.to).filter((to, i, all) => all.indexOf(to) !== i);
-  if (duplicates.length > 0) throw new Error(`two takes bake to the same name: ${duplicates.join(', ')}`);
-
-  const before = new Set(existingBaked(OUT_DIR));
-  const baked = TAKES.map(bake);
-
-  // A take removed from the table leaves a file behind that nothing references
-  // and the SFX tab still offers. Same rule the map's region writer follows: the
-  // table is what makes a file reachable, so the table is what says it is not.
-  const wanted = new Set(baked.map((b) => b.to));
-  const stale = [...before].filter((name) => !wanted.has(name));
-  for (const name of stale) rmSync(join(OUT_DIR, `${name}.ogg`));
-
-  writeManifest(baked);
-
-  const sourceBytes = baked.reduce((sum, b) => sum + b.sourceBytes, 0);
-  const bakedBytes = baked.reduce((sum, b) => sum + b.bakedBytes, 0);
-  const seconds = baked.reduce((sum, b) => sum + b.seconds, 0);
-
-  const mb = (bytes: number): string => `${(bytes / 1048576).toFixed(2)} MB`;
-  process.stdout.write(`baked ${String(baked.length)} takes into ${relative(repoRoot, OUT_DIR)}/\n`);
-  for (const name of stale) process.stdout.write(`  removed stale ${name}.ogg\n`);
-  process.stdout.write(
-    `  ${mb(sourceBytes)} of sources -> ${mb(bakedBytes)} ` +
-      `(${(100 - (bakedBytes / sourceBytes) * 100).toFixed(1)}% smaller), ` +
-      `${seconds.toFixed(1)}s of audio\n`,
-  );
-
-  // The five biggest, because the only thing that ever goes wrong here is one
-  // file quietly being a tenth of the bake.
-  const biggest = [...baked].sort((a, b) => b.bakedBytes - a.bakedBytes).slice(0, 5);
-  for (const b of biggest) {
-    process.stdout.write(`  ${b.to.padEnd(40)} ${mb(b.bakedBytes).padStart(9)}  ${b.seconds.toFixed(2)}s\n`);
-  }
+  const argv = process.argv.slice(2);
+  bakeAudio({
+    force: argv.includes('--force'),
+    prune: argv.includes('--prune'),
+    log: (line) => process.stdout.write(`${line}\n`),
+  });
 }
 
-main();
+// Run only as a script, so the dev server can import `bakeAudio` without baking
+// the moment the module is loaded.
+if (process.argv[1] !== undefined && process.argv[1].endsWith('bake-audio.ts')) main();
