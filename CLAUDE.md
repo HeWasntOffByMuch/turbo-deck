@@ -1592,6 +1592,32 @@ src/render/      the client: a tab shell over the play view, the two tuning
                  the moment touch emulation exists and will not reproduce the
                  device at all; what it is worth is the *wiring* -- point the
                  layout back at a media query and preview-touch says so.
+                 What those four facts cannot do is separate a phone in
+                 desktop-site mode from a **small touchscreen desktop**, and
+                 that is a limit rather than an oversight: both report a
+                 hardware touch count, a fine primary pointer and a frame under
+                 `HANDHELD_MAX_SHORT_SIDE`. A Steam Deck in SteamOS desktop mode
+                 is the second one -- a 1280x800 panel is under 620 once the
+                 browser's chrome and any display scale are off it -- so a
+                 machine with a keyboard attached got the phone frame, and with
+                 one tab left `showsTabButtons` draws no tab strip, which puts
+                 the Studio and the map editor out of reach of the page
+                 entirely. Moving the threshold is the repair that looks
+                 obvious and is wrong: 620 was chosen against a real photograph
+                 of a real phone, and every number above it restores the bug
+                 spec 141 closed. So spec 230 makes the answer **sayable**
+                 instead -- `?frame=desktop` and `?frame=phone`, in the register
+                 `?seed=` and `?perf=noworker` already are. Three rules. It is
+                 applied in `isHandheldDevice` rather than inside `isHandheld`,
+                 because an override is a *person's answer* and `DeviceFacts` is
+                 what the hardware says -- and because every caller comes
+                 through that one function, so the rule that the tab bar, the
+                 HUD and the fullscreen button must agree holds without any of
+                 them learning an override exists. It goes **both ways**, since
+                 forcing the compact frame is how that layout gets looked at
+                 without a phone in your hand. And an unrecognised value
+                 **defers** rather than picking a side, so a misspelling costs
+                 the flag and not the frame.
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
