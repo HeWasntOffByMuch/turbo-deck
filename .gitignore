@@ -19,3 +19,9 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# The raw audio takes (spec 229). 51.6 MB of 96kHz 24-bit production WAVs,
+# and the same rule `.studio/` follows: the raw intermediate is not the
+# deliverable. What gets committed is what `npm run bake:audio` writes into
+# public/audio/. The takes live on the raw-audio-files branch.
+assets/audio/raw/
