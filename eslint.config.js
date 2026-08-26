@@ -279,6 +279,13 @@ const PURE_RENDER = [
   'src/render/audio/variants.test.ts',
   'src/render/audio/mix.ts',
   'src/render/audio/mix.test.ts',
+  // Where a source file ends up once it is baked (spec 229). Pure string
+  // arithmetic, and the one place that rule lives -- the bake writing the file,
+  // the dev server deciding where an import may land, and the SFX tab predicting
+  // the URL it will have all read it. Two answers there is an import that lands
+  // somewhere the tab cannot then find.
+  'src/render/audio/paths.ts',
+  'src/render/audio/paths.test.ts',
   // The SFX tab's pure half (spec 229), beside `studio/vfx-fields.ts` and for
   // its reason: what a row *is*, what an edit *means* and what the document
   // *says* are answerable in Node, and the DOM over them is not.
