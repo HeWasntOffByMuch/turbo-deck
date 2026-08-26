@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 
 import { mapWritePlugin } from './scripts/dev-map-write.js';
+import { sfxWritePlugin } from './scripts/dev-sfx-write.js';
 import { httpOriginOf } from './src/render/iso3d/world/connection.js';
 
 /**
@@ -33,7 +34,16 @@ export default defineConfig({
    * the plugin declares `apply: 'serve'`, so a built page has no such endpoint
    * and the editor falls back to the download it always had.
    */
-  plugins: [mapWritePlugin()],
+  plugins: [
+    mapWritePlugin(),
+    /**
+     * `POST /api/sfx` writes the sound catalog the SFX tab is editing
+     * (spec 229). Dev only, for the reason above it: a built page has no
+     * business writing into a repository, so the tab falls back to a download
+     * and says so rather than reporting a failed save.
+     */
+    sfxWritePlugin(),
+  ],
   /**
    * The Studio tab (spec 109) is the first thing in the client that speaks HTTP
    * to the game server, and in development they are two processes on two ports.
