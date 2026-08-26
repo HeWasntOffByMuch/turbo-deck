@@ -163,7 +163,7 @@ function clampDirection(moveX: number, moveY: number): Vec2 {
 /**
  * True when the ground at a point is somewhere a body may legally stand.
  *
- * **Two rules, asking two different questions** (spec 227), and separating them
+ * **Two rules, asking two different questions** (spec 228), and separating them
  * is the whole change:
  *
  *  - {@link MAX_STEP_HEIGHT} on the *step*: can the body get over this lip?

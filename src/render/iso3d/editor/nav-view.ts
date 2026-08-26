@@ -8,7 +8,7 @@ import { NAV_CELL_WALK } from './nav.js';
  * here".
  *
  * Two colours, because there are two answers. Unwalkable **ground** is what
- * `bakeChunkNav` decides, through the sim's own `MAX_WALK_SLOPE` since spec 227
+ * `bakeChunkNav` decides, through the sim's own `MAX_WALK_SLOPE` since spec 228
  * rather than through a threshold of the editor's own that the game did not
  * use; **prop footprints** are drawn on top of it but never baked, because a
  * tree is not terrain and re-baking nav every time a bush is planted would be

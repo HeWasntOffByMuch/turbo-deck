@@ -1,5 +1,5 @@
 /**
- * How steep is too steep (spec 227).
+ * How steep is too steep (spec 228).
  *
  * There is one threshold and no band above it: ground is walked on at full
  * speed or it is not walked on. A reduced-pace "climb" was in the first cut and
@@ -294,7 +294,7 @@ function steepestRoute(aspect: number): number {
 
 describe('the router', () => {
   /**
-   * Before spec 227 one `MAX_STEP_HEIGHT` was applied over a 10-unit run and a
+   * Before spec 228 one `MAX_STEP_HEIGHT` was applied over a 10-unit run and a
    * 14.14-unit one, so this swung 6.2 degrees on where a fixed world-space
    * lattice happened to fall across the hill.
    */

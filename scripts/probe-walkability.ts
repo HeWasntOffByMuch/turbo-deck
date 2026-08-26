@@ -1,5 +1,5 @@
 /**
- * What the game actually calls too steep to walk (spec 227).
+ * What the game actually calls too steep to walk (spec 228).
  *
  *   npx tsx scripts/probe-walkability.ts [--map maps/arena]
  *
@@ -246,7 +246,7 @@ function main(): void {
   }
 
   console.log('=== 1. movement: the steepest ground a body walks up ===');
-  console.log('Since spec 227 this is a property of the ground, so every column should');
+  console.log('Since spec 228 this is a property of the ground, so every column should');
   console.log('read MAX_WALK_ANGLE_DEG. Before it, the same table ran 69.1 to 89.9.\n');
   console.log('  body                 speed   u/tick   head-on   at 60 deg   at 85 deg');
   const bodies: { name: string; speed: number }[] = [
@@ -282,7 +282,7 @@ function main(): void {
     console.log(`  ${String(a).padStart(3)} deg  ${deg(g).toFixed(1).padStart(5)} deg  (gradient ${g.toFixed(2)})`);
   }
   console.log(
-    `\n  A swing of ${(deg(highest) - deg(lowest)).toFixed(1)} degrees. It was 6.2 before spec 227, ` +
+    `\n  A swing of ${(deg(highest) - deg(lowest)).toFixed(1)} degrees. It was 6.2 before spec 228, ` +
       'from reading a jump rule as a slope',
   );
   console.log('  over two different runs; what is left is the cell lattice.');

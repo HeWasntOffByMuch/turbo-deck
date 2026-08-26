@@ -1,4 +1,4 @@
-# 227 — A maximum walkable angle
+# 228 — A maximum walkable angle
 
 ## Problem
 

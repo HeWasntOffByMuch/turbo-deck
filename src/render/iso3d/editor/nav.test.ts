@@ -223,7 +223,7 @@ describe('staying current with the ground', () => {
     // the ground as it is now, not as it was when the map was baked.
     //
     // Counted rather than sampled at one coordinate, and the brush is a wall
-    // rather than a mound: `MAX_WALK_SLOPE` is the sim's since spec 227, where
+    // rather than a mound: `MAX_WALK_SLOPE` is the sim's since spec 228, where
     // the editor used to pick its own at 0.55, so where the flank of a hill
     // crosses it is a different place and a fixed probe point measures the
     // fixture instead of the rule.
@@ -278,7 +278,7 @@ describe('staying current with the ground', () => {
 
 describe('walk limit', () => {
   /**
-   * The overlay's threshold is the sim's, by import (spec 227).
+   * The overlay's threshold is the sim's, by import (spec 228).
    *
    * What this replaced asserted `DEFAULT_WALK_SLOPE < 0.8` under a comment
    * saying it sat under the classifier's *dirt* threshold -- which is 0.45, so

@@ -12,7 +12,7 @@ import type { ChunkCoord, LayerInfo, MapChunkStore } from '../../../terrain/inde
  * `SLOPE_BASELINE`. So the picture is the answer, not a second opinion about
  * it.
  *
- * **The thresholds are the sim's, by import** (spec 227). They used to be a
+ * **The thresholds are the sim's, by import** (spec 228). They used to be a
  * `DEFAULT_WALK_SLOPE` of 0.55 and a live *Walk slope* slider, which was the
  * third of three answers to "how steep is too steep" and the only one a
  * designer could see -- and it reached nothing, because spec 204 took

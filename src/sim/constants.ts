@@ -173,7 +173,7 @@ export const SEPARATION_ITERATIONS = 4;
 // refuse exactly the steps movement refuses. `src/server/world/terrain.ts`
 // re-exports it, so the sim's own callers are unchanged.
 //
-// What it is NOT, since spec 227, is how steep a hill may be. It was doing both
+// What it is NOT, since spec 228, is how steep a hill may be. It was doing both
 // jobs and could only do one honestly: a height per tick is an *angle* divided
 // by how far the body travelled, so the same hillside answered 69 degrees for a
 // body at `MOVE_SPEED_HARD_MAX` and 88.4 for a grazer -- the slower the body,
@@ -231,7 +231,7 @@ export const MAX_WALK_SLOPE = MAX_STEP_HEIGHT / NAV_CELL_SIZE;
 export const MAX_WALK_ANGLE_DEG = (Math.atan(MAX_WALK_SLOPE) * 180) / Math.PI;
 
 /**
- * How far the samples that decide how steep ground is reach out (spec 227).
+ * How far the samples that decide how steep ground is reach out (spec 228).
  *
  * **The body's own radius**: the ground a body is standing on is the ground
  * under its own footprint, and sampling past that is asking about ground it is

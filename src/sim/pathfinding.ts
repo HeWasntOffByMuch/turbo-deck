@@ -48,7 +48,7 @@ export const NAV_TIGHT = 1;
 /**
  * A body of the grid's radius cannot stand here at all.
  *
- * Since spec 227 that includes ground steeper than `MAX_WALK_SLOPE`, graded as
+ * Since spec 228 that includes ground steeper than `MAX_WALK_SLOPE`, graded as
  * a property of the *cell* rather than of a step across it -- which is the
  * whole of what makes a maximum walkable angle a number worth stating. It is
  * `NAV_BLOCKED` and not a grade of its own, because nothing walks it and
@@ -630,7 +630,7 @@ export function gradeNavCells(
 
 
 /**
- * Mark ground too steep to stand on as blocked (spec 227).
+ * Mark ground too steep to stand on as blocked (spec 228).
  *
  * Separate from {@link gradeNavCells} and run **after** it, because it is not a
  * tile-local question: a cell's slope is read from neighbours `SLOPE_BASELINE`
@@ -1497,7 +1497,7 @@ export function findPath(grid: NavGrid, from: Vec2, to: Vec2): readonly Vec2[] {
         const next = nextRow * grid.cols + nextCol;
         const grade = grid.cells[next] ?? NAV_BLOCKED;
         if (grade === NAV_BLOCKED || closed[next] === generation) continue;
-        // The cliff rule (specs 130, 227). Must match `labelComponents` exactly,
+        // The cliff rule (specs 130, 228). Must match `labelComponents` exactly,
         // or the O(1) reachability rejection above and the search below would
         // disagree about which routes exist.
         const diagonal = dx !== 0 && dy !== 0;

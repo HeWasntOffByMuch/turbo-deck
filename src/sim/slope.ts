@@ -1,7 +1,7 @@
 import { MAX_WALK_SLOPE, SLOPE_BASELINE } from './constants.js';
 
 /**
- * How steep the ground is at a point (spec 227).
+ * How steep the ground is at a point (spec 228).
  *
  * The one description of "too steep to stand on", so movement, the router and
  * the editor's overlay cannot answer it differently. Before this there were
@@ -35,7 +35,7 @@ import { MAX_WALK_SLOPE, SLOPE_BASELINE } from './constants.js';
  * `MAX_STEP_HEIGHT`'s job, on the step rather than on the ground, and it is why
  * a stair riser and a tier edge are both still decided exactly as they were.
  *
- * The answer is a **yes or no**. An earlier cut of spec 227 had a band between
+ * The answer is a **yes or no**. An earlier cut of spec 228 had a band between
  * two thresholds where a body moved at a reduced pace, which is a movement
  * state, which wants an animation, which does not exist and is not planned. So
  * ground is walked on or it is not, and `MAX_WALK_SLOPE` is the whole of it.

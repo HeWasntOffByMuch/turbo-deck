@@ -62,7 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
-| `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 227) |
+| `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
 | `npx tsx scripts/preview-crowd.ts` | Draw the five crowd scenarios through the real tick, with the acceptance numbers (spec 187) |
@@ -290,7 +290,7 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  already a circle, so that one is exact.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against.
-                 slope.ts is how steep ground is (spec 227), and it is one file
+                 slope.ts is how steep ground is (spec 228), and it is one file
                  because it used to be four numbers -- 0.45, 0.55, 0.6 and 0.8 --
                  two of them under comments claiming agreement with a constant
                  they did not equal, and the one a designer could *see* reaching
