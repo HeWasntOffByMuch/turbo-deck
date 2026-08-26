@@ -44,6 +44,7 @@ import {
   type SoundCatalog,
 } from '../../audio/catalog.js';
 import { BUS_LABELS, soundEvent, type SoundEventId } from '../../audio/events.js';
+import { importFolderFor, isSourceName, SOURCE_EXTENSIONS } from '../../audio/paths.js';
 import { AUDIO_DEFAULTS } from '../../audio/mix.js';
 import type { ViewHandle } from '../view-handle.js';
 import {
@@ -149,6 +150,53 @@ async function postCatalog(text: string): Promise<{ readonly outcome: SaveOutcom
   return { outcome: response.ok ? 'saved' : 'refused', detail };
 }
 
+/** What `POST /api/sfx/import` answers. `url` is where the take will be once baked. */
+interface ImportReply {
+  readonly ok: boolean;
+  readonly detail: string;
+  readonly url: string;
+}
+
+/**
+ * Send one file into the source tree.
+ *
+ * The body is the file's bytes and nothing else -- `fetch` sends a `File` as
+ * exactly that -- so there is no multipart parser at either end for a form with
+ * one field in it.
+ */
+async function postImport(folder: string, file: File): Promise<ImportReply> {
+  try {
+    const url = `/api/sfx/import?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(file.name)}`;
+    const response = await fetch(url, { method: 'POST', body: file });
+    if (response.status === 404 || response.status === 405) {
+      return { ok: false, detail: 'no dev server here -- importing needs `npm run dev`', url: '' };
+    }
+    return (await response.json()) as ImportReply;
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error), url: '' };
+  }
+}
+
+interface BakeReply {
+  readonly ok: boolean;
+  readonly detail?: string;
+  readonly encoded?: number;
+  readonly skipped?: number;
+  readonly clips?: number;
+}
+
+async function postBake(): Promise<BakeReply> {
+  try {
+    const response = await fetch('/api/sfx/bake', { method: 'POST' });
+    if (response.status === 404 || response.status === 405) {
+      return { ok: false, detail: 'no dev server here -- baking needs `npm run dev`' };
+    }
+    return (await response.json()) as BakeReply;
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export function mountSfx(container: HTMLElement): ViewHandle {
   const root = el(
     'div',
@@ -176,6 +224,16 @@ export function mountSfx(container: HTMLElement): ViewHandle {
   let selected: SoundEventId | null = null;
   let filter = '';
   let dirty = false;
+  /**
+   * Bumped on every re-read of the bake's index.
+   *
+   * `public/audio/manifest.json` is a `publicDir` file: served verbatim, with no
+   * hash in its name and whatever caching the browser decided on the first
+   * fetch. Without a changing query it is entirely possible to bake a file and
+   * then be handed the manifest from before it existed, which reads as the bake
+   * having silently done nothing.
+   */
+  let clipsVersion = 0;
 
   /**
    * The tab's own engine.
@@ -212,8 +270,34 @@ export function mountSfx(container: HTMLElement): ViewHandle {
     link.remove();
     URL.revokeObjectURL(link.href);
   }, 'The fallback where there is no dev server.');
-  const bar = el('div', 'display:flex;gap:6px;');
-  bar.append(saveButton, downloadButton);
+  /**
+   * For files put into `assets/audio/raw/` by hand rather than through Import.
+   *
+   * Which is a real path and not a fallback: dragging forty takes into a folder
+   * in a file manager is faster than any browser control, and the bake discovers
+   * rather than being told, so it costs one press to pick them all up.
+   */
+  const bakeButton = button('Re-bake', () => {
+    void (async () => {
+      say('baking...', 'busy');
+      const baked = await postBake();
+      if (!baked.ok) {
+        say(`bake failed: ${baked.detail ?? 'unknown'}`, 'warn');
+        return;
+      }
+      await refreshClips();
+      drawTree();
+      drawEditor();
+      say(
+        `baked ${String(baked.encoded ?? 0)}, skipped ${String(baked.skipped ?? 0)}; ` +
+          `${String(baked.clips ?? 0)} clips available`,
+        'good',
+      );
+    })();
+  }, 'Encodes anything new under assets/audio/raw/ and re-reads the picker.');
+
+  const bar = el('div', 'display:flex;gap:6px;flex-wrap:wrap;');
+  bar.append(saveButton, downloadButton, bakeButton);
   left.append(title, cover, search, bar, status);
 
   const treeBox = el('div', 'flex:1;overflow:auto;min-height:0;');
@@ -322,6 +406,31 @@ export function mountSfx(container: HTMLElement): ViewHandle {
       );
       right.append(row);
     });
+
+    // --- import ---
+    //
+    // The whole point of this section: a take goes from a folder on disk to a
+    // variant of this event without a terminal and without a code edit. Three
+    // steps behind one gesture -- write the source, bake it, assign the result
+    // -- because they are three steps only from the inside.
+    //
+    // The folder is derived from the event id (`importFolderFor`) rather than
+    // asked for: a person importing three takes for one event should not have to
+    // invent a folder, nor remember where they put the last one. It is shown, so
+    // there is nothing hidden about where a file went.
+    const folder = importFolderFor(id);
+    const chooser = el('input', 'display:none');
+    chooser.type = 'file';
+    chooser.multiple = true;
+    chooser.accept = SOURCE_EXTENSIONS.join(',');
+    chooser.addEventListener('change', () => {
+      void importFiles(Array.from(chooser.files ?? []), id);
+      chooser.value = '';
+    });
+    const importRow = el('div', 'display:flex;gap:6px;align-items:center;margin:10px 0 2px;');
+    importRow.append(button('Import audio...', () => chooser.click(), `Writes into assets/audio/raw/${folder}/, bakes, and adds it here.`));
+    importRow.append(el('span', `${MUTED}font-size:10px;`, `-> raw/${folder}/  (or drop files anywhere on this panel)`));
+    right.append(importRow, chooser);
 
     // --- the picker ---
     const picker = el('select', `font-family:${MONO};font-size:11px;background:#0e0e16;color:#c8c8d8;border:1px solid #3a3a52;padding:3px;max-width:100%;`);
@@ -436,6 +545,83 @@ export function mountSfx(container: HTMLElement): ViewHandle {
     right.append(falloff);
   }
 
+  /**
+   * Write these files into the source tree, bake, and assign what comes out.
+   *
+   * Sequential rather than parallel, and that is not caution: the bake is one
+   * process and running it while a second upload is still landing would either
+   * miss that file or race the manifest it is writing. Three takes is three
+   * round trips of a few hundred milliseconds and one bake at the end.
+   *
+   * A file that is refused does not stop the others -- if two of five are the
+   * wrong format, the three good ones should still arrive, and the status line
+   * says how many did.
+   */
+  async function importFiles(files: readonly File[], id: SoundEventId): Promise<void> {
+    const wanted = files.filter((file) => isSourceName(file.name));
+    if (wanted.length === 0) {
+      say(files.length === 0 ? '' : `nothing importable -- takes must be ${SOURCE_EXTENSIONS.join(', ')}`, 'warn');
+      return;
+    }
+    say(`importing ${String(wanted.length)} file${wanted.length === 1 ? '' : 's'}...`, 'busy');
+    const folder = importFolderFor(id);
+    const urls: string[] = [];
+    const refused: string[] = [];
+    for (const file of wanted) {
+      const reply = await postImport(folder, file);
+      if (reply.ok) urls.push(reply.url);
+      else refused.push(`${file.name}: ${reply.detail}`);
+    }
+    if (urls.length === 0) {
+      say(refused[0] ?? 'nothing was imported', 'warn');
+      return;
+    }
+
+    say(`baking ${String(urls.length)}...`, 'busy');
+    const baked = await postBake();
+    if (!baked.ok) {
+      // The take is on disk and the assignment is not made, which is the honest
+      // state: assigning a variant whose file does not exist would be a catalog
+      // that saves and then refuses to load.
+      say(`imported, but the bake failed: ${baked.detail ?? 'unknown'}`, 'warn');
+      return;
+    }
+    await refreshClips();
+
+    // Assign only what the bake actually produced. `postImport` predicts the URL
+    // from the same pure rule the bake names the file by, so this agreeing is
+    // the check that the two have not drifted -- and a miss is a warning rather
+    // than a silent assignment of a variant that would never play.
+    const known = new Set(clips.map((clip) => clip.url));
+    let added = 0;
+    for (const url of urls) {
+      if (!known.has(url)) continue;
+      const before = catalog;
+      catalog = addVariant(catalog, id, url);
+      if (catalog !== before) added += 1;
+    }
+    const missing = urls.filter((url) => !known.has(url)).length;
+    mark();
+    say(
+      `added ${String(added)} to ${id}` +
+        (missing > 0 ? `; ${String(missing)} baked to a name the picker does not list` : '') +
+        (refused.length > 0 ? `; ${String(refused.length)} refused (${refused[0] ?? ''})` : '') +
+        ' -- Save to keep it',
+      missing > 0 || refused.length > 0 ? 'warn' : 'good',
+    );
+  }
+
+  /** Re-read the bake's index, so the picker and the counts match the disk. */
+  async function refreshClips(): Promise<void> {
+    try {
+      const response = await fetch(`/audio/manifest.json?t=${String(clipsVersion++)}`);
+      clips = parseClips(response.ok ? await response.json() : null);
+    } catch {
+      // Leave the picker with what it had. A failed refresh is a stale list,
+      // which is recoverable; an emptied one looks like the bake deleted things.
+    }
+  }
+
   /** An edit landed. `redraw` is false where the control being typed into would lose focus. */
   function mark(redraw = true): void {
     dirty = true;
@@ -444,21 +630,29 @@ export function mountSfx(container: HTMLElement): ViewHandle {
     if (redraw) drawEditor();
   }
 
+  /**
+   * The one line this tab talks through.
+   *
+   * A tone rather than a colour at each call site, for the reason `src/ui/`
+   * hands a tone to the theme: four call sites choosing hex is four chances for
+   * a warning to be drawn as a success, and this line is the only feedback an
+   * import or a bake has.
+   */
+  function say(text: string, tone: 'good' | 'warn' | 'busy' | 'plain' = 'plain'): void {
+    const colours = { good: '#7fd18a', warn: '#e08a7a', busy: '#9a9ab0', plain: '#9a9ab0' };
+    status.style.color = colours[tone];
+    status.textContent = text;
+  }
+
   async function save(): Promise<void> {
-    status.style.color = '#9a9ab0';
-    status.textContent = 'saving...';
+    say('saving...', 'busy');
     const result = await postCatalog(catalogToJson(catalog));
-    const colours: Record<SaveOutcome, string> = {
-      saved: '#7fd18a',
-      refused: '#e08a7a',
-      'no-endpoint': '#d9c07a',
-      unreachable: '#e08a7a',
-    };
-    status.style.color = colours[result.outcome];
-    status.textContent =
+    say(
       result.outcome === 'saved'
         ? `${result.detail} -- reload the Play tab to hear it`
-        : `${result.outcome}: ${result.detail}`;
+        : `${result.outcome}: ${result.detail}`,
+      result.outcome === 'saved' ? 'good' : 'warn',
+    );
     if (result.outcome === 'saved') {
       dirty = false;
       drawTree();
@@ -466,7 +660,7 @@ export function mountSfx(container: HTMLElement): ViewHandle {
   }
 
   // --- load ----------------------------------------------------------------
-  status.textContent = 'loading...';
+  say('loading...', 'busy');
   void Promise.all([
     fetch(catalogUrl).then((response) => response.text()),
     // The bake's index. A failure here is a picker with nothing in it, which is
@@ -478,25 +672,49 @@ export function mountSfx(container: HTMLElement): ViewHandle {
     .then(([text, manifest]) => {
       const parsed = parseCatalog(text);
       if ('error' in parsed) {
-        status.style.color = '#e08a7a';
-        status.textContent = `sfx.json: ${parsed.error}`;
+        say(`sfx.json: ${parsed.error}`, 'warn');
       } else {
         catalog = parsed.catalog;
         engine.setCatalog(catalog);
-        status.textContent = '';
+        say('');
       }
       clips = parseClips(manifest);
       if (clips.length === 0) {
-        status.style.color = '#d9c07a';
-        status.textContent = 'no /audio/manifest.json -- run `npm run bake:audio`';
+        say('no /audio/manifest.json -- run `npm run bake:audio`', 'warn');
       }
       drawTree();
       drawEditor();
     })
     .catch((error: unknown) => {
-      status.style.color = '#e08a7a';
-      status.textContent = error instanceof Error ? error.message : String(error);
+      say(error instanceof Error ? error.message : String(error), 'warn');
     });
+
+  /**
+   * Dropping files on the editor imports them into the selected event.
+   *
+   * The gesture the whole feature is about, and the reason `dragover` is
+   * cancelled: without `preventDefault` the browser's own default wins and
+   * navigates the tab to the file, which loses the page and every unsaved edit
+   * on it. Dropping with nothing selected says so rather than guessing an event.
+   */
+  right.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    right.style.outline = '1px dashed #5a5a78';
+  });
+  right.addEventListener('dragleave', () => {
+    right.style.outline = '';
+  });
+  right.addEventListener('drop', (event) => {
+    event.preventDefault();
+    right.style.outline = '';
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    if (selected === null) {
+      say('pick an event on the left first -- a take has to belong to something', 'warn');
+      return;
+    }
+    void importFiles(files, selected);
+  });
 
   drawTree();
   drawEditor();
