@@ -20,6 +20,7 @@
 
 import { DEFAULT_WORLD } from '../sim/collision.js';
 import type { Vec2, WorldColliders } from '../sim/types.js';
+import { damageElementOrdinal } from './data/abilities.js';
 import { AuditLog } from './admin/audit.js';
 import {
   AdminRouter,
@@ -2961,6 +2962,10 @@ export class GameServer implements AdminHost {
               (event.critical ? CombatFlag.Critical : 0) |
               (event.blocked ? CombatFlag.Blocked : 0) |
               (event.periodic ? CombatFlag.Periodic : 0),
+            // The ordinal rather than the name, and `?? 'physical'` for the two
+            // heal sites that raise a `hit` and correctly set no element
+            // (spec 229).
+            element: damageElementOrdinal(event.element ?? 'physical'),
           };
           const bytes = encodeServerMessage(message);
           for (const connection of this.connections) {

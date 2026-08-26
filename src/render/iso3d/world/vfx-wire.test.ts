@@ -11,7 +11,16 @@ import {
   type GoreLevel,
   type PlayRequest,
 } from './vfx-wire.js';
-import { ALL_ABILITIES } from '../../../server/data/abilities.js';
+import {
+  abilityById,
+  ALL_ABILITIES,
+  damageElementOf,
+  damageElementOrdinal,
+  DAMAGE_ELEMENTS,
+  elementOfAbility,
+} from '../../../server/data/abilities.js';
+import { bleedsOf, monsterLookFor, monsterLookIds } from './monster-look.js';
+import { REGISTRY } from '../vfx/registry.js';
 
 /**
  * `effectsForBlow` at `Blood: Full`, which is what the panel opens at.
@@ -98,12 +107,14 @@ describe('effectsForBlow', () => {
   });
 
   it('gives each damage type its own flash', () => {
-    for (const damageType of ['physical', 'fire', 'poison', 'ice', 'lightning', 'arcane'] as const) {
+    // Over the table rather than a list written out here, or adding an element
+    // leaves it untested by a test that looks like it covers everything.
+    for (const damageType of DAMAGE_ELEMENTS) {
       const played = blow(facts({ bleeds: false, damageType }), 1);
       expect(played[0]?.id).toBe(DAMAGE_EFFECTS[damageType]);
     }
     // ...and they are all different, which a copy-paste table would fail.
-    expect(new Set(Object.values(DAMAGE_EFFECTS)).size).toBe(6);
+    expect(new Set(Object.values(DAMAGE_EFFECTS)).size).toBe(DAMAGE_ELEMENTS.length);
   });
 
   it('throws debris only for the types that break something', () => {
@@ -398,11 +409,21 @@ describe('REDUNDANT_SERVER_EFFECTS', () => {
     // -- so drawing this one too puts the orange debug disc under the heal.
     expect(REDUNDANT_SERVER_EFFECTS.size).toBeGreaterThan(0);
     for (const id of REDUNDANT_SERVER_EFFECTS) {
-      expect(id.endsWith('.self'), id).toBe(true);
-      const ability = ALL_ABILITIES.find((entry) => `${entry.id}.self` === id);
+      // Two shapes qualify, and both are "the blow already drew this" rather
+      // than two exceptions: a self-heal's `.self`, and the `.impact` of a
+      // projectile that struck a body (spec 229), which `world.ts` sends from
+      // the same branch that raises the hit.
+      const ability = ALL_ABILITIES.find(
+        (entry) => `${entry.id}.self` === id || `${entry.id}.impact` === id,
+      );
       expect(ability, `${id} names no ability`).toBeDefined();
-      // Only an ability whose picture the blow already draws belongs here.
-      expect((ability?.healing ?? 0) + (ability?.healingFraction ?? 0), id).toBeGreaterThan(0);
+      if (id.endsWith('.self')) {
+        expect((ability?.healing ?? 0) + (ability?.healingFraction ?? 0), id).toBeGreaterThan(0);
+        continue;
+      }
+      // A direct-hit projectile only: a burst happens whether or not it struck.
+      expect(ability?.kind, id).toBe('projectile');
+      expect(ability?.radius ?? 0, id).toBe(0);
     }
   });
 });
@@ -434,5 +455,153 @@ describe('blowSeed', () => {
       expect(Number.isInteger(seed)).toBe(true);
       expect(Math.abs(seed)).toBeLessThanOrEqual(2 ** 31);
     }
+  });
+});
+
+/**
+ * What a blow is made of, and who bleeds (spec 229).
+ *
+ * These are one group rather than two because the two facts were one bug: while
+ * `bleeds` was a literal `true`, `effectsForBlow` could not reach
+ * `DAMAGE_EFFECTS` at all -- it is consulted only in the else of the bleed
+ * branch -- so five authored impact effects were unreachable and fixing the
+ * damage type on its own would have changed precisely nothing.
+ */
+describe('what a blow is made of', () => {
+  it('gives every element an effect that exists in the registry', () => {
+    // The table is a `Record<DamageType, string>`, so a missing element fails to
+    // compile; what this catches is the other half -- a row filled in with an id
+    // nothing authored, which looks complete and silently plays nothing.
+    for (const element of DAMAGE_ELEMENTS) {
+      const id = DAMAGE_EFFECTS[element];
+      expect(id, `no effect for ${element}`).toBeTruthy();
+      expect(REGISTRY.byId.has(id), `${element} -> ${id} is not in the registry`).toBe(true);
+    }
+  });
+
+  it('never draws two elements as the same picture', () => {
+    const ids = Object.values(DAMAGE_EFFECTS);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('takes an ability element from the affliction it lands', () => {
+    // Asserted row by row against the affliction each skill actually carries,
+    // rather than by re-deriving it -- a test that ran `elementOfAbility`'s own
+    // logic back over the table would pass for any mapping at all.
+    expect(elementOfAbility(abilityById('skill.emberToss'))).toBe('fire');
+    expect(elementOfAbility(abilityById('skill.rimeTouch'))).toBe('ice');
+    expect(elementOfAbility(abilityById('skill.arcLash'))).toBe('lightning');
+    expect(elementOfAbility(abilityById('skill.poisonDart'))).toBe('poison');
+    expect(elementOfAbility(abilityById('skill.acidSpray'))).toBe('corrosion');
+    expect(elementOfAbility(abilityById('skill.blight'))).toBe('decay');
+    // A cut is a cut: Bleed is the one affliction that is not elemental, which
+    // is the whole reason the mapping is a table rather than "dots are magic".
+    expect(elementOfAbility(abilityById('skill.rendingCut'))).toBe('physical');
+  });
+
+  it('is physical for a row with no affliction and no element', () => {
+    expect(elementOfAbility(abilityById('skill.guardBreak'))).toBe('physical');
+    expect(elementOfAbility(abilityById('melee.slash'))).toBe('physical');
+    // Total, so an id off a newer server cannot throw inside the render loop.
+    expect(elementOfAbility(null)).toBe('physical');
+    expect(elementOfAbility(abilityById('no.such.ability'))).toBe('physical');
+  });
+
+  it('lets the affliction win over an authored element, so the two cannot disagree', () => {
+    const ember = abilityById('skill.emberToss');
+    expect(ember).toBeDefined();
+    if (!ember) return;
+    expect(elementOfAbility({ ...ember, element: 'arcane' })).toBe('fire');
+  });
+
+  it('round-trips every element through the wire ordinal', () => {
+    for (const element of DAMAGE_ELEMENTS) {
+      expect(damageElementOf(damageElementOrdinal(element))).toBe(element);
+    }
+    // Total in the direction that matters: a client reading an ordinal a newer
+    // server invented draws what every blow drew before elements existed.
+    expect(damageElementOf(200)).toBe('physical');
+    expect(damageElementOf(-1)).toBe('physical');
+  });
+
+  it('draws blood and the element on a body that bleeds', () => {
+    const out = blow(facts({ damageType: 'fire' }), 30);
+    const ids = out.map((request) => request.id);
+    expect(ids).toContain('blood_hit_brush');
+    expect(ids).toContain(DAMAGE_EFFECTS.fire);
+    // The cap this spec does not raise.
+    expect(out.length).toBeLessThanOrEqual(3);
+  });
+
+  it('adds nothing extra for a physical blow on a body that bleeds', () => {
+    // The regression that matters most: an ordinary sword hit on flesh has to
+    // draw exactly what it drew before spec 229 touched anything.
+    const ids = blow(facts({ damageType: 'physical' }), 30).map((request) => request.id);
+    expect(ids).toEqual(['blood_hit_brush']);
+  });
+
+  it('draws no blood at all for a body that does not bleed', () => {
+    for (const gore of [0, 1, 2] as GoreLevel[]) {
+      const ids = effectsForBlow(facts({ bleeds: false, damageType: 'ice' }), 30, gore)
+        .map((request) => request.id);
+      expect(ids.some((id) => id.startsWith('blood_') || id === 'death_blood')).toBe(false);
+      expect(ids).toContain(DAMAGE_EFFECTS.ice);
+      expect(ids).toContain('impact_physical');
+    }
+  });
+
+  it('stays inside three requests in every combination', () => {
+    for (const bleeds of [true, false]) {
+      for (const gore of [0, 1, 2] as GoreLevel[]) {
+        for (const critical of [true, false]) {
+          for (const killed of [true, false]) {
+            for (const damageType of DAMAGE_ELEMENTS) {
+              const out = effectsForBlow(
+                facts({ bleeds, critical, killed, damageType }),
+                30,
+                gore,
+              );
+              expect(out.length, `${String(bleeds)}/${gore}/${damageType}`).toBeLessThanOrEqual(3);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('gives each request of one blow its own seed', () => {
+    const out = blow(facts({ damageType: 'fire', critical: true }), 30);
+    const seeds = out.map((request) => request.seed);
+    expect(new Set(seeds).size).toBe(seeds.length);
+  });
+});
+
+describe('which bodies bleed', () => {
+  it('bleeds by default, for a player and for a body with no row', () => {
+    expect(bleedsOf(null)).toBe(true);
+    expect(bleedsOf(undefined)).toBe(true);
+    expect(bleedsOf('player')).toBe(true);
+    expect(bleedsOf('no_such_monster')).toBe(true);
+  });
+
+  it('carries the field through a copied look rather than dropping it', () => {
+    // `monsterLookFor` clones what it returns, and a clone that quietly loses a
+    // field answers differently from the row it copied.
+    for (const id of monsterLookIds()) {
+      // Defaulted on both sides: the copy correctly preserves *absent*, and
+      // absent is what means "true". What this catches is a copy that turned a
+      // row's explicit `false` into an absent field.
+      expect(monsterLookFor(id)?.bleeds ?? true).toBe(bleedsOf(id));
+    }
+  });
+});
+
+describe('a projectile that struck is not drawn twice', () => {
+  it('refuses the dart impact the blow already draws', () => {
+    expect(REDUNDANT_SERVER_EFFECTS.has('skill.poisonDart.impact')).toBe(true);
+  });
+
+  it('keeps a bursting projectile, which happens whether or not it struck', () => {
+    expect(REDUNDANT_SERVER_EFFECTS.has('skill.emberToss.impact')).toBe(false);
   });
 });

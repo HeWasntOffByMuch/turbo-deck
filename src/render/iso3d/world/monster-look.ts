@@ -53,6 +53,21 @@ export interface MonsterLook {
    */
   readonly appearance: MechAppearance;
   readonly tuning: MechRigTuning;
+  /**
+   * Whether a blow on this body throws blood (spec 229).
+   *
+   * Absent is **true**, which is what makes adding the column cost nothing: a
+   * player, and every body with no row at all, bleed exactly as they did. A row
+   * that says `false` falls through to the damage type's own flash and
+   * `impact_physical` -- the path `hit_metal_spark` and `impact_flash` were
+   * authored for and which nothing had ever taken, because `view.ts` passed
+   * `bleeds: true` as a literal for every body in the game.
+   *
+   * It lives here rather than in `MONSTERS` because it is a fact about what a
+   * thing is *made of*, which is this table's whole subject, and because the sim
+   * has no opinion about it: nothing about a blow's arithmetic changes.
+   */
+  readonly bleeds?: boolean;
 }
 
 /**
@@ -103,7 +118,33 @@ const LOOKS: ReadonlyMap<string, MonsterLook> = new Map([['small_spider', SMALL_
 export function monsterLookFor(typeId: string): MonsterLook | null {
   const look = LOOKS.get(typeId);
   if (look === undefined) return null;
-  return { appearance: { ...look.appearance }, tuning: { ...look.tuning } };
+  // `bleeds` is carried through rather than left off the copy: it is a boolean
+  // and cannot be aliased, but a copy that silently drops a field is a copy that
+  // answers differently from the row it copied, which is worse than the sharing
+  // the other two are cloned to prevent.
+  return {
+    appearance: { ...look.appearance },
+    tuning: { ...look.tuning },
+    // Spread rather than assigned, because `exactOptionalPropertyTypes` makes
+    // `bleeds: undefined` a different thing from an absent `bleeds` -- and
+    // absent is the one that means "true".
+    ...(look.bleeds === undefined ? {} : { bleeds: look.bleeds }),
+  };
+}
+
+/**
+ * Whether a body with this type id bleeds. Total, and true by default (spec 229).
+ *
+ * Reads the row directly rather than through {@link monsterLookFor}, because a
+ * boolean cannot be aliased and there is nothing here to defend by copying.
+ *
+ * Total by construction like `appearanceOf`: an id off the wire that this file
+ * has never heard of bleeds, because erring the other way would silently take
+ * the blood off every monster added before somebody wrote its row.
+ */
+export function bleedsOf(typeId: string | null | undefined): boolean {
+  if (typeId === null || typeId === undefined) return true;
+  return LOOKS.get(typeId)?.bleeds ?? true;
 }
 
 /** Every type id with a look, for a test or a panel. Sorted, so it is stable. */

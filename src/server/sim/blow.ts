@@ -36,7 +36,7 @@ import type { Rng } from '../../shared/prng.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { RESTORATION } from '../data/restoration.js';
 import { SCALING } from '../data/scaling.js';
-import type { AbilityDefinition } from '../data/abilities.js';
+import { elementOfAbility, type AbilityDefinition } from '../data/abilities.js';
 import { applyArmor } from '../player/stats.js';
 import { provoke } from './aggro.js';
 import { healingScaleOf } from './damage-over-time.js';
@@ -272,6 +272,11 @@ export function resolveBlow(
     critical,
     blocked: armor > 0 && damage < raw,
     weakPoint,
+    // What it was made of, for the picture (spec 229). Derived from the row --
+    // an affliction-carrying ability is its affliction's element -- so nothing
+    // in this function decides it and no blow can disagree with the skill that
+    // threw it.
+    element: elementOfAbility(ability),
   });
 
   // --- 6: poise -----------------------------------------------------------

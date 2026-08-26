@@ -245,6 +245,9 @@ describe('game message round-trip', () => {
       damage: 12.5,
       targetHealth: 27.5,
       flags: 3,
+      // Not 0: a round trip that only ever carries the default cannot tell a
+      // field that survives from one the decoder fills in (spec 229).
+      element: 6,
     },
     {
       type: ServerMessageType.Stats,

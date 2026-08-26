@@ -8,6 +8,7 @@
  * exactly one player and this one has as many as connect.
  */
 
+import type { DamageElement } from '../data/abilities.js';
 import type { Rng } from '../../shared/prng.js';
 import type { Vec2 } from '../../sim/types.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
@@ -721,6 +722,17 @@ export type ServerSimEvent =
        * left behind that anybody can use.
        */
       readonly weakPoint: boolean;
+      /**
+       * What the blow was made of, for the picture only (spec 229).
+       *
+       * Optional, and absent is `physical` -- which is what every blow in this
+       * game was drawn as before this existed, and what the two heal sites that
+       * raise a `hit` with negative damage correctly leave it as. Nothing in the
+       * sim reads it: it is carried here so that `world.ts` can put it on the
+       * wire, because a `CombatResult` names no ability and the client therefore
+       * cannot work it out.
+       */
+      readonly element?: DamageElement;
       /**
        * This damage arrived from an affliction rather than from a blow
        * (spec 190).

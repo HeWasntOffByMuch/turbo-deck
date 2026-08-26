@@ -123,6 +123,8 @@ import {
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
+import { damageElementOf } from '../../../server/data/abilities.js';
+import { bleedsOf } from './monster-look.js';
 import { effectsForBlow, REDUNDANT_SERVER_EFFECTS, type GoreLevel } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
 import { pickupLead, pickupOrderFor } from './loot-drop.js';
@@ -1544,13 +1546,21 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           // An affliction's beat draws no blow at all (spec 219). It still
           // floats its number below, and its own paint is `affliction-vfx.ts`'s.
           periodic: (result.flags & CombatFlag.Periodic) !== 0,
-          damageType: 'physical',
+          // Off the wire since spec 229, rather than the literal `'physical'`
+          // that stood here and made five authored impact effects unreachable.
+          damageType: damageElementOf(result.element),
           x: target.x,
           y: BLOOD_HEIGHT,
           z: target.y,
           fromX: attacker?.x ?? target.x,
           fromZ: attacker?.y ?? target.y,
-          bleeds: true,
+          // And this was the other literal, and the one that made fixing the
+          // first pointless on its own: `effectsForBlow` reaches
+          // `DAMAGE_EFFECTS` only in the else of the bleed branch, so while
+          // every body in the game bled, no elemental impact could ever be
+          // drawn. A player has no `typeId` and bleeds, which is what the
+          // fallback says.
+          bleeds: bleedsOf(target.typeId),
         },
         client.view().estimatedTick,
         gore,

@@ -979,6 +979,22 @@ export const LIBRARY: readonly EffectDefinition[] = [
   burst({ id: 'hit_ice', scale: 20, hot: 'iceWhite', warm: 'icePale', cool: 'iceDeep', spikes: 21, chunks: 6 }),
   burst({ id: 'hit_lightning', scale: 24, hot: 'boltWhite', warm: 'boltYellow', cool: 'boltViolet', spikes: 22, dust: false, light: true }),
   burst({ id: 'hit_arcane', scale: 21, hot: 'arcaneLilac', warm: 'arcaneMagenta', cool: 'arcaneDeep', spikes: 20, dust: false }),
+  // The two the afflictions needed and the table did not have (spec 229).
+  //
+  // Written in the same builder as the six above rather than in the painted
+  // vocabulary, because what makes this table legible is that every damage type
+  // is *the same crystal in different colours* -- two of eight in a different
+  // language would read as two effects rather than as two damage types. The day
+  // the whole table moves to paint, these move with it.
+  //
+  // Their colours are not chosen here: spec 215 authored both ramps for the
+  // afflictions they belong to, and `decay` is the only desaturated ramp in the
+  // palette precisely so rot does not read as poison. A corrosion blow and a
+  // Corrosion cling are the same yellow-green for the same reason a heal and a
+  // heal ring are the same green.
+  burst({ id: 'hit_corrosion', scale: 19, hot: 'corrodeBright', warm: 'corrodeBody', cool: 'corrodeDeep', spikes: 17 }),
+  // `dust: false` for the reason `hit_arcane` has it: rot chips nothing off.
+  burst({ id: 'hit_decay', scale: 18, hot: 'decayBright', warm: 'decayBody', cool: 'decayDeep', spikes: 15, dust: false }),
   // Louder in the same language: a bigger crystal, never a different one.
   burst({ id: 'hit_critical', scale: 34, hot: 'sparkHot', warm: 'sparkWarm', cool: 'sparkEmber', spikes: 30, chunks: 7, priority: 3, light: true }),
 
