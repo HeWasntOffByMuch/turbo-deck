@@ -21,7 +21,7 @@
  * here departs from it, the reason is in a comment.
  */
 
-import { ORDER_MARK_ARM, brushCross, brushSwing } from './brush.js';
+import { ORDER_MARK_ARM, brushCross, brushExplosion, brushSwing } from './brush.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
@@ -980,6 +980,161 @@ export const LIBRARY: readonly EffectDefinition[] = [
     lifetimeTicks: 30,
     priority: 3,
   }),
+  // --- the landings that were a debug ring (spec 231) ------------------------
+  //
+  // Five ids, and **not one call-site change between them**: the server has
+  // always sent `${ability.id}.impact` and `.self`, and `scene.addEffect` has
+  // always checked the registry before falling back to its orange disc. So the
+  // whole of "replace the generic animation" is authoring the effect under the
+  // id that was already being sent.
+  //
+  // Four are `brushExplosion` recoloured, and that is the rule rather than
+  // laziness: `docs/vfx-plan.md` asks for a *critical* to be louder in the same
+  // language rather than a new one, and the same argument holds across elements
+  // -- `burst()` already draws eight damage types as one crystal in eight
+  // ramps. A frost skill that arrived in its own private vocabulary would read
+  // as a different game's effect.
+  //
+  // Every ramp is the one spec 215 already authored for that element's
+  // affliction, so a body catching fire from an Ember Toss and the toss itself
+  // are the same orange, and Blight's rot is the desaturated ramp that exists
+  // precisely so decay does not read as poison.
+
+  // Ember Toss: the reference blast, at the row's own 70-unit burst.
+  brushExplosion({ id: 'skill.emberToss.impact', radius: 70, light: true }),
+
+  // Rime Touch: the same composition in frost, and **no smoke at all** -- ice
+  // does not produce a mass that rolls over it afterwards, and a grey cloud
+  // over a frost burst reads as a fire that went out. Shorter and faster than
+  // the fire blast for the same reason: frost arrives and is done.
+  brushExplosion({
+    id: 'skill.rimeTouch.impact',
+    // Well inside the ability's own 140. A stroke's length is a *fraction of the
+    // radius*, so the reach and the picture are not the same number: at 140 the
+    // longest shard was 210 units and the burst read as a wave rather than as
+    // frost. The sheet is what said so.
+    radius: 96,
+    // Pale rather than saturated. The first render came out a vivid swimming-pool
+    // blue, because `warm` and `mid` were both `icePale` and that ramp carries
+    // most of the mass -- so the white is the body of it now and the blue is the
+    // edge, which is the way round frost actually reads.
+    palette: { hot: 'iceWhite', warm: 'iceWhite', mid: 'icePale', burnt: 'icePale', deep: 'iceDeep', soot: 'icePale' },
+    smoke: 0,
+    debris: 2,
+    lifetimeTicks: 44,
+    expansionSpeed: 5,
+    // Thin and long: a frost burst is shards rather than the fat lobes of flame.
+    strokeLength: [0.62, 1.1],
+    strokeThickness: [0.42, 0.8],
+    light: true,
+  }),
+
+  // Blight: rot, and the two numbers that make it rot rather than an explosion
+  // are the smoke and the speed. It creeps out and the mass outlives it, where
+  // fire throws and burns off.
+  //
+  // Deliberately **short** for a zone-denial skill, and that is a correction
+  // rather than a compromise: `landBlast` resolves Blight *once*, so nothing
+  // persists at that point, and a cloud that hung about for the ten seconds the
+  // affliction runs would draw a standing hazard over ground that stopped being
+  // dangerous the instant it landed. `cloud_poison` is authored at 600 ticks and
+  // Decay lasts 601, which agree for entirely unrelated reasons -- one is a
+  // particle lifetime and the other is the affliction on whoever was caught.
+  // The day Blight becomes a point-anchored field, this grows a long variant.
+  brushExplosion({
+    id: 'skill.blight.impact',
+    radius: 110,
+    // Rot-coloured throughout, including the soot. The first render used
+    // `smokeDark` there with ten masses arriving on tick two, and the result was
+    // a near-black shape that grew over the body -- an oil spill rather than
+    // rot, and it swallowed the decay ramp underneath it entirely. The mass is
+    // half the size, arrives later, and is made of the same desaturated ramp
+    // spec 215 authored so that decay does not read as poison.
+    // Bright end forward, and **no smoke at all**. Spec 215 authored this ramp
+    // to be a thin cling on a body -- at blast scale `decayDeep` (0x6e6a52) is
+    // mud, and five smoke masses of it grew a near-black shape over the target
+    // that swallowed the rot underneath. Twice: the first render used
+    // `smokeDark`, and halving it and recolouring the soot was not enough,
+    // because the problem is the *ramp at this size* rather than the amount.
+    //
+    // So the pale end carries it and the dark end is only the edge. What is
+    // left is a sickly burst rather than a cloud, which is also the honest
+    // picture: `landBlast` resolves Blight once and nothing lingers there.
+    // Nothing muddy anywhere in the ramp, including `deep`. Dropping the smoke
+    // fixed the black mass and cost the burst its size, so this is the third
+    // pass: pale lilac throughout, expanding at half the fire blast's rate.
+    // Slower than fire and wider than frost is what makes it rot; darker than
+    // either is what made it a hole in the ground.
+    palette: { hot: 'decayBright', warm: 'decayBright', mid: 'decayBody', burnt: 'decayBody', deep: 'decayBody', soot: 'decayDeep' },
+    smoke: 0,
+    debris: 2,
+    lifetimeTicks: 58,
+    expansionSpeed: 4.4,
+    // Wide and low. Rot spreads rather than reaching.
+    strokeLength: [0.7, 1.2],
+    strokeThickness: [1.0, 1.5],
+  }),
+
+  // Arc Lash: the electric one. Long, thin, fast and gone -- everything a fire
+  // blast is not, in one composition rather than a new vocabulary.
+  //
+  // It is a **burst at the caster** rather than the 300-unit lane the ability
+  // actually is, and that is a stated limit rather than a look choice: the
+  // effect message carries no rotation (`sim/types.ts`), and `landArea` sends a
+  // line shape's cue at the caster's own feet, so there is no bearing to lay a
+  // lane along. A lane pointing the wrong way is worse than a burst pointing
+  // nowhere. Spec 232 puts a rotation on that message and this grows a lane.
+  brushExplosion({
+    id: 'skill.arcLash.impact',
+    // 150 with strokes at 1.9 of it made marks **285 units long** -- a stroke's
+    // length is a fraction of the radius, and the two multiplied into a
+    // cream-coloured splash the height of the frame. The sheet is what said so.
+    radius: 82,
+    // Blue and violet carry it, with only the core white. The first render put
+    // `boltFlash` and `boltWhite` on the two layers that hold most of the mass,
+    // and near-white over cream reads as milk rather than as an arc.
+    // Violet, and that is a *separation* decision rather than a colour
+    // preference: at `boltPale` on the two layers that carry the mass this came
+    // out the same pale blue as Rime Touch two rows up the sheet, and two
+    // skills that land in the same colour are two skills a player cannot tell
+    // apart mid-fight. White core, violet body -- nothing else in the table is
+    // violet.
+    palette: { hot: 'boltWhite', warm: 'boltViolet', mid: 'boltArc', burnt: 'boltViolet', deep: 'boltViolet', soot: 'boltArc' },
+    smoke: 0,
+    debris: 0,
+    // The shortest life in the file. A bolt is over before anything else here
+    // has finished starting.
+    lifetimeTicks: 22,
+    expansionSpeed: 11,
+    // As thin as the builder goes: an arc is a line, and a fat bolt is a flame.
+    strokeLength: [0.9, 1.5],
+    strokeThickness: [0.3, 0.6],
+    radialCount: 14,
+    light: true,
+    priority: 3,
+  }),
+
+  // Scorched Earth: the ignition, which is the moment the ring is not.
+  // `aura_scorched` is the field standing there; this is it catching.
+  //
+  // Its radius is imported rather than typed, the same way that ring's is: this
+  // is not decoration around the mechanic, it is where the fire is about to be,
+  // and a burst that reached further than the field would promise ground that is
+  // safe.
+  brushExplosion({
+    id: 'skill.scorchedEarth.self',
+    radius: SCORCHED_EARTH.radius,
+    smoke: 5,
+    smokeDelayTicks: 8,
+    debris: 3,
+    lifetimeTicks: 54,
+    // Outward and low: the ground catching, rather than something going off.
+    expansionSpeed: 5.5,
+    strokeLength: [0.7, 1.2],
+    light: true,
+    priority: 3,
+  }),
+
   // The melee skills, played by `world/swing-vfx.ts` at the attacker on the tick
   // the blow lands -- whether or not it landed on anybody. One sweep for four
   // skills, because what differs between a cripple and a rend is the
