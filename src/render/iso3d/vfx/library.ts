@@ -21,7 +21,7 @@
  * here departs from it, the reason is in a comment.
  */
 
-import { ORDER_MARK_ARM, brushCross } from './brush.js';
+import { ORDER_MARK_ARM, brushArc, brushCross } from './brush.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
@@ -693,6 +693,23 @@ export function burst(params: BurstParams): EffectDefinition {
   };
 }
 
+/**
+ * How wide Whirlwind's painted sweep is drawn (spec 230).
+ *
+ * Inside the ability's own 160-unit reach rather than equal to it, and the gap
+ * is the mark length: `brushArc` lays each stroke centred *on* the arc and a
+ * third of the radius long, so a sweep drawn at the reach paints ~20 units past
+ * it. Erring inward is deliberate -- the one thing a player must read off this
+ * picture is who was caught, and a ring drawn wider than the mechanic answers
+ * that question wrongly in the direction that costs them the fight.
+ *
+ * Not imported from the ability row, unlike `aura_scorched`'s radius: that ring
+ * *is* where the fire is and has to agree exactly, where this is a gesture with
+ * a stated inset. A row that could not disagree would be a row that could not
+ * hold the inset either.
+ */
+export const WHIRLWIND_ARC_RADIUS = 132;
+
 export const LIBRARY: readonly EffectDefinition[] = [
   // --- fire ------------------------------------------------------------------
   fire({ id: 'torch', height: 14, vigour: 0.7, smoke: false }),
@@ -956,6 +973,50 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // own input, two particles cost nothing, and a click whose answer was dropped
   // under budget pressure reads as a click that missed.
   brushCross({ id: 'order_move', arm: ORDER_MARK_ARM, priority: 3 }),
+
+  // --- swings ----------------------------------------------------------------
+  // Whirlwind (spec 230), and it needs no call-site change at all: `landArea`
+  // already sends `skill.whirlwind.impact` at the caster's own feet, *before*
+  // the target loop, so this draws on a sweep that caught nobody -- which is
+  // what a swing is. Registering the id is the whole of the wiring.
+  //
+  // A full turn, because that is what the skill says it is. The radius is short
+  // of the ability's own 160: the marks are laid *on* the arc and each one is a
+  // third of the radius long, so a sweep drawn at exactly the reach paints past
+  // it -- and a picture wider than the mechanic is worse than one inside it,
+  // because the one thing a player has to be able to read off a sweep is who
+  // was in it.
+  // The melee skills' sweep (spec 230), played by `world/swing-vfx.ts` at the
+  // attacker on the tick the blow lands -- whether or not it landed on anybody.
+  //
+  // A body's reach: `skill.guardBreak` is 85 and `skill.rendingCut` 80, and the
+  // marks are laid on the arc rather than out to its edge, so this sits a little
+  // inside them. One sweep for four skills, because what differs between a
+  // cripple and a rend is the *affliction*, which is painted on the body it
+  // landed on -- the blade going past is the same blade.
+  brushArc({ id: 'swing_arc', radius: 62, sweep: 2.2, marks: 9, lifetimeTicks: 13 }),
+  // Louder in the same language, never a different one: Stunning Blow is wound
+  // up from the shoulder over 0.9s and telegraphed the whole way, so its sweep
+  // is wider and reaches further rather than being made of something else.
+  brushArc({
+    id: 'swing_arc_heavy',
+    radius: 74,
+    sweep: 2.8,
+    marks: 12,
+    lifetimeTicks: 17,
+    priority: 3,
+  }),
+
+  brushArc({
+    id: 'skill.whirlwind.impact',
+    radius: WHIRLWIND_ARC_RADIUS,
+    sweep: Math.PI * 2,
+    // Enough that a full turn reads as continuous rather than as a dotted ring.
+    // Twelve at this radius leaves gaps a body could stand in.
+    marks: 22,
+    lifetimeTicks: 16,
+    priority: 3,
+  }),
 
   // --- explosions ------------------------------------------------------------
   // The reference, at full size: a crystal that opens, throws rock and leaves a

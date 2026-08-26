@@ -109,7 +109,10 @@ describe('the registry as a whole', () => {
     // explosion's flash) and cutout (everything else), so it costs five. What a
     // *frame* pays is still bounded by the effects actually up -- a painted
     // explosion is four calls and a painted hit is three.
-    expect(REGISTRY.batches.length).toBeLessThanOrEqual(25);
+    //
+    // 25 to 26 for spec 230's `brush-sweep`: one shape, one blend, one batch.
+    // Moved deliberately, which is the point of the number being here at all.
+    expect(REGISTRY.batches.length).toBeLessThanOrEqual(26);
   });
 });
 

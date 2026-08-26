@@ -16,6 +16,7 @@ import {
   brushExplosion,
   brushExplosionRequest,
   BRUSH_EFFECTS,
+  brushArc,
   brushCross,
   BLOOD_HIT_SCALE,
   BRUSH_EXPLOSION_RADIUS,
@@ -111,10 +112,16 @@ describe('the painted vocabulary', () => {
     expect(orientOf('brush-flick')).toBe(ORIENT.cardVelocity);
     expect(orientOf('brush-dab')).toBe(ORIENT.velocity);
     expect(orientOf('brush-blot')).toBe(ORIENT.tumble);
+    // Three modes aim themselves off a velocity since spec 230 added the swept
+    // mark, which is flat in the ground plane and yawed by its own track.
+    const aimsItself = new Set<number>([
+      ORIENT.velocity,
+      ORIENT.cardVelocity,
+      ORIENT.groundVelocity,
+    ]);
     for (const shape of BRUSH_SHAPES) {
       // Only a shape that aims itself pays for a velocity upload.
-      const orient = orientOf(shape);
-      expect(needsVelocity(shape), shape).toBe(orient === ORIENT.velocity || orient === ORIENT.cardVelocity);
+      expect(needsVelocity(shape), shape).toBe(aimsItself.has(orientOf(shape)));
     }
   });
 
@@ -906,3 +913,71 @@ describe('the cross (spec 175)', () => {
     }
   });
 });
+
+/**
+ * The swept stroke (spec 230).
+ *
+ * Two of these assert numbers rather than behaviour, and they earn it: the
+ * velocity is what the yaw is read from, so a later tune that zeroed the speed
+ * or added gravity would return every mark to one bearing or sink the sweep out
+ * of its own plane -- and both would still look like a plausible edit.
+ */
+describe('brushArc', () => {
+  const arc = brushArc({ id: 'test_arc', radius: 60, sweep: 2.2 });
+
+  it('is one emitter, so the marks are laid along the sweep in order', () => {
+    // `SHAPE.arc` places a particle from its index *within its own burst*, so
+    // marks spread over several spawns would each restart that index and land
+    // on top of each other.
+    expect(arc.emitters).toHaveLength(1);
+    expect(arc.emitters[0]?.emission.kind).toBe('burst');
+  });
+
+  it('lays them on an arc of the radius and sweep it was given', () => {
+    const shape = arc.emitters[0]?.shape;
+    expect(shape?.kind).toBe('arc');
+    if (shape?.kind !== 'arc') return;
+    expect(shape.radius).toBe(60);
+    expect(shape.sweep).toBe(2.2);
+  });
+
+  it('paints, rather than throwing sparks', () => {
+    expect(arc.emitters[0]?.render).toBe('mesh');
+    expect(arc.emitters[0]?.mesh?.shape).toBe('brush-sweep');
+    // Alpha, like every mark in this file: additive paint over paint is a
+    // bright nothing, and what has to survive here is the stroke's edge.
+    expect(arc.emitters[0]?.blend).toBe('alpha');
+  });
+
+  it('keeps a ground track for its yaw to be read from', () => {
+    const emitter = arc.emitters[0];
+    // Never zero. At zero there is no direction, every mark takes the fallback
+    // bearing, and the sweep is the fence this shape was added to stop being.
+    expect(emitter?.speed[0]).toBeGreaterThan(0);
+    // And no spread, or the marks turn off the curve they are lying along.
+    expect(emitter?.spreadRadians ?? 0).toBe(0);
+  });
+
+  it('never falls out of its own plane', () => {
+    // The basis reads x and z only, so a falling mark keeps its yaw while
+    // sinking through the ground it is meant to be painted on.
+    expect(arc.emitters[0]?.gravity ?? 0).toBe(0);
+  });
+
+  it('fizzles rather than retracting, because its marks are centred', () => {
+    // `brushCross`'s finding: a retract drags a centred mark toward its own tip,
+    // so the sweep would come apart into pieces sliding off the arc.
+    expect(arc.emitters[0]?.strokeDecay).toBe('fizzle');
+  });
+
+  it('scales its mark length with the radius unless told otherwise', () => {
+    const small = brushArc({ id: 'a', radius: 30, sweep: 1 });
+    const large = brushArc({ id: 'b', radius: 150, sweep: 1 });
+    const lengthOf = (effect: typeof small): number =>
+      (effect.emitters[0]?.size.keys[1]?.[1] ?? 0);
+    expect(lengthOf(large)).toBeGreaterThan(lengthOf(small));
+    const told = brushArc({ id: 'c', radius: 150, sweep: 1, length: 9 });
+    expect(lengthOf(told)).toBe(9);
+  });
+});
+
