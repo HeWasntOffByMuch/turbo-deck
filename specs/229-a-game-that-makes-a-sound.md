@@ -134,16 +134,84 @@ three cases somebody tried by hand and false in the fourth.
 `npm run bake:audio` (ffmpeg, offline, the shape `bake:units` already has):
 48kHz, Vorbis q4, **mono for anything spatial** (a `PannerNode` downmixes stereo
 before it pans, so stereo is twice the bytes for an image that is discarded) and
-the trailing silence trimmed. **51.56 MB → 1.36 MB, 97.4% smaller.** Sources
+the trailing silence trimmed. Leading silence deliberately is *not* trimmed:
+trimming the head moves the transient, and a footstep that fires late is worse
+than a footstep that is large. **51.56 MB → 1.36 MB, 97.4% smaller.** Sources
 live in `assets/audio/raw/` and are gitignored for the reason `.studio/` is; the
 baked tree is committed to `public/audio/`, which is `publicDir`, so one tree is
 served by vite in dev and copied into `dist/` by a build at the same `/audio/…`
 URL.
 
+**The bake discovers; it is not told.** Every audio file under the source tree is
+baked, at the name `paths.ts` derives from where it sits. The first cut had a
+hand-written table of 74 rows, which made **adding a sound a code edit** — which
+is precisely the friction the events/catalog split exists to remove, and it is
+indefensible for the *file* half to have it when the *assignment* half does not.
+The table survives as `BAKED_NAMES`, a rename map for the delivered library
+alone, because those 74 paths are referenced by `sfx.json` and are not free to
+move: drop a row and the name re-derives to something different and perfectly
+valid, the catalog points at nothing, and the game goes quiet with every test
+green. It is also **incremental** — a take whose `.ogg` is newer than its source
+is skipped, so dropping in one file is one ffmpeg call rather than 74 — and it
+**never deletes without `--prune`**. That last one is a deliberate reversal of
+what a build usually does, and the reason is that the sources are gitignored: a
+fresh clone has none of them, so a bake that tidied away what it could not
+account for would delete the entire committed library the first time somebody ran
+it before checking the raws out. Orphans are reported instead.
+
+**`paths.ts` is one module because three places have to agree.** The bake writes
+the file, the dev server decides where an upload may land, and the SFX tab
+predicts the URL so it can assign a take the instant the bake finishes. If they
+drifted, the failure would be an import that succeeds, a bake that succeeds, and
+a variant pointing at a URL that 404s only when somebody swings a sword.
+
+### Adding a sound
+
+The whole of it, and none of it is a terminal: choose or drop files on the SFX
+tab's editor pane. They are written under `assets/audio/raw/` at a folder
+**derived from the event id** (shown, not hidden — somebody importing three takes
+for one event should not have to invent a folder or remember where the last one
+went), baked, and assigned as variants of the selected event.
+
+`POST /api/sfx/import` takes the bytes **as the body** rather than as multipart:
+a multipart parser is a dependency and a boundary to get right for a form with
+one field, where `fetch(url, { body: file })` sends a `File` as its bytes with no
+ceremony. `POST /api/sfx/bake` calls `bakeAudio` **in process**, so "ffmpeg is
+not installed" is a sentence in the status line rather than an exit code and a
+log somebody has to go and read; it blocks the dev server while it runs, which is
+affordable exactly because the bake is incremental. Both are `apply: 'serve'`
+like `POST /api/sfx`, and both are registered **before** it — vite matches
+middleware by prefix, so `/api/sfx` would otherwise swallow them and try to parse
+a `.wav` as a catalog.
+
+Every folder segment is slugged, so traversal cannot leave the source root
+whatever is sent. A segment with no alphanumeric in it is **refused anyway**: the
+difference between neutralising an attempt and refusing one is that the first
+quietly writes junk somewhere harmless and the second says what it thought it was
+doing.
+
+Two things learned by getting them wrong. The picker's re-read is **cache-busted
+with a version query**, because `manifest.json` is a `publicDir` file with no
+hash in its name — without it you can bake a file and be handed the manifest from
+before it existed, which reads exactly like a bake that silently did nothing. And
+only URLs the manifest **actually lists** are assigned, so a take ffmpeg refused
+does not become a variant pointing at nothing.
+
 ## Invariants tested
 
 - **Round trip.** `parseCatalog(catalogToJson(c))` is `c`, over the shipped
   document. Every variant URL in it names a file that exists under `public/audio/`.
+- **Every URL the shipped catalog references is one the bake still produces**
+  for the source it came from — the assertion that catches a dropped rename row,
+  which is otherwise silent all the way to a player noticing a sound has gone.
+- **Derivation is stable and URL-safe**: baking a source twice names it the same
+  thing, a slugged name needs no escaping, and no segment is ever empty (`___.wav`
+  is still a file, and a path segment of nothing is a different path).
+- **Every event in the vocabulary gets its own import folder**, and no two share
+  one — sharing would offer one event's takes under another and make
+  `unusedClips` report neither.
+- **An import never escapes the source root**, whatever folder it is handed: the
+  path is relative, contains no `..`, and is exactly as deep as it looks.
 - `catalogToJson` writes only fields that differ from `SOUND_DEFAULTS`, in the
   vocabulary's order.
 - `parseCatalog` refuses a bad document whole and never returns a partial
