@@ -489,27 +489,6 @@ mat3 groundBasis(float yaw) {
   return mat3(vec3(c, 0.0, s), vec3(s, 0.0, -c), vec3(0.0, 1.0, 0.0));
 }
 
-/**
- * Flat in the ground plane, yawed by the ground track of the velocity (spec 230).
- *
- * Built through groundBasis rather than assembled from the direction directly,
- * so there is one definition of what "flat in the ground plane" means and the
- * two cannot drift in handedness -- which for a basis is not a cosmetic
- * difference, since a determinant of -1 turns every face normal over and the
- * mark is lit from underneath.
- *
- * groundBasis puts local +Y along (sin yaw, 0, -cos yaw), so the yaw that lays
- * it along dir is atan2(dir.x, -dir.y).
- */
-mat3 groundVelocityBasis(vec3 vel) {
-  vec2 flat = vec2(vel.x, vel.z);
-  float speed = length(flat);
-  // A mark with no ground track keeps a fixed bearing rather than dividing by
-  // zero: a NaN basis does not draw a wrong mark, it deletes one.
-  vec2 dir = speed > 0.0001 ? flat / speed : vec2(0.0, 1.0);
-  return groundBasis(atan2(dir.x, -dir.y));
-}
-
 mat3 cardVelocityBasis(vec3 vel) {
   vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
   vec3 camUp    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
@@ -609,8 +588,7 @@ void main() {
     // comes out of the silhouette instead.
     uOrient < 4.5 ? cardBasis(iRotation) :
     uOrient < 5.5 ? cardVelocityBasis(iVelocity) :
-    uOrient < 6.5 ? groundBasis(iRotation) :
-                    groundVelocityBasis(iVelocity);
+                    groundBasis(iRotation);
 
   vec3 shape = position;
   float tone = 1.0;

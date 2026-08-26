@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BRUSH_SHAPES } from '../vfx/meshes.js';
 import {
   clampToSpec,
   EMITTER_FIELDS,
   fieldGroups,
-  MESH_SHAPES,
   readField,
   UNEDITED_KEYS,
   writeField,
@@ -401,26 +399,5 @@ describe('effectToJson and effectFromJson', () => {
     const emitter = parsed.effect.emitters[0] as unknown as Record<string, unknown>;
     // `exactOptionalPropertyTypes` is on: writing `undefined` is not omitting.
     for (const key of Object.keys(emitter)) expect(emitter[key], key).not.toBeUndefined();
-  });
-});
-
-/**
- * The panel's shape list against the mesher's (spec 230).
- *
- * `vfx-fields.ts` keeps its own copy for the dropdown and says so, on the
- * argument that a shape missing from one of the two "either cannot be authored
- * or cannot be drawn, and neither failure says so". That was true: the only
- * thing guarding it was this file's registry validation, which fires *after*
- * somebody has authored an effect using the new shape -- which is exactly how
- * spec 230 found out, with a green suite right up until the effect existed.
- *
- * Here rather than beside `BRUSH_SHAPES`, because the dependency runs this way:
- * the studio reads the vfx layer and not the other way about.
- */
-describe('the panel offers every brush the mesher can build', () => {
-  it('lists all of them', () => {
-    for (const shape of BRUSH_SHAPES) {
-      expect(MESH_SHAPES as readonly string[], shape).toContain(shape);
-    }
   });
 });

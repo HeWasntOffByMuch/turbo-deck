@@ -60,9 +60,6 @@ export const MESH_SHAPES = [
   // The placed mark (spec 175), which is the one that arrives centred on its own
   // origin and takes the roll it is given rather than being aimed by its travel.
   'brush-mark',
-  // The swept mark (spec 230): the same silhouette, laid along a path and yawed
-  // by its own ground track, so an arc of them reads as one gesture.
-  'brush-sweep',
 ] as const;
 
 /**

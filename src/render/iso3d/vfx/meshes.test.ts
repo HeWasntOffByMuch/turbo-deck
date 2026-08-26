@@ -11,7 +11,6 @@ import {
   MARK_REACH,
   needsVelocity,
   shadedShape,
-  strokeShape,
   strokeRootOf,
   shaftMesh,
   shardMesh,
@@ -594,12 +593,7 @@ describe('the compiled registry', () => {
     // when a shape is added and must be moved deliberately. Spec 158 moved it
     // from 20 to 25 for the four brush marks, one of which is used with two
     // blends.
-    //
-    // 25 to 26 for spec 230's `brush-sweep`: one shape, used with one blend,
-    // so exactly one batch. Deliberate, and the number is what makes it so --
-    // a shape added without moving this fails here rather than quietly costing
-    // a draw call nobody counted.
-    expect(compiled.batches.length).toBeLessThanOrEqual(26);
+    expect(compiled.batches.length).toBeLessThanOrEqual(25);
   });
 });
 
@@ -671,14 +665,9 @@ describe('the transparency sort', () => {
 describe('the placed mark (spec 175)', () => {
   const mesh = particleMesh('brush-mark');
 
-  it('shares with the swept mark the spine that does not start at its own root', () => {
-    // Two shapes now (spec 230), and they are the two `centreStrokes` builds:
-    // a placed mark and a swept one are the same silhouette and differ only in
-    // what decides their yaw, so they must report the same origin or the
-    // shader's retract threshold starts half way through one of them.
-    const centred = new Set<string>(['brush-mark', 'brush-sweep']);
+  it('is the only shape whose spine does not start at its own root', () => {
     for (const shape of BRUSH_SHAPES) {
-      expect(strokeRootOf(shape), shape).toBe(centred.has(shape) ? -STROKE_CENTRE_SHIFT : 0);
+      expect(strokeRootOf(shape), shape).toBe(shape === 'brush-mark' ? -STROKE_CENTRE_SHIFT : 0);
     }
     // Every solid too, so the shader expression the retract is written as stays
     // exactly the one it has always been for all of them.
@@ -741,49 +730,5 @@ describe('the placed mark (spec 175)', () => {
     // a mark held further off the ground than it needs to be, which is the same
     // fault as clipping, seen from the other side.
     expect(worst).toBeGreaterThan(MARK_REACH * 0.85);
-  });
-});
-
-/**
- * The swept mark (spec 230).
- *
- * `brush-sweep` exists so an arc of marks reads as one gesture rather than as a
- * fence, and every assertion below is about a way that fails silently: an
- * orientation that falls back to a rotation channel, a velocity attribute that
- * is never uploaded, or a spine origin that collapses half the mark on its first
- * frame.
- */
-describe('brush-sweep', () => {
-  it('is yawed by its velocity rather than by a rotation channel', () => {
-    expect(orientOf('brush-sweep')).toBe(ORIENT.groundVelocity);
-  });
-
-  it('has its velocity uploaded', () => {
-    // The way this feature fails without a sound: the basis would read an
-    // attribute nobody wrote, and every mark in a sweep would take the zero
-    // fallback bearing -- which looks exactly like the fence being fixed.
-    expect(needsVelocity('brush-sweep')).toBe(true);
-  });
-
-  it("leaves every other shape's orientation alone", () => {
-    // Asserted whole rather than per shape, so adding a mode cannot quietly
-    // re-point one that already existed.
-    expect(orientOf('brush-mark')).toBe(ORIENT.ground);
-    expect(orientOf('brush-slash')).toBe(ORIENT.cardVelocity);
-    expect(orientOf('brush-flick')).toBe(ORIENT.cardVelocity);
-    expect(orientOf('brush-dab')).toBe(ORIENT.velocity);
-    expect(orientOf('brush-blot')).toBe(ORIENT.tumble);
-  });
-
-  it('is paint: a stroke shape, and unlit', () => {
-    expect(strokeShape('brush-sweep')).toBe(true);
-    expect(shadedShape('brush-sweep')).toBe(false);
-  });
-
-  it('reports a centred spine, like the placed mark it shares geometry with', () => {
-    // A butt origin would leave half the mark already collapsed on frame one,
-    // because the shader's threshold sweeps from the reported root.
-    expect(strokeRootOf('brush-sweep')).toBe(strokeRootOf('brush-mark'));
-    expect(strokeRootOf('brush-sweep')).toBeLessThan(0);
   });
 });

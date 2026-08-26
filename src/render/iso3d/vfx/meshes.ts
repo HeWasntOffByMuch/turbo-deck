@@ -75,29 +75,10 @@ export type MeshShape =
    * down its own travel. This one has no travel to be aimed by, and two of it
    * rooted at one point would be a V rather than a cross.
    */
-  | 'brush-mark'
-  /**
-   * The swept mark (spec 230): a stroke laid along a path rather than placed on
-   * a point.
-   *
-   * Geometrically it is {@link 'brush-mark'} -- the centred stroke with no
-   * flecks -- and centred is right for the same reason it is there: a sweep mark
-   * sits *at* a point on the arc rather than being thrown from one, so a stroke
-   * rooted at its butt would open the sweep outward instead of laying along it.
-   * What differs is only which way it faces, and that is
-   * {@link ORIENT.groundVelocity} rather than a second silhouette.
-   */
-  | 'brush-sweep';
+  | 'brush-mark';
 
 /** The brush marks, in one place, so nothing has to spell the list out twice. */
-export const BRUSH_SHAPES = [
-  'brush-slash',
-  'brush-flick',
-  'brush-dab',
-  'brush-blot',
-  'brush-mark',
-  'brush-sweep',
-] as const;
+export const BRUSH_SHAPES = ['brush-slash', 'brush-flick', 'brush-dab', 'brush-blot', 'brush-mark'] as const;
 
 /**
  * Independently generated gestures behind each brush mark (spec 159).
@@ -685,10 +666,6 @@ function brushShape(shape: MeshShape): StrokeMeshData {
       // more broad strokes laid across it, so a single particle is already a
       // chunky irregular mass rather than a bead that needs friends to read.
       return cloudBank(BANK_SIZE, 0x7d13);
-    // The swept mark shares the placed one's silhouette (spec 230). Only its
-    // orientation differs, so a second bank here would be the same shape
-    // authored twice and free to drift.
-    case 'brush-sweep':
     case 'brush-mark':
       // The placed mark (spec 175). Broader than a thrown one and shorter for
       // its width, because it is not going anywhere and its whole job is to be
@@ -850,28 +827,6 @@ export const ORIENT = {
    * about the camera at all.
    */
   ground: 6,
-  /**
-   * The same ground plane, yawed by the ground track of the particle's own
-   * velocity rather than by its rotation channel (spec 230).
-   *
-   * {@link ORIENT.ground} above says *"a placed mark has no velocity to be aimed
-   * by"*, which is true of a cross somebody clicked and is exactly what a
-   * **swept** mark is not. A swing is a stroke laid along a path, and the path
-   * is the thing that should decide which way the stroke lies.
-   *
-   * It is what makes an arc of marks read as one gesture rather than as a fence.
-   * `rotation` is a curve over a particle's own life and therefore one curve per
-   * *emitter*, shared by everything it spawns -- so ground-oriented marks laid
-   * around a sweep all point the same way. Velocity is per particle, and
-   * `SHAPE.arc` already writes a tangent one.
-   *
-   * It also aims. `system.ts` turns an emitter's spawn direction by the effect's
-   * rotation about Y and never touches `pool.rot`, so a ground mark's yaw is the
-   * one thing an effect's rotation could not reach -- which nothing had noticed,
-   * because the only ground-oriented effect in the game is `order_move` and a
-   * click mark is played at rotation 0.
-   */
-  groundVelocity: 7,
 } as const;
 
 export function orientOf(shape: MeshShape): number {
@@ -907,10 +862,6 @@ export function orientOf(shape: MeshShape): number {
     // a mark on the ground actually lies.
     case 'brush-mark':
       return ORIENT.ground;
-    // Swept rather than placed (spec 230): same plane, and the path decides the
-    // yaw instead of a rotation channel that cannot vary per particle.
-    case 'brush-sweep':
-      return ORIENT.groundVelocity;
     default:
       return ORIENT.tumble;
   }
@@ -968,14 +919,7 @@ export function rootShadeOf(shape: MeshShape): number {
   // Gentle. At 0.38 a handful of overlapping marks turned the middle of a hit
   // into one dark mass with no strokes visible in it -- the root shade was
   // doing to the composition what it was meant to do inside a single mark.
-  if (
-    shape === 'brush-slash' ||
-    shape === 'brush-flick' ||
-    shape === 'brush-mark' ||
-    shape === 'brush-sweep'
-  ) {
-    return 0.2;
-  }
+  if (shape === 'brush-slash' || shape === 'brush-flick' || shape === 'brush-mark') return 0.2;
   if (shape === 'brush-dab') return 0.12;
   return 0;
 }
@@ -990,10 +934,7 @@ export function rootShadeOf(shape: MeshShape): number {
  * zero would have half the mark already collapsed on its first frame.
  */
 export function strokeRootOf(shape: MeshShape): number {
-  // Both centred shapes, because both are `centreStrokes` of the same bank: a
-  // sweep mark that reported a butt origin would have half of itself already
-  // collapsed on its first frame (spec 230).
-  return shape === 'brush-mark' || shape === 'brush-sweep' ? -STROKE_CENTRE_SHIFT : 0;
+  return shape === 'brush-mark' ? -STROKE_CENTRE_SHIFT : 0;
 }
 
 /**
@@ -1011,14 +952,7 @@ export const MARK_REACH = 0.75;
 /** Whether a shape's batch needs the particle's velocity uploaded (spec 125). */
 export function needsVelocity(shape: MeshShape): boolean {
   const orient = orientOf(shape);
-  // `groundVelocity` is the third (spec 230), and leaving it out is the way this
-  // feature fails silently: the basis would read an attribute nobody uploaded
-  // and every mark in a sweep would take the zero fallback bearing.
-  return (
-    orient === ORIENT.velocity ||
-    orient === ORIENT.cardVelocity ||
-    orient === ORIENT.groundVelocity
-  );
+  return orient === ORIENT.velocity || orient === ORIENT.cardVelocity;
 }
 
 /** Every shape, built once and shared -- including the brush banks. */
