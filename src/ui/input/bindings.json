@@ -243,6 +243,15 @@
       }
     },
     {
+      "id": "ui.account",
+      "category": "ui",
+      "label": "Account",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyU"
+      }
+    },
+    {
       "id": "ui.chat",
       "category": "ui",
       "label": "Chat",

@@ -123,8 +123,13 @@ export const SLOT_ICONS: Readonly<Record<'vial' | 'empty', string>> = {
   empty: '<rect x="5" y="5" width="14" height="14" rx="2" stroke-dasharray="3 2.6"/>',
 };
 
-/** Which window a HUD button opens, as far as the icon table is concerned. */
-export type SystemIconId = 'inventory' | 'character' | 'options';
+/**
+ * Which window a HUD button opens, as far as the icon table is concerned.
+ *
+ * `account` since spec 227 -- the one window button that does not live beside
+ * the other three, but draws from the same table because it *is* one of them.
+ */
+export type SystemIconId = 'inventory' | 'character' | 'options' | 'account';
 
 /**
  * The window buttons' icons (spec 140), in the same 24x24 box.
@@ -150,6 +155,13 @@ export const SYSTEM_ICONS: Readonly<Record<SystemIconId, string>> = {
   options:
     '<circle cx="12" cy="12" r="3.2"/>' +
     '<circle cx="12" cy="12" r="7.6" stroke-width="3.4" stroke-dasharray="2.6 3.4"/>',
+  // A key: a ring, a shaft and two teeth (spec 227) -- what unlocks an
+  // account, and different enough from `character`'s head and shoulders that
+  // the two cannot be mistaken for the same button.
+  account:
+    '<circle cx="7.5" cy="7.5" r="4"/>' +
+    '<path d="M10.5 10.5 L20.5 20.5"/>' +
+    '<path d="M16 16 L17.6 14.4 M18.5 18.5 L20.1 16.9" stroke-width="1.8"/>',
 };
 
 /**

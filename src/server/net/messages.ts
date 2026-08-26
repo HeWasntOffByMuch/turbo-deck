@@ -78,6 +78,22 @@ export interface HelloMessage {
    * that has aged out is the ordinary case rather than an attack.
    */
   readonly resumeToken: string;
+  /**
+   * The session token this client holds (spec 226).
+   *
+   * Obtained out of band -- `POST /api/auth/guest`, `/register` or `/login` --
+   * and presented on every connection. When the server has an auth gate, this
+   * is what decides which player the connection is, and `playerId` above is
+   * ignored; when it has none, this is ignored and `playerId` decides. Empty
+   * from a client that has not signed in, which is every in-tab single-player
+   * session and every bot.
+   *
+   * Distinct from `token`, which promotes a connection to admin, and from
+   * `resumeToken`, which comes back to a *body* that is still standing in the
+   * world. Three different questions: who you are, what you may do, and which
+   * entity you were driving.
+   */
+  readonly authToken: string;
 }
 
 /**
@@ -476,7 +492,8 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
         .str(message.displayName)
         .str(message.token)
         .str(message.assetManifest)
-        .str(message.resumeToken);
+        .str(message.resumeToken)
+        .str(message.authToken);
       break;
     case ClientMessageType.Input:
       writer
@@ -591,6 +608,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         token: reader.str(),
         assetManifest: reader.str(),
         resumeToken: reader.str(),
+        authToken: reader.str(),
       };
     case ClientMessageType.Input:
       return {

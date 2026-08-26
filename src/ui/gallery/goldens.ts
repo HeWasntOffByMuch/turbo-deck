@@ -22,6 +22,7 @@ import type {
   TradeRenderOptions,
   ChatRenderOptions,
   WorldHudRenderOptions,
+  AccountRenderOptions,
 } from './render.js';
 
 export interface GoldenCase {
@@ -250,6 +251,41 @@ export const KEYBINDING_GOLDEN_CASES: readonly KeybindingsGoldenCase[] = [
     // this window has ever had to hold, and the face is drawn rather than
     // typeset, so a button too narrow for it clips in silence.
     covers: 'the pointer verbs, named -- and the widest chord label the window can hold',
+  },
+];
+
+export interface AccountGoldenCase {
+  readonly name: string;
+  readonly options: AccountRenderOptions;
+  readonly covers: string;
+}
+
+/**
+ * The account window (spec 227), in the states worth a picture.
+ *
+ * The first goldens this screen has ever had -- "it matches the other windows"
+ * was a claim rather than a check until these existed.
+ */
+export const ACCOUNT_GOLDEN_CASES: readonly AccountGoldenCase[] = [
+  {
+    name: 'account',
+    options: {},
+    covers: 'a guest on the Register tab, with an empty form and nothing yet to complain about',
+  },
+  {
+    name: 'account-signin',
+    options: { mode: 'signIn' },
+    covers: 'the Sign in tab selected: the warning about the guest character, and the two fields it drops',
+  },
+  {
+    name: 'account-refused',
+    options: { draft: { login: 'ab', password: 'short' } },
+    covers: 'a draft the rule refuses, said in words, with the submit button dead rather than merely guessed at',
+  },
+  {
+    name: 'account-signed-in',
+    options: { account: { signedInAs: 'Ada Lovelace', busy: false, message: '', tone: 'neutral' } },
+    covers: 'signed in: the form and the tab strip gone, and Sign out in their place',
   },
 ];
 

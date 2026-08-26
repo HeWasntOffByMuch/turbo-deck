@@ -203,7 +203,7 @@ describe('nothing a client sends carries a stat', () => {
     ]);
 
     const samples: ClientMessage[] = [
-      { type: ClientMessageType.Hello, playerId: 'p', displayName: 'P', protocolVersion: 1, token: '', resumeToken: '', assetManifest: '' },
+      { type: ClientMessageType.Hello, playerId: 'p', displayName: 'P', protocolVersion: 1, token: '', resumeToken: '', assetManifest: '', authToken: '' },
       { type: ClientMessageType.Ping, nonce: 1 },
       { type: ClientMessageType.Equip, slot: 'head', itemId: 'helm.leather' },
       { type: ClientMessageType.Unequip, slot: 'head' },

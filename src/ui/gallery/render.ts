@@ -45,6 +45,9 @@ import { ShopScreen, type ShopRow, type ShopView } from '../screens/shop.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
 import { TradeScreen, type TradeUiView } from '../screens/trade.js';
+import { AccountScreen, type AccountDraft, type AccountMode, type AccountView } from '../screens/account.js';
+import { Tab } from '../widgets/tabs.js';
+import { TextField } from '../widgets/text-field.js';
 
 export interface GalleryFrame {
   readonly surface: RasterSurface;
@@ -1002,6 +1005,115 @@ export function renderKeybindings(options: KeybindingsRenderOptions = {}): Keybi
   replay(surface, root.paint().finish());
 
   return { surface, root, screen, map };
+}
+
+/**
+ * Rules good enough to exercise the account screen, and deliberately not the
+ * real ones.
+ *
+ * The genuine rule is `draftProblem` in `world/account-model.ts`, and it is out
+ * of reach from here on purpose: it imports the server's own
+ * `validateLogin`/`validatePassword`, and this directory may not import
+ * `src/render/` -- the same fence that makes `AccountScreen.options.validate`
+ * an injected capability rather than something the screen reads off a
+ * singleton. So the gallery states its own version, close enough to produce a
+ * refused draft for `account-refused` and openly not the rule a real client
+ * runs -- the same standing `demoShop`'s stock has against `data/items.ts`.
+ */
+function accountDraftProblem(draft: AccountDraft): string {
+  if (draft.mode === 'signIn') {
+    if (draft.login.trim().length === 0) return 'enter your login';
+    if (draft.password.length === 0) return 'enter your password';
+    return '';
+  }
+  if (draft.login.trim().length < 3) return 'login must be at least 3 characters';
+  if (draft.password.length < 8) return 'password must be at least 8 characters';
+  if (draft.confirm !== draft.password) return 'the two passwords do not match';
+  return '';
+}
+
+/** Find a widget by name inside the screen, the way `account.test.ts` does. */
+function findInAccount<T>(screen: AccountScreen, name: string, kind: new (...args: never[]) => T): T | null {
+  for (const found of screen.walk()) {
+    if (found.name === name && found instanceof (kind as never)) return found as T;
+  }
+  return null;
+}
+
+/** Type into a named field, firing `onChange` the way a keystroke does. */
+function typeIntoAccount(screen: AccountScreen, name: string, value: string): void {
+  const input = findInAccount(screen, name, TextField);
+  if (input === null) return;
+  input.setText(value);
+  input.onChange?.(value);
+}
+
+export interface AccountFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly screen: AccountScreen;
+}
+
+export interface AccountRenderOptions {
+  readonly viewport?: Size;
+  /** Which tab is selected. The screen itself opens on Register. */
+  readonly mode?: AccountMode;
+  /** Type these into the form's fields before the frame is drawn. */
+  readonly draft?: {
+    readonly login?: string;
+    readonly password?: string;
+    readonly confirm?: string;
+    readonly displayName?: string;
+  };
+  /** What the server says this session is, pushed through `setAccount`. */
+  readonly account?: AccountView;
+}
+
+/**
+ * The account window, rasterised (spec 227).
+ *
+ * Its own scene rather than a seventh window in the six-window one, for the
+ * reason `renderKeybindings` states: the frame budget that scene exists to
+ * measure keeps meaning what it says.
+ */
+export function renderAccount(options: AccountRenderOptions = {}): AccountFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const contexts = new ContextStack();
+  const screen = new AccountScreen({ theme, contexts, validate: accountDraftProblem });
+
+  // The mode is driven through the tab's own `onSelect`, the way a click would
+  // reach it, rather than by reaching into the screen's private `modes` field.
+  if (options.mode !== undefined) {
+    const tabName = options.mode === 'signIn' ? 'tab:account:modeSignIn' : 'tab:account:modeRegister';
+    findInAccount(screen, tabName, Tab)?.onSelect?.();
+  }
+  if (options.draft?.login !== undefined) typeIntoAccount(screen, 'account:login', options.draft.login);
+  if (options.draft?.password !== undefined) typeIntoAccount(screen, 'account:password', options.draft.password);
+  if (options.draft?.confirm !== undefined) typeIntoAccount(screen, 'account:confirm', options.draft.confirm);
+  if (options.draft?.displayName !== undefined) typeIntoAccount(screen, 'account:name', options.draft.displayName);
+  if (options.account !== undefined) screen.setAccount(options.account);
+
+  const window = new UiWindow(screen, {
+    title: 'Account',
+    at: { x: 8, y: 8 },
+    size: { width: viewport.width - 16, height: viewport.height - 16 },
+  });
+  const manager = new WindowManager();
+  const layers = new LayerStack();
+  layers.place('windows', manager);
+  manager.register(window, 'account');
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, windows: manager, layers });
+  manager.setViewport(viewport);
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, screen };
 }
 
 export interface TradeFrame {

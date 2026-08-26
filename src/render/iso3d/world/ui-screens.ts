@@ -55,6 +55,7 @@ import {
 import { ActionBarScreen, actionBarInsets } from '../../../ui/screens/action-bar.js';
 import { InventoryScreen, type SlotRef } from '../../../ui/screens/inventory.js';
 import { KeybindingsScreen } from '../../../ui/screens/keybindings.js';
+import { AccountScreen, type AccountDraft, type AccountView } from '../../../ui/screens/account.js';
 import { ShopScreen } from '../../../ui/screens/shop.js';
 import { TradeScreen, type TradeOfferView, type TradeUiView } from '../../../ui/screens/trade.js';
 import { OptionsScreen } from '../../../ui/screens/options.js';
@@ -86,6 +87,18 @@ import { selectionOf } from './selection.js';
 import { ACTION_BAR, abilityForSlot, type ActionSlot } from './action-bar.js';
 import { actionBarViewOf } from './action-bar-model.js';
 import { escapeTaken, reachesGameplay, type Routing } from './ui-routing.js';
+
+/**
+ * Everything the account window needs that this half may not do itself
+ * (spec 226): reach the network, and know the server's rules.
+ */
+export interface AccountCapability {
+  /** Why this draft cannot be submitted, or `''`. The server's own rules. */
+  readonly validate: (draft: AccountDraft) => string;
+  readonly onRegister: (login: string, password: string, displayName: string) => void;
+  readonly onSignIn: (login: string, password: string) => void;
+  readonly onSignOut: () => void;
+}
 
 export interface UiScreensOptions {
   /** The key map, so the keybinding screen edits the one the game reads. */
@@ -158,6 +171,15 @@ export interface UiScreensOptions {
    */
   readonly onScaleChosen: (choice: ScaleChoice) => void;
   /**
+   * Signing in, and what a legal login is (spec 226).
+   *
+   * Optional, and the absence is meaningful rather than a convenience: an
+   * in-tab single-player server has nobody to authenticate against, so there is
+   * nothing to register with and the window's buttons do nothing. Exactly the
+   * shape `GameServer`'s `authGate` has on the other side of the wire.
+   */
+  readonly account?: AccountCapability;
+  /**
    * The player asked for the frame-time readout, or asked for it to go away
    * (spec 165). Same contract as `onScaleChosen` for the same reason.
    */
@@ -213,6 +235,7 @@ const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
   shop: 'Shop',
   trade: 'Trade',
   options: 'Options',
+  account: 'Account',
 };
 
 /**
@@ -262,6 +285,7 @@ export class UiScreens {
   private readonly inventory: InventoryScreen;
   private readonly character: CharacterScreen;
   private readonly shop: ShopScreen;
+  private readonly account: AccountScreen;
   private readonly keybindings: KeybindingsScreen;
   private readonly trade: TradeScreen;
   private readonly optionsScreen: OptionsScreen;
@@ -466,6 +490,38 @@ export class UiScreens {
       options.onRespec();
     };
 
+    /**
+     * The account window (spec 226).
+     *
+     * `validate` and the three callbacks are injected, and both directions of
+     * that are the point: this half is pure, so it cannot `fetch`, and
+     * `src/ui/` may not reach the server, so it cannot own the rule that says
+     * what a legal login is. What is left here is the wiring.
+     *
+     * With no `account` capability supplied -- a test, and the in-tab
+     * single-player server, which has nobody to sign into -- every callback is
+     * absent and the window still builds and renders. It is the same shape
+     * `authGate` has on the server.
+     */
+    this.account = new AccountScreen({
+      theme: THEME,
+      contexts: this.root.contexts,
+      focus: this.root.focus,
+      validate: (draft) => options.account?.validate(draft) ?? '',
+    });
+    this.account.onRegister = (login, password, displayName): void => {
+      options.account?.onRegister(login, password, displayName);
+      // Emptied the instant it is sent rather than when the answer arrives: a
+      // password sitting in a focused field through a round trip is a password
+      // on screen for as long as the network takes.
+      this.account.clearPasswords();
+    };
+    this.account.onSignIn = (login, password): void => {
+      options.account?.onSignIn(login, password);
+      this.account.clearPasswords();
+    };
+    this.account.onSignOut = (): void => options.account?.onSignOut();
+
     this.shop = new ShopScreen({ theme: THEME, contexts: this.root.contexts, focus: this.root.focus });
     this.shop.onBuy = (defId) => {
       options.onBuy(this.openVendorId, defId);
@@ -622,6 +678,7 @@ export class UiScreens {
       // trusted, since the number that decides it is the theme's.
       minSize: CHARACTER_MIN_SIZE,
     });
+    this.registerWindow('account', this.account);
     this.registerWindow('shop', this.shop);
     this.registerWindow('trade', this.trade);
     // Not scrolled by the mount: the options screen's tabs scroll their own
@@ -1236,6 +1293,18 @@ export class UiScreens {
     this.display.setEffectiveScale(effective);
   }
 
+  /**
+   * What the server says this session is (spec 226).
+   *
+   * Pushed rather than asked for, and pushed from the *outcome of a request*
+   * rather than from a button having been pressed. That is the same rule the
+   * shop follows about a purchase: the screen never moves its own state, so a
+   * registration that failed cannot leave the window claiming an account.
+   */
+  setAccount(view: AccountView): void {
+    this.account.setAccount(view);
+  }
+
   /** Told whether the frame-time readout is being drawn (spec 165). */
   setShowFps(show: boolean): void {
     this.display.setShowFps(show);
@@ -1596,8 +1665,12 @@ export class UiScreens {
     switch (id) {
       case 'character':
         return { x: Math.max(MARGIN, viewport.width - size.width - MARGIN), y: top };
+      // `account` is centred with the shop and the trade table (spec 226): it
+      // is a form somebody opened to do one thing and close, not a panel they
+      // play alongside.
       case 'shop':
       case 'trade':
+      case 'account':
         return { x: Math.max(MARGIN, Math.floor((viewport.width - size.width) / 2)), y: top };
       case 'options':
         return { x: Math.max(MARGIN, Math.floor((viewport.width - size.width) / 2)), y: top };

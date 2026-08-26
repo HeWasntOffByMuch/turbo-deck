@@ -117,6 +117,7 @@ describe('game message round-trip', () => {
       token: '',
       assetManifest: '',
       resumeToken: 'resume-1',
+      authToken: 'sess-1',
     },
     {
       type: ClientMessageType.Input,

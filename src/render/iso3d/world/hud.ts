@@ -62,7 +62,9 @@ import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.j
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
 import {
+  ACCOUNT_GUEST_LABEL,
   ACTION_SLOT_CSS,
+  accountButtonCaption,
   bottomEdge,
   NO_ACTION_BAR,
   poolReserve,
@@ -425,6 +427,16 @@ export interface HudHandle {
    * about whether it is open.
    */
   showOpenWindows(open: readonly WindowId[]): void;
+  /**
+   * Who the account button is for (spec 227): a guest, or a signed-in
+   * account's own name.
+   *
+   * Pushed in rather than derived here, for the same reason as
+   * {@link showOpenWindows}: the session held in `view.ts` is the state, and
+   * this file only draws what it is handed. `null` is a guest, which is what
+   * makes the button say `REGISTER` -- the reason it exists at all.
+   */
+  setAccount(state: { readonly signedInAs: string | null }): void;
   /**
    * How big the action bar is, in CSS pixels (spec 196).
    *
@@ -997,9 +1009,74 @@ export function createHud(project: Projector): HudHandle {
   deathLayer.append(deathBanner, respawnButton);
   root.append(deathLayer);
 
-  // The weapon switch (spec 079), bottom left and out of the hotbar's way.
-  // Which one is lit is read back off `stats.basicAttackId` -- the server's
-  // answer -- so a refused equip simply leaves the old one lit.
+  /**
+   * Builds one window-style button: the box, border, background and caption
+   * face every button in this corner and the opposite one share (spec 140,
+   * spec 227's account button included, which is why this moved out of the
+   * window row's own map below). Extracted rather than copied a second time,
+   * because "the same style expression as a system button" is a claim only
+   * true while there is one function drawing it.
+   *
+   * The caption span is built and returned even when nobody appends it (see
+   * the icon-only branch), so a caller whose label changes after the button
+   * exists -- the account button's does, the three window buttons' never do
+   * -- has something to rewrite rather than a button it would have to tear
+   * down and rebuild.
+   */
+  function buildSystemStyleButton(
+    icon: SystemIconId,
+    label: string,
+  ): { readonly button: HTMLButtonElement; readonly caption: HTMLElement | null } {
+    const button = document.createElement('button');
+    button.style.cssText =
+      `width:${layout.systemButton.width}px;height:${layout.systemButton.height}px;border-radius:6px;` +
+      'border:1px solid #33405a;background:#182130;color:#cfd6e0;cursor:pointer;font:inherit;' +
+      'display:flex;align-items:center;gap:6px;line-height:1.4;' +
+      (layout.systemIconOnly ? 'justify-content:center;padding:0;' : 'padding:5px 8px;');
+    button.innerHTML = systemIconSvg(icon, { size: layout.systemIconPx });
+    // The label survives the button having no text: it is what a screen reader
+    // reads out, and what `scripts/preview-touch.ts` finds the button by.
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    let caption: HTMLElement | null = null;
+    if (!layout.systemIconOnly) {
+      caption = document.createElement('span');
+      caption.innerHTML = pixelTextSvg(label.toUpperCase(), {
+        scale: layout.captionScale,
+        fill: '#cfd6e0',
+        outline: '#0a0d14',
+      });
+      button.append(caption);
+    }
+    return { button, caption };
+  }
+
+  let openHandler: (id: WindowId) => void = () => undefined;
+
+  // The account button (spec 227), above the weapon switch: the same box a
+  // window button draws, in the corner a guest is already looking at while
+  // choosing a weapon. `openHandler` is the one both corners share -- a
+  // button and a key must not be able to mean different things -- so this is
+  // wired exactly like a `SYSTEM_BUTTONS` entry rather than through a second
+  // handler that only this button would call.
+  const { button: accountButton, caption: accountCaption } = buildSystemStyleButton(
+    'account',
+    ACCOUNT_GUEST_LABEL,
+  );
+  // Marked on the button rather than on the column below: this is the topmost
+  // thing in the corner, so its own top is already the whole group's, and
+  // `scripts/probe-chat.ts`'s furniture report has a name to print instead of
+  // a bare wrapper with nothing of its own worth measuring.
+  accountButton.dataset['hudBottom'] = 'account';
+  // For `scripts/probe-account.ts`: the label the button is actually showing,
+  // the way `data-held-weapons` publishes what is attached rather than what
+  // was asked for -- so a registration that failed still reads as a guest.
+  accountButton.dataset['accountButton'] = ACCOUNT_GUEST_LABEL;
+  accountButton.addEventListener('click', () => openHandler('account'));
+
+  // The weapon switch (spec 079), out of the hotbar's way. Which one is lit is
+  // read back off `stats.basicAttackId` -- the server's answer -- so a refused
+  // equip simply leaves the old one lit.
   //
   // Not built at all on a phone (spec 141): three permanent buttons is a lot of
   // corner for a choice made rarely, and the bag and the sheet both make it and
@@ -1015,15 +1092,32 @@ export function createHud(project: Projector): HudHandle {
   // the layout is the compact one.
   weapons.dataset['hudBottom'] = 'weapons';
   weapons.style.cssText =
-    `position:absolute;left:calc(${layout.edge}px + env(safe-area-inset-left));bottom:${bottom};` +
     `display:flex;flex-direction:${layout.weaponDirection};gap:${layout.weaponGap}px;` +
-    'font:11px ui-monospace,Menlo,monospace;pointer-events:auto;' +
+    'font:11px ui-monospace,Menlo,monospace;' +
     // Backed like the status readout: the caption is small grey text and the
     // world behind it is a bright green field, so unbacked it disappears over
     // half the map. Icons carry their own backing, so the compact row drops the
     // panel and the padding with the caption.
     (layout.weaponIconOnly ? '' : 'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;');
-  if (layout.showsWeaponSwitch) root.append(weapons);
+
+  // The bottom-left corner is a column (spec 227): the account button above
+  // the weapon switch, wrapped in one absolutely-positioned flex column
+  // rather than positioned separately, so the stacking needs no measurement
+  // -- the weapon switch's own bottom edge lands exactly where it always did,
+  // and the account button simply sits above it. `pointer-events:auto` lives
+  // here rather than on each child, the way `systemRow` below already puts it
+  // on the whole row rather than on each of its three buttons.
+  const bottomLeft = document.createElement('div');
+  bottomLeft.style.cssText =
+    `position:absolute;left:calc(${layout.edge}px + env(safe-area-inset-left));bottom:${bottom};` +
+    `display:flex;flex-direction:column;align-items:flex-start;gap:${layout.weaponGap}px;` +
+    'pointer-events:auto;';
+  root.append(bottomLeft);
+  bottomLeft.append(accountButton);
+  // A phone has no weapon switch at all (spec 141): the column then holds the
+  // account button alone, at the same position the switch used to occupy on
+  // its own.
+  if (layout.showsWeaponSwitch) bottomLeft.append(weapons);
 
   if (!layout.weaponIconOnly) {
     const weaponCaption = document.createElement('div');
@@ -1090,34 +1184,24 @@ export function createHud(project: Projector): HudHandle {
     `gap:${layout.systemGap}px;font:11px ui-monospace,Menlo,monospace;pointer-events:auto;`;
   root.append(systemRow);
 
-  let openHandler: (id: WindowId) => void = () => undefined;
-
   const systemSlots = SYSTEM_BUTTONS.map((entry) => {
-    const button = document.createElement('button');
-    button.style.cssText =
-      `width:${layout.systemButton.width}px;height:${layout.systemButton.height}px;border-radius:6px;` +
-      'border:1px solid #33405a;background:#182130;color:#cfd6e0;cursor:pointer;font:inherit;' +
-      'display:flex;align-items:center;gap:6px;line-height:1.4;' +
-      (layout.systemIconOnly ? 'justify-content:center;padding:0;' : 'padding:5px 8px;');
-    button.innerHTML = systemIconSvg(entry.icon, { size: layout.systemIconPx });
-    // The name survives the button having no text: it is what a screen reader
-    // reads out, and what `scripts/preview-touch.ts` finds the button by.
-    button.setAttribute('aria-label', entry.name);
-    button.title = entry.name;
+    const { button } = buildSystemStyleButton(entry.icon, entry.name);
     button.dataset['window'] = entry.id;
-    if (!layout.systemIconOnly) {
-      const name = document.createElement('span');
-      name.innerHTML = pixelTextSvg(entry.name.toUpperCase(), {
-        scale: layout.captionScale,
-        fill: '#cfd6e0',
-        outline: '#0a0d14',
-      });
-      button.append(name);
-    }
     button.addEventListener('click', () => openHandler(entry.id));
     systemRow.append(button);
     return { ...entry, button };
   });
+
+  /**
+   * Every button that opens a window and lights up while it is open (spec
+   * 140, spec 227): the three in the corner they have always been in, plus
+   * the account button in the opposite one. One list, so `showOpenWindows`
+   * cannot light one kind of window button and forget the other.
+   */
+  const windowButtons: readonly { readonly id: WindowId; readonly button: HTMLButtonElement }[] = [
+    ...systemSlots,
+    { id: 'account', button: accountButton },
+  ];
 
   const bars = new Map<number, Bar>();
   /** Same division as the numbers: the judgement is pure, this holds elements. */
@@ -1870,7 +1954,7 @@ export function createHud(project: Projector): HudHandle {
       for (const id of added.expired) dropError(id);
     },
     showOpenWindows(open) {
-      for (const slot of systemSlots) {
+      for (const slot of windowButtons) {
         const on = open.includes(slot.id);
         slot.button.style.borderColor = on ? '#ffcf6b' : '#33405a';
         slot.button.style.background = on ? '#243044' : '#182130';
@@ -1879,6 +1963,23 @@ export function createHud(project: Projector): HudHandle {
         // screen reader has no border to look at.
         slot.button.setAttribute('aria-pressed', String(on));
       }
+    },
+    setAccount(state) {
+      const label = state.signedInAs ?? ACCOUNT_GUEST_LABEL;
+      accountButton.setAttribute('aria-label', label);
+      accountButton.title = label;
+      // The whole, untruncated label: a probe asserting "the button now shows
+      // the account name" wants the fact, not the glyphs it happened to fit --
+      // truncation is this file's own drawing concern, not the state.
+      accountButton.dataset['accountButton'] = label;
+      // Absent on a phone: the button is icon-only there and never builds a
+      // caption to rewrite.
+      if (!accountCaption) return;
+      accountCaption.innerHTML = pixelTextSvg(accountButtonCaption(state.signedInAs, layout), {
+        scale: layout.captionScale,
+        fill: '#cfd6e0',
+        outline: '#0a0d14',
+      });
     },
     floorCss: bottomEdge(layout),
     slotSideCss: ACTION_SLOT_CSS,
