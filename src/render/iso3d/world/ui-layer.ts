@@ -35,6 +35,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import type { WindowId } from './control-actions.js';
 import type { MaxZoomChoice } from '../../../ui/input/display-store.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
+import type { AudioMixView } from '../../../ui/screens/audio.js';
 import type { AccountView } from '../../../ui/screens/account.js';
 import type { ActionSlot } from './action-bar.js';
 import { NO_ACTION_BAR, type ActionBarBox } from './hud-layout.js';
@@ -244,6 +245,11 @@ export class UiLayer {
   /** What the server says this session is (spec 226). Straight through. */
   setAccount(view: AccountView): void {
     this.screens.setAccount(view);
+  }
+
+  /** The audio mix as it actually stands (spec 229). See `AudioScreen`. */
+  setAudioMix(mix: AudioMixView): void {
+    this.screens.setAudioMix(mix);
   }
 
   setShowFps(show: boolean): void {

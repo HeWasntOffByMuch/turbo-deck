@@ -124,6 +124,17 @@ import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
 import { effectsForBlow, REDUNDANT_SERVER_EFFECTS, type GoreLevel } from './vfx-wire.js';
+import { createAudioEngine } from '../../audio/engine.js';
+import { BUS_LABELS, BUSES } from '../../audio/events.js';
+import { EMPTY_CATALOG, parseCatalog } from '../../audio/catalog.js';
+import { loadMix, saveMix, withBus, withMaster, withMuted } from '../../audio/mix.js';
+import { AudioDriver } from './audio-driver.js';
+import { fieldStatusesOn } from './aura-vfx.js';
+import { CastPhase } from '../../../server/sim/types.js';
+import { TradeStageValue } from '../../../server/net/protocol.js';
+import { HEAVY_ABILITY_DAMAGE } from '../../../server/sim/abilities.js';
+import type { UiSoundId } from '../../../ui/core/sound.js';
+import catalogUrl from '../../../../assets/audio/sfx.json?url';
 import { moveIntent, RoutePlanner } from './intent.js';
 import { pickupLead, pickupOrderFor } from './loot-drop.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
@@ -1250,6 +1261,34 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * for the same reason (spec 165).
    */
   let lastVfxReadout = '';
+  let lastAudioReadout = '';
+  /**
+   * Mirrors the audio engine's own numbers onto the root element (spec 229).
+   *
+   * `started` is what actually **started a voice**, not what was asked for, and
+   * that is the whole point: every rule in this framework is green in Node
+   * beside a mount that might call none of them -- the state spec 176 found map
+   * markers in, with every test passing beside a tab that saved nothing. A
+   * readout of what was requested would report a working game for a view that
+   * requests and an engine that refuses.
+   */
+  function publishAudioReadout(): void {
+    const stats = audioEngine.stats();
+    const started = Object.entries(stats.started)
+      .map(([id, count]) => `${id}=${String(count)}`)
+      .sort()
+      .join(',');
+    const text = `${stats.state}:${String(stats.voices)}:${String(stats.held)}:${String(stats.buffers)}:${started}`;
+    if (text === lastAudioReadout) return;
+    lastAudioReadout = text;
+    root.dataset['audioState'] = stats.state;
+    root.dataset['audioVoices'] = String(stats.voices);
+    root.dataset['audioHeld'] = String(stats.held);
+    root.dataset['audioBuffers'] = String(stats.buffers);
+    root.dataset['audioMissing'] = String(stats.missing);
+    root.dataset['audioStarted'] = started;
+  }
+
   function publishVfxReadout(): void {
     const readout = scene.vfxReadout();
     const playing = readout.effectIds.join(',');
@@ -1434,9 +1473,27 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // The way back up (spec 164). The overlay is drawn from replicated health and
   // this is the only thing it does -- nothing on this side decides that a player
   // is alive again.
-  hud.onRespawn(() => client.respawn());
+  hud.onRespawn(() => {
+    // At the intent, like every other press (spec 229). The body coming back is
+    // a round trip away and the button is the thing that was pressed.
+    audioDriver.flat('player.respawn');
+    client.respawn();
+  });
   // The same call a key binding makes (spec 140). The button knows which window
   // it names and nothing else about what opening one costs.
+  /**
+   * Push the mix into the engine, into the page, and into storage.
+   *
+   * Declared as a function so it is hoisted above the `UiLayer` options that
+   * call it -- `ui` does not exist yet when they are built, and it does by the
+   * time any of them fires.
+   */
+  function applyMix(): void {
+    audioEngine.setMix(audioMix);
+    ui.setAudioMix(audioMix);
+    saveMix(bindingStorage, audioMix);
+  }
+
   hud.onOpen((id) => ui.toggle(id));
 
   // The settings buttons float over the top-right corner of the game window: the
@@ -1558,6 +1615,26 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
         scene.playEffect(request);
       }
     }
+    // What a blow *sounds* like, decided in the same pure place and off the same
+    // facts (spec 229). Beside `effectsForBlow` rather than folded into it: a
+    // picture and a sound answer different questions about one event, and a
+    // pulse is the case that proves it -- `effectsForBlow` draws nothing for one
+    // and `soundsForBlow` refuses it too, but the affliction's own beat and its
+    // own paint are two separate drivers.
+    if (target) {
+      audioDriver.blow({
+        damage: result.damage,
+        killed: (result.flags & CombatFlag.Killed) !== 0,
+        critical: (result.flags & CombatFlag.Critical) !== 0,
+        blocked: (result.flags & CombatFlag.Blocked) !== 0,
+        periodic: (result.flags & CombatFlag.Periodic) !== 0,
+        bleeds: true,
+        x: target.x,
+        y: scene.groundAt(target.x, target.y) + BLOOD_HEIGHT,
+        z: target.y,
+        onSelf: result.targetId === client.view().selfEntityId,
+      });
+    }
     // Where it landed, asked for now and never again (spec 096). The scene is
     // the better answer -- it knows the pose actually on screen, and it still
     // holds the body of something this very blow killed -- and the replica is
@@ -1583,9 +1660,49 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     if (REDUNDANT_SERVER_EFFECTS.has(effect.effectId)) return;
     // The id the server has always sent and this view has always dropped.
     scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
+    // And what it sounds like (spec 229). This message is the **only** place an
+    // ability id reaches the client at impact time -- `CombatResultMessage`
+    // carries none, which is why `view.ts` has hardcoded `damageType:
+    // 'physical'` for the picture since spec 121 -- so it is where an element's
+    // impact comes from. `soundForEffect` answers null for anything that is not
+    // an `.impact`, because a `.self` cue is the cast and the cast was heard at
+    // the wind-up.
+    audioDriver.serverEffect(effect.effectId, {
+      x: effect.x,
+      y: scene.groundAt(effect.x, effect.y) + BLOOD_HEIGHT,
+      z: effect.y,
+    });
+  });
+  /**
+   * A wind-up begins (spec 229).
+   *
+   * `onCastStarted` has existed since spec 144 and had **no listener in the
+   * shipped renderer** -- only in four tests -- so a live hook carrying the
+   * ability id, the phase and all three ticks was fanning out to nobody.
+   *
+   * At the wind-up rather than at the contact, which is the point: this game is
+   * built on a blow being long enough to read and withdraw from, and a sword
+   * that makes no sound until it lands has no tell. `CastPhase.Windup` is 0 --
+   * the backswing and the channel both re-announce themselves on this message
+   * and must not each play the swing again.
+   */
+  client.onCastStarted((cast) => {
+    if (cast.phase !== CastPhase.Windup) return;
+    const caster = client.view().entities.find((entity) => entity.id === cast.entityId);
+    if (!caster) return;
+    const ability = abilityById(cast.abilityId);
+    audioDriver.windup(cast.abilityId, (ability?.damage ?? 0) >= HEAVY_ABILITY_DAMAGE, {
+      x: caster.x,
+      y: scene.groundAt(caster.x, caster.y) + BLOOD_HEIGHT,
+      z: caster.y,
+    });
   });
   client.onCastRejected((abilityId, reason) => {
     hud.error(castRefusalText(abilityById(abilityId)?.name ?? abilityId, reason));
+    // A refusal is a refusal wherever it came from (spec 229). The same row the
+    // interface's own `ui.error` plays, because from where the player is sitting
+    // "the server said no" and "a rule said no" are one event.
+    audioDriver.flat('ui.error');
   });
   // Every *other* refusal, into the same stack (spec 147).
   //
@@ -1596,6 +1713,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // it is, and the refusal stack spec 143 built is exactly the place to say so.
   client.onError((_code, message) => {
     if (message.length > 0) hud.error(message);
+    if (message.length > 0) audioDriver.flat('ui.error');
   });
 
   /** The world point of a body the scene has not drawn, out of the last delta. */
@@ -1664,6 +1782,104 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // whenever the options window is next opened.
   showFps = loadShowFps(bindingStorage);
 
+  // --- audio (spec 229) ---------------------------------------------------
+  /**
+   * The one `AudioContext` in the game, and the driver over it.
+   *
+   * `createAudioEngine` answers `SILENT_AUDIO` where there is no Web Audio, so
+   * everything below takes a non-nullable engine and no call site carries a
+   * `?.` -- the argument `src/ui/core/sound.ts` already makes about an optional
+   * sink, and the reason `presentation-only.test.ts` can drive this whole layer
+   * in Node.
+   *
+   * **Nothing is created here.** The context is constructed by the first
+   * `resume()`, which `start()` arms off the first real input: a browser refuses
+   * to make noise before somebody has interacted with the page, and a context
+   * built anyway starts suspended and stays there in a way that is invisible
+   * until a playtester says there is no sound.
+   */
+  const audioEngine = createAudioEngine();
+  const audioDriver = new AudioDriver(audioEngine);
+  let audioMix = loadMix(bindingStorage);
+  audioEngine.setMix(audioMix);
+  /**
+   * The sound catalog, fetched rather than bundled.
+   *
+   * `?url` and a fetch, the convention `map-asset.ts` sets and `bundle-budget.ts`
+   * enforces: a `?raw` import would compile the document into the bundle, which
+   * is the regression that put 11.5 MB of map in `index-*.js`.
+   *
+   * A failure is silence and a line in the log, never a throw. The catalog is
+   * presentation: a game that refused to start because a sound file was
+   * unreadable would be a worse game than a quiet one.
+   */
+  void fetch(catalogUrl)
+    .then(async (response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
+    .then((text) => {
+      const parsed = parseCatalog(text);
+      if ('error' in parsed) {
+        console.warn(`[audio] sfx.json: ${parsed.error}`);
+        return;
+      }
+      audioEngine.setCatalog(parsed.catalog);
+      // Two calls, and the order is the policy. The first names the buses that
+      // fire in the first ten seconds of play, so the first footstep and the
+      // first swing are not the two that are silent -- a cache miss plays
+      // *nothing* rather than playing late, because a hit that arrives 200ms
+      // after the blow is worse than one that did not arrive.
+      //
+      // The second puts everything else behind them in the same queue. That is
+      // not "load it all at startup": one queue at a bounded concurrency, hot
+      // buses first, and the game is playable throughout. What it buys is that
+      // the first Ember Shot of a session makes a noise, which the browser
+      // probe is what caught -- and it is affordable only because the bake is
+      // 1.36 MB in total. If the library ever grows past what is reasonable to
+      // fetch in the background, this second line is the one to take out.
+      audioEngine.warm(['player', 'combat', 'ui']);
+      audioEngine.warm(BUSES);
+    })
+    .catch((error: unknown) => {
+      console.warn(`[audio] could not load sfx.json: ${error instanceof Error ? error.message : String(error)}`);
+      audioEngine.setCatalog(EMPTY_CATALOG);
+    });
+
+  /**
+   * A cue **name**, from a table that is not ours.
+   *
+   * Two seams reach this: the loot cues in `RARITIES[].cues` (spec 158, whose
+   * rule is *"the renderer decides what a name sounds and looks like"*) and the
+   * particle system's own `VfxHooks.sound`, whose comment has said *"a sink
+   * today; there is no audio system to wire it to"* since spec 121. Both had
+   * been complete at one end and connected to nothing at the other.
+   */
+  scene.onCue = (cue, x, y, z) => {
+    audioDriver.cue(cue, { x, y, z });
+  };
+
+  /** What the interface emits into. `Widget.sounds` explains why it is one sink. */
+  const uiSounds = { play: (id: UiSoundId): void => { audioEngine.play(id); } };
+
+  /**
+   * The level a `Stats` message last reported (spec 229).
+   *
+   * A level-up is a *difference*, exactly as an experience gain is (spec 184),
+   * and it needs the same two rules for the same reasons: the **first reading
+   * only establishes the baseline**, or logging in plays a level-up for the
+   * level you already had; and a move **backwards re-baselines silently**,
+   * because an admin `setLevel` is not a reward.
+   */
+  let lastLevel: number | null = null;
+  /**
+   * The trade stage last seen, so the two moments worth hearing can be found.
+   *
+   * A trade has no callback: it arrives as a `TradeView` on the frame like every
+   * other replicated fact, so *being asked* and *it going through* are
+   * transitions rather than events -- which needs the previous reading, exactly
+   * as a level-up does. Null is "no trade", which is a stage in its own right
+   * here: it is what the transition into `Offered` is measured from.
+   */
+  let lastTradeStage: number | null = null;
+
   /**
    * The framework's interface, over the world (spec 131).
    *
@@ -1682,6 +1898,40 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
   const ui = new UiLayer(root, {
     map: inputMap,
+    // The interface's sink (spec 229). One for the whole tree -- every widget
+    // under the root finds it by walking `parent`, which is what stops this
+    // being eleven screens each remembering to pass it on.
+    sounds: uiSounds,
+    /**
+     * The Audio page's three sliders (spec 229).
+     *
+     * The same three steps every other preference on this window takes (spec
+     * 136), in the same order and for the same reason: honour it on the engine,
+     * tell the page so the control matches what is being heard, and save it
+     * before the frame that could lose it. A page that edited itself would be a
+     * page that could disagree with the mix.
+     */
+    audio: {
+      buses: BUSES.map((bus) => ({ id: bus, label: BUS_LABELS[bus] })),
+      mix: audioMix,
+      onMaster: (value) => {
+        audioMix = withMaster(audioMix, value);
+        applyMix();
+      },
+      onBus: (bus, value) => {
+        // The page hands back a `string`, because `src/ui/` may not import
+        // `BusId`. Checked here rather than cast, so a stale page cannot write
+        // a level under a name the engine has no gain node for.
+        const known = BUSES.find((candidate) => candidate === bus);
+        if (!known) return;
+        audioMix = withBus(audioMix, known, value);
+        applyMix();
+      },
+      onMute: (muted) => {
+        audioMix = withMuted(audioMix, muted);
+        applyMix();
+      },
+    },
     onMove: (from, to, count) => client.moveItem(from, to, count),
     // Aimed at the press, not at the body (spec 172). `offering` is the point
     // the interface is being handed *right now* -- this fires from inside
@@ -1694,13 +1944,36 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // own feet -- which the server reads as no direction at all and leaves
       // the body's own heading standing.
       client.dropItem(at, world ?? { x: me?.x ?? 0, y: me?.y ?? 0 }, count);
+      // The throw, at the body rather than where it will land: the server
+      // decides the landing and this happens on the frame of the gesture.
+      audioDriver.flat('player.dropItem');
     },
-    onSpend: (skillId) => client.spendSkillPoint(skillId),
-    onAllocate: (key) => client.allocateAttribute(key as BaseStatKey),
+    // Both at the intent, and both safe there because the button is greyed out
+    // when the points are not available -- `character-model.ts` runs the
+    // server's own rule, so a refusal here is rare and has `ui.error` of its
+    // own when it happens (spec 229).
+    onSpend: (skillId) => {
+      audioDriver.flat('player.skillUp');
+      client.spendSkillPoint(skillId);
+    },
+    onAllocate: (key) => {
+      audioDriver.flat('player.attributeUp');
+      client.allocateAttribute(key as BaseStatKey);
+    },
     onRespec: () => client.respecAttributes(),
-    onBuy: (vendorId, defId) => client.buyItem(vendorId, defId),
-    onSell: (vendorId, index) => client.sellItem(vendorId, index),
-    onBuyBack: (vendorId, index) => client.buyBack(vendorId, index),
+    // Money changing hands, in all three directions.
+    onBuy: (vendorId, defId) => {
+      audioDriver.flat('ui.coin');
+      client.buyItem(vendorId, defId);
+    },
+    onSell: (vendorId, index) => {
+      audioDriver.flat('ui.coin');
+      client.sellItem(vendorId, index);
+    },
+    onBuyBack: (vendorId, index) => {
+      audioDriver.flat('ui.coin');
+      client.buyBack(vendorId, index);
+    },
     onVendor: (vendorId) => client.openVendor(vendorId),
     onTradeOffer: (slots, coins) => client.offerInTrade(slots, coins),
     onTradeAccept: (revision) => client.acceptTrade(revision),
@@ -2947,6 +3220,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     if (!decision.ask) return;
 
     client.pickUp(mark.id);
+    // At the intent again, and here that is more than a convention: the pickup
+    // is a *walk* away -- the order is given, the body goes and gets it -- and a
+    // sound that waited for the grant would land a second after the click that
+    // asked for it, at which point it reads as the click having been dropped.
+    audioDriver.flat('player.pickUp');
     // **One order, one request.** The order ends here rather than standing until
     // the drop leaves the view, and that is the whole of the second bug: the
     // `Inventory` answering a pickup is sent straight back from the handler
@@ -3071,10 +3349,37 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * handed to the camera and averaged into the frame meter.
    */
   function onVisible(): void {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible') {
+      // A hidden tab stops `requestAnimationFrame`, so nothing is left to move
+      // a held loop or stop one -- but Web Audio keeps playing regardless, and
+      // a fire loop droning out of a tab nobody is looking at is the version of
+      // this that gets reported (spec 229). Suspended rather than stopped: the
+      // held handles stay valid, and coming back is one call rather than a
+      // frame of re-starting every loop in the world.
+      audioEngine.suspend();
+      return;
+    }
+    audioEngine.resume();
     last = 0;
     frames.reset();
     pump(performance.now());
+  }
+
+  /**
+   * Arm the audio on the first real input (spec 229).
+   *
+   * A browser refuses to let a page make noise before somebody has interacted
+   * with it, so the `AudioContext` is constructed by the first `resume()` rather
+   * than at mount -- one built earlier starts `suspended` and stays there in a
+   * way that is invisible until a playtester says there is no sound.
+   *
+   * Called on *every* input rather than once, and that is not laziness: a
+   * browser can suspend a context on its own (an OS audio-focus change, a
+   * policy), and the cheapest correct answer is to ask again than to track
+   * whose fault it was. `resume` is a no-op on a running context.
+   */
+  function armAudio(): void {
+    audioEngine.resume();
   }
 
   function frame(now: number): void {
@@ -3205,6 +3510,57 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       targetEntityId: targetId,
       aim: aimIndicator(view, view.self ?? { x: 0, y: 0 }),
     });
+    // --- audio (spec 229) --------------------------------------------------
+    //
+    // After `scene.render`, because the listener is read from the camera that
+    // frame moved -- a voice allocated against last frame's listener is panned
+    // to where the camera used to be. Before anything is played, for the same
+    // reason and in the same breath.
+    //
+    // The bodies come from the **replica** rather than from the drawn poses.
+    // What that costs is up to one broadcast interval of staleness in a pan,
+    // which is 50ms and inaudible; what it buys is that the whole audio layer
+    // is driven from here rather than threaded through the 3,000-line scene,
+    // and that it is the same list `soundsForBlow` recovers a position from.
+    audioDriver.listener(scene.listenerPose());
+    // The map's bed. Asked every frame because a refusal is the ordinary state
+    // for the first second of a session -- see `AudioDriver.ambience`.
+    audioDriver.ambience();
+    for (const entity of view.entities) {
+      audioDriver.body(
+        {
+          entityId: entity.id,
+          x: entity.x,
+          // The sim is 2D: its `Vec2 {x, y}` is world (x, z). Getting this
+          // backwards mirrors every sound across the NW-SE diagonal, which at
+          // the default camera azimuth is exactly a left/right swap.
+          z: entity.y,
+          // The height the body is *drawn* at, which `syncBodies` already
+          // computed this frame -- a map lookup against a 5.6us height sample,
+          // thirty times a frame. `groundAt` is the fallback for a body no
+          // frame has drawn yet.
+          ground: scene.bodyGround(entity.id) ?? scene.groundAt(entity.x, entity.y),
+          activity: entity.activity,
+          activityUntilTick: entity.activityUntilTick,
+          // Legs. A projectile, a drop, a mote and a prop have none, and a
+          // drop sliding down its throw arc would otherwise take footsteps.
+          walks: entity.kind === EntityKind.Player || entity.kind === EntityKind.Monster,
+          projectileLook:
+            entity.kind === EntityKind.Projectile
+              ? (abilityById(entity.typeId)?.projectile?.look ?? null)
+              : null,
+          // Whether it is standing in its own fire (spec 223). The same
+          // predicate `aura-vfx.ts` draws the ring from, so the sound and the
+          // ring cannot disagree about who is carrying a field.
+          field: fieldStatusesOn(entity.statuses, drawnTick).length > 0,
+        },
+        drawnTick,
+      );
+    }
+    // The owed stop: anything not offered this frame lets go of whatever it was
+    // holding. Nothing in the engine notices an absence.
+    audioDriver.sweep();
+
     // Split at the first draw call (spec 194), because "the renderer is slow"
     // has two unrelated causes: too much JavaScript preparing the frame, and too
     // many commands handed to the driver. The remainder the overlay computes --
@@ -3248,6 +3604,36 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       const at =
         kill?.at ?? scene.bodyAnchor(view.selfEntityId) ?? replicaAnchor(view.selfEntityId);
       if (at) hud.addExperience(kill?.group ?? view.selfEntityId, at, gained);
+    }
+    // A level-up, on the same message and by the same rule (spec 229). The two
+    // that make it honest are `XpGains`': the **first reading only baselines**,
+    // or connecting plays a level-up for the level you already had, and a move
+    // **backwards re-baselines silently**, because an admin `setLevel` is not a
+    // reward.
+    if (lastLevel !== null && view.level > lastLevel) audioDriver.flat('player.levelUp');
+    lastLevel = view.level;
+
+    // Being asked to trade, and a trade going through (spec 229). Two
+    // transitions, and only two: `Open` and `Confirmed` are a table being
+    // worked at, which the interface already shows and which does not want a
+    // noise per revision.
+    //
+    // `invited` is what makes the first one right: the side that *sent* the
+    // invitation knows it sent one, and playing them a "somebody wants to
+    // trade" is the interface telling them something they just did.
+    const stage = view.trade?.stage ?? null;
+    if (stage !== lastTradeStage) {
+      if (stage === TradeStageValue.Offered && view.trade?.invited === true) {
+        audioDriver.flat('ui.tradeRequest');
+      }
+      // Read off `endedTrade` rather than off `stage`, because the server
+      // forgets a trade the instant it is over -- the same reason the mount
+      // reads `view.trade ?? view.endedTrade` (spec 169). By the time there is
+      // a reason to say anything, the live field is already null.
+      if (stage === null && lastTradeStage !== null && view.endedTrade?.stage === TradeStageValue.Done) {
+        audioDriver.flat('ui.tradeComplete');
+      }
+      lastTradeStage = stage;
     }
 
     // What the four skill slots hold, read off the equipment every frame
@@ -3347,6 +3733,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
     publishUnitReadout();
     publishVfxReadout();
+    publishAudioReadout();
     publishOrders();
 
     // Last, over everything (spec 131). It is handed `now` rather than reading
@@ -3363,6 +3750,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   return {
     element: root,
     start(): void {
+      // The autoplay unlock. `pointerdown` and `keydown` on the window, because
+      // the canvas does not see a click that lands on the interface canvas over
+      // it and the first thing a player presses might be a window button.
+      window.addEventListener('pointerdown', armAudio);
+      window.addEventListener('keydown', armAudio);
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
       window.addEventListener('blur', onBlur);
@@ -3419,6 +3811,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     },
     stop(): void {
       cancelAnimationFrame(raf);
+      // Leaving the tab. Every held loop is stopped explicitly rather than left
+      // to the sweep: `stop()` is what the shell calls when this tab is hidden,
+      // and the frame loop that would have swept them is the thing being
+      // cancelled on the line above -- so an ember in flight when you switched
+      // to the map editor would drone until the page was closed.
+      audioDriver.stopAll();
+      audioEngine.suspend();
+      window.removeEventListener('pointerdown', armAudio);
+      window.removeEventListener('keydown', armAudio);
       if (keepAlive !== 0) {
         window.clearInterval(keepAlive);
         keepAlive = 0;
