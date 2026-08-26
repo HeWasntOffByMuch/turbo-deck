@@ -222,6 +222,15 @@ const PURE_RENDER = [
   'src/render/iso3d/world/unit-driver.ts',
   'src/render/iso3d/world/unit-lod.ts',
   'src/render/iso3d/world/vfx-wire.ts',
+  // The audio wire and its two drivers (spec 229), beside `vfx-wire.ts` and for
+  // the reason its header gives: it is handed plain facts and answers what to
+  // play, so it has nothing it *could* call. `audio-driver.ts` takes the engine
+  // as an interface, which is what lets the whole audio layer be driven in Node
+  // against a recorder -- the same argument `unit-driver.ts` makes about taking
+  // a snapshot rather than the `GameClient`.
+  'src/render/iso3d/world/audio-wire.ts',
+  'src/render/iso3d/world/audio-driver.ts',
+  'src/render/iso3d/world/footsteps.ts',
   'src/render/iso3d/world/auras.ts',
   'src/render/iso3d/studio/image-check.ts',
   'src/render/iso3d/studio/image-check.test.ts',
@@ -249,6 +258,32 @@ const PURE_RENDER = [
   'src/render/iso3d/studio/vfx-frame.ts',
   'src/render/iso3d/studio/vfx-panels.test.ts',
   'src/render/iso3d/studio/panels.test.ts',
+  // The audio framework's pure half (spec 229). Everything under
+  // `src/render/audio/` **except** `engine.ts`, which owns the one
+  // `AudioContext` in the game and would fail on `performance` and
+  // `Math.random` the moment it were listed here -- which is the split working
+  // rather than an exemption. `src/ui/render/canvas2d.ts` is the other side of
+  // the same line one layer up.
+  //
+  // What being here buys: a name, a level, a pitch spread and a world point are
+  // arithmetic, and arithmetic that decides what a fight sounds like should be
+  // checkable in Node. `variants.ts` in particular takes its randomness as an
+  // argument precisely so "a footstep never repeats immediately" is a property a
+  // test can pin rather than something true in the three cases somebody tried.
+  'src/render/audio/sink.ts',
+  'src/render/audio/events.ts',
+  'src/render/audio/events.test.ts',
+  'src/render/audio/catalog.ts',
+  'src/render/audio/catalog.test.ts',
+  'src/render/audio/variants.ts',
+  'src/render/audio/variants.test.ts',
+  'src/render/audio/mix.ts',
+  'src/render/audio/mix.test.ts',
+  // The SFX tab's pure half (spec 229), beside `studio/vfx-fields.ts` and for
+  // its reason: what a row *is*, what an edit *means* and what the document
+  // *says* are answerable in Node, and the DOM over them is not.
+  'src/render/iso3d/sfx/model.ts',
+  'src/render/iso3d/sfx/model.test.ts',
   // The VFX core (spec 118). Every decision an effect makes is arithmetic --
   // emission, integration, collision, curves, the budget -- and the promise the
   // whole system rests on is that the same seed draws the same thing, which is
@@ -360,7 +395,18 @@ const NO_SIM = {
  * which would also match src/ui/render/, this framework's own backends.
  */
 const NO_GAME_RENDERER = {
-  group: ['**/render/iso3d/**', '**/render/cloth/**', '**/render/critters/**'],
+  group: [
+    '**/render/iso3d/**',
+    '**/render/cloth/**',
+    '**/render/critters/**',
+    // The audio framework (spec 229). `BusId` is a renderer type and `mix.ts`
+    // is the versioned store over it, deliberately *not* in `src/ui/input/`
+    // beside its three siblings for that reason -- so the fence has to name it,
+    // or the argument its header makes is honour-system. The options page takes
+    // the bus list as an argument instead, exactly as `DisplayScreen` takes the
+    // camera's zoom band.
+    '**/render/audio/**',
+  ],
   message:
     "src/ui/ is engine-independent. Only src/ui/text/font.ts may read the game's renderer, and only for the 5x7 glyph table.",
 };
