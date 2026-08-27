@@ -126,7 +126,33 @@ const REASONS = {
   backswingPhase: CastPhase.Backswing,
 };
 
+/**
+ * A preset's record, with the four sigils its own spread hits hardest with.
+ *
+ * Two passes, and the second is the loadout: {@link harnessSigilsFor} ranks
+ * against the record built by the first, which carries no skills at all. Exact
+ * rather than approximate, because a sigil's `modifiers` are empty in every row
+ * -- see that function for why the ranking is per build rather than a list.
+ */
 function recordFor(preset: BuildPreset): PersistedPlayer {
+  const bare = bareRecordFor(preset);
+  const [skill1, skill2, skill3, skill4] = harnessSigilsFor(bare);
+  return {
+    ...bare,
+    // An empty slot is `null` rather than absent, and there are always four
+    // sigils in the table to fill them -- but a slot is typed as nullable, so
+    // the fallback is stated rather than asserted away.
+    equipment: {
+      ...bare.equipment,
+      skill1: skill1 ?? null,
+      skill2: skill2 ?? null,
+      skill3: skill3 ?? null,
+      skill4: skill4 ?? null,
+    },
+  };
+}
+
+function bareRecordFor(preset: BuildPreset): PersistedPlayer {
   return {
     id: preset.id,
     displayName: preset.name,
@@ -141,13 +167,7 @@ function recordFor(preset: BuildPreset): PersistedPlayer {
     // which nobody does, and which is 1-2 damage against an ability's several.
     // The same weapon for all twelve, so it stays a control rather than a
     // variable.
-    equipment: {
-      ...STARTER_EQUIPMENT,
-      skill1: HARNESS_SIGILS[0],
-      skill2: HARNESS_SIGILS[1],
-      skill3: HARNESS_SIGILS[2],
-      skill4: HARNESS_SIGILS[3],
-    },
+    equipment: STARTER_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
     facing: 0,
@@ -314,26 +334,68 @@ const PUNCTUATION_RATIO = 2;
  * skill slots, so the list comes from the same place: every `activeSkillId` in
  * the item table. Derived rather than typed out, so a thirteenth sigil is in
  * the harness the moment it is in the game.
+ *
+ * {@link castable} is the one filter, and it is applied in both places that
+ * ask: the loadout, which must not spend a slot on something the harness will
+ * never throw, and {@link bestReady}, which must not offer one. A `self`-kind
+ * ability is excluded because this is a stationary duel and an aura the harness
+ * never walks anybody into measures nothing; `skill.testStatuses` because it is
+ * the debug row, and it is named rather than inferred, since "costs 0 and does
+ * 1 damage" is a shape a real skill could have.
  */
-const CASTABLE = [...ITEMS.values()]
-  .map((item) => item.activeSkillId)
-  .filter((id): id is string => id !== undefined)
-  .map((id) => abilityById(id))
-  .filter((ability): ability is NonNullable<typeof ability> => ability !== null)
-  .filter((ability) => !ability.basicAttack && ability.kind !== 'self')
-  .sort((a, b) => b.damage - a.damage);
+function castable(ability: AbilityDefinition): boolean {
+  return !ability.basicAttack && ability.kind !== 'self' && ability.id !== 'skill.testStatuses';
+}
+
+/** Every sigil the harness could throw, paired with the ability it grants. */
+const SIGILS = [...ITEMS.values()]
+  .filter((item) => item.slot === 'skill' && item.activeSkillId !== undefined)
+  .map((item) => ({ itemId: item.id, ability: abilityById(item.activeSkillId as string) }))
+  .filter((row): row is { itemId: string; ability: AbilityDefinition } => row.ability !== null)
+  .filter((row) => castable(row.ability));
 
 /**
- * The sigils every preset wears, so `startCast` will let it cast one.
+ * The four sigils a preset wears, so `startCast` will let it cast one.
  *
  * A skill is refused unless it is in a slot (spec 188), so a harness carrying
- * none would measure twelve builds auto-attacking. The **same four for all
- * twelve**, for the reason they all carry the same sword: a hand-picked set per
- * build would make the table a comparison between whoever picked the sets. The
- * four highest-damage sigils, because `bestReady` is looking for something
- * worth interrupting the backbone for and takes them in damage order anyway.
+ * none would measure twelve builds auto-attacking.
+ *
+ * **The same rule for all twelve, not the same four sigils** -- and that is a
+ * correction rather than a preference. This was a hardcoded list of the four
+ * highest-`damage` sigils, on the argument that all twelve carrying one set is
+ * a control the way all twelve carrying one sword is. That argument held only
+ * while every ability in the game scaled with Intelligence: the four could be
+ * handed to anybody because the row's flat `damage` really was what each build
+ * got out of them.
+ *
+ * Since spec 238 an ability scales with what its own row declares, and the four
+ * highest-`damage` sigils are all Strength or Agility. Handed to everybody they
+ * stopped being a control and became a martial loadout: Pure Intelligence and
+ * INT/WIS wore four skills their spread bought nothing from, never cleared
+ * {@link PUNCTUATION_RATIO}, never cast, and killed **nothing** in thirty
+ * seconds. That is a fact about the list, not about the build.
+ *
+ * So the *rule* is the control: the four sigils this spread hits hardest with,
+ * ranked by {@link resolvedDamage} -- the same function `bestReady` picks with,
+ * so the loadout and the selection heuristic cannot disagree about what a build
+ * is holding. Nobody hand-picks anything, and a thirteenth sigil is in the
+ * harness the moment it is in the game.
+ *
+ * Ranked against a **skill-less** record, which is exact rather than
+ * approximate: a sigil's `modifiers` are empty in every row, so wearing one
+ * cannot move the attributes the ranking reads.
  */
-const HARNESS_SIGILS = ['sigil.whirlwind', 'sigil.stunningBlow', 'sigil.guardBreak', 'sigil.rendingCut'] as const;
+function harnessSigilsFor(record: PersistedPlayer): readonly string[] {
+  const stats = computeEffectiveStats(record);
+  return [...SIGILS]
+    .sort((a, b) => {
+      const byDamage = resolvedDamage(b.ability, stats) - resolvedDamage(a.ability, stats);
+      // Ties broken on id, or the loadout depends on the item table's order.
+      return byDamage !== 0 ? byDamage : a.itemId.localeCompare(b.itemId);
+    })
+    .slice(0, 4)
+    .map((row) => row.itemId);
+}
 
 /**
  * What an ability actually hits this body's targets for (spec 238).
@@ -360,6 +422,24 @@ function resolvedDamage(ability: AbilityDefinition, stats: EffectiveStats): numb
   );
 }
 
+/**
+ * The heaviest thing this body could throw right now, or null for the weapon.
+ *
+ * Two things about the candidate list, and each was a silent zero before it was
+ * fixed.
+ *
+ * **It is what the body is carrying**, off `skillAbilityIds` -- the server's own
+ * derivation from the four slots -- rather than every sigil in the item table.
+ * `startCast` refuses a skill that is not in a slot (spec 188), so a global list
+ * hands a build an id it does not own, the cast is refused, and the fallback to
+ * the weapon never happens because a choice was made. Pure Intelligence went to
+ * **0.0 DPS** that way: offered Whirlwind, which it was not wearing, on every
+ * tick it was free.
+ *
+ * **And it is ranked by {@link resolvedDamage}**, not by the row's flat
+ * `damage`. Since spec 238 those are different orders for every build -- flat
+ * damage is what an ability is worth to nobody in particular.
+ */
 function bestReady(
   self: {
     readonly cooldowns: Readonly<Record<string, number>>;
@@ -369,7 +449,12 @@ function bestReady(
   tick: number,
   basicDamage: number,
 ): string | null {
-  for (const ability of CASTABLE) {
+  const carried = self.stats.skillAbilityIds
+    .map((id) => abilityById(id))
+    .filter((ability): ability is AbilityDefinition => ability !== null)
+    .filter(castable)
+    .sort((a, b) => resolvedDamage(b, self.stats) - resolvedDamage(a, self.stats));
+  for (const ability of carried) {
     if (resolvedDamage(ability, self.stats) < basicDamage * PUNCTUATION_RATIO) continue;
     if (tick < (self.cooldowns[ability.id] ?? 0)) continue;
     if (self.resource < ability.cost * self.stats.traits.resourceCostScale) continue;
