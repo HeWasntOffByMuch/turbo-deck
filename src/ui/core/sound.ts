@@ -36,7 +36,18 @@ export type UiSoundId =
   | 'ui.drop'
   | 'ui.pickUp'
   /** Coins changing hands. */
-  | 'ui.coin';
+  | 'ui.coin'
+  /**
+   * Something worn, or taken off (spec 229). The eighth, and the argument it
+   * had to make:
+   *
+   * It is a **gesture of its own** -- shift+click on a cell, which the bag's own
+   * table lists beside the four that take and place -- and it is the only one of
+   * the five whose outcome is not "the item is somewhere else in this window".
+   * Drawing it as `ui.drop` would say a sword went into a cell when it went onto
+   * a body, and the two are told apart by every other channel the interface has.
+   */
+  | 'ui.equip';
 
 export const UI_SOUNDS: readonly UiSoundId[] = [
   'ui.press',
@@ -46,6 +57,7 @@ export const UI_SOUNDS: readonly UiSoundId[] = [
   'ui.drop',
   'ui.pickUp',
   'ui.coin',
+  'ui.equip',
 ];
 
 export interface SoundSink {

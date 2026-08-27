@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ALL_ITEMS } from '../../../server/data/items.js';
 import { validateWeaponDef } from '../../../items/validate.js';
-import { itemsWithModels, weaponModelFor } from './weapon-look.js';
+import { itemsWithModels, itemsWithTypes, weaponModelFor, weaponTypeFor } from './weapon-look.js';
 
 const ITEMS_DIR = join(process.cwd(), 'assets', 'items');
 
@@ -89,5 +89,54 @@ describe('the held-weapon table', () => {
       // like a lance.
       expect(socket?.rotationDeg).toBeDefined();
     }
+  });
+});
+
+describe('what kind of weapon a thing is', () => {
+  /**
+   * The gap this closes: a maul and a sword wound up identically, because the
+   * wind-up was chosen by the *ability's* damage and nothing anywhere asked what
+   * the player was holding.
+   */
+  it('tells the six weapons apart', () => {
+    expect(weaponTypeFor('sword.worn')).toBe('sword');
+    expect(weaponTypeFor('sword.keen')).toBe('sword');
+    expect(weaponTypeFor('maul.iron')).toBe('maul');
+    expect(weaponTypeFor('staff.emberwood')).toBe('staff');
+    expect(weaponTypeFor('bow.hunting')).toBe('bow');
+    expect(weaponTypeFor('stars.weighted')).toBe('thrown');
+  });
+
+  it('answers null for bare hands and for an id it has never heard of', () => {
+    // Null rather than a default kind: guessing `sword` would make an unarmed
+    // body swing a blade, and an id from a newer server is the same case.
+    expect(weaponTypeFor(null)).toBeNull();
+    expect(weaponTypeFor(undefined)).toBeNull();
+    expect(weaponTypeFor('')).toBeNull();
+    expect(weaponTypeFor('halberd.imaginary')).toBeNull();
+  });
+
+  it('names only items the game actually has', () => {
+    const ids = new Set(ALL_ITEMS.map((item) => item.id));
+    for (const id of itemsWithTypes()) expect(ids, id).toContain(id);
+  });
+
+  /**
+   * Complete where the model table is deliberately not.
+   *
+   * A model is a `.glb` that may not have been made yet -- the maul and the
+   * stars have none -- but a *kind* is always knowable, so every main-hand item
+   * in the game has one. A weapon with no kind falls back to the light/heavy
+   * pair, which is the answer for a body whose weapon is unknown, and using it
+   * for a weapon sitting in the player's own hand would be wrong rather than
+   * merely vague.
+   */
+  it('covers every main-hand item, mesh or no mesh', () => {
+    for (const item of ALL_ITEMS) {
+      if (item.slot !== 'mainHand') continue;
+      expect(weaponTypeFor(item.id), item.id).not.toBeNull();
+    }
+    expect(weaponModelFor('maul.iron')).toBeNull();
+    expect(weaponTypeFor('maul.iron')).toBe('maul');
   });
 });

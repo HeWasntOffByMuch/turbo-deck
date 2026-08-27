@@ -97,6 +97,7 @@ import { ORDER_MARK_REACH } from '../vfx/brush.js';
 import { markOriginY } from './order-mark.js';
 import type { GoreLevel } from '../vfx/decals.js';
 import type { PlayRequest } from './vfx-wire.js';
+import type { ListenerPose } from '../../audio/sink.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
@@ -161,6 +162,18 @@ const TICK_SECONDS = 1 / SERVER_TICK_RATE;
 
 /** Fraction of the gap to the target framing closed each frame (spec 034). */
 const CAMERA_SMOOTH = 0.15;
+
+/**
+ * How far above the ground the listener sits, in world units (spec 229).
+ *
+ * About half a body -- `DEFAULT_CANONICAL_HEIGHT` is 55.65 -- and it is paired
+ * with `BODY_SOUND_HEIGHT` in `audio-driver.ts`, which places a sound about a
+ * body at the same height. Two numbers rather than one shared constant because
+ * they answer to different files and could reasonably diverge; equal today, and
+ * what equality buys is that a body beside you is exactly level with your ears
+ * rather than at your shins.
+ */
+const LISTENER_EAR_HEIGHT = 30;
 
 const TORCH_SHADOW_MAP_SIZE = 512;
 const TORCH_SHADOW_NEAR = 8;
@@ -422,6 +435,23 @@ export interface ScreenAnchor {
 export class WorldScene {
   readonly controls: ViewControls;
 
+  /**
+   * Where a cue **name** goes (spec 229).
+   *
+   * A callback rather than an audio object, so this file never learns what a
+   * sound is -- the same injection `hooks.ground` is, and the same discipline
+   * `src/ui/core/sound.ts` states one layer up: *a widget emits an id into a
+   * sink it was handed*. `view.ts` points it at the audio driver; the sandboxes
+   * and every test leave it alone and it does nothing.
+   *
+   * Two seams feed it, and both were built for this and had nothing to hand a
+   * name to: the loot cues (`RARITIES[].cues`, spec 158 -- *"the renderer
+   * decides what a name sounds and looks like"*) and the particle system's own
+   * `VfxHooks.sound`, whose comment says *"a sink today; there is no audio
+   * system to wire it to"*.
+   */
+  onCue: (cue: string, x: number, y: number, z: number) => void = () => undefined;
+
   private readonly renderer: THREE.WebGLRenderer;
   private readonly retro = new RetroPass(1, 1);
   /**
@@ -433,6 +463,10 @@ export class WorldScene {
   private edges: HikeEdges | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
+  /** The last predicted self position, for {@link listenerPose} (spec 229). */
+  private listenerX = 0;
+  private listenerY = 0;
+  private listenerZ = 0;
   private readonly sun = new THREE.DirectionalLight(
     FIXED_DAYLIGHT.lightColor,
     FIXED_DAYLIGHT.lightIntensity,
@@ -766,6 +800,21 @@ export class WorldScene {
           sampleCapsuleSurface(rng, out, at, Math.max(2, body.headroom / radius));
           return true;
         },
+        /**
+         * An authored emitter's own cue, at start, burst or particle-collide
+         * (spec 229).
+         *
+         * The last of the three sockets this scene left open. `SoundSpec` has
+         * been in the effect format since spec 121, compiled into `soundCue` /
+         * `soundOn` and fired by `system.ts` at all three sites -- into a hook
+         * this object did not supply, so it has never once been called. Handed
+         * on rather than acted on: whether a name means anything is
+         * `events.ts`'s question, and an unrecognised one is silence exactly as
+         * `vfx.system.has(cue)` makes an unauthored *picture* draw nothing.
+         */
+        sound: (cue, x, y, z) => {
+          this.onCue(cue, x, y, z);
+        },
       },
     });
     // The paint on an afflicted body (spec 215). Given the layer rather than the
@@ -933,6 +982,19 @@ export class WorldScene {
   /** Take contributors out of the frame. See {@link PerfFlags}. */
   setPerfFlags(flags: PerfFlags): void {
     this.perf = flags;
+  }
+
+  /**
+   * Ground height at a world point, for a caller outside this class (spec 229).
+   *
+   * The audio layer places a sound about a body at `ground + a lift`, and the
+   * blow it is placing one for arrives as a network callback rather than from
+   * inside a frame -- so there is no `ground` in scope where it happens.
+   * Exposed rather than duplicated: a second height lookup would be a second
+   * answer the first time the terrain grows a layer.
+   */
+  groundAt(x: number, z: number): number {
+    return this.ground(x, z);
   }
 
   /** Ground height, or 0 before there is any ground to ask about. */
@@ -1183,6 +1245,26 @@ export class WorldScene {
   }
 
   /**
+   * The ground this body is *drawn* standing on, or null if nothing draws it.
+   *
+   * A map lookup rather than a height sample, and that is the whole reason it
+   * exists: `TerrainWorld.heightAt` costs about 5.6us a call (it jitters four
+   * corners, evaluates two triangle planes and searches the ring of neighbours
+   * when a point lands outside its nominal cell -- see `ground-decal.ts`, which
+   * memoises it for the same reason). `syncBodies` already paid for this one
+   * and wrote it into the group's transform, so the audio layer asking for it
+   * again would be thirty of those a frame for an answer already on the graph.
+   *
+   * It is also the *better* answer: this is the height the body is drawn at,
+   * where a fresh sample is the height of the terrain under wherever the caller
+   * happens to think it is. Null for a body with no rig yet, whose caller falls
+   * back to {@link groundAt}.
+   */
+  bodyGround(id: number): number | null {
+    return this.bodies.get(id)?.group.position.y ?? null;
+  }
+
+  /**
    * Project a world point to a canvas pixel, the way {@link collectAnchors}
    * does for a body (spec 076).
    *
@@ -1257,6 +1339,53 @@ export class WorldScene {
   /** 0 off, 1 low, 2 medium, 3 full. Off skips the simulation rather than hiding it. */
   setVfxIntensity(intensity: number): void {
     this.vfx.setIntensity(intensity);
+  }
+
+  /**
+   * Where the ears are, and which way they face (spec 229).
+   *
+   * **The position is the player, not the camera**, and that is the whole of
+   * this method. This camera is orthographic and parks a constant 6,000 units
+   * back -- only the two orbit *angles* are reachable from a slider -- so across
+   * the whole visible frame the camera's distance to a source varies by under
+   * seven percent. A listener mounted on it would give every sound in the game
+   * the same attenuation and collapse every pan angle onto the view axis. Two
+   * other systems here hit that and rebased onto the focus for exactly this
+   * reason: `inkOrigin` states it in as many words, and the animation LOD's
+   * comment records every unit in the game reading as maximally distant.
+   *
+   * **The orientation is ground-locked**: the camera's bearing flattened onto the
+   * ground plane, with world up. That is not an approximation of the camera's
+   * own basis -- `camera.up` is never assigned, so the camera's right vector is
+   * exactly horizontal at every elevation, and `forward x up` here reproduces it
+   * exactly. What it buys over using the camera's true forward is that the
+   * Height slider (10 to 85 degrees) cannot start re-mapping altitude into
+   * depth: at 85 degrees the camera looks nearly straight down, and a source's
+   * height would begin to pan as distance.
+   *
+   * Read from `camOffsetCurrent` rather than from `camera.position` on purpose:
+   * `applyPixelSnap` moves the camera onto the virtual pixel lattice for the
+   * draw and restores it after, and sub-pixel jitter in the pan is exactly the
+   * reason picking is deliberately kept off the snapped matrix too.
+   */
+  listenerPose(): ListenerPose {
+    const dx = -this.camOffsetCurrent.x;
+    const dz = -this.camOffsetCurrent.z;
+    const flat = Math.hypot(dx, dz);
+    // Straight overhead: the bearing is undefined, so hold the last sensible
+    // one rather than dividing by zero. The elevation slider stops at 85
+    // degrees so this is unreachable today; it costs one branch to not depend
+    // on that.
+    const forward = flat > 1e-6 ? { x: dx / flat, y: 0, z: dz / flat } : { x: 0, y: 0, z: -1 };
+    return {
+      x: this.listenerX,
+      // Ear height rather than the ground, so a body standing beside the player
+      // is level with them. `BODY_SOUND_HEIGHT` is the other half of this pair.
+      y: this.listenerY + LISTENER_EAR_HEIGHT,
+      z: this.listenerZ,
+      forward,
+      up: { x: 0, y: 1, z: 0 },
+    };
   }
 
   /** What the VFX debug readout shows. */
@@ -1369,6 +1498,13 @@ export class WorldScene {
     // one body that must never lag its own input is this one.
     const me = view.self ?? { x: this.target.x, y: this.target.z };
     const groundY = this.ground(me.x, me.y);
+    // Where the ears are (spec 229). Recorded here rather than derived by the
+    // audio layer, because this is the one place the *predicted* self and the
+    // ground under it are both in scope -- `this.target` lags it by a 130ms
+    // follow, which at MOVE_SPEED_HARD_MAX is 70 units of listener error.
+    this.listenerX = me.x;
+    this.listenerY = groundY;
+    this.listenerZ = me.y;
     this.followSelf(me, groundY, dt);
     this.applyControls();
     this.applyPlayerLights(me, groundY);
@@ -2024,6 +2160,12 @@ export class WorldScene {
    * right placeholder for an effect nobody has made yet.
    */
   private playCue(cue: string, x: number, y: number): void {
+    // The sound first, and outside the picture's guard (spec 229). A cue that
+    // has a sound and no effect authored for it is an ordinary state -- the
+    // shipped rarities name four cues and the registry holds none of them -- and
+    // returning early would make the audio depend on somebody having made a
+    // particle for it.
+    this.onCue(cue, x, this.ground(x, y) + 2, y);
     if (!this.vfx.system.has(cue)) return;
     this.vfx.play(cue, {
       x,

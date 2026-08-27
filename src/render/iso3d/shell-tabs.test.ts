@@ -17,6 +17,8 @@ const TABS: readonly ShellTab[] = [
   { label: 'Map editor' },
   { label: 'Studio' },
   { label: 'VFX' },
+  // Spec 229. A workbench: it is a tree, a form and a file picker.
+  { label: 'SFX' },
 ];
 
 describe('the tabs a device is offered', () => {

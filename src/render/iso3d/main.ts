@@ -20,6 +20,7 @@
 import { mountEditor } from './editor/view.js';
 import { mountStudio } from './studio/view.js';
 import { mountVfxStudio } from './studio/vfx-view.js';
+import { mountSfx } from './sfx/view.js';
 import { mountWorld } from './world/view.js';
 import { mountMovement } from './movement.js';
 import { mountDebug } from './debug-view.js';
@@ -70,6 +71,11 @@ function main(): void {
     // preview and a wall of parameters, so it lays out under the bar like the
     // other benches rather than owning the screen.
     { label: 'VFX', mount: mountVfxStudio },
+    // Spec 229, and the seventh. A tree and a form, so it lays out under the bar
+    // like the VFX bench beside it rather than owning the screen -- and a
+    // workbench, so a phone is not offered it: assigning files to events is a
+    // two-column tool with a file picker in it.
+    { label: 'SFX', mount: mountSfx },
   ];
 
   // A phone gets the game and nothing else (spec 140).
