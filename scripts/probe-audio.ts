@@ -208,6 +208,15 @@ async function installPannerRecorder(page: Page): Promise<void> {
   // `__name(...)` helper that exists only in the bundle it came from. The page
   // gets a script referencing an identifier nothing defines, and the whole
   // recorder throws on the first line with the game none the wiser.
+  //
+  // It records what the engine **commands** rather than what the parameter
+  // currently reads, and that distinction is the whole reliability of this
+  // check. `AudioParam.value` reflects the last value the *audio thread* has
+  // applied, so a position written with `setValueAtTime` reads back as the
+  // default 0 until that thread reaches the scheduled time -- which for a
+  // `setTimeout(0)` read is a coin toss. Measured: the same walk reported
+  // panners exactly on the listener in one run and at the origin in the next,
+  // with the game byte-identical. Wrapping the setter has no clock in it at all.
   await page.addInitScript({
     content: `
       (() => {
@@ -218,26 +227,46 @@ async function installPannerRecorder(page: Page): Promise<void> {
         // listener's own coordinate is recorded beside the offsets and checked
         // to be somewhere in a real world.
         globalThis.__listenerAt = null;
+
+        let ears = null;
+        const watch = (param, onSet) => {
+          if (!param) return;
+          const set = param.setValueAtTime.bind(param);
+          param.setValueAtTime = (value, when) => { onSet(value); return set(value, when); };
+        };
+
         const proto = AudioContext.prototype;
         const make = proto.createPanner;
         proto.createPanner = function () {
           const panner = make.call(this);
           const listener = this.listener;
-          // After the engine has placed it: a panner is created at the origin
-          // and positioned a line later, so reading it now measures nothing.
-          setTimeout(() => {
-            // Both spellings, because the engine writes whichever the browser
-            // has -- a recorder reading only one reports every voice at 0,0.
-            if (!panner.positionX || !listener.positionX) return;
-            const dx = panner.positionX.value - listener.positionX.value;
-            const dz = panner.positionZ.value - listener.positionZ.value;
-            distances.push(Math.hypot(dx, dz));
-            globalThis.__listenerAt = { x: listener.positionX.value, z: listener.positionZ.value };
-          }, 0);
+          if (listener && listener.positionX && ears === null) {
+            ears = { x: 0, z: 0 };
+            watch(listener.positionX, (v) => { ears.x = v; });
+            watch(listener.positionZ, (v) => { ears.z = v; });
+          }
+          const at = { x: null, z: null };
+          const record = () => {
+            if (at.x === null || at.z === null || ears === null) return;
+            distances.push(Math.hypot(at.x - ears.x, at.z - ears.z));
+            globalThis.__listenerAt = { x: ears.x, z: ears.z };
+            at.x = null;
+            at.z = null;
+          };
+          watch(panner.positionX, (v) => { at.x = v; record(); });
+          watch(panner.positionZ, (v) => { at.z = v; record(); });
           return panner;
         };
       })();
     `,
+  });
+}
+
+/** Start a fresh measurement window. See {@link nearestVoice}. */
+async function clearVoices(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const held = (globalThis as unknown as { __pannerDistances?: number[] }).__pannerDistances;
+    if (held) held.length = 0;
   });
 }
 
@@ -434,8 +463,22 @@ async function main(): Promise<void> {
 
     // --- footsteps: a rise, against a body that was standing still ---------
     const standing = await readAudio(page);
+    // Cleared here so the window below holds *this walk* and nothing else. It
+    // used to be everything since page load, which made the spatial check a
+    // lottery: `nearest` is a minimum, so one stray voice is harmless, but a
+    // window that happens to contain only other bodies' voices reports a
+    // working fix as broken. Seen exactly once, and not reproducible -- which
+    // is the signature of a sampling window rather than a bug.
+    await clearVoices(page);
     await page.keyboard.down('KeyW');
-    const walked = await settles(page, (readout) => count(readout, 'player.footstep') > count(standing, 'player.footstep'), 8000);
+    // Several steps rather than the first one, for the same reason: the player's
+    // own footsteps are what the spatial check is about, so the window has to be
+    // guaranteed to contain some.
+    const walked = await settles(
+      page,
+      (readout) => count(readout, 'player.footstep') >= count(standing, 'player.footstep') + 3,
+      15_000,
+    );
     await page.keyboard.up('KeyW');
     const steps = count(walked, 'player.footstep') - count(standing, 'player.footstep');
     console.log(`  walking:           ${String(steps)} footsteps`);
