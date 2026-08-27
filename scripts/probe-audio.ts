@@ -500,18 +500,43 @@ async function main(): Promise<void> {
       );
     }
 
-    // --- a swing: the wind-up, not the contact -----------------------------
+    // --- a swing: at the wind-up, and with the player's own weapon ---------
+    //
+    // Two claims in one press. It fires at the wind-up rather than the contact,
+    // which is the tell this game is built on; and it is the sound of the
+    // weapon in hand rather than a weight class. A maul and a sword used to
+    // wind up identically, because the sound was chosen by the *ability's*
+    // damage and nothing anywhere asked what was equipped.
+    //
+    // The character starts with the worn sword, so `melee.heavy` here has to be
+    // a **sword** swing and must not be the light/heavy pair -- those two rows
+    // are now the weapon-unknown case, which is every monster and every other
+    // player, since equipment is replicated to its owner alone.
+    //
+    // Only the sword is reachable from a browser: the weapon switch offers the
+    // starting kit and spec 218 narrowed it, so the maul and the staff have no
+    // button and their rows are asserted in `audio-wire.test.ts` instead. What
+    // this adds over those is the **join** -- whether `view.ts` hands the wire
+    // the equipped weapon at all, which can be null forever with every unit
+    // test green.
     const beforeSwing = await readAudio(page);
     await page.keyboard.press('Digit1');
     await page.mouse.click(700, 420);
     const swung = await settles(
       page,
-      (readout) => count(readout, 'combat.swing.heavy') > count(beforeSwing, 'combat.swing.heavy'),
-      8000,
+      (readout) => count(readout, 'combat.swing.sword') > count(beforeSwing, 'combat.swing.sword'),
+      12_000,
     );
-    const swings = count(swung, 'combat.swing.heavy') - count(beforeSwing, 'combat.swing.heavy');
-    console.log(`  heavy swing:       ${String(swings)}`);
-    if (swings === 0) problems.push('a heavy swing produced no swing sound');
+    const swings = count(swung, 'combat.swing.sword') - count(beforeSwing, 'combat.swing.sword');
+    const generic =
+      count(swung, 'combat.swing.heavy') -
+      count(beforeSwing, 'combat.swing.heavy') +
+      (count(swung, 'combat.swing.light') - count(beforeSwing, 'combat.swing.light'));
+    console.log(`  swing:             sword=${String(swings)} unknown-weapon=${String(generic)}`);
+    if (swings === 0) problems.push('a heavy swing with a sword equipped produced no sword swing');
+    if (generic > 0) {
+      problems.push(`a swing with a known weapon played ${String(generic)} unknown-weapon swing(s)`);
+    }
 
     // --- an elemental cast, and the loop it holds --------------------------
     //
@@ -573,6 +598,12 @@ async function main(): Promise<void> {
     //
     // Last, because this fires an arrow that lives two seconds and the checks
     // above measure a held count coming back to zero.
+    // Equipped, through the real weapon switch, because that is how a player
+    // gets a bow and because the wind-up now reads the equipped weapon: with the
+    // sword still in hand this would draw the bow and swing a sword.
+    const bowButton = await page.$('[data-weapon="bow.hunting"]');
+    if (bowButton === null) problems.push('the weapon switch has no bow');
+    else await bowButton.click();
     const beforeShot = await readAudio(page);
     await page.keyboard.press('Digit3');
     await page.mouse.click(760, 300);
