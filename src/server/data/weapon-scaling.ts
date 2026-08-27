@@ -93,6 +93,20 @@ const NO_SCALING_LETTER = '-';
  */
 export const SCALING_ATTRIBUTES: readonly ScalingAttribute[] = ['strength', 'agility', 'intelligence'];
 
+/**
+ * What sits between two positions of the notation.
+ *
+ * Here beside {@link letterOf} and {@link SCALING_ATTRIBUTES} rather than in
+ * each of the three places that draws the line, because since spec 242 a
+ * *skill* draws it too and the whole claim of that spec is that a sigil and a
+ * sword say the same fact the same way. Three literals that must agree is the
+ * drift this file already holds the letters and the order to prevent.
+ *
+ * One string, so a line's flat text and its coloured runs cannot disagree
+ * either: a caller joins the runs to get the text rather than writing both.
+ */
+export const SCALING_SEPARATOR = ' / ';
+
 /** Scales with nothing. What a row that authors no scaling means. */
 export const NO_SCALING: WeaponScaling = {
   strength: ScalingGrade.None,
@@ -417,5 +431,5 @@ export function explainScaling(
 
 /** `S / D / -`, for a log line. The *tooltip* draws it coloured, per position. */
 export function formatScaling(scaling: WeaponScaling): string {
-  return SCALING_ATTRIBUTES.map((attribute) => letterOf(scaling[attribute])).join(' / ');
+  return SCALING_ATTRIBUTES.map((attribute) => letterOf(scaling[attribute])).join(SCALING_SEPARATOR);
 }

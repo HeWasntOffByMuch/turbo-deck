@@ -55,7 +55,7 @@ import {
 } from './damage-over-time.js';
 import { auraFieldById, type AuraFieldDefinition } from './aura-fields.js';
 import { abilityProfileOf, isUnscaled } from './ability-scaling.js';
-import { letterOf, SCALING_ATTRIBUTES } from './weapon-scaling.js';
+import { letterOf, SCALING_ATTRIBUTES, SCALING_SEPARATOR } from './weapon-scaling.js';
 import type { ScalingAttribute } from '../state/types.js';
 
 /**
@@ -273,9 +273,6 @@ function scalingLine(ability: AbilityDefinition): TechnicalLine | null {
   }
   return { text: spans.map((span) => span.text).join(''), tone: 'effect', spans };
 }
-
-/** What sits between two grades. One string, so the text and the runs agree. */
-const SCALING_SEPARATOR = ' / ';
 
 
 /** Who or what the cast is aimed at, and how far away it may be. */

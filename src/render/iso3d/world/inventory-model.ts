@@ -23,6 +23,7 @@ import {
   NO_GRADE_MODIFIERS,
   NO_SCALING,
   SCALING_ATTRIBUTES,
+  SCALING_SEPARATOR,
   type ScalingGradeModifiers,
 } from '../../../server/data/weapon-scaling.js';
 import { abilityById } from '../../../server/data/abilities.js';
@@ -271,8 +272,6 @@ function scalingDetail(definition: ItemDefinition, modifiers: ScalingGradeModifi
   return { text: spans.map((span) => span.text).join(''), tone: 'normal', spans };
 }
 
-/** What sits between two grades. One string, so the text and the runs agree. */
-const SCALING_SEPARATOR = ' / ';
 
 function descriptorOf(slot: EquipSlot): SlotDescriptor {
   // `accepts` is the **family**, which is what makes one `slot: 'skill'` sigil
