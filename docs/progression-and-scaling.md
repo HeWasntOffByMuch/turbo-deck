@@ -6,9 +6,16 @@ Everything here is **Implemented** unless a heading says otherwise; where a
 section records a decision that is arguable, it says so rather than presenting
 it as obvious.
 
-Its companions: `mechanics-vocabulary.md` is how a mechanic is *described*, and
+Its companions: `progression-model.md` is the **economy and the structure** --
+one pool, six tracks, what is automatic and what is bought (spec 244);
+`mechanics-vocabulary.md` is how a mechanic is *described*; and
 `reward-philosophy.md` is what a reward is *for*. This is what a number is
 allowed to do.
+
+**Vocabulary.** What this document called a *skill* and a *rank* through specs
+238-243 is a **specialization** and a **tier** since spec 244 -- the same
+thirty-six rows at the same thresholds, renamed because "skill" already meant the
+four active abilities a character equips. Nothing in Part 2 changed meaning.
 
 ---
 
@@ -210,21 +217,21 @@ Two rules, and every progression change is reviewed against both.
 `npx tsx scripts/audit-progression.ts` checks them mechanically, and
 `player/progression-audit.test.ts` fails CI when one breaks.
 
-### 2.1 Every purchased rank does something
+### 2.1 Every purchased tier does something
 
-**Every skill rank must change a value the simulation reads, at every attribute
-value where that rank can legally be bought.**
+**Every specialization tier must change a value the simulation reads, at every
+attribute value where that tier can legally be bought.**
 
 *A value the simulation reads* means `EffectiveStats` or `TraitStats`. A
 modifier that only moves a `ModifierTotals` field is **not** enough: that is
-exactly what three skills did before spec 239, granting an improvement to a
+exactly what three specializations did before spec 239, granting an improvement to a
 mechanic their own milestone introduced ten to twenty-five attribute points
 later, with the totals moving and `deriveTraits` gated on a different field.
 
 Two failure shapes, and the audit tells them apart:
 
-- **Inert** — the rank does nothing at any legal attribute value.
-- **Redundant** — the rank does nothing *here*, because a milestone has already
+- **Inert** — the tier does nothing at any legal attribute value.
+- **Redundant** — the tier does nothing *here*, because a milestone has already
   filled the cap it shares, though it works elsewhere.
 
 The fix for a shared cap is **a budget, never a bigger cap**. The four sources
@@ -234,7 +241,7 @@ they always did and every step on the way there is reachable.
 
 ### 2.2 Progression does not move backwards
 
-**Increasing a stat, gaining a milestone or buying another rank must not
+**Increasing a stat, gaining a milestone or buying another tier must not
 increase a cost, disable an effect, make another investment useless, remove
 access to a mechanic, or cross a cap so the purchase does nothing.**
 
@@ -248,14 +255,14 @@ Two representational rules follow, and both are about making the bad case
 
 - **A capability is a flag, never a number a layer reduces.** `grantsPrepared`,
   `grantsOpeningRead` and `grantsAdaptation` exist because `deriveTraits` used to
-  infer each mechanic's existence from a field that skills grant as a *negative*
-  delta — so buying the skill that improves Prepared is what switched Prepared
-  off. Behind the flag, every number is a delta onto a base in `SCALING`.
+  infer each mechanic's existence from a field that specializations grant as a
+  *negative* delta — so buying the specialization that improves Prepared is what
+  switched Prepared off. Behind the flag, every number is a delta onto a base in `SCALING`.
 - **A price comes from `SCALING`, and progression may only relieve it.**
   `overflowHealthPerResource` decides *whether* Arcane Overflow exists; the rate
   is the table's and the only thing that moves it is a reduction. Additively, the
-  Intelligence 40 skill and the Intelligence 50 milestone both granted the rate
-  and it **doubled**.
+  Intelligence 40 specialization and the Intelligence 50 milestone both granted
+  the rate and it **doubled**.
 
 ### 2.3 Two mechanics that meet must both survive
 
@@ -267,12 +274,13 @@ twice and a full shield passes the whole remainder on.
 
 Constitution first because a shield is a buffer against the next blow and
 Conversion is explicitly a valve for what would otherwise be wasted — the
-skill's own words. Before spec 239 the first two were an `if / else if`, so
+specialization's own words. Before spec 239 the first two were an `if / else if`, so
 taking the Constitution capstone switched the Wisdom capstone off outright.
 
-### 2.4 A skill grants what its tooltip says
+### 2.4 A specialization grants what its tooltip says
 
-A skill must not confer a qualitative mechanic its description does not mention.
+A specialization must not confer a qualitative mechanic its description does not
+mention.
 Hard to Kill grants a damage reduction; the *milestone* of the same name grants
 immunity to guard breaks, and those are two traits (`resoluteReduction`,
 `staggerImmuneBelow`) read by two predicates (`isResolute`, `isUnstaggerable`)
@@ -291,7 +299,7 @@ farm-decay counter are all the same shape.
 
 So Catalysis asked the only question the map could answer, *"is anything at all
 live on this body"* — and every blow stamps `recentlyHit` and `inCombat` on what
-it lands on. The Intelligence skill that rewards exploiting an affliction was
+it lands on. The Intelligence specialization that rewards exploiting an affliction was
 **"deal more damage to anything you have already hit once"**.
 
 `data/status-semantics.ts` is the missing distinction. It is a table rather than
@@ -353,7 +361,7 @@ would be a fight nobody can read.
 | When is it consumed? | On the tick it fires — health at or below `secondWindBelow`, the comeback paid. `StatusId.SecondWindSpent` is applied in the same breath. |
 | How is that state represented? | `StatusId.SecondWindSpent` (`secondWind.spent`), an ordinary entry in the status map, **held** rather than timed — the mirror of `Prepared`, which is banked until spent where this is spent until banked. |
 | When does it reset? | **A rest, or a death.** `advanceRest` clears it beside the flask charge it returns; `respawn` clears it beside the flask it refills. Nothing else clears it. |
-| Where is a player told? | A derived line on the `secondWindHeal` grant (spec 243): *"Resting in a safe zone re-arms it, and so does dying. Recovering health does not."* Not the skill's `description`, which is flavour — the rule lived there for four specs after spec 239 changed it, still describing the reset it replaced. |
+| Where is a player told? | A derived line on the `secondWindHeal` grant (spec 243): *"Resting in a safe zone re-arms it, and so does dying. Recovering health does not."* Not the specialization's `description`, which is flavour — the rule lived there for four specs after spec 239 changed it, still describing the reset it replaced. |
 
 **Health rising is explicitly not a reset**, and that is the whole fix. The rule
 it replaces re-armed Second Wind the moment the body climbed back above its
@@ -377,15 +385,15 @@ the mark row cannot express.
 ## Part 5 — Keeping it true
 
 `npx tsx scripts/audit-progression.ts` (or `npm run audit:progression`) answers,
-for every skill, at every rank, at every attribute value where that rank can be
-bought: does the purchase reach the simulation? It prints four verdicts —
+for every specialization, at every tier, at every attribute value where that tier
+can be bought: does the purchase reach the simulation? It prints four verdicts —
 `ACTIVE`, `REDUNDANT`, `INERT`, `BACKWARDS` — plus what crossing each milestone
 does, what raising each attribute does over its whole range, and the ability
 scaling roster with each row's coefficient budget.
 
 `player/progression-audit.test.ts` is the same thing as a gate. Exceptions are
 an **explicit allowlist with a reason each**, asserted exactly in both
-directions: a new inert rank fails, and so does fixing an allowlisted one
+directions: a new inert tier fails, and so does fixing an allowlisted one
 without removing its entry — so the list can only shrink by somebody deciding it
 should.
 
