@@ -197,6 +197,49 @@ before it existed, which reads exactly like a bake that silently did nothing. An
 only URLs the manifest **actually lists** are assigned, so a take ffmpeg refused
 does not become a variant pointing at nothing.
 
+### Follow-ups
+
+**A wind-up is the weapon in your hand.** The sound was chosen by the *ability's*
+damage, so a maul and the starting sword wound up identically. `weaponTypeFor`
+(beside `weaponModelFor`, the question that file already answers) gives sword,
+maul and staff a row each. Only ever your own weapon: equipment is replicated to
+its owner alone, so a monster has none and another player's is not knowable, and
+those keep `combat.swing.light/heavy` — which is what that pair is *for* now.
+Two things beat it, both already right: the **look** first, because it is what
+the body is drawn doing (an arrow ability draws a bow whether or not a bow is
+equipped), then the **element**, so the ember staff still casts fire.
+
+**A shot has three moments.** `combat.projectile.launch` and
+`combat.projectile.impact` were rows fired by nothing, so a bow had a draw and
+then silence. The loose is taken on a body's first frame, which *is* the release;
+the landing is owed from the sweep that notices the body has gone. Both doors out
+share one `end`, or an arrow lands audibly or silently depending on which pass
+noticed first; `stopAll` fires none of them, because leaving the tab is not a
+dozen arrows landing at once.
+
+**Your own footsteps come out of your own head.** The listener sits on the
+predicted self and bodies came from the replica, which lags it. For a monster
+across the arena that lag is a rounding error on a long vector; for your own body
+there is no vector for it to be small against, so the panner placed your
+footsteps entirely by your own network lag — and the lag points backwards along
+the way you are going, which put your feet in the wrong speaker. Measured: 0.0
+units from the ears, 713 with the fix taken back out.
+
+**A blow asks what the body is made of.** `bleeds` was hardcoded true at both
+fact sites, so every blow routed to `combat.hit.flesh` and `combat.hit.armored`
+was unreachable — the training dummy threw blood. `bleedsFor` is a deny list, so
+the default is flesh: a monster added tomorrow bleeds unless somebody says
+otherwise.
+
+**The mix has to be able to reach the takes.** The bake does not normalise,
+because loudness relative to the rest of the game is a mix decision and the mix
+lives in the catalog. That assumes the catalog can express the range the takes
+span, and at a 2x ceiling it could not: source levels differ by about 14 dB
+across the delivered library, and a bow draw mixed to parity with a sword swing
+needs 3.7x. The ceiling is 4x. And `ref` is a property of the *ability's reach* —
+a bow reaches 420, so an arrow landing at the edge of its own range was losing
+10 dB for being far away when what it is, is the thing the player just did.
+
 ## Invariants tested
 
 - **Round trip.** `parseCatalog(catalogToJson(c))` is `c`, over the shipped

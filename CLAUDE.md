@@ -172,6 +172,21 @@ assets/audio/    the sound library (spec 229). `sfx.json` is the **catalog** -- 
                  gameplay reads it. So adding a sound to a skill is an edit in a
                  tool, and adding a *kind* of moment to the game is a row in the
                  vocabulary plus one call site.
+                 Two numbers in an entry are worth knowing because neither is
+                 a preference. **`volume` reaches 4x**, and the ceiling is set by
+                 the library rather than by taste: the bake deliberately does not
+                 normalise -- loudness relative to the rest of the game is a mix
+                 decision and the mix lives here -- and that assumes this file
+                 can express the range the takes span. Measured across the
+                 delivered 74 the source levels differ by about **14 dB**, so at
+                 the old 2x (+6 dB) ceiling the three arrow takes were
+                 unreachably quiet whatever anybody typed into the tab: they
+                 started, panned and played at about -38 dB, which is not a
+                 sound. And **`ref` is a property of the ability's reach**, not a
+                 constant -- 140 is melee, and a bow reaches 420, so an arrow
+                 landing at the edge of the range it was shot over lost another
+                 10 dB for being far away when what it is, is the thing the
+                 player just did.
                  An entry stores `variants` and **only the fields that differ
                  from `SOUND_DEFAULTS`**, which is not tidiness: a file where
                  every entry restates `"rolloff": 1` is a file nobody reads, and
