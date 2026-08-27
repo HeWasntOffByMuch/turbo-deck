@@ -198,7 +198,18 @@ export const SCALING = {
     /** What being `exposed` is worth to whoever exposed the target. */
     exposedDamagePct: 0.15,
     openingReadTicks: seconds(0.75),
-    vulnerableWeakPointFactor: 2,
+    /**
+     * What the Perception 35 milestone adds to the Vulnerable weak-point
+     * factor, **as a bonus above 1** (spec 232).
+     *
+     * It was `vulnerableWeakPointFactor: 2` -- a *total* -- and the milestone
+     * granted it while the skill granted 0, which is what made the skill inert:
+     * a total cannot be shared between two layers without one of them knowing
+     * what the other is. As a bonus the two simply add, and `deriveTraits`
+     * turns the sum into a factor exactly once. 1.0 is still "double", so what
+     * a Perception character with the milestone alone gets has not moved.
+     */
+    vulnerableWeakPointBonus: 1,
     steadyAimTicks: seconds(0.5),
   },
 

@@ -74,7 +74,22 @@ export interface TraitModifier {
   readonly shapingCostPct?: number;
   /** Sums, clamped 0..1: the fraction of the shaping premium removed. */
   readonly shapingCostRelief?: number;
+  /**
+   * Grants the **Prepared** mechanic at all (spec 232).
+   *
+   * A capability flag rather than a number, read as `> 0`, which is the pattern
+   * `poiseArmorAllCasts` and `preparedMastery` already set. It exists because
+   * the two fields below are *deltas* -- a skill shortens the stillness and
+   * sharpens the opener, and both of its grants are negative -- so neither can
+   * also mean "you have this". Before it, `deriveTraits` inferred the
+   * capability from `preparedWindupScale > 0`, and the skill that improves
+   * Prepared therefore did nothing at all until the milestone that granted it,
+   * ten Intelligence later: a purchasable rank with no effect.
+   */
+  readonly grantsPrepared?: number;
+  /** Sums onto {@link SCALING.intelligence.prepareTicks}. Negative shortens. */
   readonly prepareTicks?: number;
+  /** Sums onto {@link SCALING.intelligence.preparedWindupScale}. Negative sharpens. */
   readonly preparedWindupScale?: number;
   readonly preparedMastery?: number;
   readonly vsAfflictedPct?: number;
@@ -95,6 +110,20 @@ export interface TraitModifier {
   readonly secondWindHeal?: number;
   readonly resoluteBelow?: number;
   readonly resoluteReduction?: number;
+  /**
+   * Below this fraction of maximum health, the body **cannot be staggered**
+   * (spec 232).
+   *
+   * Split out of `resoluteReduction` because the two are different promises and
+   * were one field. `isResolute` gated the damage reduction *and* the stagger
+   * immunity, and `deriveTraits` inferred the threshold from the reduction --
+   * so the Hard to Kill **skill**, whose whole grant is a damage reduction and
+   * whose description says the execute range is where you get harder, silently
+   * handed out complete immunity to guard breaks as well. That is a qualitative
+   * mechanic, it belongs to the milestone that names it, and a tooltip should
+   * describe what it grants.
+   */
+  readonly staggerImmuneBelow?: number;
   readonly overhealShieldTicks?: number;
 
   // --- Perception ---
@@ -103,7 +132,24 @@ export interface TraitModifier {
   readonly weakPointPayoffPct?: number;
   readonly exposeTicks?: number;
   readonly exposedDamagePct?: number;
+  /**
+   * Grants the **Opening Read** mechanic at all (spec 232).
+   *
+   * The capability flag {@link grantsPrepared} is, for the same reason and with
+   * the same history: `deriveTraits` inferred it from
+   * `vulnerableWeakPointFactor > 0`, so the Perception 10 skill -- which grants
+   * a longer Vulnerable *window* -- did nothing whatsoever until the Perception
+   * 35 milestone. Twenty-five points of a purchasable, ranked skill doing
+   * exactly nothing.
+   *
+   * What the two layers now own is the distinction the design already draws:
+   * **Vulnerable is a fact about the target**, so the skill introduces the
+   * window and lengthens it, and how well you can *exploit* an opening is
+   * Perception's, so both layers add to the factor and the milestone adds most.
+   */
+  readonly grantsOpeningRead?: number;
   readonly openingReadTicks?: number;
+  /** Sums as a **bonus above 1**: 1.0 here is "double weak-point chance". */
   readonly vulnerableWeakPointFactor?: number;
   readonly steadyAimPct?: number;
   readonly steadyAimTicks?: number;
@@ -127,8 +173,20 @@ export interface TraitModifier {
   readonly attunedTicks?: number;
   readonly attunedCostPct?: number;
   readonly attunedFromWeakPoints?: number;
+  /**
+   * Grants the **Adaptation** mechanic at all (spec 232).
+   *
+   * The third of the three, and the one that was inert in two ways at once: the
+   * Wisdom 25 skill grants `adaptationPerStack` and neither a window nor a cap,
+   * and `markTarget` needs `adaptationTicks > 0` to record a stack while
+   * `adaptationAgainst` needs `adaptationCap > 0` to read one. So the skill did
+   * nothing until the Wisdom 35 milestone supplied both.
+   */
+  readonly grantsAdaptation?: number;
   readonly adaptationPerStack?: number;
+  /** Sums onto {@link SCALING.wisdom.adaptationCap}, which is the base. */
   readonly adaptationCap?: number;
+  /** Sums onto {@link SCALING.wisdom.adaptationTicks}, which is the base. */
   readonly adaptationTicks?: number;
   readonly conversionCap?: number;
   readonly masteryRelief?: number;
@@ -235,6 +293,7 @@ function zeroTraits(): TraitTotals {
     spellRangePct: 0,
     shapingCostPct: 0,
     shapingCostRelief: 0,
+    grantsPrepared: 0,
     prepareTicks: 0,
     preparedWindupScale: 0,
     preparedMastery: 0,
@@ -252,11 +311,13 @@ function zeroTraits(): TraitTotals {
     secondWindHeal: 0,
     resoluteBelow: 0,
     resoluteReduction: 0,
+    staggerImmuneBelow: 0,
     overhealShieldTicks: 0,
     weakPointChance: 0,
     weakPointPayoffPct: 0,
     exposeTicks: 0,
     exposedDamagePct: 0,
+    grantsOpeningRead: 0,
     openingReadTicks: 0,
     vulnerableWeakPointFactor: 0,
     steadyAimPct: 0,
@@ -277,6 +338,7 @@ function zeroTraits(): TraitTotals {
     attunedTicks: 0,
     attunedCostPct: 0,
     attunedFromWeakPoints: 0,
+    grantsAdaptation: 0,
     adaptationPerStack: 0,
     adaptationCap: 0,
     adaptationTicks: 0,

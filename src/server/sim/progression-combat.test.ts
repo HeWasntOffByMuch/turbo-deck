@@ -49,7 +49,7 @@ import {
   type Statuses,
 } from './statuses.js';
 import { ActivityValue, AggroValue, CastPhase, EntityKindValue, type CastState, type ServerEntity } from './types.js';
-import { advanceProgression, blankProgression } from './world.js';
+import { advanceProgression, advanceRest, blankProgression } from './world.js';
 
 // --------------------------------------------------------------------------
 
@@ -569,15 +569,59 @@ describe('Second Wind', () => {
     expect(again.health).toBe(stats.maxHealth * 0.1);
   });
 
-  it('re-arms only once the body has climbed back out', () => {
-    // The guard that stops somebody parked at 29% health getting a heartbeat.
+  it('stays spent however far the body climbs back out (spec 232)', () => {
+    // **The bug this replaced, as the assertion.** The old rule re-armed Second
+    // Wind the moment health went back over the threshold -- and the comeback
+    // itself does that, on the same tick, because healing 12% of maximum from
+    // under 30% lands above 30%. So the cooldown was cleared one tick after it
+    // was applied, every single time, and a Constitution character could cycle
+    // the threshold for as long as they liked.
     const stats = conStats();
     const hurt = { ...body(stats), health: stats.maxHealth * 0.2 };
     const spent = advanceProgression(hurt, 1, false);
     expect(hasStatus(spent.statuses, StatusId.SecondWindSpent, 1)).toBe(true);
 
-    const recovered = advanceProgression({ ...spent, health: stats.maxHealth }, 2, false);
-    expect(hasStatus(recovered.statuses, StatusId.SecondWindSpent, 2)).toBe(false);
+    // Fully healed, and still spent.
+    const full = advanceProgression({ ...spent, health: stats.maxHealth }, 2, false);
+    expect(hasStatus(full.statuses, StatusId.SecondWindSpent, 2)).toBe(true);
+
+    // And a long way later, so it is a lifecycle rather than a long timer.
+    const later = advanceProgression({ ...full, health: stats.maxHealth }, 100_000, false);
+    expect(hasStatus(later.statuses, StatusId.SecondWindSpent, 100_000)).toBe(true);
+  });
+
+  it('cannot be cycled by crossing the threshold again and again (spec 232)', () => {
+    // The property stated directly, over the loop that used to work: drop under
+    // the threshold, get the comeback, climb out, drop under again. Only the
+    // first one pays.
+    const stats = conStats();
+    let self = { ...body(stats), health: stats.maxHealth * 0.2 };
+    let comebacks = 0;
+    for (let round = 0; round < 5; round++) {
+      const before = self.health;
+      self = advanceProgression(self, round * 10 + 1, false);
+      if (self.health > before) comebacks++;
+      // Climb back out under their own steam, then take a beating again.
+      self = { ...self, health: stats.maxHealth };
+      self = advanceProgression(self, round * 10 + 5, false);
+      self = { ...self, health: stats.maxHealth * 0.2 };
+    }
+    expect(comebacks).toBe(1);
+  });
+
+  it('re-arms on a rest, which is the flask’s own reset (spec 232)', () => {
+    const stats = conStats();
+    const hurt = { ...body(stats), health: stats.maxHealth * 0.2 };
+    const spent = advanceProgression(hurt, 1, false);
+    expect(hasStatus(spent.statuses, StatusId.SecondWindSpent, 1)).toBe(true);
+
+    // Resting is the boundary: `advanceRest` clears it beside the charge it
+    // returns. A player *not* resting keeps it, which is the other half.
+    const walked = advanceRest({ ...spent, kind: EntityKindValue.Player }, 2, false);
+    expect(hasStatus(walked.statuses, StatusId.SecondWindSpent, 2)).toBe(true);
+
+    const rested = advanceRest({ ...spent, kind: EntityKindValue.Player }, 2, true);
+    expect(hasStatus(rested.statuses, StatusId.SecondWindSpent, 2)).toBe(false);
   });
 
   it('is nothing at all for a body without the skill', () => {

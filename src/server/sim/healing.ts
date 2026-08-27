@@ -75,21 +75,43 @@ export function applyHealing(entity: ServerEntity, amount: number, tick: number)
   // Wisdom's salvage is applied to *what is actually left* (spec 156) -- a
   // salvage that read the whole overheal would pay twice for the part
   // Constitution's shield or Wisdom's own conversion had already taken.
+  // **The overheal cascade** (spec 232). Three outlets, each taking from what
+  // the one above it left, in a fixed order that is stated once here:
+  //
+  //   1. Constitution's shield   (`overhealShieldTicks`, capped by `maxShield`)
+  //   2. Wisdom's conversion     (`conversionCap`, into the resource pool)
+  //   3. Wisdom's salvage        (`salvageFrom`, into the restoration meter)
+  //
+  // The first two were an `if / else if`, which meant **the Constitution
+  // capstone switched the Wisdom capstone off**: a character with Overflow
+  // Vitality and Conversion took the shield branch always, and Conversion --
+  // the last thing a Wisdom character buys, at 50 Wisdom -- did nothing for the
+  // rest of the game. Two investments, and gaining the second one cost you the
+  // first.
+  //
+  // Constitution's is first because a shield is a *buffer against the next
+  // blow* and Conversion is explicitly a valve for what would otherwise be
+  // wasted -- the skill's own words. Both remain meaningful: a big overheal
+  // fills the shield to its cap and the remainder still converts, which is the
+  // case a CON/WIS build produces constantly.
+  //
+  // Nothing is created twice, because each outlet takes from `leftover` and
+  // subtracts exactly what it actually absorbed -- an outlet at its cap, or a
+  // pool already full, consumes nothing and passes the whole remainder on.
   let leftover = overheal;
-  if (overheal > 0) {
-    if (traits.overhealShieldTicks > 0 && traits.maxShield > 0) {
-      const before = shield;
-      shield = Math.min(traits.maxShield, shield + overheal);
-      shieldUntilTick = tick + traits.overhealShieldTicks;
-      leftover -= shield - before;
-    } else if (traits.conversionCap > 0) {
-      const before = resource;
-      resource = Math.min(
-        entity.stats.maxResource,
-        resource + Math.min(traits.conversionCap, overheal),
-      );
-      leftover -= resource - before;
-    }
+  if (leftover > 0 && traits.overhealShieldTicks > 0 && traits.maxShield > 0) {
+    const before = shield;
+    shield = Math.min(traits.maxShield, shield + leftover);
+    shieldUntilTick = tick + traits.overhealShieldTicks;
+    leftover -= shield - before;
+  }
+  if (leftover > 0 && traits.conversionCap > 0) {
+    const before = resource;
+    resource = Math.min(
+      entity.stats.maxResource,
+      resource + Math.min(traits.conversionCap, leftover),
+    );
+    leftover -= resource - before;
   }
 
   // The last outlet, and the only path in the game from healing back to the

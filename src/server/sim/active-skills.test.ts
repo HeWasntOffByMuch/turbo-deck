@@ -779,15 +779,18 @@ describe('Stunning Blow stuns every time it lands', () => {
    * worth nothing.
    */
   it('is still refused by a body that has earned its footing', () => {
+    // `staggerImmuneBelow` since spec 232. The earned defence is the milestone
+    // that says a body cannot be staggered, not the skill that says it takes
+    // less damage -- those were one trait and are two.
     const { state, casterId, targetId } = against('ravager');
     const target = state.entities.get(targetId);
     if (!target) throw new Error('no target');
-    const resolute = replaceEntity(state, {
+    const unbreakable = replaceEntity(state, {
       ...target,
       health: 1,
-      stats: { ...target.stats, traits: { ...target.stats.traits, resoluteBelow: 0.9 } },
+      stats: { ...target.stats, traits: { ...target.stats.traits, staggerImmuneBelow: 0.9 } },
     });
-    const struck = strike(resolute, casterId, targetId);
+    const struck = strike(unbreakable, casterId, targetId);
     expect(struck.target?.activity).not.toBe(ActivityValue.Stunned);
   });
 });

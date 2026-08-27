@@ -35,7 +35,7 @@ import { applyDot } from './damage-over-time.js';
 import { applyHealing } from './healing.js';
 import { resolveBlow } from './blow.js';
 import { abilityEffectPowerOf } from '../data/ability-scaling.js';
-import { applyPoiseDamage, isResolute, stagger } from './poise.js';
+import { applyPoiseDamage, isUnstaggerable, stagger } from './poise.js';
 import { applyStatus, clearStatus } from './statuses.js';
 import type { ServerEntity, ServerSimEvent } from './types.js';
 
@@ -180,12 +180,14 @@ function applyOne(
       // and did nothing at all to a body already inside somebody else's window.
       // One skill, three behaviours, none of them stated anywhere.
       //
-      // What is still refused: a corpse, and {@link isResolute}. That second
-      // one is the difference between a global guard and an *earned* defence --
-      // a Constitution character who is hurt enough to have it is meant to be
-      // unstaggerable, and a skill that walked through it would make the trait
-      // worth nothing.
-      if (isResolute(target) || target.health <= 0) return still(target);
+      // What is still refused: a corpse, and {@link isUnstaggerable}. That
+      // second one is the difference between a global guard and an *earned*
+      // defence -- a Constitution character who is hurt enough to have it is
+      // meant to be unstaggerable, and a skill that walked through it would
+      // make the trait worth nothing. It is `isUnstaggerable` rather than
+      // `isResolute` since spec 232, so a stun is refused by the milestone that
+      // grants immunity and not by the skill that grants a damage reduction.
+      if (isUnstaggerable(target) || target.health <= 0) return still(target);
       // It still *stamps* the window, so a guard break cannot follow it for
       // free: what this changes is who the window applies to, not that it
       // exists.

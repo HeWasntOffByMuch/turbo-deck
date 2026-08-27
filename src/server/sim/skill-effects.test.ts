@@ -203,17 +203,46 @@ describe('stuns', () => {
     expect(result.target.staggerImmuneUntilTick).toBeGreaterThan(TICK);
   });
 
-  /** An earned defence still refuses it, unlike the global window. */
-  it('is refused by a body that is resolute', () => {
+  /**
+   * An earned defence still refuses it, unlike the global window.
+   *
+   * The trait is `staggerImmuneBelow` since spec 232 rather than
+   * `resoluteBelow`: taking less damage and being unbreakable were one field
+   * and are two promises, and only the milestone that says "you cannot be
+   * staggered" grants this one.
+   */
+  it('is refused by a body that cannot be staggered', () => {
     const caster = { ...place(0), id: 1 };
-    const resolute = {
+    const unbreakable = {
       ...place(50),
       id: 2,
       health: 1,
-      stats: { ...dummy.stats, traits: { ...dummy.stats.traits, resoluteBelow: 0.9 } },
+      stats: { ...dummy.stats, traits: { ...dummy.stats.traits, staggerImmuneBelow: 0.9 } },
     };
-    const result = apply([{ kind: 'stun', ticks: 45 }], caster, resolute);
+    const result = apply([{ kind: 'stun', ticks: 45 }], caster, unbreakable);
     expect(result.target.activity).not.toBe(ActivityValue.Stunned);
+  });
+
+  /**
+   * And the damage reduction on its own does **not** refuse it (spec 232).
+   *
+   * The half of the split that matters: the Hard to Kill *skill* grants only
+   * `resoluteReduction`, and before this it bought complete stun immunity with
+   * it. A skill grants what its tooltip says.
+   */
+  it('is not refused by a body that merely takes less damage', () => {
+    const caster = { ...place(0), id: 1 };
+    const tough = {
+      ...place(50),
+      id: 2,
+      health: 1,
+      stats: {
+        ...dummy.stats,
+        traits: { ...dummy.stats.traits, resoluteBelow: 0.9, resoluteReduction: 0.2 },
+      },
+    };
+    const result = apply([{ kind: 'stun', ticks: 45 }], caster, tough);
+    expect(result.target.activity).toBe(ActivityValue.Stunned);
   });
 
   it('never stuns a corpse', () => {

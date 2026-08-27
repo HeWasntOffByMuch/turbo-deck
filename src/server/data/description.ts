@@ -647,10 +647,22 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'spellRangePct', where: 'trait', name: 'Ability range', form: 'percent' },
   { key: 'shapingCostPct', where: 'trait', name: 'Cost of shaped abilities', form: 'percent', higherIsBetter: false },
   { key: 'shapingCostRelief', where: 'trait', name: 'Relief on the shaping premium', form: 'percent' },
-  { key: 'vsAfflictedPct', where: 'trait', name: 'Damage against a target carrying a status', form: 'percent' },
+  { key: 'vsAfflictedPct', where: 'trait', name: 'Damage against a target carrying an affliction', form: 'percent' },
+  // The three capability flags (spec 232). Each is a *rule about what you can
+  // do* rather than a quantity, which is exactly what `form: 'flag'` is for --
+  // and each is worth a line, because before that spec a player could buy the
+  // skill granting it and get nothing at all.
+  { key: 'grantsPrepared', where: 'trait', form: 'flag', name: 'Standing still primes your next ability.' },
+  { key: 'overflowCostReduction', where: 'trait', name: 'Relief on Arcane Overflow’s health cost', form: 'percent' },
 
   { key: 'secondWindHeal', where: 'trait', name: 'Second Wind heal, of maximum health', form: 'percent' },
   { key: 'resoluteReduction', where: 'trait', name: 'Damage reduction while badly hurt', form: 'percent' },
+  {
+    key: 'staggerImmuneBelow',
+    where: 'trait',
+    form: 'flag',
+    name: 'Your guard cannot be broken while badly hurt.',
+  },
   { key: 'overhealShieldTicks', where: 'trait', name: 'Shield duration', form: 'seconds' },
 
   { key: 'weakPointChance', where: 'trait', name: 'Weak-point chance', form: 'percent' },
@@ -658,13 +670,21 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'weakPointKillHeal', where: 'trait', name: 'Health on a weak-point kill, of maximum health', form: 'percent' },
   { key: 'exposeTicks', where: 'trait', name: 'Exposed duration', form: 'seconds' },
   { key: 'exploitDamagePct', where: 'trait', name: 'Damage on a weak point against an Exposed target', form: 'percent' },
+  { key: 'grantsOpeningRead', where: 'trait', form: 'flag', name: 'An enemy that commits an attack becomes Vulnerable.' },
   { key: 'openingReadTicks', where: 'trait', name: 'Vulnerable duration', form: 'seconds' },
+  {
+    key: 'vulnerableWeakPointFactor',
+    where: 'trait',
+    name: 'Weak-point chance against a Vulnerable target',
+    form: 'percent',
+  },
   { key: 'steadyAimPct', where: 'trait', name: 'Damage after standing still', form: 'percent' },
 
   { key: 'costReduction', where: 'trait', name: 'Ability cost reduction', form: 'percent' },
   { key: 'healingPct', where: 'trait', name: 'Healing received', form: 'percent' },
   { key: 'attunedCostPct', where: 'trait', name: 'Ability cost reduction per Attuned stack', form: 'percent' },
   { key: 'attunedTicks', where: 'trait', name: 'Attuned duration', form: 'seconds' },
+  { key: 'grantsAdaptation', where: 'trait', form: 'flag', name: 'Being hit by the same ability builds resistance to it.' },
   { key: 'adaptationPerStack', where: 'trait', name: 'Adaptation per stack', form: 'percent' },
   { key: 'adaptationTicks', where: 'trait', name: 'Adaptation duration', form: 'seconds' },
   { key: 'conversionCap', where: 'trait', name: 'Overflow conversion cap', form: 'flat' },

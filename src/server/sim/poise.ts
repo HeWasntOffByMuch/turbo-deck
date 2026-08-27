@@ -119,13 +119,35 @@ export function staggerImmune(entity: Pick<ServerEntity, 'staggerImmuneUntilTick
 }
 
 /**
- * Whether the resolute state -- Constitution's low-health behaviour change --
- * is on. Stagger immunity *and* damage reduction, both gated on being hurt.
+ * Whether Constitution's low-health **damage reduction** is on (spec 232).
+ *
+ * One of two, and it used to be both. This answered "take less damage" *and*
+ * "cannot be broken", from one threshold that `deriveTraits` inferred from the
+ * reduction -- so the Hard to Kill **skill**, three ranks whose entire grant is
+ * a damage reduction and whose description says the execute range is where you
+ * get harder, silently handed out complete immunity to guard breaks as well.
+ * That is a qualitative mechanic, it belongs to the milestone that names it,
+ * and a skill should grant what its tooltip says.
  */
 export function isResolute(entity: Pick<ServerEntity, 'health' | 'stats'>): boolean {
   const traits = entity.stats.traits;
   if (traits.resoluteBelow <= 0 || entity.stats.maxHealth <= 0) return false;
   return entity.health / entity.stats.maxHealth <= traits.resoluteBelow;
+}
+
+/**
+ * Whether this body is hurt enough that its guard cannot be broken at all
+ * (spec 232).
+ *
+ * The other half of what {@link isResolute} used to answer, on its own granted
+ * trait. Read in the two places a break can happen -- {@link applyPoiseDamage}
+ * and a skill's `stun` -- so the two cannot come to different answers about who
+ * is unbreakable.
+ */
+export function isUnstaggerable(entity: Pick<ServerEntity, 'health' | 'stats'>): boolean {
+  const traits = entity.stats.traits;
+  if (traits.staggerImmuneBelow <= 0 || entity.stats.maxHealth <= 0) return false;
+  return entity.health / entity.stats.maxHealth <= traits.staggerImmuneBelow;
 }
 
 export interface PoiseResult {
@@ -143,7 +165,7 @@ export interface PoiseResult {
  * function owns the three consequences and nothing else owns any of them --
  * emptying the pool, rooting the body, and dropping whatever it was doing.
  *
- * A body already staggered, already immune, or {@link isResolute} takes the
+ * A body already staggered, already immune, or {@link isUnstaggerable} takes the
  * damage against a pool it cannot break, which is a deliberate no-op rather than
  * an early return: poise still drains, so the moment the immunity lifts the
  * next blow is landing on a pool that has been worn down.
@@ -162,7 +184,10 @@ export function applyPoiseDamage(
   const armored = amount * (1 - poiseArmorOf(target, isBasicAttack));
   const poise = Math.max(0, Math.min(traits.maxPoise, target.poise) - armored);
 
-  const protectedFromBreak = staggerImmune(target, tick) || isResolute(target);
+  // The immunity is `isUnstaggerable` rather than `isResolute` since spec 232:
+  // taking less damage and being unbreakable are two promises, and they were
+  // one predicate.
+  const protectedFromBreak = staggerImmune(target, tick) || isUnstaggerable(target);
   if (poise > 0 || protectedFromBreak) {
     return { entity: { ...target, poise }, broke: false, interrupted: null };
   }

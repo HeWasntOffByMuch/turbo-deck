@@ -49,7 +49,6 @@ import {
   type CrowdBody,
   type CrowdPush,
 } from './crowd.js';
-import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
 import { healingScaleOf, pulseDots } from './damage-over-time.js';
 import { pulseAuraFields } from './aura-field.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
@@ -1599,20 +1598,28 @@ export function advanceProgression(
   const shield = shieldLive ? entity.shield : 0;
   const poise = regenPoise(entity, tick, moved, staggered);
 
-  // Second Wind (spec 147). Constitution's one comeback, and the *only* thing
-  // in this system that restores health without a heal being cast.
+  // Second Wind (spec 147, fixed in 232). Constitution's one comeback, and the
+  // *only* thing in this system that restores health without a heal being cast.
   //
-  // Three guards, and each closes a loop the others do not: it needs the
-  // threshold to have been crossed, it needs its own long cooldown carried as a
-  // status, and -- the one that matters -- it will not fire again until the
-  // body has climbed back *above* the threshold, so somebody sitting at 29%
-  // health does not get a heartbeat every twenty seconds.
+  // **It is consumed until an explicit reset, and health rising is not one.**
+  // The rule this replaces re-armed it the moment the body climbed back above
+  // the threshold -- which the comeback itself does, on the same tick, because
+  // healing 12% of maximum from under 30% lands above 30%. So the twenty-second
+  // cooldown it was given was cleared one tick after it was applied, every
+  // single time, and Second Wind fired again on the next dip. A Constitution
+  // character could cycle the threshold indefinitely; the mechanic that was
+  // meant to be one comeback was a heartbeat.
+  //
+  // The reset is the one the health economy already has, and it is the flask's:
+  // **a rest, or a death.** `advanceRest` clears it beside the charges it
+  // returns, and `respawn` clears it beside the flask it refills -- which is
+  // the shape spec 156 states, a bad run costing the momentum you had built and
+  // never leaving you unable to start again. Nothing else clears it, so the
+  // status is held rather than timed.
   let health = entity.health;
   const armed = traits.secondWindHeal > 0 && entity.stats.maxHealth > 0 && health > 0;
   const hurt = armed && health / entity.stats.maxHealth <= traits.secondWindBelow;
-  if (armed && !hurt) {
-    statuses = clearStatus(statuses, StatusId.SecondWindSpent);
-  } else if (hurt && !hasStatus(statuses, StatusId.SecondWindSpent, tick)) {
+  if (hurt && !hasStatus(statuses, StatusId.SecondWindSpent, tick)) {
     // Suppressed like every other restoration (spec 190). Second Wind bypasses
     // `applyHealing` entirely, so a Decay that only reached that function would
     // stop working at exactly the moment a Constitution build needs it -- which
@@ -1620,7 +1627,15 @@ export function advanceProgression(
     const comeback =
       entity.stats.maxHealth * traits.secondWindHeal * healingScaleOf(statuses, tick);
     health = Math.min(entity.stats.maxHealth, health + comeback);
-    statuses = applyStatus(statuses, StatusId.SecondWindSpent, tick, SECOND_WIND_COOLDOWN_TICKS);
+    // Held rather than timed, exactly as `Prepared` above is and for the mirror
+    // of its reason: that one is banked until it is spent, this one is spent
+    // until it is banked, and neither has a clock that should end it.
+    statuses = applyStatus(
+      statuses,
+      StatusId.SecondWindSpent,
+      tick,
+      Number.MAX_SAFE_INTEGER - tick,
+    );
   }
 
   if (
@@ -1679,10 +1694,23 @@ export function advanceRest(entity: ServerEntity, tick: number, resting: boolean
     }
   }
 
-  if (health === entity.health && charges === entity.fallbackCharges && restingTicks === entity.restingTicks) {
+  // **Second Wind re-arms here** (spec 232), beside the flask charge and for
+  // the same reason: this is one of the two places the economy says you are
+  // whole again. It is the *only* way back other than dying, because the rule
+  // it replaces -- re-arming the moment health climbed back over the threshold
+  // -- was re-armed by the comeback itself and made the mechanic repeatable
+  // without limit.
+  const statuses = clearStatus(entity.statuses, StatusId.SecondWindSpent);
+
+  if (
+    health === entity.health &&
+    charges === entity.fallbackCharges &&
+    restingTicks === entity.restingTicks &&
+    statuses === entity.statuses
+  ) {
     return entity;
   }
-  return { ...entity, health, fallbackCharges: charges, restingTicks };
+  return { ...entity, health, fallbackCharges: charges, restingTicks, statuses };
 }
 
 interface CreditResult {

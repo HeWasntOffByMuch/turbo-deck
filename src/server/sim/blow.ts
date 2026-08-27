@@ -78,8 +78,12 @@ export const SUNDER_TICKS = Math.round(SERVER_TICK_RATE * 4);
 export const RECENTLY_HIT_TICKS = Math.round(SERVER_TICK_RATE * 0.5);
 /** Perfect Exit's own cooldown, so a hit-trade loop cannot fund itself. */
 export const PERFECT_EXIT_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 4);
-/** Second Wind's, for the same reason. */
-export const SECOND_WIND_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 20);
+// Second Wind used to have a cooldown here beside Perfect Exit's, and it is
+// gone (spec 232). It never once expired: the rule that read it re-armed the
+// mechanic the moment health climbed back above its threshold, and the comeback
+// itself does that on the tick it fires. What replaced it is not a longer
+// number but a **lifecycle** -- consumed until a rest or a death, the two
+// boundaries the flask already resets at. See `advanceProgression`.
 /** The bounty a Tactician's exposure leaves for everyone else. */
 export const EXPOSED_BOUNTY = 'exposed.bounty';
 

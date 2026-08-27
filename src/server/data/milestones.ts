@@ -55,16 +55,21 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'strength',
     threshold: TIER_2,
     name: 'Committed Swing',
-    effect: 'While winding up an attack you ignore 60% of incoming poise damage.',
-    grants: { traits: { windupPoiseArmor: 0.6 } },
+    effect: 'While winding up an attack you ignore a further 36% of incoming poise damage.',
+    grants: { traits: { windupPoiseArmor: 0.36 } },
   },
   {
     id: 'str.unstoppable',
     attribute: 'strength',
     threshold: TIER_3,
     name: 'Unstoppable',
+    // 0.18 rather than 0.3 (spec 232). Four sources feed `windupPoiseArmor`
+    // against a cap of 0.9 and they used to sum to 2.0, so the last ranks of
+    // Committed Swing were bought into a number that was already full. They sum
+    // to exactly 0.9 now: a fully-invested Strength character reaches the same
+    // 90% they always did, and every purchase on the way there moves it.
     effect: 'That protection reaches 90% and lasts through the follow-through -- but only while you are committed to a blow.',
-    grants: { traits: { windupPoiseArmor: 0.3, poiseArmorInBackswing: 1 } },
+    grants: { traits: { windupPoiseArmor: 0.18, poiseArmorInBackswing: 1 } },
   },
 
   // --- Agility ------------------------------------------------------------
@@ -112,11 +117,18 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'intelligence',
     threshold: TIER_2,
     name: 'Prepared Casting',
-    effect: 'Two seconds of stillness primes you: the next ability winds up in half the time.',
+    // Grants Prepared and **sharpens** it (spec 232). It used to grant the base
+    // outright while the Intelligence 25 skill granted reductions of it, and the
+    // gate was the base -- so the skill switched the mechanic off instead of
+    // improving it. Both layers now grant the capability and the numbers are
+    // deltas onto `SCALING`, which is what makes the two compose in the
+    // direction they read.
+    effect: 'Stillness primes you: your next ability winds up far faster, and you need less of it.',
     grants: {
       traits: {
-        prepareTicks: SCALING.intelligence.prepareTicks,
-        preparedWindupScale: SCALING.intelligence.preparedWindupScale,
+        grantsPrepared: 1,
+        prepareTicks: -Math.round(SCALING.intelligence.prepareTicks * 0.25),
+        preparedWindupScale: -0.1,
       },
     },
   },
@@ -125,10 +137,16 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'intelligence',
     threshold: TIER_3,
     name: 'Arcane Overflow',
-    effect: 'You may cast without the resource, paying 2 health per point short -- never more than 40% of what you have left.',
+    // Enables Overflow and **relieves** it (spec 232). This and the Intelligence
+    // 40 skill both granted the rate and the two summed, so reaching this
+    // milestone doubled the health an overflow cast costs -- progression running
+    // backwards at the moment the tree says an Intelligence character has
+    // arrived. The rate is `SCALING`'s now and a layer may only ever lower it.
+    effect: 'You may cast without the resource, paying health per point short -- never more than 40% of what you have left.',
     grants: {
       traits: {
         overflowHealthPerResource: SCALING.intelligence.overflowHealthPerResource,
+        overflowCostReduction: 0.25,
       },
     },
   },
@@ -147,8 +165,12 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'constitution',
     threshold: TIER_2,
     name: 'Hard to Kill',
+    // The stagger immunity is **granted here and only here** (spec 232). It used
+    // to be inferred from `resoluteReduction`, so the Constitution 25 skill --
+    // three ranks of a damage reduction -- silently handed out the qualitative
+    // half of this milestone as well.
     effect: 'Below 30% health you cannot be staggered and take 20% less damage.',
-    grants: { traits: { resoluteBelow: 0.3, resoluteReduction: 0.2 } },
+    grants: { traits: { resoluteBelow: 0.3, resoluteReduction: 0.2, staggerImmuneBelow: 0.3 } },
   },
   {
     id: 'con.overflowVitality',
@@ -173,11 +195,17 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'perception',
     threshold: TIER_2,
     name: 'Opening Read',
-    effect: 'An enemy that has just committed an attack is Vulnerable for 0.75s: double weak-point chance against it.',
+    // Grants Opening Read and owns most of the payoff (spec 232). The window was
+    // gated on this factor, and the Perception 10 skill grants a longer *window*
+    // and no factor -- so three purchasable ranks did nothing for twenty-five
+    // points. The factor is a **bonus above 1** now, so the skill's share and
+    // this one add rather than one of them being a total.
+    effect: 'An enemy that has just committed an attack is Vulnerable for longer, and you are far likelier to find a weak point on it.',
     grants: {
       traits: {
-        openingReadTicks: SCALING.perception.openingReadTicks,
-        vulnerableWeakPointFactor: SCALING.perception.vulnerableWeakPointFactor,
+        grantsOpeningRead: 1,
+        openingReadTicks: Math.round(SCALING.perception.openingReadTicks * 0.5),
+        vulnerableWeakPointFactor: SCALING.perception.vulnerableWeakPointBonus,
       },
     },
   },
@@ -196,6 +224,9 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'wisdom',
     threshold: TIER_1,
     name: 'Resource Discipline',
+    // `attunedCostPct` is capped at 0.2 and the Wisdom 25 skill adds to the same
+    // number (spec 232): at its old 0.07 a rank, rank 2 was half wasted and rank
+    // 3 did nothing. 0.08 here plus three ranks of 0.04 is the cap exactly.
     effect: 'An ability that connects grants Attuned: 8% off your next cast, up to three stacks.',
     grants: {
       traits: {
@@ -210,12 +241,20 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'wisdom',
     threshold: TIER_2,
     name: 'Adaptation',
-    effect: 'Being hit by the same ability twice starts building resistance to it, up to 30%.',
+    // Grants Adaptation and deepens it (spec 232). The cap and the window are
+    // `SCALING`'s base now rather than this milestone's, which is what lets the
+    // Wisdom 25 skill introduce the mechanic instead of granting a per-stack
+    // size that nothing could read.
+    //
+    // It adds **no cap of its own**, deliberately: `pair.enduring` promises "45%
+    // instead of 30%" in a line a player reads, and the base plus that pair's
+    // 0.15 is exactly those two numbers. A milestone raising it as well would
+    // make the pair's own sentence false. What this layer deepens is the rate.
+    effect: 'Being hit by the same ability twice builds resistance to it half again as fast.',
     grants: {
       traits: {
+        grantsAdaptation: 1,
         adaptationPerStack: 0.06,
-        adaptationCap: SCALING.wisdom.adaptationCap,
-        adaptationTicks: SCALING.wisdom.adaptationTicks,
       },
     },
   },

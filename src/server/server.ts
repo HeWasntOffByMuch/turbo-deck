@@ -66,6 +66,7 @@ import { RESTORATION } from './data/restoration.js';
 import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
 import { applyStatus, adaptedKey } from './sim/statuses.js';
 import { clearAfflictions } from './sim/damage-over-time.js';
+import { clearStatus, StatusId } from './sim/statuses.js';
 import { ALL_DOTS, dotById, dotDurationTicks } from './data/damage-over-time.js';
 import { ALL_AURA_FIELDS } from './data/aura-fields.js';
 import { ADAPTED_ID, STATUS_VISUALS } from './data/status-visuals.js';
@@ -2894,7 +2895,11 @@ export class GameServer implements AdminHost {
       // stay: death already costs the meter and the run, and taking the Flow or
       // the Attunement somebody built as well is not what it is meant to charge
       // for.
-      statuses: clearAfflictions(entity.statuses),
+      // Afflictions, and Second Wind's consumed mark (spec 232). That one is
+      // *inverted* -- carrying it means the comeback has fired and has not come
+      // back -- so leaving it would make death the one reset that does not
+      // reset it, beside a flask this same line refills.
+      statuses: clearStatus(clearAfflictions(entity.statuses), StatusId.SecondWindSpent),
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
       targetId: null,

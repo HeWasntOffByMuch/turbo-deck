@@ -408,6 +408,17 @@ export interface TraitStats {
   /** Health fraction below which `resolute` applies, and what it grants. */
   readonly resoluteBelow: number;
   readonly resoluteReduction: number;
+  /**
+   * Below this fraction of maximum health, this body cannot be staggered
+   * (spec 232). 0 is "no such protection", which is every body by default.
+   *
+   * Separate from {@link resoluteReduction} because they are different
+   * promises: one is a number, the other is a *rule about what can happen to
+   * you*. They were one field, inferred from each other, so the Constitution
+   * skill that grants a damage reduction also granted immunity to guard breaks
+   * without saying so anywhere a player could read.
+   */
+  readonly staggerImmuneBelow: number;
   /** Overheal becomes shield, up to `maxShield`, for this many ticks. 0 is off. */
   readonly overhealShieldTicks: number;
   readonly maxShield: number;
@@ -551,6 +562,7 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'secondWindHeal',
   'resoluteBelow',
   'resoluteReduction',
+  'staggerImmuneBelow',
   'overhealShieldTicks',
   'maxShield',
   'weakPointChance',
