@@ -543,7 +543,7 @@ colour-blind player does not have, and the two marks are a warm red against a
 cool blue — the single most common confusion there is.
 
 **This is presentation, and it is not the categorisation the sim reads.** Since
-spec 233 there is a second, mechanical one in `data/status-semantics.ts`:
+spec 238 there is a second, mechanical one in `data/status-semantics.ts`:
 `beneficial`, `harmful`, `affliction`, `damageOverTime`, `bookkeeping`, covering
 every status id including the ones no player is ever shown. It exists because
 one map holds a poison and a half-second reaction window alike, and something

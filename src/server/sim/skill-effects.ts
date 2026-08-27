@@ -185,7 +185,7 @@ function applyOne(
       // defence -- a Constitution character who is hurt enough to have it is
       // meant to be unstaggerable, and a skill that walked through it would
       // make the trait worth nothing. It is `isUnstaggerable` rather than
-      // `isResolute` since spec 232, so a stun is refused by the milestone that
+      // `isResolute` since spec 237, so a stun is refused by the milestone that
       // grants immunity and not by the skill that grants a damage reduction.
       if (isUnstaggerable(target) || target.health <= 0) return still(target);
       // It still *stamps* the window, so a guard break cannot follow it for

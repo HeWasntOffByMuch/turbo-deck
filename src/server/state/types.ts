@@ -410,7 +410,7 @@ export interface TraitStats {
   readonly resoluteReduction: number;
   /**
    * Below this fraction of maximum health, this body cannot be staggered
-   * (spec 232). 0 is "no such protection", which is every body by default.
+   * (spec 237). 0 is "no such protection", which is every body by default.
    *
    * Separate from {@link resoluteReduction} because they are different
    * promises: one is a number, the other is a *rule about what can happen to

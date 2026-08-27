@@ -1,6 +1,6 @@
 /**
  * Catalysis, against a body that is actually suffering from something
- * (spec 233).
+ * (spec 238).
  *
  * The skill's line is *statuses are fuel; anything already suffering suffers
  * more*, and what it did was ask whether **any** entry on the target was live.
@@ -125,7 +125,7 @@ function damageAgainst(attacker: EffectiveStats, ...ids: readonly string[]): num
   return hit && hit.kind === 'hit' ? hit.damage : 0;
 }
 
-describe('Catalysis reads afflictions and not bookkeeping (spec 233)', () => {
+describe('Catalysis reads afflictions and not bookkeeping (spec 238)', () => {
   const A = catalyst();
 
   it('is armed at all, so the negative cases below mean something', () => {

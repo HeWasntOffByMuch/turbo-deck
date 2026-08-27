@@ -1,7 +1,7 @@
 # Progression and scaling
 
 The rules progression and combat-scaling work is decided against, and the
-answers to the four questions that had no written answer before specs 231-234.
+answers to the four questions that had no written answer before specs 231, 237-239.
 Everything here is **Implemented** unless a heading says otherwise; where a
 section records a decision that is arguable, it says so rather than presenting
 it as obvious.
@@ -190,7 +190,7 @@ value where that rank can legally be bought.**
 
 *A value the simulation reads* means `EffectiveStats` or `TraitStats`. A
 modifier that only moves a `ModifierTotals` field is **not** enough: that is
-exactly what three skills did before spec 232, granting an improvement to a
+exactly what three skills did before spec 237, granting an improvement to a
 mechanic their own milestone introduced ten to twenty-five attribute points
 later, with the totals moving and `deriveTraits` gated on a different field.
 
@@ -240,7 +240,7 @@ twice and a full shield passes the whole remainder on.
 
 Constitution first because a shield is a buffer against the next blow and
 Conversion is explicitly a valve for what would otherwise be wasted — the
-skill's own words. Before spec 232 the first two were an `if / else if`, so
+skill's own words. Before spec 237 the first two were an `if / else if`, so
 taking the Constitution capstone switched the Wisdom capstone off outright.
 
 ### 2.4 A skill grants what its tooltip says

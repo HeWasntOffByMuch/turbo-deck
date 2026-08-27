@@ -1,5 +1,5 @@
 /**
- * The audit, as a gate (spec 234).
+ * The audit, as a gate (spec 239).
  *
  * `npx tsx scripts/audit-progression.ts` is the instrument a person reads while
  * tuning; this is the half that runs in CI. What it asserts is not a set of
@@ -93,7 +93,7 @@ const ALLOWED_REGRESSIONS: Readonly<Record<string, string>> = {
 
 const report = auditProgression();
 
-describe('the direction table covers what it judges (spec 234)', () => {
+describe('the direction table covers what it judges (spec 239)', () => {
   it('gives every TraitStats field a direction', () => {
     // Exactly, in both directions: a trait added and forgotten would opt out of
     // the backwards check silently, and a direction for a field that no longer
@@ -111,7 +111,7 @@ describe('the direction table covers what it judges (spec 234)', () => {
   });
 });
 
-describe('every rank checked (spec 234)', () => {
+describe('every rank checked (spec 239)', () => {
   it('checks every skill at every rank and every legal context', () => {
     const expected = ALL_SKILLS.reduce(
       (sum, skill) => sum + skill.maxLevel * contextsFor(skill).length,
@@ -133,7 +133,7 @@ describe('every rank checked (spec 234)', () => {
   });
 });
 
-describe('no rank is inert, redundant or backwards (spec 234)', () => {
+describe('no rank is inert, redundant or backwards (spec 239)', () => {
   it('has no finding that is not on the allowlist', () => {
     const found = findings(report).map(findingKey);
     const unexpected = found.filter((key) => !(key in ALLOWED_RANKS));
@@ -170,7 +170,7 @@ describe('no rank is inert, redundant or backwards (spec 234)', () => {
   });
 });
 
-describe('nothing gets worse as progression goes up (spec 234)', () => {
+describe('nothing gets worse as progression goes up (spec 239)', () => {
   it('has no regression that is not on the allowlist', () => {
     const unexpected = regressionKeys(report).filter((key) => !(key in ALLOWED_REGRESSIONS));
     expect(unexpected).toEqual([]);

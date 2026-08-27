@@ -112,7 +112,7 @@ export const StatusId = {
    * Perception+Wisdom: what a Tactician's exposure leaves for everyone else.
    *
    * Declared here with the rest of the well-known ids rather than beside its one
-   * writer in `sim/blow.ts` (spec 233). It is a status id, this is where status
+   * writer in `sim/blow.ts` (spec 238). It is a status id, this is where status
    * ids are, and leaving it over there meant `data/status-semantics.ts` -- which
    * has to classify every id that can exist -- could only reach it by importing
    * `blow.ts`, which imports the classification. `blow.ts` re-exports the name

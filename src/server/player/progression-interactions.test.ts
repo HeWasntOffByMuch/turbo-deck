@@ -1,5 +1,5 @@
 /**
- * Where two pieces of progression meet (spec 232).
+ * Where two pieces of progression meet (spec 237).
  *
  * Eight interactions, each of which was a real fault and each of which is one
  * `describe` here. What they have in common is that **every one of them was
@@ -103,7 +103,7 @@ function everyRankMoves(
 
 // --------------------------------------------------------------------------
 
-describe('Second Wind (spec 232)', () => {
+describe('Second Wind (spec 237)', () => {
   // The lifecycle half is driven through the sim in `progression-combat.test.ts`,
   // because it is a rule about ticks. What belongs here is the derivation.
   it('grants the heal without granting a threshold nobody authored', () => {
@@ -125,7 +125,7 @@ describe('Second Wind (spec 232)', () => {
   });
 });
 
-describe('Arcane Overflow cannot get more expensive (spec 232)', () => {
+describe('Arcane Overflow cannot get more expensive (spec 237)', () => {
   // The headline fault: the skill and the milestone both granted the *rate* and
   // the two summed, so reaching Intelligence 50 doubled the health an overflow
   // cast costs. Every combination is checked, because the fault was only
@@ -173,7 +173,7 @@ describe('Arcane Overflow cannot get more expensive (spec 232)', () => {
   });
 });
 
-describe('a rank is never swallowed by a cap it shares (spec 232)', () => {
+describe('a rank is never swallowed by a cap it shares (spec 237)', () => {
   it('moves Committed Swing at every Strength, milestones included', () => {
     for (const strength of [10, 25, 35, 50]) {
       everyRankMoves(
@@ -217,7 +217,7 @@ describe('a rank is never swallowed by a cap it shares (spec 232)', () => {
   });
 });
 
-describe('a purchasable rank works the moment it can be bought (spec 232)', () => {
+describe('a purchasable rank works the moment it can be bought (spec 237)', () => {
   // Three skills that granted an improvement to a mechanic the character did not
   // have. Each is asserted at *its own requirement*, which is the point: the
   // question is not whether the skill eventually works but whether it works when
@@ -227,7 +227,7 @@ describe('a purchasable rank works the moment it can be bought (spec 232)', () =
     if (!skill) throw new Error('no int.prepared');
     const bought = traits({ intelligence: skill.requires }, [{ skillId: skill.id, level: 1 }]);
     // Both halves: there is a stillness window at all, and spending it is worth
-    // something. Before spec 232 the first was 0 and the second was 1.
+    // something. Before spec 237 the first was 0 and the second was 1.
     expect(bought.prepareTicks).toBeGreaterThan(0);
     expect(bought.preparedWindupScale).toBeLessThan(1);
 
@@ -292,7 +292,7 @@ describe('a purchasable rank works the moment it can be bought (spec 232)', () =
   });
 });
 
-describe('Hard to Kill grants what it says and nothing else (spec 232)', () => {
+describe('Hard to Kill grants what it says and nothing else (spec 237)', () => {
   it('gives the skill a damage reduction and no stagger immunity', () => {
     const bought = traits({ constitution: 25 }, [{ skillId: 'con.hardToKill', level: 3 }]);
     expect(bought.resoluteReduction).toBeGreaterThan(0);
@@ -324,7 +324,7 @@ describe('Hard to Kill grants what it says and nothing else (spec 232)', () => {
   });
 });
 
-describe('Constitution and Wisdom overheal together (spec 232)', () => {
+describe('Constitution and Wisdom overheal together (spec 237)', () => {
   // The two capstones. Taking the Constitution one used to switch the Wisdom one
   // off outright, because `applyHealing` chose a branch rather than a cascade.
   // The routing itself is asserted in `restoration.test.ts` against real

@@ -1694,7 +1694,7 @@ export function advanceRest(entity: ServerEntity, tick: number, resting: boolean
     }
   }
 
-  // **Second Wind re-arms here** (spec 232), beside the flask charge and for
+  // **Second Wind re-arms here** (spec 237), beside the flask charge and for
   // the same reason: this is one of the two places the economy says you are
   // whole again. It is the *only* way back other than dying, because the rule
   // it replaces -- re-arming the moment health climbed back over the threshold

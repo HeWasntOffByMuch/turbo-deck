@@ -1,5 +1,5 @@
 /**
- * Does this purchase change anything? (spec 234)
+ * Does this purchase change anything? (spec 239)
  *
  * `npm run balance` fights twelve *attribute* presets through the real sim and
  * prints what each one did. It is the right instrument for "is Strength worth
@@ -118,7 +118,7 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   appliesSundered: 'up',
   // Health per point of missing resource. A **price**: lower is better, and the
   // field whose additive representation made the Intelligence 50 milestone
-  // double its own cost (spec 232).
+  // double its own cost (spec 237).
   overflowHealthPerResource: 'down',
   damageToShield: 'up',
 
@@ -429,7 +429,7 @@ export function auditSkills(skills: readonly SkillDefinition[] = ALL_SKILLS): re
  * attribute smoothly scales. Both are progression, and neither is allowed to
  * make a thing worse.
  *
- * This is the audit that would have caught spec 232's headline fault on its own:
+ * This is the audit that would have caught spec 237's headline fault on its own:
  * reaching Intelligence 50 **doubled** the health an overflow cast costs,
  * because the skill and the milestone both granted the rate and the two summed.
  */

@@ -483,7 +483,7 @@ describe('the passive skill tree (spec 191)', () => {
     // in English, each left to its row's authored sentence on purpose:
     // `juggernautBelow` is a health threshold, `masteryRelief` is a count that
     // *lowers* a requirement, and `overflowHealthPerResource` is a price the
-    // skill charges for a benefit -- and since spec 232 it is a *capability*
+    // skill charges for a benefit -- and since spec 237 it is a *capability*
     // rather than a rate, since the rate itself is `SCALING`'s and what a layer
     // grants is the relief beside it, which does have a label.
     expect([...missing].sort()).toEqual([

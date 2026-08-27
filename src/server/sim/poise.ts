@@ -119,7 +119,7 @@ export function staggerImmune(entity: Pick<ServerEntity, 'staggerImmuneUntilTick
 }
 
 /**
- * Whether Constitution's low-health **damage reduction** is on (spec 232).
+ * Whether Constitution's low-health **damage reduction** is on (spec 237).
  *
  * One of two, and it used to be both. This answered "take less damage" *and*
  * "cannot be broken", from one threshold that `deriveTraits` inferred from the
@@ -137,7 +137,7 @@ export function isResolute(entity: Pick<ServerEntity, 'health' | 'stats'>): bool
 
 /**
  * Whether this body is hurt enough that its guard cannot be broken at all
- * (spec 232).
+ * (spec 237).
  *
  * The other half of what {@link isResolute} used to answer, on its own granted
  * trait. Read in the two places a break can happen -- {@link applyPoiseDamage}
@@ -184,7 +184,7 @@ export function applyPoiseDamage(
   const armored = amount * (1 - poiseArmorOf(target, isBasicAttack));
   const poise = Math.max(0, Math.min(traits.maxPoise, target.poise) - armored);
 
-  // The immunity is `isUnstaggerable` rather than `isResolute` since spec 232:
+  // The immunity is `isUnstaggerable` rather than `isResolute` since spec 237:
   // taking less damage and being unbreakable are two promises, and they were
   // one predicate.
   const protectedFromBreak = staggerImmune(target, tick) || isUnstaggerable(target);

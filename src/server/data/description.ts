@@ -648,7 +648,7 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'shapingCostPct', where: 'trait', name: 'Cost of shaped abilities', form: 'percent', higherIsBetter: false },
   { key: 'shapingCostRelief', where: 'trait', name: 'Relief on the shaping premium', form: 'percent' },
   { key: 'vsAfflictedPct', where: 'trait', name: 'Damage against a target carrying an affliction', form: 'percent' },
-  // The three capability flags (spec 232). Each is a *rule about what you can
+  // The three capability flags (spec 237). Each is a *rule about what you can
   // do* rather than a quantity, which is exactly what `form: 'flag'` is for --
   // and each is worth a line, because before that spec a player could buy the
   // skill granting it and get nothing at all.

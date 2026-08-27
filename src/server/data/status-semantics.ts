@@ -1,5 +1,5 @@
 /**
- * What kind of thing a status *is* (spec 233).
+ * What kind of thing a status *is* (spec 238).
  *
  * `sim/statuses.ts` is deliberately one map for everything a body has to
  * remember between ticks, and its header says so: the Flow an Agility character

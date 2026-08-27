@@ -206,7 +206,7 @@ describe('stuns', () => {
   /**
    * An earned defence still refuses it, unlike the global window.
    *
-   * The trait is `staggerImmuneBelow` since spec 232 rather than
+   * The trait is `staggerImmuneBelow` since spec 237 rather than
    * `resoluteBelow`: taking less damage and being unbreakable were one field
    * and are two promises, and only the milestone that says "you cannot be
    * staggered" grants this one.
@@ -224,7 +224,7 @@ describe('stuns', () => {
   });
 
   /**
-   * And the damage reduction on its own does **not** refuse it (spec 232).
+   * And the damage reduction on its own does **not** refuse it (spec 237).
    *
    * The half of the split that matters: the Hard to Kill *skill* grants only
    * `resoluteReduction`, and before this it bought complete stun immunity with

@@ -63,7 +63,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'strength',
     threshold: TIER_3,
     name: 'Unstoppable',
-    // 0.18 rather than 0.3 (spec 232). Four sources feed `windupPoiseArmor`
+    // 0.18 rather than 0.3 (spec 237). Four sources feed `windupPoiseArmor`
     // against a cap of 0.9 and they used to sum to 2.0, so the last ranks of
     // Committed Swing were bought into a number that was already full. They sum
     // to exactly 0.9 now: a fully-invested Strength character reaches the same
@@ -117,7 +117,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'intelligence',
     threshold: TIER_2,
     name: 'Prepared Casting',
-    // Grants Prepared and **sharpens** it (spec 232). It used to grant the base
+    // Grants Prepared and **sharpens** it (spec 237). It used to grant the base
     // outright while the Intelligence 25 skill granted reductions of it, and the
     // gate was the base -- so the skill switched the mechanic off instead of
     // improving it. Both layers now grant the capability and the numbers are
@@ -137,7 +137,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'intelligence',
     threshold: TIER_3,
     name: 'Arcane Overflow',
-    // Enables Overflow and **relieves** it (spec 232). This and the Intelligence
+    // Enables Overflow and **relieves** it (spec 237). This and the Intelligence
     // 40 skill both granted the rate and the two summed, so reaching this
     // milestone doubled the health an overflow cast costs -- progression running
     // backwards at the moment the tree says an Intelligence character has
@@ -165,7 +165,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'constitution',
     threshold: TIER_2,
     name: 'Hard to Kill',
-    // The stagger immunity is **granted here and only here** (spec 232). It used
+    // The stagger immunity is **granted here and only here** (spec 237). It used
     // to be inferred from `resoluteReduction`, so the Constitution 25 skill --
     // three ranks of a damage reduction -- silently handed out the qualitative
     // half of this milestone as well.
@@ -195,7 +195,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'perception',
     threshold: TIER_2,
     name: 'Opening Read',
-    // Grants Opening Read and owns most of the payoff (spec 232). The window was
+    // Grants Opening Read and owns most of the payoff (spec 237). The window was
     // gated on this factor, and the Perception 10 skill grants a longer *window*
     // and no factor -- so three purchasable ranks did nothing for twenty-five
     // points. The factor is a **bonus above 1** now, so the skill's share and
@@ -225,7 +225,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     threshold: TIER_1,
     name: 'Resource Discipline',
     // `attunedCostPct` is capped at 0.2 and the Wisdom 25 skill adds to the same
-    // number (spec 232): at its old 0.07 a rank, rank 2 was half wasted and rank
+    // number (spec 237): at its old 0.07 a rank, rank 2 was half wasted and rank
     // 3 did nothing. 0.08 here plus three ranks of 0.04 is the cap exactly.
     effect: 'An ability that connects grants Attuned: 8% off your next cast, up to three stacks.',
     grants: {
@@ -241,7 +241,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'wisdom',
     threshold: TIER_2,
     name: 'Adaptation',
-    // Grants Adaptation and deepens it (spec 232). The cap and the window are
+    // Grants Adaptation and deepens it (spec 237). The cap and the window are
     // `SCALING`'s base now rather than this milestone's, which is what lets the
     // Wisdom 25 skill introduce the mechanic instead of granting a per-stack
     // size that nothing could read.

@@ -200,7 +200,7 @@ export const SCALING = {
     openingReadTicks: seconds(0.75),
     /**
      * What the Perception 35 milestone adds to the Vulnerable weak-point
-     * factor, **as a bonus above 1** (spec 232).
+     * factor, **as a bonus above 1** (spec 237).
      *
      * It was `vulnerableWeakPointFactor: 2` -- a *total* -- and the milestone
      * granted it while the skill granted 0, which is what made the skill inert:

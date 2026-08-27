@@ -79,7 +79,7 @@ export const RECENTLY_HIT_TICKS = Math.round(SERVER_TICK_RATE * 0.5);
 /** Perfect Exit's own cooldown, so a hit-trade loop cannot fund itself. */
 export const PERFECT_EXIT_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 4);
 // Second Wind used to have a cooldown here beside Perfect Exit's, and it is
-// gone (spec 232). It never once expired: the rule that read it re-armed the
+// gone (spec 237). It never once expired: the rule that read it re-armed the
 // mechanic the moment health climbed back above its threshold, and the comeback
 // itself does that on the tick it fires. What replaced it is not a longer
 // number but a **lifecycle** -- consumed until a rest or a death, the two
@@ -87,7 +87,7 @@ export const PERFECT_EXIT_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 4);
 /**
  * The bounty a Tactician's exposure leaves for everyone else.
  *
- * The id itself moved to {@link StatusId} in spec 233, where the rest of the
+ * The id itself moved to {@link StatusId} in spec 238, where the rest of the
  * well-known ids are; this is the name every caller here already uses.
  */
 export const EXPOSED_BOUNTY: string = StatusId.ExposedBounty;
@@ -258,7 +258,7 @@ export function resolveBlow(
   const exposed = statusOf(target.statuses, StatusId.Exposed, tick);
   if (exposed) damage *= 1 + exposed.magnitude;
   // **Catalysis, against a body that is actually suffering from something**
-  // (spec 233). `hasAffliction` reads `data/status-semantics.ts`, which is the
+  // (spec 238). `hasAffliction` reads `data/status-semantics.ts`, which is the
   // one place a status says what kind of thing it is.
   //
   // This used to be a local `afflicted` that returned true if *any* entry on

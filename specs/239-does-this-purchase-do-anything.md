@@ -1,4 +1,4 @@
-# 234 — Does this purchase do anything?
+# 239 — Does this purchase do anything?
 
 ## Problem
 
@@ -77,7 +77,7 @@ declares, and the coefficient budget its letters add up to.
   deltas, so an audit that had stopped computing anything cannot pass the
   absence assertions above it.
 
-Verified by putting three of spec 232's faults back: Conservation's rank 3 reads
+Verified by putting three of spec 237's faults back: Conservation's rank 3 reads
 `INERT`, Adaptation's three ranks read `REDUNDANT` at the value they become
 purchasable, Arcane Overflow reads as a regression, and the gate fails on two
 assertions.
@@ -85,7 +85,7 @@ assertions.
 ## Out of scope
 
 - Behaviour-level interference. The audit reads resolved state, so it would not
-  have caught spec 232's overheal fault -- both traits were present and the bug
+  have caught spec 237's overheal fault -- both traits were present and the bug
   was a branch in `applyHealing`. That one is covered by `sim/overheal.test.ts`
   and the limit is stated rather than papered over.
 - Equipment, levels and the loot tables. Attributes and skills only.

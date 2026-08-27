@@ -1,5 +1,5 @@
 /**
- * Where healing past full goes (spec 232).
+ * Where healing past full goes (spec 237).
  *
  * Three outlets in a fixed order -- Constitution's shield, Wisdom's conversion,
  * Wisdom's salvage -- and until this spec the first two were an `if / else if`.
@@ -69,7 +69,7 @@ function body(overrides: {
   };
 }
 
-describe('the overheal cascade (spec 232)', () => {
+describe('the overheal cascade (spec 237)', () => {
   it('fills the shield alone for a Constitution character', () => {
     const healed = applyHealing(body({ shieldTicks: 60, maxShield: 100 }), 40, TICK);
     expect(healed.entity.shield).toBeCloseTo(40, 6);
