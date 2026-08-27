@@ -178,6 +178,7 @@ const ui = new UiLayer(app, {
     used.push(abilityId);
     draw();
   },
+  onHoverSlot: nothing,
 });
 // The two facts the bar needs that only the HUD's table knows: how much of the
 // frame's floor the experience strip has, and how big a slot must be for a

@@ -97,6 +97,7 @@ import { ORDER_MARK_REACH } from '../vfx/brush.js';
 import { markOriginY } from './order-mark.js';
 import type { GoreLevel } from '../vfx/decals.js';
 import type { PlayRequest } from './vfx-wire.js';
+import type { ListenerPose } from '../../audio/sink.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
@@ -152,6 +153,7 @@ import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 import { AfflictionVfx } from './affliction-vfx.js';
 import { AuraVfx, fieldStatusesOn } from './aura-vfx.js';
+import { SwingVfx } from './swing-vfx.js';
 import { ShotVfx } from './shot-vfx.js';
 import { sampleCapsuleSurface } from '../vfx/shapes.js';
 import type { WorldAnchor } from './damage-popup.js';
@@ -161,6 +163,18 @@ const TICK_SECONDS = 1 / SERVER_TICK_RATE;
 
 /** Fraction of the gap to the target framing closed each frame (spec 034). */
 const CAMERA_SMOOTH = 0.15;
+
+/**
+ * How far above the ground the listener sits, in world units (spec 229).
+ *
+ * About half a body -- `DEFAULT_CANONICAL_HEIGHT` is 55.65 -- and it is paired
+ * with `BODY_SOUND_HEIGHT` in `audio-driver.ts`, which places a sound about a
+ * body at the same height. Two numbers rather than one shared constant because
+ * they answer to different files and could reasonably diverge; equal today, and
+ * what equality buys is that a body beside you is exactly level with your ears
+ * rather than at your shins.
+ */
+const LISTENER_EAR_HEIGHT = 30;
 
 const TORCH_SHADOW_MAP_SIZE = 512;
 const TORCH_SHADOW_NEAR = 8;
@@ -272,6 +286,17 @@ export interface AimIndicator {
   readonly range: number;
   /** False when the placement is out of range, so the picture says "you will walk". */
   readonly inRange: boolean;
+  /**
+   * This is a hover, not a decision (spec 235).
+   *
+   * The reach is drawn **whenever this is true**, where a live aim draws it only
+   * when the placement is out of range -- and the two rules are opposite for the
+   * same reason. On a live aim the ring is a warning: the confirm will be a walk
+   * before it is a blow, and drawing it the rest of the time would be a ring
+   * under the player permanently. On a hover it is the entire question being
+   * asked, which is "how far does this reach".
+   */
+  readonly preview?: boolean;
 }
 
 /**
@@ -422,6 +447,23 @@ export interface ScreenAnchor {
 export class WorldScene {
   readonly controls: ViewControls;
 
+  /**
+   * Where a cue **name** goes (spec 229).
+   *
+   * A callback rather than an audio object, so this file never learns what a
+   * sound is -- the same injection `hooks.ground` is, and the same discipline
+   * `src/ui/core/sound.ts` states one layer up: *a widget emits an id into a
+   * sink it was handed*. `view.ts` points it at the audio driver; the sandboxes
+   * and every test leave it alone and it does nothing.
+   *
+   * Two seams feed it, and both were built for this and had nothing to hand a
+   * name to: the loot cues (`RARITIES[].cues`, spec 158 -- *"the renderer
+   * decides what a name sounds and looks like"*) and the particle system's own
+   * `VfxHooks.sound`, whose comment says *"a sink today; there is no audio
+   * system to wire it to"*.
+   */
+  onCue: (cue: string, x: number, y: number, z: number) => void = () => undefined;
+
   private readonly renderer: THREE.WebGLRenderer;
   private readonly retro = new RetroPass(1, 1);
   /**
@@ -433,6 +475,10 @@ export class WorldScene {
   private edges: HikeEdges | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
+  /** The last predicted self position, for {@link listenerPose} (spec 229). */
+  private listenerX = 0;
+  private listenerY = 0;
+  private listenerZ = 0;
   private readonly sun = new THREE.DirectionalLight(
     FIXED_DAYLIGHT.lightColor,
     FIXED_DAYLIGHT.lightIntensity,
@@ -522,6 +568,8 @@ export class WorldScene {
    */
   private readonly afflictions: AfflictionVfx;
   private readonly auras: AuraVfx;
+  private readonly swings: SwingVfx;
+  private readonly castReleases = new Map<number, number>();
   /**
    * The paint a shot flies with (spec 218). A second driver rather than a
    * branch in the one above, because the two answer different questions from
@@ -766,6 +814,21 @@ export class WorldScene {
           sampleCapsuleSurface(rng, out, at, Math.max(2, body.headroom / radius));
           return true;
         },
+        /**
+         * An authored emitter's own cue, at start, burst or particle-collide
+         * (spec 229).
+         *
+         * The last of the three sockets this scene left open. `SoundSpec` has
+         * been in the effect format since spec 121, compiled into `soundCue` /
+         * `soundOn` and fired by `system.ts` at all three sites -- into a hook
+         * this object did not supply, so it has never once been called. Handed
+         * on rather than acted on: whether a name means anything is
+         * `events.ts`'s question, and an unrecognised one is silence exactly as
+         * `vfx.system.has(cue)` makes an unauthored *picture* draw nothing.
+         */
+        sound: (cue, x, y, z) => {
+          this.onCue(cue, x, y, z);
+        },
       },
     });
     // The paint on an afflicted body (spec 215). Given the layer rather than the
@@ -785,6 +848,14 @@ export class WorldScene {
     // calls again, and for the third time the same two reasons: a persistent
     // attached effect needs a handle it can find out has been evicted, and it
     // needs somebody to owe it a stop.
+    // The sweep a melee swing paints (spec 233). Two calls rather than four: a
+    // sweep is a one-shot the particle system retires itself, so there is no
+    // handle to hold, nothing to ask `isLive` about and no stop owed. The
+    // bookkeeping the other two need would be guarding nothing here.
+    this.swings = new SwingVfx({
+      play: (id, options) => this.vfx.play(id, options),
+      has: (id) => this.vfx.system.has(id),
+    });
     this.auras = new AuraVfx({
       play: (id, options) => this.vfx.play(id, options),
       stop: (handle) => this.vfx.stop(handle),
@@ -933,6 +1004,19 @@ export class WorldScene {
   /** Take contributors out of the frame. See {@link PerfFlags}. */
   setPerfFlags(flags: PerfFlags): void {
     this.perf = flags;
+  }
+
+  /**
+   * Ground height at a world point, for a caller outside this class (spec 229).
+   *
+   * The audio layer places a sound about a body at `ground + a lift`, and the
+   * blow it is placing one for arrives as a network callback rather than from
+   * inside a frame -- so there is no `ground` in scope where it happens.
+   * Exposed rather than duplicated: a second height lookup would be a second
+   * answer the first time the terrain grows a layer.
+   */
+  groundAt(x: number, z: number): number {
+    return this.ground(x, z);
   }
 
   /** Ground height, or 0 before there is any ground to ask about. */
@@ -1183,6 +1267,26 @@ export class WorldScene {
   }
 
   /**
+   * The ground this body is *drawn* standing on, or null if nothing draws it.
+   *
+   * A map lookup rather than a height sample, and that is the whole reason it
+   * exists: `TerrainWorld.heightAt` costs about 5.6us a call (it jitters four
+   * corners, evaluates two triangle planes and searches the ring of neighbours
+   * when a point lands outside its nominal cell -- see `ground-decal.ts`, which
+   * memoises it for the same reason). `syncBodies` already paid for this one
+   * and wrote it into the group's transform, so the audio layer asking for it
+   * again would be thirty of those a frame for an answer already on the graph.
+   *
+   * It is also the *better* answer: this is the height the body is drawn at,
+   * where a fresh sample is the height of the terrain under wherever the caller
+   * happens to think it is. Null for a body with no rig yet, whose caller falls
+   * back to {@link groundAt}.
+   */
+  bodyGround(id: number): number | null {
+    return this.bodies.get(id)?.group.position.y ?? null;
+  }
+
+  /**
    * Project a world point to a canvas pixel, the way {@link collectAnchors}
    * does for a body (spec 076).
    *
@@ -1259,6 +1363,53 @@ export class WorldScene {
     this.vfx.setIntensity(intensity);
   }
 
+  /**
+   * Where the ears are, and which way they face (spec 229).
+   *
+   * **The position is the player, not the camera**, and that is the whole of
+   * this method. This camera is orthographic and parks a constant 6,000 units
+   * back -- only the two orbit *angles* are reachable from a slider -- so across
+   * the whole visible frame the camera's distance to a source varies by under
+   * seven percent. A listener mounted on it would give every sound in the game
+   * the same attenuation and collapse every pan angle onto the view axis. Two
+   * other systems here hit that and rebased onto the focus for exactly this
+   * reason: `inkOrigin` states it in as many words, and the animation LOD's
+   * comment records every unit in the game reading as maximally distant.
+   *
+   * **The orientation is ground-locked**: the camera's bearing flattened onto the
+   * ground plane, with world up. That is not an approximation of the camera's
+   * own basis -- `camera.up` is never assigned, so the camera's right vector is
+   * exactly horizontal at every elevation, and `forward x up` here reproduces it
+   * exactly. What it buys over using the camera's true forward is that the
+   * Height slider (10 to 85 degrees) cannot start re-mapping altitude into
+   * depth: at 85 degrees the camera looks nearly straight down, and a source's
+   * height would begin to pan as distance.
+   *
+   * Read from `camOffsetCurrent` rather than from `camera.position` on purpose:
+   * `applyPixelSnap` moves the camera onto the virtual pixel lattice for the
+   * draw and restores it after, and sub-pixel jitter in the pan is exactly the
+   * reason picking is deliberately kept off the snapped matrix too.
+   */
+  listenerPose(): ListenerPose {
+    const dx = -this.camOffsetCurrent.x;
+    const dz = -this.camOffsetCurrent.z;
+    const flat = Math.hypot(dx, dz);
+    // Straight overhead: the bearing is undefined, so hold the last sensible
+    // one rather than dividing by zero. The elevation slider stops at 85
+    // degrees so this is unreachable today; it costs one branch to not depend
+    // on that.
+    const forward = flat > 1e-6 ? { x: dx / flat, y: 0, z: dz / flat } : { x: 0, y: 0, z: -1 };
+    return {
+      x: this.listenerX,
+      // Ear height rather than the ground, so a body standing beside the player
+      // is level with them. `BODY_SOUND_HEIGHT` is the other half of this pair.
+      y: this.listenerY + LISTENER_EAR_HEIGHT,
+      z: this.listenerZ,
+      forward,
+      up: { x: 0, y: 1, z: 0 },
+    };
+  }
+
   /** What the VFX debug readout shows. */
   vfxReadout(): ReturnType<VfxLayer['readout']> {
     return this.vfx.readout();
@@ -1274,9 +1425,21 @@ export class WorldScene {
    * still what happens, so abilities keep their cue until the effect library
    * gives each of them a real one.
    */
-  addEffect(effectId: string, x: number, y: number, radius: number, durationTicks: number): void {
+  addEffect(
+    effectId: string,
+    x: number,
+    y: number,
+    radius: number,
+    durationTicks: number,
+    rotation = 0,
+  ): void {
     if (this.vfx.system.has(effectId)) {
       this.vfx.play(effectId, {
+        // Which way it points (spec 235). Zero for every radial cue, which is
+        // what the server sends for one -- so a blast is drawn exactly as it
+        // was, and a lane and a cone are drawn along the aim instead of as a
+        // burst at the caster's feet.
+        rotation,
         x,
         y: this.ground(x, y) + 2,
         z: y,
@@ -1369,6 +1532,13 @@ export class WorldScene {
     // one body that must never lag its own input is this one.
     const me = view.self ?? { x: this.target.x, y: this.target.z };
     const groundY = this.ground(me.x, me.y);
+    // Where the ears are (spec 229). Recorded here rather than derived by the
+    // audio layer, because this is the one place the *predicted* self and the
+    // ground under it are both in scope -- `this.target` lags it by a 130ms
+    // follow, which at MOVE_SPEED_HARD_MAX is 70 units of listener error.
+    this.listenerX = me.x;
+    this.listenerY = groundY;
+    this.listenerZ = me.y;
     this.followSelf(me, groundY, dt);
     this.applyControls();
     this.applyPlayerLights(me, groundY);
@@ -1621,12 +1791,17 @@ export class WorldScene {
     this.castPhases.clear();
     this.castAbilities.clear();
     this.castTicksLeft.clear();
+    this.castReleases.clear();
     this.attackRates.clear();
     for (const cast of view.casts) {
       this.castPhases.set(cast.entityId, cast.phase);
       // Which ability, not just that there is one (spec 164): a sword swing and
       // a bow draw are the same activity on the wire and two different clips.
       this.castAbilities.set(cast.entityId, cast.abilityId);
+      // And when the blade goes past (spec 233), which is the tick the blow
+      // lands rather than the tick the cast ends -- a backswing is the arm
+      // coming back, and painting a sweep on it would draw the swing twice.
+      this.castReleases.set(cast.entityId, cast.releaseTick);
       // And how much of it is left to run (spec 166), so the frame the cast
       // vanishes can be read as "finished" or "called off". Against the drawn
       // tick rather than the replicated one, because that is the clock the
@@ -1751,7 +1926,39 @@ export class WorldScene {
       if (dead) {
         this.afflictions.forget(entity.id);
         this.auras.forget(entity.id);
+        this.swings.forget(entity.id);
       } else {
+        // The sweep a swing paints (spec 233), on the tick the blade goes past.
+        //
+        // Fed the **drawn** facing rather than the replicated heading, for the
+        // reason the paint below is fed the drawn position: the sweep is
+        // composed around the body as it is being shown, and `turnEase` can have
+        // the drawn yaw a few ticks behind the authoritative one (spec 142). A
+        // sweep aimed at where the body is about to point is a blade that misses
+        // its own arm.
+        //
+        // At `ground`, not at chest height, and that is not the mistake it looks
+        // like: `brushSwing` lifts its own lobes by `reach * 0.22` in their
+        // offsets, so the height a blade passes at is a property of the effect
+        // rather than of every call site that plays one.
+        const swingAbility = this.castAbilities.get(entity.id);
+        const swingRelease = this.castReleases.get(entity.id);
+        if (swingAbility !== undefined && swingRelease !== undefined) {
+          this.swings.step(
+            [
+              {
+                entityId: entity.id,
+                x,
+                y: ground,
+                z: y,
+                facing,
+                abilityId: swingAbility,
+                releaseTick: swingRelease,
+              },
+            ],
+            frame.tick,
+          );
+        }
         this.afflictions.step(
           { entityId: entity.id, x, y: ground, z: y, radius: look.radius },
           entity.statuses ?? [],
@@ -1814,6 +2021,7 @@ export class WorldScene {
       // stop is the caller's, so it is made here -- from the sweep that already
       // knows a body has left -- rather than inferred from an absence.
       this.afflictions.forget(id);
+      this.swings.forget(id);
       this.auras.forget(id);
       // The same obligation for a shot's paint, and it bites harder: a shot
       // lives a second and a half, so an unstopped one is a leak that runs at
@@ -2024,6 +2232,12 @@ export class WorldScene {
    * right placeholder for an effect nobody has made yet.
    */
   private playCue(cue: string, x: number, y: number): void {
+    // The sound first, and outside the picture's guard (spec 229). A cue that
+    // has a sound and no effect authored for it is an ordinary state -- the
+    // shipped rarities name four cues and the registry holds none of them -- and
+    // returning early would make the audio depend on somebody having made a
+    // particle for it.
+    this.onCue(cue, x, this.ground(x, y) + 2, y);
     if (!this.vfx.system.has(cue)) return;
     this.vfx.play(cue, {
       x,
@@ -2242,7 +2456,7 @@ export class WorldScene {
     // largest thing drawn on the ground -- 700 units across at the top of the
     // ability table, which is thirty terrain cells -- and so the one a flat mesh
     // was most wrong about.
-    if (!aim.inRange && aim.range > 0) {
+    if ((aim.preview === true || !aim.inRange) && aim.range > 0) {
       const range = aim.range;
       this.aimRangeDecal.lay(
         `ring:${range}`,

@@ -39,6 +39,7 @@ import { RESTORATION } from '../data/restoration.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { abilityEffectPowerOf } from '../data/ability-scaling.js';
 import { SCALING } from '../data/scaling.js';
+import { elementOfDot } from '../data/abilities.js';
 import {
   dotById,
   dotDurationTicks,
@@ -458,6 +459,12 @@ function onePulse(
     critical: false,
     blocked: false,
     weakPoint: false,
+    // Honest even though nothing reads it: `effectsForBlow` returns early for a
+    // pulse (spec 219) because an affliction's picture is `affliction-vfx.ts`'s,
+    // so this never reaches a `DAMAGE_EFFECTS` lookup. A field that is set
+    // correctly wherever it is set costs one line; one that is right in some
+    // places and defaulted in others is a field nobody can trust later.
+    element: elementOfDot(row.id),
   });
 
   if (killed) {

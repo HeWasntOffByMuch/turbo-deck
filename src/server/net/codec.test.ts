@@ -239,12 +239,29 @@ describe('game message round-trip', () => {
       reason: 1,
     },
     {
+      type: ServerMessageType.Effect,
+      effectId: 'skill.arcLash.impact',
+      x: 320.5,
+      y: -18.25,
+      z: 4,
+      radius: 300,
+      durationTicks: 24,
+      // Non-zero, and not a round number: a fixture that only ever carries the
+      // default cannot tell a field that survives from one the decoder fills in
+      // (spec 235). This message had no fixture at all until the bearing was
+      // added to it.
+      rotation: -2.5,
+    },
+    {
       type: ServerMessageType.CombatResult,
       attackerId: 1,
       targetId: 2,
       damage: 12.5,
       targetHealth: 27.5,
       flags: 3,
+      // Not 0: a round trip that only ever carries the default cannot tell a
+      // field that survives from one the decoder fills in (spec 232).
+      element: 6,
     },
     {
       type: ServerMessageType.Stats,

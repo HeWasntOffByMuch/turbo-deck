@@ -142,20 +142,25 @@ describe('the radius', () => {
 describe('the shipped map', () => {
   const SHIPPED = loadMapFile().doc;
 
-  it('has no shore at all, and this is the record of that', () => {
-    // Committed as a **ratchet** rather than a gate: the map fails today, and a
-    // gate committed red is a gate somebody turns off. When a coast is grown,
-    // this number comes down and the bound comes down with it.
+  it('has a coast now, and this is the record of how much', () => {
+    // Committed as a **ratchet** rather than a gate: the map still fails the
+    // rule, and a gate committed red is a gate somebody turns off. A coast was
+    // grown, so the bound came down with it -- 212 when the arena was a
+    // rectangle with no sea anywhere in it, 122 once it was trimmed back to
+    // one.
     const problems = shoreProblems(SHIPPED);
-    expect(problems.length).toBeLessThanOrEqual(212);
-    expect(drownedChunks(SHIPPED)).toBe(0);
+    expect(problems.length).toBeLessThanOrEqual(122);
+    // The sea ratchets the other way, because more of it is what fixes the
+    // number above: this is what "not one chunk of sea" became, and losing it
+    // again is the regression this catches.
+    expect(drownedChunks(SHIPPED)).toBeGreaterThanOrEqual(87);
   });
 
-  it('is walkable right up against the void in a hundred and ten places', () => {
+  it('is walkable right up against the void in sixty-two places', () => {
     // The measurement the spec is about, kept so that a change that makes it
     // *worse* is visible rather than being absorbed into the bound above.
     const adjacent = shoreProblems(SHIPPED).filter((p) => p.toVoid === 1);
-    expect(adjacent.length).toBeLessThanOrEqual(110);
+    expect(adjacent.length).toBeLessThanOrEqual(62);
     expect(adjacent.length).toBeGreaterThan(0);
   });
 });

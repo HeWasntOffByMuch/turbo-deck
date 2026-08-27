@@ -844,6 +844,22 @@ export interface CombatResultMessage {
   readonly targetHealth: number;
   /** bit 0 = killing blow, bit 1 = critical, bit 2 = blocked, bit 3 = periodic. */
   readonly flags: number;
+  /**
+   * What the blow was made of, as `DAMAGE_ELEMENTS`' append-only ordinal
+   * (spec 232).
+   *
+   * A byte of its own rather than three more bits of `flags`, because eight
+   * elements is exactly eight and a bitfield with no room left is one the next
+   * element silently overflows. `damageElementOf` is total, so an ordinal this
+   * build has no name for reads as `physical`.
+   *
+   * It rides at all for the reason spec 219 gave when it promoted `periodic`
+   * onto this same message: the client cannot work it out. A `CombatResult`
+   * names an attacker and a target and no ability, and the one join available --
+   * against the attacker's live cast -- is exactly wrong for a projectile, whose
+   * blow lands seconds after its cast ended.
+   */
+  readonly element: number;
 }
 
 export const CombatFlag = {
@@ -1101,6 +1117,15 @@ export interface EffectMessage {
   readonly z: number;
   readonly radius: number;
   readonly durationTicks: number;
+  /**
+   * Radians about Y: which way the cue points (spec 235).
+   *
+   * Zero for every radial cue, which is what they all sent before this existed,
+   * so no picture in the game moved when it was added. What needed it is the two
+   * shapes that are not radial: `scene.addEffect` had no bearing to hand `play`,
+   * so a lane and a cone could only ever be drawn as a burst.
+   */
+  readonly rotation: number;
 }
 
 /** Why the server would not start an ability the client asked for. */
@@ -1676,7 +1701,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .varuint(message.targetId)
         .f32(message.damage)
         .f32(message.targetHealth)
-        .u8(message.flags);
+        .u8(message.flags)
+        .u8(message.element);
       break;
     case ServerMessageType.Stats:
       writer
@@ -1767,7 +1793,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .f32(message.y)
         .f32(message.z)
         .f32(message.radius)
-        .u16(message.durationTicks);
+        .u16(message.durationTicks)
+        .f32(message.rotation);
       break;
     case ServerMessageType.CastRejected:
       writer.str(message.abilityId).str(message.reason);
@@ -1859,6 +1886,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         damage: reader.f32(),
         targetHealth: reader.f32(),
         flags: reader.u8(),
+        element: reader.u8(),
       };
     case ServerMessageType.Stats:
       return {
@@ -1989,6 +2017,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         z: reader.f32(),
         radius: reader.f32(),
         durationTicks: reader.u16(),
+        rotation: reader.f32(),
       };
     case ServerMessageType.CastRejected:
       return {

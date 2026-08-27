@@ -78,6 +78,7 @@ interface Harness {
 
 function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): Harness {
   const requests: string[] = [];
+  const hovers: (string | null)[] = [];
   const saved: StoredLayout[] = [];
   const screens = new UiScreens(
     {
@@ -97,6 +98,9 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       onTradeCancel: () => requests.push('tradeCancel'),
       onTradeDismiss: () => requests.push('tradeDismiss'),
       onCastSlot: (abilityId: string) => requests.push(`cast:${abilityId}`),
+      // A hover is presentation, so it is recorded apart from `requests` here
+      // for the reason `mount-presentation.test.ts` states at length (spec 235).
+      onHoverSlot: (abilityId) => hovers.push(abilityId),
       onSay: (text: string) => requests.push(`say:${text}`),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),

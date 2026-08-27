@@ -86,15 +86,19 @@ describe('growing the shipped map through the script', () => {
     expect(grown.parts?.map((p) => p.id)).toEqual([...(before.parts?.map((p) => p.id) ?? []), 'test-part']);
   });
 
-  it('reports a ragged layer, and a rectangular one as clean', () => {
+  it('reports a ragged layer, and a completed column as no worse', () => {
     // Asked of the **manifest** since spec 209, because the partial grow path
     // never holds the world to count -- which also means this exercises the
     // per-region cell count end to end rather than trusting it.
     const unfilled = (d: MapDocument, id: string): number => unfilledCells(splitMap(d).manifest, id);
     const doc = shipped();
     const layerId = doc.layers[0]?.id ?? '';
-    // The shipped map is exactly its own rectangle to begin with.
-    expect(unfilled(doc, layerId)).toBe(0);
+    // The shipped map is no longer its own rectangle: it was trimmed back to a
+    // coast, so its bounds declare ground the layer does not have. That is what
+    // a ragged rim *is*, and it makes the baseline the thing a grow is measured
+    // against rather than zero.
+    const ragged = unfilled(doc, layerId);
+    expect(ragged).toBeGreaterThan(0);
 
     const layer = doc.layers[0];
     if (!layer) throw new Error('no layer');
@@ -107,7 +111,7 @@ describe('growing the shipped map through the script', () => {
     // rectangle over the bottom half too -- bounds are one rectangle for the
     // whole layer -- so the layer is briefly declaring ground it has not got.
     const east = grow(doc, args({ rect: { minCx: hiCx + 1, minCz: loCz, maxCx: hiCx + 1, maxCz: midCz } }), RECIPE);
-    expect(unfilled(east, layerId)).toBeGreaterThan(0);
+    expect(unfilled(east, layerId)).toBeGreaterThan(ragged);
 
     // Completing the rest of that column closes it, which is what the warning
     // tells you to do.
@@ -116,7 +120,7 @@ describe('growing the shipped map through the script', () => {
       { ...args({ rect: { minCx: hiCx + 1, minCz: midCz + 1, maxCx: hiCx + 1, maxCz: hiCz } }), id: 'south' },
       RECIPE,
     );
-    expect(unfilled(both, layerId)).toBe(0);
+    expect(unfilled(both, layerId)).toBe(ragged);
   });
 
   it('produces a document the loader accepts unchanged', () => {

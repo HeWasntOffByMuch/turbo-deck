@@ -17,6 +17,7 @@ import {
   brushExplosionRequest,
   BRUSH_EFFECTS,
   brushCross,
+  brushSwing,
   BLOOD_HIT_SCALE,
   BRUSH_EXPLOSION_RADIUS,
   CROSS_YAWS,
@@ -904,5 +905,136 @@ describe('the cross (spec 175)', () => {
       const fromView = Math.min(...[Math.PI / 4, (3 * Math.PI) / 4].map((axis) => Math.abs(yaw - axis)));
       expect(fromView, String(yaw)).toBeGreaterThan(0.5);
     }
+  });
+});
+
+/**
+ * The swing (spec 233).
+ *
+ * The regression these exist for is the one the first implementation shipped
+ * green: marks laid flat on the ground, which reads as the debug disc they
+ * replaced. So the lift is asserted directly, on the offset, rather than trusted
+ * to a comment.
+ */
+describe('brushSwing', () => {
+  const swing = brushSwing({ id: 'test_swing', reach: 74, sweep: 2.1, lobes: 4 });
+
+  it('composes one emitter per lobe', () => {
+    expect(swing.emitters).toHaveLength(4);
+  });
+
+  it('throws every lobe along its own bearing', () => {
+    // A single wide fan samples uniformly and comes out an even star, whatever
+    // the marks are. Distinct bearings are what make it a composition.
+    const bearings = swing.emitters.map((emitter) =>
+      emitter.shape.kind === 'fan' ? emitter.shape.bearing : undefined,
+    );
+    expect(bearings.every((bearing) => bearing !== undefined)).toBe(true);
+    expect(new Set(bearings).size).toBe(bearings.length);
+  });
+
+  it('lifts its marks off the ground', () => {
+    // THE regression. A swing on the floor is the debug ring in paint.
+    for (const emitter of swing.emitters) {
+      expect(emitter.offset?.y ?? 0, emitter.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('paints, in the vocabulary the blood is in', () => {
+    for (const emitter of swing.emitters) {
+      expect(emitter.render).toBe('mesh');
+      expect(strokeShape(emitter.mesh?.shape ?? 'blob'), emitter.id).toBe(true);
+      expect(emitter.blend).toBe('alpha');
+    }
+    // Some of it has to be the dominant mark: all-flick reads as petals, which
+    // is what the first render of the sheet showed.
+    const shapes = swing.emitters.map((emitter) => emitter.mesh?.shape);
+    expect(shapes).toContain('brush-slash');
+  });
+
+  it('centres a partial sweep on the effect bearing', () => {
+    const bearings = swing.emitters
+      .map((emitter) => (emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0))
+      .sort((a, b) => a - b);
+    const first = bearings[0] ?? 0;
+    const last = bearings[bearings.length - 1] ?? 0;
+    // Symmetric about the bearing, allowing for the constant lead each lobe is
+    // given toward the direction the edge is travelling.
+    expect(Math.abs(first + last - 2 * 0.5)).toBeLessThan(1e-6);
+  });
+
+  it('does not stack a full turn back onto its own first lobe', () => {
+    const turn = brushSwing({ id: 'test_turn', reach: 130, sweep: Math.PI * 2, lobes: 8 });
+    const bearings = turn.emitters.map((emitter) =>
+      emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0,
+    );
+    // Divided by the count rather than by the gaps, or the last lobe lands on
+    // the first and a full turn is a turn with a hole and a double in it.
+    const spread = Math.max(...bearings) - Math.min(...bearings);
+    expect(spread).toBeLessThan(Math.PI * 2);
+    expect(new Set(bearings.map((b) => b.toFixed(4))).size).toBe(bearings.length);
+  });
+
+  it('places its lobes out on the arc rather than at the body', () => {
+    for (const emitter of swing.emitters) {
+      const dx = emitter.offset?.x ?? 0;
+      const dz = emitter.offset?.z ?? 0;
+      expect(Math.hypot(dx, dz), emitter.id).toBeGreaterThan(74 * 0.5);
+    }
+  });
+});
+
+/**
+ * No affliction shouts louder than its severity (spec 236).
+ *
+ * Frostbite was the largest **base** in the table -- wider than three other
+ * afflictions' heavy tiers -- and its heavy was far above everything, so a body
+ * carrying it read as carrying more affliction than a body carrying any other.
+ * That is a claim about severity no rule here makes.
+ *
+ * What is deliberately *not* pinned is that frostbite's tier crosses on elapsed
+ * rather than stacks. It is the only row with a real ramp, so it genuinely does
+ * escalate, and the paint saying so is that row's design (spec 215).
+ */
+describe('the affliction cling sizes stay in one band', () => {
+  const clings = (): { id: string; cling: number; size: number }[] =>
+    EFFECTS.flatMap((effect) => {
+      if (!effect.id.startsWith('affliction_') || effect.id.endsWith('_pulse')) return [];
+      const first = effect.emitters[0];
+      if (!first) return [];
+      const size = Math.max(...first.size.keys.map(([, value]) => value));
+      const count = first.emission.kind === 'burst' ? first.emission.count : 0;
+      return [{ id: effect.id, cling: count, size }];
+    });
+
+  it("never lets a base tier out-size another affliction's heavy tier", () => {
+    const rows = clings();
+    const bases = rows.filter((row) => !row.id.endsWith('_heavy'));
+    const heavies = rows.filter((row) => row.id.endsWith('_heavy'));
+    expect(bases.length).toBeGreaterThan(0);
+    expect(heavies.length).toBeGreaterThan(0);
+    const widestBase = Math.max(...bases.map((row) => row.size));
+    const narrowestHeavy = Math.min(...heavies.map((row) => row.size));
+    // The band may overlap -- decay's base is a wide, sparse smear -- but no
+    // base may exceed every heavy, which is where frostbite had got to.
+    expect(widestBase).toBeLessThanOrEqual(Math.max(...heavies.map((row) => row.size)));
+    expect(narrowestHeavy).toBeGreaterThan(0);
+  });
+
+  it('keeps frostbite off the top of the table at both tiers', () => {
+    const rows = clings();
+    const by = (id: string): number => rows.find((row) => row.id === id)?.size ?? 0;
+    const widest = Math.max(...rows.map((row) => row.size));
+    expect(by('affliction_frostbite')).toBeLessThan(widest);
+    expect(by('affliction_frostbite_heavy')).toBeLessThan(widest);
+    // And its step up is no larger than the largest of its siblings' steps.
+    const step = (base: string, heavy: string): number => by(heavy) - by(base);
+    expect(step('affliction_frostbite', 'affliction_frostbite_heavy')).toBeLessThanOrEqual(
+      Math.max(
+        step('affliction_bleed', 'affliction_bleed_heavy'),
+        step('affliction_poison', 'affliction_poison_heavy'),
+        step('affliction_corrosion', 'affliction_corrosion_heavy'),
+      ) + 1e-9,
+    );
   });
 });

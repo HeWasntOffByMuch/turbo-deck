@@ -355,22 +355,30 @@ describe('growing the shipped map', () => {
    */
   const shipped = (): MapDocument => loadMapFile().doc;
 
-  /** The whole east flank grown outward by two chunks, rows and all. */
-  function grownEast(): { doc: MapDocument; before: MapDocument; span: number } {
+  /** The east flank grown outward by two chunks, over the rows that reach it. */
+  function grownEast(): { doc: MapDocument; before: MapDocument; span: number; seamX: number } {
     const before = shipped();
     const layer = before.layers[0];
     if (!layer) throw new Error('no layer');
     const span = before.grid.cellSize * before.grid.chunkCells;
-    const rows = new Set(layer.chunks.map((c) => c.cz));
     const eastCx = Math.max(...layer.chunks.map((c) => c.cx));
+    // The rows that actually *reach* that column, rather than every row the map
+    // has. The shipped map was trimmed back to a coast and is no longer a
+    // rectangle, so most of its rows stop three chunks short of the furthest
+    // one -- and a part hung out there joins a void rather than the ground.
+    const rows = layer.chunks.filter((c) => c.cx === eastCx).map((c) => c.cz);
     return {
       before,
       span,
+      // Where the part begins, which is where the join is. `bounds.maxX` is
+      // not: a layer's bounds need not land on a chunk edge, and on this map
+      // they land 1600 units short of one.
+      seamX: (eastCx + 1) * span,
       doc: growMap(before, {
         id: 'east-shelf-probe',
         layerId: layer.id,
         // One column clear of the map's own east edge -- nothing there to
-        // collide with -- spanning every chunk row the map has.
+        // collide with -- spanning the chunk rows that edge is made of.
         rect: { minCx: eastCx + 1, minCz: Math.min(...rows), maxCx: eastCx + 2, maxCz: Math.max(...rows) },
         recipe: { features: [{ kind: 'rolling', amplitude: 40 }] },
         seed: 4242,
@@ -527,10 +535,17 @@ describe('growing the shipped map', () => {
     const layer = before.layers[0];
     if (!layer) throw new Error('no layer');
     const cells = before.grid.chunkCells;
-    const loCx = Math.min(...layer.chunks.map((c) => c.cx));
-    const hiCx = Math.max(...layer.chunks.map((c) => c.cx));
-    const loCz = Math.min(...layer.chunks.map((c) => c.cz));
-    const hiCz = Math.max(...layer.chunks.map((c) => c.cz));
+    // Each side's edge measured **over the span being grown against**, not over
+    // the whole map. The shipped map was trimmed back to a coast and is no
+    // longer a rectangle, so its furthest chunk in a direction need not be
+    // present at the rows the part spans -- and growing off the global maximum
+    // hangs the part over a void, which is not a join and cannot be one.
+    const inRows = layer.chunks.filter((c) => c.cz >= 1 && c.cz <= 3);
+    const inCols = layer.chunks.filter((c) => c.cx >= 1 && c.cx <= 3);
+    const loCx = Math.min(...inRows.map((c) => c.cx));
+    const hiCx = Math.max(...inRows.map((c) => c.cx));
+    const loCz = Math.min(...inCols.map((c) => c.cz));
+    const hiCz = Math.max(...inCols.map((c) => c.cz));
 
     const sides = [
       ['west', { minCx: loCx - 2, minCz: 1, maxCx: loCx - 1, maxCz: 3 }, 'col', loCx * cells],
@@ -566,10 +581,9 @@ describe('growing the shipped map', () => {
   });
 
   it('is continuous across the join when sampled as the sim samples it', () => {
-    const { doc, before } = grownEast();
+    const { doc, before, seamX } = grownEast();
     const bounds = before.layers[0]?.bounds;
     if (!bounds) throw new Error('no bounds');
-    const seamX = bounds.maxX;
 
     // Calibrated against the map itself rather than a number picked by hand.
     // This terrain terraces, so it is full of honest risers; the question a
