@@ -45,7 +45,8 @@
  */
 
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../src/server/config.js';
-import { abilityById, STARTING_ABILITIES } from '../src/server/data/abilities.js';
+import { abilityById, STARTING_ABILITIES, type AbilityDefinition } from '../src/server/data/abilities.js';
+import { abilityAttributeBonus, abilityGradesOf } from '../src/server/data/ability-scaling.js';
 import { BUILD_PRESETS, fullSpreadOf, presetById, type BuildPreset } from '../src/server/data/presets.js';
 import { monsterById } from '../src/server/data/monsters.js';
 import { startingBaseStats } from '../src/server/player/attributes.js';
@@ -77,6 +78,7 @@ import { STARTER_EQUIPMENT } from '../src/server/player/player-manager.js';
 import {
   emptyInventory,
   type BaseStats,
+  type EffectiveStats,
   type PersistedPlayer,
 } from '../src/server/state/types.js';
 import { chunkKeyOf } from '../src/server/world/chunks.js';
@@ -301,13 +303,42 @@ const CASTABLE = STARTING_ABILITIES.map((id) => abilityById(id))
   .filter((ability) => !ability.basicAttack && ability.kind !== 'self')
   .sort((a, b) => b.damage - a.damage);
 
+/**
+ * What an ability actually hits this body's targets for (spec 231).
+ *
+ * **Not `ability.damage`.** That is the row's flat number, and since spec 231 an
+ * ability's damage is that plus its declared attribute scaling -- so a caster's
+ * Quake is half again its authored 7 and a Strength character's Whirlwind is
+ * more than double its authored 4. Comparing the authored number against a
+ * resolved weapon damage is comparing two different quantities, which is
+ * exactly the fault spec 217 recorded fixing in this same function when a basic
+ * attack's damage moved onto the weapon.
+ *
+ * The weapon term is deliberately absent: no production ability declares one,
+ * and a roll has no place in a selection heuristic.
+ */
+function resolvedDamage(ability: AbilityDefinition, stats: EffectiveStats): number {
+  return (
+    ability.damage +
+    abilityAttributeBonus(
+      stats.scalingAttributes,
+      abilityGradesOf(ability.scaling),
+      stats.spellPower,
+    )
+  );
+}
+
 function bestReady(
-  self: { readonly cooldowns: Readonly<Record<string, number>>; readonly resource: number; readonly stats: { readonly traits: { readonly resourceCostScale: number } } },
+  self: {
+    readonly cooldowns: Readonly<Record<string, number>>;
+    readonly resource: number;
+    readonly stats: EffectiveStats;
+  },
   tick: number,
   basicDamage: number,
 ): string | null {
   for (const ability of CASTABLE) {
-    if (ability.damage < basicDamage * PUNCTUATION_RATIO) continue;
+    if (resolvedDamage(ability, self.stats) < basicDamage * PUNCTUATION_RATIO) continue;
     if (tick < (self.cooldowns[ability.id] ?? 0)) continue;
     if (self.resource < ability.cost * self.stats.traits.resourceCostScale) continue;
     return ability.id;
