@@ -983,3 +983,58 @@ describe('brushSwing', () => {
     }
   });
 });
+
+/**
+ * No affliction shouts louder than its severity (spec 236).
+ *
+ * Frostbite was the largest **base** in the table -- wider than three other
+ * afflictions' heavy tiers -- and its heavy was far above everything, so a body
+ * carrying it read as carrying more affliction than a body carrying any other.
+ * That is a claim about severity no rule here makes.
+ *
+ * What is deliberately *not* pinned is that frostbite's tier crosses on elapsed
+ * rather than stacks. It is the only row with a real ramp, so it genuinely does
+ * escalate, and the paint saying so is that row's design (spec 215).
+ */
+describe('the affliction cling sizes stay in one band', () => {
+  const clings = (): { id: string; cling: number; size: number }[] =>
+    EFFECTS.flatMap((effect) => {
+      if (!effect.id.startsWith('affliction_') || effect.id.endsWith('_pulse')) return [];
+      const first = effect.emitters[0];
+      if (!first) return [];
+      const size = Math.max(...first.size.keys.map(([, value]) => value));
+      const count = first.emission.kind === 'burst' ? first.emission.count : 0;
+      return [{ id: effect.id, cling: count, size }];
+    });
+
+  it("never lets a base tier out-size another affliction's heavy tier", () => {
+    const rows = clings();
+    const bases = rows.filter((row) => !row.id.endsWith('_heavy'));
+    const heavies = rows.filter((row) => row.id.endsWith('_heavy'));
+    expect(bases.length).toBeGreaterThan(0);
+    expect(heavies.length).toBeGreaterThan(0);
+    const widestBase = Math.max(...bases.map((row) => row.size));
+    const narrowestHeavy = Math.min(...heavies.map((row) => row.size));
+    // The band may overlap -- decay's base is a wide, sparse smear -- but no
+    // base may exceed every heavy, which is where frostbite had got to.
+    expect(widestBase).toBeLessThanOrEqual(Math.max(...heavies.map((row) => row.size)));
+    expect(narrowestHeavy).toBeGreaterThan(0);
+  });
+
+  it('keeps frostbite off the top of the table at both tiers', () => {
+    const rows = clings();
+    const by = (id: string): number => rows.find((row) => row.id === id)?.size ?? 0;
+    const widest = Math.max(...rows.map((row) => row.size));
+    expect(by('affliction_frostbite')).toBeLessThan(widest);
+    expect(by('affliction_frostbite_heavy')).toBeLessThan(widest);
+    // And its step up is no larger than the largest of its siblings' steps.
+    const step = (base: string, heavy: string): number => by(heavy) - by(base);
+    expect(step('affliction_frostbite', 'affliction_frostbite_heavy')).toBeLessThanOrEqual(
+      Math.max(
+        step('affliction_bleed', 'affliction_bleed_heavy'),
+        step('affliction_poison', 'affliction_poison_heavy'),
+        step('affliction_corrosion', 'affliction_corrosion_heavy'),
+      ) + 1e-9,
+    );
+  });
+});

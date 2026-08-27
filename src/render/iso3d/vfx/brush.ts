@@ -2222,6 +2222,20 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // is on the body stays on the body and builds up. `_heavy` is not "more
   // stacks" for this one but *more time*: its ramp is the design, and the tier
   // crosses on how long it has been carried.
+  // Sized back into the band its siblings occupy (spec 236).
+  //
+  // At `clingSize: 0.66` this was the *largest base* in the table -- bigger than
+  // poison's, bleed's and corrosion's **heavy** tiers -- and its heavy at 0.82
+  // was far above everything. So a body carrying frostbite read as carrying more
+  // affliction than a body carrying any other, which is a claim about severity
+  // that no rule here is making.
+  //
+  // What is **not** changed is that its tier crosses on *elapsed* rather than on
+  // stacks. That looks like escalation because it is: frostbite is the only row
+  // in `data/damage-over-time.ts` with a real ramp (`rampPerSecond: 0.35`,
+  // `rampCap: 3`), so it genuinely triples over its life and the paint saying so
+  // is the row's whole design (spec 215). The complaint was the size, and only
+  // the size.
   brushAffliction({
     id: 'affliction_frostbite',
     cling: 15,
@@ -2229,7 +2243,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     rise: -10,
     turbulence: 3,
     shedSpeed: 4,
-    clingSize: 0.66,
+    // Between shock's 0.54 and burn's 0.6, where a one-stack affliction belongs.
+    clingSize: 0.58,
     clingLife: [34, 52],
     shedLife: [30, 46],
     shedSize: 0.26,
@@ -2239,12 +2254,16 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   }),
   brushAffliction({
     id: 'affliction_frostbite_heavy',
-    cling: 34,
+    // Bleed's jump exactly (15 -> 28). It was 34, which is a bigger step up than
+    // any other heavy tier takes and on top of a base that was already the
+    // widest.
+    cling: 28,
     shed: 5,
     rise: -9,
     turbulence: 4,
     shedSpeed: 5,
-    clingSize: 0.82,
+    // Between bleed's 0.66 and corrosion's 0.7.
+    clingSize: 0.68,
     clingLife: [40, 62],
     shedLife: [30, 48],
     shedSize: 0.3,

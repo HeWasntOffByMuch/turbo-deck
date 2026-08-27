@@ -151,7 +151,7 @@ import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
 import { windupLostItsMarkIn } from './withdraw.js';
-import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
+import { aimShape, castOrder, effectiveReach, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { worldCursor, worldMark } from './crosshair.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
@@ -2876,6 +2876,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const decision = castOrder({
       self: me,
       order: standing,
+      // The same derivation the pickup uses, for the same disagreement
+      // (spec 236): the request leaves from the prediction and is checked
+      // against the last input the server applied, so a placed cast sent from
+      // exactly the edge can be refused for drift nobody can see. A distance a
+      // body travels, not a fraction of the range.
+      castLead: pickupLead(
+        view.stats?.moveSpeed ?? 0,
+        view.roundTripTicks,
+        SERVER_TICK_RATE,
+        standing.range,
+      ),
       target: mark
         ? {
             id: mark.id,
@@ -2966,7 +2977,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       point,
       unitId: preview ? null : unitId,
       preview,
-      range: ability.range,
+      // A hover asks "how far does this reach", so it is answered with the
+      // reach -- which for a caster-centred area is its radius and not the
+      // `range: 0` such a row states (spec 236). A live aim keeps `range`,
+      // because there the ring means "the confirm will be a walk first" and
+      // walking is measured against exactly the number `startCast` gates on.
+      range: preview ? effectiveReach(ability) : ability.range,
       // Measured to the body's edge when there is one, the same as the gate the
       // server will apply to the cast this becomes.
       inRange: Math.hypot(point.x - me.x, point.y - me.y) <= ability.range + markRadius,
