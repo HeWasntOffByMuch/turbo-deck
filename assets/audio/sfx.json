@@ -79,18 +79,18 @@
     },
     "combat.hit.flesh": {
       "variants": [
-        "/audio/combat/hits/sword_clash_01.ogg",
-        "/audio/combat/hits/sword_clash_02.ogg",
-        "/audio/combat/hits/sword_clash_03.ogg"
+        "/audio/combat/swings/sword_stab_light_01.ogg",
+        "/audio/combat/swings/sword_stab_light_02.ogg",
+        "/audio/combat/swings/sword_stab_light_03.ogg"
       ],
       "volume": 0.85,
       "pitch": { "min": 0.94, "max": 1.06 }
     },
     "combat.hit.armored": {
       "variants": [
-        "/audio/combat/swings/sword_stab_light_01.ogg",
-        "/audio/combat/swings/sword_stab_light_02.ogg",
-        "/audio/combat/swings/sword_stab_light_03.ogg"
+        "/audio/combat/hits/sword_clash_01.ogg",
+        "/audio/combat/hits/sword_clash_02.ogg",
+        "/audio/combat/hits/sword_clash_03.ogg"
       ],
       "volume": 0.85,
       "pitch": { "min": 0.95, "max": 1.05 }
