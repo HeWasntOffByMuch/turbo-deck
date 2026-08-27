@@ -29,6 +29,7 @@
  */
 
 import type { SoundEventId } from '../../audio/events.js';
+import type { WeaponType } from './weapon-look.js';
 
 /**
  * Everything this needs to know about a blow. Facts, not objects.
@@ -202,6 +203,7 @@ export function soundForWindup(
   abilityId: string,
   isHeavy: boolean,
   projectileLook: string | null = null,
+  weaponType: WeaponType | null = null,
 ): SoundEventId | null {
   // **The look decides before the element does**, and before the ability id.
   // What a wind-up sounds like has to agree with what the body is drawn doing,
@@ -217,8 +219,37 @@ export function soundForWindup(
 
   const element = elementOf(abilityId);
   if (element !== 'physical') return ELEMENT_CASTS[element];
+
+  // **The weapon, when we know what it is.** A maul and a sword were one sound
+  // chosen by the *ability's* damage, so the heaviest thing in the game and the
+  // starting blade wound up identically and what a player was holding changed
+  // nothing they could hear.
+  //
+  // Which is only ever their own weapon, and that is a fact about the wire
+  // rather than a shortcut: equipment is replicated to its owner alone, so a
+  // monster has no weapon at all and another player's is not knowable. They keep
+  // the light/heavy pair, which is what those two rows are for now.
+  const swing = weaponType === null ? undefined : WEAPON_WINDUPS[weaponType];
+  if (swing !== undefined) return swing;
+
   return isHeavy ? 'combat.swing.heavy' : 'combat.swing.light';
 }
+
+/**
+ * What each kind of weapon sounds like winding up.
+ *
+ * `bow` and `thrown` are absent, and that is the tables agreeing rather than a
+ * gap: both are reached by `PROJECTILE_WINDUPS` above, off the look, which fires
+ * first and is the better key -- it is what the body is *drawn* doing, so an
+ * arrow ability draws a bow whether or not a bow is what is equipped.
+ */
+const WEAPON_WINDUPS: Readonly<Record<WeaponType, SoundEventId | undefined>> = {
+  sword: 'combat.swing.sword',
+  maul: 'combat.swing.maul',
+  staff: 'combat.swing.staff',
+  bow: undefined,
+  thrown: undefined,
+};
 
 /**
  * The tell a thrown weapon makes, by what it throws.

@@ -333,9 +333,49 @@ describe('soundForWindup', () => {
     expect(elementOf('skill.poisonDart')).toBe('poison');
   });
 
-  it('tells a light swing from a heavy one', () => {
+  it('tells a light swing from a heavy one when the weapon is unknown', () => {
+    // Which is every monster and every other player: equipment is replicated to
+    // its owner alone, so those two rows are the "somebody swung something" case
+    // rather than the general one.
     expect(soundForWindup('melee.slash', false)).toBe('combat.swing.light');
     expect(soundForWindup('melee.heavy', true)).toBe('combat.swing.heavy');
+  });
+
+  /**
+   * The gap the weapon rows close.
+   *
+   * The wind-up was chosen by the *ability's* damage, so the heaviest thing in
+   * the game and the starting blade wound up identically and what the player was
+   * holding changed nothing they could hear.
+   */
+  it('gives each weapon its own swing, whatever the ability weighs', () => {
+    for (const isHeavy of [false, true]) {
+      expect(soundForWindup('melee.slash', isHeavy, null, 'sword')).toBe('combat.swing.sword');
+      expect(soundForWindup('melee.slash', isHeavy, null, 'maul')).toBe('combat.swing.maul');
+      expect(soundForWindup('melee.slash', isHeavy, null, 'staff')).toBe('combat.swing.staff');
+    }
+    // A maul swinging a *light* ability is still a maul, and a sword swinging a
+    // heavy one is still a sword: the weapon decides the sound, the ability's
+    // weight no longer does.
+    expect(soundForWindup('melee.heavy', true, null, 'sword')).not.toBe('combat.swing.heavy');
+    expect(soundForWindup('melee.slash', false, null, 'maul')).not.toBe('combat.swing.light');
+  });
+
+  it('leaves the bow and the thrown weapon to the look, which fires first', () => {
+    // Both are reached by their projectile, which is the better key: it is what
+    // the body is drawn doing, so an arrow ability draws a bow whether or not a
+    // bow is what happens to be equipped.
+    expect(soundForWindup('ranged.shot', false, 'arrow', 'bow')).toBe('combat.bow.draw');
+    expect(soundForWindup('ranged.star', false, 'shuriken', 'thrown')).toBe('combat.throw');
+    // ...and with no look to go on they fall through rather than inventing one.
+    expect(soundForWindup('melee.slash', false, null, 'bow')).toBe('combat.swing.light');
+  });
+
+  it('lets an element beat the weapon, so a staff still casts', () => {
+    // The ember staff's basic attack is a fire cast and must stay one; the staff
+    // swing is what a *melee* skill held in the same hand sounds like.
+    expect(soundForWindup('ranged.ember', false, 'ember', 'staff')).toBe('elemental.fire.cast');
+    expect(soundForWindup('skill.whirlwind', false, null, 'staff')).toBe('combat.swing.staff');
   });
 
   it('gives an elemental row its cast instead of a swing, never as well as', () => {

@@ -55,6 +55,7 @@ import {
   soundsForBlow,
   type BlowFacts,
 } from './audio-wire.js';
+import type { WeaponType } from './weapon-look.js';
 import { Footsteps } from './footsteps.js';
 
 /** `EntityActivity` values this cares about. Copied rather than imported: see below. */
@@ -293,8 +294,14 @@ export class AudioDriver {
    * is built on a blow being long enough to read and withdraw from, and a swing
    * that makes no sound until it lands has no tell.
    */
-  windup(abilityId: string, isHeavy: boolean, at: PlayOptions, projectileLook: string | null = null): void {
-    const id = soundForWindup(abilityId, isHeavy, projectileLook);
+  windup(
+    abilityId: string,
+    isHeavy: boolean,
+    at: PlayOptions,
+    projectileLook: string | null = null,
+    weaponType: WeaponType | null = null,
+  ): void {
+    const id = soundForWindup(abilityId, isHeavy, projectileLook, weaponType);
     if (id !== null) this.audio.play(id, at);
   }
 

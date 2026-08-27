@@ -123,6 +123,7 @@ import {
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
+import { weaponTypeFor } from './weapon-look.js';
 import { effectsForBlow, REDUNDANT_SERVER_EFFECTS, type GoreLevel } from './vfx-wire.js';
 import { createAudioEngine } from '../../audio/engine.js';
 import { BUS_LABELS, BUSES } from '../../audio/events.js';
@@ -1707,6 +1708,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // What it throws, so a bow is heard being drawn whatever ability drew it
       // -- the rule `unit-driver.ts` already picks the *animation* by.
       ability?.projectile?.look ?? null,
+      // ...and what it is being swung with, for the one body whose weapon this
+      // client knows. Equipment is replicated to its owner alone, so a monster
+      // has none and another player's is not knowable: both fall to the
+      // light/heavy pair, which is what those two rows exist for.
+      cast.entityId === client.view().selfEntityId
+        ? weaponTypeFor(client.view().equipment.mainHand)
+        : null,
     );
   });
   client.onCastRejected((abilityId, reason) => {
