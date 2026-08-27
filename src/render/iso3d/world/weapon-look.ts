@@ -51,3 +51,47 @@ export function weaponModelFor(itemId: string | null | undefined): string | null
 export function itemsWithModels(): readonly string[] {
   return Object.keys(MODELS).sort();
 }
+
+/**
+ * What kind of weapon a main-hand item is.
+ *
+ * A second table beside {@link MODELS} rather than a field on it, because the
+ * two answer different questions and are complete to different degrees: a model
+ * is a `.glb` that may not have been made yet, and a *kind* is a fact about the
+ * item that is always knowable. The maul and the stars have no mesh and are
+ * still, unmistakably, a maul and a thrown weapon.
+ *
+ * Here rather than in `audio-wire.ts` because it is not an audio fact. It is the
+ * same question this file already exists to answer -- what is this main-hand
+ * item, for presentation -- and the next thing to want it is an animation, not a
+ * second copy of the table.
+ */
+export type WeaponType = 'sword' | 'maul' | 'staff' | 'bow' | 'thrown';
+
+const TYPES: Readonly<Record<string, WeaponType>> = {
+  'sword.worn': 'sword',
+  'sword.keen': 'sword',
+  'maul.iron': 'maul',
+  'staff.emberwood': 'staff',
+  'bow.hunting': 'bow',
+  'stars.weighted': 'thrown',
+};
+
+/**
+ * The kind of weapon an item is, or null for bare hands and for anything this
+ * build has never heard of.
+ *
+ * Null rather than a default kind, for {@link weaponModelFor}'s reason one step
+ * along: "no weapon", "a weapon with no row" and "an id from a newer server" are
+ * one answer to a caller, and guessing `sword` would make an unarmed body swing
+ * a blade.
+ */
+export function weaponTypeFor(itemId: string | null | undefined): WeaponType | null {
+  if (itemId === null || itemId === undefined) return null;
+  return TYPES[itemId] ?? null;
+}
+
+/** Every item with a kind, for the test that checks them against the item table. */
+export function itemsWithTypes(): readonly string[] {
+  return Object.keys(TYPES).sort();
+}

@@ -19,7 +19,6 @@ import {
   DAMAGE_ELEMENTS,
   elementOfAbility,
 } from '../../../server/data/abilities.js';
-import { bleedsOf, monsterLookFor, monsterLookIds } from './monster-look.js';
 import { REGISTRY } from '../vfx/registry.js';
 
 /**
@@ -573,26 +572,6 @@ describe('what a blow is made of', () => {
     const out = blow(facts({ damageType: 'fire', critical: true }), 30);
     const seeds = out.map((request) => request.seed);
     expect(new Set(seeds).size).toBe(seeds.length);
-  });
-});
-
-describe('which bodies bleed', () => {
-  it('bleeds by default, for a player and for a body with no row', () => {
-    expect(bleedsOf(null)).toBe(true);
-    expect(bleedsOf(undefined)).toBe(true);
-    expect(bleedsOf('player')).toBe(true);
-    expect(bleedsOf('no_such_monster')).toBe(true);
-  });
-
-  it('carries the field through a copied look rather than dropping it', () => {
-    // `monsterLookFor` clones what it returns, and a clone that quietly loses a
-    // field answers differently from the row it copied.
-    for (const id of monsterLookIds()) {
-      // Defaulted on both sides: the copy correctly preserves *absent*, and
-      // absent is what means "true". What this catches is a copy that turned a
-      // row's explicit `false` into an absent field.
-      expect(monsterLookFor(id)?.bleeds ?? true).toBe(bleedsOf(id));
-    }
   });
 });
 

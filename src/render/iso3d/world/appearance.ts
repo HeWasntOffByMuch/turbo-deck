@@ -208,6 +208,49 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
  * table, which is why only the player branch reads a wire field. `'Player'`
  * remains the answer for the frames before a body's `Identity` has landed.
  */
+/**
+ * Bodies that are struck rather than cut.
+ *
+ * A presentation table, keyed the way every other one here is, because nothing
+ * on the server authors it: `MONSTERS` has no material and should not grow one
+ * for a sound. What a thing is made of decides what a blow off it sounds like
+ * (`combat.hit.flesh` against `combat.hit.armored`) and what it throws
+ * (`vfx-wire.ts`: "a construct throws sparks instead"), and neither is a game
+ * outcome.
+ *
+ * A **deny list**, so the default is that a body bleeds. That is the right way
+ * round for a bestiary of animals: a monster added tomorrow is flesh unless
+ * somebody says otherwise, and the failure of forgetting a row is a sheep that
+ * sounds like a sheep rather than one that clangs.
+ */
+const BLOODLESS = new Set<string>(['dummy']);
+
+/**
+ * The deny list, for the one test that can catch a typo in it.
+ *
+ * A misspelled id here is a construct that bleeds, and every assertion about
+ * the *rule* still passes -- so what has to be checked is that each name is a
+ * row `MONSTERS` actually has.
+ */
+export const BLOODLESS_IDS: readonly string[] = [...BLOODLESS];
+
+/**
+ * Whether a blow on this body draws blood.
+ *
+ * Beside {@link displayName} rather than folded into {@link Appearance} for the
+ * reason that one is: it is a question *about* an entity rather than a part of
+ * what gets built for it, and both wires ask it without wanting a rig.
+ *
+ * A projectile, a drop, a prop and a mote answer false and are never asked --
+ * nothing lands a blow on one. A player always bleeds, which is not a table
+ * because there is one player look and it is a cow.
+ */
+export function bleedsFor(entity: AppearanceInput): boolean {
+  if (entity.kind === EntityKind.Player) return true;
+  if (entity.kind !== EntityKind.Monster) return false;
+  return !BLOODLESS.has(entity.typeId);
+}
+
 export function displayName(entity: AppearanceInput): string {
   if (entity.kind === EntityKind.Player) return entity.name ? entity.name : 'Player';
   // Never the item's name. A drop's label is `DropPresentation.label`, which is

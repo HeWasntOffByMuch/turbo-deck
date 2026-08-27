@@ -1,0 +1,449 @@
+{
+  "version": 1,
+  "clips": [
+    {
+      "url": "/audio/combat/death/death_01.ogg",
+      "seconds": 12.349,
+      "bytes": 101752,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/hits/blunt_01.ogg",
+      "seconds": 0.701,
+      "bytes": 11190,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/hits/blunt_02.ogg",
+      "seconds": 0.439,
+      "bytes": 8863,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/hits/blunt_03.ogg",
+      "seconds": 0.751,
+      "bytes": 12509,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/hits/sword_clash_01.ogg",
+      "seconds": 1.03,
+      "bytes": 13796,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/hits/sword_clash_02.ogg",
+      "seconds": 0.67,
+      "bytes": 10480,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/hits/sword_clash_03.ogg",
+      "seconds": 0.734,
+      "bytes": 10041,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/punch_01.ogg",
+      "seconds": 0.3,
+      "bytes": 6440,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/punch_02.ogg",
+      "seconds": 0.493,
+      "bytes": 7843,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/punch_03.ogg",
+      "seconds": 0.431,
+      "bytes": 7768,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_slash_01.ogg",
+      "seconds": 0.415,
+      "bytes": 8462,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_slash_02.ogg",
+      "seconds": 0.857,
+      "bytes": 13501,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_slash_03.ogg",
+      "seconds": 0.67,
+      "bytes": 11508,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_stab_heavy_01.ogg",
+      "seconds": 0.815,
+      "bytes": 11833,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_stab_heavy_02.ogg",
+      "seconds": 0.836,
+      "bytes": 13653,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_stab_heavy_03.ogg",
+      "seconds": 0.829,
+      "bytes": 11865,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_stab_light_01.ogg",
+      "seconds": 0.474,
+      "bytes": 8466,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_stab_light_02.ogg",
+      "seconds": 0.518,
+      "bytes": 9969,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_stab_light_03.ogg",
+      "seconds": 0.625,
+      "bytes": 9928,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_swoosh_heavy_01.ogg",
+      "seconds": 1.258,
+      "bytes": 15555,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_swoosh_heavy_02.ogg",
+      "seconds": 1.029,
+      "bytes": 12910,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_swoosh_heavy_03.ogg",
+      "seconds": 1.479,
+      "bytes": 16636,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_swoosh_light_01.ogg",
+      "seconds": 0.599,
+      "bytes": 9171,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_swoosh_light_02.ogg",
+      "seconds": 0.764,
+      "bytes": 11116,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/swings/sword_swoosh_light_03.ogg",
+      "seconds": 0.536,
+      "bytes": 8732,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/cast_01.ogg",
+      "seconds": 1.69,
+      "bytes": 18231,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/cast_02.ogg",
+      "seconds": 1.694,
+      "bytes": 18937,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/cast_03.ogg",
+      "seconds": 1.787,
+      "bytes": 19316,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/cast_long_01.ogg",
+      "seconds": 9.008,
+      "bytes": 93308,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/embers_01.ogg",
+      "seconds": 1.322,
+      "bytes": 16082,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/hold_01.ogg",
+      "seconds": 8,
+      "bytes": 103909,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/impact_01.ogg",
+      "seconds": 1.809,
+      "bytes": 18840,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/impact_02.ogg",
+      "seconds": 1.631,
+      "bytes": 19175,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/impact_03.ogg",
+      "seconds": 1.59,
+      "bytes": 17051,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/impact_heavy_01.ogg",
+      "seconds": 1.897,
+      "bytes": 22946,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/throw_01.ogg",
+      "seconds": 1.29,
+      "bytes": 16152,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/fire/whoosh_01.ogg",
+      "seconds": 2.144,
+      "bytes": 39561,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/ice/arrow_cast_01.ogg",
+      "seconds": 0.599,
+      "bytes": 9735,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/ice/arrow_fly_01.ogg",
+      "seconds": 1.037,
+      "bytes": 15030,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/ice/arrow_hit_01.ogg",
+      "seconds": 0.776,
+      "bytes": 12014,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/ice/cast_01.ogg",
+      "seconds": 1.097,
+      "bytes": 15668,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/ice/glacier_cast_01.ogg",
+      "seconds": 0.821,
+      "bytes": 12381,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/ice/glacier_impact_01.ogg",
+      "seconds": 1.346,
+      "bytes": 16879,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/lightning/hit_01.ogg",
+      "seconds": 0.792,
+      "bytes": 14515,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/lightning/impact_01.ogg",
+      "seconds": 1.343,
+      "bytes": 21970,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/lightning/throw_01.ogg",
+      "seconds": 1.447,
+      "bytes": 20986,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/water/cast_01.ogg",
+      "seconds": 5.242,
+      "bytes": 51103,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/water/hit_01.ogg",
+      "seconds": 1.132,
+      "bytes": 14270,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/water/hit_short_01.ogg",
+      "seconds": 1.001,
+      "bytes": 13218,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/water/impact_01.ogg",
+      "seconds": 1.75,
+      "bytes": 19965,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/water/throw_01.ogg",
+      "seconds": 1.836,
+      "bytes": 23079,
+      "channels": 1
+    },
+    {
+      "url": "/audio/elemental/water/throw_02.ogg",
+      "seconds": 1.885,
+      "bytes": 22688,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/boots_01.ogg",
+      "seconds": 0.145,
+      "bytes": 23886,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/boots_02.ogg",
+      "seconds": 0.15,
+      "bytes": 23987,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/boots_03.ogg",
+      "seconds": 0.21,
+      "bytes": 24491,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/boots_04.ogg",
+      "seconds": 0.144,
+      "bytes": 23997,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/boots_05.ogg",
+      "seconds": 0.208,
+      "bytes": 24410,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/boots_06.ogg",
+      "seconds": 0.138,
+      "bytes": 23743,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/sandals_01.ogg",
+      "seconds": 0.261,
+      "bytes": 25013,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/sandals_02.ogg",
+      "seconds": 0.261,
+      "bytes": 25363,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/sandals_03.ogg",
+      "seconds": 0.278,
+      "bytes": 25040,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/sandals_04.ogg",
+      "seconds": 0.263,
+      "bytes": 24921,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/sandals_05.ogg",
+      "seconds": 0.262,
+      "bytes": 25020,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footsteps/sandals_06.ogg",
+      "seconds": 0.299,
+      "bytes": 25315,
+      "channels": 1
+    },
+    {
+      "url": "/audio/ui/attribute_up.ogg",
+      "seconds": 0.28,
+      "bytes": 6283,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/denied.ogg",
+      "seconds": 0.234,
+      "bytes": 8675,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/drop_item.ogg",
+      "seconds": 0.333,
+      "bytes": 6743,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/equip_item_skill.ogg",
+      "seconds": 0.384,
+      "bytes": 8432,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/move_item.ogg",
+      "seconds": 0.193,
+      "bytes": 5576,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/pick_up_item.ogg",
+      "seconds": 0.162,
+      "bytes": 5530,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/skill_equip_cancelled.ogg",
+      "seconds": 0.264,
+      "bytes": 6481,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/skill_up.ogg",
+      "seconds": 0.382,
+      "bytes": 8154,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/trade_complete.ogg",
+      "seconds": 0.621,
+      "bytes": 11994,
+      "channels": 2
+    },
+    {
+      "url": "/audio/ui/trade_request.ogg",
+      "seconds": 0.669,
+      "bytes": 7819,
+      "channels": 2
+    }
+  ]
+}
