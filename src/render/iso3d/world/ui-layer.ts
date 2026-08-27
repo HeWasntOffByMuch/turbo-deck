@@ -36,6 +36,7 @@ import type { WindowId } from './control-actions.js';
 import type { MaxZoomChoice } from '../../../ui/input/display-store.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
 import type { AudioMixView } from '../../../ui/screens/audio.js';
+import type { DialogueBubbleView } from '../../../ui/screens/dialogue.js';
 import type { AccountView } from '../../../ui/screens/account.js';
 import type { ActionSlot } from './action-bar.js';
 import { NO_ACTION_BAR, type ActionBarBox } from './hud-layout.js';
@@ -419,6 +420,28 @@ export class UiLayer {
 
   toggle(id: WindowId): void {
     this.screens.toggle(id);
+  }
+
+  /** Open the shop at this vendor rather than at the nearest one (spec 244). */
+  showShopFor(vendorId: string): void {
+    this.screens.showShopFor(vendorId);
+  }
+
+  /**
+   * What the dialogue bubble shows, and where it points (spec 244).
+   *
+   * `anchor` arrives in **CSS pixels** -- it is a projected world point, and
+   * that is the space the projector answers in -- and is converted here, because
+   * `toUi` is deliberately the one conversion between the two and a caller doing
+   * its own would be a second one to keep in step.
+   */
+  setDialogue(bubble: DialogueBubbleView | null, anchor: Point | null): void {
+    this.screens.setDialogue(bubble, anchor === null ? null : this.toUi(anchor));
+  }
+
+  /** Whether a conversation's bubble is on screen. */
+  get dialogueOpen(): boolean {
+    return this.screens.dialogueOpen;
   }
 
   /** Offer a pointer event, in CSS pixels. True when gameplay must not act. */

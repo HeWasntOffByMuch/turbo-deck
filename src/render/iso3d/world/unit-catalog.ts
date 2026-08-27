@@ -44,6 +44,16 @@ export const PLAYER_TYPE_ID = 'player';
  */
 export const DEFAULT_AUTHORED_UNITS: Readonly<Record<string, AuthoredUnitId>> = {
   [PLAYER_TYPE_ID]: 'pig_a_pose_full',
+  // The merchant (spec 244), and the second row this table has ever had. It is
+  // the fox because a body somebody walks up to and talks to is the other one
+  // that has to prove the format -- and because a friendly NPC is exactly what
+  // the seam is for: one row, and everything else in the roster still draws
+  // what it drew before.
+  //
+  // The fox's own state machine has an idle, a locomotion blend and a death,
+  // which is the whole of what this body ever does. Its swing came across with
+  // it and reaches nothing, since a friendly row has no attack to trigger one.
+  'npc.merchant': 'fox_a_pose',
 };
 
 const authored = new Map<string, AuthoredUnitId>(Object.entries(DEFAULT_AUTHORED_UNITS));

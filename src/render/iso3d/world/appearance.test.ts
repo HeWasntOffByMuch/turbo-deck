@@ -11,8 +11,31 @@ describe('appearanceOf', () => {
       const look = appearanceOf({ kind: EntityKind.Monster, typeId: monster.id });
       expect(look.rig).toBe('monster');
       expect(look.radius).toBe(monster.radius);
-      expect(look.showsHealth).toBe(true);
     }
+  });
+
+  it('draws a bar over everything that can be fought, and nothing over what cannot', () => {
+    // Spec 244. A friendly body's health can never move, so a bar over it would
+    // be a full one forever -- and a health bar is the clearest thing this game
+    // draws to say "you may fight this".
+    //
+    // Both directions, because either alone is passed by a broken rule: an
+    // `appearanceOf` that withheld every bar satisfies the first half, and one
+    // that drew them all satisfies the second.
+    let fightable = 0;
+    let friendly = 0;
+    for (const monster of ALL_MONSTERS) {
+      const look = appearanceOf({ kind: EntityKind.Monster, typeId: monster.id });
+      if (monster.temperament.kind === 'friendly') {
+        friendly += 1;
+        expect(look.showsHealth, monster.id).toBe(false);
+      } else {
+        fightable += 1;
+        expect(look.showsHealth, monster.id).toBe(true);
+      }
+    }
+    expect(fightable).toBeGreaterThan(0);
+    expect(friendly).toBeGreaterThan(0);
   });
 
   it('sizes a projectile from the ability that threw it', () => {

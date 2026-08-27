@@ -204,6 +204,11 @@ const PURE_RENDER = [
   // and `render/audio/dialogue-voice.ts`, and the alternative to asserting them
   // is somebody listening.
   'src/render/iso3d/world/dialogue.ts',
+  // What joins a conversation to the server's answer, the audio, the bubble and
+  // the camera (spec 244). Pure of three.js and of the DOM -- it is handed the
+  // bodies and answers what to draw -- which is what lets "every way a
+  // conversation can end arrives as one event" be a test rather than a claim.
+  'src/render/iso3d/world/dialogue-driver.ts',
   // The action bar's view-model (spec 190). The bar moved onto the interface
   // canvas, so what a slot draws -- its wedge, its badge, why it is lit -- is a
   // mapping from replicated facts to plain rows, and a mapping is checked in

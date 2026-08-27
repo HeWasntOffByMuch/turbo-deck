@@ -23,7 +23,7 @@
  *    paints, reading a smoothed pose that is presentation and nothing else.
  */
 
-import { GameClient } from '../../../server/client/game-client.js';
+import { GameClient, type ClientView } from '../../../server/client/game-client.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { afflictionsFromQuery } from './affliction-vfx.js';
 import { fieldsWantedByQuery } from './aura-vfx.js';
@@ -123,6 +123,7 @@ import {
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { isFriendlyMonster } from '../../../server/data/monsters.js';
+import { DialogueDriver, SpeechSink } from './dialogue-driver.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
 import { weaponTypeFor } from './weapon-look.js';
 import { damageElementOf } from '../../../server/data/abilities.js';
@@ -174,6 +175,17 @@ import { castRefusalText } from './error-log.js';
 import { backoffTicksFor, KEEPALIVE_MS } from './keepalive.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
+
+/**
+ * How high above a speaker's feet the dialogue bubble points (spec 244).
+ *
+ * Above the head rather than at it: `projectPoint`'s lift is world units up
+ * from the ground, and the tallest body that can hold a conversation is a
+ * generated unit drawn at canonical height. Comfortably clear of the health
+ * bar's own band as well, since a body a player is talking to may still be
+ * carrying status marks from a fight they walked away from.
+ */
+const DIALOGUE_BUBBLE_LIFT = 96;
 
 /**
  * Wall-clock quiet before the prop field is rebuilt (spec 165).
@@ -1855,6 +1867,24 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const audioEngine = createAudioEngine();
   const audioDriver = new AudioDriver(audioEngine);
+  /**
+   * The conversation, if there is one (spec 244).
+   *
+   * Built here because it needs three things that only exist at this level: the
+   * audio engine to speak through, the client to tell when the player leaves,
+   * and the window manager to open a shop on. What it does *not* need is the
+   * scene or the DOM, which is why it is a module rather than a closure.
+   */
+  const dialogue = new DialogueDriver({
+    speech: new SpeechSink(audioEngine),
+    onShop: (vendorId) => {
+      // The NPC's own shop, named by the reply rather than found by proximity:
+      // `nearestVendorTo` is the right answer for a key press with no context
+      // and the wrong one for "this merchant's stock" (spec 244).
+      ui.showShopFor(vendorId);
+    },
+    onLeave: () => client.talk(0),
+  });
   let audioMix = loadMix(bindingStorage);
   audioEngine.setMix(audioMix);
   /**
@@ -2032,6 +2062,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     onVendor: (vendorId) => client.openVendor(vendorId),
     onTradeOffer: (slots, coins) => client.offerInTrade(slots, coins),
     onTradeAccept: (revision) => client.acceptTrade(revision),
+    onDialogueChoice: (index) => dialogue.choose(index, performance.now()),
+    onDialogueAdvance: () => dialogue.advance(performance.now()),
+    onDialogueLeave: () => dialogue.leave(),
     onTradeRespond: (accept) => client.respondToTrade(accept),
     onTradeCancel: () => client.cancelTrade(),
     onTradeDismiss: () => client.dismissEndedTrade(),
@@ -2451,6 +2484,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   function stopEverything(): void {
     dropOrders();
+    // A conversation is something the body is committed to (spec 244), so the
+    // one press that drops everything drops it too -- and it is the *only* key
+    // that ends one, since Escape reaches the menu when there is nothing to back
+    // out of and the bubble is not a window Escape can close.
+    dialogue.leave();
     held.clear();
     // The keys and buttons still down when this fired. Without this the walk
     // resumes on its own at the browser's repeat rate; see `disarmed`.
@@ -3578,6 +3616,41 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     audioEngine.resume();
   }
 
+  /**
+   * One frame of a conversation (spec 244).
+   *
+   * Driven off `view.conversationEntityId`, which is the server's answer and the
+   * only trigger: every way a conversation can end -- walking away, either body
+   * dying, the NPC despawning, the socket dropping -- arrives as that going back
+   * to 0, so none of them needs a case here.
+   *
+   * Runs *after* the scene has drawn, so the anchor is projected through the
+   * camera this frame actually used rather than the previous one's -- which at
+   * the rate the framing eases is a bubble trailing the body it belongs to.
+   */
+  function driveDialogue(view: ClientView, nowMs: number): void {
+    dialogue.update(view.conversationEntityId, view.entities, nowMs);
+    const speakerId = dialogue.speakerId;
+    const speaker = speakerId === 0 ? undefined : view.entities.find((e) => e.id === speakerId);
+
+    // The camera looks between the two while a conversation is live, and goes
+    // back on its own when it is not: both are the same ease the camera has
+    // always used to follow a body, so there is nothing to restore.
+    scene.setDialogueFraming(speaker ? { x: speaker.x, y: speaker.y } : null);
+
+    const bubble = dialogue.view();
+    if (bubble === null || speaker === undefined) {
+      ui.setDialogue(null, null);
+      return;
+    }
+    // Over the speaker's head. `projectPoint` answers in CSS pixels and reports
+    // whether the point is on screen at all -- an off-screen anchor draws no
+    // bubble rather than one pinned to an edge, since the conversation is with
+    // somebody the player cannot see and the camera is on its way to them.
+    const at = scene.projectPoint(speaker.x, speaker.y, DIALOGUE_BUBBLE_LIFT);
+    ui.setDialogue(bubble, at.onScreen ? { x: at.x, y: at.y } : null);
+  }
+
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
     last = now;
@@ -3958,6 +4031,8 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
         : [],
     );
 
+    driveDialogue(view, now);
+
     publishUnitReadout();
     publishVfxReadout();
     publishAudioReadout();
@@ -4044,6 +4119,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // cancelled on the line above -- so an ember in flight when you switched
       // to the map editor would drone until the page was closed.
       audioDriver.stopAll();
+      // And the conversation, for the same reason one line up (spec 244): a
+      // mumble is scheduled by the frame loop being cancelled on the line
+      // above, so a line half-spoken when you switched to the map editor would
+      // otherwise leave the merchant standing still on the server with nobody
+      // in front of it. `leave` tells the server as well, which is what makes
+      // it start wandering again.
+      dialogue.leave();
       audioEngine.suspend();
       window.removeEventListener('pointerdown', armAudio);
       window.removeEventListener('keydown', armAudio);

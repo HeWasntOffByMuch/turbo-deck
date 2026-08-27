@@ -49,6 +49,11 @@ import { THEME } from '../../../ui/theme/theme.js';
 import { CharacterScreen } from '../../../ui/screens/character.js';
 import { ChatScreen, chatInsets, type ChatLineView } from '../../../ui/screens/chat.js';
 import {
+  DialogueDock,
+  DialogueScreen,
+  type DialogueBubbleView,
+} from '../../../ui/screens/dialogue.js';
+import {
   SelectedUnitScreen,
   selectedUnitInsets,
 } from '../../../ui/screens/selected-unit.js';
@@ -157,6 +162,15 @@ export interface UiScreensOptions {
   readonly onVendor: (vendorId: string) => void;
   /** Which shop to ask for. Answered from where the player is standing. */
   readonly nearestVendor: () => string | null;
+  /**
+   * A reply was pressed, by index (spec 244). The mount decides what it means:
+   * the conversation is not this layer's to advance.
+   */
+  readonly onDialogueChoice: (index: number) => void;
+  /** The bubble was clicked: skip the reveal, or move on. */
+  readonly onDialogueAdvance: () => void;
+  /** The player backed out of the conversation. */
+  readonly onDialogueLeave: () => void;
   /** Trade (spec 134). Every one of these is a request; the server decides. */
   readonly onTradeOffer: (
     slots: readonly { readonly index: number; readonly count: number }[],
@@ -344,6 +358,8 @@ export class UiScreens {
   /** The mini HUD for whatever was left-clicked (spec 196). */
   private readonly selectedUnit: SelectedUnitScreen;
   private readonly selectionDock = new Anchor('selected:dock');
+  private readonly dialogue: DialogueScreen;
+  private readonly dialogueDock: DialogueDock;
   /**
    * Which body is selected. Client state, exactly like {@link chatLog}: nothing
    * about a selection is replicated and the server is never told.
@@ -708,6 +724,21 @@ export class UiScreens {
     this.selectionDock.place(this.selectedUnit, 'topRight');
     this.layers.place('hud', this.selectionDock);
 
+    // The dialogue bubble (spec 244), the `hud` layer's fourth occupant and the
+    // second that is *pressable*: its dock passes the pointer through and the
+    // bubble does not, which is what stops a click on a reply also being a click
+    // on the world behind it.
+    //
+    // In the `hud` layer rather than `windows`, because it is not a window: it
+    // has no title bar, is never dragged, and nothing about it goes in the
+    // layout store. It is what a conversation looks like, and it goes away with
+    // the conversation.
+    this.dialogue = new DialogueScreen({ theme: THEME });
+    this.dialogueDock = new DialogueDock(this.dialogue);
+    this.layers.place('hud', this.dialogueDock);
+    this.dialogue.onChoice = (index) => this.options.onDialogueChoice(index);
+    this.dialogue.onAdvance = () => this.options.onDialogueAdvance();
+
     // The action bar (spec 196), the `hud` layer's third occupant, and the only
     // one of the three that is *pressable*: the dock and the row pass the
     // pointer through and the slots do not.
@@ -884,6 +915,32 @@ export class UiScreens {
    * built to ignore a resend anyway, so the whole rebuild was landing on
    * `sameItem` guards sixty times a second. It was 2.7ms of a 1.5ms budget.
    */
+  /**
+   * What the bubble shows and where it points (spec 244).
+   *
+   * Pushed rather than derived from `ClientView`, because neither half is on the
+   * wire: what is being said is a content table walked by a controller that owns
+   * a clock, and where it points is a world position projected through a camera.
+   * Both live one layer out, and this layer draws what it is handed -- the same
+   * division the action bar's plan already makes.
+   */
+  setDialogue(bubble: DialogueBubbleView | null, anchor: { x: number; y: number } | null): void {
+    this.dialogue.setAnchor(anchor);
+    this.dialogue.setView(bubble);
+  }
+
+  /** Whether a conversation's bubble is on screen. */
+  get dialogueOpen(): boolean {
+    return this.dialogue.visible;
+  }
+
+  /** Escape's last step: leave the conversation, if there is one to leave. */
+  private leaveDialogue(): boolean {
+    if (!this.dialogue.visible) return false;
+    this.options.onDialogueLeave();
+    return true;
+  }
+
   update(view: ClientView, nowMs: number, drawnTick: number = view.estimatedTick): void {
     this.now = nowMs;
     // Before anything is placed, and before anything is saved. The saved layout
@@ -1641,6 +1698,29 @@ export class UiScreens {
     else this.show(id);
   }
 
+  /**
+   * Open the shop at a **named** vendor (spec 244).
+   *
+   * `show('shop')` asks `nearestVendor`, which is the right answer for a key
+   * press with no context and the wrong one for a merchant's own stock: two
+   * shops already stand within a hundred units of each other near the spawn, so
+   * proximity would visibly pick the wrong one. A reply that opens a shop knows
+   * exactly which, so it says so.
+   *
+   * Re-asks even when the window is already open, which is the case a plain
+   * `show` gets wrong: talking to a second merchant while the first one's list
+   * is still up would otherwise focus the window and leave the old stock in it.
+   */
+  showShopFor(vendorId: string): void {
+    this.shopAskedAt = this.lastVendorRevision;
+    this.options.onVendor(vendorId);
+    if (this.isOpen('shop')) {
+      this.windows.focus('shop');
+      return;
+    }
+    this.openWindow('shop');
+  }
+
   show(id: WindowId): void {
     if (this.isOpen(id)) {
       this.windows.focus(id);
@@ -1652,6 +1732,17 @@ export class UiScreens {
       this.shopAskedAt = this.lastVendorRevision;
       this.options.onVendor(this.options.nearestVendor() ?? '');
     }
+    this.openWindow(id);
+  }
+
+  /**
+   * The half of `show` that puts a window on screen.
+   *
+   * Extracted so `showShopFor` and `show` cannot come to different answers
+   * about placement, the wipe or the sound -- which is the drift a second
+   * open path invites.
+   */
+  private openWindow(id: WindowId): void {
     // Handed the time, so the window wipes into view (spec 133). It is the only
     // caller that has one -- the goldens open a window settled, on purpose.
     this.windows.open(id, this.now);
@@ -1932,6 +2023,12 @@ export class UiScreens {
         // before it reaches the bag behind it.
         () => this.escapeChat(),
         () => this.closeTopmost(),
+        // Last, behind every window (spec 244). Escape backs out of the
+        // innermost thing first, and a shop opened *from* a conversation is
+        // inside it -- so the first press puts the stock list away and the
+        // second leaves the merchant, rather than one press doing both and
+        // leaving the player wondering which they meant.
+        () => this.leaveDialogue(),
       ]);
     }
 

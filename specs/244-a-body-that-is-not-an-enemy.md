@@ -102,8 +102,8 @@ export interface DialogueLine {
 }
 export interface DialogueChoice {
   readonly text: string;
-  readonly go: string | null;    // another line id, or null to close
-  readonly opens: 'shop' | null; // what pressing it does besides move
+  readonly go: string | null;  // another line id, or null to close
+  readonly opens?: 'shop';     // what pressing it does besides move
 }
 ```
 
@@ -120,19 +120,32 @@ cannot be the thing scheduling sounds.
 
 ```ts
 // render/iso3d/world/dialogue.ts — pure, time is an argument
-class DialoguePlayback {
-  advance(nowMs: number): readonly SpeakEvent[];  // characters revealed since last call
-  skip(): void;      // whole line visible, pending sounds dropped
-  get visible(): string;
-  get done(): boolean;
+class DialogueSession {
+  constructor(npc: NpcDefinition, entityId: number, speech: DialogueSpeech, nowMs: number);
+  update(nowMs: number): void;                 // reveal, and speak what asks to
+  advance(nowMs: number): DialogueOutcome;     // skip the line, or move on
+  choose(index: number, nowMs: number): DialogueOutcome;
+  end(): DialogueOutcome;                      // idempotent; always stops the voice
+  get view(): DialogueView;                    // what the bubble draws
 }
 ```
 
 Pure and driven by a clock it is handed, so the reveal is a function of elapsed
 time rather than of frame rate, and a test asserts a rhythm without waiting for
-one. The **cancellation is a generation counter** on the owner, exactly as the
-handoff spec suggests: a new line, a closed bubble or a skip bumps it, and every
-sound is checked against it at the moment it would start.
+one. The sound sink is injected for the same reason: driven against a recorder,
+the whole feature runs in Node with no `AudioContext` anywhere.
+
+There is a generation counter, as the handoff spec suggests, but it is not what
+makes cancellation correct. **Nothing is ever scheduled ahead** — a voice starts
+at the instant the reveal reaches its character — so at any moment there are no
+pending sounds to cancel and skipping cannot produce a burst. That is a property
+of the loop rather than a check inside it, and it is stronger than the token,
+which is kept for the sounds that have already *started*.
+
+`DialogueDriver` beside it is what joins a session to the four things it has to
+be connected to: the server's authoritative answer about who is talking, the
+audio, the bubble and the camera. `ClientView.conversationEntityId` is the whole
+trigger, so every way a conversation can end arrives as one event.
 
 ```ts
 // render/audio/dialogue-voice.ts — pure: which characters speak, at what pitch
@@ -161,15 +174,51 @@ pointer for the same reason.
 ### The camera
 
 A *temporary* framing pushed on top of the player follow, never a write into the
-view controls: the focus eases toward the midpoint of the two bodies and the zoom
-eases in by a fixed factor, and closing the conversation eases both back. What a
-player set on the Height and Zoom sliders is exactly what they get back.
+view controls: the focus eases toward the midpoint of the two bodies and the
+half-width comes down, and closing the conversation eases both back. Both go
+through the ease the camera has always used to follow a body, so "smoothly
+reframes" and "smoothly restores" are one mechanism rather than two.
+
+It may only ever pull the camera **in**. A framing that could push it out would
+override a preference rather than decorate it: somebody playing zoomed right in
+would have the game jump away from them the moment they said hello.
+
+## Corrections
+
+Three things this design got wrong, found by building it.
+
+**A friendly body needs a client-side predicate too.** The spec above says the
+non-hostility is one line in `isHostile`, and it is -- for the *server*. The
+client independently decides what a right-click means, and `attackable` had no
+way to know: clicking a merchant was a walk over and a swing that quietly never
+landed. `isFriendlyMonster` lives in `data/monsters.ts` because three trees ask
+it (the sim wraps it as `isFriendly`, `appearanceOf` withholds a health bar with
+it, and a test picking something to fight has to skip one), and `talkable` is
+the fourth reading of `world.order` beside pickup, attack and walk.
+
+**A shop with a body in it must leave the proximity search.** Its reach is
+derived from `talkRadius + wander radius + margin`, which is four times a
+walk-up shop's -- so in `nearestVendorTo` it swallowed both older shops, and
+pressing the shop key near the square opened a merchant's stock with no word
+exchanged. `VendorDefinition.byProximity` is the fix and the better design: this
+shop is reached by talking, which is what its reach was sized for.
+
+**There is no `voice` bus.** One was written. `BUSES` is the *sound event*
+vocabulary and `events.test.ts` asserts every bus appears in the SFX tab's tree
+in mixer order, so a bus that can never hold a catalog event is an empty folder
+and a slider with nothing behind it. The mumble rides `ui`, which is what the
+out-of-scope note below already said it would; a Dialogue level is a follow-up
+wanting a mixer that separates "a bus of events" from "a level".
 
 ## Invariants tested
 
 - A friendly body is refused by `isHostile` in **both** directions, is never
   returned by `nearestQuarry`, is not provoked by a blow, and is not rallied by
-  one landing beside it.
+  one landing beside it -- each with a control, since a rule that refused
+  *everything* passes every one of those on its own.
+- It draws no health bar, and everything that can be fought still does.
+- The camera framing never pushes the camera further out than the player's own
+  zoom, and clearing it restores exactly what the sliders say.
 - A friendly body wanders inside its authored radius and comes home if dragged
   off, through the existing `idle.ts` — asserted off the real tick.
 - A body with a conversation claim **does not move**, and faces the player.

@@ -121,11 +121,20 @@ export class DialogueScreen extends Panel {
    */
   setAnchor(at: { x: number; y: number } | null): void {
     if (at === null) {
-      if (this.anchor !== null) this.anchor = null;
+      if (this.anchor === null) return;
+      this.anchor = null;
+      this.parent?.invalidateArrange();
       return;
     }
     if (this.anchor !== null && this.anchor.x === at.x && this.anchor.y === at.y) return;
     this.anchor = { x: at.x, y: at.y };
+    // The **dock's** arrange, not this widget's: the placement is computed in
+    // `DialogueDock.arrangeSelf`, so invalidating only this one would re-run a
+    // pass that does not read the anchor. `UiRoot.update` lays out nothing that
+    // is not dirty, so without this the bubble sticks where it was first placed
+    // and moves only when the *text* changes -- which looks right while a line
+    // is typing and freezes the moment it finishes.
+    this.parent?.invalidateArrange();
   }
 
   /**
