@@ -26,10 +26,10 @@ function ability(id: string) {
 
 describe('the gesture an ability asks for (spec 080)', () => {
   it('is nothing for a self cast, a body for a unit cast, and ground for the rest', () => {
-    expect(aimGesture(ability('self.mend'))).toBe('none');
-    expect(aimGesture(ability('bolt.seek'))).toBe('unit');
-    expect(aimGesture(ability('ground.quake'))).toBe('ground');
-    expect(aimGesture(ability('melee.heavy'))).toBe('ground');
+    expect(aimGesture(ability('self.hearthdraught'))).toBe('none');
+    expect(aimGesture(ability('skill.poisonDart'))).toBe('unit');
+    expect(aimGesture(ability('skill.blight'))).toBe('ground');
+    expect(aimGesture(ability('skill.acidSpray'))).toBe('ground');
   });
 
   it('answers for every ability in the table', () => {
@@ -43,14 +43,14 @@ describe('what a press turns into (spec 080)', () => {
   const ready = { readyAtTick: 0, tick: 100 };
 
   it('asks for a self cast now, and aims everything else', () => {
-    expect(startAim(ability('self.mend'), ready)).toEqual({ kind: 'cast' });
-    expect(startAim(ability('bolt.seek'), ready)).toEqual({ kind: 'aim', gesture: 'unit' });
-    expect(startAim(ability('ground.quake'), ready)).toEqual({ kind: 'aim', gesture: 'ground' });
+    expect(startAim(ability('self.hearthdraught'), ready)).toEqual({ kind: 'cast' });
+    expect(startAim(ability('skill.poisonDart'), ready)).toEqual({ kind: 'aim', gesture: 'unit' });
+    expect(startAim(ability('skill.blight'), ready)).toEqual({ kind: 'aim', gesture: 'ground' });
   });
 
   it('refuses a press while the ability is on cooldown, whatever it aims at', () => {
     const cooling = { readyAtTick: 120, tick: 100 };
-    for (const id of ['self.mend', 'bolt.seek', 'ground.quake', 'melee.heavy']) {
+    for (const id of ['self.hearthdraught', 'skill.poisonDart', 'skill.blight', 'skill.acidSpray']) {
       expect(startAim(ability(id), cooling), id).toEqual({
         kind: 'refused',
         reason: 'onCooldown',
@@ -59,8 +59,8 @@ describe('what a press turns into (spec 080)', () => {
   });
 
   it('allows it on the very tick the cooldown comes back, and not before', () => {
-    expect(startAim(ability('ground.quake'), { readyAtTick: 120, tick: 119 }).kind).toBe('refused');
-    expect(startAim(ability('ground.quake'), { readyAtTick: 120, tick: 120 }).kind).toBe('aim');
+    expect(startAim(ability('skill.blight'), { readyAtTick: 120, tick: 119 }).kind).toBe('refused');
+    expect(startAim(ability('skill.blight'), { readyAtTick: 120, tick: 120 }).kind).toBe('aim');
   });
 
   it('never refuses an ability with no cooldown standing against it', () => {
@@ -72,30 +72,30 @@ describe('what a press turns into (spec 080)', () => {
 
 describe('the shape drawn on the ground (spec 080)', () => {
   it('draws nothing for a self cast or a named body -- the body is the indicator', () => {
-    expect(aimShape(ability('self.mend'))).toEqual({ kind: 'none' });
-    expect(aimShape(ability('bolt.seek'))).toEqual({ kind: 'none' });
+    expect(aimShape(ability('self.hearthdraught'))).toEqual({ kind: 'none' });
+    expect(aimShape(ability('skill.poisonDart'))).toEqual({ kind: 'none' });
   });
 
   it('recovers the wedge the sim will actually test, from arcCosSq', () => {
-    const drain = ability('channel.drain');
-    const shape = aimShape(drain);
+    const spray = ability('skill.acidSpray');
+    const shape = aimShape(spray);
     if (shape.kind !== 'cone') throw new Error('expected a cone');
-    expect(shape.length).toBe(drain.range);
+    expect(shape.length).toBe(spray.range);
     // The half-angle round-trips: cos(half)^2 is the table's number back again.
-    expect(Math.cos(shape.halfAngle) ** 2).toBeCloseTo(drain.arcCosSq ?? 0, 6);
+    expect(Math.cos(shape.halfAngle) ** 2).toBeCloseTo(spray.arcCosSq ?? 0, 6);
   });
 
   it('draws a circle of the table radius for a blast and for a bursting lob', () => {
-    expect(aimShape(ability('ground.quake'))).toEqual({ kind: 'circle', radius: 140 });
-    expect(aimShape(ability('bolt.lob'))).toEqual({ kind: 'circle', radius: 90 });
+    expect(aimShape(ability('skill.blight'))).toEqual({ kind: 'circle', radius: 110 });
+    expect(aimShape(ability('skill.emberToss'))).toEqual({ kind: 'circle', radius: 70 });
   });
 
   it('draws the lane a flat shot flies down', () => {
-    const bolt = ability('bolt.arcane');
-    expect(aimShape(bolt)).toEqual({
+    const shot = ability('ranged.shot');
+    expect(aimShape(shot)).toEqual({
       kind: 'line',
-      length: bolt.range,
-      width: (bolt.projectile?.radius ?? 0) * 2,
+      length: shot.range,
+      width: (shot.projectile?.radius ?? 0) * 2,
     });
   });
 
@@ -108,8 +108,8 @@ describe('the shape drawn on the ground (spec 080)', () => {
 });
 
 const MARK: TargetSnapshot = { id: 9, x: 600, y: 0, radius: 24, health: 50 };
-const UNIT_ORDER: AimOrder = { abilityId: 'bolt.seek', targetEntityId: MARK.id, x: MARK.x, y: MARK.y, range: 480 };
-const GROUND_ORDER: AimOrder = { abilityId: 'ground.quake', targetEntityId: 0, x: 900, y: 0, range: 420 };
+const UNIT_ORDER: AimOrder = { abilityId: 'skill.poisonDart', targetEntityId: MARK.id, x: MARK.x, y: MARK.y, range: 480 };
+const GROUND_ORDER: AimOrder = { abilityId: 'skill.blight', targetEntityId: 0, x: 900, y: 0, range: 420 };
 
 function step(overrides: Partial<CastOrderInput> = {}): ReturnType<typeof castOrder> {
   return castOrder({
@@ -148,7 +148,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
     const decision = step({ self: { x: 400, y: 0 } });
     expect(decision.chaseTo).toBeNull();
     expect(decision.cast).toEqual({
-      abilityId: 'bolt.seek',
+      abilityId: 'skill.poisonDart',
       x: MARK.x,
       y: MARK.y,
       targetEntityId: MARK.id,
@@ -171,7 +171,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
     const early = step({ self: { x: 400, y: 0 }, tick: 100, readyAtTick: 120 });
     expect(early).toEqual({ chaseTo: null, cast: null, drop: true });
     const ready = step({ self: { x: 400, y: 0 }, tick: 120, readyAtTick: 120 });
-    expect(ready.cast?.abilityId).toBe('bolt.seek');
+    expect(ready.cast?.abilityId).toBe('skill.poisonDart');
   });
 
   it('still walks toward a mark while the ability comes back, and gives up on arrival', () => {
@@ -237,7 +237,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       tick: 100,
     });
     expect(near.cast).toEqual({
-      abilityId: 'ground.quake',
+      abilityId: 'skill.blight',
       x: GROUND_ORDER.x,
       y: GROUND_ORDER.y,
       targetEntityId: 0,
@@ -283,7 +283,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       const stepLength = Math.min(20, length);
       self = { x: self.x + (dx / length) * stepLength, y: self.y + (dy / length) * stepLength };
     }
-    expect(cast?.abilityId).toBe('bolt.seek');
+    expect(cast?.abilityId).toBe('skill.poisonDart');
   });
 });
 

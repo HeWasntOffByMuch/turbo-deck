@@ -190,7 +190,7 @@ export const StatusId = {
   ScorchedEarth: 'scorchedEarth',
 } as const;
 
-/** Adaptation is per ability id: `adapt:bolt.arcane`. */
+/** Adaptation is per ability id: `adapt:skill.poisonDart`. */
 export const ADAPTED_PREFIX = 'adapt:';
 
 export function adaptedKey(abilityId: string): string {

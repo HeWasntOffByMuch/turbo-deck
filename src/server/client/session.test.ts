@@ -15,6 +15,9 @@ import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
 import { abilityById } from '../data/abilities.js';
+import { AdminProgressMode } from '../net/protocol.js';
+import { SKILL_SWAP } from '../data/skill-effects.js';
+import { equipmentAddress } from '../player/inventory.js';
 import { CastEndReason } from '../sim/types.js';
 
 /** Lets the loopback's queued microtasks drain. */
@@ -41,6 +44,77 @@ async function connect(test: Harness, playerId: string): Promise<GameClient> {
   await welcomed;
   return client;
 }
+
+/**
+ * The two this file casts, and why it takes two.
+ *
+ * `skill.arcLash` is `direction`-targeted, so `startCast`'s range gate does not
+ * run for it -- which is what the tests aiming at a fixed far-off point need,
+ * and what `melee.heavy` gave them for free. `skill.blight` is `point`-targeted
+ * and is the longest wind-up of the four, which is what the tests that want
+ * plenty of wind-up to be knocked out of need. Aimed inside its 380 range.
+ */
+const CAST_SIGILS = [
+  ['skill1', 'sigil.arcLash'],
+  ['skill2', 'sigil.blight'],
+] as const;
+
+/**
+ * Puts the cast sigils in a player's skill slots, so the server will let them
+ * cast one (spec 237).
+ *
+ * Every ability a player can cast that is not their weapon's own swing now comes
+ * from a sigil, and `startCast` refuses one that is not in a slot -- so a test
+ * about casting has to equip something first. It used to be able to reach for
+ * `melee.spell` or `ground.quake`, which were spec 062's demo rows: granted by
+ * nothing, castable by anybody, and removed with the rest of that set.
+ *
+ * The level is raised first because a sigil carries a `levelRequirement` and
+ * `applyMove` enforces it, and the move goes through `moveItem` rather than
+ * `equip` because `equip` refuses a skill slot outright -- that is spec 188's
+ * swap gate, and the bag is the path that honours it.
+ */
+async function equipSigils(test: Harness, client: GameClient, playerId: string): Promise<void> {
+  const manager = test.server.playerManager;
+  const level = await manager.setProgress(playerId, AdminProgressMode.SetLevel, SIGIL_LEVEL);
+  if (!level.ok) throw new Error(`could not level ${playerId}: ${level.reason}`);
+  for (const [slot, sigilId] of CAST_SIGILS) {
+    const given = await manager.giveItem(playerId, sigilId, 1);
+    if (!given.ok) throw new Error(`could not give ${sigilId}: ${given.reason}`);
+    const index = manager.get(playerId)?.record.inventory.findIndex((stack) => stack?.defId === sigilId) ?? -1;
+    if (index < 0) throw new Error(`${sigilId} did not land in the bag`);
+    // Through the **client**, not through `playerManager.moveItem`. The manager
+    // updates the record and the derived stats and does not tell anybody: the
+    // `Stats` push lives in the message handler, so a direct call leaves the
+    // client's own `skillAbilityIds` empty and its prediction refuses the cast
+    // before a byte reaches the server. Driving the wire message is also what
+    // makes this go through spec 188's swap queue, which is why the ticks
+    // below are `SKILL_SWAP.durationTicks` and not one.
+    client.moveItem({ container: 'inventory', index }, equipmentAddress(slot), 1);
+    await settle();
+    for (let tick = 0; tick <= SKILL_SWAP.durationTicks; tick += 1) test.server.tick();
+    await settle();
+    if (manager.get(playerId)?.record.equipment[slot] !== sigilId) {
+      throw new Error(`${sigilId} never reached ${slot}`);
+    }
+  }
+}
+
+/**
+ * Exactly high enough to wear the two above, and deliberately no higher.
+ *
+ * `applyMove` enforces an item's `levelRequirement`, so the level has to clear
+ * `sigil.blight`'s 6 -- and a bigger number is not free: resource regeneration
+ * scales with the level, and a pool that ticks every tick is a delta every
+ * tick, which is exactly what "the server stops sending deltas entirely" below
+ * is asserting the absence of. At 20 that test measured a stall of one tick.
+ */
+const SIGIL_LEVEL = 6;
+
+/** Direction-targeted, so it may be aimed anywhere. */
+const FAR_SPELL = 'skill.arcLash';
+/** Point-targeted and the longest wind-up, so it must be aimed inside its range. */
+const LONG_SPELL = 'skill.blight';
 
 /**
  * Runs whole broadcast periods, finishing *on* a broadcast tick.
@@ -218,7 +292,7 @@ describe('loopback session', () => {
     const self = test.server.world.entities.get(client.view().selfEntityId);
     // A training dummy rather than a grazer (spec 147). This test is about
     // *displacement*, and a grazer has 24 health -- once Strength's damage
-    // actually reaches a blow and a weak-point roll can double it, whether the
+    // actually reaches a spell and a weak-point roll can double it, whether the
     // target is still there to measure is a coin flip on the seed. A body that
     // cannot die makes the assertion about the thing it is about.
     test.server.spawnEntities('dummy', (self?.position.x ?? 0) + 40, self?.position.y ?? 0, 1);
@@ -392,33 +466,34 @@ describe('dying', () => {
  * that a player pressing the key actually reaches it: `cancelCast()` travels as
  * its own message, on a tick that may carry no movement input at all, and if it
  * is dropped anywhere along that path the wind-up simply runs to release and the
- * player is charged for a blow they called off.
+ * player is charged for a spell they called off.
  */
 describe('calling off a cast', () => {
   it('refunds the cost and the cooldown from the client side', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
     const entityId = client.view().selfEntityId;
-    const heavy = abilityById('melee.heavy');
-    expect(heavy).toBeDefined();
-    if (!heavy) return;
-    expect(heavy.cost).toBeGreaterThan(0);
+    const spell = abilityById(FAR_SPELL);
+    expect(spell).toBeDefined();
+    if (!spell) return;
+    expect(spell.cost).toBeGreaterThan(0);
 
     const before = test.server.world.entities.get(entityId)?.resource ?? 0;
 
-    client.useAbility('melee.heavy', 900, 500);
+    client.useAbility(FAR_SPELL, 900, 500);
     await settle();
     test.server.tick();
     await settle();
 
     const casting = test.server.world.entities.get(entityId);
-    expect(casting?.cast?.abilityId).toBe('melee.heavy');
-    expect(casting?.resource ?? 0).toBeCloseTo(before - heavy.cost, 6);
+    expect(casting?.cast?.abilityId).toBe(FAR_SPELL);
+    expect(casting?.resource ?? 0).toBeCloseTo(before - spell.cost, 6);
     // The cost is spent at the commit; the cooldown is not, and since spec 091
     // there is nothing to refund because nothing was taken.
-    expect(casting?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(casting?.cooldowns[FAR_SPELL]).toBeUndefined();
 
     // Call it off partway through the wind-up, deliberately on a tick with no
     // movement input behind it.
@@ -431,22 +506,23 @@ describe('calling off a cast', () => {
     const after = test.server.world.entities.get(entityId);
     expect(after?.cast).toBeNull();
     expect(after?.resource ?? 0).toBeGreaterThanOrEqual(before);
-    expect(after?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(after?.cooldowns[FAR_SPELL]).toBeUndefined();
 
     // And it can be committed to again at once, because nothing was spent.
-    client.useAbility('melee.heavy', 900, 500);
+    client.useAbility(FAR_SPELL, 900, 500);
     await settle();
     test.server.tick();
     await settle();
-    expect(test.server.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.heavy');
+    expect(test.server.world.entities.get(entityId)?.cast?.abilityId).toBe(FAR_SPELL);
   });
 
   it('tells the client the cast is over, so the bar clears', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
-    client.useAbility('melee.heavy', 900, 500);
+    client.useAbility(FAR_SPELL, 900, 500);
     await settle();
     test.server.tick();
     await settle();
@@ -470,13 +546,14 @@ describe('calling off a cast', () => {
   it('keeps the cast until the server is finished with it', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
     const entityId = client.view().selfEntityId;
     const at = test.server.world.entities.get(entityId)?.position;
     if (!at) return;
 
-    client.useAbility('melee.heavy', at.x + 60, at.y);
+    client.useAbility(LONG_SPELL, at.x + 60, at.y);
     await settle();
 
     let disagreements = 0;
@@ -509,6 +586,7 @@ describe('a cast the client is holding', () => {
   it('is never one the server has already dropped', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
     const entityId = client.view().selfEntityId;
@@ -529,7 +607,7 @@ describe('a cast the client is holding', () => {
     }
 
     // A long cast, aimed away, so there is plenty of wind-up to be knocked out of.
-    client.useAbility('ground.quake', at.x + 200, at.y);
+    client.useAbility(LONG_SPELL, at.x + 200, at.y);
     await settle();
 
     let phantomTicks = 0;
@@ -551,6 +629,7 @@ describe('a cast the client is holding', () => {
   it('survives being hit: the cast it was holding still releases (spec 068)', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
     const entityId = client.view().selfEntityId;
@@ -577,14 +656,14 @@ describe('a cast the client is holding', () => {
     });
 
     // A long wind-up, aimed away, so there is plenty of it to be hit during.
-    client.useAbility('ground.quake', at.x + 200, at.y);
+    client.useAbility(LONG_SPELL, at.x + 200, at.y);
     await settle();
     for (let i = 0; i < 200 && reasons.length === 0; i++) {
       test.server.tick();
       await settle();
     }
 
-    // It was hit, it lived, and the blow it committed to went off anyway.
+    // It was hit, it lived, and the spell it committed to went off anyway.
     const health = test.server.world.entities.get(entityId)?.health ?? 0;
     expect(health).toBeLessThan(fullHealth);
     expect(health).toBeGreaterThan(0);
@@ -604,6 +683,7 @@ describe('the estimated tick', () => {
   it('keeps time when the server has nothing to say', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
     const entityId = client.view().selfEntityId;
@@ -612,7 +692,7 @@ describe('the estimated tick', () => {
 
     // Commit to something long. The caster is rooted, nothing else is alive, so
     // the server stops sending deltas entirely.
-    client.useAbility('ground.quake', at.x + 100, at.y);
+    client.useAbility(LONG_SPELL, at.x + 100, at.y);
     await settle();
 
     for (let i = 0; i < 40; i++) {
@@ -651,28 +731,29 @@ describe('cooldowns', () => {
   it('start empty, and are announced when a cast spends one', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
     expect(client.view().cooldowns).toEqual({});
 
-    const heavy = abilityById('melee.heavy');
-    expect(heavy).toBeDefined();
-    if (!heavy) return;
+    const spell = abilityById(FAR_SPELL);
+    expect(spell).toBeDefined();
+    if (!spell) return;
 
-    client.useAbility('melee.heavy', 900, 500);
+    client.useAbility(FAR_SPELL, 900, 500);
     await settle();
     test.server.tick();
     await settle();
-    // Not while the blow is still being wound up (spec 091) -- it is spent by
+    // Not while the spell is still being wound up (spec 091) -- it is spent by
     // the swing, not by the decision to start one.
-    expect(client.view().cooldowns['melee.heavy']).toBeUndefined();
+    expect(client.view().cooldowns[FAR_SPELL]).toBeUndefined();
 
-    await advance(test, heavy.windupTicks + 1);
+    await advance(test, spell.windupTicks + 1);
 
-    const readyAt = client.view().cooldowns['melee.heavy'];
+    const readyAt = client.view().cooldowns[FAR_SPELL];
     expect(readyAt).toBeGreaterThan(0);
     // And it is the server's number, not one the client worked out.
     const entityId = client.view().selfEntityId;
-    expect(readyAt).toBe(test.server.world.entities.get(entityId)?.cooldowns['melee.heavy']);
+    expect(readyAt).toBe(test.server.world.entities.get(entityId)?.cooldowns[FAR_SPELL]);
   });
 
   /**
@@ -685,19 +766,20 @@ describe('cooldowns', () => {
   it('are never announced for a cast that is withdrawn from', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
-    client.useAbility('melee.heavy', 900, 500);
+    client.useAbility(FAR_SPELL, 900, 500);
     await settle();
     test.server.tick();
     await settle();
-    expect(client.view().cooldowns['melee.heavy']).toBeUndefined();
+    expect(client.view().cooldowns[FAR_SPELL]).toBeUndefined();
 
     client.cancelCast();
     await settle();
     test.server.tick();
     await settle();
-    expect(client.view().cooldowns['melee.heavy']).toBeUndefined();
+    expect(client.view().cooldowns[FAR_SPELL]).toBeUndefined();
   });
 
   /**
@@ -708,6 +790,7 @@ describe('cooldowns', () => {
   it('leaves an expired entry inert, and never re-sends it', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
     const slash = abilityById('melee.slash');
@@ -732,14 +815,14 @@ describe('cooldowns', () => {
     // Landing something else re-sends the map, and the dead entry is not in it.
     // It has to *land*: since spec 091 the stamp -- and so the frame -- waits
     // for the release rather than the commit.
-    const heavy = abilityById('melee.heavy');
-    expect(heavy).toBeDefined();
-    if (!heavy) return;
-    client.useAbility('melee.heavy', 900, 500);
+    const spell = abilityById(FAR_SPELL);
+    expect(spell).toBeDefined();
+    if (!spell) return;
+    client.useAbility(FAR_SPELL, 900, 500);
     await settle();
-    await advance(test, heavy.windupTicks + 2);
+    await advance(test, spell.windupTicks + 2);
     expect(client.view().cooldowns['melee.slash']).toBeUndefined();
-    expect(client.view().cooldowns['melee.heavy']).toBeGreaterThan(0);
+    expect(client.view().cooldowns[FAR_SPELL]).toBeGreaterThan(0);
   });
 });
 
@@ -795,26 +878,27 @@ describe('committing before the server has answered', () => {
   it('does not predict a root for an ability it knows is on cooldown', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
-    client.useAbility('melee.heavy', 900, 500);
+    client.useAbility(FAR_SPELL, 900, 500);
     await settle();
     test.server.tick();
     await settle();
     // Let the cast finish, leaving only the cooldown standing.
-    const heavy = abilityById('melee.heavy');
-    expect(heavy).toBeDefined();
-    if (!heavy) return;
-    for (let i = 0; i < heavy.windupTicks + 4; i++) {
+    const spell = abilityById(FAR_SPELL);
+    expect(spell).toBeDefined();
+    if (!spell) return;
+    for (let i = 0; i < spell.windupTicks + 4; i++) {
       test.server.tick();
       await settle();
     }
     expect(client.view().selfRoot).toBeNull();
-    expect(client.view().cooldowns['melee.heavy']).toBeGreaterThan(client.view().estimatedTick);
+    expect(client.view().cooldowns[FAR_SPELL]).toBeGreaterThan(client.view().estimatedTick);
 
     // Pressing it again is refused by the server, and the client knows enough
     // not to stand still waiting to be told.
-    client.useAbility('melee.heavy', 900, 500);
+    client.useAbility(FAR_SPELL, 900, 500);
     expect(client.view().selfRoot).toBeNull();
   });
 
@@ -833,9 +917,10 @@ describe('committing before the server has answered', () => {
   it('withdraws the root when the cast is called off', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
+    await equipSigils(test, client, 'alice');
     await advance(test, 1);
 
-    client.useAbility('melee.heavy', 900, 500);
+    client.useAbility(FAR_SPELL, 900, 500);
     expect(client.view().selfRoot).not.toBeNull();
     client.cancelCast();
     expect(client.view().selfRoot).toBeNull();

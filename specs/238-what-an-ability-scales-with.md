@@ -113,7 +113,11 @@ replaces: an `A` at 50 Intelligence is 3.025 against the old `spellPower` 3.0.
 - Ability grades are **not** shifted by `scalingModifiers`. Those are authored
   as weapon scaling steps; the weapon-derived term carries them already, because
   it reads the weapon's resolved damage.
-- Rebalancing the authored grades. The letters are a first classification, and
-  two of them (`bolt.lob` / `skill.emberToss` as thrown incendiaries, and
-  `ground.quake` as a spell rather than a Strength/Intelligence hybrid) are
-  recorded as arguable rather than settled.
+- Rebalancing the authored grades. The letters are a first classification
+  rather than a settled one; `skill.emberToss` at `- / D / B` for a thrown
+  incendiary is the one most obviously arguable, since what a pot of embers is
+  worth could as easily be read off the arm that threw it.
+
+  Written against the roster as it stood, this paragraph also named `bolt.lob`
+  and `ground.quake`; spec 237 deleted both along with five other rows nothing
+  granted, so the argument survives only in the row that is still in the game.

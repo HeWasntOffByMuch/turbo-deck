@@ -22,7 +22,9 @@
 
 import type { UnitDef } from '../../../units/types.js';
 import { abilityById } from '../../../server/data/abilities.js';
+import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { EntityActivity, CastPhaseValue } from '../../../server/net/protocol.js';
+import { CAST_RELEASE_MS } from '../../../units/pig-cast.js';
 import type { FiredEvent, UnitMachine } from '../../../units/machine.js';
 
 /**
@@ -104,6 +106,9 @@ export interface UnitFacts {
  */
 const FINISHED_WITHIN_TICKS = 6;
 
+/** {@link CAST_RELEASE_MS} on the sim's clock, which is what a wind-up is in. */
+const CAST_RELEASE_TICKS = (CAST_RELEASE_MS / 1000) * SERVER_TICK_RATE;
+
 /**
  * The parameter names a driven unit is expected to declare.
  *
@@ -117,6 +122,15 @@ export const DRIVEN_PARAMETERS = {
   dead: 'dead',
   attack: 'attack',
   shoot: 'shoot',
+  /**
+   * The spell cast (spec 231).
+   *
+   * The third of the three, and the first that is reached by more than one
+   * ability: a body has one sword and one bow and four spells, so the clip
+   * behind this trigger is shared and {@link clipStretch} is what makes it land
+   * on each of their beats.
+   */
+  cast: 'cast',
   /**
    * The poise break (spec 173). No unit in the tree declares it yet, so today
    * this trigger is raised into the void on every rig -- which is the correct
@@ -142,13 +156,63 @@ export const DRIVEN_PARAMETERS = {
  * a clip for them and a wrong animation is worse than a generic one. That keeps
  * this a fact read off the content table rather than a list of ids to keep in
  * sync with it.
+ *
+ * The cast is the third answer (spec 231) and the one place that rule bends,
+ * because there is nothing mechanical to read. `skill.whirlwind` and
+ * `skill.rimeTouch` are both an `area` circle on the caster's own feet, and one
+ * is a blade going all the way round while the other is cold coming off the
+ * ground -- so whether a body focuses or swings is a fact about the *picture*
+ * and a row says so, in `castLook`, exactly as it says what its projectile
+ * looks like. Still a fact read off the content table rather than a list of ids
+ * kept in sync with it, which is the half of the rule that was load-bearing.
+ *
+ * Checked before the projectile, so a spell that also throws something is drawn
+ * as the spell. Nothing in the table is both today, and the order is the
+ * question "did somebody author a look for this" asked most-specific first.
  */
 export function attackTriggerFor(abilityId: string | null): string {
   if (abilityId === null) return DRIVEN_PARAMETERS.attack;
-  return abilityById(abilityId)?.projectile?.look === 'arrow'
-    ? DRIVEN_PARAMETERS.shoot
-    : DRIVEN_PARAMETERS.attack;
+  const ability = abilityById(abilityId);
+  if (ability?.castLook !== undefined) return DRIVEN_PARAMETERS.cast;
+  return ability?.projectile?.look === 'arrow' ? DRIVEN_PARAMETERS.shoot : DRIVEN_PARAMETERS.attack;
 }
+
+/**
+ * How fast the chosen clip has to run for its own beat to be the sim's (spec 231).
+ *
+ * A factor on {@link UnitFacts.attackRate}, and 1 for every clip that was
+ * authored for one ability. That is the swing and the draw: `slash`'s contact
+ * *is* `melee.slash`'s wind-up and `shoot`'s loose *is* `ranged.shot`'s, so the
+ * ratio of the authored wind-up to the one the sim is running is already the
+ * whole answer and there is nothing to rebase.
+ *
+ * The cast clip is the first in this tree that is **shared**. Every spell in the
+ * table goes through it and their wind-ups run from `skill.arcLash`'s 0.55s to
+ * `skill.blight`'s 1.0s, so its own release has to be related to whichever one
+ * is being cast:
+ *
+ * ```
+ * rate = attackRate * clipStretch = (authoredWindup / span) * (clipRelease / authoredWindup)
+ *      = clipRelease / span
+ * ```
+ *
+ * -- which is the property the whole thing is for: the frame the hands come
+ * forward is the tick the sim resolves the spell, whatever the ability is and
+ * whatever a status did to its wind-up. Two terms rather than one because
+ * `attackRate` is measured off the *wire* (the ticks the server sent) and this
+ * is measured off the *table*, and only the first of those can see a modifier.
+ *
+ * Handed the trigger rather than deriving it, because `triggerFor` may have
+ * fallen back to the swing on a unit with no cast state -- and a unit drawing
+ * `slash` must be driven at exactly the rate it is driven at today.
+ */
+export function clipStretch(trigger: string, abilityId: string | null): number {
+  if (trigger !== DRIVEN_PARAMETERS.cast || abilityId === null) return 1;
+  const windup = abilityById(abilityId)?.windupTicks ?? 0;
+  if (!(windup > 0)) return 1;
+  return CAST_RELEASE_TICKS / windup;
+}
+
 
 /**
  * Writes this tick's facts onto the machine and steps it.
@@ -186,9 +250,13 @@ export function driveUnit(
   // consume.
   if (!facts.dead) machine.revive();
   // Written before the trigger, so the swing that is about to start is entered
-  // at the right rate rather than a tick of it playing at the old one.
-  machine.setActionRate(facts.attackRate);
-  if (startedCasting(facts, previous)) machine.trigger(triggerFor(machine, facts.abilityId));
+  // at the right rate rather than a tick of it playing at the old one. The
+  // trigger is resolved first because the rate depends on which clip it reaches
+  // (spec 231) -- resolving it is a parameter lookup and raising it is not, so
+  // it is safe to ask on every tick and only raise on the edge.
+  const trigger = triggerFor(machine, facts.abilityId);
+  machine.setActionRate(facts.attackRate * clipStretch(trigger, facts.abilityId));
+  if (startedCasting(facts, previous)) machine.trigger(trigger);
   // Before the step, so a swing called off on this tick cannot fire the impact
   // it was about to (spec 166) -- the machine leaves the state first and events
   // are read off whatever it is in afterwards.
@@ -210,18 +278,19 @@ export function driveUnit(
 /**
  * The trigger to raise, given what this particular unit can answer.
  *
- * A unitdef with no `shoot` parameter falls back to `attack`, which is what it
- * did before this existed. That matters because the roster is not uniform: the
- * fox and the dev mannequin share this family's clip library and neither has a
- * draw state, and a silently dropped trigger is a body standing perfectly still
- * through its own attack -- a worse outcome than a generic animation, and a
- * much harder one to notice.
+ * A unitdef with no `shoot` -- or, since spec 231, no `cast` -- parameter falls
+ * back to `attack`, which is what it did before either existed. That matters
+ * because the roster is not uniform: the fox and the dev mannequin share this
+ * family's clip library and neither has a draw state or a focus state, and a
+ * silently dropped trigger is a body standing perfectly still through its own
+ * attack -- a worse outcome than a generic animation, and a much harder one to
+ * notice.
  *
  * `getParameter` is the question to ask, because it returns undefined for a
  * parameter the document never declared, which is exactly the condition and is
  * already how `setParameter` decides to ignore one.
  */
-function triggerFor(machine: UnitMachine, abilityId: string | null): string {
+export function triggerFor(machine: UnitMachine, abilityId: string | null): string {
   const wanted = attackTriggerFor(abilityId);
   if (wanted === DRIVEN_PARAMETERS.attack) return wanted;
   return machine.getParameter(wanted) === undefined ? DRIVEN_PARAMETERS.attack : wanted;

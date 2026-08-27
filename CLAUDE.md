@@ -802,6 +802,69 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  *is* the distance the hands get apart, and it prints that
                  distance per frame beside the picture because a thumbnail of a
                  pig cannot settle whether the string hand went back.
+                 pig-cast.ts is the third of them (spec 231): six poses over
+                 1250ms with the hands drawn in to the chest, a coil that creeps
+                 for 460ms, and both arms thrown forward at 850. It exists
+                 because every spell in the game was drawn as a sword chop --
+                 `attackTriggerFor` had two answers and neither was a cast --
+                 and the one thing that makes it different from the other two is
+                 the reason the fix was not simply a third clip. **It is
+                 shared.** `slash` was authored for `melee.slash` and `shoot`
+                 for `ranged.shot`, so each one's own beat *is* that ability's
+                 wind-up and today's playback rate is already right; every
+                 spell in the table casts through this one, and their wind-ups
+                 differ by nearly two to one. So its release
+                 is rebased per cast by `unit-driver.ts`'s `clipStretch`, and
+                 `CAST_RELEASE_MS` was **derived rather than chosen**: the pig's
+                 `maxTimeScale` is 2, which put it in `[0.5 * 1400, 2 * 500]`,
+                 and the point in that window minimising the worst stretch is
+                 the geometric mean, 837 -- 850 being the nearest value on the
+                 50ms grid the other two clips are on, and a whole 60Hz sample
+                 of a 1250ms clip.
+                 Spec 231 then removed both of the rows that fixed those ends,
+                 and the number **did not move**, which is the more useful half
+                 of the story: what is asserted is the *bound* -- every spell
+                 within `maxTimeScale` of the release, comfortably at 1.55x --
+                 rather than the optimum, because pinning the optimum means
+                 re-authoring a committed `.glb` every time a spell is added or
+                 removed, for a change in the worst stretch nobody can see. The
+                 four spells left are the sigil ones.
+                 Two things in it were learned by getting them wrong, and both
+                 are about the *recovery* rather than the cast. **A cast's hands
+                 travel further coming home than going out**, because the push
+                 starts from the chest and is already half way -- so at the
+                 swing's 200ms settle the recovery came back four times faster
+                 than the extension, which reads as the body being yanked. Two
+                 things fix it together: 400ms of recovery, and a `ready` pose
+                 with the hands already up in front rather than where the idle
+                 actually leaves them (measured, at `up: 0.058`) -- the one
+                 place this file knowingly spends part of its 60ms entry blend,
+                 which is what `pig-shot.ts`'s own bow-ready stance already
+                 spends. And **the extension is short**: `focus` sits at 720
+                 rather than half way, so the release is 130ms and eight frames,
+                 near enough the swing's own six. The long readable part of a
+                 commitment is the coil; the release is a snap. Everything else
+                 is borrowed whole -- `STRIKE_GUARD_LEGS` in every key, so a
+                 foot cannot slide by construction, and the strike's rule that
+                 the frame the picture lands and the frame the spell lands are
+                 the same frame.
+                 `scripts/aim-cast.ts` solves its arms and `scripts/arm-solve.ts`
+                 is the solver, which is `aim-bow.ts`'s lifted out of it rather
+                 than copied: two clips wanted the same descent, and a second
+                 copy would be a second set of weights to keep in step. The
+                 extraction is behaviour-preserving to the character -- run
+                 `aim-bow.ts` and it still prints the numbers committed in
+                 `pig-shot.ts`. `npx tsx scripts/make-pig-cast.ts` writes the
+                 bytes and `npx tsx scripts/preview-cast.ts` photographs them,
+                 and unlike the shot it draws **no bar between the hands**: a
+                 draw *is* the distance the hands get apart, so there the bar is
+                 a measurement, and a cast holds nothing -- at full extension the
+                 hands are a fifth of a body apart and a bar between them is a
+                 staff this game has not got. It prints two distances instead,
+                 because a cast is two movements, and samples the key times as
+                 well as the even step: two of the six authored poses sit between
+                 multiples of 50, and the first cut of the strip had neither of
+                 them in it.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and
@@ -2807,6 +2870,44 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 Since spec 237 **every ability in that table is reachable by
+                 somebody**, and it is a test rather than a habit: an item grants
+                 it as an active skill, an item or a monster names it as a basic
+                 attack, or it is one of the two the game reaches for directly --
+                 `BASIC_ATTACK_ID` (bare hands, and every melee monster) and the
+                 flask, identified by its `chargeCost` rather than by its id,
+                 because that id lives in the renderer and a second copy of it in
+                 the test is the drift the test exists to catch.
+                 What it caught was spec 062's own starting set, still sitting
+                 there: **nine of twenty-five rows granted by nothing** -- one per
+                 `AbilityKind`, written to exercise the kinds end to end and
+                 explicitly "not to be balanced" -- which spec 188 superseded when
+                 it moved what a player casts onto sigils and which nobody
+                 removed. Seven went (`melee.heavy`, the three bolts,
+                 `ground.quake`, `self.mend`, `channel.drain`); two stayed,
+                 because an item table cannot see what reaches them. They were not
+                 harmless: not being `skill: true` they were castable by any
+                 client that named one, and two of them out-damaged every real
+                 skill, so they were what `npm run balance` had been measuring the
+                 twelve builds with -- the harness reads the sigils now, and the
+                 magic rows in that table dropped by half when it did.
+                 Two things the removal exposed and did not fix. `kind: 'channel'`
+                 has **no rows**, so the whole channel path in `sim/abilities.ts`,
+                 `client/combat.ts` and `data/description.ts` is live and
+                 unreachable from content; taking it out means removing a member
+                 from the middle of `CastPhaseValue`, which renumbers the two after
+                 it, so it is a protocol change and wants its own spec. And
+                 `attackTimingFor` sends a non-basic ability's `cooldownTicks`
+                 through `resolveAttackTiming` as though it were a Base Attack
+                 Time, which clamps it to `MAX_ATTACK_INTERVAL_SECONDS` -- a
+                 constant whose own comment says "nothing in the content reaches
+                 either bound", true of BAT and false here: **twelve of the
+                 fourteen non-basic rows are over five seconds, so every one of
+                 them is really on a five-second cooldown.** Scorched Earth's
+                 authored 24s is 5s. It was invisible while the ability those
+                 tests drove was `melee.heavy`, whose cooldown was inside the
+                 bound; `abilities.test.ts` asserts the clamped value and names it
+                 now, so it is written down rather than assumed.
                  `data/weapon-scaling.ts` is **what a weapon scales with**
                  (spec 216), and it exists because until it did, every weapon in
                  the game scaled the same way and the way was Strength: the two
@@ -3052,7 +3153,9 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  That is the first ownership check the ability system has ever
                  had -- `STARTING_ABILITIES` was exported and read by nothing
                  for a hundred and twenty specs, so any client could send
-                 `ground.quake` on its first tick. And **a swap costs
+                 `ground.quake` on its first tick. Spec 231 removed both: the
+                 list, and the nine rows it named that no sigil, weapon or
+                 monster ever reached. And **a swap costs
                  something**: `player/skill-slots.ts` refuses a move that would
                  empty a slot whose skill is on cooldown (checked over *both*
                  ends, since swapping something in empties a slot as surely as
@@ -4366,7 +4469,33 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  worse than a generic one. A unit whose document declares no
                  `shoot` parameter falls back the same way, since a silently
                  dropped trigger is a body standing perfectly still through its
-                 own attack. Since spec 166 the snapshot also carries how much
+                 own attack. Spec 230 is the third answer and the one place
+                 that rule bends, because there is nothing mechanical to read:
+                 `skill.whirlwind` and `skill.rimeTouch` are both an `area`
+                 circle on the caster's own feet, both `targeting: 'self'`, both
+                 damage in a radius, and one is a blade going all the way round
+                 while the other is cold coming off the ground. **Whether a body
+                 focuses or swings is a fact about the picture**, so the row says
+                 so in `castLook` -- an authored field in the register
+                 `ProjectileLook` is already in, which keeps the half of the rule
+                 that was load-bearing: a fact read off the content table rather
+                 than a list of ids kept in sync with it.
+                 `clipStretch` is the other half and is what a *shared* clip
+                 costs. `attackRate` is `authoredWindup / span`, which is the
+                 whole answer for a clip authored for one ability -- the swing
+                 and the draw, whose own beat *is* that ability's wind-up -- and
+                 says nothing at all for one every spell goes through. Multiplied
+                 by `clipRelease / authoredWindup` it telescopes to
+                 `clipRelease / span`, which is the sentence the spec is about:
+                 the frame the hands come forward is the tick the sim resolves
+                 the spell, whatever the ability is and whatever a status did to
+                 its wind-up. Two terms rather than one because the first is
+                 measured off the **wire** and the second off the **table**, and
+                 only the wire can see a modifier. It is handed the *trigger*
+                 rather than deriving one, because `triggerFor` may have fallen
+                 back to the swing on a unit with no focus state -- and a body
+                 drawing `slash` has to be driven at exactly the rate it is
+                 driven at today. Since spec 166 the snapshot also carries how much
                  of the cast is **left** -- `endTick - tick`, which the cast bar
                  already reads -- because that is the one thing that separates a
                  cast which *finished* from one that was *called off*, and both
@@ -4646,7 +4775,11 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  exists and **overrides** the equipped skills rather than being
                  the only way to fill a slot -- a harness that wants
                  `ground.quake` on the bar should not have to loot a sigil for
-                 it first.
+                 it first. (That row is gone since spec 237; the switch is not,
+                 and it is the only way to put a skill on the bar without one --
+                 though the *server* still refuses a `skill: true` ability that
+                 is not in a slot, so `?slots=` now fills the bar rather than
+                 the hands.)
                  Since spec 196 none of that is DOM: the row is
                  `src/ui/screens/action-bar.ts` on the interface canvas, the
                  plan is pushed into the mount rather than into `hud.ts`, and a

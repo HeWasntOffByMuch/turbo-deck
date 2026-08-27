@@ -279,16 +279,24 @@ describe('ABILITY_ELEMENTS', () => {
   it('files each element under an ability that really is one', () => {
     // The table read back the other way, so a row moved between elements fails
     // here rather than in somebody's ears.
-    const representative: Readonly<Record<Element, string>> = {
+    //
+    // `arcane` is deliberately absent: since spec 237 no ability is one. The
+    // five that were -- the three bolts, the quake and the drain channel -- were
+    // spec 062's demo set, granted by nothing. So the map is partial, and the
+    // second loop is what stops that being a hole: every element the table
+    // really files something under has to be named here.
+    const representative: Partial<Record<Element, string>> = {
       physical: 'melee.slash',
       fire: 'ranged.ember',
       ice: 'skill.rimeTouch',
       lightning: 'skill.arcLash',
       poison: 'skill.poisonDart',
-      arcane: 'bolt.arcane',
     };
     for (const [element, abilityId] of Object.entries(representative)) {
       expect(elementOf(abilityId), abilityId).toBe(element);
+    }
+    for (const element of new Set(Object.values(ABILITY_ELEMENTS))) {
+      expect(representative[element], `${element} has rows but no representative`).toBeDefined();
     }
   });
 });
@@ -495,7 +503,9 @@ describe('soundForEffect', () => {
     expect(soundForEffect('skill.rimeTouch.impact')).toBe('elemental.ice.impact');
     expect(soundForEffect('skill.arcLash.impact')).toBe('elemental.lightning.impact');
     expect(soundForEffect('skill.acidSpray.impact')).toBe('elemental.poison.impact');
-    expect(soundForEffect('ground.quake.impact')).toBe('elemental.arcane.impact');
+    // No arcane row to ask with: `ground.quake` was the one that used to stand
+    // here and went with spec 062's demo set (spec 237). `elemental.arcane.impact`
+    // is recorded and waiting for the first arcane skill somebody authors.
   });
 });
 

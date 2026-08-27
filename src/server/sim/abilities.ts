@@ -1717,7 +1717,7 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
   // list was written, validated, typechecked and never run -- the same stranded
   // path a projectile's was. Run *after* the healing rather than instead of it,
   // because the two columns are independent: a row may be a heal, or a list, or
-  // both, and folding one into the other would make `self.mend` an effect list
+  // both, and folding one into the other would make a self-heal an effect list
   // for no reason.
   const applied = applyEffects(ability, restored.entity, restored.entity, tick, rng);
   const healed = applied.target.health;

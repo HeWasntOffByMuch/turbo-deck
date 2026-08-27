@@ -134,16 +134,28 @@ function damageOf(ability: AbilityDefinition, attacker: EffectiveStats): number 
   return hit && hit.kind === 'hit' ? hit.damage : 0;
 }
 
-/** A row that exists only here. The brief asks for these rather than content. */
+/**
+ * A row that exists only here. The brief asks for these rather than content.
+ *
+ * Built over `melee.slash` for the required fields it has no opinion about. It
+ * is the neutral base because it is the one production row carrying no
+ * `effects` and no `costs` -- a synthetic fixture that inherited a skill's stun
+ * or its guard price would be a fixture nobody could read the damage off.
+ *
+ * Both of the base's own opinions are dropped unless a caller states them.
+ * `basicAttack` because that is the one flag `resolveBlow` branches on, so
+ * inheriting it would make every row here take the weapon's range and none of
+ * its own letters -- which is the very distinction these tests measure. And
+ * `scaling` because the strict tsconfig has `exactOptionalPropertyTypes`, so an
+ * explicit `undefined` is not the same thing as an absent field, and "declares
+ * nothing" is what half of this file is about.
+ */
 function row(overrides: Partial<AbilityDefinition>): AbilityDefinition {
-  const base = abilityById('melee.heavy');
-  if (!base) throw new Error('no melee.heavy');
-  // `scaling` is deliberately deleted rather than set to `undefined`: the
-  // strict tsconfig has `exactOptionalPropertyTypes`, so an explicit
-  // `undefined` is not the same thing as an absent field -- which is the very
-  // distinction this spec leans on for "declares nothing".
+  const base = abilityById('melee.slash');
+  if (!base) throw new Error('no melee.slash');
   const made: Record<string, unknown> = { ...base, id: 'test.row', damage: 0, ...overrides };
   if (overrides.scaling === undefined) delete made.scaling;
+  if (overrides.basicAttack === undefined) delete made.basicAttack;
   return made as unknown as AbilityDefinition;
 }
 
@@ -208,7 +220,6 @@ describe('every production ability declares a scaling model (spec 238)', () => {
     // is these specific rows: every one of them was an Intelligence ability
     // before this spec, and Whirlwind is the brief's own example.
     const martial = [
-      'melee.heavy',
       'skill.whirlwind',
       'skill.guardBreak',
       'skill.stunningBlow',

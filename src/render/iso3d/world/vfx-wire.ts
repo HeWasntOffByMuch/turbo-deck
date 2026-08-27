@@ -160,7 +160,9 @@ export const HEAL_EFFECT = 'heal_restore';
  * the registry under its own id, which is the seam `addEffect` already checks.
  */
 export const REDUNDANT_SERVER_EFFECTS: ReadonlySet<string> = new Set([
-  'self.mend.self',
+  // One entry rather than two since spec 232: `self.mend` was spec 062's
+  // demo heal, granted by nothing and removed with the rest of that set. The
+  // flask is the self-heal the game still has.
   'self.hearthdraught.self',
   // A projectile that struck a body (spec 232). `world.ts` sends this from the
   // same branch that raises the `hit`, at the same instant and the same point,

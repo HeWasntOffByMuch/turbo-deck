@@ -310,8 +310,8 @@ describe('game message round-trip', () => {
     {
       type: ServerMessageType.Cooldowns,
       entries: [
-        { abilityId: 'melee.heavy', readyAtTick: 1800 },
-        { abilityId: 'ground.quake', readyAtTick: 2400 },
+        { abilityId: 'skill.acidSpray', readyAtTick: 1800 },
+        { abilityId: 'skill.blight', readyAtTick: 2400 },
       ],
       resource: 12.5,
       atTick: 1750,

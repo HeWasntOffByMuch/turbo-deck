@@ -152,9 +152,12 @@ function ability(id: string): AbilityDefinition {
 }
 
 const SLASH = ability('melee.slash');
-const QUAKE = ability('ground.quake');
+// A ground spell that launches nothing, and a projectile that does: the two
+// halves of the handling test below. Repointed off spec 062's demo rows by
+// spec 237; what matters about each is its *shape*, not its id.
+const SPELL = ability('skill.blight');
 const SHOT = ability('ranged.shot');
-const BOLT = ability('bolt.arcane');
+const DART = ability('skill.poisonDart');
 
 // ==========================================================================
 
@@ -199,10 +202,10 @@ describe('Agility shortens the animation and never the interval', () => {
     // something, and nothing else.
     const agile = { stats: statsFor({ agility: 40 }) };
     expect(windupScaleFor(SHOT, agile, 0)).toBeLessThan(1);
-    expect(windupScaleFor(BOLT, agile, 0)).toBeLessThan(1);
+    expect(windupScaleFor(DART, agile, 0)).toBeLessThan(1);
     // Quake launches nothing and is not a basic attack: its wind-up is its own
     // statement about itself.
-    expect(windupScaleFor(QUAKE, agile, 0)).toBe(1);
+    expect(windupScaleFor(SPELL, agile, 0)).toBe(1);
   });
 
   it('lets Flow shorten the follow-through further, and nothing else', () => {
@@ -259,10 +262,10 @@ describe('poise', () => {
   });
 
   it('drops whatever the broken body was casting, and reports it', () => {
-    const victim = { ...target(), poise: 1, cast: casting('ground.quake', CastPhase.Windup) };
+    const victim = { ...target(), poise: 1, cast: casting('skill.blight', CastPhase.Windup) };
     const result = applyPoiseDamage(victim, 9999, 0, true);
     expect(result.broke).toBe(true);
-    expect(result.interrupted?.abilityId).toBe('ground.quake');
+    expect(result.interrupted?.abilityId).toBe('skill.blight');
     expect(result.entity.cast).toBeNull();
   });
 
@@ -292,13 +295,13 @@ describe('poise', () => {
   });
 
   it('protects a basic attack but not a spell, until the Juggernaut pair', () => {
-    const strong = body(statsFor({ strength: 40 }), { cast: casting('ground.quake', CastPhase.Windup) });
+    const strong = body(statsFor({ strength: 40 }), { cast: casting('skill.blight', CastPhase.Windup) });
     expect(poiseArmorOf(strong, false)).toBe(0);
 
     // STR/CON at the pair threshold, and *below half health*, which is the
     // condition the pair is about.
     const juggernaut = statsFor({ strength: 40, constitution: 25 });
-    const healthy = body(juggernaut, { cast: casting('ground.quake', CastPhase.Windup) });
+    const healthy = body(juggernaut, { cast: casting('skill.blight', CastPhase.Windup) });
     expect(poiseArmorOf(healthy, false)).toBe(0);
     const hurt = { ...healthy, health: juggernaut.maxHealth * 0.4 };
     expect(poiseArmorOf(hurt, false)).toBeGreaterThan(0);
@@ -399,7 +402,7 @@ describe('a blow', () => {
     let currentRng = rng;
     const damages: number[] = [];
     for (let i = 0; i < 6; i++) {
-      const result = resolveBlow(BOLT, body(statsFor()), victim, i, currentRng);
+      const result = resolveBlow(DART, body(statsFor()), victim, i, currentRng);
       currentRng = result.rng;
       const hit = result.events.find((e) => e.kind === 'hit') as { damage: number } | undefined;
       if (hit) damages.push(hit.damage);
@@ -429,7 +432,7 @@ describe('a blow', () => {
   it('rolls the crit alone for an ability, which has no weapon range to roll', () => {
     const noWeakPoint = body({ ...statsFor(), traits: { ...NEUTRAL_TRAITS, weakPointChance: 0 } });
     const [, expected] = Rng.fromSeed(99).nextInt(0, 9999);
-    const result = resolveBlow(BOLT, noWeakPoint, body(statsFor(), { id: 2 }), 0, Rng.fromSeed(99));
+    const result = resolveBlow(DART, noWeakPoint, body(statsFor(), { id: 2 }), 0, Rng.fromSeed(99));
     expect(result.rng.getState()).toEqual(expected.getState());
   });
 
@@ -458,12 +461,12 @@ describe('a blow', () => {
 
 describe('the resource economy', () => {
   it('is exactly the table for a fresh character', () => {
-    expect(resourceCostFor(QUAKE, { stats: statsFor() }, 0)).toBe(QUAKE.cost);
+    expect(resourceCostFor(SPELL, { stats: statsFor() }, 0)).toBe(SPELL.cost);
   });
 
   it('falls with Wisdom, and never to zero', () => {
-    const wise = resourceCostFor(QUAKE, { stats: statsFor({ wisdom: SCALING.attributeHardCap }) }, 0);
-    expect(wise).toBeLessThan(QUAKE.cost);
+    const wise = resourceCostFor(SPELL, { stats: statsFor({ wisdom: SCALING.attributeHardCap }) }, 0);
+    expect(wise).toBeLessThan(SPELL.cost);
     expect(wise).toBeGreaterThan(0);
   });
 
@@ -483,28 +486,28 @@ describe('the resource economy', () => {
     // Below the shaping milestone, so this one is paying no premium at all.
     const plain = statsFor({ intelligence: 19 });
 
-    const shaped = resourceCostFor(QUAKE, { stats: shaper }, 0);
-    const paidOff = resourceCostFor(QUAKE, { stats: efficient }, 0);
-    const unshaped = resourceCostFor(QUAKE, { stats: plain }, 0);
+    const shaped = resourceCostFor(SPELL, { stats: shaper }, 0);
+    const paidOff = resourceCostFor(SPELL, { stats: efficient }, 0);
+    const unshaped = resourceCostFor(SPELL, { stats: plain }, 0);
 
-    expect(unshaped).toBe(QUAKE.cost);
+    expect(unshaped).toBe(SPELL.cost);
     expect(shaped).toBeGreaterThan(unshaped);
     expect(paidOff).toBeLessThan(shaped);
     // The relief can only ever cancel the premium -- it can never make an
     // unshaped cast cheaper, which is Wisdom's job and not Intelligence's. So
     // full relief lands *on* the list price, and never under it, while keeping
     // the geometry the premium was paying for.
-    expect(paidOff).toBeCloseTo(QUAKE.cost, 9);
+    expect(paidOff).toBeCloseTo(SPELL.cost, 9);
     expect(efficient.traits.spellRadiusPct).toBeGreaterThan(0);
   });
 
   it('lets Attuned and Flow stack a discount, bounded', () => {
     const stats = statsFor({ wisdom: 25, agility: 25 });
-    const bare = resourceCostFor(QUAKE, { stats, statuses: NO_STATUSES }, 0);
+    const bare = resourceCostFor(SPELL, { stats, statuses: NO_STATUSES }, 0);
     let held: Statuses = NO_STATUSES;
     for (let i = 0; i < 3; i++) held = applyStatus(held, StatusId.Attuned, 0, 100, { maxStacks: 3 });
     for (let i = 0; i < 3; i++) held = applyStatus(held, StatusId.Flow, 0, 100, { maxStacks: 3 });
-    const discounted = resourceCostFor(QUAKE, { stats, statuses: held }, 0);
+    const discounted = resourceCostFor(SPELL, { stats, statuses: held }, 0);
     expect(discounted).toBeLessThan(bare);
     expect(discounted).toBeGreaterThan(0);
   });
@@ -653,8 +656,8 @@ describe('prepared casting', () => {
   it('halves the next non-basic wind-up, and leaves the weapon alone', () => {
     const stats = statsFor({ intelligence: 35 });
     const primed = applyStatus(NO_STATUSES, StatusId.Prepared, 0, 9999);
-    expect(windupScaleFor(QUAKE, { stats, statuses: primed }, 0)).toBeLessThan(
-      windupScaleFor(QUAKE, { stats, statuses: NO_STATUSES }, 0),
+    expect(windupScaleFor(SPELL, { stats, statuses: primed }, 0)).toBeLessThan(
+      windupScaleFor(SPELL, { stats, statuses: NO_STATUSES }, 0),
     );
     expect(windupScaleFor(SLASH, { stats, statuses: primed }, 0)).toBe(
       windupScaleFor(SLASH, { stats, statuses: NO_STATUSES }, 0),
@@ -664,14 +667,14 @@ describe('prepared casting', () => {
   it('refunds part of the cooldown for the Archmage pair, and nobody else', () => {
     const primed = applyStatus(NO_STATUSES, StatusId.Prepared, 0, 9999);
     const mage = statsFor({ intelligence: 35 });
-    expect(cooldownScaleFor(QUAKE, { stats: mage, statuses: primed }, 0)).toBe(
-      cooldownScaleFor(QUAKE, { stats: mage, statuses: NO_STATUSES }, 0),
+    expect(cooldownScaleFor(SPELL, { stats: mage, statuses: primed }, 0)).toBe(
+      cooldownScaleFor(SPELL, { stats: mage, statuses: NO_STATUSES }, 0),
     );
 
     const archmage = statsFor({ intelligence: 35, wisdom: 25 });
     expect(archmage.traits.preparedMastery).toBe(1);
-    expect(cooldownScaleFor(QUAKE, { stats: archmage, statuses: primed }, 0)).toBeLessThan(
-      cooldownScaleFor(QUAKE, { stats: archmage, statuses: NO_STATUSES }, 0),
+    expect(cooldownScaleFor(SPELL, { stats: archmage, statuses: primed }, 0)).toBeLessThan(
+      cooldownScaleFor(SPELL, { stats: archmage, statuses: NO_STATUSES }, 0),
     );
   });
 });
@@ -679,13 +682,13 @@ describe('prepared casting', () => {
 describe('spell geometry', () => {
   it('does nothing without the shaping milestone', () => {
     expect(statsFor({ intelligence: 19 }).traits.spellRadiusPct).toBe(0);
-    expect(castRangeFor(QUAKE, { stats: statsFor({ intelligence: 19 }) })).toBe(QUAKE.range);
+    expect(castRangeFor(SPELL, { stats: statsFor({ intelligence: 19 }) })).toBe(SPELL.range);
   });
 
   it('reaches further and lands wider once it is held', () => {
     const shaper = statsFor({ intelligence: SCALING.attributeHardCap });
     expect(shaper.traits.spellRadiusPct).toBeGreaterThan(0);
-    expect(castRangeFor(QUAKE, { stats: shaper })).toBeGreaterThan(QUAKE.range);
+    expect(castRangeFor(SPELL, { stats: shaper })).toBeGreaterThan(SPELL.range);
   });
 
   it('never lengthens a basic attack, whatever the Intelligence', () => {
@@ -747,14 +750,24 @@ describe('weapon scaling through a blow', () => {
     expect(took(armoured, mitigated.target)).toBeLessThan(took(soft, bare.target));
   });
 
-  // The split spec 147 drew and this spec deliberately did not move: a swing
-  // scales with what you are swinging, and a spell with Intelligence's spell
-  // power. A weapon's letters must not reach an ability's damage.
-  it('leaves an ability\'s damage alone -- that is still spell power', () => {
+  // The split spec 147 drew and neither this spec nor 238 moved: a swing scales
+  // with what you are swinging, and an ability with its own declared letters. A
+  // weapon's letters must not reach an ability's damage.
+  //
+  // The pair is `sword.worn` against `bow.hunting` because those are the two
+  // weapons in the table that grant **no attributes at all**, which is what
+  // isolates the claim. A weapon's attribute grants reach an ability's damage
+  // and are *meant* to (spec 238) -- +2 Strength off a maul is +2 Strength, and
+  // an ability with a Strength letter reads it exactly as it would off an
+  // amulet. Measured with the maul against the stars this test compared a build
+  // one Agility richer with a build two Strength richer and read the difference
+  // as a leak. Their letters are as far apart as the table goes -- A/D/- against
+  // D/A/- -- so a leak would show.
+  it('leaves an ability\'s damage alone -- that is still its own letters', () => {
     const target = body(statsFor(), { id: 2 });
-    const maul = resolveBlow(BOLT, body(holding('maul.iron', { strength: 40 })), target, 0, Rng.fromSeed(3));
-    const stars = resolveBlow(BOLT, body(holding('stars.weighted', { strength: 40 })), target, 0, Rng.fromSeed(3));
-    expect(maul.target.health).toBeCloseTo(stars.target.health, 9);
+    const sword = resolveBlow(DART, body(holding('sword.worn', { strength: 40 })), target, 0, Rng.fromSeed(3));
+    const bow = resolveBlow(DART, body(holding('bow.hunting', { strength: 40 })), target, 0, Rng.fromSeed(3));
+    expect(sword.target.health).toBeCloseTo(bow.target.health, 9);
   });
 });
 
@@ -869,11 +882,16 @@ describe('a rolled weapon range', () => {
     );
   });
 
+  // The weapon *roll* specifically: `weaponDamageMin`/`Max` differ by a factor
+  // of three across these two and an ability that read them would say so. The
+  // pair grants no attributes, for the reason the sibling test above states at
+  // length.
   it('leaves an ability\'s damage off the weapon entirely', () => {
     const target = body(statsFor(), { id: 2 });
-    const maul = resolveBlow(BOLT, body(holding('maul.iron')), target, 0, Rng.fromSeed(3));
-    const stars = resolveBlow(BOLT, body(holding('stars.weighted')), target, 0, Rng.fromSeed(3));
-    expect(maul.target.health).toBeCloseTo(stars.target.health, 9);
-    expect(maul.target.health).toBeLessThan(target.health);
+    const sword = resolveBlow(DART, body(holding('sword.worn')), target, 0, Rng.fromSeed(3));
+    const bow = resolveBlow(DART, body(holding('bow.hunting')), target, 0, Rng.fromSeed(3));
+    expect(holding('bow.hunting').weaponDamageMax).not.toBeCloseTo(holding('sword.worn').weaponDamageMax, 9);
+    expect(sword.target.health).toBeCloseTo(bow.target.health, 9);
+    expect(sword.target.health).toBeLessThan(target.health);
   });
 });

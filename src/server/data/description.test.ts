@@ -9,6 +9,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { ALL_ABILITIES, abilityById } from './abilities.js';
+import { isUnscaled } from './ability-scaling.js';
+import { SERVER_TICK_RATE } from '../config.js';
 import { ALL_ITEMS } from './items.js';
 import { STATUS_VISUALS } from './status-visuals.js';
 import { ALL_DOTS, dotById, dotPulseDamage } from './damage-over-time.js';
@@ -190,10 +192,10 @@ describe('derived numbers match the row they came from', () => {
   it('follows a retune without being edited', () => {
     // An *ability*, because since spec 217 a basic attack has no damage number
     // of its own to follow -- see the test below.
-    const bolt = abilityById('bolt.arcane');
-    expect(bolt).not.toBeNull();
-    if (!bolt) return;
-    const louder = { ...bolt, damage: 99, range: 123 };
+    const dart = abilityById('skill.poisonDart');
+    expect(dart).not.toBeNull();
+    if (!dart) return;
+    const louder = { ...dart, damage: 99, range: 123 };
     const text = technicalText(describeAbility(louder));
     expect(text).toContain('Deals 99 damage.');
     expect(text).toContain('Range 123.');
@@ -259,9 +261,22 @@ describe('effects are described in the row order', () => {
   });
 
   it('writes a channel as a cadence rather than as one blow', () => {
-    const ability = abilityById('channel.drain');
-    expect(ability).not.toBeNull();
-    if (!ability) return;
+    // Built here rather than looked up, because **no shipped row is a channel
+    // any more** (spec 237): `channel.drain` was spec 062's one row of that
+    // kind and went with the rest of the demo set. The mechanism is still in
+    // `sim/abilities.ts` and this branch is still in `description.ts`, so it is
+    // still tested -- against a row constructed for it, which is the honest
+    // shape while the kind has no content behind it.
+    const base = abilityById('skill.poisonDart');
+    expect(base).not.toBeNull();
+    if (!base) return;
+    const ability = {
+      ...base,
+      kind: 'channel' as const,
+      damage: 3,
+      channelTicks: 2 * SERVER_TICK_RATE,
+      pulseIntervalTicks: 0.25 * SERVER_TICK_RATE,
+    };
     expect(technicalText(describeAbility(ability))).toContain(
       `Deals ${ability.damage} damage every 0.25s for 2s.`,
     );
@@ -269,34 +284,45 @@ describe('effects are described in the row order', () => {
 });
 
 describe('nothing is invented', () => {
-  it('adds no effect line beyond damage and scaling for a row with no effects', () => {
-    // Two lines, and both are derived rather than invented: what it does, and
-    // what that grows with (spec 238). Heavy Blow is pure Strength `A`.
-    const ability = abilityById('melee.heavy');
+  it('adds no effect line beyond damage and scaling for a row that only damages', () => {
+    // Whirlwind since spec 237 took `melee.heavy` out of the table, and it is
+    // the better subject anyway: two lines, both derived rather than invented
+    // -- what it does, and what that grows with.
+    const ability = abilityById('skill.whirlwind');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const effects = describeAbility(ability).lines.filter((line) => line.tone === 'effect');
     expect(effects).toHaveLength(2);
     expect(effects[0]?.text).toBe(`Deals ${ability.damage} damage.`);
     // The weapon tooltip's notation, borrowed (spec 242): position is the
-    // attribute, so Heavy Blow's pure Strength `A` is the first of three.
-    expect(effects[1]?.text).toBe('A / - / -');
+    // attribute, so Whirlwind's Strength `A` and Agility `D` sit first and
+    // second -- the same string `sword.worn` draws.
+    expect(effects[1]?.text).toBe('A / D / -');
   });
 
   it('says nothing about scaling for a row that scales with nothing (spec 238)', () => {
     // The standard's first rule reaching the newest line: an ability that
-    // scales with nothing gets no line, rather than a line saying so. Asserted
-    // on the two rows where "fixed quantity" is the design -- a flask that grew
-    // with a build would stop being a fallback for the build that needs one.
-    for (const id of ['self.hearthdraught', 'self.mend']) {
-      const ability = abilityById(id);
-      expect(ability, id).not.toBeNull();
-      if (!ability) continue;
-      // Asserted structurally rather than by the absence of a phrase: the line
-      // is notation now, so there is no wording for a stale test to keep
-      // passing against.
-      expect(describeAbility(ability).lines.some((line) => line.spans !== undefined), id).toBe(false);
+    // scales with nothing gets no line, rather than a line saying so.
+    //
+    // Stated as a walk of the table rather than as a hand-written list of ids,
+    // which is what the first cut was and what spec 237 broke -- it named
+    // `self.mend` beside the flask, and when that row was deleted the test
+    // failed for the row being absent rather than for anything about a
+    // description. A rule over `isUnscaled` cannot go stale that way and covers
+    // every row added since.
+    //
+    // Asserted structurally rather than by the absence of a phrase: the line is
+    // notation now, so there is no wording for a stale test to pass against.
+    const unscaled = ALL_ABILITIES.filter((ability) => isUnscaled(ability.scaling));
+    for (const ability of unscaled) {
+      expect(describeAbility(ability).lines.some((line) => line.spans !== undefined), ability.id).toBe(
+        false,
+      );
     }
+    // And the row the rule is *about*: a flask that grew with a build would
+    // stop being the fallback for the build that needs one. Named so the walk
+    // above cannot pass vacuously on an empty list.
+    expect(unscaled.map((ability) => ability.id)).toContain('self.hearthdraught');
   });
 
   it('leaves a basic attack’s scaling to the weapon that decides it (spec 238)', () => {
