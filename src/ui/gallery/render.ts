@@ -422,15 +422,18 @@ export interface PlayRenderOptions {
   readonly scrollBody?: number;
 }
 
+// Real ability ids, because the row draws real icons and a made-up id would
+// draw the unknown box -- but fake costs, because what is being photographed is
+// the widget rather than the table. Repointed at surviving rows by spec 231.
 const DEMO_ABILITIES: readonly { readonly id: string; readonly icon: string; readonly cost: number }[] = [
   { id: 'melee.slash', icon: 'ability:slash', cost: 0 },
-  { id: 'melee.heavy', icon: 'ability:heavy', cost: 12 },
-  { id: 'bolt.arcane', icon: 'ability:bolt', cost: 8 },
-  { id: 'bolt.lob', icon: 'ability:lob', cost: 14 },
-  { id: 'bolt.seek', icon: 'ability:seek', cost: 10 },
-  { id: 'ground.quake', icon: 'ability:quake', cost: 22 },
-  { id: 'self.mend', icon: 'ability:mend', cost: 18 },
-  { id: 'channel.drain', icon: 'ability:drain', cost: 16 },
+  { id: 'skill.guardBreak', icon: 'ability:guardBreak', cost: 12 },
+  { id: 'skill.stunningBlow', icon: 'ability:stunningBlow', cost: 8 },
+  { id: 'skill.whirlwind', icon: 'ability:whirlwind', cost: 14 },
+  { id: 'skill.cripplingStrike', icon: 'ability:cripplingStrike', cost: 10 },
+  { id: 'skill.poisonDart', icon: 'ability:poisonDart', cost: 22 },
+  { id: 'skill.rendingCut', icon: 'ability:rendingCut', cost: 18 },
+  { id: 'self.hearthdraught', icon: 'item:potion', cost: 16 },
 ];
 
 const DEMO_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8'];

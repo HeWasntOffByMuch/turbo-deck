@@ -315,19 +315,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description: 'A quick forward cut, more habit than decision.',
   },
   {
-    id: 'melee.heavy',
-    name: 'Heavy Blow',
-    kind: 'melee',
-    targeting: 'direction',
-    windupTicks: seconds(1.1),
-    cooldownTicks: seconds(3),
-    cost: 2,
-    range: 90,
-    damage: 6,
-    arcCosSq: 0.65,
-    description: 'Both hands, and everything you weigh, put behind one swing.',
-  },
-  {
     id: 'ranged.shot',
     name: 'Hunting Shot',
     kind: 'projectile',
@@ -402,82 +389,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     projectile: { speed: 700, arc: 0.25, radius: 9, lifetimeTicks: seconds(1.5), look: 'ember' },
     basicAttack: true,
     description: 'A knot of fire, shaken off the charred head of the staff.',
-  },
-  {
-    id: 'bolt.arcane',
-    name: 'Arcane Bolt',
-    kind: 'projectile',
-    targeting: 'direction',
-    windupTicks: seconds(0.6),
-    cooldownTicks: seconds(0.8),
-    cost: 3,
-    range: 700,
-    damage: 3,
-    projectile: { speed: 620, arc: 0, radius: 8, lifetimeTicks: seconds(2) },
-    description: 'Raw force, shaped just enough to travel.',
-  },
-  {
-    id: 'bolt.lob',
-    name: 'Firepot',
-    kind: 'projectile',
-    targeting: 'point',
-    windupTicks: seconds(1.0),
-    cooldownTicks: seconds(4),
-    cost: 5,
-    range: 520,
-    damage: 4,
-    radius: 90,
-    // A full arc: at its 520-unit range that peaks at 130, which is exactly the
-    // constant it replaces -- the tell that the constant was always a 45-degree
-    // shot with the distance filed off (spec 089).
-    projectile: { speed: 300, arc: 1, radius: 12, lifetimeTicks: seconds(4) },
-    description: 'A clay pot of banked embers, thrown in a lazy arc.',
-  },
-  {
-    id: 'bolt.seek',
-    name: 'Seeking Bolt',
-    kind: 'projectile',
-    // The one row that exists to exercise a named cast at a range worth walking
-    // (spec 080). Everything under it was already built: a projectile carrying
-    // a target id tracks its mark and is disjointed by its death (spec 079).
-    targeting: 'unit',
-    windupTicks: seconds(0.9),
-    cooldownTicks: seconds(2.5),
-    cost: 4,
-    range: 480,
-    damage: 4,
-    // A third of the optimal arc: it skims rather than lobs, peaking at 42 over
-    // its full 480 rather than the 120 a full arc would give it.
-    projectile: { speed: 700, arc: 0.35, radius: 9, lifetimeTicks: seconds(3) },
-    description: 'It leaves knowing the shape of what you pointed it at.',
-  },
-  {
-    id: 'ground.quake',
-    name: 'Quake',
-    kind: 'ground',
-    targeting: 'point',
-    castLook: 'focus',
-    windupTicks: seconds(1.4),
-    cooldownTicks: seconds(8),
-    cost: 7,
-    range: 420,
-    damage: 7,
-    radius: 140,
-    description: 'The ground remembers being struck, and answers.',
-  },
-  {
-    id: 'self.mend',
-    name: 'Mend',
-    kind: 'self',
-    targeting: 'self',
-    castLook: 'focus',
-    windupTicks: seconds(1.2),
-    cooldownTicks: seconds(10),
-    cost: 6,
-    range: 0,
-    damage: 0,
-    healing: 9,
-    description: 'Knitting yourself back together is not a quick thing.',
   },
   {
     id: 'self.hearthdraught',
@@ -947,22 +858,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description:
       'A test blow: no damage worth the name, and every status the game can show, at once.',
   },
-  {
-    id: 'channel.drain',
-    name: 'Drain',
-    kind: 'channel',
-    targeting: 'direction',
-    castLook: 'focus',
-    windupTicks: seconds(0.5),
-    cooldownTicks: seconds(6),
-    cost: 4,
-    range: 220,
-    damage: 1,
-    arcCosSq: 0.75,
-    channelTicks: seconds(2),
-    pulseIntervalTicks: seconds(0.25),
-    description: 'It takes something out of them, and you can feel it arrive.',
-  },
 ];
 
 export const ABILITIES: ReadonlyMap<string, AbilityDefinition> = new Map(
@@ -981,19 +876,6 @@ export function abilityById(id: string): AbilityDefinition | null {
  * `EffectiveStats.basicAttackId`, derived from its main hand or its row.
  */
 export const BASIC_ATTACK_ID = 'melee.slash';
-
-/** What a fresh character can use. Everything else is unlocked elsewhere later. */
-export const STARTING_ABILITIES: readonly string[] = [
-  'melee.slash',
-  'melee.heavy',
-  'bolt.arcane',
-  'bolt.lob',
-  'bolt.seek',
-  'ground.quake',
-  'self.mend',
-  'self.hearthdraught',
-  'channel.drain',
-];
 
 /**
  * Total ticks a cast occupies the caster, from the wind-up starting to free,

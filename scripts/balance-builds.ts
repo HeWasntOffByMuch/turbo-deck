@@ -45,7 +45,8 @@
  */
 
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../src/server/config.js';
-import { abilityById, STARTING_ABILITIES } from '../src/server/data/abilities.js';
+import { abilityById } from '../src/server/data/abilities.js';
+import { ITEMS } from '../src/server/data/items.js';
 import { BUILD_PRESETS, fullSpreadOf, presetById, type BuildPreset } from '../src/server/data/presets.js';
 import { monsterById } from '../src/server/data/monsters.js';
 import { startingBaseStats } from '../src/server/player/attributes.js';
@@ -138,7 +139,13 @@ function recordFor(preset: BuildPreset): PersistedPlayer {
     // which nobody does, and which is 1-2 damage against an ability's several.
     // The same weapon for all twelve, so it stays a control rather than a
     // variable.
-    equipment: STARTER_EQUIPMENT,
+    equipment: {
+      ...STARTER_EQUIPMENT,
+      skill1: HARNESS_SIGILS[0],
+      skill2: HARNESS_SIGILS[1],
+      skill3: HARNESS_SIGILS[2],
+      skill4: HARNESS_SIGILS[3],
+    },
     inventory: emptyInventory(),
     position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
     facing: 0,
@@ -296,10 +303,35 @@ function run(preset: BuildPreset): Row {
  * the weapon's damage is the line.
  */
 const PUNCTUATION_RATIO = 2;
-const CASTABLE = STARTING_ABILITIES.map((id) => abilityById(id))
+/**
+ * What a build has to punctuate with, read off the **sigils** (spec 231).
+ *
+ * It used to be `STARTING_ABILITIES`, which was spec 062's demo set -- one row
+ * per `AbilityKind`, granted by nothing and castable by anybody. Those rows are
+ * gone, and the abilities a character can actually cast now come from the four
+ * skill slots, so the list comes from the same place: every `activeSkillId` in
+ * the item table. Derived rather than typed out, so a thirteenth sigil is in
+ * the harness the moment it is in the game.
+ */
+const CASTABLE = [...ITEMS.values()]
+  .map((item) => item.activeSkillId)
+  .filter((id): id is string => id !== undefined)
+  .map((id) => abilityById(id))
   .filter((ability): ability is NonNullable<typeof ability> => ability !== null)
   .filter((ability) => !ability.basicAttack && ability.kind !== 'self')
   .sort((a, b) => b.damage - a.damage);
+
+/**
+ * The sigils every preset wears, so `startCast` will let it cast one.
+ *
+ * A skill is refused unless it is in a slot (spec 188), so a harness carrying
+ * none would measure twelve builds auto-attacking. The **same four for all
+ * twelve**, for the reason they all carry the same sword: a hand-picked set per
+ * build would make the table a comparison between whoever picked the sets. The
+ * four highest-damage sigils, because `bestReady` is looking for something
+ * worth interrupting the backbone for and takes them in damage order anyway.
+ */
+const HARNESS_SIGILS = ['sigil.whirlwind', 'sigil.stunningBlow', 'sigil.guardBreak', 'sigil.rendingCut'] as const;
 
 function bestReady(
   self: { readonly cooldowns: Readonly<Record<string, number>>; readonly resource: number; readonly stats: { readonly traits: { readonly resourceCostScale: number } } },

@@ -47,13 +47,9 @@ const TICK_RATE = 60;
  */
 const ABILITY_ICONS: Readonly<Record<string, string>> = {
   'melee.slash': 'ability:slash',
-  'melee.heavy': 'ability:heavy',
-  'bolt.arcane': 'ability:bolt',
-  'bolt.lob': 'ability:lob',
-  'bolt.seek': 'ability:seek',
-  'ground.quake': 'ability:quake',
-  'self.mend': 'ability:mend',
-  'channel.drain': 'ability:drain',
+  // The bow and the stars borrow glyphs rather than having their own. The names
+  // outlived the abilities they were drawn for (spec 231) and are kept because
+  // the *sprites* are still the right picture for a shot and a thrown blade.
   'ranged.shot': 'ability:seek',
   'ranged.star': 'ability:slash',
   // The four active skills (spec 188) and the flask, which had no rows at all
