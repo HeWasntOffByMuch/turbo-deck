@@ -15,7 +15,7 @@
  * would go quiet with every test green.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -35,22 +35,52 @@ import { SOUND_EVENT_IDS } from './events.js';
 
 const CATALOG = new URL('../../../assets/audio/sfx.json', import.meta.url);
 
+/** Where the bake writes, and what vite serves. A URL here is a file there. */
+const bakedFile = (url: string): URL => new URL(`../../../public${url}`, import.meta.url);
+
+/**
+ * The library the rename map was written for.
+ *
+ * It is closed at this number on purpose: the map renames what `sfx.json`
+ * already referenced when derivation replaced the bake's own table, and every
+ * sound added since goes through {@link bakedPathFor}.
+ */
+const DELIVERED = 74;
+
 describe('the delivered library', () => {
   /**
    * The one that would break the game silently.
    *
-   * Every URL the shipped catalog names has to be a URL the bake still produces
-   * for the source it came from. If a rename row were dropped, the derived name
-   * would be a different, perfectly valid path -- and nothing would fail until a
-   * player noticed the sound had gone.
+   * Every URL the shipped catalog names has to be one the bake actually wrote.
+   * A variant naming a file that is not there is an import that succeeded, a
+   * bake that succeeded, and silence the first time somebody swings a sword --
+   * so this is asked of the files rather than of any one naming rule, which is
+   * what lets a renamed take and a derived one be checked by the same sentence.
    */
   it('bakes to exactly the paths the shipped catalog references', () => {
     const parsed = parseCatalog(readFileSync(CATALOG, 'utf8'));
     if ('error' in parsed) throw new Error(parsed.error);
-    const produced = new Set(Object.values(BAKED_NAMES).map(urlForBaked));
     const referenced = [...referencedVariants(parsed.catalog)];
     expect(referenced.length).toBeGreaterThan(0);
-    for (const url of referenced) expect(produced).toContain(url);
+    // Asked of the bytes rather than of the rename map, because the map covers
+    // the delivered library alone -- a take imported through the SFX tab derives
+    // its name, and is just as much a 404 if the bake never wrote it.
+    for (const url of referenced) expect(existsSync(bakedFile(url))).toBe(true);
+  });
+
+  /**
+   * The delivered paths cannot move.
+   *
+   * The catalog references them by name, so a dropped rename row would re-derive
+   * a different, perfectly valid path -- and nothing would fail until a player
+   * noticed the sound had gone. The count is what catches the dropped row; the
+   * files are what catch a rename pointing at nothing.
+   */
+  it('never moves one of the delivered paths', () => {
+    expect(Object.keys(BAKED_NAMES)).toHaveLength(DELIVERED);
+    for (const name of Object.values(BAKED_NAMES)) {
+      expect(existsSync(bakedFile(urlForBaked(name)))).toBe(true);
+    }
   });
 
   it('renames every source to a distinct name', () => {
