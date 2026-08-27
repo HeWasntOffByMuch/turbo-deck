@@ -150,10 +150,14 @@ function applyOne(
       // a weapon emptying it does.
       const poised = applyPoiseDamage(target, effect.amount, tick, false);
       if (!poised.broke) return still(poised.entity);
+      // The **caster's** duration, for `resolveBlow`'s reason (spec 243):
+      // `staggerTicks` is how long a break you caused lasts, so a skill that
+      // breaks a guard roots the body for as long as the breaker's Strength
+      // says -- exactly as a weapon emptying the same pool does.
       const struck = stagger(
         poised.entity,
         caster.id,
-        poised.entity.stats.traits.staggerTicks,
+        caster.stats.traits.staggerTicks,
         tick,
         poised.interrupted,
       );

@@ -612,6 +612,23 @@ export interface GrantLabel {
    * a grant cuts.
    */
   readonly higherIsBetter?: boolean;
+  /**
+   * A rule about the mechanic this grant brings, as a whole sentence.
+   *
+   * For the part of a mechanic that **is not a quantity** -- when it re-arms,
+   * what ends it, what it will not stack with. A number's own line cannot say
+   * any of that, and the only other place to put it is the row's authored
+   * `description` -- which is flavour, and which is where this standard's own
+   * first rule says a mechanical claim must never live, because nothing keeps
+   * one true there.
+   *
+   * Second Wind is the case that proved it. Its flavour said it would not fire
+   * again *"until you have climbed back out"*, which was the behaviour until
+   * spec 239 replaced it -- and the sentence stayed, describing a rule the sim
+   * had stopped having. Emitted from the label rather than the row, it appears
+   * exactly when the grant that carries the mechanic does.
+   */
+  readonly note?: string;
 }
 
 /**
@@ -699,7 +716,19 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'grantsPrepared', where: 'trait', form: 'flag', name: 'Standing still primes your next ability.' },
   { key: 'overflowCostReduction', where: 'trait', name: 'Relief on Arcane Overflow’s health cost', form: 'percent' },
 
-  { key: 'secondWindHeal', where: 'trait', name: 'Second Wind heal, of maximum health', form: 'percent' },
+  {
+    key: 'secondWindHeal',
+    where: 'trait',
+    name: 'Second Wind heal, of maximum health',
+    form: 'percent',
+    // The lifecycle, which is the half of this mechanic that is not a number
+    // and the half a player has to plan around. `advanceRest` and `respawn` are
+    // the only two callers of `clearStatus(SecondWindSpent)` in the tree, and
+    // the last sentence is here because the rule it denies is the one the game
+    // used to have -- somebody who played before spec 239 has to be told the
+    // comeback no longer re-arms itself.
+    note: 'Resting in a safe zone re-arms it, and so does dying. Recovering health does not.',
+  },
   { key: 'resoluteReduction', where: 'trait', name: 'Damage reduction while badly hurt', form: 'percent' },
   {
     key: 'staggerImmuneBelow',
@@ -800,6 +829,10 @@ export function grantsOf(modifier: StatModifier, times = 1): readonly Grant[] {
       text: `${signed(value, label.form)} ${label.name}.`,
       good: value > 0 === (label.higherIsBetter ?? true),
     });
+    // After the quantity, because the number is what the row grants and this is
+    // a rule about what the number brings with it. `times` does not reach it:
+    // a rule is the same rule at rank 1 and at rank 3.
+    if (label.note !== undefined) out.push({ text: label.note, good: true, whole: true });
   }
   return out;
 }

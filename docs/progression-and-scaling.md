@@ -353,6 +353,7 @@ would be a fight nobody can read.
 | When is it consumed? | On the tick it fires — health at or below `secondWindBelow`, the comeback paid. `StatusId.SecondWindSpent` is applied in the same breath. |
 | How is that state represented? | `StatusId.SecondWindSpent` (`secondWind.spent`), an ordinary entry in the status map, **held** rather than timed — the mirror of `Prepared`, which is banked until spent where this is spent until banked. |
 | When does it reset? | **A rest, or a death.** `advanceRest` clears it beside the flask charge it returns; `respawn` clears it beside the flask it refills. Nothing else clears it. |
+| Where is a player told? | A derived line on the `secondWindHeal` grant (spec 243): *"Resting in a safe zone re-arms it, and so does dying. Recovering health does not."* Not the skill's `description`, which is flavour — the rule lived there for four specs after spec 239 changed it, still describing the reset it replaced. |
 
 **Health rising is explicitly not a reset**, and that is the whole fix. The rule
 it replaces re-armed Second Wind the moment the body climbed back above its
@@ -393,3 +394,27 @@ resolved state, so an interference that lives in behaviour rather than in a
 number is invisible to it. Spec 239's overheal fault was exactly that — both
 traits were present and the bug was a branch in `applyHealing` — and it is
 covered by `sim/overheal.test.ts` instead.
+
+The list shrank once, which is the mechanism working rather than an exception to
+it. `staggerTicks` was allowlisted for four specs as a real finding parked on a
+design question: it is Strength's, it grows with Strength, and both consumers
+read it off the **defender**, so Strength lengthened its own holder's stagger.
+Spec 243 answered the question — the trait is *duration inflicted*, the reading
+consistent with Strength as overpower and with its neighbours in
+`SCALING.strength` — so the resolvers read the attacker's value and the four
+entries are gone rather than excused.
+
+### 5.1 A description is part of what the audit cannot see
+
+**Current rule.** No table can check that a sentence is true. Second Wind's
+lifecycle was correct in the sim and wrong in the tooltip for four specs with a
+complete green suite either side of it, because nothing read a description
+against the behaviour it describes.
+
+The repair is not a linter. It is that a mechanical claim is **derived** —
+`GrantLabel.note` (spec 243) puts the part of a mechanic that is not a quantity
+on the label of the grant that brings it, so it appears exactly when the mechanic
+does — and that where a claim and a behaviour must agree, **one test asserts
+both**. `sim/progression-combat.test.ts`'s Second Wind block does that: it reads
+the description and drives the sim through the rest and the recovery in the same
+test, so a change to either side alone fails.

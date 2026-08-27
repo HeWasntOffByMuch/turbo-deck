@@ -72,8 +72,12 @@ export type Direction = 'up' | 'down' | 'ambiguous';
 export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   // --- Strength ---
   staggerPower: 'up',
-  // How long a stagger *on this body* lasts: `resolveBlow` reads the victim's.
-  staggerTicks: 'down',
+  // How long a break *this body causes* lasts: `resolveBlow` reads the
+  // attacker's since spec 243, so longer is better and the direction is `up`.
+  // It was `down` while the resolver read the victim's, which is what made
+  // Strength's own growth read as a regression here -- correctly, and for four
+  // specs the finding was allowlisted rather than fixed.
+  staggerTicks: 'up',
   windupPoiseArmor: 'up',
   poiseArmorInBackswing: 'up',
   poiseArmorAllCasts: 'up',
@@ -188,9 +192,8 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
  * Two, and they need naming because both are `down` fields -- a stillness
  * window and a price -- where the naive reading of `0 -> 1.5` is "the cost went
  * up" and the true reading is "you acquired Arcane Overflow". Every other
- * `down` field in `TraitStats` has a non-zero neutral (a scale is 1, a stagger
- * is `staggerTicksBase`), so zero is a real value there and a rise really is a
- * regression.
+ * `down` field in `TraitStats` has a non-zero neutral (a scale is 1), so zero
+ * is a real value there and a rise really is a regression.
  *
  * Stated as a table rather than inferred from `NEUTRAL_TRAITS === 0`, because
  * plenty of `up` fields are zero at neutral too and the distinction that

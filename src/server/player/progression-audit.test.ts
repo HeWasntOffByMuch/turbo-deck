@@ -59,36 +59,24 @@ const ALLOWED_RANKS: Readonly<Record<string, string>> = {
 /**
  * Attribute-side regressions that are allowed, and why.
  *
- * Two entries and they are different in kind. The shaping ones are a stated
- * trade-off; the Strength one is a **finding**, kept here rather than fixed
- * because fixing it is a design decision and a balance change rather than a
- * cleanup -- see the reason on the entry.
+ * One trade-off, stated in two places because the audit asks the question two
+ * ways -- at the milestone that grants the premium, and at the attribute span
+ * that crosses it.
+ *
+ * It held four more entries until spec 243. `staggerTicks` grows 0.2 a point
+ * under Strength while `resolveBlow` read it off the **defender**, so a
+ * Strength character's own stagger lasted longer the more Strength they had --
+ * backwards progression in exactly the sense this audit exists to catch, found
+ * by it, and parked here for four specs because which side should read it was a
+ * design question rather than a typo. It is the attacker's now, so the
+ * regression is gone rather than excused, and the staleness test below is what
+ * would have failed had the entries been left behind.
  */
 const ALLOWED_REGRESSIONS: Readonly<Record<string, string>> = {
   'milestone int.shaping : shapingCostPct':
     'the Intelligence 20 milestone grants the shaping premium along with the geometry it pays for; the trade-off is stated on the milestone and on the skill',
   'growth intelligence 5->20 : shapingCostPct':
     'the same premium, seen as the attribute crossing the milestone that grants it',
-
-  // **A real finding, deliberately not fixed here.**
-  //
-  // `staggerTicks` is documented under Strength -- "how long a break roots the
-  // broken body" -- and grows 0.2 a point, 31 ticks at 5 Strength to 42 at 60.
-  // But `resolveBlow` reads it off the **defender**: `stagger(target,
-  // attacker.id, D.staggerTicks, ...)`. So a Strength character's own stagger
-  // lasts *longer* the more Strength they have, which is backwards progression
-  // in exactly the sense this audit exists to catch.
-  //
-  // Which side should read it is a design question rather than a typo: "a heavy
-  // body takes longer to get up" is a defensible rule, and so is "Strength makes
-  // the breaks you cause last longer", and the two produce different games.
-  // Changing it moves every stagger duration in the game either way, which is a
-  // balance pass rather than a cleanup. Recorded, surfaced by the report on
-  // every run, and left for that decision.
-  'growth strength 5->20 : staggerTicks': 'Strength lengthens the holder’s own stagger -- see the note above',
-  'growth strength 20->35 : staggerTicks': 'Strength lengthens the holder’s own stagger -- see the note above',
-  'growth strength 35->50 : staggerTicks': 'Strength lengthens the holder’s own stagger -- see the note above',
-  'growth strength 50->60 : staggerTicks': 'Strength lengthens the holder’s own stagger -- see the note above',
 };
 
 const report = auditProgression();

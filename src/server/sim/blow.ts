@@ -361,7 +361,18 @@ export function resolveBlow(
       // two answers to the same question. `applyPoiseDamage` has already
       // checked the immunity and taken the cast off, so the cast it dropped is
       // passed in rather than read back off a body that no longer has it.
-      const struck = stagger(target, attacker.id, D.staggerTicks, tick, poised.interrupted);
+      // **`A`, not `D`** (spec 243). `staggerTicks` is Strength's, it sits in
+      // `SCALING.strength` beside the poise damage a blow carries, and it means
+      // *how long the break you caused lasts* -- so it is the attacker's, the
+      // way `staggerPower` two lines of arithmetic above it already is.
+      //
+      // Read off the defender it was Strength scaling the holder's **own**
+      // stagger: 31 ticks at 5 Strength and 42 at 60, so investing in the
+      // overpower attribute bought a longer time on the floor and bought the
+      // body that broke you nothing at all. Backwards progression in exactly
+      // the sense `player/progression-audit.ts` exists to catch, and it caught
+      // it -- it was allowlisted for four specs while the semantic was decided.
+      const struck = stagger(target, attacker.id, A.staggerTicks, tick, poised.interrupted);
       target = struck.entity;
       events.push(...struck.events);
       attacker = rewardBreak(attacker, tick);

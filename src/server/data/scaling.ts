@@ -125,7 +125,10 @@ export const SCALING = {
     staggerFalloff: 0.5,
     /** Poise contributed to one's own pool. */
     poisePer: 0.2,
-    /** How long a break roots the broken body: a floor plus a rate, capped. */
+    /**
+     * How long a break **you cause** roots the body you broke: a floor plus a
+     * rate, capped. Offence, like `staggerBase`/`staggerPer` above it.
+     */
     staggerTicksBase: seconds(0.5),
     staggerTicksPer: 0.2,
     staggerTicksCap: seconds(0.8),

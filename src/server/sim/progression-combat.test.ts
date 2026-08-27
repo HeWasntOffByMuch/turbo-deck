@@ -18,6 +18,8 @@ import { rollBetween } from './blow.js';
 import { monsterById } from '../data/monsters.js';
 import { Rng } from '../../shared/prng.js';
 import { abilityById, type AbilityDefinition } from '../data/abilities.js';
+import { ALL_SKILLS } from '../data/skills.js';
+import { describeStatSkill } from '../data/description.js';
 import { SCALING } from '../data/scaling.js';
 import { startingBaseStats } from '../player/attributes.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
@@ -39,6 +41,7 @@ import {
   windupScaleFor,
 } from './abilities.js';
 import { resolveBlow, SUNDER_TICKS } from './blow.js';
+import { applyEffects } from './skill-effects.js';
 import { applyPoiseDamage, isResolute, poiseArmorOf, poiseDamageOf, regenPoise, STAGGER_IMMUNE_TICKS } from './poise.js';
 import {
   applyStatus,
@@ -259,6 +262,76 @@ describe('poise', () => {
 
     const outside = applyPoiseDamage(inside.entity, 9999, 100, true);
     expect(outside.broke).toBe(true);
+  });
+
+  // ------------------------------------------------------------------
+  // Who owns the duration of a break (spec 243).
+  //
+  // `staggerTicks` grows 0.2 a point under Strength -- 31 ticks at 5 and 42 at
+  // 60 -- and `resolveBlow` read it off the **defender**, so investing in the
+  // overpower attribute bought a longer spell on the floor for yourself and
+  // bought whoever broke you nothing. It is the attacker's, like the
+  // `staggerPower` that emptied the pool.
+  //
+  // Driven through `resolveBlow` rather than through `stagger` directly,
+  // because the argument is the thing being tested and a test that passed it
+  // in would be asserting its own fixture.
+  const brokenFor = (breaker: ServerEntity, broken: ServerEntity): number => {
+    // A guard already at nothing, so one blow breaks it whatever it carries --
+    // the durations are what is being compared, not how long each took to reach.
+    const glass = { ...broken, poise: 0.0001 };
+    const struck = resolveBlow(SLASH, breaker, glass, 0, Rng.fromSeed(7)).target;
+    expect(struck.activity).toBe(ActivityValue.Stunned);
+    return struck.activityUntilTick;
+  };
+
+  it('lasts as long as the breaker’s Strength says (spec 243)', () => {
+    const weak = body(statsFor({ strength: 5 }));
+    const strong = body(statsFor({ strength: 60 }));
+    expect(strong.stats.traits.staggerTicks).toBeGreaterThan(weak.stats.traits.staggerTicks);
+
+    const victim = target();
+    expect(brokenFor(strong, victim)).toBeGreaterThan(brokenFor(weak, victim));
+  });
+
+  it('does not depend on the broken body’s own Strength (spec 243)', () => {
+    // The fault, stated as its own assertion: the same attacker breaking two
+    // bodies that differ *only* in Strength must root them for the same time.
+    // Before the fix the high-Strength body was held eleven ticks longer.
+    const breaker = body(statsFor({ strength: 30 }));
+    const soft = body(statsFor({ strength: 5 }), { id: 2 });
+    const burly = body(statsFor({ strength: 60 }), { id: 3 });
+    expect(burly.stats.traits.staggerTicks).toBeGreaterThan(soft.stats.traits.staggerTicks);
+
+    expect(brokenFor(breaker, burly)).toBe(brokenFor(breaker, soft));
+  });
+
+  it('never lets Strength lengthen its own holder’s stagger (spec 243)', () => {
+    // The progression rule the audit enforces, at the one place it is spent:
+    // raising Strength must not make anything about being broken worse. A fixed
+    // ordinary attacker, and a victim whose Strength climbs the whole range.
+    const breaker = body(statsFor({ strength: 20 }));
+    const durations = [5, 20, 35, 50, 60].map((strength) =>
+      brokenFor(breaker, body(statsFor({ strength }), { id: 2 })),
+    );
+    expect(new Set(durations).size).toBe(1);
+  });
+
+  it('is the caster’s through a skill’s guard break too (spec 243)', () => {
+    // The second consumer. `skill-effects.ts`'s `poiseDamage` case had its own
+    // copy of the same mistake, reading the duration off `poised.entity` -- so
+    // fixing only `resolveBlow` would have left a skill breaking a guard for
+    // however long the *broken* body's Strength said.
+    const guardBreak = ability('skill.guardBreak');
+    const broken = (breaker: ServerEntity): number => {
+      const glass = { ...target(), poise: 0.0001, id: 2 };
+      const after = applyEffects(guardBreak, breaker, glass, 0, Rng.fromSeed(7)).target;
+      expect(after.activity).toBe(ActivityValue.Stunned);
+      return after.activityUntilTick;
+    };
+    expect(broken(body(statsFor({ strength: 60 })))).toBeGreaterThan(
+      broken(body(statsFor({ strength: 5 }))),
+    );
   });
 
   it('drops whatever the broken body was casting, and reports it', () => {
@@ -625,6 +698,44 @@ describe('Second Wind', () => {
 
     const rested = advanceRest({ ...spent, kind: EntityKindValue.Player }, 2, true);
     expect(hasStatus(rested.statuses, StatusId.SecondWindSpent, 2)).toBe(false);
+  });
+
+  it('says what it does, in the same test that proves it (spec 243)', () => {
+    // **The drift this exists to stop.** Spec 239 made the reset a rest or a
+    // death; the skill's flavour went on saying it would not fire again *"until
+    // you have climbed back out"*, which was the rule it replaced, and it was
+    // shown to players for four specs. Every mechanic test above passed the
+    // whole time, because none of them read the description.
+    //
+    // So the claim and the behaviour are asserted together, off the same skill
+    // row. A future change to either side that leaves the other alone fails
+    // here.
+    const skill = ALL_SKILLS.find((row) => row.id === 'con.secondWind');
+    expect(skill).toBeDefined();
+    if (!skill) return;
+    const said = describeStatSkill(skill).lines.map((line) => line.text).join(' ');
+
+    const stats = conStats();
+    const hurt = { ...body(stats), health: stats.maxHealth * 0.2 };
+    const spent = advanceProgression(hurt, 1, false);
+    const held = (entity: ServerEntity, tick: number): boolean =>
+      hasStatus(entity.statuses, StatusId.SecondWindSpent, tick);
+
+    // 1. It says resting re-arms it, and resting does.
+    expect(said).toContain('Resting in a safe zone re-arms it');
+    expect(held(advanceRest({ ...spent, kind: EntityKindValue.Player }, 2, true), 2)).toBe(false);
+
+    // 2. It says recovering health does not, and it does not.
+    expect(said).toContain('Recovering health does not');
+    expect(held(advanceProgression({ ...spent, health: stats.maxHealth }, 2, false), 2)).toBe(true);
+
+    // 3. And the flavour makes no mechanical claim at all, which is the rule
+    //    that was broken rather than the sentence that was wrong: flavour has
+    //    nothing keeping it true, so the lifecycle belongs in a derived line.
+    const flavor = skill.description.toLowerCase();
+    for (const word of ['climb', 'rest', 'again', 'until', 'heal', 'recover']) {
+      expect(flavor, `flavour claims a mechanic: "${skill.description}"`).not.toContain(word);
+    }
   });
 
   it('is nothing at all for a body without the skill', () => {

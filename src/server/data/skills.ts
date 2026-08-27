@@ -162,9 +162,15 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('con.steadyFrame', 'constitution', 'Steady Frame', T1, 3, 'while not casting',
     { traits: { poiseRegenPct: 0.4 } },
     'A moment not swinging is a moment getting your feet back.'),
+  // The lifecycle is on the `secondWindHeal` label in `data/description.ts`,
+  // where it is derived (spec 243). It used to be the second sentence here --
+  // "it will not fire again until you have climbed back out" -- which was the
+  // rule until spec 239 made the reset a rest or a death, and which then went
+  // on being shown for four specs. Flavour is flavour: it is the one text in
+  // this file with nothing keeping it true.
   skill('con.secondWind', 'constitution', 'Second Wind', T2, 3, 'dropping below 30% health',
     { traits: { secondWindBelow: 0, secondWindHeal: 0.12 } },
-    'One comeback. It will not fire again until you have climbed back out.'),
+    'One comeback, and the body only has the one.'),
   // Damage reduction, and **only** damage reduction (spec 239). `isResolute`
   // gated the reduction and the immunity to guard breaks together, and
   // `deriveTraits` inferred the threshold from the reduction -- so this skill

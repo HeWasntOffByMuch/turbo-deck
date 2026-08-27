@@ -303,7 +303,14 @@ export interface TraitStats {
   // --- Strength: force and commitment ------------------------------------
   /** Poise damage one blow carries. See `sim/poise.ts`. */
   readonly staggerPower: number;
-  /** How long a poise break roots the body it happened to, in ticks. */
+  /**
+   * How long a break **this body causes** roots the body it broke, in ticks.
+   *
+   * The attacker's, like {@link staggerPower} above it -- `resolveBlow` and the
+   * `poiseDamage` skill effect both read it off whoever landed the blow. It was
+   * read off the *victim* until spec 243, which made Strength lengthen its own
+   * holder's time on the floor.
+   */
   readonly staggerTicks: number;
   /**
    * Fraction of incoming poise damage ignored *while committed to a cast*.
