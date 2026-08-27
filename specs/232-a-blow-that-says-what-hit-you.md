@@ -1,4 +1,4 @@
-# 229 — A blow that says what hit you
+# 232 — A blow that says what hit you
 
 ## Problem
 
@@ -165,9 +165,9 @@ same instant, at the same point, as the blow it reports.
   anybody* has somewhere to say so, rather than having a dot invented for it.
 - **The `.impact` fallback ring** for Whirlwind, Arc Lash, Rime Touch, Blight,
   Ember Toss and Scorched Earth. Those are landings rather than blows, they need
-  authored effects of their own, and they are specs 231 and 232.
+  authored effects of their own, and they are specs 234 and 235.
 - **Aimed landings.** Acid Spray's cone and Arc Lash's lane cannot be drawn from
-  the effect message, which carries no rotation. Spec 231.
+  the effect message, which carries no rotation. Spec 234.
 - **Repainting the five existing impacts.** `hit_fire` and its four siblings
   become reachable here for the first time; whether the whole `DAMAGE_EFFECTS`
   table should move from `burst()` particles to the painted vocabulary is a look

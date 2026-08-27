@@ -172,7 +172,7 @@ declare global {
       explosion: (input: ExplosionTrigger) => number;
       /**
        * Play any registry effect in **world space** at the dummy's feet, turned
-       * by a bearing (spec 230).
+       * by a bearing (spec 233).
        *
        * The counterpart to {@link affliction}, which attaches to the dummy and
        * therefore has no bearing to give: a swing is a gesture the body makes in

@@ -132,6 +132,17 @@ export class ActionBarScreen extends Row {
   private slotSide = SLOT_SIDE;
   private hints: readonly (readonly TooltipLine[])[] = [];
   onUse: ((index: number) => void) | null = null;
+  /**
+   * Which slot the cursor is resting on, or null (spec 235).
+   *
+   * Recorded rather than merely acted on, because two different things want it
+   * and only one of them is in this layer: the tooltip below, and the *world*,
+   * which draws the hovered skill's reach on the ground. `src/ui/` may not
+   * reach the sim, so what leaves here is an index and the mount turns it into
+   * an ability -- the same division `inventory-model.ts` keeps.
+   */
+  private hovered: number | null = null;
+  onHover: ((index: number | null) => void) | null = null;
 
   constructor(options: ActionBarOptions) {
     super('actionBar');
@@ -233,9 +244,30 @@ export class ActionBarScreen extends Row {
       if (!inside) continue;
       const hint = this.hints[index] ?? [];
       this.tooltip.point(hint.length > 0 ? hint : null, at, nowMs);
+      this.setHovered(index);
       return;
     }
     this.tooltip.point(null, at, nowMs);
+    this.setHovered(null);
+  }
+
+  /** The slot under the cursor, or null. */
+  get hoveredSlot(): number | null {
+    return this.hovered;
+  }
+
+  /**
+   * Announce a change and nothing else.
+   *
+   * An edge rather than a level, because the world side of this rebuilds a
+   * ground decal when it changes: `pointerMoved` fires on every mouse move, and
+   * a callback on each would re-lay the ring several times a frame while the
+   * cursor sat still inside one slot.
+   */
+  private setHovered(index: number | null): void {
+    if (index === this.hovered) return;
+    this.hovered = index;
+    this.onHover?.(index);
   }
 
   /** Advance the tooltip's delay. Called once a frame by the mount. */

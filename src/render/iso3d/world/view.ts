@@ -1546,7 +1546,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           // An affliction's beat draws no blow at all (spec 219). It still
           // floats its number below, and its own paint is `affliction-vfx.ts`'s.
           periodic: (result.flags & CombatFlag.Periodic) !== 0,
-          // Off the wire since spec 229, rather than the literal `'physical'`
+          // Off the wire since spec 232, rather than the literal `'physical'`
           // that stood here and made five authored impact effects unreachable.
           damageType: damageElementOf(result.element),
           x: target.x,
@@ -1559,7 +1559,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           // `DAMAGE_EFFECTS` only in the else of the bleed branch, so while
           // every body in the game bled, no elemental impact could ever be
           // drawn. A player has no `typeId` and bleeds, which is what the
-          // fallback says.
+          // fallback says (spec 232).
           bleeds: bleedsOf(target.typeId),
         },
         client.view().estimatedTick,
@@ -1592,7 +1592,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // `addEffect`'s orange debug disc under the green heal for half a second.
     if (REDUNDANT_SERVER_EFFECTS.has(effect.effectId)) return;
     // The id the server has always sent and this view has always dropped.
-    scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
+    scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks, effect.rotation);
   });
   client.onCastRejected((abilityId, reason) => {
     hud.error(castRefusalText(abilityById(abilityId)?.name ?? abilityId, reason));
@@ -1837,6 +1837,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     onCastSlot: (abilityId) => {
       pressAbility(abilityId);
     },
+    // Resting on a slot draws that skill's reach on the ground (spec 235). It
+    // is a *preview* and nothing else: no order is given, nothing is armed, and
+    // moving off it takes the ring away.
+    onHoverSlot: (abilityId) => {
+      hoveredAbility = abilityId;
+    },
   });
 
   // The account window can be shown now (spec 226). Assigned rather than called
@@ -1930,6 +1936,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * because there was nothing to refund.
    */
   let pendingAim: { readonly abilityId: string; readonly gesture: AimGesture } | null = null;
+  /**
+   * The skill the cursor is resting on in the bar, or null (spec 235).
+   *
+   * Kept beside `pendingAim` because it feeds the same picture and is the same
+   * kind of thing -- a question the player has not answered. It ranks *below*
+   * both a pending aim and a standing order, since those are decisions and this
+   * is a look.
+   */
+  let hoveredAbility: string | null = null;
   /**
    * A confirmed aim, walking into range (spec 080). One cast, not a cadence:
    * the tick it is asked for is the tick it is forgotten.
@@ -2908,10 +2923,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     view: ReturnType<typeof client.view>,
     me: { x: number; y: number },
   ): AimIndicator | null {
-    const abilityId = pendingAim?.abilityId ?? order?.abilityId ?? null;
+    const abilityId = pendingAim?.abilityId ?? order?.abilityId ?? hoveredAbility ?? null;
     if (abilityId === null) return null;
     const ability = abilityById(abilityId);
     if (!ability) return null;
+    // A hover is a preview, and it is one only while nothing has been decided:
+    // a pending aim and a standing order both outrank it above, so this is true
+    // exactly when the id came from the bar.
+    const preview = pendingAim === null && order === null;
 
     // Where it is pointed: the cursor while the aim is still a question, the
     // placement once it has been answered.
@@ -2938,10 +2957,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     }
 
     return {
-      shape: aimShape(ability),
+      // A preview draws the reach and nothing else. There is no aim point to
+      // put a shape at -- the cursor is over the interface, not the world -- and
+      // a wedge laid along the last place the mouse happened to be in the world
+      // would be answering a question nobody asked.
+      shape: preview ? { kind: 'none' } : aimShape(ability),
       origin: me,
       point,
-      unitId,
+      unitId: preview ? null : unitId,
+      preview,
       range: ability.range,
       // Measured to the body's edge when there is one, the same as the gate the
       // server will apply to the cast this becomes.

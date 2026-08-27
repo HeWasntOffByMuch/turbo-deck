@@ -54,7 +54,7 @@ export interface MonsterLook {
   readonly appearance: MechAppearance;
   readonly tuning: MechRigTuning;
   /**
-   * Whether a blow on this body throws blood (spec 229).
+   * Whether a blow on this body throws blood (spec 232).
    *
    * Absent is **true**, which is what makes adding the column cost nothing: a
    * player, and every body with no row at all, bleed exactly as they did. A row
@@ -133,7 +133,7 @@ export function monsterLookFor(typeId: string): MonsterLook | null {
 }
 
 /**
- * Whether a body with this type id bleeds. Total, and true by default (spec 229).
+ * Whether a body with this type id bleeds. Total, and true by default (spec 232).
  *
  * Reads the row directly rather than through {@link monsterLookFor}, because a
  * boolean cannot be aliased and there is nothing here to defend by copying.

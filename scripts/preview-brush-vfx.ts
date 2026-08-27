@@ -687,15 +687,16 @@ async function main(): Promise<void> {
         { label: 'whirl t=26', kind: 'swing' as const, effectId: 'skill.whirlwind.impact', seed: SEEDS[1] ?? 2, ticks: 26, halfHeight: 210 },
       ]),
     });
-    // --- the five landings (spec 231) --------------------------------------
+    // --- the five landings (spec 234) --------------------------------------
     // One row each, over the effect's own life. These replace `addEffect`'s
     // orange debug ring, so what the row has to answer is whether each reads as
     // its own element rather than as the same blast in six colours.
     const landings = [
       { id: 'skill.emberToss.impact', label: 'ember', ticks: [3, 8, 14, 24, 40, 62], half: 170 },
-      { id: 'skill.rimeTouch.impact', label: 'rime', ticks: [2, 6, 12, 20, 32, 46], half: 250 },
-      { id: 'skill.blight.impact', label: 'blight', ticks: [3, 9, 18, 30, 46, 62], half: 210 },
-      { id: 'skill.arcLash.impact', label: 'arc', ticks: [1, 3, 6, 10, 16, 24], half: 260 },
+      { id: 'skill.rimeTouch.impact', label: 'rime (shards)', ticks: [2, 5, 10, 18, 26, 34], half: 170 },
+      { id: 'skill.blight.impact', label: 'blight', ticks: [3, 9, 18, 30, 46, 62], half: 160 },
+      { id: 'skill.arcLash.impact', label: 'arc (lane)', ticks: [2, 5, 8, 12, 18, 24], half: 190 },
+      { id: 'skill.acidSpray.impact', label: 'acid (cone)', ticks: [2, 5, 9, 14, 20, 28], half: 200 },
       { id: 'skill.scorchedEarth.self', label: 'scorch', ticks: [3, 8, 16, 28, 40, 54], half: 240 },
     ] as const;
     for (const landing of landings) {

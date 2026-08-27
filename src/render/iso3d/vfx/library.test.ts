@@ -1052,7 +1052,7 @@ describe('the ember shot (spec 218)', () => {
 });
 
 /**
- * The five landings that were a debug ring (spec 231).
+ * The five landings that were a debug ring (spec 234).
  *
  * The seam is `scene.addEffect`'s `system.has(effectId)`: the server has sent
  * these ids since spec 062 and the registry held none of them, so authoring
@@ -1060,7 +1060,7 @@ describe('the ember shot (spec 218)', () => {
  * fragile is the *id* -- a typo produces an effect nobody plays and a ring
  * nobody notices, which is the state this spec found the game in.
  */
-describe('the landings (spec 231)', () => {
+describe('the landings (spec 234)', () => {
   const LANDINGS = [
     { id: 'skill.emberToss.impact', ability: 'skill.emberToss' },
     { id: 'skill.rimeTouch.impact', ability: 'skill.rimeTouch' },
@@ -1144,6 +1144,79 @@ describe('the landings (spec 231)', () => {
         [clash, landing.id].every((id) => id === 'skill.emberToss.impact' || id === 'skill.scorchedEarth.self');
       expect(clash === undefined || firePair, `${landing.id} shares a palette with ${String(clash)}`).toBe(true);
       seen.set(colours, landing.id);
+    }
+  });
+});
+
+/**
+ * The aimed landings and the shards (spec 235).
+ *
+ * Three of these assert numbers, and each is a regression the sheet caught and
+ * no other check could: a lane that is not a lane, shards small enough to
+ * vanish, and two skills in one colour.
+ */
+describe('the aimed landings (spec 235)', () => {
+  const effectOf = (id: string) => EFFECTS.find((entry) => entry.id === id);
+
+  it('gives Acid Spray a cue at all', () => {
+    // `landCone` computed a bearing and raised no effect event for 170 specs, so
+    // this was the one skill with not even a debug ring to fall back from.
+    expect(REGISTRY.byId.has('skill.acidSpray.impact')).toBe(true);
+  });
+
+  it('strings the lane along its bearing rather than around a point', () => {
+    const lane = effectOf('skill.arcLash.impact');
+    expect(lane).toBeDefined();
+    const offsets = (lane?.emitters ?? []).map((emitter) => emitter.offset?.x ?? 0);
+    // Every node ahead of the origin, and reaching most of the row's own 300.
+    expect(Math.min(...offsets)).toBeGreaterThan(0);
+    expect(Math.max(...offsets)).toBeGreaterThan(200);
+    // And off the centre line, alternately: a ruled line is a laser, not a bolt.
+    const sides = (lane?.emitters ?? []).map((emitter) => Math.sign(emitter.offset?.z ?? 0));
+    expect(new Set(sides).size).toBeGreaterThan(1);
+  });
+
+  it('fans the cone instead of kinking it', () => {
+    const cone = effectOf('skill.acidSpray.impact');
+    expect(cone).toBeDefined();
+    const bearings = (cone?.emitters ?? []).map((emitter) =>
+      emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0,
+    );
+    // A lane's nodes all point straight down the run; a cone's do not.
+    expect(new Set(bearings.map((b) => b.toFixed(3))).size).toBeGreaterThan(1);
+    const lane = effectOf('skill.arcLash.impact');
+    const laneBearings = (lane?.emitters ?? []).map((emitter) =>
+      emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0,
+    );
+    expect(new Set(laneBearings).size).toBe(1);
+  });
+
+  it('makes frost shards big enough to see', () => {
+    // The correction from "water" went straight past "shards" into a scatter of
+    // specks. A shard has to be a piece you can see the shape of.
+    const shards = effectOf('skill.rimeTouch.impact');
+    expect(shards).toBeDefined();
+    const longest = Math.max(
+      ...(shards?.emitters ?? []).flatMap((emitter) => emitter.size.keys.map(([, value]) => value)),
+    );
+    expect(longest).toBeGreaterThan(20);
+  });
+
+  it('throws frost radially, with no lobe', () => {
+    // `brushExplosion`'s "asymmetry has to be composed" argument is right about
+    // a blast and wrong about a shatter: ice breaking has no side it favours,
+    // and composing one is what made this read as a splash.
+    const shards = effectOf('skill.rimeTouch.impact');
+    for (const emitter of shards?.emitters ?? []) {
+      expect(emitter.shape.kind, emitter.id).toBe('circle');
+    }
+  });
+
+  it('lets the shards fall, where a blast does not', () => {
+    const shards = effectOf('skill.rimeTouch.impact');
+    const rings = (shards?.emitters ?? []).filter((emitter) => emitter.id !== 'flash');
+    for (const emitter of rings) {
+      expect(emitter.gravity ?? 0, emitter.id).toBeLessThan(-500);
     }
   });
 });

@@ -272,7 +272,7 @@ export function resolveBlow(
     critical,
     blocked: armor > 0 && damage < raw,
     weakPoint,
-    // What it was made of, for the picture (spec 229). Derived from the row --
+    // What it was made of, for the picture (spec 232). Derived from the row --
     // an affliction-carrying ability is its affliction's element -- so nothing
     // in this function decides it and no blow can disagree with the skill that
     // threw it.

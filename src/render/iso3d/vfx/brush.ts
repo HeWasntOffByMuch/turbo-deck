@@ -805,7 +805,7 @@ export interface BrushSwingParams {
 }
 
 /**
- * A swing, painted (spec 230).
+ * A swing, painted (spec 233).
  *
  * ## The false start, because it is the whole reason this looks the way it does
  *
@@ -913,6 +913,236 @@ export function brushSwing(params: BrushSwingParams): EffectDefinition {
     id: params.id,
     priority: params.priority ?? 2,
     cullDistance: 1600,
+    emitters,
+  };
+}
+
+export interface BrushShardsParams {
+  readonly id: string;
+  /** How far the shards reach, in world units. */
+  readonly reach: number;
+  /** How many. Small and many is the whole idea. */
+  readonly count?: number;
+  /** Each shard's length, as a fraction of the reach. */
+  readonly length?: number;
+  readonly lifetimeTicks?: number;
+  /** How high off the ground they leave, as a fraction of the reach. */
+  readonly lift?: number;
+  readonly bright?: PaletteKey;
+  readonly mid?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+}
+
+/**
+ * Small sharp marks thrown outward: shards (spec 235).
+ *
+ * The counterpart to {@link brushExplosion} and the reason it is not one.
+ * `brushExplosion` composes a few *dominant* strokes into lobes, which is what
+ * makes a blast read as a blast -- and at frost colours that composition came
+ * out as a handful of big pale sheets, which reads as **water**. What frost
+ * wants is the opposite distribution: many small pieces, all going outward, none
+ * of them dominant.
+ *
+ * So the marks are `brush-dab` and `brush-flick` rather than `brush-slash`, they
+ * are a fifth the length, and there are four times as many. Nothing here has a
+ * lobe: a shatter genuinely is radially even, which is the one case
+ * `brushExplosion`'s "asymmetry has to be composed" argument does *not* apply to
+ * -- ice breaking has no side it favours.
+ *
+ * They also **fall**. Gravity is real here where a blast's is nearly off,
+ * because that is most of what separates the two: fire goes up and out and
+ * burns off in the air, and shards go out and come down.
+ */
+export function brushShards(params: BrushShardsParams): EffectDefinition {
+  const reach = params.reach;
+  const count = params.count ?? 26;
+  const length = (params.length ?? 0.19) * reach;
+  const life = params.lifetimeTicks ?? 30;
+  const lift = params.lift ?? 0.1;
+  const bright = params.bright ?? 'iceWhite';
+  const mid = params.mid ?? 'icePale';
+  const deep = params.deep ?? 'iceDeep';
+
+  /** One ring of shards. Two of them, so the sizes are not all one size. */
+  const ring = (id: string, marks: number, scale: number, shape: 'brush-dab' | 'brush-flick'): Emitter => ({
+    id,
+    // `circle` rather than `fan`: radially even on purpose (see the header), and
+    // `shell` so they leave from a rim rather than filling a disc.
+    shape: { kind: 'circle', radius: reach * 0.08, shell: true },
+    emission: { kind: 'burst', count: marks },
+    lifetimeTicks: [Math.round(life * 0.5), life],
+    speed: [reach * 3.4 * scale, reach * 6.2 * scale],
+    // Wide, because a shatter has no bearing to respect.
+    spreadRadians: 0.9,
+    // Real gravity: shards come down, which is what fire does not do.
+    gravity: -1500,
+    drag: 3.4,
+    velocityScale: { keys: [[0, 1], [0.4, 0.4], [1, 0.12]] },
+    size: {
+      keys: [
+        [0, length * scale * 0.9],
+        [0.3, length * scale],
+        [1, length * scale * 0.72],
+      ],
+    },
+    alpha: { keys: [[0, 1], [0.62, 1], [1, 0]] },
+    color: { stops: [[0, bright], [0.45, mid], [1, deep]] },
+    render: 'mesh',
+    mesh: { shape },
+    blend: 'alpha',
+    offset: { x: 0, y: reach * lift, z: 0 },
+    // Retract: these are thrown and rooted at their butts, so the erosion
+    // walking root to tip is the shard finishing rather than sliding off itself.
+    strokeDecay: 'retract',
+  });
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1500,
+    emitters: [
+      // The flash the break starts with -- one beat, near-white, and gone.
+      // Without it the shatter has no *moment*, only a spray.
+      {
+        id: 'flash',
+        shape: { kind: 'circle', radius: reach * 0.05 },
+        emission: { kind: 'burst', count: 4 },
+        lifetimeTicks: [4, 7],
+        speed: [reach * 1.4, reach * 2.6],
+        spreadRadians: 1.2,
+        size: { keys: [[0, length * 1.5], [1, length * 0.7]] },
+        alpha: { keys: [[0, 1], [0.6, 1], [1, 0]] },
+        color: { stops: [[0, bright], [1, mid]] },
+        render: 'mesh',
+        mesh: { shape: 'brush-flick' },
+        blend: 'alpha',
+        offset: { x: 0, y: reach * lift, z: 0 },
+        strokeDecay: 'retract',
+      },
+      ring('shards', Math.round(count * 0.6), 1, 'brush-flick'),
+      ring('splinters', Math.round(count * 0.4), 0.62, 'brush-dab'),
+    ],
+  };
+}
+
+export interface BrushLaneParams {
+  readonly id: string;
+  /** How far down its own bearing the lane runs. */
+  readonly length: number;
+  /** How wide, across the bearing. */
+  readonly width: number;
+  /** How many nodes the run is made of. */
+  readonly nodes?: number;
+  /** Marks per node. */
+  readonly marks?: number;
+  readonly lifetimeTicks?: number;
+  /** How high off the ground it runs. */
+  readonly lift?: number;
+  /** Spread the run out into a cone instead, half-angle in radians. */
+  readonly cone?: number;
+  readonly bright?: PaletteKey;
+  readonly mid?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+}
+
+/**
+ * Marks strung along a bearing: a lane, or a cone (spec 235).
+ *
+ * The third composition in this file, and the one the other two could not do.
+ * `brushExplosion` throws from a point and `brushSwing` lays along an arc; both
+ * are *centred* on where they are played. A lane is not -- it starts at the
+ * caster and runs three hundred units away from them, and drawing it as
+ * anything centred is what made Arc Lash a violet burst that had nothing to do
+ * with the skill.
+ *
+ * It needs the bearing spec 235 put on the effect message. Before that there was
+ * none: `landArea` sends a line's cue at the caster's own feet, so a lane could
+ * only ever have pointed one fixed way in world space.
+ *
+ * ## Nodes, and why they zig
+ *
+ * The run is a handful of nodes `offset` along +X, each throwing a few marks.
+ * Alternate nodes are pushed to opposite sides of the centre line by a fraction
+ * of the width, so the run has a kink in it rather than being a ruled line --
+ * which is the whole difference between a bolt and a laser, and cannot come out
+ * of a sampler because it has to alternate.
+ *
+ * ## The cone is the same thing spread
+ *
+ * With `cone` set, a node's offset is turned by an angle that grows along the
+ * run instead of being pushed sideways, so the nodes fan out from the origin.
+ * One builder rather than two because a cone and a lane differ in exactly that:
+ * where the nodes are. What is thrown at each of them is identical.
+ */
+export function brushLane(params: BrushLaneParams): EffectDefinition {
+  const nodes = Math.max(2, params.nodes ?? 6);
+  const marks = params.marks ?? 3;
+  const life = params.lifetimeTicks ?? 22;
+  const lift = params.lift ?? params.width * 0.28;
+  // `boltFlash` rather than `boltWhite`: the latter is 0xfffbe0, a *cream*, and
+  // on the near end of the run -- where the marks are biggest -- it read as
+  // milk rather than as a discharge. The flash white is 0xf4f8ff and carries a
+  // blue cast, which is the same near-white the rest of the bolt ramp is built
+  // around.
+  const bright = params.bright ?? 'boltFlash';
+  const mid = params.mid ?? 'boltArc';
+  const deep = params.deep ?? 'boltViolet';
+  const cone = params.cone ?? 0;
+
+  const emitters: Emitter[] = [];
+  for (let index = 0; index < nodes; index += 1) {
+    // Along the run, from just off the caster to the far end. Never at zero:
+    // a node on top of the caster is a mark inside their own body.
+    const along = (index + 1) / nodes;
+    const distance = params.length * along;
+    // A cone fans; a lane kinks. Alternating rather than drawn, because a zig
+    // has to *alternate* -- a random offset per node is a wobble, and a wobble
+    // reads as an effect that could not decide where to go.
+    const side = cone > 0 ? 0 : (index % 2 === 0 ? 1 : -1) * params.width * 0.34;
+    const yaw = cone > 0 ? (index % 2 === 0 ? 1 : -1) * cone * along : 0;
+    const x = Math.cos(yaw) * distance;
+    const z = Math.sin(yaw) * distance + side;
+    // Narrower and shorter at the far end: a bolt is fiercest where it starts,
+    // and a cone genuinely does thin out as it spreads.
+    const taper = 1 - along * 0.42;
+    emitters.push({
+      id: `node_${index}`,
+      offset: { x, y: lift, z },
+      // Thrown *onward*, down the run, so the marks read as travelling rather
+      // than as a row of stamps. `bearing` is in the effect's own frame, which
+      // its rotation then turns -- so one definition serves every aim.
+      shape: { kind: 'fan', angle: 0.42, radius: params.width * 0.12, rise: 0.1, bearing: yaw },
+      // Later nodes start later: the run arrives end to end rather than all at
+      // once, which is the other half of reading as a bolt rather than a bar.
+      emission: { kind: 'burst', count: marks, delayTicks: index },
+      lifetimeTicks: [Math.round(life * 0.5), Math.round(life * taper + 4)],
+      speed: [params.length * 1.1, params.length * 2.0],
+      spreadRadians: 0.22,
+      // None. A bolt does not fall, and a cone of acid is over before it could.
+      drag: 7,
+      velocityScale: { keys: [[0, 1], [0.25, 0.12], [1, 0.02]] },
+      size: {
+        keys: [
+          [0, params.width * 0.78 * taper],
+          [0.3, params.width * 0.86 * taper],
+          [1, params.width * 0.8 * taper],
+        ],
+      },
+      alpha: { keys: [[0, 1], [0.66, 1], [1, 0]] },
+      color: { stops: [[0, bright], [0.42, bright], [0.72, mid], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: index % 2 === 0 ? 'brush-slash' : 'brush-flick' },
+      blend: 'alpha',
+      strokeDecay: 'retract',
+    });
+  }
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1800,
     emitters,
   };
 }

@@ -411,7 +411,7 @@ describe('REDUNDANT_SERVER_EFFECTS', () => {
     for (const id of REDUNDANT_SERVER_EFFECTS) {
       // Two shapes qualify, and both are "the blow already drew this" rather
       // than two exceptions: a self-heal's `.self`, and the `.impact` of a
-      // projectile that struck a body (spec 229), which `world.ts` sends from
+      // projectile that struck a body (spec 232), which `world.ts` sends from
       // the same branch that raises the hit.
       const ability = ALL_ABILITIES.find(
         (entry) => `${entry.id}.self` === id || `${entry.id}.impact` === id,
@@ -459,7 +459,7 @@ describe('blowSeed', () => {
 });
 
 /**
- * What a blow is made of, and who bleeds (spec 229).
+ * What a blow is made of, and who bleeds (spec 232).
  *
  * These are one group rather than two because the two facts were one bug: while
  * `bleeds` was a literal `true`, `effectsForBlow` could not reach
@@ -535,7 +535,7 @@ describe('what a blow is made of', () => {
 
   it('adds nothing extra for a physical blow on a body that bleeds', () => {
     // The regression that matters most: an ordinary sword hit on flesh has to
-    // draw exactly what it drew before spec 229 touched anything.
+    // draw exactly what it drew before spec 232 touched anything.
     const ids = blow(facts({ damageType: 'physical' }), 30).map((request) => request.id);
     expect(ids).toEqual(['blood_hit_brush']);
   });

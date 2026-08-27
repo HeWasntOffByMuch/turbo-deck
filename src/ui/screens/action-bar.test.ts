@@ -218,3 +218,34 @@ describe('the action bar screen', () => {
     expect(bag.bar.rect).toEqual(before);
   });
 });
+
+/**
+ * Which slot the cursor rests on (spec 235).
+ *
+ * The world draws the hovered skill's reach on the ground, and `src/ui/` may not
+ * reach the sim -- so what this layer owes is an index and an *edge*, not a
+ * level: `pointerMoved` fires on every mouse move, and a callback per move
+ * would re-lay a ground decal several times a frame while the cursor sat still.
+ */
+describe('the hovered slot', () => {
+  it('reports entering and leaving a slot, once each', () => {
+    const bar = new ActionBarScreen({ theme: THEME, slotCount: 4 });
+    const seen: (number | null)[] = [];
+    bar.onHover = (index) => seen.push(index);
+    const [first, second] = bar.slots;
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (!first || !second) return;
+    first.rect = { x: 0, y: 0, width: 20, height: 20 };
+    second.rect = { x: 40, y: 0, width: 20, height: 20 };
+
+    bar.pointerMoved({ x: 45, y: 10 }, 0);
+    bar.pointerMoved({ x: 50, y: 12 }, 16);
+    expect(seen).toEqual([1]);
+    expect(bar.hoveredSlot).toBe(1);
+
+    bar.pointerMoved({ x: 200, y: 10 }, 32);
+    expect(seen).toEqual([1, null]);
+    expect(bar.hoveredSlot).toBeNull();
+  });
+});

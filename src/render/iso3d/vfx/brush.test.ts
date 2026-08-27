@@ -909,7 +909,7 @@ describe('the cross (spec 175)', () => {
 });
 
 /**
- * The swing (spec 230).
+ * The swing (spec 233).
  *
  * The regression these exist for is the one the first implementation shipped
  * green: marks laid flat on the ground, which reads as the debug disc they

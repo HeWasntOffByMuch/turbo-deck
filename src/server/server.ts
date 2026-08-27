@@ -2964,7 +2964,7 @@ export class GameServer implements AdminHost {
               (event.periodic ? CombatFlag.Periodic : 0),
             // The ordinal rather than the name, and `?? 'physical'` for the two
             // heal sites that raise a `hit` and correctly set no element
-            // (spec 229).
+            // (spec 232).
             element: damageElementOrdinal(event.element ?? 'physical'),
           };
           const bytes = encodeServerMessage(message);
@@ -3056,6 +3056,9 @@ export class GameServer implements AdminHost {
           const bytes = encodeServerMessage({
             type: ServerMessageType.Effect,
             effectId: event.effectId,
+            // Zero for a radial cue, which is what every landing but the cone
+            // and the lane sends (spec 235).
+            rotation: event.rotation ?? 0,
             x: event.x,
             y: event.y,
             z: event.z,

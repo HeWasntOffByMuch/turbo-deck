@@ -1496,6 +1496,24 @@ function landArea(
   const centreY = area.shape === 'circle' && area.origin === 'aim' ? cast.targetY : caster.position.y;
 
   const updated = new Map<number, ServerEntity>();
+  // Which way the cue points (spec 235).
+  //
+  // A circle is the same picture whichever way the caster was standing, so it
+  // sends nothing and the client draws it radially, exactly as before. A line
+  // and a cone are not: both run from the caster toward the aim, and this cue is
+  // sent at the caster's own feet -- so without a bearing there is nothing a
+  // client could do with a lane but draw it as a burst, which is what Arc Lash
+  // was.
+  //
+  // Measured to `cast.targetX/Y`, which is where the player pointed, rather than
+  // to `caster.facing`: spec 065 turns a body before its wind-up and holds the
+  // aim live to the commit, so by the landing they agree -- and the aim is the
+  // one of them that is right even when the turn was interrupted.
+  const aimed = area.shape !== 'circle';
+  const aimDx = cast.targetX - caster.position.x;
+  const aimDy = cast.targetY - caster.position.y;
+  const rotation =
+    aimed && Math.hypot(aimDx, aimDy) > 1e-6 ? Math.atan2(aimDy, aimDx) : caster.facing;
   const events: ServerSimEvent[] = [
     {
       kind: 'effect',
@@ -1505,6 +1523,7 @@ function landArea(
       z: caster.position.z,
       radius: areaReachOf(area),
       durationTicks: Math.round(SERVER_TICK_RATE * 0.4),
+      ...(aimed ? { rotation } : {}),
     },
   ];
 
@@ -1599,7 +1618,26 @@ function landCone(
   const dirY = length > 1e-6 ? aimY / length : Math.sin(caster.facing);
 
   const updated = new Map<number, ServerEntity>();
-  const events: ServerSimEvent[] = [];
+  // A cone finally draws something (spec 235).
+  //
+  // This landing has computed `dirX/dirY` since spec 062 and raised no `effect`
+  // event at all, so Acid Spray -- the one ability in the table that *is* a
+  // shape -- was the only skill with no cue of any kind: not even the debug
+  // ring the other five got, because there was no id being sent to fall back
+  // from. It is sent whether or not the sweep caught anybody, like every other
+  // landing's, because a spray that hit nothing still happened.
+  const events: ServerSimEvent[] = [
+    {
+      kind: 'effect',
+      effectId: `${ability.id}.impact`,
+      x: caster.position.x,
+      y: caster.position.y,
+      z: caster.position.z,
+      radius: ability.range,
+      durationTicks: Math.round(SERVER_TICK_RATE * 0.4),
+      rotation: Math.atan2(dirY, dirX),
+    },
+  ];
   let currentRng = rng;
   let connected = false;
   // Carried forward across the sweep so a cone that catches three bodies pays

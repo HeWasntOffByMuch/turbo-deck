@@ -846,7 +846,7 @@ export interface CombatResultMessage {
   readonly flags: number;
   /**
    * What the blow was made of, as `DAMAGE_ELEMENTS`' append-only ordinal
-   * (spec 229).
+   * (spec 232).
    *
    * A byte of its own rather than three more bits of `flags`, because eight
    * elements is exactly eight and a bitfield with no room left is one the next
@@ -1117,6 +1117,15 @@ export interface EffectMessage {
   readonly z: number;
   readonly radius: number;
   readonly durationTicks: number;
+  /**
+   * Radians about Y: which way the cue points (spec 235).
+   *
+   * Zero for every radial cue, which is what they all sent before this existed,
+   * so no picture in the game moved when it was added. What needed it is the two
+   * shapes that are not radial: `scene.addEffect` had no bearing to hand `play`,
+   * so a lane and a cone could only ever be drawn as a burst.
+   */
+  readonly rotation: number;
 }
 
 /** Why the server would not start an ability the client asked for. */
@@ -1766,7 +1775,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .f32(message.y)
         .f32(message.z)
         .f32(message.radius)
-        .u16(message.durationTicks);
+        .u16(message.durationTicks)
+        .f32(message.rotation);
       break;
     case ServerMessageType.CastRejected:
       writer.str(message.abilityId).str(message.reason);
@@ -1989,6 +1999,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         z: reader.f32(),
         radius: reader.f32(),
         durationTicks: reader.u16(),
+        rotation: reader.f32(),
       };
     case ServerMessageType.CastRejected:
       return {

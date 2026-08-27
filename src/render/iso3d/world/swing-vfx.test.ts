@@ -1,5 +1,5 @@
 /**
- * The sweep a melee swing paints (spec 230).
+ * The sweep a melee swing paints (spec 233).
  *
  * Driven end to end against a recording player, the way `shot-vfx.test.ts` and
  * `affliction-vfx.test.ts` are: the driver is pure, so the whole feature is

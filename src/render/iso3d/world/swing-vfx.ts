@@ -1,5 +1,5 @@
 /**
- * The sweep a melee swing paints (spec 230).
+ * The sweep a melee swing paints (spec 233).
  *
  * Pure -- no three.js, no DOM, no `GameClient`. It is handed replicated facts
  * and answers what to play, which is the discipline `vfx-wire.ts`,

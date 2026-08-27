@@ -21,7 +21,7 @@
  * here departs from it, the reason is in a comment.
  */
 
-import { ORDER_MARK_ARM, brushCross, brushExplosion, brushSwing } from './brush.js';
+import { ORDER_MARK_ARM, brushCross, brushExplosion, brushLane, brushShards, brushSwing } from './brush.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
@@ -959,7 +959,7 @@ export const LIBRARY: readonly EffectDefinition[] = [
 
   // --- swings ----------------------------------------------------------------
   // Painted, in the air, in the vocabulary the blood and the explosions are
-  // already in (spec 230). What these replace is `scene.addEffect`'s orange
+  // already in (spec 233). What these replace is `scene.addEffect`'s orange
   // debug disc, which is what every skill in the table drew.
   //
   // Whirlwind needs no call-site change at all: `landArea` already sends
@@ -980,7 +980,7 @@ export const LIBRARY: readonly EffectDefinition[] = [
     lifetimeTicks: 30,
     priority: 3,
   }),
-  // --- the landings that were a debug ring (spec 231) ------------------------
+  // --- the landings that were a debug ring (spec 234) ------------------------
   //
   // Five ids, and **not one call-site change between them**: the server has
   // always sent `${ability.id}.impact` and `.self`, and `scene.addEffect` has
@@ -1007,27 +1007,24 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // does not produce a mass that rolls over it afterwards, and a grey cloud
   // over a frost burst reads as a fire that went out. Shorter and faster than
   // the fire blast for the same reason: frost arrives and is done.
-  brushExplosion({
-    id: 'skill.rimeTouch.impact',
-    // Well inside the ability's own 140. A stroke's length is a *fraction of the
-    // radius*, so the reach and the picture are not the same number: at 140 the
-    // longest shard was 210 units and the burst read as a wave rather than as
-    // frost. The sheet is what said so.
-    radius: 96,
-    // Pale rather than saturated. The first render came out a vivid swimming-pool
-    // blue, because `warm` and `mid` were both `icePale` and that ramp carries
-    // most of the mass -- so the white is the body of it now and the blue is the
-    // edge, which is the way round frost actually reads.
-    palette: { hot: 'iceWhite', warm: 'iceWhite', mid: 'icePale', burnt: 'icePale', deep: 'iceDeep', soot: 'icePale' },
-    smoke: 0,
-    debris: 2,
-    lifetimeTicks: 44,
-    expansionSpeed: 5,
-    // Thin and long: a frost burst is shards rather than the fat lobes of flame.
-    strokeLength: [0.62, 1.1],
-    strokeThickness: [0.42, 0.8],
-    light: true,
-  }),
+  // Rime Touch: **shards**, not a blast (spec 235).
+  //
+  // The first two versions were `brushExplosion` in ice colours and both read as
+  // *water*, which is a fact about the composition rather than about the ramp:
+  // that builder makes a few dominant strokes into lobes, and a few big pale
+  // sheets is what a splash looks like. Frost wants the opposite distribution --
+  // many small pieces, radially even, coming down rather than burning off.
+  //
+  // `brushShards` is that, and the one thing it deliberately does not have is a
+  // lobe: `brushExplosion`'s "asymmetry has to be composed" argument is right
+  // about a blast and wrong about a shatter, because ice breaking has no side it
+  // favours.
+  // `length` is the number that decides whether this reads at all. At the
+  // builder's default 0.19 the shards were 20 units against a 104-unit reach and
+  // the sheet showed a scatter of specks -- the correction from "water" went
+  // straight past "shards" into "nothing". A third of the reach is a piece you
+  // can see the shape of.
+  brushShards({ id: 'skill.rimeTouch.impact', reach: 104, count: 32, length: 0.34, lifetimeTicks: 34 }),
 
   // Blight: rot, and the two numbers that make it rot rather than an explosion
   // are the smoke and the speed. It creeps out and the mass outlives it, where
@@ -1083,35 +1080,49 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // effect message carries no rotation (`sim/types.ts`), and `landArea` sends a
   // line shape's cue at the caster's own feet, so there is no bearing to lay a
   // lane along. A lane pointing the wrong way is worse than a burst pointing
-  // nowhere. Spec 232 puts a rotation on that message and this grows a lane.
-  brushExplosion({
+  // nowhere. Spec 235 puts a rotation on that message and this grows a lane.
+  // Arc Lash: the lane it actually is (spec 235).
+  //
+  // Two versions of this were a `brushExplosion` at the caster, because the
+  // effect message had no bearing on it and `landArea` sends a line's cue at the
+  // caster's feet -- so a burst was the only honest thing to draw. It read, in
+  // the reviewer's words, as *"too big and makes no sense with that skill"*, and
+  // both halves of that were true: a 150-unit violet ball is neither the shape
+  // nor the size of a 300x60 lane.
+  //
+  // With the bearing it is the run: nodes strung down the aim, kinking either
+  // side of the centre line, each arriving a tick after the last.
+  brushLane({
     id: 'skill.arcLash.impact',
-    // 150 with strokes at 1.9 of it made marks **285 units long** -- a stroke's
-    // length is a fraction of the radius, and the two multiplied into a
-    // cream-coloured splash the height of the frame. The sheet is what said so.
-    radius: 82,
-    // Blue and violet carry it, with only the core white. The first render put
-    // `boltFlash` and `boltWhite` on the two layers that hold most of the mass,
-    // and near-white over cream reads as milk rather than as an arc.
-    // Violet, and that is a *separation* decision rather than a colour
-    // preference: at `boltPale` on the two layers that carry the mass this came
-    // out the same pale blue as Rime Touch two rows up the sheet, and two
-    // skills that land in the same colour are two skills a player cannot tell
-    // apart mid-fight. White core, violet body -- nothing else in the table is
-    // violet.
-    palette: { hot: 'boltWhite', warm: 'boltViolet', mid: 'boltArc', burnt: 'boltViolet', deep: 'boltViolet', soot: 'boltArc' },
-    smoke: 0,
-    debris: 0,
-    // The shortest life in the file. A bolt is over before anything else here
-    // has finished starting.
+    // The row's own, exactly. A lane is one of the two shapes where the picture
+    // and the mechanic *are* the same rectangle -- unlike a burst, whose marks
+    // are thrown outward from a radius and so must be authored inside it.
+    length: 300,
+    width: 60,
+    nodes: 7,
+    marks: 3,
     lifetimeTicks: 22,
-    expansionSpeed: 11,
-    // As thin as the builder goes: an arc is a line, and a fat bolt is a flame.
-    strokeLength: [0.9, 1.5],
-    strokeThickness: [0.3, 0.6],
-    radialCount: 14,
-    light: true,
     priority: 3,
+  }),
+
+  // Acid Spray: the cone, and the first cue this ability has ever had.
+  //
+  // `landCone` computed a bearing and raised no `effect` event at all, so this
+  // was the one skill with not even a debug ring -- there was no id being sent
+  // to fall back from. Corrosion's own ramp, the one spec 215 authored.
+  brushLane({
+    id: 'skill.acidSpray.impact',
+    length: 150,
+    width: 54,
+    // A cone rather than a lane, which in this builder is where the nodes go
+    // and nothing else: what is thrown at each of them is identical.
+    cone: 0.5,
+    nodes: 6,
+    marks: 4,
+    lifetimeTicks: 28,
+    bright: 'corrodeBright',
+    mid: 'corrodeBody',
+    deep: 'corrodeDeep',
   }),
 
   // Scorched Earth: the ignition, which is the moment the ring is not.
@@ -1124,9 +1135,15 @@ export const LIBRARY: readonly EffectDefinition[] = [
   brushExplosion({
     id: 'skill.scorchedEarth.self',
     radius: SCORCHED_EARTH.radius,
-    smoke: 5,
-    smokeDelayTicks: 8,
-    debris: 3,
+    // Three masses, briefly. A smoke mass is sized off the radius, and at the
+    // field's 130 the five this had were a column taller than the body that lit
+    // it -- the ignition read as the whole screen catching rather than as the
+    // ground. The fire is what says the skill happened; the smoke is the beat
+    // after it, and at this size a beat is all it may be.
+    smoke: 3,
+    smokeDelayTicks: 10,
+    smokeLifeTicks: [34, 52],
+    debris: 2,
     lifetimeTicks: 54,
     // Outward and low: the ground catching, rather than something going off.
     expansionSpeed: 5.5,
@@ -1167,7 +1184,7 @@ export const LIBRARY: readonly EffectDefinition[] = [
   burst({ id: 'hit_ice', scale: 20, hot: 'iceWhite', warm: 'icePale', cool: 'iceDeep', spikes: 21, chunks: 6 }),
   burst({ id: 'hit_lightning', scale: 24, hot: 'boltWhite', warm: 'boltYellow', cool: 'boltViolet', spikes: 22, dust: false, light: true }),
   burst({ id: 'hit_arcane', scale: 21, hot: 'arcaneLilac', warm: 'arcaneMagenta', cool: 'arcaneDeep', spikes: 20, dust: false }),
-  // The two the afflictions needed and the table did not have (spec 229).
+  // The two the afflictions needed and the table did not have (spec 232).
   //
   // Written in the same builder as the six above rather than in the painted
   // vocabulary, because what makes this table legible is that every damage type

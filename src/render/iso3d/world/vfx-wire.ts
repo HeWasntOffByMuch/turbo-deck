@@ -40,7 +40,7 @@ export type { GoreLevel };
  * The damage-type language from `docs/vfx-plan.md` section 6.
  *
  * An alias for the content table's {@link DamageElement} rather than a second
- * union (spec 229), which is what keeps this module's job to *one* decision:
+ * union (spec 232), which is what keeps this module's job to *one* decision:
  * `abilities.ts` says a blow is fire, and {@link DAMAGE_EFFECTS} below is the
  * only place that says what fire looks like. Two unions here would be two lists
  * to keep in step, and the failure would be a `Record` that still compiles
@@ -69,7 +69,7 @@ export interface CombatFacts {
   readonly critical: boolean;
   readonly blocked: boolean;
   /**
-   * What the blow was made of, off `CombatResultMessage.element` (spec 229).
+   * What the blow was made of, off `CombatResultMessage.element` (spec 232).
    *
    * It rides the wire rather than being derived client-side the way
    * `ProjectileLook` is, and the difference is worth knowing because the first
@@ -162,7 +162,7 @@ export const HEAL_EFFECT = 'heal_restore';
 export const REDUNDANT_SERVER_EFFECTS: ReadonlySet<string> = new Set([
   'self.mend.self',
   'self.hearthdraught.self',
-  // A projectile that struck a body (spec 229). `world.ts` sends this from the
+  // A projectile that struck a body (spec 232). `world.ts` sends this from the
   // same branch that raises the `hit`, at the same instant and the same point,
   // so the blow's own picture is already the impact -- which is this set's
   // stated rule rather than a third exception to it.
@@ -178,7 +178,7 @@ export const REDUNDANT_SERVER_EFFECTS: ReadonlySet<string> = new Set([
  *
  * The budget is spent per-blow by the people fighting, so an impact that fans
  * out into six is one that starves the next five. Named rather than spelled
- * since spec 229 gave the last slot two possible occupants and therefore a
+ * since spec 232 gave the last slot two possible occupants and therefore a
  * precedence worth stating in one place.
  */
 export const MAX_BLOW_EFFECTS = 3;
@@ -340,7 +340,7 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
   if (facts.critical) out.push(at('hit_critical', 4));
 
   // The last slot, and which of two things goes in it depends on whether the
-  // body bled (spec 229).
+  // body bled (spec 232).
   //
   // Blood says *that* something landed and the element says *what*, and both are
   // true of an Ember Toss on flesh -- so a bleeding body wants its blood and its
@@ -357,7 +357,7 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
   if (!bleeds) {
     if (debris) out.push(at(debris, 5));
   } else if (facts.damageType !== 'physical' && out.length < MAX_BLOW_EFFECTS) {
-    // The room check is not defensive, it is the precedence (spec 229).
+    // The room check is not defensive, it is the precedence (spec 232).
     //
     // A killing blow at `Full` has already spent two of the three on
     // `blood_hit_brush_heavy` and `death_blood`, and a crit spends the third --

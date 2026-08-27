@@ -1,4 +1,4 @@
-# 231 — The landings that were a debug ring
+# 234 — The landings that were a debug ring
 
 ## Problem
 
@@ -11,7 +11,7 @@ It is not a gap so much as an accident of naming. The server has sent
 `${ability.id}.impact` and `.self` since spec 062, and `addEffect` has always
 checked `system.has(effectId)` before falling back. Until spec 218 the registry
 held **none** of the 46 ids it can send, so every ability in the game took the
-fallback; spec 230 authored the first one (`skill.whirlwind.impact`) and proved
+fallback; spec 233 authored the first one (`skill.whirlwind.impact`) and proved
 the seam works. This is the other five.
 
 ## Shape
@@ -44,7 +44,7 @@ and a burst reaching past the field would promise ground that is safe.
 **Arc Lash is a burst, not the lane it should be.** The effect message carries
 no rotation (`sim/types.ts`), and `landArea` sends a line shape's cue at the
 caster's own feet — so there is no bearing to lay 300 units of lane along. A
-lane pointing the wrong way is worse than a burst pointing nowhere. Spec 232
+lane pointing the wrong way is worse than a burst pointing nowhere. Spec 235
 puts a rotation on that message and this grows a lane.
 
 ## What the sheet decided, three times over
@@ -91,7 +91,7 @@ core, violet body now; nothing else in the table is violet.
 ## Out of scope
 
 - **A lane for Arc Lash, and a cone for Acid Spray.** Both need a rotation on
-  the effect message. Spec 232.
+  the effect message. Spec 235.
 - **Acid Spray at all.** `landCone` emits no effect event, so unlike these five
   there is no id being sent to author under; it needs the server change first.
 - **A long-lived Blight cloud.** It would draw a standing hazard over ground

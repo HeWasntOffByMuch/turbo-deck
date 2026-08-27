@@ -50,7 +50,7 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 export type ProjectileLook = 'orb' | 'arrow' | 'shuriken' | 'ember';
 
 /**
- * What a blow is *made of* (spec 229).
+ * What a blow is *made of* (spec 232).
  *
  * Content rather than presentation, and the line is worth stating because this
  * file holds both. **This says a blow is fire; it does not say what fire looks
@@ -339,7 +339,7 @@ export interface AbilityDefinition {
    */
   readonly effects?: readonly SkillEffect[];
   /**
-   * What this blow is made of, for a row that lands no affliction (spec 229).
+   * What this blow is made of, for a row that lands no affliction (spec 232).
    *
    * Absent is `physical`, which is what every blow in the game was drawn as
    * before this existed, so no row that leaves it out changes. A row that lands
@@ -757,7 +757,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // one body -- and then goes looking for the rest of them.
     radius: 70,
     // `ember`, so the sigil flies with the paint its own staff already had
-    // (spec 229). `shot_ember` is authored in multiples of the shot radius, so
+    // (spec 232). `shot_ember` is authored in multiples of the shot radius, so
     // ten against `ranged.ember`'s nine needs nothing else.
     projectile: { speed: 420, arc: 1, radius: 10, lifetimeTicks: seconds(3), look: 'ember' },
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Burn }],
