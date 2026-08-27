@@ -30,6 +30,7 @@
 
 import type { SoundEventId } from '../../audio/events.js';
 import type { WeaponType } from './weapon-look.js';
+import type { TerrainMaterial } from '../../../terrain/types.js';
 
 /**
  * Everything this needs to know about a blow. Facts, not objects.
@@ -351,3 +352,38 @@ export function soundForAfflictionTick(dotId: string): SoundEventId | null {
 export function soundForProjectile(look: string): SoundEventId | null {
   return look === 'ember' ? 'elemental.fire.travel' : null;
 }
+
+/**
+ * Which footstep to reach for on a given surface, most specific first.
+ *
+ * An ordered *preference* rather than one answer, because the two halves of the
+ * problem pull opposite ways: the framework's rule is that an event with no
+ * entry is silent, and a per-surface vocabulary starts life entirely
+ * unassigned -- so returning `player.footstep.grass` alone would take the sound
+ * of walking out of the game until somebody had recorded six sets of takes.
+ * The driver plays the first entry the catalog actually has files for.
+ *
+ * `null` is what a streaming client answers for ground it has not been sent
+ * yet, and it means "I do not know" rather than "no surface": it falls straight
+ * to the plain footstep, which is exactly right -- a body walking into
+ * un-arrived ground should sound like a body walking, not like nothing.
+ *
+ * Pure and total: a material this build has never heard of takes the same path
+ * as `null` rather than composing an id nothing in the vocabulary declares.
+ */
+export function footstepEvents(surface: TerrainMaterial | null): readonly SoundEventId[] {
+  const specific = surface === null ? undefined : SURFACE_FOOTSTEPS[surface];
+  return specific === undefined ? [GENERIC_FOOTSTEP] : [specific, GENERIC_FOOTSTEP];
+}
+
+/** What plays when the surface is unknown, or has no take of its own yet. */
+const GENERIC_FOOTSTEP: SoundEventId = 'player.footstep';
+
+const SURFACE_FOOTSTEPS: Readonly<Record<TerrainMaterial, SoundEventId>> = {
+  grass: 'player.footstep.grass',
+  dirt: 'player.footstep.dirt',
+  sand: 'player.footstep.sand',
+  rock: 'player.footstep.rock',
+  snow: 'player.footstep.snow',
+  water: 'player.footstep.water',
+};

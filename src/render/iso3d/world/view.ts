@@ -1288,6 +1288,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     root.dataset['audioBuffers'] = String(stats.buffers);
     root.dataset['audioMissing'] = String(stats.missing);
     root.dataset['audioStarted'] = started;
+    // What the local player is standing on, for the per-surface footstep. A
+    // readout rather than an assertion in Node, because the whole join can be
+    // null forever and every test still pass: a surface that never resolves
+    // falls back to the plain footstep, which is exactly what the tests assert
+    // it should do while the surface rows are unassigned. Only a browser can
+    // say whether the ground is being read at all.
+    const me = client.view().self;
+    root.dataset['audioSurface'] =
+      me === undefined || me === null ? '' : (streamed?.materialAt(me.x, me.y) ?? '');
   }
 
   function publishVfxReadout(): void {
@@ -3590,6 +3599,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           projectileLook:
             entity.kind === EntityKind.Projectile
               ? (abilityById(entity.typeId)?.projectile?.look ?? null)
+              : null,
+          // What is under its feet, for the per-surface footstep. Asked only of
+          // things that have feet, because `materialAtWorld` walks the layers
+          // and a projectile, a drop and a mote would all pay for an answer
+          // nothing reads. Null where this client has not been sent that chunk,
+          // which the wire reads as "I do not know" and falls back on.
+          surface:
+            entity.kind === EntityKind.Player || entity.kind === EntityKind.Monster
+              ? (streamed?.materialAt(entity.x, entity.y) ?? null)
               : null,
           // Whether it is standing in its own fire (spec 223). The same
           // predicate `aura-vfx.ts` draws the ring from, so the sound and the

@@ -35,23 +35,31 @@
  * dev mannequin's library already declares `footstep.l` / `footstep.r` on its
  * walk and run.
  *
- * ## And why there is one footstep sound rather than one per surface
+ * ## The surface is somebody else's question, and this is why
  *
- * The ground's material **is** reachable on a streaming client, and precisely:
- * `StreamedMap.meshLayers` is public and `MeshLayer.materialAt(col, row)`
- * returns the *baked* index, with `null` meaning "that chunk has not arrived"
- * rather than "no material" -- which is the distinction a surface-varied
- * footstep needs and would have to treat as "use the default", never as silence.
- * (What must **not** be used is `worldMaterialAt` in `classify.ts`: it re-derives
- * a material from height and slope with `region: 'default'`, so it reports a
- * hand-painted dirt path as grass and painted snow as rock.)
+ * There is a row per terrain material now (`player.footstep.grass` and its
+ * five siblings) and **none of it is here**. This class answers *when* a foot
+ * lands; which sound that is belongs to `audio-wire.ts`'s `footstepEvents`, and
+ * the material itself comes from `MapChunkStore.materialAtWorld`.
  *
- * What is missing is not the signal, it is the recordings: the library ships one
- * boot set and one sandal set, which are two kinds of *shoe* and not two kinds
- * of *ground*. Splitting `player.footstep` into five surface rows with one of
- * them assigned would be five events to look at and one sound to hear. When the
- * takes exist, the change is a row per surface in `events.ts` and a material
- * lookup handed into the driver -- not a change here.
+ * The reader that matters is the one **not** used: `worldMaterialAt` in
+ * `classify.ts` re-derives a material from height and slope with
+ * `region: 'default'`, so it reports a hand-painted dirt path as grass and
+ * painted snow as rock. That is right for scattering vegetation over a
+ * generated world and wrong for asking what a body is standing on in a map
+ * somebody edited -- since spec 179 a material is a *choice*, and the baked
+ * index is where the choice lives. `null` from either reader means "no chunk
+ * holds that cell", which on a streaming client is ordinary and has to be read
+ * as "I do not know" rather than as an answer.
+ *
+ * Every surface row ships unassigned, because the delivered library is one boot
+ * set and one sandal set -- two kinds of *shoe*, not two kinds of ground. What
+ * makes that safe rather than silent is that the preference is a *list*: the
+ * driver plays the first entry the catalog has files for, so every surface
+ * resolves to `player.footstep` today and walking sounds exactly as it always
+ * has. Dropping a take on one row in the SFX tab changes that surface and
+ * nothing else, with no code edit anywhere -- which is the whole point of the
+ * split between the vocabulary and the catalog.
  *
  * ## Two things it has to refuse
  *

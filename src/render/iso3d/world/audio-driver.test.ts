@@ -50,6 +50,15 @@ class RecordingAudio implements Audio {
   readonly stopped: AudioHandle[] = [];
   readonly listeners: ListenerPose[] = [];
   readonly evicted = new Set<AudioHandle>();
+  /**
+   * Which events the catalog has *no* files for.
+   *
+   * A deny set rather than an allow set, so every test written before `has`
+   * existed still describes a fully-assigned catalog and asserts what it always
+   * did. The fallback chain is the thing that needs the other case, and it says
+   * so by naming the rows it wants silent.
+   */
+  readonly unassigned = new Set<string>();
   refuse = false;
   stopAllCalls = 0;
   private next = 1;
@@ -81,6 +90,9 @@ class RecordingAudio implements Audio {
   }
   warm(): void {
     /* nothing */
+  }
+  has(id: SoundEventId): boolean {
+    return !this.unassigned.has(id);
   }
   resume(): void {
     /* nothing */
@@ -121,6 +133,7 @@ function aBody(over: Partial<AudioBody> = {}): AudioBody {
     activityUntilTick: 0,
     walks: false,
     projectileLook: null,
+    surface: null,
     field: false,
     ...over,
   };
@@ -644,5 +657,71 @@ describe('the three moments a shot has', () => {
     driver.body(arrow({ entityId: 3 }), 0);
     driver.stopAll();
     expect(audio.countOf('combat.projectile.impact')).toBe(0);
+  });
+});
+
+describe('the surface underfoot', () => {
+  /** A body that walks far enough to bank a step, on whatever ground is given. */
+  const walkOn = (audio: RecordingAudio, surface: AudioBody['surface']): void => {
+    const driver = new AudioDriver(audio);
+    for (let frame = 0; frame < 12; frame += 1) {
+      driver.body(aBody({ walks: true, surface, x: frame * 30 }), frame);
+      driver.sweep();
+    }
+  };
+
+  /**
+   * The state this ships in, and the reason the fallback exists at all.
+   *
+   * Every surface row is unassigned on purpose -- the library is one boot set
+   * and one sandal set, which are two kinds of shoe and not two kinds of ground
+   * -- so walking has to sound exactly as it did. Without the chain, adding six
+   * rows would take the sound of walking out of the game until somebody had
+   * recorded six sets of takes.
+   */
+  it('plays the plain footstep while every surface row is silent', () => {
+    const audio = new RecordingAudio();
+    for (const id of [
+      'player.footstep.grass',
+      'player.footstep.snow',
+      'player.footstep.rock',
+    ] as const) {
+      audio.unassigned.add(id);
+    }
+    walkOn(audio, 'grass');
+    expect(audio.countOf('player.footstep')).toBeGreaterThan(0);
+    expect(audio.countOf('player.footstep.grass')).toBe(0);
+  });
+
+  it('takes the surface row the moment that surface has a take', () => {
+    const audio = new RecordingAudio();
+    // Everything assigned: what the catalog looks like once somebody has
+    // dropped a snow take in the SFX tab.
+    walkOn(audio, 'snow');
+    expect(audio.countOf('player.footstep.snow')).toBeGreaterThan(0);
+    expect(audio.countOf('player.footstep')).toBe(0);
+  });
+
+  it('changes surface with the ground rather than per body', () => {
+    const audio = new RecordingAudio();
+    const driver = new AudioDriver(audio);
+    // One body, walking off grass and onto rock: the same entity, so this is
+    // the surface being re-read each frame rather than remembered.
+    for (let frame = 0; frame < 24; frame += 1) {
+      driver.body(aBody({ walks: true, surface: frame < 12 ? 'grass' : 'rock', x: frame * 30 }), frame);
+      driver.sweep();
+    }
+    expect(audio.countOf('player.footstep.grass')).toBeGreaterThan(0);
+    expect(audio.countOf('player.footstep.rock')).toBeGreaterThan(0);
+  });
+
+  /**
+   * Ground this client has not been sent is "I do not know", never silence: a
+   * body walking toward un-arrived terrain should sound like a body walking.
+   */
+  it('walks audibly over ground that has not streamed in', () => {
+    const audio = new RecordingAudio();
+    walkOn(audio, null);
+    expect(audio.countOf('player.footstep')).toBeGreaterThan(0);
   });
 });

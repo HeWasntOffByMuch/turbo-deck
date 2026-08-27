@@ -28,6 +28,7 @@ import {
   soundForAfflictionTick,
   soundForEffect,
   soundForProjectile,
+  footstepEvents,
   soundForProjectileImpact,
   soundForProjectileLaunch,
   soundForWindup,
@@ -38,6 +39,7 @@ import {
 import { isSoundEventId, soundEvent } from '../../audio/events.js';
 import { ABILITIES, abilityById, ALL_ABILITIES, type ProjectileLook } from '../../../server/data/abilities.js';
 import { ALL_DOTS } from '../../../server/data/damage-over-time.js';
+import { TERRAIN_MATERIALS } from '../../../terrain/types.js';
 
 function facts(overrides: Partial<BlowFacts> = {}): BlowFacts {
   return {
@@ -546,5 +548,49 @@ describe('AFFLICTION_TICKS', () => {
   it('stays silent for an affliction with no row rather than borrowing one', () => {
     expect(soundForAfflictionTick('nothing')).toBeNull();
     expect(soundForAfflictionTick('burn')).toBe('affliction.burn.tick');
+  });
+});
+
+describe('which footstep a surface gets', () => {
+  /**
+   * The rule the rows exist under, rather than the list.
+   *
+   * `TERRAIN_MATERIALS` is the authority: a seventh material added to the game
+   * arrives with a footstep row or fails here, instead of quietly walking on
+   * whatever the fallback happens to be.
+   */
+  it('has a row for every material the terrain can be', () => {
+    for (const material of TERRAIN_MATERIALS) {
+      const [specific] = footstepEvents(material);
+      expect(specific, material).not.toBe('player.footstep');
+      expect(isSoundEventId(specific ?? ''), `${material} -> ${String(specific)}`).toBe(true);
+    }
+  });
+
+  it('offers the surface first and the plain footstep behind it', () => {
+    expect(footstepEvents('snow')).toEqual(['player.footstep.snow', 'player.footstep']);
+    expect(footstepEvents('grass')).toEqual(['player.footstep.grass', 'player.footstep']);
+  });
+
+  /**
+   * `null` is "I do not know", which is the ordinary state on a streaming
+   * client for ground a body is walking toward. It must reach the plain
+   * footstep rather than nothing: a body walking into un-arrived ground should
+   * sound like a body walking.
+   */
+  it('falls straight to the plain footstep for ground it has not been sent', () => {
+    expect(footstepEvents(null)).toEqual(['player.footstep']);
+  });
+
+  it('never composes an id the vocabulary does not declare', () => {
+    for (const material of [...TERRAIN_MATERIALS, null]) {
+      for (const id of footstepEvents(material)) expect(isSoundEventId(id), id).toBe(true);
+    }
+  });
+
+  it('always ends with the fallback, so a chain can never resolve to nothing', () => {
+    for (const material of [...TERRAIN_MATERIALS, null]) {
+      expect(footstepEvents(material).at(-1), String(material)).toBe('player.footstep');
+    }
   });
 });

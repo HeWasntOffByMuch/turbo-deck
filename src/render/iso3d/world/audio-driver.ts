@@ -51,11 +51,13 @@ import {
   soundForProjectile,
   soundForProjectileImpact,
   soundForProjectileLaunch,
+  footstepEvents,
   soundForWindup,
   soundsForBlow,
   type BlowFacts,
 } from './audio-wire.js';
 import type { WeaponType } from './weapon-look.js';
+import type { TerrainMaterial } from '../../../terrain/types.js';
 import { Footsteps } from './footsteps.js';
 
 /** `EntityActivity` values this cares about. Copied rather than imported: see below. */
@@ -88,6 +90,15 @@ export interface AudioBody {
   readonly walks: boolean;
   /** A projectile's look (`'ember'`, `'arrow'`, ...), or null for anything else. */
   readonly projectileLook: string | null;
+  /**
+   * What the ground under this body is made of, or null where the client does
+   * not hold that chunk yet.
+   *
+   * Null is "I do not know", not "no surface" -- it is the ordinary state for
+   * ground a body is walking toward on a streaming client, and it falls to the
+   * plain footstep rather than to silence.
+   */
+  readonly surface: TerrainMaterial | null;
   /** Whether this body is carrying an aura field (spec 223). */
   readonly field: boolean;
 }
@@ -196,7 +207,14 @@ export class AudioDriver {
         walks: body.activity !== ACTIVITY_STUNNED && body.activity !== ACTIVITY_DEAD,
       })
     ) {
-      this.audio.play('player.footstep', { x: body.x, y: body.ground, z: body.z });
+      // The most specific footstep the catalog actually has a take for. Every
+      // surface row ships unassigned, so today this always resolves to the
+      // plain one and the game sounds exactly as it did -- and dropping a take
+      // on `player.footstep.snow` in the SFX tab changes snow and only snow,
+      // with no code edit anywhere.
+      const wanted = footstepEvents(body.surface);
+      const chosen = wanted.find((id) => this.audio.has(id)) ?? wanted[wanted.length - 1];
+      if (chosen !== undefined) this.audio.play(chosen, { x: body.x, y: body.ground, z: body.z });
     }
   }
 

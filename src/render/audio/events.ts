@@ -105,6 +105,70 @@ export const SOUND_EVENTS = [
     placement: 'world',
     note: 'Every body that walks, on a stride measured from the distance it covered.',
   },
+  // --- one row per terrain material -----------------------------------------
+  //
+  // The material a body is standing on is a *choice* since spec 179 -- painted
+  // in the map editor -- and reading it is `MapChunkStore.materialAtWorld`,
+  // which answers the **baked** index rather than re-deriving one from height
+  // and slope. All six are here rather than the five a designer can paint,
+  // because the authority is `TERRAIN_MATERIALS` and not a guess about which of
+  // them a foot will ever land on; a test asserts the two lists match, so a
+  // seventh material arrives with a footstep row or fails.
+  //
+  // Every one of them is **unassigned on purpose**. The delivered library is one
+  // boot set and one sandal set, which are two kinds of *shoe* and not two kinds
+  // of ground, so there is nothing honest to put behind them yet. A surface with
+  // no files falls back to `player.footstep`, which is what plays today -- so
+  // these rows change nothing until somebody drops a take on one, and then they
+  // change exactly that surface.
+  {
+    id: 'player.footstep.grass',
+    label: 'Footstep: grass',
+    bus: 'player',
+    section: 'Movement',
+    placement: 'world',
+    note: 'A step on grass. Falls back to the plain footstep while unassigned.',
+  },
+  {
+    id: 'player.footstep.dirt',
+    label: 'Footstep: dirt',
+    bus: 'player',
+    section: 'Movement',
+    placement: 'world',
+    note: 'A step on bare earth or a worn path.',
+  },
+  {
+    id: 'player.footstep.sand',
+    label: 'Footstep: sand',
+    bus: 'player',
+    section: 'Movement',
+    placement: 'world',
+    note: 'A step on sand, which is the shore and the dunes.',
+  },
+  {
+    id: 'player.footstep.rock',
+    label: 'Footstep: rock',
+    bus: 'player',
+    section: 'Movement',
+    placement: 'world',
+    note: 'A step on stone -- a rock tier, a cliff shelf, a paved square.',
+  },
+  {
+    id: 'player.footstep.snow',
+    label: 'Footstep: snow',
+    bus: 'player',
+    section: 'Movement',
+    placement: 'world',
+    note: 'A step on snow, which is the tops of things.',
+  },
+  {
+    id: 'player.footstep.water',
+    label: 'Footstep: water',
+    bus: 'player',
+    section: 'Movement',
+    placement: 'world',
+    note: 'A step on ground at or under the flood line -- a ford, a shallow edge.',
+  },
   {
     id: 'player.hurt',
     label: 'Player hurt',
