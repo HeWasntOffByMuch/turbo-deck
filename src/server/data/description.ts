@@ -218,7 +218,7 @@ export function describeAbility(ability: AbilityDefinition): TechnicalDescriptio
 }
 
 /**
- * What this ability's offence scales with (specs 231, 240).
+ * What this ability's offence scales with (specs 238, 242).
  *
  * **The weapon tooltip's notation, borrowed whole**: three positions, always
  * `Strength / Agility / Intelligence` in that fixed order, one character each,

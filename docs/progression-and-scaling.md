@@ -390,6 +390,6 @@ should.
 
 What the audit **cannot** see is stated rather than papered over: it reads
 resolved state, so an interference that lives in behaviour rather than in a
-number is invisible to it. Spec 232's overheal fault was exactly that — both
+number is invisible to it. Spec 239's overheal fault was exactly that — both
 traits were present and the bug was a branch in `applyHealing` — and it is
 covered by `sim/overheal.test.ts` instead.

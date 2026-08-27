@@ -7,7 +7,7 @@
  * down: **for every skill, at every rank, at every attribute value where that
  * rank can legally be bought -- does the purchase reach the simulation at all?**
  *
- * Spec 232 closed eight faults that were each invisible to every test in the
+ * Spec 239 closed eight faults that were each invisible to every test in the
  * tree, and six of them were this question answered wrongly: three skills that
  * granted an improvement to a mechanic their own milestone introduced, two ranks
  * bought into a number a milestone had already filled to its cap, and a capstone
