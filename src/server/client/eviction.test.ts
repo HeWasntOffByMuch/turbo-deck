@@ -107,7 +107,11 @@ describe('walking the map', () => {
     // rather than as a stale constant.
     const evicting = circuit(true);
     const hoarding = circuit(false);
-    expect(hoarding).toBeGreaterThan(300);
+    // Derived from the keep window rather than typed: what makes the contrast
+    // real is that hoarding ends up holding several times what it is ever
+    // allowed to want, and a hand-written 300 is a fact about how big the map
+    // happened to be -- which is exactly the drift the comment above refuses.
+    expect(hoarding).toBeGreaterThan(KEEP_WINDOW * 2);
     expect(evicting).toBeLessThan(hoarding / 5);
   });
 

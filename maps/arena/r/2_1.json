@@ -72,7 +72,8 @@
             { "species": "tree", "x": 203.074, "z": 61.015, "rotation": 1.877, "scale": 0.755, "tint": 0.583 },
             { "species": "tree", "x": 220.111, "z": 149.291, "rotation": 1.23, "scale": 1.368, "tint": 0.782 },
             { "species": "tree", "x": 217.035, "z": 245.088, "rotation": 0.029, "scale": 0.809, "tint": -0.379 },
-            { "species": "tree", "x": 483.38, "z": 352.38, "rotation": 5.227, "scale": 0.797, "tint": -0.598 }
+            { "species": "tree", "x": 483.38, "z": 352.38, "rotation": 5.227, "scale": 0.797, "tint": -0.598 },
+            { "species": "bush", "x": 114.413, "z": 580.267, "rotation": 1.203, "scale": 1.336, "tint": 0.312 }
           ],
           "markers": []
         },
