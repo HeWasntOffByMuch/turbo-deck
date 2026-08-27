@@ -354,7 +354,50 @@ export function catalogToJson(catalog: SoundCatalog): string {
     }
     sounds[id] = out;
   }
-  return `${JSON.stringify({ version: CATALOG_VERSION, sounds }, null, 2)}\n`;
+  return renderCatalog(sounds);
+}
+
+/**
+ * The document's shape on disk, and why it is not `JSON.stringify(x, null, 2)`.
+ *
+ * This file is committed so that **a mix change reviews as a diff**, which is
+ * the reason CLAUDE.md gives for it existing at all. Fully expanded, moving one
+ * number is a four-line hunk and a row's whole tuning is twenty lines, so the
+ * one thing the format is for is the thing it does worst.
+ *
+ * So a leaf object is written inline -- `"pitch": { "min": 0.92, "max": 1.08 }`
+ * is one line and a retune is one changed line -- and a list of variants is
+ * written one per line, because that is a list somebody reorders and adds to and
+ * each of those should be its own hunk. A single variant stays inline, since a
+ * one-item list has no order to review.
+ *
+ * Hand-formatting got the same shape and could not survive contact with the
+ * tab: Save writes whatever this function returns, so the first time anybody
+ * pressed it the file would have exploded to 700 lines and every later diff
+ * would have been noise. A format worth having is one the writer produces.
+ */
+function renderCatalog(sounds: Record<string, unknown>): string {
+  const rows = Object.entries(sounds).map(([id, entry]) => {
+    const fields = Object.entries(entry as Record<string, unknown>).map(
+      ([key, value]) => `      ${JSON.stringify(key)}: ${renderValue(value)}`,
+    );
+    return `    ${JSON.stringify(id)}: {\n${fields.join(',\n')}\n    }`;
+  });
+  return `{\n  "version": ${String(CATALOG_VERSION)},\n  "sounds": {\n${rows.join(',\n')}\n  }\n}\n`;
+}
+
+/** One field of an entry. Every value here is a scalar, a scalar list, or a leaf object. */
+function renderValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    if (value.length <= 1) return JSON.stringify(value);
+    const items = value.map((item) => `        ${JSON.stringify(item)}`);
+    return `[\n${items.join(',\n')}\n      ]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const pairs = Object.entries(value).map(([key, inner]) => `${JSON.stringify(key)}: ${JSON.stringify(inner)}`);
+    return `{ ${pairs.join(', ')} }`;
+  }
+  return JSON.stringify(value);
 }
 
 /** Ids present in the catalog, in the vocabulary's order. */
