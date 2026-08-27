@@ -241,13 +241,39 @@ describe('effects are described in the row order', () => {
 });
 
 describe('nothing is invented', () => {
-  it('adds no effect line beyond damage for a row with no effects', () => {
+  it('adds no effect line beyond damage and scaling for a row with no effects', () => {
+    // Two lines, and both are derived rather than invented: what it does, and
+    // what that grows with (spec 231). Heavy Blow is pure Strength `A`.
     const ability = abilityById('melee.heavy');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const effects = describeAbility(ability).lines.filter((line) => line.tone === 'effect');
-    expect(effects).toHaveLength(1);
+    expect(effects).toHaveLength(2);
     expect(effects[0]?.text).toBe(`Deals ${ability.damage} damage.`);
+    expect(effects[1]?.text).toBe('Scales with Strength A.');
+  });
+
+  it('says nothing about scaling for a row that scales with nothing (spec 231)', () => {
+    // The standard's first rule reaching the newest line: an ability that
+    // scales with nothing gets no line, rather than a line saying so. Asserted
+    // on the two rows where "fixed quantity" is the design -- a flask that grew
+    // with a build would stop being a fallback for the build that needs one.
+    for (const id of ['self.hearthdraught', 'self.mend']) {
+      const ability = abilityById(id);
+      expect(ability, id).not.toBeNull();
+      if (!ability) continue;
+      expect(technicalText(describeAbility(ability)), id).not.toContain('Scales with');
+    }
+  });
+
+  it('leaves a basic attack’s scaling to the weapon that decides it (spec 231)', () => {
+    // A basic attack takes the weapon's range whole and the weapon's own
+    // tooltip already prints its three grades. A second statement here would be
+    // the duplicate rule this file exists to prevent.
+    for (const ability of ALL_ABILITIES) {
+      if (ability.basicAttack !== true) continue;
+      expect(technicalText(describeAbility(ability)), ability.id).not.toContain('Scales with');
+    }
   });
 
   it('adds no facing line for a row with no cast angle', () => {

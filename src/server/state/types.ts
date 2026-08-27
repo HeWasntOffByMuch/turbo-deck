@@ -618,6 +618,16 @@ export type WeaponScaling = Readonly<Record<ScalingAttribute, ScalingGrade>>;
 /** Grade *steps* a body's equipment, perks and buffs contribute. Not coefficients. */
 export type ScalingGradeModifiers = Readonly<Record<ScalingAttribute, number>>;
 
+/**
+ * The three attribute values a scaling grade is resolved against (spec 216).
+ *
+ * Declared here beside the grades rather than in `data/weapon-scaling.ts`,
+ * because since spec 231 it rides on {@link EffectiveStats} and crosses the
+ * wire -- so the type has to be reachable from the half of the tree that has no
+ * business importing a content table.
+ */
+export type ScalingAttributes = Readonly<Record<ScalingAttribute, number>>;
+
 export interface EffectiveStats {
   readonly maxHealth: number;
   /** World units per second. */
@@ -726,6 +736,29 @@ export interface EffectiveStats {
    * implementation of the resolver this spec exists to prevent.
    */
   readonly scalingModifiers: ScalingGradeModifiers;
+  /**
+   * The three attribute values scaling is resolved against (spec 231).
+   *
+   * Strength, Agility and Intelligence *after* every grant -- allocation, item
+   * bonuses, milestones, synergies -- which is exactly the object
+   * `player/stats.ts` already hands `attributeScalingBonus` for the weapon. It
+   * rides here because an **ability's** scaling cannot be folded in the way a
+   * weapon's is: `weaponDamageMin/Max` is one range and can carry its attribute
+   * term pre-computed, where an ability's term depends on which ability, and
+   * there are two dozen of those. So the sim carries the three inputs and
+   * resolves per ability at the moment of the blow, through the same
+   * `contributionOf` the weapon path uses.
+   *
+   * Three numbers rather than all six on purpose: Constitution, Perception and
+   * Wisdom are not damage-scaling attributes and adding them here would be the
+   * socket somebody eventually plugs a fourth damage stat into.
+   *
+   * A monster's is zeros (`NO_WEAPON`), so `above()` is zero on all three and
+   * an ability's damage is exactly its authored number -- which is what a
+   * monster's ability did before this spec, when `spellPower` was 1 for every
+   * row in `data/monsters.ts`.
+   */
+  readonly scalingAttributes: ScalingAttributes;
   /**
    * Everything the six attributes derive (spec 147). See {@link TraitStats}.
    *

@@ -84,10 +84,13 @@ function carrier(
     ...made,
     kind: EntityKindValue.Player,
     typeId: 'player',
-    // A real spell power, so the affliction it lands is worth something: a
-    // magnitude of zero draws the mark and does nothing, which is the lie every
-    // test row in this repo is written to avoid.
     stats: { ...made.stats, spellPower: 1 },
+    // The field status with **no magnitude**, which is what
+    // `admin:triggerEvent 'field'` produces and therefore the case worth
+    // fixturing: since spec 231 the pass reads the power the field was cast
+    // with off this status, and an unstated one is the table's own rate. A
+    // fixture that stated one would leave the developer path -- a ring that
+    // draws and burns nobody -- untested.
     statuses: applyStatus({}, field.id, tick, durationTicks),
   };
 }

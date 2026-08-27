@@ -28,13 +28,14 @@
 
 import type {
   ScalingAttribute,
+  ScalingAttributes,
   ScalingGrade as Grade,
   ScalingGradeModifiers,
   WeaponScaling,
 } from '../state/types.js';
 import { above, SCALING } from './scaling.js';
 
-export type { ScalingAttribute, ScalingGradeModifiers, WeaponScaling };
+export type { ScalingAttribute, ScalingAttributes, ScalingGradeModifiers, WeaponScaling };
 
 /**
  * The ladder, as ordinals.
@@ -114,6 +115,21 @@ export const UNARMED_SCALING: WeaponScaling = {
   intelligence: ScalingGrade.None,
 };
 
+/**
+ * The attribute values of a body with no progression (spec 231).
+ *
+ * Zeros rather than {@link SCALING.startingAttribute}, and the difference is
+ * load-bearing: `contributionOf` measures from `above()`, so zeros and fives
+ * both contribute nothing, and zeros additionally say *"this body has no
+ * attributes"* rather than "this body is a fresh character". A monster is the
+ * former.
+ */
+export const NO_SCALING_ATTRIBUTES: ScalingAttributes = {
+  strength: 0,
+  agility: 0,
+  intelligence: 0,
+};
+
 /** No modifiers at all. A fresh object is never handed out; this is read-only. */
 export const NO_GRADE_MODIFIERS: ScalingGradeModifiers = {
   strength: 0,
@@ -184,6 +200,10 @@ export function damageOf(damage: WeaponDamage | undefined, held: boolean): Weapo
 export const NO_WEAPON = {
   weaponScaling: NO_SCALING,
   scalingModifiers: NO_GRADE_MODIFIERS,
+  // No attributes at all (spec 231), so an ability cast by such a body is worth
+  // exactly its authored `damage` -- which is what one was worth before that
+  // spec, when every `data/monsters.ts` row authored `spellPower: 1`.
+  scalingAttributes: NO_SCALING_ATTRIBUTES,
   weaponDamageMin: UNARMED_DAMAGE.min,
   weaponDamageMax: UNARMED_DAMAGE.max,
 } as const;
@@ -300,9 +320,6 @@ export function scalingOf(scaling: WeaponScaling | undefined, held: boolean): We
   if (!held) return UNARMED_SCALING;
   return scaling ?? NO_SCALING;
 }
-
-/** The attribute values this system reads. The other three are not in the type. */
-export type ScalingAttributes = Readonly<Record<ScalingAttribute, number>>;
 
 /**
  * What one attribute contributes at one grade.

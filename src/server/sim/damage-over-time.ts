@@ -36,6 +36,8 @@
  */
 
 import { RESTORATION } from '../data/restoration.js';
+import type { AbilityDefinition } from '../data/abilities.js';
+import { abilityEffectPowerOf } from '../data/ability-scaling.js';
 import { SCALING } from '../data/scaling.js';
 import {
   dotById,
@@ -141,16 +143,38 @@ export function afflictable(entity: ServerEntity): boolean {
  * on which skill happened to land it is one the player carrying it cannot
  * reason about, and "content is data" means the data is the content.
  *
- * What does vary is the *applier*: their `spellPower` is captured into
- * `magnitude` the way Exposed already captures the exposer's own coefficient,
- * so an affliction is worth what the build that landed it was worth and does
- * not retroactively change when that build does.
+ * What does vary is the *applier*: their resolved **ability power** is captured
+ * into `magnitude` the way Exposed already captures the exposer's own
+ * coefficient, so an affliction is worth what the build that landed it was
+ * worth and does not retroactively change when that build does.
+ *
+ * That power is the **applying ability's own declared scaling** (spec 231), not
+ * the applier's spell power. Before that spec it was `source.stats.spellPower`
+ * outright, which meant every affliction in the game was an Intelligence
+ * affliction whatever had applied it -- a Rending Cut's Bleed grew with
+ * Intelligence and with nothing else, and the martial build that threw it got
+ * the table's flat rate. Now a row's letters decide it, so Rending Cut's Bleed
+ * grows with Strength and Agility and Ember Toss's Burn grows with
+ * Intelligence, and a caster who has spent nothing gets exactly the rate
+ * `data/damage-over-time.ts` states.
+ *
+ * The ability is passed rather than looked up: `skill-effects.ts` has it in
+ * hand, and an id lookup here would let a caller pass an id that is not the one
+ * that actually landed.
+ *
+ * **Absent means the table's own rate**, power exactly 1, which is the honest
+ * answer for an affliction with no ability behind it -- a developer trigger, a
+ * measuring instrument like `scripts/preview-afflictions.ts`, a test fixture
+ * asking what a row is worth. `sim/aura-field.ts` states the same default for
+ * the same reason. The one production path (`applyEffects`) always has the row
+ * in hand and always passes it.
  */
 export function applyDot(
   target: ServerEntity,
   dotId: string,
   tick: number,
   source: ServerEntity,
+  ability?: Pick<AbilityDefinition, 'scaling'>,
 ): ServerEntity {
   const row = dotById(dotId);
   if (!row || !afflictable(target)) return target;
@@ -159,7 +183,7 @@ export function applyDot(
     statuses: landDot(target.statuses, row, tick, {
       durationTicks: dotDurationTicks(row),
       maxStacks: row.maxStacks,
-      magnitude: Math.max(0, source.stats.spellPower),
+      magnitude: Math.max(0, abilityEffectPowerOf(ability?.scaling, source.stats)),
       sourceId: source.id,
     }),
   };

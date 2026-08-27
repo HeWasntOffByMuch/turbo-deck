@@ -34,6 +34,7 @@ import { subjectOf, type SkillEffect } from '../data/skill-effects.js';
 import { applyDot } from './damage-over-time.js';
 import { applyHealing } from './healing.js';
 import { resolveBlow } from './blow.js';
+import { abilityEffectPowerOf } from '../data/ability-scaling.js';
 import { applyPoiseDamage, isResolute, stagger } from './poise.js';
 import { applyStatus, clearStatus } from './statuses.js';
 import type { ServerEntity, ServerSimEvent } from './types.js';
@@ -193,11 +194,25 @@ function applyOne(
     }
 
     case 'applyStatus':
+      // **A row that authors no magnitude carries the caster's resolved ability
+      // power** (spec 231), which is the rule `Exposed` and every affliction
+      // already follow: a status usually belongs to somebody *else's* stats, so
+      // what it is worth is captured when it lands rather than re-read off
+      // whoever happens to be standing there later.
+      //
+      // A row that authors one means that number literally -- Crippling
+      // Strike's `0.4` is a fraction of move speed and would be nonsense
+      // scaled. So the two cases are "this status carries a quantity the row
+      // states" and "this status carries how strong the caster was", and the
+      // presence of the field is which.
       return still({
         ...target,
         statuses: applyStatus(target.statuses, effect.statusId, tick, effect.durationTicks, {
           ...(effect.maxStacks === undefined ? {} : { maxStacks: effect.maxStacks }),
-          ...(effect.magnitude === undefined ? {} : { magnitude: effect.magnitude }),
+          magnitude:
+            effect.magnitude === undefined
+              ? abilityEffectPowerOf(ability.scaling, caster.stats)
+              : effect.magnitude,
         }),
       });
 
@@ -210,7 +225,7 @@ function applyOne(
       // how long it runs and who is answerable for what it kills are all
       // decided by `applyDot` against its own table, so a skill row cannot
       // author a Burn that is not the Burn.
-      return still(applyDot(target, effect.dotId, tick, caster));
+      return still(applyDot(target, effect.dotId, tick, caster, ability));
 
     case 'heal': {
       const amount = (effect.amount ?? 0) + target.stats.maxHealth * (effect.fraction ?? 0);

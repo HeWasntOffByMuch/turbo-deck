@@ -54,6 +54,9 @@ import {
   type DotDefinition,
 } from './damage-over-time.js';
 import { auraFieldById, type AuraFieldDefinition } from './aura-fields.js';
+import { abilityProfileOf } from './ability-scaling.js';
+import { letterOf, SCALING_ATTRIBUTES, ScalingGrade } from './weapon-scaling.js';
+import type { ScalingAttribute } from '../state/types.js';
 
 /**
  * Which register a line is in, so a surface can style the block without
@@ -173,6 +176,7 @@ export function describeAbility(ability: AbilityDefinition): TechnicalDescriptio
   push('target', shapeLine(ability));
 
   for (const text of effectLines(ability)) push('effect', text);
+  push('effect', scalingLine(ability));
   push('cost', costLine(ability));
   for (const text of timingLines(ability)) push('timing', text);
   for (const text of noteLines(ability)) push('note', text);
@@ -183,6 +187,49 @@ export function describeAbility(ability: AbilityDefinition): TechnicalDescriptio
     flavor: ability.description.length > 0 ? ability.description : null,
   };
 }
+
+/**
+ * What this ability's offence scales with (spec 231).
+ *
+ * Derived from the row's own `scaling`, like every other line here, so an
+ * ability that is retuned describes itself correctly with nothing to remember.
+ * It is the one thing a player could not previously find out at all: before
+ * spec 231 the answer was "Intelligence" for every active ability in the game
+ * and it was written down nowhere.
+ *
+ * Named attributes rather than letters, because a letter is a comparison
+ * between weapons and a player reading a skill wants to know which stat to
+ * spend on. The letters are still the authored truth and
+ * `formatAbilityScaling` prints them for a log line.
+ *
+ * **Omitted entirely when there is nothing to say**, which is the standard's
+ * first rule: an ability that scales with nothing gets no line, rather than a
+ * line saying so. That is a real classification -- a flask and a Mend are fixed
+ * quantities -- and `description.test.ts` asserts the omission rather than
+ * letting it read as a gap.
+ */
+function scalingLine(ability: AbilityDefinition): string {
+  // A basic attack's damage is the weapon's, whole, and the weapon's own
+  // tooltip already states its three grades. Saying it again here would be the
+  // second copy of a rule this file exists to prevent.
+  if (ability.basicAttack === true) return '';
+  const profile = abilityProfileOf(ability.scaling);
+  const named = SCALING_ATTRIBUTES.filter(
+    (attribute) => profile.grades[attribute] !== ScalingGrade.None,
+  ).map((attribute) => `${ATTRIBUTE_NAMES[attribute]} ${letterOf(profile.grades[attribute])}`);
+  if (profile.weapon > 0) {
+    named.push(profile.weapon >= 1 ? 'your weapon' : `${percent(profile.weapon)} of your weapon`);
+  }
+  if (named.length === 0) return '';
+  return `Scales with ${joinList(named)}.`;
+}
+
+/** The three scaling attributes as a player sees them written. */
+const ATTRIBUTE_NAMES: Readonly<Record<ScalingAttribute, string>> = {
+  strength: 'Strength',
+  agility: 'Agility',
+  intelligence: 'Intelligence',
+};
 
 /** Who or what the cast is aimed at, and how far away it may be. */
 function targetLine(ability: AbilityDefinition): string {

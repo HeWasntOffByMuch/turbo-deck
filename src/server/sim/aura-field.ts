@@ -147,6 +147,21 @@ export function pulseAuraFields(
   for (const carrier of carriers) {
     for (const field of carrier.fields) {
       const row = dotById(field.dotId);
+      // The power this field was **cast** with, read off the carrier's own
+      // field status -- which is where `applyStatus` snapshotted it when the
+      // skill landed (spec 231). Per field rather than per carrier, because a
+      // body carrying two fields carries two independent snapshots.
+      //
+      // **A magnitude that is not positive means none was stated**, and the
+      // answer is 1 -- the table's own rate, unmodified. That is not defensive
+      // padding: `admin:triggerEvent 'field'` applies this status directly and
+      // authors no magnitude, so a plain `?? 1` would leave the developer path
+      // drawing a ring that burns nobody, which is the exact shape of silent
+      // no-op this file's neighbours are written to refuse. `applyStatus`
+      // itself defaults a magnitude to 0, so "absent" arrives here as 0 rather
+      // than as `undefined`.
+      const held = statusOf(carrier.entity.statuses, field.id, tick);
+      const power = held && held.magnitude > 0 ? held.magnitude : 1;
       // A field naming an affliction that is not in the table does nothing
       // rather than throwing. `aura-fields.test.ts` refuses the row, so this is
       // the runtime half of a check that has already failed in CI.
@@ -158,7 +173,15 @@ export function pulseAuraFields(
           ...body,
           statuses: landDot(body.statuses, row, tick, {
             ...fieldLanding(field, statusOf(body.statuses, row.id, tick), tick),
-            magnitude: Math.max(0, carrier.entity.stats.spellPower),
+            // The power the field was **cast** with, snapshotted into the
+            // carrier's own field status when the skill landed (spec 231), not
+            // the carrier's live spell power. Two changes in one: it is the
+            // casting ability's declared letters rather than Intelligence
+            // outright, and it is a snapshot rather than a live read -- so a
+            // field is worth what the build that laid it was worth, which is
+            // the rule `magnitude` exists for and the one every affliction
+            // already follows.
+            magnitude: power,
             sourceId: carrier.entity.id,
           }),
         });

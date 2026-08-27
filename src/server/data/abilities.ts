@@ -13,6 +13,8 @@
 
 import { SERVER_TICK_RATE } from '../config.js';
 import { adaptedKey, StatusId } from '../sim/statuses.js';
+import type { AbilityScaling } from './ability-scaling.js';
+import { ScalingGrade } from './weapon-scaling.js';
 import type { SkillArea, SkillCosts, SkillEffect } from './skill-effects.js';
 
 export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel' | 'area';
@@ -117,6 +119,29 @@ export interface AbilityDefinition {
   readonly cost: number;
   readonly range: number;
   readonly damage: number;
+  /**
+   * What this ability's offence scales with (spec 231).
+   *
+   * Three modes and any combination of them -- its own STR/AGI/INT letters, a
+   * fraction of the equipped weapon's own damage, or both -- through the one
+   * grade ladder `data/weapon-scaling.ts` already owns. See
+   * {@link AbilityScaling}.
+   *
+   * **Absent means it scales with nothing**, which is a real classification
+   * rather than a default nobody chose: a flask, a Mend and the test row are
+   * fixed quantities on purpose. What absent used to mean was `ability.damage *
+   * spellPower`, so every active ability in the game was an Intelligence
+   * ability whatever it was -- Whirlwind included, and every affliction with
+   * it, because the applier's spell power was captured as the pulse magnitude.
+   *
+   * It reaches two things and it is the only thing that reaches either: the
+   * damage term in `resolveBlow`, and the multiplier an affliction, slow or
+   * exposure landed by this ability carries (`abilityEffectPower`). A
+   * {@link basicAttack} ignores it for damage and takes the weapon's range
+   * whole -- which is the same number `{ weapon: 1 }` produces, and a test
+   * asserts that rather than leaving it as a comment.
+   */
+  readonly scaling?: AbilityScaling;
   /** melee: squared cosine of the cone half-angle. 0.5 == a 90-degree wedge. */
   readonly arcCosSq?: number;
   /** ground, and the impact of a projectile that has one. */
@@ -259,6 +284,9 @@ function seconds(value: number): number {
  */
 export const TEST_STATUS_TICKS = seconds(8);
 
+/** The grade ladder, shortened. This table names it three dozen times. */
+const G = ScalingGrade;
+
 const DEFINITIONS: readonly AbilityDefinition[] = [
   {
     id: 'melee.slash',
@@ -275,6 +303,11 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // because `attackTimingFor` still reads it against `HEAVY_ABILITY_DAMAGE`,
     // and a swing is not heavy at any weapon's numbers.
     damage: 0,
+    // The weapon's, whole. `basicAttack` takes the range directly in
+    // `resolveBlow`, so this is documentation of a branch rather than the
+    // input to one -- and `ability-scaling.test.ts` asserts the two agree,
+    // because a comment claiming they do is a comment that can rot.
+    scaling: { weapon: 1 },
     arcCosSq: 0.5,
     basicAttack: true,
     description: 'A quick forward cut, more habit than decision.',
@@ -289,6 +322,9 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 2,
     range: 90,
     damage: 6,
+    // Everything you weigh, put behind one swing. The Strength ability, and
+    // the one in the starting set that is not a spell.
+    scaling: { strength: G.A },
     arcCosSq: 0.65,
     description: 'Both hands, and everything you weigh, put behind one swing.',
   },
@@ -305,6 +341,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 0,
     range: 420,
     damage: 0,
+    // The bow's own, whole -- see `melee.slash`.
+    scaling: { weapon: 1 },
     // Lobbed, which is what makes it unblockable: an arcing shot flies over
     // whatever is between the archer and the body it named (spec 079). A full
     // arc, so a shot at the edge of its range leaves at 45 degrees and one at a
@@ -324,6 +362,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 0,
     range: 300,
     damage: 0,
+    // The stars' own, whole -- see `melee.slash`.
+    scaling: { weapon: 1 },
     // Flat, and therefore stoppable by anything that steps into the line.
     projectile: { speed: 1150, arc: 0, radius: 6, lifetimeTicks: seconds(1.5), look: 'shuriken' },
     basicAttack: true,
@@ -355,6 +395,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // the number that decides how hard this lands is on the weapon a player
     // picked up rather than on a row shared with whatever else throws one.
     damage: 0,
+    // The staff's own, whole -- see `melee.slash`.
+    scaling: { weapon: 1 },
     // The slowest thing anybody throws here -- the arrow leaves at 900 and the
     // star at 1150. That is the whole of what makes a fireball a shot you can
     // see coming and step out of, which is spec 094's argument about wind-ups
@@ -378,6 +420,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 3,
     range: 700,
     damage: 3,
+    // Raw force, shaped. The reference Intelligence ability.
+    scaling: { intelligence: G.A },
     projectile: { speed: 620, arc: 0, radius: 8, lifetimeTicks: seconds(2) },
     description: 'Raw force, shaped just enough to travel.',
   },
@@ -391,6 +435,11 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 5,
     range: 520,
     damage: 4,
+    // A thrown incendiary: mostly the fire, partly the throw. Hybrid because
+    // a clay pot is an object somebody lobs rather than a spell they shape --
+    // the one genuinely arguable call in the starting set, and it is recorded
+    // as arguable rather than settled.
+    scaling: { intelligence: G.B, agility: G.D },
     radius: 90,
     // A full arc: at its 520-unit range that peaks at 130, which is exactly the
     // constant it replaces -- the tell that the constant was always a 45-degree
@@ -411,6 +460,9 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 4,
     range: 480,
     damage: 4,
+    // It leaves knowing the shape of what you pointed it at, which is
+    // manipulation and nothing else.
+    scaling: { intelligence: G.A },
     // A third of the optimal arc: it skims rather than lobs, peaking at 42 over
     // its full 480 rather than the 120 a full arc would give it.
     projectile: { speed: 700, arc: 0.35, radius: 9, lifetimeTicks: seconds(3) },
@@ -426,6 +478,12 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 7,
     range: 420,
     damage: 7,
+    // Cast at 420 units onto ground nobody is standing on, which is what
+    // settles it: the fiction reads as force, and force applied four hundred
+    // units away is shaping rather than muscle. Recorded as the least
+    // surprising reading rather than an obvious one -- a Strength/Intelligence
+    // hybrid is the alternative a design pass might prefer.
+    scaling: { intelligence: G.A },
     radius: 140,
     description: 'The ground remembers being struck, and answers.',
   },
@@ -439,6 +497,11 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 6,
     range: 0,
     damage: 0,
+    // **Intentionally unscaled.** What it produces is healing, and healing has
+    // its own scale (`traits.healingScale`, Wisdom and Constitution) applied in
+    // `applyHealing`. A damage grade here would be a second, silent healing
+    // coefficient.
+    // (No `scaling` field: absent is the declaration.)
     healing: 9,
     description: 'Knitting yourself back together is not a quick thing.',
   },
@@ -458,6 +521,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     chargeCost: 1,
     range: 0,
     damage: 0,
+    // **Intentionally unscaled**, and more so than Mend: a fallback that grew
+    // with a build would stop being a fallback for the build that needs one.
+    // Its restore is already a fraction of maximum health.
+    // (No `scaling` field: absent is the declaration.)
     healingFraction: 0.35,
     description: 'A draught from the hearth flask, tasting of ash and home.',
   },
@@ -495,6 +562,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     costs: { poise: 4 },
     range: 85,
     damage: 2,
+    // Getting inside a guard is force and footwork. Its damage is small on
+    // purpose -- the flat `poiseDamage` is the skill -- so what these letters
+    // move is the smaller half of it.
+    scaling: { strength: G.B, agility: G.D },
     // Order is the skill. The guard comes off first, so the poise damage that
     // follows lands on a pool that is already down -- which is what makes this
     // a *setup* for somebody else's stagger rather than a stagger of its own.
@@ -519,6 +590,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 6,
     range: 75,
     damage: 3,
+    // Wound up from the shoulder. Pure Strength.
+    scaling: { strength: G.A },
     effects: [
       { kind: 'damage' },
       // Guard damage as well as the stun, so it is worth throwing at a body
@@ -546,6 +619,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 9,
     range: 0,
     damage: 4,
+    // One turn, all the way round, blade out: a martial skill, and the
+    // worked example in spec 231's brief. Before that spec this was an
+    // *Intelligence* ability, because every active ability was.
+    scaling: { strength: G.A, agility: G.D },
     area: { shape: 'circle', origin: 'caster', radius: 160, maxTargets: 6 },
     // Damage and nothing else. A status here would be complexity bought with
     // nothing -- the skill's whole statement is "everything near you, at once".
@@ -568,6 +645,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 4,
     // Reduced damage, deliberately: what you are buying is the Slow.
     damage: 1,
+    // A cut behind the knee, thrown at something already walking away. What
+    // it buys is the Slow, and `abilityEffectPower` scales that off these
+    // letters -- so it is Agility that makes the slow bite.
+    scaling: { agility: G.A },
     range: 80,
     effects: [
       { kind: 'damage' },
@@ -615,6 +696,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 380,
     // Almost nothing on impact. What you are paying for is the tenth pulse.
     damage: 1,
+    // A thrown dart. The poison is the payload and `data/damage-over-time.ts`
+    // states its rate whole; what Agility moves is the concentration each
+    // dart lands with.
+    scaling: { agility: G.A },
     projectile: { speed: 1000, arc: 0.2, radius: 6, lifetimeTicks: seconds(1.5), look: 'arrow' },
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Poison }],
     description: 'A dart with something on it. Little on the way in, and it stacks.',
@@ -630,6 +715,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 5,
     range: 420,
     damage: 2,
+    // The same pot as Firepot, so the same letters. Two thrown incendiaries
+    // that scaled differently would be a distinction nothing in the fiction
+    // supports.
+    scaling: { intelligence: G.B, agility: G.D },
     // A burst, so the fire starts on everything in the splash rather than on
     // one body -- and then goes looking for the rest of them.
     radius: 70,
@@ -649,6 +738,11 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 3,
     range: 80,
     damage: 2,
+    // The finding this spec exists for, in one row: a cut that will not close
+    // is a martial wound, and before spec 231 its Bleed grew with Intelligence
+    // and nothing else. Agility-led because a cut that keeps opening is placed
+    // rather than forced.
+    scaling: { strength: G.C, agility: G.B },
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Bleed }],
     description: 'A cut that will not close while they keep using the arm it is in.',
   },
@@ -667,6 +761,9 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 6,
     range: 150,
     damage: 1,
+    // Chemistry. It goes through armour, which is manipulation rather than
+    // force -- the armour is not broken, it is dissolved.
+    scaling: { intelligence: G.A },
     arcCosSq: 0.5,
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Corrosion }],
     description: 'It goes through the guard and the armour first. Set up a break with it.',
@@ -682,6 +779,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 6,
     range: 300,
     damage: 2,
+    // Lightning down a lane.
+    scaling: { intelligence: G.A },
     // The one lane in the table. Shock arcs on its own afterwards, so what this
     // has to do is start it on a line rather than finish anything.
     area: { shape: 'line', width: 60, range: 300, maxTargets: 4 },
@@ -700,6 +799,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 5,
     range: 0,
     damage: 1,
+    // Cold off the ground.
+    scaling: { intelligence: G.A },
     area: { shape: 'circle', origin: 'caster', radius: 140, maxTargets: 5 },
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Frostbite }],
     description: 'Cold off the ground. Nothing much, until it has been on a while.',
@@ -717,6 +818,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 6,
     range: 380,
     damage: 1,
+    // A patch of rot.
+    scaling: { intelligence: G.A },
     radius: 110,
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Decay }],
     description: 'A patch of rot. Little damage, and nothing they do about it works properly.',
@@ -755,6 +858,11 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 7,
     range: 0,
     damage: 0,
+    // Its landing does nothing to anybody, so these letters reach one thing
+    // only: the Burn the field lays, through `sim/aura-field.ts`, which asks
+    // `abilityEffectPower` of this row. Without them a field's fire would be
+    // the flat table rate for every caster who ever cast it.
+    scaling: { intelligence: G.A },
     effects: [
       {
         kind: 'applyStatus',
@@ -804,6 +912,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // `staggerPower * abilityPoiseFactor` of guard damage, and that factor is
     // zero for everybody except the Strength+Intelligence pair.
     damage: 1,
+    // **Intentionally unscaled.** It is an instrument: what it puts on a body
+    // should be the table's own numbers, so that what a tester is looking at is
+    // the row rather than their own character.
+    // (No `scaling` field: absent is the declaration.)
     effects: [
       { kind: 'damage' },
       // Everything below is one `applyStatus` per row of `STATUS_VISUALS`, in
@@ -916,6 +1028,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     cost: 4,
     range: 220,
     damage: 1,
+    // It takes something out of them, per pulse.
+    scaling: { intelligence: G.A },
     arcCosSq: 0.75,
     channelTicks: seconds(2),
     pulseIntervalTicks: seconds(0.25),

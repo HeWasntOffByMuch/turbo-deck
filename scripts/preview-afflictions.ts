@@ -69,8 +69,18 @@ interface Curve {
   readonly victim: ServerEntity;
 }
 
+/**
+ * The reference applier: an ability that declares no scaling (spec 231).
+ *
+ * What this script is for is the **row's own curve**, so the applier's power
+ * has to be exactly 1 -- an `A`-grade caster would draw a picture of a build
+ * rather than of the table. Unscaled is that 1 by construction rather than by
+ * `CASTER` happening to have spent nothing.
+ */
+const UNSCALED = {};
+
 function run(row: DotDefinition, activity: number = ActivityValue.Idle): Curve {
-  const victim = { ...applyDot(body(600, 450, 1), row.id, 0, CASTER), activity };
+  const victim = { ...applyDot(body(600, 450, 1), row.id, 0, CASTER, UNSCALED), activity };
   const world = new Map<number, ServerEntity>([
     [victim.id, victim],
     [CASTER.id, CASTER],
@@ -172,7 +182,7 @@ if (frost && frostCurve) {
 
 const corrosion = ALL_DOTS.find((r) => r.id === StatusId.Corrosion);
 if (corrosion) {
-  const guarded = { ...applyDot(body(600, 450, 1), corrosion.id, 0, CASTER), poise: 60 };
+  const guarded = { ...applyDot(body(600, 450, 1), corrosion.id, 0, CASTER, UNSCALED), poise: 60 };
   const world = new Map<number, ServerEntity>([[guarded.id, guarded], [CASTER.id, CASTER]]);
   for (let tick = 0; tick <= dotDurationTicks(corrosion); tick++) pulseDots(world, tick, ALL_HOSTILE);
   const after = world.get(guarded.id);
@@ -186,7 +196,7 @@ if (corrosion) {
 // Spread, in the worst case there is: a pack standing on top of each other.
 const burn = ALL_DOTS.find((r) => r.id === StatusId.Burn);
 if (burn) {
-  const lit = applyDot(body(600, 450, 1), burn.id, 0, CASTER);
+  const lit = applyDot(body(600, 450, 1), burn.id, 0, CASTER, UNSCALED);
   const world = new Map<number, ServerEntity>([[lit.id, lit], [CASTER.id, CASTER]]);
   const pack: number[] = [];
   for (let i = 0; i < 10; i++) {

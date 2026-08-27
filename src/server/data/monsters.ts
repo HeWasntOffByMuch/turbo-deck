@@ -61,6 +61,11 @@ export type AuthoredStats = Omit<
   // identically at 14.
   | 'weaponDamageMin'
   | 'weaponDamageMax'
+  // Not authorable either (spec 231). Ability scaling is resolved against a
+  // body's own Strength, Agility and Intelligence, and a monster has none --
+  // its damage is the number its row states. Filled in as zeros by `NO_WEAPON`,
+  // so an ability a monster throws is worth exactly its authored `damage`.
+  | 'scalingAttributes'
 >;
 
 /**

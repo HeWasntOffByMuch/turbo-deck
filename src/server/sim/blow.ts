@@ -10,8 +10,9 @@
  *
  * ```
  *   1. eligibility   is this blow allowed to find a weak point at all
- *   2. rolls         crit, then weak point -- crit FIRST, always
- *   3. amplify       weak point, exploit, catalysis, exposure, execute
+ *   2. rolls         the weapon's range, then crit, then weak point
+ *   3. base          the row's flat damage + its own letters + the weapon's
+ *   3b. amplify      weak point, exploit, catalysis, exposure, execute
  *   4. mitigate      armour (less sundering), adaptation, resolve, reads, flow
  *   5. absorb        shield before health
  *   6. poise         guard damage, and the break if it empties
@@ -29,6 +30,15 @@
  * here adds a percentage to another percentage, which is the arithmetic that
  * makes a system stop being predictable once it has more than three sources.
  *
+ * **Offensive sources add; everything else multiplies** (spec 231). There are
+ * exactly three ways damage can enter a blow -- the ability's flat number, its
+ * declared attribute letters, and a fraction of the weapon -- they are summed
+ * once in step 3, and nothing below step 3 is a source. That is what makes
+ * double-counting a structural impossibility rather than something to be
+ * careful about: a reviewer checking "does Intelligence reach this twice" has
+ * three addends to read and not a chain of multiplications spread over two
+ * files. See `data/ability-scaling.ts` for what each addend is.
+ *
  * Pure. The tick and the Rng are arguments.
  */
 
@@ -37,6 +47,7 @@ import { SERVER_TICK_RATE } from '../config.js';
 import { RESTORATION } from '../data/restoration.js';
 import { SCALING } from '../data/scaling.js';
 import type { AbilityDefinition } from '../data/abilities.js';
+import { abilityAttributeBonus, abilityGradesOf, abilityWeaponFactor } from '../data/ability-scaling.js';
 import { applyArmor } from '../player/stats.js';
 import { provoke } from './aggro.js';
 import { healingScaleOf } from './damage-over-time.js';
@@ -136,19 +147,27 @@ export function resolveBlow(
 
   // --- 1 + 2: eligibility, then the rolls, the weapon's own first ----------
   //
-  // The damage roll leads (spec 217), and it is drawn **only for a basic
-  // attack**. Conditioning on the ability's own `basicAttack` flag is safe
-  // where conditioning on a *chance* would not be: it is a property of the row,
-  // fixed for a given ability id, so two replays of the same inputs always draw
-  // the same count. `weakPointChance > 0` below is the shape to be careful of,
-  // and it is already there.
+  // The damage roll leads (spec 217), and it is drawn for a blow that carries
+  // some of the weapon: a basic attack, or an ability declaring a `weapon`
+  // fraction (spec 231). Conditioning on the ability's own row is safe where
+  // conditioning on a *chance* would not be -- both are fixed for a given
+  // ability id, so two replays of the same inputs always draw the same count.
+  // `weakPointChance > 0` below is the shape to be careful of, and it is
+  // already there.
   //
   // The Rng draw count is protocol, so adding this moved every seeded combat
   // sequence in the tree once. That is the cost of a weapon having damage of
-  // its own, and it is paid here rather than smeared over a special case.
+  // its own, and it is paid here rather than smeared over a special case. No
+  // production ability declares a `weapon` fraction today, so spec 231 moved
+  // none of them a second time.
   let rng = rngIn;
   let weaponRoll = 0;
-  if (isBasicAttack) {
+  // A weapon roll is drawn for a basic attack, and for an ability that declares
+  // a `weapon` fraction (spec 231). Both conditions are properties of the *row*
+  // -- fixed for an ability id -- so two replays of the same inputs draw the
+  // same count in the same order, which is the rule this block is written under.
+  const weaponFactor = isBasicAttack ? 1 : abilityWeaponFactor(ability.scaling);
+  if (weaponFactor > 0) {
     const [roll, afterRoll] = rollBetween(rng, attacker.stats.weaponDamageMin, attacker.stats.weaponDamageMax);
     weaponRoll = roll;
     rng = afterRoll;
@@ -176,16 +195,51 @@ export function resolveBlow(
   }
 
   // --- 3: amplify ---------------------------------------------------------
-  // Where a blow's base number comes from, and which of the two it is is the
-  // ability's own `basicAttack` flag (specs 147, 217).
   //
-  // A swing is **the weapon's own damage**: the range rolled above, which
-  // already carries spec 216's attribute term, the flat bonuses and the
-  // percentage. An ability is `ability.damage` against Intelligence's spell
-  // power, unchanged. Before spec 217 a swing was `ability.damage` times a
-  // multiplier too, which meant the number deciding how hard every sword in the
-  // game hit lived on `melee.slash` -- shared with every monster on the map.
-  const base = isBasicAttack ? weaponRoll : ability.damage * attacker.stats.spellPower;
+  // **Where a blow's base number comes from** (specs 147, 217, 231). This is
+  // the answer to "why did this hit for that", and it is three addends and
+  // nothing else:
+  //
+  // ```
+  //   base = ability.damage                 the row's own flat number
+  //        + abilityAttributeBonus(...)     its declared STR/AGI/INT letters
+  //        + weaponRoll * weaponFactor      the fraction of the weapon it is
+  // ```
+  //
+  // A **basic attack** is the third addend alone: `weaponFactor` is 1, the row
+  // authors `damage: 0` and declares no letters of its own, so `base` is the
+  // weapon's rolled range -- which already carries spec 216's attribute term,
+  // the flat bonuses and the percentage. That is bit-for-bit what this line did
+  // before spec 231, and `ability-scaling.test.ts` asserts it rather than
+  // leaving it as a claim.
+  //
+  // **Nothing enters twice, and each addend is why:**
+  //
+  //  - `ability.damage` is a constant on the row and is multiplied by nothing.
+  //    It used to be multiplied by `spellPower`, which is how every active
+  //    ability in the game became an Intelligence ability.
+  //  - the attribute term reads each of the three attributes exactly once, at
+  //    the one grade the row declares for it. `spellPower` is inside it and
+  //    only on Intelligence, and its own Intelligence term was removed when
+  //    this landed, so Intelligence is linear rather than quadratic.
+  //  - the weapon term is the weapon's *whole* resolved damage, so a weapon's
+  //    own letters live in it and are not re-applied by the ability. An
+  //    ability's letters and its weapon's are separate addends for exactly this
+  //    reason: nested, a hybrid would multiply one by the other.
+  //
+  // Everything after this point is a multiplier on the running number -- crit,
+  // weak point, exposure, armour, adaptation -- and none of them is an
+  // offensive *source*, so none of them can double-count one.
+  const base =
+    ability.damage +
+    (isBasicAttack
+      ? 0
+      : abilityAttributeBonus(
+          attacker.stats.scalingAttributes,
+          abilityGradesOf(ability.scaling),
+          attacker.stats.spellPower,
+        )) +
+    weaponRoll * weaponFactor;
   let damage = base * (critical ? 1.75 : 1);
 
   if (weakPoint) {

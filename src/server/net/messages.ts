@@ -1485,6 +1485,19 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
   writer.i16(clampStep(stats.scalingModifiers.strength));
   writer.i16(clampStep(stats.scalingModifiers.agility));
   writer.i16(clampStep(stats.scalingModifiers.intelligence));
+  // The three attribute values every grade is resolved against (spec 231).
+  //
+  // Not redundant with the `attributes` block on the `Stats` message: that one
+  // is what has been *allocated*, which is what the sheet's respec reads, and
+  // this is the total after every grant -- items, milestones, synergies -- which
+  // is what an ability's damage is actually computed from. A client that
+  // re-derived one from the other would be the second resolver spec 216 exists
+  // to prevent.
+  //
+  // `f32`, because a grant is not required to be integral.
+  writer.f32(stats.scalingAttributes.strength);
+  writer.f32(stats.scalingAttributes.agility);
+  writer.f32(stats.scalingAttributes.intelligence);
   writeTraits(writer, stats.traits);
 }
 
@@ -1575,6 +1588,11 @@ function readStats(reader: BufferReader): EffectiveStats {
       strength: reader.i16(),
       agility: reader.i16(),
       intelligence: reader.i16(),
+    },
+    scalingAttributes: {
+      strength: reader.f32(),
+      agility: reader.f32(),
+      intelligence: reader.f32(),
     },
     traits: readTraits(reader),
   };

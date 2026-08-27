@@ -42,6 +42,9 @@ import {
   pulseDots,
   type DotContext,
 } from './damage-over-time.js';
+import type { AbilityDefinition } from '../data/abilities.js';
+import { abilityEffectPowerOf } from '../data/ability-scaling.js';
+import { ScalingGrade } from '../data/weapon-scaling.js';
 import { applyHealing } from './healing.js';
 import { applyStatus, statusOf, StatusId } from './statuses.js';
 import {
@@ -104,6 +107,30 @@ const ALL_HOSTILE: DotContext = { isHostile: () => true, isSimulated: () => true
 /** A source, so `sourceId` resolves and a spread has sides to measure against. */
 function source(id: number): ServerEntity {
   return { ...body(1), id, kind: EntityKindValue.Player, typeId: 'player' };
+}
+
+/**
+ * An Intelligence-scaling ability, for the tests that are about the *applier*
+ * (spec 231).
+ *
+ * What an affliction is worth stopped being the applier's `spellPower` and
+ * became the applying ability's own declared scaling, so a test about "the
+ * stronger applier wins" has to build strength the way the game now does:
+ * a row with a letter on it, and a body with the attribute to resolve it
+ * against.
+ */
+const ARCANE: Pick<AbilityDefinition, 'scaling'> = { scaling: { intelligence: ScalingGrade.A } };
+
+/** `source(id)` with Intelligence, so what it applies carries real power. */
+function caster(id: number, intelligence: number): ServerEntity {
+  const base = source(id);
+  return {
+    ...base,
+    stats: {
+      ...base.stats,
+      scalingAttributes: { strength: 0, agility: 0, intelligence },
+    },
+  };
 }
 
 interface Ran {
@@ -246,19 +273,22 @@ describe('refreshing', () => {
     // number always describe the same body -- where "whoever touched it last"
     // would let a weak applier take a strong one's poison while leaving the
     // strong one's damage running.
-    const strong = { ...source(9), stats: { ...source(9).stats, spellPower: 2 } };
-    const weak = { ...source(11), stats: { ...source(11).stats, spellPower: 1 } };
+    const strong = caster(9, 50);
+    const weak = caster(11, 10);
+    const strongPower = abilityEffectPowerOf(ARCANE.scaling, strong.stats);
+    // The two really are different, or the test below asserts nothing.
+    expect(strongPower).toBeGreaterThan(abilityEffectPowerOf(ARCANE.scaling, weak.stats));
 
-    let victim = applyDot(body(1), StatusId.Poison, 0, strong);
-    victim = applyDot(victim, StatusId.Poison, 5, weak);
+    let victim = applyDot(body(1), StatusId.Poison, 0, strong, ARCANE);
+    victim = applyDot(victim, StatusId.Poison, 5, weak, ARCANE);
     const held = statusOf(victim.statuses, StatusId.Poison, 5);
-    expect(held?.magnitude).toBe(2);
+    expect(held?.magnitude).toBeCloseTo(strongPower, 5);
     expect(held?.sourceId).toBe(strong.id);
 
     // And the other way round, so it is the magnitude deciding rather than the
     // order two casters happened to arrive in.
-    let other = applyDot(body(1), StatusId.Poison, 0, weak);
-    other = applyDot(other, StatusId.Poison, 5, strong);
+    let other = applyDot(body(1), StatusId.Poison, 0, weak, ARCANE);
+    other = applyDot(other, StatusId.Poison, 5, strong, ARCANE);
     expect(statusOf(other.statuses, StatusId.Poison, 5)?.sourceId).toBe(strong.id);
   });
 });
@@ -322,13 +352,26 @@ describe('what a pulse is worth', () => {
 
   it('is worth what the applier was worth, captured when it landed', () => {
     const poison = row(StatusId.Poison);
-    const strong = { ...source(9), stats: { ...source(9).stats, spellPower: 3 } };
-    const victim = applyDot(body(1), StatusId.Poison, 0, strong);
+    const strong = caster(9, 50);
+    const power = abilityEffectPowerOf(ARCANE.scaling, strong.stats);
+    // The rule, stated before it is used: an `A` at 50 Intelligence -- 45 points
+    // past the start, since `contributionOf` measures from `above()` -- is what
+    // `spellPower` was worth at 50 Intelligence before spec 231, which is the
+    // curve `SCALING.abilityScaling.effectPerPoint` was chosen to preserve.
+    expect(power).toBeCloseTo(3, 1);
+
+    const victim = applyDot(body(1), StatusId.Poison, 0, strong, ARCANE);
     const world = new Map([[victim.id, victim]]);
     expect(pulse(world, victim.id, 0, poison.intervalTicks + 1).pulses[0]?.damage).toBeCloseTo(
-      dotPulseDamage(poison) * 3,
+      dotPulseDamage(poison) * power,
       5,
     );
+
+    // And an ability that declares nothing is worth exactly the table's own
+    // rate, whoever throws it -- which is the half of this rule that stops
+    // every affliction in the game being an Intelligence affliction.
+    const plain = applyDot(body(1), StatusId.Poison, 0, strong, {});
+    expect(statusOf(plain.statuses, StatusId.Poison, 0)?.magnitude).toBe(1);
   });
 });
 

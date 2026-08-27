@@ -298,6 +298,56 @@ export const SCALING = {
       S: 1.15,
     },
   },
+
+  /**
+   * What an *ability's* own letters are worth (spec 231).
+   *
+   * Deliberately thin, and that is the point: the ladder, the letters and the
+   * damage a point buys are all `weaponScaling` above, shared, so an `A` on
+   * Whirlwind and an `A` on a sword buy the same damage per point of Strength.
+   * A second ladder here would be the second coefficient language spec 231
+   * exists to refuse.
+   *
+   * What an ability does need of its own is the rate for the effects that are
+   * **not** damage -- an affliction's pulse, a slow's bite -- because those are
+   * in a different currency. A row in `data/damage-over-time.ts` states its
+   * damage per second whole, and what an applier moves is one multiplier on
+   * top of it.
+   */
+  abilityScaling: {
+    /**
+     * The multiplier an `A`-grade ability's effects gain, per point above the
+     * starting attribute, times the grade's coefficient.
+     *
+     * Chosen to reproduce the curve this replaced rather than to retune it:
+     * before spec 231 an affliction's magnitude was the applier's `spellPower`,
+     * `1 + 0.04 * Intelligence`, which is `3.0` at 50 Intelligence. At `A`
+     * (coefficient 0.9) and 45 points above the start this gives `1 + 45 * 0.9
+     * * 0.05 = 3.025`, so a fully-specialised caster's Poison is worth what it
+     * was worth. What moved is *which* casters get it: a Rending Cut's Bleed
+     * now grows with the build that threw it, and a fresh character is exactly
+     * `1.0` rather than `1.2`, which is the baseline rule `above()` states.
+     */
+    effectPerPoint: 0.05,
+    /**
+     * What an ability's **own** letters may add up to.
+     *
+     * A shade over the ladder's best single grade (`S`, 1.15) on purpose, so a
+     * two-attribute hybrid can carry a real second letter rather than a token
+     * one -- `A` and `D` together, which is the shape the design brief asks for
+     * -- and paid for by the cooldown and the resource cost an active ability
+     * has and a basic attack does not.
+     *
+     * The **weapon** fraction is deliberately outside it: that term is the
+     * weapon's own scaling, already budgeted where weapons are budgeted, and
+     * counting it twice would price a technique against its own tool.
+     *
+     * Asserted rather than trusted -- `ability-scaling.test.ts` fails a row that
+     * exceeds it, which is what keeps "breadth is paid for" a property of the
+     * table rather than a habit.
+     */
+    coefficientBudget: 1.2,
+  },
 } as const;
 
 /** Thresholds the three milestone tiers sit on, and the stat-skill tiers too. */

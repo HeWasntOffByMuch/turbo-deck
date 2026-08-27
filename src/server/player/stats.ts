@@ -39,7 +39,12 @@ import type { StatModifier } from '../data/modifiers.js';
 import { armorFromAttributes, deriveTraits } from './derived.js';
 import { skillAbilityIdsOf } from './skill-slots.js';
 import { heldModifiers, resolveProgression } from './progression.js';
-import { type BaseStats, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
+import {
+  type BaseStats,
+  type EffectiveStats,
+  type PersistedPlayer,
+  type ScalingAttributes,
+} from '../state/types.js';
 
 /**
  * The single-player sim's durations are written in 60Hz ticks; this server runs
@@ -211,13 +216,18 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   const held = weapon !== null;
   const scalingModifiers = gradeModifiersFrom(bonus);
   const weaponScaling = effectiveScaling(scalingOf(weapon?.scaling, held), scalingModifiers);
+  // The three values every grade in the game is resolved against, named once
+  // (spec 231). The weapon folds its own term into the range below; an ability
+  // cannot, because which grades apply depends on which ability -- so the sim
+  // carries these and resolves per blow, through the same `contributionOf`.
+  const scalingAttributes: ScalingAttributes = { strength, agility, intelligence };
 
   // The weapon's own range, with everything that acts on it folded in (spec
   // 217). Both ends take the same additions, so a wide weapon stays wide and a
   // narrow one stays narrow -- an attribute term that multiplied the spread
   // would make every high-Strength maul a lottery.
   const weaponDamage = damageOf(weapon?.damage, held);
-  const scalingBonus = attributeScalingBonus({ strength, agility, intelligence }, weaponScaling);
+  const scalingBonus = attributeScalingBonus(scalingAttributes, weaponScaling);
   const resolve = (end: number): number =>
     Math.max(0, (end + scalingBonus + bonus.attackDamage) * (1 + bonus.attackDamagePct));
   const weaponDamageMin = resolve(weaponDamage.min);
@@ -258,10 +268,23 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const armor = armorFromAttributes(attributes, bonus.armor);
 
-  const spellPower = Math.max(
-    0,
-    1 + SCALING.intelligence.spellPowerPer * intelligence + bonus.spellPower,
-  );
+  // Spell Power (spec 231).
+  //
+  // **Intelligence is deliberately no longer a term in it.** Before spec 231
+  // this was `1 + per * Intelligence + bonus` and it multiplied the damage of
+  // every non-basic ability in the game, which is how Whirlwind came to be an
+  // Intelligence skill. Intelligence now reaches an ability exactly once, as
+  // the attribute its declared `intelligence` grade is resolved against, and
+  // leaving the per-point term here as well would make an Intelligence ability
+  // quadratic in Intelligence -- the double-count spec 231 exists to prevent.
+  //
+  // What is left is what items and passives grant, and what it now multiplies
+  // is the **Intelligence contribution of an ability's scaling** and nothing
+  // else (`abilityContributionOf`). So "Spell Power" means what it says: it
+  // amplifies your magic, it cannot reach a Strength ability, and the two
+  // rows that author it -- the Emberwood Staff and `int.potency` -- keep
+  // meaning what they meant.
+  const spellPower = Math.max(0, 1 + bonus.spellPower);
 
   const critChance = clamp(CRIT_PER_PERCEPTION * perception + bonus.critChance, 0, MAX_CRIT_CHANCE);
 
@@ -298,6 +321,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     weaponDamageMin,
     weaponDamageMax,
     scalingModifiers,
+    scalingAttributes,
     // Derived last, because two of its fields are fractions of maxHealth and
     // one is a duration in ticks -- it needs the pool it is a fraction of, and
     // the tick rate the sim actually runs at.
