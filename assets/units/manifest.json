@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "1e79f5d0ef235a314e0cb8ca94ecdda6e7c859ef2048a96054dc544c593f9fb1",
+  "hash": "06423bbb8798a67b8802851c31617be7e8f17403199ef59bde320e3312aef5b7",
   "builtStages": [],
   "units": [
     {
@@ -50,8 +50,8 @@
       "entries": [
         {
           "path": "fox_a_pose/fox_a_pose.unitdef.json",
-          "sha256": "44f9d3e2913c61a772e8b71306793e39f248520936591603fa0cee5a8198d08e",
-          "bytes": 2819
+          "sha256": "5c523a393b56f5e31139592cb19065b4ccad03a17892b9c2d85019ef7e70977d",
+          "bytes": 4115
         },
         {
           "path": "fox_a_pose/fox_a_pose.glb",
