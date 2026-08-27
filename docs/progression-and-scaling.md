@@ -1,7 +1,7 @@
 # Progression and scaling
 
 The rules progression and combat-scaling work is decided against, and the
-answers to the four questions that had no written answer before specs 231, 237-239.
+answers to the four questions that had no written answer before specs 238-241.
 Everything here is **Implemented** unless a heading says otherwise; where a
 section records a decision that is arguable, it says so rather than presenting
 it as obvious.
@@ -19,7 +19,7 @@ allowed to do.
 **Every ability declares its own scaling, and an ability that declares nothing
 scales with nothing.**
 
-Before spec 231 there was no declaration and no need for one, because there was
+Before spec 238 there was no declaration and no need for one, because there was
 one answer: `resolveBlow` computed a non-basic blow as
 `ability.damage * spellPower`, and `spellPower` is a function of Intelligence.
 So Whirlwind — *one turn, all the way round, blade out* — got stronger because a
@@ -149,7 +149,7 @@ can reason about. On top of that sits `abilityEffectPower`, which is
 - a martial Bleed grows with the build that threw it, and an Ember Toss's Burn
   grows with Intelligence.
 
-Before spec 231 the multiplier was the applier's `spellPower` outright, so
+Before spec 238 the multiplier was the applier's `spellPower` outright, so
 **every affliction in the game was Intelligence-scaled whatever applied it** —
 Rending Cut's Bleed included.
 
@@ -159,6 +159,33 @@ worth what the build that landed it was worth and does not retroactively change
 when that build does. The same rule covers a slow's magnitude and a field's
 linger; a status effect whose row authors no magnitude carries the caster's
 resolved power, and one that authors a number means that number literally.
+
+### 1.6b How it is shown
+
+**The weapon tooltip's notation, borrowed whole** (spec 242): three positions,
+always Strength / Agility / Intelligence, one grade character each, `-` for
+none, each in that attribute's own hue.
+
+```
+Whirlwind        A / D / -
+Arcane Bolt      - / - / A
+Axe Throw        - / - / -  + weapon
+```
+
+It replaced a sentence — *"Scales with Strength A and Agility D."* — and the
+sentence was what made the two halves of the game's offence read as two
+systems: a weapon said `A / D / -` and a skill that scales identically said it
+in prose, so nothing about them looked comparable. A sigil carrying Whirlwind
+and a Worn Sword now produce **byte-identical** lines, from two different
+builders, which is what a test asserts rather than what a convention hopes.
+
+Two departures, both about which rows have anything to say. A **basic attack**
+draws nothing, because its damage is the weapon's whole and the weapon's own
+tooltip states these three grades already. An **unscaled ability** draws
+nothing, where an unscaled weapon still draws `- / - / -`: every weapon scales
+somehow, so a blank there reads as a tooltip that forgot, while for an ability
+scaling with nothing is a real classification and `- / - / -` on a flask would
+be noise about a number that does not exist.
 
 ### 1.7 No stat gating
 
@@ -190,7 +217,7 @@ value where that rank can legally be bought.**
 
 *A value the simulation reads* means `EffectiveStats` or `TraitStats`. A
 modifier that only moves a `ModifierTotals` field is **not** enough: that is
-exactly what three skills did before spec 237, granting an improvement to a
+exactly what three skills did before spec 239, granting an improvement to a
 mechanic their own milestone introduced ten to twenty-five attribute points
 later, with the totals moving and `deriveTraits` gated on a different field.
 
@@ -240,7 +267,7 @@ twice and a full shield passes the whole remainder on.
 
 Constitution first because a shield is a buffer against the next blow and
 Conversion is explicitly a valve for what would otherwise be wasted — the
-skill's own words. Before spec 237 the first two were an `if / else if`, so
+skill's own words. Before spec 239 the first two were an `if / else if`, so
 taking the Constitution capstone switched the Wisdom capstone off outright.
 
 ### 2.4 A skill grants what its tooltip says

@@ -9,6 +9,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { ALL_ITEMS, itemById } from '../../../server/data/items.js';
+import { abilityById } from '../../../server/data/abilities.js';
+import { isUnscaled } from '../../../server/data/ability-scaling.js';
 import {
   effectiveScaling,
   formatScaling,
@@ -185,14 +187,15 @@ describe('detailsFor', () => {
 });
 
 /**
- * The compact scaling line (spec 216).
+ * The compact scaling line (specs 216, 242).
  *
- * Everything here is about the *line*, not about the numbers: that it exists on
- * weapons and nowhere else, that its three positions never move, and that the
- * grades in it came from the resolver rather than from the row. The arithmetic
- * is `data/weapon-scaling.test.ts`'s.
+ * Everything here is about the *line*, not about the numbers: that its three
+ * positions never move, that the grades in it came from the resolver rather
+ * than from the row, and -- since spec 242 -- that a sigil draws the same
+ * notation for the skill it carries. The arithmetic is
+ * `data/weapon-scaling.test.ts`'s.
  */
-describe('the weapon scaling line', () => {
+describe('the compact scaling line', () => {
   const scalingOf = (defId: string, modifiers?: ScalingGradeModifiers): ItemDetail | undefined =>
     detailsFor(defId, modifiers).find((line) => line.spans !== undefined);
 
@@ -245,11 +248,31 @@ describe('the weapon scaling line', () => {
     expect(formatScaling(NO_SCALING)).toBe('- / - / -');
   });
 
-  it('is drawn for a weapon and for nothing else', () => {
+  it('is drawn for a weapon, and for a sigil whose skill scales', () => {
+    // Since spec 242 the notation is on **both** halves of the game's offence:
+    // a weapon's own grades, and the grades of the skill a sigil carries. That
+    // is the whole point of borrowing it -- a sigil and a sword in the same bag
+    // are read with one habit rather than two -- so this asserts the union
+    // rather than loosening to "some items have it".
     for (const item of ALL_ITEMS) {
+      const skill = item.activeSkillId === undefined ? null : abilityById(item.activeSkillId);
+      const carriesScaling = skill !== null && !isUnscaled(skill.scaling);
       const has = scalingOf(item.id) !== undefined;
-      expect(has, item.id).toBe(item.slot === 'mainHand');
+      expect(has, item.id).toBe(item.slot === 'mainHand' || carriesScaling);
     }
+  });
+
+  it('gives a sigil’s line the same shape and the same hues as a weapon’s', () => {
+    // Whirlwind is Strength `A` / Agility `D`, which is also `sword.worn`'s
+    // pair -- so the two lines are identical strings from two different
+    // sources, which is the strongest form the claim has.
+    const sigil = ALL_ITEMS.find(
+      (item) => item.activeSkillId === 'skill.whirlwind',
+    );
+    expect(sigil, 'no sigil carries Whirlwind').toBeDefined();
+    if (!sigil) return;
+    expect(scalingOf(sigil.id)?.text).toBe('A / D / -');
+    expect(scalingOf(sigil.id)?.spans).toEqual(scalingOf('sword.worn')?.spans);
   });
 
   // The requirement the whole design is for: the line is the resolver's answer,

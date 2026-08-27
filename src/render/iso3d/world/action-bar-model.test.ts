@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ATTRIBUTE_TOKENS } from '../../../ui/theme/theme.js';
 import { InputMap } from '../../../ui/input/input-map.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
@@ -101,6 +102,26 @@ describe('actionBarViewOf (spec 196)', () => {
     // Every line past the name carries a colour token; the name takes the
     // tooltip's own.
     expect(lines.slice(1).every((line) => (line.colorToken ?? '').length > 0)).toBe(true);
+  });
+
+  it('draws the scaling notation with a hue per position (spec 242)', () => {
+    // The weapon tooltip's `S / - / D`, on the bar. Slot 0 holds Heavy Blow,
+    // which is pure Strength `A`, so the first position is lit and the other
+    // two are `-` -- and the separators take the line's own colour, so what
+    // carries a hue is the three grades and not the punctuation between them.
+    const lines = actionBarViewOf(source()).slots[0]?.hint ?? [];
+    const notation = lines.find((line) => line.spans !== undefined);
+    expect(notation?.text).toBe('A / - / -');
+    expect(notation?.spans?.map((span) => span.colorToken)).toEqual([
+      ATTRIBUTE_TOKENS.strength,
+      notation?.colorToken,
+      ATTRIBUTE_TOKENS.agility,
+      notation?.colorToken,
+      ATTRIBUTE_TOKENS.intelligence,
+    ]);
+    // The runs and the whole line say the same thing, or the tooltip's wrap and
+    // its repeat-hover key describe something nobody is shown.
+    expect(notation?.spans?.map((span) => span.text).join('')).toBe(notation?.text);
   });
 
   it('says nothing at all for an empty slot', () => {

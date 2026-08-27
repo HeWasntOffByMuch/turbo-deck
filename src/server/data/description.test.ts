@@ -80,13 +80,41 @@ describe('the writer is total', () => {
   });
 });
 
+/** The scaling notation's whole grammar: three graded positions, and a weapon. */
+const NOTATION = /^[SABCDE-] \/ [SABCDE-] \/ [SABCDE-](?: \+ (?:\d+% )?weapon)?$/;
+
 describe('grammar conformance', () => {
-  it('ends every line in a full stop', () => {
+  it('ends every line in a full stop, unless it is notation', () => {
+    // The exception is exactly one line and it is **structural**: a line with
+    // `spans` is notation rather than prose (spec 242), and `A / - / -` is no
+    // more a sentence than a chord symbol is. §2.2's rule governs sentences and
+    // fragments, and the standard says so since this landed.
+    //
+    // It is not a loophole, because the exempt line is held to its *own*
+    // grammar below rather than to nothing -- a prose line that acquired spans
+    // to dodge the full stop would fail that instead.
     for (const ability of ALL_ABILITIES) {
       for (const line of describeAbility(ability).lines) {
+        if (line.spans !== undefined) continue;
         expect(line.text.endsWith('.'), `${ability.id}: ${line.text}`).toBe(true);
       }
     }
+  });
+
+  it('holds the notation line to the notation’s own grammar', () => {
+    let seen = 0;
+    for (const ability of ALL_ABILITIES) {
+      for (const line of describeAbility(ability).lines) {
+        if (line.spans === undefined) continue;
+        seen++;
+        expect(line.text, `${ability.id}: ${line.text}`).toMatch(NOTATION);
+        // The runs and the whole line are the same string, or the tooltip's
+        // wrap and its repeat-hover key describe something nobody is shown.
+        expect(line.spans.map((span) => span.text).join('')).toBe(line.text);
+      }
+    }
+    // A control: an exemption that applied to nothing would pass both of these.
+    expect(seen).toBeGreaterThan(10);
   });
 
   it('writes every duration as seconds with at most two decimals', () => {
@@ -243,17 +271,19 @@ describe('effects are described in the row order', () => {
 describe('nothing is invented', () => {
   it('adds no effect line beyond damage and scaling for a row with no effects', () => {
     // Two lines, and both are derived rather than invented: what it does, and
-    // what that grows with (spec 231). Heavy Blow is pure Strength `A`.
+    // what that grows with (spec 238). Heavy Blow is pure Strength `A`.
     const ability = abilityById('melee.heavy');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const effects = describeAbility(ability).lines.filter((line) => line.tone === 'effect');
     expect(effects).toHaveLength(2);
     expect(effects[0]?.text).toBe(`Deals ${ability.damage} damage.`);
-    expect(effects[1]?.text).toBe('Scales with Strength A.');
+    // The weapon tooltip's notation, borrowed (spec 242): position is the
+    // attribute, so Heavy Blow's pure Strength `A` is the first of three.
+    expect(effects[1]?.text).toBe('A / - / -');
   });
 
-  it('says nothing about scaling for a row that scales with nothing (spec 231)', () => {
+  it('says nothing about scaling for a row that scales with nothing (spec 238)', () => {
     // The standard's first rule reaching the newest line: an ability that
     // scales with nothing gets no line, rather than a line saying so. Asserted
     // on the two rows where "fixed quantity" is the design -- a flask that grew
@@ -262,17 +292,23 @@ describe('nothing is invented', () => {
       const ability = abilityById(id);
       expect(ability, id).not.toBeNull();
       if (!ability) continue;
-      expect(technicalText(describeAbility(ability)), id).not.toContain('Scales with');
+      // Asserted structurally rather than by the absence of a phrase: the line
+      // is notation now, so there is no wording for a stale test to keep
+      // passing against.
+      expect(describeAbility(ability).lines.some((line) => line.spans !== undefined), id).toBe(false);
     }
   });
 
-  it('leaves a basic attack’s scaling to the weapon that decides it (spec 231)', () => {
+  it('leaves a basic attack’s scaling to the weapon that decides it (spec 238)', () => {
     // A basic attack takes the weapon's range whole and the weapon's own
     // tooltip already prints its three grades. A second statement here would be
     // the duplicate rule this file exists to prevent.
     for (const ability of ALL_ABILITIES) {
       if (ability.basicAttack !== true) continue;
-      expect(technicalText(describeAbility(ability)), ability.id).not.toContain('Scales with');
+      expect(
+        describeAbility(ability).lines.some((line) => line.spans !== undefined),
+        ability.id,
+      ).toBe(false);
     }
   });
 
@@ -483,7 +519,7 @@ describe('the passive skill tree (spec 191)', () => {
     // in English, each left to its row's authored sentence on purpose:
     // `juggernautBelow` is a health threshold, `masteryRelief` is a count that
     // *lowers* a requirement, and `overflowHealthPerResource` is a price the
-    // skill charges for a benefit -- and since spec 237 it is a *capability*
+    // skill charges for a benefit -- and since spec 239 it is a *capability*
     // rather than a rate, since the rate itself is `SCALING`'s and what a layer
     // grants is the relief beside it, which does have a label.
     expect([...missing].sort()).toEqual([

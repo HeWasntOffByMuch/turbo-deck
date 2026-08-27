@@ -284,6 +284,7 @@ what the chance is *derived from* rather than omitting it or guessing:
 | `+X%` / `-X%` | A proportional change. |
 | `X% of maximum health` | A proportion of a pool. |
 | `Scales with X` | Where a number comes from an attribute, and the coefficient is not worth showing. |
+| `A / D / -` | **What an ability or a weapon scales with** (specs 216, 242). Three positions, always Strength / Agility / Intelligence, one grade character each, `-` for none, each drawn in that attribute's own hue. Never reordered by strongest — position *is* the attribute. A weapon fraction is appended (`- / A / - + weapon`) rather than given a position, because it is not an attribute. |
 | `Xx` | An outright multiplier. |
 
 **Do not use:** *increases*/*decreases* where a sign will do, *enhanced*,
@@ -371,7 +372,12 @@ it in that order and reordering it is a balance change. Guard Break strips guard
 - One fact per sentence. One sentence per line.
 - Imperative-free and second-person-free: `Deals 42 damage.`, not `You deal` and
   not `Deal`.
-- Every line ends in a full stop, including a fragment.
+- Every line ends in a full stop, including a fragment. **Notation is the one
+  exception** (spec 242): the scaling line is `A / D / -`, the same three-position
+  form a weapon's tooltip uses, and it is no more a sentence than a chord symbol
+  is. It is held to the notation's own grammar instead, which
+  `description.test.ts` asserts — so the exemption cannot be borrowed by a prose
+  line trying to drop its full stop.
 - The subject is the ability, and it is implicit. Never name the ability inside
   its own description.
 - Conditions lead: `While Slowed: ...`, `When hit: ...`, `Against a staggered
@@ -543,7 +549,7 @@ colour-blind player does not have, and the two marks are a warm red against a
 cool blue — the single most common confusion there is.
 
 **This is presentation, and it is not the categorisation the sim reads.** Since
-spec 238 there is a second, mechanical one in `data/status-semantics.ts`:
+spec 240 there is a second, mechanical one in `data/status-semantics.ts`:
 `beneficial`, `harmful`, `affliction`, `damageOverTime`, `bookkeeping`, covering
 every status id including the ones no player is ever shown. It exists because
 one map holds a poison and a half-second reaction window alike, and something

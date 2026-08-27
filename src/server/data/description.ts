@@ -54,8 +54,8 @@ import {
   type DotDefinition,
 } from './damage-over-time.js';
 import { auraFieldById, type AuraFieldDefinition } from './aura-fields.js';
-import { abilityProfileOf } from './ability-scaling.js';
-import { letterOf, SCALING_ATTRIBUTES, ScalingGrade } from './weapon-scaling.js';
+import { abilityProfileOf, isUnscaled } from './ability-scaling.js';
+import { letterOf, SCALING_ATTRIBUTES } from './weapon-scaling.js';
 import type { ScalingAttribute } from '../state/types.js';
 
 /**
@@ -71,6 +71,34 @@ export type Tone = 'target' | 'effect' | 'cost' | 'timing' | 'note';
 export interface TechnicalLine {
   readonly text: string;
   readonly tone: Tone;
+  /**
+   * The line cut into runs, where one colour is not enough (spec 242).
+   *
+   * Absent for every line but one, and the one is the scaling line: it borrows
+   * the weapon tooltip's `S / - / D` notation, where **position is the
+   * attribute** and each position is drawn in that attribute's own hue. Three
+   * labelled rows would say the same thing and not fit; three coloured
+   * characters do.
+   *
+   * {@link text} is still the whole line, so a caller that wants plain text --
+   * `technicalText`, the DOM `title` on the weapon switch -- reads it and never
+   * learns runs exist.
+   */
+  readonly spans?: readonly TechnicalSpan[];
+}
+
+/**
+ * One run of a {@link TechnicalLine}, and what kind of thing it is.
+ *
+ * `attribute` rather than a colour, because this file is in the deterministic
+ * core and naming a colour here would be the layering violation `Tone` already
+ * exists to avoid: the writer says what a run *is* and `src/ui/` says what that
+ * looks like. Absent means the run takes the line's own tone, which is what the
+ * separators between grades do.
+ */
+export interface TechnicalSpan {
+  readonly text: string;
+  readonly attribute?: ScalingAttribute;
 }
 
 export interface TechnicalDescription {
@@ -176,7 +204,8 @@ export function describeAbility(ability: AbilityDefinition): TechnicalDescriptio
   push('target', shapeLine(ability));
 
   for (const text of effectLines(ability)) push('effect', text);
-  push('effect', scalingLine(ability));
+  const scaling = scalingLine(ability);
+  if (scaling) lines.push(scaling);
   push('cost', costLine(ability));
   for (const text of timingLines(ability)) push('timing', text);
   for (const text of noteLines(ability)) push('note', text);
@@ -189,47 +218,65 @@ export function describeAbility(ability: AbilityDefinition): TechnicalDescriptio
 }
 
 /**
- * What this ability's offence scales with (spec 231).
+ * What this ability's offence scales with (specs 231, 240).
  *
- * Derived from the row's own `scaling`, like every other line here, so an
- * ability that is retuned describes itself correctly with nothing to remember.
- * It is the one thing a player could not previously find out at all: before
- * spec 231 the answer was "Intelligence" for every active ability in the game
- * and it was written down nowhere.
+ * **The weapon tooltip's notation, borrowed whole**: three positions, always
+ * `Strength / Agility / Intelligence` in that fixed order, one character each,
+ * `-` for `None`. Never reordered by strongest -- position *is* the attribute,
+ * which is what lets the line be three characters instead of three labelled
+ * rows, and what lets a player read a sigil and a sword with one habit instead
+ * of two.
  *
- * Named attributes rather than letters, because a letter is a comparison
- * between weapons and a player reading a skill wants to know which stat to
- * spend on. The letters are still the authored truth and
- * `formatAbilityScaling` prints them for a log line.
+ * It replaced a sentence (*"Scales with Strength A and Agility D."*), and the
+ * sentence was the thing that made the two halves of the game's offence read as
+ * two systems: a weapon said `A / D / -` and a skill that scales identically
+ * said it in prose, so nothing about them looked comparable. `inventory-model.ts`
+ * builds the weapon's; this builds the ability's; both go through
+ * {@link letterOf} and {@link SCALING_ATTRIBUTES}, so neither can invent a
+ * fourth position or a letter the ladder has not got.
  *
- * **Omitted entirely when there is nothing to say**, which is the standard's
- * first rule: an ability that scales with nothing gets no line, rather than a
- * line saying so. That is a real classification -- a flask and a Mend are fixed
- * quantities -- and `description.test.ts` asserts the omission rather than
- * letting it read as a gap.
+ * The weapon fraction is appended rather than given a position, because it is
+ * not an attribute: `- / A / -  + weapon` is an ability whose damage is partly
+ * the thing in your hand, and the letters it brings are the *weapon's* and are
+ * on the weapon's own tooltip.
+ *
+ * Two deliberate departures from the weapon's version, both about which rows
+ * have anything to say:
+ *
+ *  - **A basic attack draws nothing.** Its damage is the weapon's, whole, and
+ *    the weapon's own tooltip already states these three grades. A second copy
+ *    is the duplicate rule this file exists to prevent.
+ *  - **An unscaled ability draws nothing**, where an unscaled *weapon* still
+ *    draws `- / - / -`. Every weapon scales somehow, so a blank there reads as
+ *    a tooltip that forgot; for an ability, scaling with nothing is a real and
+ *    deliberate classification -- a flask, a Mend -- and `- / - / -` on a
+ *    draught would be noise about a number that does not exist.
  */
-function scalingLine(ability: AbilityDefinition): string {
-  // A basic attack's damage is the weapon's, whole, and the weapon's own
-  // tooltip already states its three grades. Saying it again here would be the
-  // second copy of a rule this file exists to prevent.
-  if (ability.basicAttack === true) return '';
+function scalingLine(ability: AbilityDefinition): TechnicalLine | null {
+  if (ability.basicAttack === true) return null;
   const profile = abilityProfileOf(ability.scaling);
-  const named = SCALING_ATTRIBUTES.filter(
-    (attribute) => profile.grades[attribute] !== ScalingGrade.None,
-  ).map((attribute) => `${ATTRIBUTE_NAMES[attribute]} ${letterOf(profile.grades[attribute])}`);
+  if (isUnscaled(ability.scaling)) return null;
+
+  const spans: TechnicalSpan[] = [];
+  SCALING_ATTRIBUTES.forEach((attribute, index) => {
+    // The separator carries no attribute, so it takes the line's own tone and
+    // only the three letters are hued -- the weapon line's rule, for its
+    // reason: coloured punctuation reads as decoration rather than as three
+    // marked positions.
+    if (index > 0) spans.push({ text: SCALING_SEPARATOR });
+    spans.push({ text: letterOf(profile.grades[attribute]), attribute });
+  });
   if (profile.weapon > 0) {
-    named.push(profile.weapon >= 1 ? 'your weapon' : `${percent(profile.weapon)} of your weapon`);
+    spans.push({
+      text: profile.weapon >= 1 ? ' + weapon' : ` + ${percent(profile.weapon)} weapon`,
+    });
   }
-  if (named.length === 0) return '';
-  return `Scales with ${joinList(named)}.`;
+  return { text: spans.map((span) => span.text).join(''), tone: 'effect', spans };
 }
 
-/** The three scaling attributes as a player sees them written. */
-const ATTRIBUTE_NAMES: Readonly<Record<ScalingAttribute, string>> = {
-  strength: 'Strength',
-  agility: 'Agility',
-  intelligence: 'Intelligence',
-};
+/** What sits between two grades. One string, so the text and the runs agree. */
+const SCALING_SEPARATOR = ' / ';
+
 
 /** Who or what the cast is aimed at, and how far away it may be. */
 function targetLine(ability: AbilityDefinition): string {
@@ -648,7 +695,7 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'shapingCostPct', where: 'trait', name: 'Cost of shaped abilities', form: 'percent', higherIsBetter: false },
   { key: 'shapingCostRelief', where: 'trait', name: 'Relief on the shaping premium', form: 'percent' },
   { key: 'vsAfflictedPct', where: 'trait', name: 'Damage against a target carrying an affliction', form: 'percent' },
-  // The three capability flags (spec 237). Each is a *rule about what you can
+  // The three capability flags (spec 239). Each is a *rule about what you can
   // do* rather than a quantity, which is exactly what `form: 'flag'` is for --
   // and each is worth a line, because before that spec a player could buy the
   // skill granting it and get nothing at all.

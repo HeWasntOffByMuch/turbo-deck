@@ -22,6 +22,7 @@ import { attackTimingFor } from '../../../server/sim/abilities.js';
 import { describeAbility, type Tone } from '../../../server/data/description.js';
 import type { EffectiveStats } from '../../../server/state/types.js';
 import { chordLabel } from '../../../ui/input/actions.js';
+import { ATTRIBUTE_TOKENS } from '../../../ui/theme/theme.js';
 import type { InputMap } from '../../../ui/input/input-map.js';
 import type {
   ActionBarView,
@@ -142,7 +143,25 @@ function hintFor(ability: AbilityDefinition | null): readonly TooltipLine[] {
   const described = describeAbility(ability);
   return [
     { text: described.name },
-    ...described.lines.map((line) => ({ text: line.text, colorToken: TONE_TOKENS[line.tone] })),
+    ...described.lines.map((line) => {
+      const colorToken = TONE_TOKENS[line.tone];
+      // A spanned line carries its runs through with each one resolved here,
+      // which is the same hop the line's own tone makes and the same one
+      // `inventory.ts` makes for a weapon's grades (spec 242). One line has
+      // them: the `S / - / D` scaling notation, where position is the attribute
+      // and each position takes that attribute's hue. `text` rides along as the
+      // whole line, because the tooltip's wrap and its repeat-hover key are
+      // built from it.
+      if (line.spans === undefined) return { text: line.text, colorToken };
+      return {
+        text: line.text,
+        colorToken,
+        spans: line.spans.map((span) => ({
+          text: span.text,
+          colorToken: span.attribute === undefined ? colorToken : ATTRIBUTE_TOKENS[span.attribute],
+        })),
+      };
+    }),
     // Flavour last and dim, kept out of the rules exactly as `technicalText`
     // keeps it out of them: a caller that wants both puts them in two styles.
     ...(described.flavor === null ? [] : [{ text: described.flavor, colorToken: 'textDim' }]),

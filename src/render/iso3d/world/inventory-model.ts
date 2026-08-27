@@ -350,7 +350,23 @@ export function detailsFor(
         // `normal` for what it does, `dim` for the small print. The tones are
         // the view-model's vocabulary and `src/ui/` decides what they look
         // like, which is why the mapping is here and the colours are not.
-        lines.push({ text: line.text, tone: line.tone === 'note' ? 'dim' : 'normal' });
+        const tone = line.tone === 'note' ? 'dim' : 'normal';
+        // A spanned line keeps its runs (spec 242): the scaling notation is the
+        // one that has them, and it is the *same* three positions this file
+        // builds for a weapon thirty lines up -- so a sigil and a sword in the
+        // same bag are read with one habit rather than two.
+        lines.push(
+          line.spans === undefined
+            ? { text: line.text, tone }
+            : {
+                text: line.text,
+                tone,
+                spans: line.spans.map((span) => ({
+                  text: span.text,
+                  tone: span.attribute ?? tone,
+                })),
+              },
+        );
       }
     }
     // `0` is "cannot be sold" rather than "free" (spec 129), so it is said in

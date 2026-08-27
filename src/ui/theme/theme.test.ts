@@ -1,7 +1,7 @@
 import Ajv from 'ajv';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { resolveTheme, THEME, WIDGET_STATES } from './theme.js';
+import { resolveTheme, THEME, WIDGET_STATES, ATTRIBUTE_TOKENS } from './theme.js';
 import { PATCHES, PATCH_PALETTE, ICONS, ICON_SIZE } from './atlas-source.js';
 import document from './theme.json';
 
@@ -121,6 +121,30 @@ describe('the atlas source', () => {
     for (const [name, rows] of Object.entries(ICONS)) {
       expect(rows.length, name).toBe(ICON_SIZE);
       for (const row of rows) expect(row.length, name).toBe(ICON_SIZE);
+    }
+  });
+});
+
+describe('attribute colours (specs 216, 242)', () => {
+  it('names a token the palette actually has, for each of the three', () => {
+    for (const [attribute, token] of Object.entries(ATTRIBUTE_TOKENS)) {
+      expect(THEME.palette[token], `${attribute} -> ${token}`).toBeDefined();
+    }
+  });
+
+  it('gives each attribute its own hue', () => {
+    // Two attributes sharing a colour would make `A / D / -` unreadable in
+    // exactly the case the notation exists for: telling positions apart.
+    const tokens = Object.values(ATTRIBUTE_TOKENS);
+    expect(new Set(tokens).size).toBe(tokens.length);
+  });
+
+  it('is neither the good nor the bad colour', () => {
+    // An `S` -- the best grade on the ladder -- drawn in the drawback colour
+    // would read as a warning, which is why these are their own hues.
+    for (const token of Object.values(ATTRIBUTE_TOKENS)) {
+      expect(token).not.toBe('danger');
+      expect(token).not.toBe('success');
     }
   });
 });

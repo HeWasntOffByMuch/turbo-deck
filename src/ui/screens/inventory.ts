@@ -21,7 +21,7 @@ import { DragController, type DragPayload } from '../core/drag.js';
 import type { Gesture } from '../core/events.js';
 import { uniformInsets, type Point } from '../core/geom.js';
 import type { Widget } from '../core/widget.js';
-import type { Theme } from '../theme/theme.js';
+import { ATTRIBUTE_TOKENS, type Theme } from '../theme/theme.js';
 import { DragGhost } from '../widgets/drag-ghost.js';
 import { Tooltip, type TooltipLine } from '../widgets/tooltip.js';
 import {
@@ -50,14 +50,10 @@ const TONE_TOKENS: Readonly<Record<Exclude<DetailTone, 'rarity'>, string>> = {
   bad: 'danger',
   dim: 'textDim',
   normal: 'text',
-  // Attribute identity (spec 216), and deliberately not `danger`/`success`:
-  // those two mean bad and good, and an `S` -- the best grade on the ladder --
-  // drawn in the drawback colour would read as a warning. One hue each, so the
-  // three positions of a scaling line say which attribute they are without
-  // three labels that would not fit beside them.
-  strength: 'attrStrength',
-  agility: 'attrAgility',
-  intelligence: 'attrIntelligence',
+  // Attribute identity (specs 216, 242), from the one table that names it --
+  // the action bar draws the same three positions on a skill tooltip now, and
+  // two copies of "Strength is this colour" is how the two stop matching.
+  ...ATTRIBUTE_TOKENS,
 };
 
 /**
