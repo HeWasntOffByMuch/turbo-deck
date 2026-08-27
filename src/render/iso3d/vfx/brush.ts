@@ -787,6 +787,366 @@ export function brushCross(params: BrushCrossParams): EffectDefinition {
   };
 }
 
+export interface BrushSwingParams {
+  readonly id: string;
+  /** How far the blade reaches, in world units. The one size knob. */
+  readonly reach: number;
+  /** Total angle the swing covers, centred on the effect's bearing. Radians. */
+  readonly sweep: number;
+  /** How many lobes the sweep is composed of. */
+  readonly lobes?: number;
+  readonly lifetimeTicks?: number;
+  /** How high off the ground the blade passes. A chest, not a pair of boots. */
+  readonly lift?: number;
+  readonly bright?: PaletteKey;
+  readonly mid?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+}
+
+/**
+ * A swing, painted (spec 233).
+ *
+ * ## The false start, because it is the whole reason this looks the way it does
+ *
+ * The first version of this invented a `brush-sweep` mesh shape and an
+ * `ORIENT.groundVelocity` to go with it, and laid the marks **flat on the
+ * ground** along an arc. It was wrong in the way that matters: the vocabulary
+ * this game paints combat in is marks *in the air* -- `bloodHit` throws
+ * `brush-slash` at `cardVelocity`, `brushExplosion` composes lobes of them --
+ * and a flat ring on the floor is the same object as the debug disc
+ * `scene.addEffect` falls back to, only in paint. Whirlwind at a full turn was
+ * literally a painted circle on the ground.
+ *
+ * So this is built the way the effects it has to sit beside are built, and it
+ * needs **no engine change at all**: `fan` already throws marks along a bearing
+ * and lifts them out of the ground plane, and `bearing` already lets several of
+ * them compose a shape.
+ *
+ * ## Lobes, not a spread
+ *
+ * `brushExplosion` states the argument and it holds here: a single wide fan
+ * samples directions uniformly, so however different the marks are the
+ * silhouette comes out an even star. A swing is composed of a few clusters with
+ * gaps between them, and the counts step down across the sweep so one part of
+ * it carries more weight than the rest -- which is what a blade accelerating
+ * through an arc actually leaves.
+ *
+ * ## Born out on the arc, not at the body
+ *
+ * Each lobe is `offset` most of the way out to the reach, so the marks are where
+ * the blade was rather than streaming out of the caster's chest. `system.ts`
+ * turns an emitter's offset by the effect's rotation, so the whole composition
+ * aims with nothing else to do -- the same mechanism that makes a blood hit
+ * point away from its attacker.
+ */
+export function brushSwing(params: BrushSwingParams): EffectDefinition {
+  const reach = params.reach;
+  const lobes = Math.max(2, params.lobes ?? 5);
+  const life = params.lifetimeTicks ?? 26;
+  const lift = params.lift ?? reach * 0.22;
+  const bright = params.bright ?? 'physicalBone';
+  const mid = params.mid ?? 'dustPale';
+  const deep = params.deep ?? 'dustStone';
+  // Thrown at a fraction of the reach a second: fast enough to read as a blade
+  // rather than a puff, and `velocityScale` takes it out almost at once so the
+  // marks stop where the blade was instead of sailing off it.
+  const velocity = reach * 5.2;
+
+  const emitters: Emitter[] = [];
+  for (let index = 0; index < lobes; index += 1) {
+    // Across the sweep, centred on the effect's own bearing. A full turn wraps,
+    // so the last lobe is not laid on top of the first: the span is divided by
+    // the count rather than by the gaps between them.
+    const wraps = params.sweep >= Math.PI * 1.98;
+    const step = params.sweep / (wraps ? lobes : Math.max(1, lobes - 1));
+    const theta = wraps ? index * step : -params.sweep / 2 + index * step;
+    // Uneven, so the sweep has weight somewhere rather than being an even star
+    // -- `brushExplosion`'s argument, applied along an arc instead of around a
+    // point. Every other lobe is a dominant `brush-slash`, and the rest are
+    // `brush-flick` company: all-flick reads as petals rather than as an edge,
+    // which is what the first render of this sheet showed.
+    const heavy = index % 2 === 0;
+    emitters.push({
+      id: `lobe_${index}`,
+      // Out on the arc rather than at the caster (see the header), and lifted to
+      // the height a blade actually passes at.
+      offset: { x: Math.cos(theta) * reach * 0.72, y: lift, z: Math.sin(theta) * reach * 0.72 },
+      // Thrown outward *and along* the turn: half a radian ahead of its own
+      // bearing, which is the direction the edge is travelling at that point of
+      // the arc. Purely radial marks read as an explosion; purely tangential
+      // ones read as a ring.
+      shape: { kind: 'fan', angle: 0.5, radius: reach * 0.06, rise: 0.16, bearing: theta + 0.5 },
+      emission: { kind: 'burst', count: heavy ? 4 : 2 },
+      lifetimeTicks: [Math.round(life * 0.55), life],
+      speed: [velocity * 0.7, velocity * 1.15],
+      spreadRadians: 0.18,
+      // Light, for `bloodHit`'s reason: these marks carry a *direction* and that
+      // is the information in them, so enough gravity to turn one mid-flight
+      // makes it a vertical mark that says nothing about where the blade went.
+      gravity: -260,
+      drag: 6,
+      velocityScale: { keys: [[0, 1], [0.28, 0.14], [1, 0.03]] },
+      // A stroke's size *is* its length. The dominant marks are most of a
+      // body across, which is what makes them read as an edge going past rather
+      // than as debris coming off one.
+      size: (() => {
+        const peak = reach * (heavy ? 0.72 : 0.42);
+        return { keys: [[0, peak * 0.92], [0.35, peak], [1, peak * 0.9]] } as const;
+      })(),
+      // Opaque while it matters, like every mark in this file: overlapping
+      // translucent strokes make a third colour at every crossing that is in
+      // neither of them.
+      alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
+      color: { stops: [[0, bright], [0.5, bright], [0.78, mid], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: heavy ? 'brush-slash' : 'brush-flick' },
+      blend: 'alpha',
+      // Retract, which is spec 161's rule for anything fast: these are thrown
+      // marks rooted at their butts, so the erosion walking from root to tip is
+      // the stroke being finished rather than the mark sliding off its point.
+      strokeDecay: 'retract',
+    });
+  }
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1600,
+    emitters,
+  };
+}
+
+export interface BrushShardsParams {
+  readonly id: string;
+  /** How far the shards reach, in world units. */
+  readonly reach: number;
+  /** How many. Small and many is the whole idea. */
+  readonly count?: number;
+  /** Each shard's length, as a fraction of the reach. */
+  readonly length?: number;
+  readonly lifetimeTicks?: number;
+  /** How high off the ground they leave, as a fraction of the reach. */
+  readonly lift?: number;
+  readonly bright?: PaletteKey;
+  readonly mid?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+}
+
+/**
+ * Small sharp marks thrown outward: shards (spec 235).
+ *
+ * The counterpart to {@link brushExplosion} and the reason it is not one.
+ * `brushExplosion` composes a few *dominant* strokes into lobes, which is what
+ * makes a blast read as a blast -- and at frost colours that composition came
+ * out as a handful of big pale sheets, which reads as **water**. What frost
+ * wants is the opposite distribution: many small pieces, all going outward, none
+ * of them dominant.
+ *
+ * So the marks are `brush-dab` and `brush-flick` rather than `brush-slash`, they
+ * are a fifth the length, and there are four times as many. Nothing here has a
+ * lobe: a shatter genuinely is radially even, which is the one case
+ * `brushExplosion`'s "asymmetry has to be composed" argument does *not* apply to
+ * -- ice breaking has no side it favours.
+ *
+ * They also **fall**. Gravity is real here where a blast's is nearly off,
+ * because that is most of what separates the two: fire goes up and out and
+ * burns off in the air, and shards go out and come down.
+ */
+export function brushShards(params: BrushShardsParams): EffectDefinition {
+  const reach = params.reach;
+  const count = params.count ?? 26;
+  const length = (params.length ?? 0.19) * reach;
+  const life = params.lifetimeTicks ?? 30;
+  const lift = params.lift ?? 0.1;
+  const bright = params.bright ?? 'iceWhite';
+  const mid = params.mid ?? 'icePale';
+  const deep = params.deep ?? 'iceDeep';
+
+  /** One ring of shards. Two of them, so the sizes are not all one size. */
+  const ring = (id: string, marks: number, scale: number, shape: 'brush-dab' | 'brush-flick'): Emitter => ({
+    id,
+    // `circle` rather than `fan`: radially even on purpose (see the header), and
+    // `shell` so they leave from a rim rather than filling a disc.
+    shape: { kind: 'circle', radius: reach * 0.08, shell: true },
+    emission: { kind: 'burst', count: marks },
+    lifetimeTicks: [Math.round(life * 0.5), life],
+    speed: [reach * 3.4 * scale, reach * 6.2 * scale],
+    // Wide, because a shatter has no bearing to respect.
+    spreadRadians: 0.9,
+    // Real gravity: shards come down, which is what fire does not do.
+    gravity: -1500,
+    drag: 3.4,
+    velocityScale: { keys: [[0, 1], [0.4, 0.4], [1, 0.12]] },
+    size: {
+      keys: [
+        [0, length * scale * 0.9],
+        [0.3, length * scale],
+        [1, length * scale * 0.72],
+      ],
+    },
+    alpha: { keys: [[0, 1], [0.62, 1], [1, 0]] },
+    color: { stops: [[0, bright], [0.45, mid], [1, deep]] },
+    render: 'mesh',
+    mesh: { shape },
+    blend: 'alpha',
+    offset: { x: 0, y: reach * lift, z: 0 },
+    // Retract: these are thrown and rooted at their butts, so the erosion
+    // walking root to tip is the shard finishing rather than sliding off itself.
+    strokeDecay: 'retract',
+  });
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1500,
+    emitters: [
+      // The flash the break starts with -- one beat, near-white, and gone.
+      // Without it the shatter has no *moment*, only a spray.
+      {
+        id: 'flash',
+        shape: { kind: 'circle', radius: reach * 0.05 },
+        emission: { kind: 'burst', count: 4 },
+        lifetimeTicks: [4, 7],
+        speed: [reach * 1.4, reach * 2.6],
+        spreadRadians: 1.2,
+        size: { keys: [[0, length * 1.5], [1, length * 0.7]] },
+        alpha: { keys: [[0, 1], [0.6, 1], [1, 0]] },
+        color: { stops: [[0, bright], [1, mid]] },
+        render: 'mesh',
+        mesh: { shape: 'brush-flick' },
+        blend: 'alpha',
+        offset: { x: 0, y: reach * lift, z: 0 },
+        strokeDecay: 'retract',
+      },
+      ring('shards', Math.round(count * 0.6), 1, 'brush-flick'),
+      ring('splinters', Math.round(count * 0.4), 0.62, 'brush-dab'),
+    ],
+  };
+}
+
+export interface BrushLaneParams {
+  readonly id: string;
+  /** How far down its own bearing the lane runs. */
+  readonly length: number;
+  /** How wide, across the bearing. */
+  readonly width: number;
+  /** How many nodes the run is made of. */
+  readonly nodes?: number;
+  /** Marks per node. */
+  readonly marks?: number;
+  readonly lifetimeTicks?: number;
+  /** How high off the ground it runs. */
+  readonly lift?: number;
+  /** Spread the run out into a cone instead, half-angle in radians. */
+  readonly cone?: number;
+  readonly bright?: PaletteKey;
+  readonly mid?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+}
+
+/**
+ * Marks strung along a bearing: a lane, or a cone (spec 235).
+ *
+ * The third composition in this file, and the one the other two could not do.
+ * `brushExplosion` throws from a point and `brushSwing` lays along an arc; both
+ * are *centred* on where they are played. A lane is not -- it starts at the
+ * caster and runs three hundred units away from them, and drawing it as
+ * anything centred is what made Arc Lash a violet burst that had nothing to do
+ * with the skill.
+ *
+ * It needs the bearing spec 235 put on the effect message. Before that there was
+ * none: `landArea` sends a line's cue at the caster's own feet, so a lane could
+ * only ever have pointed one fixed way in world space.
+ *
+ * ## Nodes, and why they zig
+ *
+ * The run is a handful of nodes `offset` along +X, each throwing a few marks.
+ * Alternate nodes are pushed to opposite sides of the centre line by a fraction
+ * of the width, so the run has a kink in it rather than being a ruled line --
+ * which is the whole difference between a bolt and a laser, and cannot come out
+ * of a sampler because it has to alternate.
+ *
+ * ## The cone is the same thing spread
+ *
+ * With `cone` set, a node's offset is turned by an angle that grows along the
+ * run instead of being pushed sideways, so the nodes fan out from the origin.
+ * One builder rather than two because a cone and a lane differ in exactly that:
+ * where the nodes are. What is thrown at each of them is identical.
+ */
+export function brushLane(params: BrushLaneParams): EffectDefinition {
+  const nodes = Math.max(2, params.nodes ?? 6);
+  const marks = params.marks ?? 3;
+  const life = params.lifetimeTicks ?? 22;
+  const lift = params.lift ?? params.width * 0.28;
+  // `boltFlash` rather than `boltWhite`: the latter is 0xfffbe0, a *cream*, and
+  // on the near end of the run -- where the marks are biggest -- it read as
+  // milk rather than as a discharge. The flash white is 0xf4f8ff and carries a
+  // blue cast, which is the same near-white the rest of the bolt ramp is built
+  // around.
+  const bright = params.bright ?? 'boltFlash';
+  const mid = params.mid ?? 'boltArc';
+  const deep = params.deep ?? 'boltViolet';
+  const cone = params.cone ?? 0;
+
+  const emitters: Emitter[] = [];
+  for (let index = 0; index < nodes; index += 1) {
+    // Along the run, from just off the caster to the far end. Never at zero:
+    // a node on top of the caster is a mark inside their own body.
+    const along = (index + 1) / nodes;
+    const distance = params.length * along;
+    // A cone fans; a lane kinks. Alternating rather than drawn, because a zig
+    // has to *alternate* -- a random offset per node is a wobble, and a wobble
+    // reads as an effect that could not decide where to go.
+    const side = cone > 0 ? 0 : (index % 2 === 0 ? 1 : -1) * params.width * 0.34;
+    const yaw = cone > 0 ? (index % 2 === 0 ? 1 : -1) * cone * along : 0;
+    const x = Math.cos(yaw) * distance;
+    const z = Math.sin(yaw) * distance + side;
+    // Narrower and shorter at the far end: a bolt is fiercest where it starts,
+    // and a cone genuinely does thin out as it spreads.
+    const taper = 1 - along * 0.42;
+    emitters.push({
+      id: `node_${index}`,
+      offset: { x, y: lift, z },
+      // Thrown *onward*, down the run, so the marks read as travelling rather
+      // than as a row of stamps. `bearing` is in the effect's own frame, which
+      // its rotation then turns -- so one definition serves every aim.
+      shape: { kind: 'fan', angle: 0.42, radius: params.width * 0.12, rise: 0.1, bearing: yaw },
+      // Later nodes start later: the run arrives end to end rather than all at
+      // once, which is the other half of reading as a bolt rather than a bar.
+      emission: { kind: 'burst', count: marks, delayTicks: index },
+      lifetimeTicks: [Math.round(life * 0.5), Math.round(life * taper + 4)],
+      speed: [params.length * 1.1, params.length * 2.0],
+      spreadRadians: 0.22,
+      // None. A bolt does not fall, and a cone of acid is over before it could.
+      drag: 7,
+      velocityScale: { keys: [[0, 1], [0.25, 0.12], [1, 0.02]] },
+      size: {
+        keys: [
+          [0, params.width * 0.78 * taper],
+          [0.3, params.width * 0.86 * taper],
+          [1, params.width * 0.8 * taper],
+        ],
+      },
+      alpha: { keys: [[0, 1], [0.66, 1], [1, 0]] },
+      color: { stops: [[0, bright], [0.42, bright], [0.72, mid], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: index % 2 === 0 ? 'brush-slash' : 'brush-flick' },
+      blend: 'alpha',
+      strokeDecay: 'retract',
+    });
+  }
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1800,
+    emitters,
+  };
+}
+
 /**
  * How long each arm of the order cross is, in world units (spec 175).
  *
@@ -1862,6 +2222,20 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // is on the body stays on the body and builds up. `_heavy` is not "more
   // stacks" for this one but *more time*: its ramp is the design, and the tier
   // crosses on how long it has been carried.
+  // Sized back into the band its siblings occupy (spec 236).
+  //
+  // At `clingSize: 0.66` this was the *largest base* in the table -- bigger than
+  // poison's, bleed's and corrosion's **heavy** tiers -- and its heavy at 0.82
+  // was far above everything. So a body carrying frostbite read as carrying more
+  // affliction than a body carrying any other, which is a claim about severity
+  // that no rule here is making.
+  //
+  // What is **not** changed is that its tier crosses on *elapsed* rather than on
+  // stacks. That looks like escalation because it is: frostbite is the only row
+  // in `data/damage-over-time.ts` with a real ramp (`rampPerSecond: 0.35`,
+  // `rampCap: 3`), so it genuinely triples over its life and the paint saying so
+  // is the row's whole design (spec 215). The complaint was the size, and only
+  // the size.
   brushAffliction({
     id: 'affliction_frostbite',
     cling: 15,
@@ -1869,7 +2243,8 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
     rise: -10,
     turbulence: 3,
     shedSpeed: 4,
-    clingSize: 0.66,
+    // Between shock's 0.54 and burn's 0.6, where a one-stack affliction belongs.
+    clingSize: 0.58,
     clingLife: [34, 52],
     shedLife: [30, 46],
     shedSize: 0.26,
@@ -1879,12 +2254,16 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   }),
   brushAffliction({
     id: 'affliction_frostbite_heavy',
-    cling: 34,
+    // Bleed's jump exactly (15 -> 28). It was 34, which is a bigger step up than
+    // any other heavy tier takes and on top of a base that was already the
+    // widest.
+    cling: 28,
     shed: 5,
     rise: -9,
     turbulence: 4,
     shedSpeed: 5,
-    clingSize: 0.82,
+    // Between bleed's 0.66 and corrosion's 0.7.
+    clingSize: 0.68,
     clingLife: [40, 62],
     shedLife: [30, 48],
     shedSize: 0.3,

@@ -187,6 +187,15 @@ export interface UiScreensOptions {
    */
   readonly onCastSlot: (abilityId: string) => void;
   /**
+   * The cursor came to rest on a bar slot, or left one (spec 235).
+   *
+   * An ability id rather than the slot index the screen reports, because the
+   * mapping from one to the other is `abilityForSlot` and this mount is where
+   * that already happens for the press -- so a hover and a click cannot come to
+   * different answers about what is in slot 3.
+   */
+  readonly onHoverSlot: (abilityId: string | null) => void;
+  /**
    * A line the player wants to say (spec 189).
    *
    * A request like every other callback here: the server broadcasts it back to
@@ -721,6 +730,11 @@ export class UiScreens {
       // the same function.
       const ability = abilityForSlot(this.barPlan, index);
       if (ability) options.onCastSlot(ability);
+    };
+    // The same lookup for the hover, so the reach drawn on the ground and the
+    // skill the click casts are the same skill by construction.
+    this.actionBar.onHover = (index) => {
+      options.onHoverSlot(index === null ? null : abilityForSlot(this.barPlan, index));
     };
 
     this.registerWindow('inventory', this.inventory);

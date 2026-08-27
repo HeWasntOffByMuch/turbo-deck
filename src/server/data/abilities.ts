@@ -49,6 +49,119 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
  */
 export type ProjectileLook = 'orb' | 'arrow' | 'shuriken' | 'ember';
 
+/**
+ * What a blow is *made of* (spec 232).
+ *
+ * Content rather than presentation, and the line is worth stating because this
+ * file holds both. **This says a blow is fire; it does not say what fire looks
+ * like.** The second half is `vfx-wire.ts`'s `DAMAGE_EFFECTS`, which maps an
+ * element to an effect id and is the only place that decision is taken -- so a
+ * retune of the fire impact is a renderer diff and does not touch this table.
+ *
+ * It is here rather than beside the effect ids for the reason `ProjectileLook`
+ * is here: a client cannot work it out. `look` gets away with being a pure
+ * lookup because a projectile entity's `typeId` is its ability id, so the client
+ * is holding the ability already. A *blow* is a `CombatResult`, which names an
+ * attacker and a target and no ability at all -- and the one join available,
+ * against the attacker's live cast, is exactly wrong for a projectile, whose
+ * blow lands seconds after its cast ended. So this rides the wire.
+ *
+ * `corrosion` and `decay` are elements rather than shades of `poison` because
+ * spec 215 already decided they are not poison: it authored a separate palette
+ * ramp for each, and made decay the only desaturated ramp in the table so that
+ * rot does not read as venom. Folding them back together here would undo that
+ * one system over.
+ */
+export type DamageElement =
+  | 'physical'
+  | 'fire'
+  | 'poison'
+  | 'ice'
+  | 'lightning'
+  | 'arcane'
+  | 'corrosion'
+  | 'decay';
+
+/**
+ * The wire ordinal of each element. **Append only.**
+ *
+ * The same rule and the same reason as `StatusVisual.wire`: this is the number
+ * that crosses in place of the string, so renumbering a row silently repaints
+ * every blow on a client that has not been rebuilt. A client reading an ordinal
+ * it has no name for falls back to `physical`, which is what every blow in the
+ * game was drawn as before this existed.
+ */
+export const DAMAGE_ELEMENTS: readonly DamageElement[] = [
+  'physical',
+  'fire',
+  'poison',
+  'ice',
+  'lightning',
+  'arcane',
+  'corrosion',
+  'decay',
+];
+
+/** An element as the byte that crosses. Unknown is `physical`, never a throw. */
+export function damageElementOrdinal(element: DamageElement): number {
+  const at = DAMAGE_ELEMENTS.indexOf(element);
+  return at < 0 ? 0 : at;
+}
+
+/** The byte back again. Total: an ordinal this build has no row for is physical. */
+export function damageElementOf(ordinal: number): DamageElement {
+  return DAMAGE_ELEMENTS[ordinal] ?? 'physical';
+}
+
+/**
+ * Which affliction is which element.
+ *
+ * Beside the ability table rather than in `data/damage-over-time.ts` so that
+ * file stays what it says it is -- a rate, a cadence and a length -- and so the
+ * derivation below has one table to read rather than a field spread over two.
+ *
+ * Bleed is `physical` and that is the whole reason this is a table rather than
+ * "afflictions are elemental": a cut is a cut.
+ */
+const DOT_ELEMENTS: Readonly<Record<string, DamageElement>> = {
+  burn: 'fire',
+  bleed: 'physical',
+  poison: 'poison',
+  corrosion: 'corrosion',
+  shock: 'lightning',
+  frostbite: 'ice',
+  decay: 'decay',
+};
+
+/** The element of one affliction. Total: an id with no row is `physical`. */
+export function elementOfDot(dotId: string): DamageElement {
+  return DOT_ELEMENTS[dotId] ?? 'physical';
+}
+
+/**
+ * What element an ability's blow is.
+ *
+ * **An affliction decides the element of the blow that carried it**, which is
+ * what keeps this derived rather than authored: every Burn in the game is the
+ * same Burn (spec 190), so every blow that lands one is a fire blow, and an
+ * eighth affliction is a row in {@link DOT_ELEMENTS} rather than an edit to
+ * every skill that applies it.
+ *
+ * A row's own `element` is consulted only when it lands no affliction, so the
+ * two can never disagree -- the first ability that is *arcane without poisoning
+ * anybody* has somewhere to say so, and a row that says both is answered by its
+ * affliction. Total: no dot and no field is `physical`.
+ */
+export function elementOfAbility(ability: AbilityDefinition | null | undefined): DamageElement {
+  if (!ability) return 'physical';
+  for (const effect of ability.effects ?? []) {
+    if (effect.kind !== 'applyDot') continue;
+    const element = DOT_ELEMENTS[effect.dotId];
+    if (element) return element;
+  }
+  return ability.element ?? 'physical';
+}
+
 export interface ProjectileSpec {
   /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 088). */
   readonly speed: number;
@@ -225,6 +338,16 @@ export interface AbilityDefinition {
    * already down, and reordering the two rows is a balance change.
    */
   readonly effects?: readonly SkillEffect[];
+  /**
+   * What this blow is made of, for a row that lands no affliction (spec 232).
+   *
+   * Absent is `physical`, which is what every blow in the game was drawn as
+   * before this existed, so no row that leaves it out changes. A row that lands
+   * an affliction takes that affliction's element and this is not read --
+   * `elementOfAbility` states the precedence, and the test asserts it, so a row
+   * carrying both cannot come to two answers.
+   */
+  readonly element?: DamageElement;
   /**
    * Flavour, and **only** flavour (spec 191).
    *
@@ -633,7 +756,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // A burst, so the fire starts on everything in the splash rather than on
     // one body -- and then goes looking for the rest of them.
     radius: 70,
-    projectile: { speed: 420, arc: 1, radius: 10, lifetimeTicks: seconds(3) },
+    // `ember`, so the sigil flies with the paint its own staff already had
+    // (spec 232). `shot_ember` is authored in multiples of the shot radius, so
+    // ten against `ranged.ember`'s nine needs nothing else.
+    projectile: { speed: 420, arc: 1, radius: 10, lifetimeTicks: seconds(3), look: 'ember' },
     effects: [{ kind: 'damage' }, { kind: 'applyDot', dotId: StatusId.Burn }],
     description: 'A pot of embers, lobbed. What it lands on burns, and so does what is next to it.',
   },

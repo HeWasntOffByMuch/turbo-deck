@@ -18,6 +18,7 @@
  */
 
 import type { AbilityDefinition } from '../../../server/data/abilities.js';
+import { areaReachOf } from '../../../server/sim/skill-area.js';
 import { HOLD_FRACTION, STANDOFF_FRACTION, type Point, type TargetSnapshot } from './target.js';
 
 /** What the player has to supply before an ability may be asked for. */
@@ -85,6 +86,24 @@ export function startAim(ability: AbilityDefinition, input: AimStartInput): AimS
   if (input.tick < input.readyAtTick) return { kind: 'refused', reason: 'onCooldown' };
   const gesture = aimGesture(ability);
   return gesture === 'none' ? { kind: 'cast' } : { kind: 'aim', gesture };
+}
+
+/**
+ * How far an ability actually reaches, for the ring drawn on a hover (spec 236).
+ *
+ * `range` alone is the wrong number and Whirlwind is why: it is a caster-centred
+ * area, so its row states `range: 0` -- there is nothing to be out of range of --
+ * and its reach is the 160 in `area.radius`. Hovering it drew no ring at all,
+ * which reads as a skill with no reach rather than one with a reach of its own.
+ *
+ * `areaReachOf` is the server's own answer to "what does `spellRangePct` scale",
+ * imported rather than restated so the ring and the landing cannot drift. The
+ * larger of the two, because a shaped skill can have both -- Arc Lash is a
+ * 300-unit lane thrown from a body with a 300-unit range, and Blight is a
+ * 110-radius blast placed anywhere inside 380.
+ */
+export function effectiveReach(ability: AbilityDefinition): number {
+  return Math.max(ability.range, ability.area ? areaReachOf(ability.area) : 0);
 }
 
 /** What to draw on the ground while aiming. */
@@ -163,6 +182,19 @@ export interface CastOrderInput {
   /** Where we are: the predicted position, not the replica. */
   readonly self: Point;
   readonly order: AimOrder | null;
+  /**
+   * How much of a placed cast's reach to keep in hand, in world units (spec 236).
+   *
+   * The margin between "the client believes it is in range" and "the server
+   * agrees", and it is a *distance a body can travel* rather than a fraction of
+   * the range, because that is what the disagreement is made of: the request is
+   * sent from the prediction and checked against the last input the server
+   * applied. `pickupLead` derives the same number for the same reason one system
+   * over, and this takes it from there rather than inventing a second answer.
+   *
+   * A named order does not use it -- see the comment at the comparison.
+   */
+  readonly castLead: number;
   /**
    * The named body as the view last saw it, or null when the order was placed
    * on the ground -- or when the body it named is no longer in the world.
@@ -255,7 +287,27 @@ export function castOrder(input: CastOrderInput): CastOrderStep {
   const reach = order.range + (named && input.target ? input.target.radius : 0);
 
   const distance = Math.hypot(at.x - input.self.x, at.y - input.self.y);
-  if (distance > reach * HOLD_FRACTION) {
+  // How far out the body may be and still throw it (spec 236).
+  //
+  // **A placed order and a named one want different numbers**, and running both
+  // on `HOLD_FRACTION` is what made a click inside a skill's own range walk
+  // first. That constant is a *chase* rule: it exists because a chase stops
+  // within `ARRIVE_EPS` of its destination, so a body whose cast threshold
+  // equalled that destination parks a few units short and stands there -- and
+  // because a body that shuffles must not flip the decision every tick.
+  //
+  // Neither applies to a patch of ground. It does not move, so there is nothing
+  // to flip; and the destination a chase would head for is `STANDOFF_FRACTION`
+  // of the reach, comfortably inside the full one, so nothing parks. What is
+  // left is the only real reason a placed cast needs any margin at all: the
+  // client asks from its **prediction** and the server checks against the last
+  // input it **applied**, so a request sent at exactly the edge can be refused
+  // for a drift the player cannot see. That is `pickupLead`'s problem exactly,
+  // and it takes `pickupLead`'s answer rather than a tenth of the range -- which
+  // on Blight's 380 was 38 units of ground a player could stand on, click
+  // inside their own range ring, and be walked forward from.
+  const hold = named ? reach * HOLD_FRACTION : Math.max(0, reach - input.castLead);
+  if (distance > hold) {
     return { chaseTo: standoffPoint(input.self, at, reach), cast: null, drop: false };
   }
 

@@ -124,6 +124,7 @@ import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
 import { weaponTypeFor } from './weapon-look.js';
+import { damageElementOf } from '../../../server/data/abilities.js';
 import { effectsForBlow, REDUNDANT_SERVER_EFFECTS, type GoreLevel } from './vfx-wire.js';
 import { createAudioEngine } from '../../audio/engine.js';
 import { BUS_LABELS, BUSES } from '../../audio/events.js';
@@ -161,7 +162,7 @@ import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
 import { windupLostItsMarkIn } from './withdraw.js';
-import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
+import { aimShape, castOrder, effectiveReach, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { worldCursor, worldMark } from './crosshair.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
@@ -1611,7 +1612,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           // An affliction's beat draws no blow at all (spec 219). It still
           // floats its number below, and its own paint is `affliction-vfx.ts`'s.
           periodic: (result.flags & CombatFlag.Periodic) !== 0,
-          damageType: 'physical',
+          // Off the wire since spec 232, rather than the literal `'physical'`
+          // that stood here and made five authored impact effects unreachable.
+          damageType: damageElementOf(result.element),
           x: target.x,
           y: BLOOD_HEIGHT,
           z: target.y,
@@ -1620,6 +1623,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           // What the body is made of, rather than the `true` that was here:
           // hardcoded, a construct threw blood and `combat.hit.armored` was
           // unreachable for every blow in the game.
+          //
+          // Spec 232 fixed this same literal independently, with a column on
+          // `monster-look.ts`. This one is better and is the one kept: a deny
+          // list keyed on entity *kind* answers a projectile and a drop as well
+          // as a monster, it has rows actually set, and its test checks each
+          // name is a row `MONSTERS` has. The other is gone rather than left
+          // beside it -- two answers to "does this bleed" is exactly the drift
+          // both were written to remove.
           bleeds: bleedsFor(target),
         },
         client.view().estimatedTick,
@@ -1674,14 +1685,28 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // `addEffect`'s orange debug disc under the green heal for half a second.
     if (REDUNDANT_SERVER_EFFECTS.has(effect.effectId)) return;
     // The id the server has always sent and this view has always dropped.
-    scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
-    // And what it sounds like (spec 229). This message is the **only** place an
-    // ability id reaches the client at impact time -- `CombatResultMessage`
-    // carries none, which is why `view.ts` has hardcoded `damageType:
-    // 'physical'` for the picture since spec 121 -- so it is where an element's
-    // impact comes from. `soundForEffect` answers null for anything that is not
-    // an `.impact`, because a `.self` cue is the cast and the cast was heard at
-    // the wind-up.
+    scene.addEffect(
+      effect.effectId,
+      effect.x,
+      effect.y,
+      effect.radius,
+      effect.durationTicks,
+      // Which way the cue points (spec 235). Zero for a radial one, so every
+      // picture that existed before it is drawn exactly as it was; a lane and
+      // a cone are laid along the aim instead of bursting at the caster.
+      effect.rotation,
+    );
+    // And what it sounds like (spec 229). This message is the only place an
+    // ability *id* reaches the client at impact time, so it is where an
+    // element's impact sound comes from. `soundForEffect` answers null for
+    // anything that is not an `.impact`, because a `.self` cue is the cast and
+    // the cast was heard at the wind-up.
+    //
+    // The half of that comment about the *picture* is no longer true: spec 232
+    // put the element on `CombatResultMessage` as a byte, because the ability
+    // id could not be recovered for a projectile -- whose blow lands seconds
+    // after its cast ended. The sound still reads it from here, which is right:
+    // this message names the ability and that one names only its element.
     audioDriver.serverEffect(effect.effectId, {
       x: effect.x,
       y: scene.groundAt(effect.x, effect.y) + BLOOD_HEIGHT,
@@ -2129,6 +2154,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     onCastSlot: (abilityId) => {
       pressAbility(abilityId);
     },
+    // Resting on a slot draws that skill's reach on the ground (spec 235). It
+    // is a *preview* and nothing else: no order is given, nothing is armed, and
+    // moving off it takes the ring away.
+    onHoverSlot: (abilityId) => {
+      hoveredAbility = abilityId;
+    },
   });
 
   // The account window can be shown now (spec 226). Assigned rather than called
@@ -2222,6 +2253,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * because there was nothing to refund.
    */
   let pendingAim: { readonly abilityId: string; readonly gesture: AimGesture } | null = null;
+  /**
+   * The skill the cursor is resting on in the bar, or null (spec 235).
+   *
+   * Kept beside `pendingAim` because it feeds the same picture and is the same
+   * kind of thing -- a question the player has not answered. It ranks *below*
+   * both a pending aim and a standing order, since those are decisions and this
+   * is a look.
+   */
+  let hoveredAbility: string | null = null;
   /**
    * A confirmed aim, walking into range (spec 080). One cast, not a cadence:
    * the tick it is asked for is the tick it is forgotten.
@@ -3153,6 +3193,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const decision = castOrder({
       self: me,
       order: standing,
+      // The same derivation the pickup uses, for the same disagreement
+      // (spec 236): the request leaves from the prediction and is checked
+      // against the last input the server applied, so a placed cast sent from
+      // exactly the edge can be refused for drift nobody can see. A distance a
+      // body travels, not a fraction of the range.
+      castLead: pickupLead(
+        view.stats?.moveSpeed ?? 0,
+        view.roundTripTicks,
+        SERVER_TICK_RATE,
+        standing.range,
+      ),
       target: mark
         ? {
             id: mark.id,
@@ -3200,10 +3251,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     view: ReturnType<typeof client.view>,
     me: { x: number; y: number },
   ): AimIndicator | null {
-    const abilityId = pendingAim?.abilityId ?? order?.abilityId ?? null;
+    const abilityId = pendingAim?.abilityId ?? order?.abilityId ?? hoveredAbility ?? null;
     if (abilityId === null) return null;
     const ability = abilityById(abilityId);
     if (!ability) return null;
+    // A hover is a preview, and it is one only while nothing has been decided:
+    // a pending aim and a standing order both outrank it above, so this is true
+    // exactly when the id came from the bar.
+    const preview = pendingAim === null && order === null;
 
     // Where it is pointed: the cursor while the aim is still a question, the
     // placement once it has been answered.
@@ -3230,11 +3285,21 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     }
 
     return {
-      shape: aimShape(ability),
+      // A preview draws the reach and nothing else. There is no aim point to
+      // put a shape at -- the cursor is over the interface, not the world -- and
+      // a wedge laid along the last place the mouse happened to be in the world
+      // would be answering a question nobody asked.
+      shape: preview ? { kind: 'none' } : aimShape(ability),
       origin: me,
       point,
-      unitId,
-      range: ability.range,
+      unitId: preview ? null : unitId,
+      preview,
+      // A hover asks "how far does this reach", so it is answered with the
+      // reach -- which for a caster-centred area is its radius and not the
+      // `range: 0` such a row states (spec 236). A live aim keeps `range`,
+      // because there the ring means "the confirm will be a walk first" and
+      // walking is measured against exactly the number `startCast` gates on.
+      range: preview ? effectiveReach(ability) : ability.range,
       // Measured to the body's edge when there is one, the same as the gate the
       // server will apply to the cast this becomes.
       inRange: Math.hypot(point.x - me.x, point.y - me.y) <= ability.range + markRadius,

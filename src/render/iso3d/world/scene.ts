@@ -153,6 +153,7 @@ import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 import { AfflictionVfx } from './affliction-vfx.js';
 import { AuraVfx, fieldStatusesOn } from './aura-vfx.js';
+import { SwingVfx } from './swing-vfx.js';
 import { ShotVfx } from './shot-vfx.js';
 import { sampleCapsuleSurface } from '../vfx/shapes.js';
 import type { WorldAnchor } from './damage-popup.js';
@@ -285,6 +286,17 @@ export interface AimIndicator {
   readonly range: number;
   /** False when the placement is out of range, so the picture says "you will walk". */
   readonly inRange: boolean;
+  /**
+   * This is a hover, not a decision (spec 235).
+   *
+   * The reach is drawn **whenever this is true**, where a live aim draws it only
+   * when the placement is out of range -- and the two rules are opposite for the
+   * same reason. On a live aim the ring is a warning: the confirm will be a walk
+   * before it is a blow, and drawing it the rest of the time would be a ring
+   * under the player permanently. On a hover it is the entire question being
+   * asked, which is "how far does this reach".
+   */
+  readonly preview?: boolean;
 }
 
 /**
@@ -556,6 +568,8 @@ export class WorldScene {
    */
   private readonly afflictions: AfflictionVfx;
   private readonly auras: AuraVfx;
+  private readonly swings: SwingVfx;
+  private readonly castReleases = new Map<number, number>();
   /**
    * The paint a shot flies with (spec 218). A second driver rather than a
    * branch in the one above, because the two answer different questions from
@@ -834,6 +848,14 @@ export class WorldScene {
     // calls again, and for the third time the same two reasons: a persistent
     // attached effect needs a handle it can find out has been evicted, and it
     // needs somebody to owe it a stop.
+    // The sweep a melee swing paints (spec 233). Two calls rather than four: a
+    // sweep is a one-shot the particle system retires itself, so there is no
+    // handle to hold, nothing to ask `isLive` about and no stop owed. The
+    // bookkeeping the other two need would be guarding nothing here.
+    this.swings = new SwingVfx({
+      play: (id, options) => this.vfx.play(id, options),
+      has: (id) => this.vfx.system.has(id),
+    });
     this.auras = new AuraVfx({
       play: (id, options) => this.vfx.play(id, options),
       stop: (handle) => this.vfx.stop(handle),
@@ -1403,9 +1425,21 @@ export class WorldScene {
    * still what happens, so abilities keep their cue until the effect library
    * gives each of them a real one.
    */
-  addEffect(effectId: string, x: number, y: number, radius: number, durationTicks: number): void {
+  addEffect(
+    effectId: string,
+    x: number,
+    y: number,
+    radius: number,
+    durationTicks: number,
+    rotation = 0,
+  ): void {
     if (this.vfx.system.has(effectId)) {
       this.vfx.play(effectId, {
+        // Which way it points (spec 235). Zero for every radial cue, which is
+        // what the server sends for one -- so a blast is drawn exactly as it
+        // was, and a lane and a cone are drawn along the aim instead of as a
+        // burst at the caster's feet.
+        rotation,
         x,
         y: this.ground(x, y) + 2,
         z: y,
@@ -1757,12 +1791,17 @@ export class WorldScene {
     this.castPhases.clear();
     this.castAbilities.clear();
     this.castTicksLeft.clear();
+    this.castReleases.clear();
     this.attackRates.clear();
     for (const cast of view.casts) {
       this.castPhases.set(cast.entityId, cast.phase);
       // Which ability, not just that there is one (spec 164): a sword swing and
       // a bow draw are the same activity on the wire and two different clips.
       this.castAbilities.set(cast.entityId, cast.abilityId);
+      // And when the blade goes past (spec 233), which is the tick the blow
+      // lands rather than the tick the cast ends -- a backswing is the arm
+      // coming back, and painting a sweep on it would draw the swing twice.
+      this.castReleases.set(cast.entityId, cast.releaseTick);
       // And how much of it is left to run (spec 166), so the frame the cast
       // vanishes can be read as "finished" or "called off". Against the drawn
       // tick rather than the replicated one, because that is the clock the
@@ -1887,7 +1926,39 @@ export class WorldScene {
       if (dead) {
         this.afflictions.forget(entity.id);
         this.auras.forget(entity.id);
+        this.swings.forget(entity.id);
       } else {
+        // The sweep a swing paints (spec 233), on the tick the blade goes past.
+        //
+        // Fed the **drawn** facing rather than the replicated heading, for the
+        // reason the paint below is fed the drawn position: the sweep is
+        // composed around the body as it is being shown, and `turnEase` can have
+        // the drawn yaw a few ticks behind the authoritative one (spec 142). A
+        // sweep aimed at where the body is about to point is a blade that misses
+        // its own arm.
+        //
+        // At `ground`, not at chest height, and that is not the mistake it looks
+        // like: `brushSwing` lifts its own lobes by `reach * 0.22` in their
+        // offsets, so the height a blade passes at is a property of the effect
+        // rather than of every call site that plays one.
+        const swingAbility = this.castAbilities.get(entity.id);
+        const swingRelease = this.castReleases.get(entity.id);
+        if (swingAbility !== undefined && swingRelease !== undefined) {
+          this.swings.step(
+            [
+              {
+                entityId: entity.id,
+                x,
+                y: ground,
+                z: y,
+                facing,
+                abilityId: swingAbility,
+                releaseTick: swingRelease,
+              },
+            ],
+            frame.tick,
+          );
+        }
         this.afflictions.step(
           { entityId: entity.id, x, y: ground, z: y, radius: look.radius },
           entity.statuses ?? [],
@@ -1950,6 +2021,7 @@ export class WorldScene {
       // stop is the caller's, so it is made here -- from the sweep that already
       // knows a body has left -- rather than inferred from an absence.
       this.afflictions.forget(id);
+      this.swings.forget(id);
       this.auras.forget(id);
       // The same obligation for a shot's paint, and it bites harder: a shot
       // lives a second and a half, so an unstopped one is a leak that runs at
@@ -2384,7 +2456,7 @@ export class WorldScene {
     // largest thing drawn on the ground -- 700 units across at the top of the
     // ability table, which is thirty terrain cells -- and so the one a flat mesh
     // was most wrong about.
-    if (!aim.inRange && aim.range > 0) {
+    if ((aim.preview === true || !aim.inRange) && aim.range > 0) {
       const range = aim.range;
       this.aimRangeDecal.lay(
         `ring:${range}`,

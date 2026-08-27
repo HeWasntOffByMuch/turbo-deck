@@ -9,6 +9,7 @@ import {
   aimGesture,
   aimShape,
   castOrder,
+  effectiveReach,
   startAim,
   type AimOrder,
   type CastOrderInput,
@@ -115,6 +116,9 @@ function step(overrides: Partial<CastOrderInput> = {}): ReturnType<typeof castOr
     self: { x: 0, y: 0 },
     order: UNIT_ORDER,
     target: MARK,
+    // A placed cast's margin (spec 236). Non-zero, so the tests below exercise
+    // the real comparison rather than the degenerate one.
+    castLead: 20,
     rooted: false,
     // Holding its own footing, unless a case says otherwise (spec 173).
     staggered: false,
@@ -210,6 +214,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       self: { x: 0, y: 0 },
       order: GROUND_ORDER,
       target: null,
+      castLead: 20,
       rooted: false,
       staggered: false,
       readyAtTick: 0,
@@ -225,6 +230,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       self: { x: 700, y: 0 },
       order: GROUND_ORDER,
       target: null,
+      castLead: 20,
       rooted: false,
       staggered: false,
       readyAtTick: 0,
@@ -260,8 +266,9 @@ describe('one tick of a confirmed aim (spec 080)', () => {
         self,
         order: UNIT_ORDER,
         target: MARK,
+        castLead: 20,
         rooted: false,
-      staggered: false,
+        staggered: false,
         readyAtTick: 0,
         tick: 100 + i,
       });
@@ -308,5 +315,96 @@ describe('a broken body does nothing with a standing cast order (spec 173)', () 
 
   it('acts again the moment the window ends', () => {
     expect(step({ staggered: false, self: { x: MARK.x - 100, y: 0 } }).cast).not.toBeNull();
+  });
+});
+
+/**
+ * A placed cast at the edge of its own range (spec 236).
+ *
+ * The bug this is written against: clicking inside a skill's range ring but near
+ * its rim walked the body forward first, because the decision ran on
+ * `HOLD_FRACTION` -- a *chase* constant that guards against a moving target
+ * flipping the answer and against a chase parking on its own threshold. Neither
+ * is true of a patch of ground.
+ */
+describe('a placed cast does not walk from inside its own range', () => {
+  const RANGE = GROUND_ORDER.range;
+
+  it('casts from just inside the rim rather than walking', () => {
+    // 95% of the range: comfortably inside, and squarely in the band
+    // `HOLD_FRACTION` used to send walking.
+    const at = RANGE * 0.95;
+    const decision = step({ order: { ...GROUND_ORDER, x: at, y: 0 }, target: null, castLead: 10 });
+    expect(decision.chaseTo).toBeNull();
+    expect(decision.cast).not.toBeNull();
+  });
+
+  it('still walks when the point is genuinely out of range', () => {
+    const decision = step({
+      order: { ...GROUND_ORDER, x: RANGE * 1.4, y: 0 },
+      target: null,
+      castLead: 10,
+    });
+    expect(decision.chaseTo).not.toBeNull();
+    expect(decision.cast).toBeNull();
+  });
+
+  it('keeps back exactly the lead it was given, and no more', () => {
+    // The margin is a distance a body travels, not a fraction of the range: at
+    // the same lead a long-ranged skill keeps back the same few units as a short
+    // one, where a fraction kept back 38 units of Blight's 380.
+    const lead = 30;
+    const inside = step({
+      order: { ...GROUND_ORDER, x: RANGE - lead - 1, y: 0 },
+      target: null,
+      castLead: lead,
+    });
+    expect(inside.cast).not.toBeNull();
+    const outside = step({
+      order: { ...GROUND_ORDER, x: RANGE - lead + 1, y: 0 },
+      target: null,
+      castLead: lead,
+    });
+    expect(outside.cast).toBeNull();
+  });
+
+  it('leaves a named order on the chase rule, because its mark moves', () => {
+    // The hold band is what stops a shuffling body flipping the decision every
+    // tick, so a unit order keeps it.
+    const reach = UNIT_ORDER.range + MARK.radius;
+    const decision = step({ order: { ...UNIT_ORDER, x: reach * 0.95, y: 0 }, castLead: 10 });
+    expect(decision.chaseTo).not.toBeNull();
+  });
+});
+
+describe('how far an ability reaches, for the hover ring (spec 236)', () => {
+  it('answers a caster-centred area with its radius, not its zero range', () => {
+    // Whirlwind states `range: 0` -- there is nothing to be out of range of --
+    // so the ring drew nothing at all, which reads as a skill with no reach.
+    const whirlwind = abilityById('skill.whirlwind');
+    expect(whirlwind).toBeDefined();
+    if (!whirlwind) return;
+    expect(whirlwind.range).toBe(0);
+    const area = whirlwind.area;
+    expect(area?.shape).toBe('circle');
+    if (area?.shape !== 'circle') return;
+    expect(effectiveReach(whirlwind)).toBe(area.radius);
+  });
+
+  it('answers a ranged skill with its range', () => {
+    const blight = abilityById('skill.blight');
+    expect(blight).toBeDefined();
+    if (!blight) return;
+    // Placed anywhere inside 380, and its blast is 110: the reach a player
+    // wants drawn is the one they may click within.
+    expect(effectiveReach(blight)).toBe(blight.range);
+  });
+
+  it('never answers zero for a skill that reaches anywhere', () => {
+    for (const ability of ALL_ABILITIES) {
+      if (!ability.skill) continue;
+      if (ability.targeting === 'self' && !ability.area) continue;
+      expect(effectiveReach(ability), ability.id).toBeGreaterThan(0);
+    }
   });
 });

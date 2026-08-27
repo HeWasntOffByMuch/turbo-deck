@@ -8,6 +8,7 @@
  * exactly one player and this one has as many as connect.
  */
 
+import type { DamageElement } from '../data/abilities.js';
 import type { Rng } from '../../shared/prng.js';
 import type { Vec2 } from '../../sim/types.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
@@ -722,6 +723,17 @@ export type ServerSimEvent =
        */
       readonly weakPoint: boolean;
       /**
+       * What the blow was made of, for the picture only (spec 232).
+       *
+       * Optional, and absent is `physical` -- which is what every blow in this
+       * game was drawn as before this existed, and what the two heal sites that
+       * raise a `hit` with negative damage correctly leave it as. Nothing in the
+       * sim reads it: it is carried here so that `world.ts` can put it on the
+       * wire, because a `CombatResult` names no ability and the client therefore
+       * cannot work it out.
+       */
+      readonly element?: DamageElement;
+      /**
        * This damage arrived from an affliction rather than from a blow
        * (spec 190).
        *
@@ -809,6 +821,21 @@ export type ServerSimEvent =
       readonly z: number;
       readonly radius: number;
       readonly durationTicks: number;
+      /**
+       * Which way the cue points, radians about Y (spec 235).
+       *
+       * Optional, and absent is the same "no bearing" a radial cue has always
+       * had -- a blast, a heal and a ring are the same picture whichever way the
+       * caster was standing, and they say so by leaving this off rather than by
+       * sending a zero that means something.
+       *
+       * It exists because two shapes are *not* radial and could not be drawn at
+       * all without it: a cone and a lane both run from the caster toward the
+       * aim, and `landArea` sends a line's cue at the caster's own feet. Every
+       * landing that has a direction already computes one -- `landCone` has had
+       * `dirX/dirY` since spec 062 -- so this carries what was being thrown away.
+       */
+      readonly rotation?: number;
     }
   | {
       /**
