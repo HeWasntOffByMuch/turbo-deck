@@ -8,6 +8,12 @@
       "channels": 1
     },
     {
+      "url": "/audio/combat/hit_blocked/block_light_01.ogg",
+      "seconds": 0.568,
+      "bytes": 8809,
+      "channels": 1
+    },
+    {
       "url": "/audio/combat/hits/blunt_01.ogg",
       "seconds": 0.701,
       "bytes": 11190,
@@ -41,6 +47,18 @@
       "url": "/audio/combat/hits/sword_clash_03.ogg",
       "seconds": 0.734,
       "bytes": 10041,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/projectile_impact/bow_impact_solid_body.ogg",
+      "seconds": 0.537,
+      "bytes": 8747,
+      "channels": 1
+    },
+    {
+      "url": "/audio/combat/projectile_launch/bow_release.ogg",
+      "seconds": 0.59,
+      "bytes": 8652,
       "channels": 1
     },
     {
@@ -311,6 +329,414 @@
       "url": "/audio/elemental/water/throw_02.ogg",
       "seconds": 1.885,
       "bytes": 22688,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_dirt/steps_dirt_001.ogg",
+      "seconds": 0.164,
+      "bytes": 5370,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_dirt/steps_dirt_002.ogg",
+      "seconds": 0.207,
+      "bytes": 6144,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_dirt/steps_dirt_003.ogg",
+      "seconds": 0.159,
+      "bytes": 5389,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_dirt/steps_dirt_004.ogg",
+      "seconds": 0.221,
+      "bytes": 6014,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_dirt/steps_dirt_005.ogg",
+      "seconds": 0.207,
+      "bytes": 6357,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_dirt/steps_dirt_006.ogg",
+      "seconds": 0.345,
+      "bytes": 7312,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_dirt_001.ogg",
+      "seconds": 0.164,
+      "bytes": 5370,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_dirt_002.ogg",
+      "seconds": 0.207,
+      "bytes": 6144,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_dirt_003.ogg",
+      "seconds": 0.159,
+      "bytes": 5389,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_dirt_004.ogg",
+      "seconds": 0.221,
+      "bytes": 6014,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_dirt_005.ogg",
+      "seconds": 0.207,
+      "bytes": 6357,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_dirt_006.ogg",
+      "seconds": 0.345,
+      "bytes": 7312,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_water_012.ogg",
+      "seconds": 0.12,
+      "bytes": 5433,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_water_013.ogg",
+      "seconds": 0.163,
+      "bytes": 5570,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_water_014.ogg",
+      "seconds": 0.162,
+      "bytes": 6080,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_water_016.ogg",
+      "seconds": 0.238,
+      "bytes": 6947,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_grass/steps_water_017.ogg",
+      "seconds": 0.157,
+      "bytes": 5864,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_rock/steps_gravel_001.ogg",
+      "seconds": 0.178,
+      "bytes": 5392,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_rock/steps_gravel_002.ogg",
+      "seconds": 0.184,
+      "bytes": 5802,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_rock/steps_gravel_003.ogg",
+      "seconds": 0.213,
+      "bytes": 6038,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_rock/steps_gravel_004.ogg",
+      "seconds": 0.16,
+      "bytes": 5816,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_rock/steps_gravel_005.ogg",
+      "seconds": 0.182,
+      "bytes": 5698,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_rock/steps_gravel_006.ogg",
+      "seconds": 0.206,
+      "bytes": 5761,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_001.ogg",
+      "seconds": 0.094,
+      "bytes": 4719,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_002.ogg",
+      "seconds": 0.044,
+      "bytes": 4220,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_003.ogg",
+      "seconds": 0.086,
+      "bytes": 4613,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_004.ogg",
+      "seconds": 0.062,
+      "bytes": 4430,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_005.ogg",
+      "seconds": 0.068,
+      "bytes": 4533,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_006.ogg",
+      "seconds": 0.064,
+      "bytes": 4394,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_007.ogg",
+      "seconds": 0.069,
+      "bytes": 4505,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_008.ogg",
+      "seconds": 0.045,
+      "bytes": 4220,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_009.ogg",
+      "seconds": 0.058,
+      "bytes": 4426,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_010.ogg",
+      "seconds": 0.065,
+      "bytes": 4369,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_011.ogg",
+      "seconds": 0.04,
+      "bytes": 4116,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_012.ogg",
+      "seconds": 0.06,
+      "bytes": 4327,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_013.ogg",
+      "seconds": 0.067,
+      "bytes": 4456,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_014.ogg",
+      "seconds": 0.045,
+      "bytes": 4310,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_015.ogg",
+      "seconds": 0.08,
+      "bytes": 4718,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_016.ogg",
+      "seconds": 0.055,
+      "bytes": 4240,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_017.ogg",
+      "seconds": 0.039,
+      "bytes": 4171,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_018.ogg",
+      "seconds": 0.059,
+      "bytes": 4327,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_019.ogg",
+      "seconds": 0.078,
+      "bytes": 4626,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_020.ogg",
+      "seconds": 0.069,
+      "bytes": 4576,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_carpet_021.ogg",
+      "seconds": 0.07,
+      "bytes": 4545,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_gravel_016.ogg",
+      "seconds": 0.214,
+      "bytes": 6319,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_gravel_017.ogg",
+      "seconds": 0.166,
+      "bytes": 5684,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_gravel_018.ogg",
+      "seconds": 0.155,
+      "bytes": 5283,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_gravel_019.ogg",
+      "seconds": 0.232,
+      "bytes": 5980,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_gravel_020.ogg",
+      "seconds": 0.187,
+      "bytes": 5622,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_gravel_021.ogg",
+      "seconds": 0.169,
+      "bytes": 5324,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_tiles_001.ogg",
+      "seconds": 0.108,
+      "bytes": 4732,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_tiles_002.ogg",
+      "seconds": 0.109,
+      "bytes": 4753,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_tiles_006.ogg",
+      "seconds": 0.145,
+      "bytes": 5018,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_tiles_007.ogg",
+      "seconds": 0.11,
+      "bytes": 4818,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_tiles_015.ogg",
+      "seconds": 0.114,
+      "bytes": 4819,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_sand/steps_tiles_018.ogg",
+      "seconds": 0.079,
+      "bytes": 4438,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_snow/steps_snow_001.ogg",
+      "seconds": 0.232,
+      "bytes": 6048,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_snow/steps_snow_002.ogg",
+      "seconds": 0.285,
+      "bytes": 6991,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_snow/steps_snow_003.ogg",
+      "seconds": 0.328,
+      "bytes": 7145,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_snow/steps_snow_004.ogg",
+      "seconds": 0.111,
+      "bytes": 4921,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_snow/steps_snow_005.ogg",
+      "seconds": 0.464,
+      "bytes": 8836,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_snow/steps_snow_006.ogg",
+      "seconds": 0.314,
+      "bytes": 6634,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_water/steps_water_001.ogg",
+      "seconds": 0.194,
+      "bytes": 6057,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_water/steps_water_002.ogg",
+      "seconds": 0.178,
+      "bytes": 5895,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_water/steps_water_003.ogg",
+      "seconds": 0.168,
+      "bytes": 5817,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_water/steps_water_004.ogg",
+      "seconds": 0.094,
+      "bytes": 4728,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_water/steps_water_005.ogg",
+      "seconds": 0.213,
+      "bytes": 6080,
+      "channels": 1
+    },
+    {
+      "url": "/audio/player/footstep_water/steps_water_006.ogg",
+      "seconds": 0.143,
+      "bytes": 5533,
       "channels": 1
     },
     {
