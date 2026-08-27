@@ -104,6 +104,15 @@ export interface AudioStats {
  * catalog, because there is nothing to look up -- a mumble is generated, not
  * fetched, which is the whole reason this exists.
  *
+ * It takes a bus rather than owning one. A sixth, `voice`, was written and
+ * taken out again: `BUSES` is the *sound event* vocabulary, `soundEventSections`
+ * builds the SFX tab's tree from it, and `events.test.ts` asserts every bus
+ * appears there in mixer order -- so a bus that can never hold a catalog event
+ * is an empty folder in the tab and a slider with nothing behind it. A
+ * dedicated Dialogue level is worth having and is a follow-up; it wants a
+ * mixer that separates "a bus of events" from "a level", which is a change to
+ * that vocabulary rather than a row in it.
+ *
  * Null means "no Web Audio here", which is what Node gets and what a browser
  * that refused a context gets. The caller's answer to null is to make no sound,
  * never to build a second context of its own.

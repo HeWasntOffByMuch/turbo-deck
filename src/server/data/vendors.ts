@@ -71,6 +71,22 @@ export interface VendorDefinition {
   readonly buyMarkup: number;
   /** What you get: `floor(value * sellFraction)`. Below 1, always. */
   readonly sellFraction: number;
+  /**
+   * Whether standing near this shop is enough to open it (spec 244).
+   *
+   * True for the two above, which is how shopping has worked since spec 129:
+   * there is nobody to talk to, so `nearestVendorTo` finds one by proximity and
+   * the shop key opens it.
+   *
+   * False for a shop with a **body** standing in it, and that is a rule rather
+   * than a preference. Its reach has to cover its owner's whole wander disc plus
+   * the distance a player can be talking from, which is four times the radius of
+   * a shop you walk onto -- so left in the proximity search it would swallow the
+   * others, and pressing the shop key anywhere near the square would open a
+   * merchant's stock without a word being exchanged. Reached through the
+   * conversation instead, which is what the reach was sized for.
+   */
+  readonly byProximity: boolean;
 }
 
 /**
@@ -96,6 +112,7 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     ],
     buyMarkup: 1.5,
     sellFraction: 0.4,
+    byProximity: true,
   },
   {
     // Better goods, worse rates: the choice a second shop exists to offer.
@@ -107,6 +124,7 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     stock: ['sword.keen', 'maul.iron', 'staff.emberwood', 'focus.quartz', 'helm.plated', 'chest.scale'],
     buyMarkup: 1.8,
     sellFraction: 0.3,
+    byProximity: true,
   },
   {
     // The first shop with a body standing in it (spec 244). The two above are
@@ -127,6 +145,10 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     // Between the two above. It walks to you, so it charges for the walk.
     buyMarkup: 1.6,
     sellFraction: 0.35,
+    // Talk to Rell. See the field's own note: this shop's reach is four times a
+    // walk-up shop's, because it is measured from an anchor its owner wanders
+    // around, and in the proximity search it would swallow both of the others.
+    byProximity: false,
   },
 ];
 

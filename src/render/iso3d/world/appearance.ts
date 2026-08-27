@@ -14,7 +14,7 @@
  * Pure: no three.js. It says what to build, not how.
  */
 
-import { monsterById } from '../../../server/data/monsters.js';
+import { isFriendlyMonster, monsterById } from '../../../server/data/monsters.js';
 import { abilityById, type ProjectileLook } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { VFX_PALETTE } from '../vfx/palette.js';
@@ -194,7 +194,10 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
         rig: 'monster',
         typeId: entity.typeId || 'monster',
         radius: monster?.radius ?? DEFAULT_MONSTER_RADIUS,
-        showsHealth: true,
+        // A friendly body has no bar (spec 244). Nothing can take its health, so
+        // a bar over it would be a full one forever -- and a health bar is the
+        // clearest thing this game draws to say "you may fight this".
+        showsHealth: !isFriendlyMonster(entity.typeId),
         look: null,
       };
     }

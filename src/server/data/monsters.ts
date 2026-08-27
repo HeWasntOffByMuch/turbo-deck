@@ -210,6 +210,23 @@ export function noticeRangeOf(temperament: Temperament): number {
  * no row at all is a body the table cannot describe -- and a thing nobody can
  * name should not also be walking about.
  */
+/**
+ * Whether a body of this type will not fight and cannot be fought (spec 244).
+ *
+ * The one answer, because three places need it and they are in three different
+ * trees: `sim/aggro.ts`'s `isFriendly` wraps it for an entity, the renderer's
+ * `appearanceOf` reads it to withhold a health bar and to make a right-click
+ * mean "talk", and a test picking a body to fight has to skip one. A predicate
+ * each would be three readings of one union member.
+ *
+ * By type id rather than by entity, so a caller with a replicated body and no
+ * server types can ask -- which is the whole reason the client can answer it at
+ * all without a bit on the wire.
+ */
+export function isFriendlyMonster(typeId: string): boolean {
+  return monsterById(typeId)?.temperament.kind === 'friendly';
+}
+
 export function idlePlanOf(typeId: string): Idle {
   return monsterById(typeId)?.idle ?? SENTINEL;
 }

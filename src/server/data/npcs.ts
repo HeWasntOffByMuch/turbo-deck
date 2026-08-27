@@ -102,17 +102,19 @@ const DEFINITIONS: readonly NpcDefinition[] = [
   {
     id: 'npc.merchant',
     name: 'Rell',
-    // Comfortably more than a body's reach and less than a shout. The shop's own
-    // reach has to cover this *plus* the wander radius, since `withinReach`
-    // measures from the vendor row's fixed point and the body moves: see
-    // `VENDOR_REACH` in `data/vendors.ts`.
+    // Comfortably more than a body's reach and less than a shout. Its shop's
+    // reach is *derived* from this plus the wander radius, since `withinReach`
+    // measures from the vendor row's fixed point and the body moves -- see
+    // `reachFor` in `data/vendors.ts`, and the test in
+    // `world/npc-placement.test.ts` that measures the worst case off the
+    // shipped map.
     talkRadius: 130,
     // Soft Mumble, the handoff spec's own recommendation for a default NPC --
     // "gentle, rounded, neutral, friendly ... probably the safest default". A
     // touch above the preset's pitch and a touch under its pace, which is the
     // whole of what makes this a particular person rather than the engine.
     voice: { voice: 'soft', pitchMultiplier: 1.04, speed: 0.95 },
-    vendorId: 'vendor.quartermaster',
+    vendorId: 'vendor.rell',
     dialogue: MERCHANT_DIALOGUE,
   },
 ];

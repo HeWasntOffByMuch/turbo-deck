@@ -58,11 +58,11 @@ function parsed(document: unknown): AudioMix {
   return mix;
 }
 
-/** A mix with a distinct level per bus, so a value that moved is traceable to its slider. */
+/** A mix with five distinct bus levels, so a value that moved is traceable to its slider. */
 const DISTINCT: AudioMix = {
   version: AUDIO_VERSION,
   master: 0.55,
-  buses: { player: 0.1, combat: 0.2, elemental: 0.3, ambience: 0.4, voice: 0.45, ui: 0.5 },
+  buses: { player: 0.1, combat: 0.2, elemental: 0.3, ambience: 0.4, ui: 0.5 },
   muted: false,
 };
 

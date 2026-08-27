@@ -3813,6 +3813,12 @@
           "monsterId": "ravager",
           "x": -106.07900000000001,
           "z": 750.837
+        },
+        {
+          "id": "npc-merchant",
+          "monsterId": "npc.merchant",
+          "x": 650,
+          "z": 520
         }
       ],
       "regions": [
@@ -4353,7 +4359,7 @@
         {
           "rx": 1,
           "rz": 1,
-          "hash": "3713f646",
+          "hash": "743a8749",
           "cells": 3136
         },
         {
@@ -4815,5 +4821,5 @@
       ]
     }
   ],
-  "mapId": "58d636fe"
+  "mapId": "06f4dfeb"
 }

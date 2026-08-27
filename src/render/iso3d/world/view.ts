@@ -122,6 +122,7 @@ import {
 } from './action-bar.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
+import { isFriendlyMonster } from '../../../server/data/monsters.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
 import { weaponTypeFor } from './weapon-look.js';
 import { damageElementOf } from '../../../server/data/abilities.js';
@@ -2464,10 +2465,35 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * the blow is *allowed* -- hostility, range, the zone's pvp flag -- is the
    * server's to answer, and it answers it on every swing.
    */
-  function attackable(entity: { id: number; kind: number; health: number }, selfId: number): boolean {
+  function attackable(
+    entity: { id: number; kind: number; health: number; typeId?: string },
+    selfId: number,
+  ): boolean {
     if (entity.id === selfId) return false;
     if (entity.health <= 0) return false;
+    // A friendly body is not something to swing at (spec 244). Still as thin as
+    // the rest of this predicate: the server refuses the blow either way, and
+    // what this decides is which of the three things a right-click meant --
+    // without it, clicking a merchant is a walk over and a swing that quietly
+    // never lands.
+    if (entity.typeId !== undefined && isFriendlyMonster(entity.typeId)) return false;
     return entity.kind === EntityKind.Monster || entity.kind === EntityKind.Player;
+  }
+
+  /**
+   * Whether a right-click on this body starts a conversation (spec 244).
+   *
+   * The third reading of `world.order`, beside `collectable` and `attackable`
+   * and answered before both: a body you can talk to is never a body you fight,
+   * so the two predicates cannot both be true and the order between them is not
+   * load-bearing. As thin as its neighbours -- the range, whether somebody else
+   * is already talking to it and whether it is alive are the server's, and it
+   * answers all three on every request.
+   */
+  function talkable(entity: { kind: number; health: number; typeId?: string }): boolean {
+    if (entity.health <= 0) return false;
+    if (entity.kind !== EntityKind.Monster) return false;
+    return entity.typeId !== undefined && isFriendlyMonster(entity.typeId);
   }
 
   /**
@@ -2798,6 +2824,26 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       targetId = null;
       destination = null;
       planner.clear();
+      return;
+    }
+    // A friendly body is the fourth thing the button can mean (spec 244), and
+    // like the drop above it is checked before `attackable` for clarity rather
+    // than for precedence: `attackable` already refuses a friendly body, so the
+    // two can never both be true.
+    //
+    // The order is dropped first, and everything else about it is the server's:
+    // whether the player is close enough, whether the body is already talking to
+    // somebody, and whether the merchant then stops walking. A refusal comes
+    // back as a `Conversation 0` and nothing has been committed to here.
+    if (picked && talkable(picked)) {
+      targetId = null;
+      destination = null;
+      planner.clear();
+      // The wind-up somebody was mid-way through is withdrawn: walking up to a
+      // merchant to talk is a change of mind about the swing, exactly as a new
+      // mark or a click on the ground is.
+      client.cancelCast();
+      client.talk(picked.id);
       return;
     }
     if (picked && attackable(picked, client.view().selfEntityId)) {

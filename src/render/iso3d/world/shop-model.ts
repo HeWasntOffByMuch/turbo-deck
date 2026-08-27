@@ -55,6 +55,9 @@ export function nearestVendorTo(x: number, y: number): string | null {
   let best: string | null = null;
   let bestDistance = Infinity;
   for (const vendor of ALL_VENDORS) {
+    // A shop with a body standing in it is reached by talking to them, never by
+    // walking near it (spec 244) -- see `byProximity`.
+    if (!vendor.byProximity) continue;
     if (!withinReach(vendor, x, y)) continue;
     const distance = Math.hypot(vendor.x - x, vendor.y - y);
     if (distance >= bestDistance) continue;
