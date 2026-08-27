@@ -62,6 +62,7 @@ change a game outcome.
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
+| `npm run audit:progression` | Every skill rank at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (spec 234). `--all` lists the working ones too |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
