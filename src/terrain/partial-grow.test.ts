@@ -89,7 +89,13 @@ function grownPartial(
   return { manifest: mergeSplit(manifest, part), part, readCount: around.length };
 }
 
-const EAST: ChunkRect = { minCx: MAX_CX + 1, minCz: 0, maxCx: MAX_CX + 2, maxCz: 1 };
+// The east edge **at the rows the probe rect spans**, which is not `MAX_CX`:
+// the shipped map was trimmed back to a coast and is no longer a rectangle, so
+// its furthest chunk anywhere is three east of where the ground ends at cz 0..1.
+// A rect hung off the global maximum is grown clear of every existing region,
+// and a part that borders nothing is exactly what this file cannot measure.
+const EAST_CX = Math.max(...LAYER.chunks.filter((c) => c.cz >= 0 && c.cz <= 1).map((c) => c.cx));
+const EAST: ChunkRect = { minCx: EAST_CX + 1, minCz: 0, maxCx: EAST_CX + 2, maxCz: 1 };
 
 describe('a partial grow against a whole one', () => {
   it('produces the same map, byte for byte', () => {
@@ -144,10 +150,10 @@ describe('what it opens', () => {
     const c = counting();
     const { readCount } = grownPartial(EAST, 'probe', c.read);
     // The rect spans two chunks each way plus a border of one, so at a region
-    // size of 2 that is a 3x2 block of regions at worst -- against 224.
+    // size of 2 that is a 3x2 block of regions at worst -- against 166.
     expect(readCount).toBeLessThanOrEqual(9);
     expect(c.paths().length).toBeLessThanOrEqual(readCount);
-    expect(BASE.regions.size).toBeGreaterThan(200);
+    expect(BASE.regions.size).toBeGreaterThan(100);
 
     // And they are the right ones: every path read covers a chunk within the
     // border of the rect.
@@ -301,9 +307,13 @@ describe('the unfilled-cell warning', () => {
     // the per-region cell counts -- and it has to be recorded rather than
     // derived from the coordinate count, because a chunk on a flank can be
     // short.
-    expect(unfilledCells(BASE.manifest, LAYER_ID)).toBe(0);
+    // The shipped map declares a ragged rim of its own now that it has been
+    // trimmed back to a coast, so what a half-grown column adds is measured
+    // against that baseline rather than against zero.
+    const ragged = unfilledCells(BASE.manifest, LAYER_ID);
+    expect(ragged).toBeGreaterThan(0);
     const half: ChunkRect = { minCx: MAX_CX + 1, minCz: 0, maxCx: MAX_CX + 1, maxCz: 1 };
-    expect(unfilledCells(grownPartial(half).manifest, LAYER_ID)).toBeGreaterThan(0);
+    expect(unfilledCells(grownPartial(half).manifest, LAYER_ID)).toBeGreaterThan(ragged);
   });
 
   it('sums the cells the regions actually hold', () => {

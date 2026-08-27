@@ -121,7 +121,12 @@ describe('a map that has not all arrived', () => {
 
   it('predicts flat across ground it has not got, rather than a cliff', () => {
     const chunks = allChunks();
-    const partial = streamed(chunks.slice(0, 4));
+    // Sixteen rather than four, because the control at the bottom needs the held
+    // ground to have relief in it. The shipped map was trimmed back to a coast
+    // and its first chunks are flat sea, where a predictor with no coverage has
+    // no cliff to refuse -- so the control stops proving the bug is real while
+    // still passing, which is the one way a control can be worse than none.
+    const partial = streamed(chunks.slice(0, 16));
     const step = predictorFor(partial);
 
     // Walk out of the held region in every direction. Every one of these steps

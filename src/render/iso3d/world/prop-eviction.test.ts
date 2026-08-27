@@ -252,7 +252,11 @@ describe('what a walk leaves drawn', () => {
     // a stale constant. The terrain is evicted in both: this is the trees.
     const dropping = lawnmower(true);
     const hoarding = lawnmower(false);
-    expect(hoarding.drawn.size).toBeGreaterThan(60);
+    // A scale guard, so the ratio below is measured over a walk that actually
+    // accumulated something rather than over a handful of regions. It came down
+    // with the map when the arena was trimmed back to a coast; the assertion
+    // that says the feature works is the ratio, not this.
+    expect(hoarding.drawn.size).toBeGreaterThan(40);
     expect(dropping.drawn.size).toBeLessThan(hoarding.drawn.size / 5);
     // ...and the ground under it was bounded the whole way, in both.
     expect(hoarding.streamed.size).toBeLessThanOrEqual((2 * MAP_CHUNK_KEEP_RADIUS + 1) ** 2);
