@@ -576,7 +576,7 @@ describe('costs beyond the pool', () => {
 });
 
 /**
- * `kind: 'channel'` has **no shipped row** since spec 232.
+ * `kind: 'channel'` has **no shipped row** since spec 237.
  *
  * `channel.drain` was spec 062's one channel -- granted by nothing, castable by
  * anybody -- and it went with the rest of that demo set. The mechanism is still

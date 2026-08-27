@@ -470,6 +470,11 @@ export class InventoryScreen extends Row {
     const taken = Math.max(1, Math.min(count, item.count));
     this.drag.begin({ source: slot, data: { from: slot.ref, item, count: taken } satisfies ItemDrag }, at);
     this.carried = { from: slot.ref, count: taken };
+    // At the intent, and *this* is the intent (spec 229): a stack leaves a cell
+    // the moment the press lands, before anything has been asked of the server.
+    // The rule `sound.ts` states -- a click that made no noise until a round
+    // trip later is a click that felt broken.
+    this.emitSound('ui.pickUp');
     this.render();
     return true;
   }
@@ -524,9 +529,18 @@ export class InventoryScreen extends Row {
     const from = this.carried?.from;
     if (from && from.container === slot.ref.container && from.index === slot.ref.index) {
       this.cancelDrag();
+      // Putting it back where it came from is a cancel, and it still makes the
+      // sound of an item being set down -- because from the hand's point of
+      // view that is exactly what happened.
+      this.emitSound('ui.drop');
       return true;
     }
-    return this.drag.dropOnTarget(slot);
+    const placed = this.drag.dropOnTarget(slot);
+    // Only where the cell took it. A cell that refuses leaves the item in hand,
+    // and a sound there would be the interface reporting a move that did not
+    // happen -- which is the one thing worse than silence.
+    if (placed) this.emitSound('ui.drop');
+    return placed;
   }
 
   /**
@@ -617,12 +631,18 @@ export class InventoryScreen extends Row {
       const free = this.firstFreeBagIndex();
       if (free === null) return;
       this.onMove?.({ from: slot.ref, to: { container: 'inventory', index: free }, count: 0 });
+      // Taking something off is the same gesture and the same sound (spec 229).
+      // One row for both directions rather than two, because "equipped" and
+      // "unequipped" are the same event to the hand and a player would have to
+      // be told they were different to notice.
+      this.emitSound('ui.equip');
       return;
     }
     if (item.slot === null) return;
     const target = this.slotIds.indexOf(item.slot);
     if (target < 0) return;
     this.onMove?.({ from: slot.ref, to: { container: 'equipment', index: target }, count: 0 });
+    this.emitSound('ui.equip');
   }
 
   /**

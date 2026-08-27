@@ -24,6 +24,7 @@ import { looseConstraint, type Size } from './geom.js';
 import { EventRouter } from './router.js';
 import type { LayoutContext, PaintContext, Widget } from './widget.js';
 import type { Atlas } from '../render/atlas.js';
+import type { SoundSink } from './sound.js';
 import type { Theme } from '../theme/theme.js';
 
 export interface UiRootOptions {
@@ -48,6 +49,16 @@ export interface UiRootOptions {
    */
   readonly windows?: WindowManager;
   readonly layers?: LayerStack;
+  /**
+   * Where this interface's sounds go (spec 229).
+   *
+   * Optional, and absent everywhere but the game: the gallery, the goldens and
+   * every test get a silent tree without having to pass anything. Set on the
+   * content widget at construction and found by every descendant through
+   * `Widget.emitSound` -- see `Widget.sounds` for why it is inherited rather
+   * than pushed to each screen.
+   */
+  readonly sounds?: SoundSink;
 }
 
 export class UiRoot {
@@ -67,6 +78,7 @@ export class UiRoot {
   ) {
     this.viewportSize = options.viewport;
     this.motionPreference = options.motion ?? FULL_MOTION;
+    content.sounds = options.sounds ?? null;
     this.router = new EventRouter({
       dragThreshold: options.theme.input.dragThreshold,
       doubleClickMs: options.theme.input.doubleClickMs,
@@ -98,6 +110,11 @@ export class UiRoot {
 
   get layers(): LayerStack | null {
     return this.options.layers ?? null;
+  }
+
+  /** Where this interface's sounds go, or null. See {@link UiRootOptions.sounds}. */
+  get sounds(): SoundSink | null {
+    return this.options.sounds ?? null;
   }
 
   resize(viewport: Size): void {

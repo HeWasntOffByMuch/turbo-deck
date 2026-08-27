@@ -21,6 +21,7 @@
  * here, which is the acceptance criterion the whole arc is built around.
  */
 
+import type { DamageElement } from '../../../server/data/abilities.js';
 import type { GoreLevel } from '../vfx/decals.js';
 
 /**
@@ -35,8 +36,17 @@ import type { GoreLevel } from '../vfx/decals.js';
  */
 export type { GoreLevel };
 
-/** The damage-type language from `docs/vfx-plan.md` section 6. */
-export type DamageType = 'physical' | 'fire' | 'poison' | 'ice' | 'lightning' | 'arcane';
+/**
+ * The damage-type language from `docs/vfx-plan.md` section 6.
+ *
+ * An alias for the content table's {@link DamageElement} rather than a second
+ * union (spec 232), which is what keeps this module's job to *one* decision:
+ * `abilities.ts` says a blow is fire, and {@link DAMAGE_EFFECTS} below is the
+ * only place that says what fire looks like. Two unions here would be two lists
+ * to keep in step, and the failure would be a `Record` that still compiles
+ * because both happen to have the same members today.
+ */
+export type DamageType = DamageElement;
 
 /** What one blow asks to be drawn. */
 export interface PlayRequest {
@@ -59,9 +69,14 @@ export interface CombatFacts {
   readonly critical: boolean;
   readonly blocked: boolean;
   /**
-   * Derived client-side from the ability or weapon, the way `ProjectileLook`
-   * already is (`server/data/abilities.ts`). `CombatResultMessage` carries no
-   * damage type and does not need to -- the tables are shared code.
+   * What the blow was made of, off `CombatResultMessage.element` (spec 232).
+   *
+   * It rides the wire rather than being derived client-side the way
+   * `ProjectileLook` is, and the difference is worth knowing because the first
+   * cut of this tried the derivation and it does not work: a `CombatResult`
+   * names an attacker and a target and no ability, and the one join available --
+   * against the attacker's live cast -- is wrong for exactly the abilities that
+   * needed it most, since a projectile's blow lands seconds after its cast ended.
    */
   readonly damageType: DamageType;
   /** Where the blow landed. */
@@ -98,6 +113,8 @@ export const DAMAGE_EFFECTS: Record<DamageType, string> = {
   ice: 'hit_ice',
   lightning: 'hit_lightning',
   arcane: 'hit_arcane',
+  corrosion: 'hit_corrosion',
+  decay: 'hit_decay',
 };
 
 /** The secondary an impact plays alongside its flash, or null. */
@@ -111,6 +128,10 @@ export const DAMAGE_DEBRIS: Record<DamageType, string | null> = {
   ice: 'impact_physical',
   lightning: null,
   arcane: null,
+  // Acid eats what it lands on rather than breaking pieces off it, and rot even
+  // less so. Both null for `hit_fire`'s reason rather than by omission.
+  corrosion: null,
+  decay: null,
 };
 
 /**
@@ -143,7 +164,26 @@ export const REDUNDANT_SERVER_EFFECTS: ReadonlySet<string> = new Set([
   // demo heal, granted by nothing and removed with the rest of that set. The
   // flask is the self-heal the game still has.
   'self.hearthdraught.self',
+  // A projectile that struck a body (spec 232). `world.ts` sends this from the
+  // same branch that raises the `hit`, at the same instant and the same point,
+  // so the blow's own picture is already the impact -- which is this set's
+  // stated rule rather than a third exception to it.
+  //
+  // A *bursting* projectile is not in here and must not be: its `.impact` is
+  // sent whether or not anything was struck, and a blast that caught nobody
+  // still happened.
+  'skill.poisonDart.impact',
 ]);
+
+/**
+ * How many requests one blow may spend.
+ *
+ * The budget is spent per-blow by the people fighting, so an impact that fans
+ * out into six is one that starves the next five. Named rather than spelled
+ * since spec 232 gave the last slot two possible occupants and therefore a
+ * precedence worth stating in one place.
+ */
+export const MAX_BLOW_EFFECTS = 3;
 
 /**
  * How far back along the blow a hit is drawn, in world units.
@@ -172,7 +212,7 @@ export function blowSeed(facts: CombatFacts, tick: number): number {
 }
 
 /**
- * What to play for one blow. Between zero and three requests.
+ * What to play for one blow. Between zero and {@link MAX_BLOW_EFFECTS} requests.
  *
  * Capped at three deliberately. The budget is spent per-blow by the people
  * fighting, and an impact that fans out into six effects is one that starves the
@@ -301,11 +341,35 @@ export function effectsForBlow(facts: CombatFacts, tick: number, gore: GoreLevel
 
   if (facts.critical) out.push(at('hit_critical', 4));
 
-  // Chips and dust, for the damage types that break something rather than burn
-  // it -- and only off a body that is not already throwing blood, so a blow
-  // never draws two kinds of debris at once.
+  // The last slot, and which of two things goes in it depends on whether the
+  // body bled (spec 232).
+  //
+  // Blood says *that* something landed and the element says *what*, and both are
+  // true of an Ember Toss on flesh -- so a bleeding body wants its blood and its
+  // fire. What makes that affordable is that these two were never both wanted:
+  // `DAMAGE_DEBRIS` has always been skipped for a body that bleeds, so the
+  // elemental flash takes a slot that was already going spare and the cap of
+  // three stands untouched.
+  //
+  // A *physical* blow on flesh adds nothing, which is the other half of the same
+  // rule: `hit_physical` beside a blood spatter is the spatter drawn twice in
+  // two colours, where fire beside it is a second fact. So the flash goes on
+  // only where the type is something the blood is not already saying.
   const debris = DAMAGE_DEBRIS[facts.damageType];
-  if (debris && !bleeds) out.push(at(debris, 5));
+  if (!bleeds) {
+    if (debris) out.push(at(debris, 5));
+  } else if (facts.damageType !== 'physical' && out.length < MAX_BLOW_EFFECTS) {
+    // The room check is not defensive, it is the precedence (spec 232).
+    //
+    // A killing blow at `Full` has already spent two of the three on
+    // `blood_hit_brush_heavy` and `death_blood`, and a crit spends the third --
+    // so the element is the one that yields, and it is the right one to yield.
+    // The other three are all saying something this blow *did*: it killed, it
+    // opened them up, it crit. The element is saying what the blow was, which is
+    // the same on every cast of the skill and the thing a player already knows
+    // from the button they pressed.
+    out.push(at(DAMAGE_EFFECTS[facts.damageType], 5));
+  }
 
   return out;
 }

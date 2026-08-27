@@ -1219,8 +1219,8 @@ describe('two inputs in one tick (spec 090)', () => {
     expect(merged.castTargetX).toBe(10);
 
     // A later request replaces an earlier one outright, aim included.
-    const recast = mergeInputs(older, input(7, 3, { castAbilityId: 'melee.heavy', castTargetX: 99 }));
-    expect(recast.castAbilityId).toBe('melee.heavy');
+    const recast = mergeInputs(older, input(7, 3, { castAbilityId: 'skill.acidSpray', castTargetX: 99 }));
+    expect(recast.castAbilityId).toBe('skill.acidSpray');
     expect(recast.castTargetX).toBe(99);
   });
 });

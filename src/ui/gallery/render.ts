@@ -424,7 +424,7 @@ export interface PlayRenderOptions {
 
 // Real ability ids, because the row draws real icons and a made-up id would
 // draw the unknown box -- but fake costs, because what is being photographed is
-// the widget rather than the table. Repointed at surviving rows by spec 232.
+// the widget rather than the table. Repointed at surviving rows by spec 237.
 const DEMO_ABILITIES: readonly { readonly id: string; readonly icon: string; readonly cost: number }[] = [
   { id: 'melee.slash', icon: 'ability:slash', cost: 0 },
   { id: 'skill.guardBreak', icon: 'ability:guardBreak', cost: 12 },

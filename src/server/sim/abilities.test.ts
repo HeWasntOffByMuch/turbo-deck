@@ -36,7 +36,7 @@ const RECORD: PersistedPlayer = {
   displayName: 'P1',
   baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
   skills: [],
-  // Sigils, because since spec 232 every ability that is not the weapon's own
+  // Sigils, because since spec 237 every ability that is not the weapon's own
   // swing is `skill: true` and `startCast` refuses one that is not in a slot.
   // The rows these tests used to reach for -- `melee.heavy`, `ground.quake`,
   // `bolt.seek` -- were spec 062's demo set: granted by nothing and castable by
@@ -192,7 +192,7 @@ const blows = (events: readonly ServerSimEvent[]): Extract<ServerSimEvent, { kin
 
 describe('the ability table', () => {
   /**
-   * **Every ability is reachable by somebody** (spec 232).
+   * **Every ability is reachable by somebody** (spec 237).
    *
    * The check that would have caught the thing that spec removed: nine of
    * twenty-five rows were castable by naming an id and by no other means, left
@@ -915,7 +915,7 @@ describe('projectiles', () => {
 });
 
 /**
- * `kind: 'channel'` has no shipped row since spec 232, so the sim's channel path
+ * `kind: 'channel'` has no shipped row since spec 237, so the sim's channel path
  * has nothing to point at and the test that used to live here -- a cast that
  * pulses while held and stops when cancelled -- cannot be written.
  *
@@ -1319,7 +1319,7 @@ describe('determinism holds with abilities in play', () => {
     const frames: Record<number, ServerInput[]> = {
       0: [input(player.id, { castAbilityId: 'ranged.star', castTargetX: 900, castTargetY: 450 })],
       40: [input(player.id, { castAbilityId: 'skill.emberToss', castTargetX: 800, castTargetY: 460 })],
-      // Was `channel.drain` until spec 232; a refused cast is a poor frame for a
+      // Was `channel.drain` until spec 237; a refused cast is a poor frame for a
       // determinism replay, since it exercises no path the others do not.
       90: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 800, castTargetY: 450 })],
       140: [input(player.id, { cancelCast: true })],

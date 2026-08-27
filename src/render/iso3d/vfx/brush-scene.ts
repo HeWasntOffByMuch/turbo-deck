@@ -121,6 +121,12 @@ export interface ExplosionTrigger {
   readonly z?: number;
 }
 
+export interface SwingTrigger {
+  readonly seed: number;
+  /** Radians about Y: which way the body is facing, which the sweep turns with. */
+  readonly facing?: number;
+}
+
 export interface AfflictionTrigger {
   readonly seed: number;
   /**
@@ -164,6 +170,18 @@ declare global {
       blood: (input: BloodTrigger) => number;
       /** Fire an explosion on the ground. */
       explosion: (input: ExplosionTrigger) => number;
+      /**
+       * Play any registry effect in **world space** at the dummy's feet, turned
+       * by a bearing (spec 233).
+       *
+       * The counterpart to {@link affliction}, which attaches to the dummy and
+       * therefore has no bearing to give: a swing is a gesture the body makes in
+       * a direction, so what it needs is the rotation the marks are composed
+       * around. Any id rather than a swing-only entry point, for the reason
+       * `affliction` takes one -- a rig with its own copy of the ability-to-
+       * effect table is a second answer to a question `SWING_ART` answers.
+       */
+      swing: (id: string, input: SwingTrigger) => number;
       /**
        * Play any registry effect attached to the dummy. Returns the handle.
        *
@@ -539,6 +557,23 @@ class BrushScene {
   }
 
   /**
+   * Play an effect in world space at the dummy, turned by a bearing.
+   *
+   * No `attach`, which is the whole difference from {@link affliction}: a swing
+   * is thrown *by* a body rather than worn by one, so the marks stay where the
+   * blade left them while the body walks on.
+   */
+  swing(id: string, input: SwingTrigger): number {
+    return this.layer.play(id, {
+      x: 0,
+      y: 0,
+      z: 0,
+      rotation: input.facing ?? 0,
+      seed: input.seed,
+    });
+  }
+
+  /**
    * Play an effect attached to the dummy.
    *
    * The scale defaults to the dummy's own radius because every length in
@@ -834,6 +869,7 @@ function main(): void {
     setChrome,
     blood: (input) => scene.blood(input),
     explosion: (input) => scene.explosion(input),
+    swing: (id, input) => scene.swing(id, input),
     affliction: (id, input) => scene.affliction(id, input),
     shot: (id, input) => scene.shot(id, input),
     stopAffliction: () => scene.stopAffliction(),

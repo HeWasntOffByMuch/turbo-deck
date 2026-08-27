@@ -78,6 +78,13 @@ interface RunResult {
   readonly states: readonly string[];
   /** Requests the screens emitted. Must be empty: nothing below clicks a button. */
   readonly requests: readonly string[];
+  /**
+   * Hovers the bar reported (spec 235). **Not** a request: a hover draws a ring
+   * on the ground and asks the server nothing, so it is kept apart from
+   * `requests` -- and asserted non-empty, so the emptiness of that one is
+   * evidence about a driven interface rather than about an untouched one.
+   */
+  readonly hovers: readonly (string | null)[];
   /** Draw commands on the last frame, so "it was actually drawing" is checkable. */
   readonly drawn: number;
   /** Layout writes over the whole run. One, however much hovering happened. */
@@ -118,6 +125,7 @@ async function play(drive: boolean): Promise<RunResult> {
   await settle();
 
   const requests: string[] = [];
+  const hovers: (string | null)[] = [];
   let layoutWrites = 0;
   const screens = new UiScreens(
     {
@@ -137,6 +145,11 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeCancel: () => requests.push('tradeCancel'),
       onTradeDismiss: () => requests.push('tradeDismiss'),
       onCastSlot: (abilityId: string) => requests.push(`cast:${abilityId}`),
+      // Deliberately **not** in `requests`: a hover is presentation. The whole
+      // claim of this file is that mounting the interface sends the server
+      // nothing, and resting the cursor on a slot draws a ring on the ground
+      // rather than asking anybody anything (spec 235).
+      onHoverSlot: (abilityId) => hovers.push(abilityId),
       onSay: (text: string) => requests.push(`say:${text}`),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
@@ -194,7 +207,7 @@ async function play(drive: boolean): Promise<RunResult> {
     drawn = screens.paint().length;
   }
 
-  return { states, requests, drawn, layoutWrites };
+  return { states, requests, hovers, drawn, layoutWrites };
 }
 
 describe('mounting the interface is presentation only', () => {
@@ -234,5 +247,8 @@ describe('mounting the interface is presentation only', () => {
     const mounted = await play(true);
     expect(mounted.requests).toEqual([]);
     expect(mounted.layoutWrites).toBe(1);
+    // And the hover really did happen, so the emptiness above is evidence about
+    // a driven interface rather than about one nothing touched.
+    expect(mounted.hovers.length).toBeGreaterThan(0);
   }, 30_000);
 });

@@ -60,6 +60,7 @@ import { ShopScreen } from '../../../ui/screens/shop.js';
 import { TradeScreen, type TradeOfferView, type TradeUiView } from '../../../ui/screens/trade.js';
 import { OptionsScreen } from '../../../ui/screens/options.js';
 import { DisplayScreen } from '../../../ui/screens/display.js';
+import { AudioScreen, type AudioBusRow, type AudioMixView } from '../../../ui/screens/audio.js';
 import type { MaxZoomChoice } from '../../../ui/input/display-store.js';
 import {
   MAX_VIEW_HALF_WIDTH,
@@ -82,6 +83,7 @@ import { swapProgress, type SwapProgress } from './skill-swap-view.js';
 import { shopViewOf } from './shop-model.js';
 import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './control-actions.js';
+import type { SoundSink, UiSoundId } from '../../../ui/core/sound.js';
 import { ChatLog, revealAt } from './chat-log.js';
 import { selectionOf } from './selection.js';
 import { ACTION_BAR, abilityForSlot, type ActionSlot } from './action-bar.js';
@@ -100,9 +102,41 @@ export interface AccountCapability {
   readonly onSignOut: () => void;
 }
 
+/**
+ * What the Audio page is handed, and what it emits (spec 229).
+ *
+ * The bus list rather than the `BusId` union, because `src/ui/` may not import
+ * the renderer -- see `AudioScreen`'s header.
+ */
+export interface AudioOptions {
+  readonly buses: readonly AudioBusRow[];
+  readonly mix: AudioMixView;
+  readonly onMaster: (value: number) => void;
+  readonly onBus: (bus: string, value: number) => void;
+  readonly onMute: (muted: boolean) => void;
+}
+
 export interface UiScreensOptions {
   /** The key map, so the keybinding screen edits the one the game reads. */
   readonly map: InputMap;
+  /**
+   * Where the interface's sounds go (spec 229).
+   *
+   * Optional, and absent everywhere but the Play tab: the gallery and the
+   * goldens build the same screens and must stay silent. One sink for the whole
+   * tree -- see `Widget.sounds` for why it is inherited rather than handed to
+   * each screen.
+   */
+  readonly sounds?: SoundSink;
+  /**
+   * The audio mix, and what to do when a slider moves (spec 229).
+   *
+   * Same three-step contract every other preference on the options window has
+   * (spec 136): the page emits a wish, the mount honours it on the engine, tells
+   * the page so the slider matches what is being heard, and saves it. Absent
+   * means the Audio tab is not built at all, which is what the gallery gets.
+   */
+  readonly audio?: AudioOptions;
   /** A drag that landed: where from, where to, and 0 for the whole stack. */
   readonly onMove: (from: SlotRef, to: SlotRef, count: number) => void;
   /**
@@ -152,6 +186,15 @@ export interface UiScreensOptions {
    * come to different answers about what slot 3 casts.
    */
   readonly onCastSlot: (abilityId: string) => void;
+  /**
+   * The cursor came to rest on a bar slot, or left one (spec 235).
+   *
+   * An ability id rather than the slot index the screen reports, because the
+   * mapping from one to the other is `abilityForSlot` and this mount is where
+   * that already happens for the press -- so a hover and a click cannot come to
+   * different answers about what is in slot 3.
+   */
+  readonly onHoverSlot: (abilityId: string | null) => void;
   /**
    * A line the player wants to say (spec 189).
    *
@@ -290,6 +333,8 @@ export class UiScreens {
   private readonly trade: TradeScreen;
   private readonly optionsScreen: OptionsScreen;
   private readonly display: DisplayScreen;
+  /** The options window's Audio page, or null where no mix was handed in. */
+  private readonly audio: AudioScreen | null;
   private readonly chat: ChatScreen;
   /** What has been said. Client state: nothing here is replicated (spec 189). */
   private readonly chatLog = new ChatLog();
@@ -448,6 +493,10 @@ export class UiScreens {
       viewport,
       windows: this.windows,
       layers: this.layers,
+      // The one place the interface's sink is plugged in (spec 229). Every
+      // widget under here finds it by walking `parent`; absent in the gallery
+      // and in every test, which is what keeps the goldens silent.
+      ...(options.sounds ? { sounds: options.sounds } : {}),
     });
 
     // Every screen that owns a context or a focus ring is given the root's, not
@@ -590,10 +639,30 @@ export class UiScreens {
     };
     this.display.setMaxZoom(options.maxZoom ?? 'supported');
 
+    // The Audio page (spec 229), built only where a mix was handed in. The
+    // gallery and the goldens get the window without it rather than a page of
+    // sliders that reach nothing -- the state spec 147 found the whole layout
+    // store in, and spec 199 found `combat.stop` in.
+    this.audio = options.audio ? new AudioScreen({ theme: THEME, buses: options.audio.buses }) : null;
+    if (this.audio && options.audio) {
+      const audio = options.audio;
+      this.audio.onMasterChosen = (value) => {
+        audio.onMaster(value);
+      };
+      this.audio.onBusChosen = (bus, value) => {
+        audio.onBus(bus, value);
+      };
+      this.audio.onMuteChosen = (muted) => {
+        audio.onMute(muted);
+      };
+      this.audio.setMix(options.audio.mix);
+    }
+
     this.optionsScreen = new OptionsScreen({
       theme: THEME,
       keys: this.keybindings,
       display: this.display,
+      ...(this.audio ? { audio: this.audio } : {}),
     });
 
     // The chat (spec 189), and the `hud` layer's first occupant in the Play tab.
@@ -661,6 +730,11 @@ export class UiScreens {
       // the same function.
       const ability = abilityForSlot(this.barPlan, index);
       if (ability) options.onCastSlot(ability);
+    };
+    // The same lookup for the hover, so the reach drawn on the ground and the
+    // skill the click casts are the same skill by construction.
+    this.actionBar.onHover = (index) => {
+      options.onHoverSlot(index === null ? null : abilityForSlot(this.barPlan, index));
     };
 
     this.registerWindow('inventory', this.inventory);
@@ -1306,6 +1380,11 @@ export class UiScreens {
   }
 
   /** Told whether the frame-time readout is being drawn (spec 165). */
+  /** The audio mix as it actually stands (spec 229). The mount answering a wish. */
+  setAudioMix(mix: AudioMixView): void {
+    this.audio?.setMix(mix);
+  }
+
   setShowFps(show: boolean): void {
     this.display.setShowFps(show);
   }
@@ -1577,6 +1656,9 @@ export class UiScreens {
     // caller that has one -- the goldens open a window settled, on purpose.
     this.windows.open(id, this.now);
     if (!this.placed.has(id)) this.awaitingPlacement.add(id);
+    // At the intent (spec 133's rule), and here rather than on the button:
+    // Escape, a keybinding and the server all open windows without a press.
+    this.sound('ui.open');
     this.syncContext();
   }
 
@@ -1591,7 +1673,19 @@ export class UiScreens {
     // a window without pressing anything -- and an ending still remembered is
     // an ending the mount re-opens on the very next frame.
     if (id === 'trade') this.leaveTrade();
+    this.sound('ui.close');
     this.syncContext();
+  }
+
+  /**
+   * Emit an interface sound.
+   *
+   * Through the root's sink rather than a field of this class, so the whole
+   * interface has one sink and a screen built lazily in a tab inherits it -- see
+   * `Widget.sounds`.
+   */
+  private sound(id: UiSoundId): void {
+    this.root.sounds?.play(id);
   }
 
   /**

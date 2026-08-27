@@ -126,7 +126,7 @@ export const DRIVEN_PARAMETERS = {
    * The spell cast (spec 231).
    *
    * The third of the three, and the first that is reached by more than one
-   * ability: a body has one sword and one bow and seven spells, so the clip
+   * ability: a body has one sword and one bow and four spells, so the clip
    * behind this trigger is shared and {@link clipStretch} is what makes it land
    * on each of their beats.
    */
@@ -186,9 +186,9 @@ export function attackTriggerFor(abilityId: string | null): string {
  * ratio of the authored wind-up to the one the sim is running is already the
  * whole answer and there is nothing to rebase.
  *
- * The cast clip is the first in this tree that is **shared**. Seven spells go
- * through it and their wind-ups run from `channel.drain`'s 0.5s to
- * `ground.quake`'s 1.4s, so its own release has to be related to whichever one
+ * The cast clip is the first in this tree that is **shared**. Every spell in the
+ * table goes through it and their wind-ups run from `skill.arcLash`'s 0.55s to
+ * `skill.blight`'s 1.0s, so its own release has to be related to whichever one
  * is being cast:
  *
  * ```

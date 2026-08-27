@@ -154,7 +154,7 @@ function ability(id: string): AbilityDefinition {
 const SLASH = ability('melee.slash');
 // A ground spell that launches nothing, and a projectile that does: the two
 // halves of the handling test below. Repointed off spec 062's demo rows by
-// spec 232; what matters about each is its *shape*, not its id.
+// spec 237; what matters about each is its *shape*, not its id.
 const SPELL = ability('skill.blight');
 const SHOT = ability('ranged.shot');
 const DART = ability('skill.poisonDart');
@@ -262,10 +262,10 @@ describe('poise', () => {
   });
 
   it('drops whatever the broken body was casting, and reports it', () => {
-    const victim = { ...target(), poise: 1, cast: casting('ground.quake', CastPhase.Windup) };
+    const victim = { ...target(), poise: 1, cast: casting('skill.blight', CastPhase.Windup) };
     const result = applyPoiseDamage(victim, 9999, 0, true);
     expect(result.broke).toBe(true);
-    expect(result.interrupted?.abilityId).toBe('ground.quake');
+    expect(result.interrupted?.abilityId).toBe('skill.blight');
     expect(result.entity.cast).toBeNull();
   });
 
@@ -295,13 +295,13 @@ describe('poise', () => {
   });
 
   it('protects a basic attack but not a spell, until the Juggernaut pair', () => {
-    const strong = body(statsFor({ strength: 40 }), { cast: casting('ground.quake', CastPhase.Windup) });
+    const strong = body(statsFor({ strength: 40 }), { cast: casting('skill.blight', CastPhase.Windup) });
     expect(poiseArmorOf(strong, false)).toBe(0);
 
     // STR/CON at the pair threshold, and *below half health*, which is the
     // condition the pair is about.
     const juggernaut = statsFor({ strength: 40, constitution: 25 });
-    const healthy = body(juggernaut, { cast: casting('ground.quake', CastPhase.Windup) });
+    const healthy = body(juggernaut, { cast: casting('skill.blight', CastPhase.Windup) });
     expect(poiseArmorOf(healthy, false)).toBe(0);
     const hurt = { ...healthy, health: juggernaut.maxHealth * 0.4 };
     expect(poiseArmorOf(hurt, false)).toBeGreaterThan(0);

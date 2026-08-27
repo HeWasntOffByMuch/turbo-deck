@@ -233,7 +233,7 @@ describe('effects are described in the row order', () => {
 
   it('writes a channel as a cadence rather than as one blow', () => {
     // Built here rather than looked up, because **no shipped row is a channel
-    // any more** (spec 232): `channel.drain` was spec 062's one row of that
+    // any more** (spec 237): `channel.drain` was spec 062's one row of that
     // kind and went with the rest of the demo set. The mechanism is still in
     // `sim/abilities.ts` and this branch is still in `description.ts`, so it is
     // still tested -- against a row constructed for it, which is the honest

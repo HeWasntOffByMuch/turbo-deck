@@ -14,7 +14,8 @@ import { LIBRARY, aura, burst, fire, puff } from './library.js';
 import { compileRegistry } from './compile.js';
 import { sampleCurve, compileCurve, sampleGradient, compileGradient } from './curve.js';
 import { VfxSystem } from './system.js';
-import { DAMAGE_EFFECTS, DAMAGE_DEBRIS, effectsForBlow } from '../world/vfx-wire.js';
+import { DAMAGE_EFFECTS, DAMAGE_DEBRIS, effectsForBlow, REDUNDANT_SERVER_EFFECTS } from '../world/vfx-wire.js';
+import { SCORCHED_EARTH } from '../../../server/data/aura-fields.js';
 import { AFFLICTION_ART } from '../world/affliction-vfx.js';
 import { SHOT_ART } from '../world/shot-vfx.js';
 import { EMBER_BURST_RADIUS } from './brush.js';
@@ -1047,5 +1048,175 @@ describe('the ember shot (spec 218)', () => {
     const named = new Set(Object.values(SHOT_ART));
     const authored = EFFECTS.filter((effect) => effect.id.startsWith('shot_')).map((e) => e.id);
     expect([...named].sort()).toEqual([...authored].sort());
+  });
+});
+
+/**
+ * The five landings that were a debug ring (spec 234).
+ *
+ * The seam is `scene.addEffect`'s `system.has(effectId)`: the server has sent
+ * these ids since spec 062 and the registry held none of them, so authoring
+ * under the id already being sent is the whole of the wiring. What that makes
+ * fragile is the *id* -- a typo produces an effect nobody plays and a ring
+ * nobody notices, which is the state this spec found the game in.
+ */
+describe('the landings (spec 234)', () => {
+  const LANDINGS = [
+    { id: 'skill.emberToss.impact', ability: 'skill.emberToss' },
+    { id: 'skill.rimeTouch.impact', ability: 'skill.rimeTouch' },
+    { id: 'skill.blight.impact', ability: 'skill.blight' },
+    { id: 'skill.arcLash.impact', ability: 'skill.arcLash' },
+    { id: 'skill.whirlwind.impact', ability: 'skill.whirlwind' },
+    { id: 'skill.scorchedEarth.self', ability: 'skill.scorchedEarth' },
+  ] as const;
+
+  it('is in the registry, so addEffect takes the authored branch', () => {
+    for (const landing of LANDINGS) {
+      expect(REGISTRY.byId.has(landing.id), landing.id).toBe(true);
+    }
+  });
+
+  it('names an ability, with the suffix that ability actually sends', () => {
+    for (const landing of LANDINGS) {
+      const ability = abilityById(landing.ability);
+      expect(ability, landing.ability).toBeDefined();
+      if (!ability) continue;
+      if (landing.id.endsWith('.self')) {
+        // `landSelf` is the only landing that sends `.self`.
+        expect(ability.kind, landing.id).toBe('self');
+        continue;
+      }
+      // The three landings that send `.impact`: an area shape, a ground blast,
+      // and a projectile with a burst radius. A plain melee row sends nothing,
+      // so an `.impact` authored for one would never play.
+      const sendsImpact =
+        ability.kind === 'area' ||
+        ability.kind === 'ground' ||
+        (ability.kind === 'projectile' && (ability.radius ?? 0) > 0);
+      expect(sendsImpact, `${landing.id} names a row that sends no impact`).toBe(true);
+    }
+  });
+
+  it('does not drop the scorched-earth ignition before it reaches the registry', () => {
+    // `REDUNDANT_SERVER_EFFECTS` is where the two self-heals correctly sit,
+    // because the blow they report already draws them. Scorched Earth reports no
+    // blow at all -- it applies a status -- so the ignition is its only picture.
+    expect(REDUNDANT_SERVER_EFFECTS.has('skill.scorchedEarth.self')).toBe(false);
+  });
+
+  it('sizes the ignition off the field it lights, not off a number', () => {
+    // The same rule `aura_scorched` follows: this is where the fire is about to
+    // be, so a burst reaching past the field would promise ground that is safe.
+    const index = REGISTRY.byId.get('skill.scorchedEarth.self');
+    expect(index).toBeDefined();
+    const effect = EFFECTS.find((entry) => entry.id === 'skill.scorchedEarth.self');
+    expect(effect).toBeDefined();
+    // Authored at the field's reach: the longest a mark is thrown scales off it,
+    // so the check is that the definition moves when the constant does.
+    const reach = Math.max(
+      ...(effect?.emitters ?? []).map((emitter) =>
+        Math.max(...emitter.size.keys.map(([, value]) => value)),
+      ),
+    );
+    expect(reach).toBeGreaterThan(SCORCHED_EARTH.radius * 0.3);
+    expect(reach).toBeLessThan(SCORCHED_EARTH.radius * 2.2);
+  });
+
+  it('gives no two landings the same colours', () => {
+    // The sheet's own finding, turned into a check. Arc Lash's second version
+    // came out the same pale blue as Rime Touch two rows above it, and nothing
+    // else in this suite could have said so.
+    const signature = (id: string): string => {
+      const effect = EFFECTS.find((entry) => entry.id === id);
+      const stops = (effect?.emitters ?? []).flatMap((emitter) =>
+        emitter.color.stops.map(([, key]) => key),
+      );
+      return [...new Set(stops)].sort().join(',');
+    };
+    const seen = new Map<string, string>();
+    for (const landing of LANDINGS) {
+      const colours = signature(landing.id);
+      const clash = seen.get(colours);
+      // Ember Toss and Scorched Earth are both fire and are allowed to share:
+      // they are the same element, which is the rule rather than an exception.
+      const firePair =
+        clash !== undefined &&
+        [clash, landing.id].every((id) => id === 'skill.emberToss.impact' || id === 'skill.scorchedEarth.self');
+      expect(clash === undefined || firePair, `${landing.id} shares a palette with ${String(clash)}`).toBe(true);
+      seen.set(colours, landing.id);
+    }
+  });
+});
+
+/**
+ * The aimed landings and the shards (spec 235).
+ *
+ * Three of these assert numbers, and each is a regression the sheet caught and
+ * no other check could: a lane that is not a lane, shards small enough to
+ * vanish, and two skills in one colour.
+ */
+describe('the aimed landings (spec 235)', () => {
+  const effectOf = (id: string) => EFFECTS.find((entry) => entry.id === id);
+
+  it('gives Acid Spray a cue at all', () => {
+    // `landCone` computed a bearing and raised no effect event for 170 specs, so
+    // this was the one skill with not even a debug ring to fall back from.
+    expect(REGISTRY.byId.has('skill.acidSpray.impact')).toBe(true);
+  });
+
+  it('strings the lane along its bearing rather than around a point', () => {
+    const lane = effectOf('skill.arcLash.impact');
+    expect(lane).toBeDefined();
+    const offsets = (lane?.emitters ?? []).map((emitter) => emitter.offset?.x ?? 0);
+    // Every node ahead of the origin, and reaching most of the row's own 300.
+    expect(Math.min(...offsets)).toBeGreaterThan(0);
+    expect(Math.max(...offsets)).toBeGreaterThan(200);
+    // And off the centre line, alternately: a ruled line is a laser, not a bolt.
+    const sides = (lane?.emitters ?? []).map((emitter) => Math.sign(emitter.offset?.z ?? 0));
+    expect(new Set(sides).size).toBeGreaterThan(1);
+  });
+
+  it('fans the cone instead of kinking it', () => {
+    const cone = effectOf('skill.acidSpray.impact');
+    expect(cone).toBeDefined();
+    const bearings = (cone?.emitters ?? []).map((emitter) =>
+      emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0,
+    );
+    // A lane's nodes all point straight down the run; a cone's do not.
+    expect(new Set(bearings.map((b) => b.toFixed(3))).size).toBeGreaterThan(1);
+    const lane = effectOf('skill.arcLash.impact');
+    const laneBearings = (lane?.emitters ?? []).map((emitter) =>
+      emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0,
+    );
+    expect(new Set(laneBearings).size).toBe(1);
+  });
+
+  it('makes frost shards big enough to see', () => {
+    // The correction from "water" went straight past "shards" into a scatter of
+    // specks. A shard has to be a piece you can see the shape of.
+    const shards = effectOf('skill.rimeTouch.impact');
+    expect(shards).toBeDefined();
+    const longest = Math.max(
+      ...(shards?.emitters ?? []).flatMap((emitter) => emitter.size.keys.map(([, value]) => value)),
+    );
+    expect(longest).toBeGreaterThan(20);
+  });
+
+  it('throws frost radially, with no lobe', () => {
+    // `brushExplosion`'s "asymmetry has to be composed" argument is right about
+    // a blast and wrong about a shatter: ice breaking has no side it favours,
+    // and composing one is what made this read as a splash.
+    const shards = effectOf('skill.rimeTouch.impact');
+    for (const emitter of shards?.emitters ?? []) {
+      expect(emitter.shape.kind, emitter.id).toBe('circle');
+    }
+  });
+
+  it('lets the shards fall, where a blast does not', () => {
+    const shards = effectOf('skill.rimeTouch.impact');
+    const rings = (shards?.emitters ?? []).filter((emitter) => emitter.id !== 'flash');
+    for (const emitter of rings) {
+      expect(emitter.gravity ?? 0, emitter.id).toBeLessThan(-500);
+    }
   });
 });
