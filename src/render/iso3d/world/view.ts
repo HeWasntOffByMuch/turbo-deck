@@ -3539,19 +3539,41 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // for the first second of a session -- see `AudioDriver.ambience`.
     audioDriver.ambience();
     for (const entity of view.entities) {
+      // --- the one body that is not where the replica says ------------------
+      //
+      // The listener sits on the **predicted** self (`scene.listenerPose`), and
+      // every body here comes from the replica, which lags it. For a monster
+      // across the arena that lag is 50ms of a long vector and inaudible, which
+      // is what the note below says and it is true of everything except this
+      // one body: your own.
+      //
+      // At zero distance there is no vector for the error to be small against.
+      // The offset between prediction and replica *is* the whole source
+      // position, so a panner given it pans your own footsteps entirely by your
+      // own network lag -- and because the lag points backwards along the way
+      // you are going, walking one way puts your feet in the other speaker.
+      // Which is exactly the report: move left, hear it on the right.
+      //
+      // So the local player is emitted at the listener. Not as a correction to
+      // the lag but because it is simply true: a sound your own body makes is
+      // at your own head, and the only honest offset there is none.
+      const self = entity.id === view.selfEntityId ? (view.self ?? null) : null;
       audioDriver.body(
         {
           entityId: entity.id,
-          x: entity.x,
+          x: self?.x ?? entity.x,
           // The sim is 2D: its `Vec2 {x, y}` is world (x, z). Getting this
           // backwards mirrors every sound across the NW-SE diagonal, which at
           // the default camera azimuth is exactly a left/right swap.
-          z: entity.y,
+          z: self?.y ?? entity.y,
           // The height the body is *drawn* at, which `syncBodies` already
           // computed this frame -- a map lookup against a 5.6us height sample,
           // thirty times a frame. `groundAt` is the fallback for a body no
           // frame has drawn yet.
-          ground: scene.bodyGround(entity.id) ?? scene.groundAt(entity.x, entity.y),
+          ground:
+            self === null
+              ? (scene.bodyGround(entity.id) ?? scene.groundAt(entity.x, entity.y))
+              : scene.groundAt(self.x, self.y),
           activity: entity.activity,
           activityUntilTick: entity.activityUntilTick,
           // Legs. A projectile, a drop, a mote and a prop have none, and a
