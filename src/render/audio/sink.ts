@@ -109,6 +109,21 @@ export interface Audio {
   setCatalog(catalog: SoundCatalog): void;
   /** Fetch and decode everything on these buses, in the background. */
   warm(buses: readonly BusId[]): void;
+  /**
+   * Is there anything behind this event -- has the catalog given it files?
+   *
+   * A question about the *document*, not about whether a voice would start
+   * right now: a buffer that has not decoded yet, a source past the cull and a
+   * throttled repeat all still answer true, because all three are transient and
+   * an event that is silent for one frame has not stopped existing.
+   *
+   * It exists so a caller can prefer a specific event and fall back to a general
+   * one -- a footstep on grass to a plain footstep -- which is the only way the
+   * "an event with no entry is silent" rule and a per-surface vocabulary can
+   * both be true. Without it, adding six surface rows would take the sound of
+   * walking out of the game until somebody had recorded six sets.
+   */
+  has(id: SoundEventId): boolean;
   /** Create the context, or bring it back. Must be called from a user gesture. */
   resume(): void;
   suspend(): void;
@@ -159,6 +174,11 @@ export const SILENT_AUDIO: Audio = {
   },
   warm(): void {
     /* nothing */
+  },
+  has(): boolean {
+    // A silent engine has nothing behind anything, which is the honest answer
+    // and the one that makes a fallback chain resolve to its last entry.
+    return false;
   },
   resume(): void {
     /* nothing */

@@ -202,6 +202,17 @@ export class AudioEngine implements Audio {
 
   // --- configuration -----------------------------------------------------
 
+  /**
+   * Whether the catalog has given this event any files.
+   *
+   * A `variants` array is never empty -- `parseCatalog` refuses an entry with no
+   * files, because that is the same state as no entry -- so holding a resolved
+   * row is the whole question.
+   */
+  has(id: SoundEventId): boolean {
+    return this.resolved.has(id);
+  }
+
   setCatalog(catalog: SoundCatalog): void {
     this.resolved = new Map();
     for (const [id, entry] of catalog) this.resolved.set(id, resolveSound(id, entry));
