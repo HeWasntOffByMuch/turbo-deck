@@ -23,6 +23,7 @@
     "bake:ui-goldens": "tsx scripts/bake-ui-goldens.ts",
     "balance": "tsx scripts/balance-builds.ts",
     "audit:progression": "tsx scripts/audit-progression.ts",
+    "check:tracked": "tsx scripts/check-tracked.ts",
     "check:bundle": "tsx scripts/check-bundle.ts"
   },
   "dependencies": {

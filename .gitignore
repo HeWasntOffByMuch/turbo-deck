@@ -15,7 +15,15 @@ dist/
 # The live database (spec 226). A developer's save file, not source: the schema
 # is in src/server/persistence/migrations.ts and is what gets reviewed. WAL and
 # shared-memory sidecars go with it.
-data/
+#
+# **Anchored**, and it has to be: an unanchored `data/` matches a directory of
+# that name at *any* depth, so it also matched `src/server/data/` -- the content
+# tables, which are the most-edited source directory in the repo. Existing files
+# there stayed tracked, because .gitignore does not touch what git already
+# follows, so nothing looked wrong; but every **new** file added there was
+# silently skipped by `git add`, and the first one cost a branch that typechecked,
+# linted and passed 7,037 tests locally while being unbuildable from a clone.
+/data/
 *.db
 *.db-wal
 *.db-shm
