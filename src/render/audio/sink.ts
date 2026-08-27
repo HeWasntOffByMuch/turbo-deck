@@ -94,6 +94,27 @@ export interface AudioStats {
   readonly started: Readonly<Record<string, number>>;
 }
 
+/**
+ * Somewhere to build a procedural voice (spec 244).
+ *
+ * The one hole in this otherwise closed surface, and it is deliberately shaped
+ * so that it is not a hole in the *mix*: `into` is a bus gain node, so a
+ * dialogue voice is scaled by its bus and by master and is silenced by mute,
+ * exactly like every file the catalog plays. What it is not scaled by is the
+ * catalog, because there is nothing to look up -- a mumble is generated, not
+ * fetched, which is the whole reason this exists.
+ *
+ * Null means "no Web Audio here", which is what Node gets and what a browser
+ * that refused a context gets. The caller's answer to null is to make no sound,
+ * never to build a second context of its own.
+ */
+export interface SpeechOutput {
+  /** The one context. Nodes must be built from it; nothing else may be. */
+  readonly context: BaseAudioContext;
+  /** The bus to connect a finished voice into. Never `context.destination`. */
+  readonly into: AudioNode;
+}
+
 export interface Audio {
   /** Fire and forget. Silent, never throwing, if the event has no files or nothing can be heard. */
   play(id: SoundEventId, options?: PlayOptions): void;
@@ -144,6 +165,15 @@ export interface Audio {
    * *now* or not at all.
    */
   preview(url: string, gain?: number, rate?: number): void;
+  /**
+   * The context and bus a procedural voice is built on, or null.
+   *
+   * Never creates one: it answers what {@link Audio.resume} has already made,
+   * so a caller reaching for it before the first user gesture gets null and
+   * makes no sound -- the same rule `play` follows, and for the same reason a
+   * queue would be wrong. See {@link SpeechOutput}.
+   */
+  speech(bus: BusId): SpeechOutput | null;
 }
 
 /** A sink that does nothing, and what runs in Node. See the header. */
@@ -194,5 +224,11 @@ export const SILENT_AUDIO: Audio = {
   },
   preview(): void {
     /* nothing */
+  },
+  speech(): SpeechOutput | null {
+    // No context, so nothing to build a voice on. This is what makes the whole
+    // dialogue layer drivable in Node: the controller still schedules, still
+    // cancels, still reveals text, and simply never makes a noise.
+    return null;
   },
 };

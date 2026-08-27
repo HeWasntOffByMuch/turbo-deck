@@ -56,7 +56,7 @@ export interface AudioMix {
 export const AUDIO_DEFAULTS: AudioMix = {
   version: AUDIO_VERSION,
   master: 0.7,
-  buses: { player: 1, combat: 1, elemental: 1, ambience: 0.6, ui: 0.8 },
+  buses: { player: 1, combat: 1, elemental: 1, ambience: 0.6, voice: 0.9, ui: 0.8 },
   muted: false,
 };
 

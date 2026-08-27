@@ -196,6 +196,14 @@ const PURE_RENDER = [
   // hold -- and, more to the point, the file that makes the corner panel and
   // the mark over the same body two readings of one list rather than two.
   'src/render/iso3d/world/selection.ts',
+  // A conversation in progress (spec 244). The controller that owns both the
+  // text reveal and the vocal events it triggers -- so which letter appears
+  // when, which of them speak, and what skipping does to the ones that have not
+  // yet, are all answerable in Node against a recording sink. Every acceptance
+  // criterion the procedural-dialogue handoff states is a claim about this file
+  // and `render/audio/dialogue-voice.ts`, and the alternative to asserting them
+  // is somebody listening.
+  'src/render/iso3d/world/dialogue.ts',
   // The action bar's view-model (spec 190). The bar moved onto the interface
   // canvas, so what a slot draws -- its wedge, its badge, why it is lit -- is a
   // mapping from replicated facts to plain rows, and a mapping is checked in

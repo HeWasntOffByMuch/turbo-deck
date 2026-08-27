@@ -93,7 +93,23 @@ export type Temperament =
    * Notices at `noticeRange` and commits on the spot, and answers a blow landed
    * within `assistRange` of it as though it had been struck itself.
    */
-  | { readonly kind: 'ferocious'; readonly noticeRange: number; readonly assistRange: number };
+  | { readonly kind: 'ferocious'; readonly noticeRange: number; readonly assistRange: number }
+  /**
+   * Will not fight, and cannot be fought (spec 244).
+   *
+   * The only member with no number on it, and that is the authoring rule
+   * holding rather than an omission: it notices nothing, waits for nothing and
+   * assists nobody, so there is no range or clock it could read. The whole of
+   * its behaviour is that `isHostile` refuses it at both ends -- so nothing
+   * swings at it, no blast catches it, it never turns up in `nearestQuarry`,
+   * and it never acquires a target of its own.
+   *
+   * A temperament rather than an entity kind, because everything else about
+   * such a body is a monster: it spawns from a marker, wanders through
+   * `sim/idle.ts`, moves through `resolveMovement`, replicates, streams and is
+   * drawn. `Prop` is scenery that does none of that.
+   */
+  | { readonly kind: 'friendly' };
 
 /**
  * What a body does with its own time (spec 213).
@@ -495,6 +511,49 @@ const AUTHORED: readonly AuthoredMonster[] = [
       maxResource: 0,
       resourceRegen: 0,
       basicAttackId: 'ranged.star',
+    },
+  },
+  {
+    // The first body in this table that is not an enemy (spec 244). It is a row
+    // here rather than in a table of its own because everything about it except
+    // the fighting is a monster: it comes off a `spawner` marker, wanders
+    // through `sim/idle.ts`, is moved by `resolveMovement`, replicates and is
+    // drawn. What it says lives in `data/npcs.ts`, keyed by this id.
+    id: 'npc.merchant',
+    name: 'Rell',
+    radius: 20,
+    // Nothing can kill it, so nothing can be paid for killing it.
+    experience: 0,
+    temperament: { kind: 'friendly' },
+    // A tight ramble, and tight for a reason the other rows do not have: a body
+    // you walk up to and talk to should still be roughly where you last saw it,
+    // and its shop's reach is measured from the *anchor* rather than from the
+    // body (`withinReach` in `data/vendors.ts`), so how far it strays is a
+    // number `VENDOR_REACH` has to cover. Nine seconds against 90 units leaves
+    // it standing for most of the cycle, which is what a shopkeeper does.
+    idle: { kind: 'wander', radius: 90, cycleTicks: seconds(9) },
+    stats: {
+      // It cannot be hit -- `isHostile` refuses a friendly body at both ends --
+      // so this is the number that keeps it a live body rather than a corpse,
+      // and nothing ever subtracts from it.
+      maxHealth: 100,
+      // An amble. Fast enough not to look broken, slow enough that a player
+      // walking over to it always arrives.
+      moveSpeed: 55,
+      turnRate: 180,
+      attackDamage: 0,
+      attackRange: 0,
+      baseAttackTimeTicks: 1,
+      ...NO_ATTACK_SPEED,
+      armor: 0,
+      spellPower: 1,
+      critChance: 0,
+      maxResource: 0,
+      resourceRegen: 0,
+      // No attack at all, the training dummy's convention: an empty id is a
+      // body that never swings, which for this one is the point rather than a
+      // consequence of never being made to stand.
+      basicAttackId: '',
     },
   },
 ];

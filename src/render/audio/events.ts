@@ -38,7 +38,7 @@
  */
 
 /** The buses, coarsest first. Master is not a row: it multiplies all of them. */
-export const BUSES = ['player', 'combat', 'elemental', 'ambience', 'ui'] as const;
+export const BUSES = ['player', 'combat', 'elemental', 'ambience', 'voice', 'ui'] as const;
 export type BusId = (typeof BUSES)[number];
 
 /** What a bus is called where a player sees it. */
@@ -47,6 +47,7 @@ export const BUS_LABELS: Record<BusId, string> = {
   combat: 'Combat',
   elemental: 'Elemental',
   ambience: 'Ambience',
+  voice: 'Dialogue',
   ui: 'UI',
 };
 

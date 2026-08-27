@@ -14,6 +14,48 @@
  */
 
 import { itemById } from './items.js';
+import { idlePlanOf } from './monsters.js';
+import { npcById } from './npcs.js';
+
+/**
+ * Where the merchant's spawner is, in world units (spec 244).
+ *
+ * The one number in this file that has to agree with something outside it. A
+ * vendor's reach is measured from a fixed point and the body that owns this one
+ * *walks*, so the point is its anchor -- which is a marker in the map document,
+ * where this module cannot see it. `vendors.test.ts` asserts the shipped map's
+ * `npc.merchant` spawner is here, so the two drifting apart is a failing test
+ * rather than a shop that quietly refuses to open.
+ *
+ * Inside Hearthstead, a short walk south-east of where players arrive, on flat
+ * ground whose whole wander disc is clear of props.
+ */
+export const RELL_HOME = { x: 650, y: 520 } as const;
+
+/**
+ * How far from {@link RELL_HOME} the merchant's shop can be reached.
+ *
+ * **Derived, not chosen**, because the thing it must not do is be smaller than
+ * the distance a player can legitimately be standing at when they press the
+ * reply that opens it. That distance is how far the body has wandered from its
+ * anchor plus how far away the player may be from the body, and both of those
+ * numbers are authored elsewhere -- so this reads them rather than restating
+ * them, and raising either one carries the shop's reach along for free.
+ *
+ * The margin is for the gap between the tick the client asked on and the tick
+ * the server answers: a player walking away as they press is measured where the
+ * server last put them, not where they were.
+ */
+const REACH_MARGIN = 40;
+
+function reachFor(npcId: string): number {
+  const npc = npcById(npcId);
+  const plan = idlePlanOf(npcId);
+  const roam = plan.kind === 'sentinel' ? 0 : plan.radius;
+  return (npc?.talkRadius ?? 0) + roam + REACH_MARGIN;
+}
+
+const RELL_REACH = reachFor('npc.merchant');
 
 export interface VendorDefinition {
   readonly id: string;
@@ -65,6 +107,26 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     stock: ['sword.keen', 'maul.iron', 'staff.emberwood', 'focus.quartz', 'helm.plated', 'chest.scale'],
     buyMarkup: 1.8,
     sellFraction: 0.3,
+  },
+  {
+    // The first shop with a body standing in it (spec 244). The two above are
+    // invisible coordinates you walk onto and press a key at, which is what the
+    // header's own caveat is about: there was no map that said where a town was.
+    // This one is reached by talking to the merchant who owns it, so its `x`/`y`
+    // are that body's spawner rather than a spot chosen here -- see
+    // `RELL_HOME` below for the one thing that has to agree.
+    id: 'vendor.rell',
+    name: "Rell's Pack",
+    x: RELL_HOME.x,
+    y: RELL_HOME.y,
+    radius: RELL_REACH,
+    // A traveller's pack: the things somebody forgot to bring, at a fair price
+    // rather than a good one. Deliberately overlapping the Quartermaster's --
+    // this is a second place to buy a flask, not a third tier of goods.
+    stock: ['potion.minor', 'sword.worn', 'bow.hunting', 'helm.leather', 'legs.traveller'],
+    // Between the two above. It walks to you, so it charges for the walk.
+    buyMarkup: 1.6,
+    sellFraction: 0.35,
   },
 ];
 
