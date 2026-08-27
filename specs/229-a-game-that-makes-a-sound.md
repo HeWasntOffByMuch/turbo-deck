@@ -240,6 +240,36 @@ needs 3.7x. The ceiling is 4x. And `ref` is a property of the *ability's reach* 
 a bow reaches 420, so an arrow landing at the edge of its own range was losing
 10 dB for being far away when what it is, is the thing the player just did.
 
+**A footstep asks what the ground is made of.** One row per entry in
+`TERRAIN_MATERIALS` — the authority, so a seventh material arrives with a
+footstep row or fails a test rather than quietly walking on the fallback. The
+reader is `MapChunkStore.materialAtWorld`, which answers the **baked** material;
+`classify.ts`'s `worldMaterialAt` is the trap and is not it, because it
+re-derives from height and slope with `region: 'default'` and so reports a
+hand-painted dirt path as grass and painted snow as rock. Since spec 179 a
+material is a *choice*, and this is the reader for the choice.
+
+All six ship **unassigned**, and the fallback is what makes that possible:
+`footstepEvents` returns an ordered preference and the driver plays the first the
+catalog has files for, so today every surface resolves to `player.footstep` and
+walking sounds exactly as it did. Without the chain, adding six rows would take
+the sound of walking out of the game until somebody had recorded six sets of
+takes. `Audio.has(id)` is what the driver asks — a question about the *document*,
+not about whether a voice would start right now, since a buffer that has not
+decoded, a source past the cull and a throttled repeat are all transient and none
+of them mean an event has stopped existing.
+
+`null` from the store is **"I do not know", never "no surface"**: it is the
+ordinary state on a streaming client for ground a body is walking toward, and it
+falls straight to the plain footstep — a body walking into un-arrived ground
+should sound like a body walking, not like nothing.
+
+The whole join can be dead with every Node test passing, because falling back is
+exactly what those tests assert while the rows are unassigned. So the probe reads
+`data-audio-surface` and requires a real material; measured `grass` on the shipped
+map, and with a take temporarily assigned to `player.footstep.grass` the count
+moves to that row and the plain one goes to zero.
+
 ## Invariants tested
 
 - **Round trip.** `parseCatalog(catalogToJson(c))` is `c`, over the shipped

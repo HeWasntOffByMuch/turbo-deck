@@ -4238,6 +4238,25 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  a blow and an elemental ability makes its element's sound on its
                  own message, a fraction of a tick apart -- against widening the
                  combat frame by a byte for a presentation problem.
+                 Since spec 229's follow-up a footstep also asks **what the
+                 ground is made of**: one row per entry in `TERRAIN_MATERIALS`,
+                 read through `MapChunkStore.materialAtWorld`, which answers the
+                 **baked** material. `classify.ts`'s `worldMaterialAt` is the
+                 trap and is deliberately not it -- that one re-derives from
+                 height and slope with `region: 'default'`, so it reports a
+                 hand-painted dirt path as grass and painted snow as rock, which
+                 is right for scattering vegetation over a generated world and
+                 wrong for asking what a body is standing on in a map somebody
+                 edited. All six rows ship **unassigned**, and the fallback is
+                 what makes that safe: `footstepEvents` returns an ordered
+                 preference and the driver plays the first one the catalog has
+                 files for, so every surface resolves to `player.footstep` today
+                 and walking sounds exactly as it did. `null` from the store is
+                 *"I do not know"* rather than "no surface" -- the ordinary state
+                 for ground a streaming client has not been sent -- and falls to
+                 the plain footstep, because a body walking into un-arrived
+                 ground should sound like a body walking rather than like
+                 nothing.
                  `footsteps.ts` is a distance accumulator rather than an
                  animation event, and the choice is forced twice over. The event
                  machinery is complete and has no consumer -- `driveUnit` returns
