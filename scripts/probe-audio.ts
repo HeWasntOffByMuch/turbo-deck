@@ -55,6 +55,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from 'playwright';
 
+import { TERRAIN_MATERIALS } from '../src/terrain/types.js';
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4331;
 /** The second half runs against a real `npm run dev`, on a port of its own. */
@@ -112,6 +114,8 @@ interface AudioReadout {
   readonly buffers: number;
   readonly missing: number;
   readonly started: Readonly<Record<string, number>>;
+  /** What the local player is standing on, or '' where it has not resolved. */
+  readonly surface: string;
 }
 
 /** What the engine says, off the root element the frame writes it to. */
@@ -131,6 +135,7 @@ async function readAudio(page: Page): Promise<AudioReadout> {
       buffers: Number(root?.dataset['audioBuffers'] ?? -1),
       missing: Number(root?.dataset['audioMissing'] ?? -1),
       started,
+      surface: root?.dataset['audioSurface'] ?? '',
     };
   });
 }
@@ -450,6 +455,23 @@ async function main(): Promise<void> {
     // Which is why this is measured rather than reasoned about: every counter in
     // the game reads perfectly for that bug. The nearest voice placed while
     // walking has to be your own feet, at your own ears.
+    // --- and what it was standing on --------------------------------------
+    //
+    // The per-surface footstep rows all ship unassigned, so they fall back to
+    // the plain one and the game sounds exactly as it did. Which means the whole
+    // join can be dead -- `view.ts` handing the driver a null surface forever --
+    // with every test in Node passing, because falling back is precisely what
+    // they assert. Only a browser can say whether the ground is being read at
+    // all, and the day somebody drops a take on `player.footstep.snow` is far
+    // too late to find out it never was.
+    const surface = walked.surface;
+    console.log(`  standing on:       ${surface === '' ? 'NOTHING RESOLVED' : surface}`);
+    if (!TERRAIN_MATERIALS.includes(surface as (typeof TERRAIN_MATERIALS)[number])) {
+      problems.push(
+        `the ground under the player read as "${surface}" -- the per-surface footstep has nothing to key on`,
+      );
+    }
+
     const { nearest, ears } = await nearestVoice(page);
     console.log(
       `  nearest voice:     ${nearest === Number.POSITIVE_INFINITY ? 'none placed' : `${nearest.toFixed(1)} units from the ears`}` +
