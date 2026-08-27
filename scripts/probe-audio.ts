@@ -71,7 +71,14 @@ const CHROMIUM_ARGS = [
 ];
 
 /** The bar ships empty (spec 164), so a skill has to be put in it to press. */
-const SLOTS = 'melee.heavy,ranged.ember,bolt.seek,self.mend';
+// Slot 3 is the **bow**, put on the bar the way slot 2's ember already is.
+// Both are `basicAttack` rather than `skill`, so `startCast`'s ownership check
+// does not apply and neither needs the weapon equipped -- which is what makes
+// the shot reachable at all here. The other route to an arrow is
+// `skill.poisonDart`, and that one is `targeting: 'unit'`: it needs a body
+// under the cursor, and a click on grass is refused in a way that reads
+// exactly like three sounds that did not fire.
+const SLOTS = 'melee.heavy,ranged.ember,ranged.shot,self.mend';
 
 async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -173,6 +180,84 @@ const count = (readout: AudioReadout, id: string): number => readout.started[id]
 /** How many voices started in total, across every event. */
 const total = (readout: AudioReadout): number =>
   Object.values(readout.started).reduce((sum, value) => sum + value, 0);
+
+/**
+ * Record where every voice is placed, relative to the ears.
+ *
+ * The engine's own readout counts voices and cannot say *where* they went, and
+ * where they went is the whole of one class of bug: a sound at the wrong
+ * position is a sound that started, decoded and played, so every counter in the
+ * game reads perfectly while the player hears their own footsteps in the wrong
+ * speaker.
+ *
+ * Installed as an init script so it is in place before the page's first line
+ * runs -- the context is built on the first input, and a patch applied after
+ * that would miss it. It wraps `createPanner` and records the distance from the
+ * listener at the moment each voice was placed, which is the one number that
+ * answers the question without needing to know which body a sound came from.
+ */
+async function installPannerRecorder(page: Page): Promise<void> {
+  // Source text rather than a function, and that is not a style choice: an init
+  // script passed as a function is serialised from *transpiled* output, and this
+  // file is run through tsx -- whose `keepNames` wraps every named function in a
+  // `__name(...)` helper that exists only in the bundle it came from. The page
+  // gets a script referencing an identifier nothing defines, and the whole
+  // recorder throws on the first line with the game none the wiser.
+  await page.addInitScript({
+    content: `
+      (() => {
+        const distances = [];
+        globalThis.__pannerDistances = distances;
+        // The control. A voice at the ears and a voice nowhere are the same
+        // reading -- 0.0 -- if neither position was ever written, so the
+        // listener's own coordinate is recorded beside the offsets and checked
+        // to be somewhere in a real world.
+        globalThis.__listenerAt = null;
+        const proto = AudioContext.prototype;
+        const make = proto.createPanner;
+        proto.createPanner = function () {
+          const panner = make.call(this);
+          const listener = this.listener;
+          // After the engine has placed it: a panner is created at the origin
+          // and positioned a line later, so reading it now measures nothing.
+          setTimeout(() => {
+            // Both spellings, because the engine writes whichever the browser
+            // has -- a recorder reading only one reports every voice at 0,0.
+            if (!panner.positionX || !listener.positionX) return;
+            const dx = panner.positionX.value - listener.positionX.value;
+            const dz = panner.positionZ.value - listener.positionZ.value;
+            distances.push(Math.hypot(dx, dz));
+            globalThis.__listenerAt = { x: listener.positionX.value, z: listener.positionZ.value };
+          }, 0);
+          return panner;
+        };
+      })();
+    `,
+  });
+}
+
+/**
+ * The closest any voice was placed to the ears, since the last reading, and
+ * where the ears were when it was placed.
+ *
+ * Both, because 0.0 is the right answer *and* what a run where nothing was ever
+ * positioned looks like. The listener coordinate is the control: the arena is
+ * hundreds of units across and the spawn is nowhere near the origin, so ears at
+ * (0, 0) mean the recorder measured two unset values against each other.
+ */
+async function nearestVoice(page: Page): Promise<{ nearest: number; ears: number }> {
+  return page.evaluate(() => {
+    const scope = globalThis as unknown as {
+      __pannerDistances?: number[];
+      __listenerAt?: { x: number; z: number } | null;
+    };
+    const held = scope.__pannerDistances ?? [];
+    const nearest = held.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...held);
+    held.length = 0;
+    const at = scope.__listenerAt ?? null;
+    return { nearest, ears: at === null ? 0 : Math.hypot(at.x, at.z) };
+  });
+}
 
 /**
  * The half that closes the loop: a real `npx vite`, Import, Bake, Save.
@@ -319,6 +404,7 @@ async function main(): Promise<void> {
     await waitForServer(`http://localhost:${PORT}/`);
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     page.on('pageerror', (error) => problems.push(String(error)));
+    await installPannerRecorder(page);
     await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=${SLOTS}`, { waitUntil: 'load' });
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await waitForTick(page, 120);
@@ -349,6 +435,39 @@ async function main(): Promise<void> {
     const steps = count(walked, 'player.footstep') - count(standing, 'player.footstep');
     console.log(`  walking:           ${String(steps)} footsteps`);
     if (steps === 0) problems.push('walking produced no footstep');
+
+    // --- and where those footsteps were -----------------------------------
+    //
+    // Your own body is the one place a small position error is not small. The
+    // listener sits on the *predicted* self and the replicated entities lag it,
+    // and for a monster across the arena that lag is a rounding error on a long
+    // vector. At zero distance there is nothing for it to be small against: the
+    // offset IS the source position, so a panner given it pans your own
+    // footsteps entirely by your own network lag -- and the lag points backwards
+    // along the way you are going, so walking one way puts your feet in the
+    // other speaker.
+    //
+    // Which is why this is measured rather than reasoned about: every counter in
+    // the game reads perfectly for that bug. The nearest voice placed while
+    // walking has to be your own feet, at your own ears.
+    const { nearest, ears } = await nearestVoice(page);
+    console.log(
+      `  nearest voice:     ${nearest === Number.POSITIVE_INFINITY ? 'none placed' : `${nearest.toFixed(1)} units from the ears`}` +
+        `, ears ${ears.toFixed(0)} from the origin`,
+    );
+    if (ears < 1) {
+      problems.push('the listener was never positioned -- the offset above is two unset values, not a measurement');
+    }
+    // A body's radius is 10 and a footstep stride is 48, so anything past a few
+    // units is a systematic offset rather than a rounding one. Not exactly zero:
+    // the panner is placed at the body's sound height above the ground, and the
+    // listener at ear height, and those are two different constants.
+    if (nearest > 5) {
+      problems.push(
+        `the nearest voice while walking was ${nearest.toFixed(1)} units from the listener -- ` +
+          'your own body is not being emitted at your own ears',
+      );
+    }
 
     // ...and the other half of the control: a body that is not walking does not
     // make walking noises. Without this, a driver that played a footstep every
@@ -442,6 +561,41 @@ async function main(): Promise<void> {
     if (settled.voices !== 0) {
       problems.push(`${String(settled.voices)} voices were still counted with nothing playing -- a voice leak`);
     }
+
+    // --- a shot from end to end -------------------------------------------
+    //
+    // Three moments, and until spec 229's follow-up only the first was ever
+    // heard: both projectile rows were in the vocabulary and fired by nothing,
+    // so a bow had a draw and then silence. Checked because each fails silently
+    // and differently -- the draw is a table lookup keyed on the look, the
+    // loose is taken on a body's first frame, and the landing is owed from the
+    // sweep that notices the body has gone.
+    //
+    // Last, because this fires an arrow that lives two seconds and the checks
+    // above measure a held count coming back to zero.
+    const beforeShot = await readAudio(page);
+    await page.keyboard.press('Digit3');
+    await page.mouse.click(760, 300);
+    const shot = await settles(
+      page,
+      (readout) =>
+        count(readout, 'combat.projectile.impact') > count(beforeShot, 'combat.projectile.impact'),
+      15_000,
+    );
+    const moments = (
+      ['combat.bow.draw', 'combat.projectile.launch', 'combat.projectile.impact'] as const
+    ).map((id) => [id, count(shot, id) - count(beforeShot, id)] as const);
+    console.log(
+      `  a shot:            ${moments.map(([id, n]) => `${id.split('.').pop() ?? id}=${String(n)}`).join(' ')}`,
+    );
+    for (const [id, n] of moments) {
+      if (n === 0) problems.push(`an arrow produced no ${id}`);
+    }
+    // ...and it is a bow rather than the swing the physical branch falls
+    // through to. The wind-up is the one of the three that had a *wrong* answer
+    // available to it rather than no answer at all.
+    const strayed = count(shot, 'combat.swing.light') - count(beforeShot, 'combat.swing.light');
+    if (strayed > 0) problems.push(`shooting an arrow also played ${String(strayed)} sword swing(s)`);
 
     // --- the seventh tab ---------------------------------------------------
     //
