@@ -48,6 +48,7 @@ import { RESTORATION } from '../data/restoration.js';
 import { SCALING } from '../data/scaling.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { abilityAttributeBonus, abilityGradesOf, abilityWeaponFactor } from '../data/ability-scaling.js';
+import { hasAffliction } from '../data/status-semantics.js';
 import { applyArmor } from '../player/stats.js';
 import { provoke } from './aggro.js';
 import { healingScaleOf } from './damage-over-time.js';
@@ -61,7 +62,6 @@ import {
   stacksOf,
   statusOf,
   StatusId,
-  type Statuses,
 } from './statuses.js';
 import {
   ActivityValue,
@@ -84,8 +84,13 @@ export const PERFECT_EXIT_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 4);
 // itself does that on the tick it fires. What replaced it is not a longer
 // number but a **lifecycle** -- consumed until a rest or a death, the two
 // boundaries the flask already resets at. See `advanceProgression`.
-/** The bounty a Tactician's exposure leaves for everyone else. */
-export const EXPOSED_BOUNTY = 'exposed.bounty';
+/**
+ * The bounty a Tactician's exposure leaves for everyone else.
+ *
+ * The id itself moved to {@link StatusId} in spec 233, where the rest of the
+ * well-known ids are; this is the name every caller here already uses.
+ */
+export const EXPOSED_BOUNTY: string = StatusId.ExposedBounty;
 
 export interface BlowResult {
   /** The attacker, with whatever the blow returned to it. */
@@ -116,14 +121,6 @@ export function rollBetween(rng: Rng, min: number, max: number): [number, Rng] {
 
 function healthFraction(entity: ServerEntity): number {
   return entity.stats.maxHealth > 0 ? entity.health / entity.stats.maxHealth : 1;
-}
-
-/** Whether anything at all is on this body -- what Catalysis keys off. */
-function afflicted(statuses: Statuses, tick: number): boolean {
-  for (const [, value] of Object.entries(statuses)) {
-    if (tick < value.expiresAtTick) return true;
-  }
-  return false;
 }
 
 /**
@@ -260,7 +257,16 @@ export function resolveBlow(
 
   const exposed = statusOf(target.statuses, StatusId.Exposed, tick);
   if (exposed) damage *= 1 + exposed.magnitude;
-  if (A.vsAfflictedPct > 0 && afflicted(target.statuses, tick)) damage *= 1 + A.vsAfflictedPct;
+  // **Catalysis, against a body that is actually suffering from something**
+  // (spec 233). `hasAffliction` reads `data/status-semantics.ts`, which is the
+  // one place a status says what kind of thing it is.
+  //
+  // This used to be a local `afflicted` that returned true if *any* entry on
+  // the body was live -- and every blow stamps `recentlyHit` and `inCombat` on
+  // what it lands on, so the Intelligence skill whose whole identity is
+  // rewarding a set-up was "8% more damage to anything you have hit once", on
+  // every target in the game.
+  if (A.vsAfflictedPct > 0 && hasAffliction(target.statuses, tick)) damage *= 1 + A.vsAfflictedPct;
 
   const staggered = target.activity === ActivityValue.Stunned;
   if (A.executeBonus > 0 && staggered && healthFraction(target) <= A.executeBelow) {
