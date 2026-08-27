@@ -49,6 +49,31 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
  */
 export type ProjectileLook = 'orb' | 'arrow' | 'shuriken' | 'ember';
 
+/**
+ * How a body is drawn casting this (spec 230).
+ *
+ * A picture and nothing more, in exactly the register {@link ProjectileLook} is
+ * in: nothing under `src/server/sim/` reads it, it rides no wire, and two
+ * abilities with the same numbers and different looks behave identically. The
+ * renderer maps it onto a trigger in `unit-driver.ts`'s `attackTriggerFor`, and
+ * a row without it is drawn as the swing every ability was drawn as before this
+ * existed.
+ *
+ * It has to be **authored** rather than derived, and that is worth writing down
+ * because every other animation decision in this game is read off what an
+ * ability does. There is no mechanical fact separating a spell from a weapon
+ * skill here: `skill.whirlwind` and `skill.rimeTouch` are both an `area` circle
+ * on the caster's own feet, both `targeting: 'self'`, both damage in a radius --
+ * and one is a blade going all the way round while the other is cold coming off
+ * the ground. Whether a body focuses or swings is a fact about the picture, so
+ * the picture is what says it.
+ *
+ * `focus` is the one that exists: hands gathered at the chest and both arms
+ * thrown forward, `assets/units/clips/cast.glb`, authored in
+ * `src/units/pig-cast.ts`.
+ */
+export type CastLook = 'focus';
+
 export interface ProjectileSpec {
   /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 088). */
   readonly speed: number;
@@ -153,6 +178,16 @@ export interface AbilityDefinition {
    * ability per unit should carry it.
    */
   readonly basicAttack?: boolean;
+  /**
+   * How the caster is drawn while this winds up (spec 230). Absent is the swing.
+   *
+   * See {@link CastLook}. It is on the row for the reason `projectile.look` is:
+   * `attackTriggerFor` states that which animation an ability gets is *"a fact
+   * read off the content table rather than a list of ids to keep in sync with
+   * it"*, so a new spell says what it looks like here and nothing else is
+   * edited.
+   */
+  readonly castLook?: CastLook;
   /**
    * This ability is an **active skill** and may only be cast out of a skill slot
    * (spec 188).
@@ -421,6 +456,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Quake',
     kind: 'ground',
     targeting: 'point',
+    castLook: 'focus',
     windupTicks: seconds(1.4),
     cooldownTicks: seconds(8),
     cost: 7,
@@ -434,6 +470,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Mend',
     kind: 'self',
     targeting: 'self',
+    castLook: 'focus',
     windupTicks: seconds(1.2),
     cooldownTicks: seconds(10),
     cost: 6,
@@ -676,6 +713,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Arc Lash',
     kind: 'area',
     targeting: 'direction',
+    castLook: 'focus',
     skill: true,
     windupTicks: seconds(0.55),
     cooldownTicks: seconds(9),
@@ -694,6 +732,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'area',
     // Nothing to aim, like Whirlwind: the circle is on the caster's own feet.
     targeting: 'self',
+    castLook: 'focus',
     skill: true,
     windupTicks: seconds(0.6),
     cooldownTicks: seconds(11),
@@ -709,6 +748,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Blight',
     kind: 'ground',
     targeting: 'point',
+    castLook: 'focus',
     skill: true,
     // The longest wind-up here, which is what a zone denial has to cost: it is
     // slow enough to walk out of, exactly as Quake is.
@@ -743,6 +783,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     shortName: 'Scorch',
     kind: 'self',
     targeting: 'self',
+    castLook: 'focus',
     skill: true,
     // Long enough to be a commitment and short enough to throw as something
     // closes. Nothing about the cast is aimed, so the wind-up is the only thing
@@ -911,6 +952,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Drain',
     kind: 'channel',
     targeting: 'direction',
+    castLook: 'focus',
     windupTicks: seconds(0.5),
     cooldownTicks: seconds(6),
     cost: 4,

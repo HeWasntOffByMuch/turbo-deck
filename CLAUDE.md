@@ -704,6 +704,63 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  *is* the distance the hands get apart, and it prints that
                  distance per frame beside the picture because a thumbnail of a
                  pig cannot settle whether the string hand went back.
+                 pig-cast.ts is the third of them (spec 230): six poses over
+                 1250ms with the hands drawn in to the chest, a coil that creeps
+                 for 460ms, and both arms thrown forward at 850. It exists
+                 because every spell in the game was drawn as a sword chop --
+                 `attackTriggerFor` had two answers and neither was a cast --
+                 and the one thing that makes it different from the other two is
+                 the reason the fix was not simply a third clip. **It is
+                 shared.** `slash` was authored for `melee.slash` and `shoot`
+                 for `ranged.shot`, so each one's own beat *is* that ability's
+                 wind-up and today's playback rate is already right; seven
+                 spells cast through this one, and their wind-ups run from
+                 `channel.drain`'s 0.5s to `ground.quake`'s 1.4s. So its release
+                 is rebased per cast by `unit-driver.ts`'s `clipStretch`, and
+                 `CAST_RELEASE_MS` is **derived rather than chosen**: the pig's
+                 `maxTimeScale` is 2, which puts it in `[0.5 * 1400, 2 * 500]`,
+                 and the point in that window minimising the worst stretch is
+                 the geometric mean, 837 -- 850 being the nearest value on the
+                 50ms grid the other two clips are on, and a whole 60Hz sample
+                 of a 1250ms clip. Worst stretch 1.70x, asserted over the
+                 ability table so a spell authored outside the window fails a
+                 test rather than shipping as a twitch.
+                 Two things in it were learned by getting them wrong, and both
+                 are about the *recovery* rather than the cast. **A cast's hands
+                 travel further coming home than going out**, because the push
+                 starts from the chest and is already half way -- so at the
+                 swing's 200ms settle the recovery came back four times faster
+                 than the extension, which reads as the body being yanked. Two
+                 things fix it together: 400ms of recovery, and a `ready` pose
+                 with the hands already up in front rather than where the idle
+                 actually leaves them (measured, at `up: 0.058`) -- the one
+                 place this file knowingly spends part of its 60ms entry blend,
+                 which is what `pig-shot.ts`'s own bow-ready stance already
+                 spends. And **the extension is short**: `focus` sits at 720
+                 rather than half way, so the release is 130ms and eight frames,
+                 near enough the swing's own six. The long readable part of a
+                 commitment is the coil; the release is a snap. Everything else
+                 is borrowed whole -- `STRIKE_GUARD_LEGS` in every key, so a
+                 foot cannot slide by construction, and the strike's rule that
+                 the frame the picture lands and the frame the spell lands are
+                 the same frame.
+                 `scripts/aim-cast.ts` solves its arms and `scripts/arm-solve.ts`
+                 is the solver, which is `aim-bow.ts`'s lifted out of it rather
+                 than copied: two clips wanted the same descent, and a second
+                 copy would be a second set of weights to keep in step. The
+                 extraction is behaviour-preserving to the character -- run
+                 `aim-bow.ts` and it still prints the numbers committed in
+                 `pig-shot.ts`. `npx tsx scripts/make-pig-cast.ts` writes the
+                 bytes and `npx tsx scripts/preview-cast.ts` photographs them,
+                 and unlike the shot it draws **no bar between the hands**: a
+                 draw *is* the distance the hands get apart, so there the bar is
+                 a measurement, and a cast holds nothing -- at full extension the
+                 hands are a fifth of a body apart and a bar between them is a
+                 staff this game has not got. It prints two distances instead,
+                 because a cast is two movements, and samples the key times as
+                 well as the even step: two of the six authored poses sit between
+                 multiples of 50, and the first cut of the strip had neither of
+                 them in it.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and
@@ -4034,7 +4091,33 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  worse than a generic one. A unit whose document declares no
                  `shoot` parameter falls back the same way, since a silently
                  dropped trigger is a body standing perfectly still through its
-                 own attack. Since spec 166 the snapshot also carries how much
+                 own attack. Spec 230 is the third answer and the one place
+                 that rule bends, because there is nothing mechanical to read:
+                 `skill.whirlwind` and `skill.rimeTouch` are both an `area`
+                 circle on the caster's own feet, both `targeting: 'self'`, both
+                 damage in a radius, and one is a blade going all the way round
+                 while the other is cold coming off the ground. **Whether a body
+                 focuses or swings is a fact about the picture**, so the row says
+                 so in `castLook` -- an authored field in the register
+                 `ProjectileLook` is already in, which keeps the half of the rule
+                 that was load-bearing: a fact read off the content table rather
+                 than a list of ids kept in sync with it.
+                 `clipStretch` is the other half and is what a *shared* clip
+                 costs. `attackRate` is `authoredWindup / span`, which is the
+                 whole answer for a clip authored for one ability -- the swing
+                 and the draw, whose own beat *is* that ability's wind-up -- and
+                 says nothing at all for one seven spells go through. Multiplied
+                 by `clipRelease / authoredWindup` it telescopes to
+                 `clipRelease / span`, which is the sentence the spec is about:
+                 the frame the hands come forward is the tick the sim resolves
+                 the spell, whatever the ability is and whatever a status did to
+                 its wind-up. Two terms rather than one because the first is
+                 measured off the **wire** and the second off the **table**, and
+                 only the wire can see a modifier. It is handed the *trigger*
+                 rather than deriving one, because `triggerFor` may have fallen
+                 back to the swing on a unit with no focus state -- and a body
+                 drawing `slash` has to be driven at exactly the rate it is
+                 driven at today. Since spec 166 the snapshot also carries how much
                  of the cast is **left** -- `endTick - tick`, which the cast bar
                  already reads -- because that is the one thing that separates a
                  cast which *finished* from one that was *called off*, and both
