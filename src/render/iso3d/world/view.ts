@@ -122,7 +122,7 @@ import {
 } from './action-bar.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
-import { appearanceOf } from './appearance.js';
+import { appearanceOf, bleedsFor } from './appearance.js';
 import { effectsForBlow, REDUNDANT_SERVER_EFFECTS, type GoreLevel } from './vfx-wire.js';
 import { createAudioEngine } from '../../audio/engine.js';
 import { BUS_LABELS, BUSES } from '../../audio/events.js';
@@ -1607,7 +1607,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           z: target.y,
           fromX: attacker?.x ?? target.x,
           fromZ: attacker?.y ?? target.y,
-          bleeds: true,
+          // What the body is made of, rather than the `true` that was here:
+          // hardcoded, a construct threw blood and `combat.hit.armored` was
+          // unreachable for every blow in the game.
+          bleeds: bleedsFor(target),
         },
         client.view().estimatedTick,
         gore,
@@ -1628,7 +1631,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
         critical: (result.flags & CombatFlag.Critical) !== 0,
         blocked: (result.flags & CombatFlag.Blocked) !== 0,
         periodic: (result.flags & CombatFlag.Periodic) !== 0,
-        bleeds: true,
+        // The same answer the picture above got, from the same function -- so a
+        // blow that throws sparks cannot also sound like a cut.
+        bleeds: bleedsFor(target),
         x: target.x,
         y: scene.groundAt(target.x, target.y) + BLOOD_HEIGHT,
         z: target.y,
