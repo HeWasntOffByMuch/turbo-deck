@@ -575,41 +575,24 @@ describe('costs beyond the pool', () => {
   });
 });
 
-describe('a channelled skill', () => {
-  /**
-   * The brief's rule, stated as a test: **an interrupted channel still counts
-   * as cast.** It falls out of where the cooldown is stamped rather than from a
-   * rule about channels -- the attack point is what stamps it, a channel's
-   * attack point is the tick it starts pulsing, and no cancellation path after
-   * the attack point writes it again.
-   */
-  it('keeps its cooldown when it is broken off part-way', () => {
-    const empty = createWorldState(7);
-    const caster = withPlayer(empty, 600, 450);
-    const target = withDummy(caster.state, 660, 450);
-    const drain = abilityById('channel.drain');
-    if (!drain) throw new Error('no drain');
-    const started = drain.windupTicks + 1;
-    // Aimed straight ahead, so the body is already facing it and the wind-up
-    // clock starts on tick 0 -- an aim behind the caster would spend unknown
-    // ticks in `Turning` and make the arithmetic below a guess.
-    const broken = run(target.state, started + 4, {
-      0: [
-        input(caster.id, {
-          castAbilityId: 'channel.drain',
-          castTargetX: 800,
-          castTargetY: 450,
-        }),
-      ],
-      // Well inside the channel, which runs for `channelTicks` after the first
-      // pulse.
-      [started + 2]: [input(caster.id, { cancelCast: true })],
-    });
-    const body = broken.state.entities.get(caster.id);
-    expect(body?.cast).toBeNull();
-    expect(body?.cooldowns['channel.drain'] ?? 0).toBeGreaterThan(broken.state.tick);
-  });
-});
+/**
+ * `kind: 'channel'` has **no shipped row** since spec 231.
+ *
+ * `channel.drain` was spec 062's one channel -- granted by nothing, castable by
+ * anybody -- and it went with the rest of that demo set. The mechanism is still
+ * live in `sim/abilities.ts`, `client/combat.ts` and `data/description.ts`, and
+ * `CastPhaseValue.Channel` is still on the wire; what is gone is anything to
+ * point it at, so the end-to-end test that used to live here cannot be written.
+ *
+ * The invariant it asserted is **not** lost, and that is why it was removed
+ * rather than skipped: *an interrupted cast that is past its attack point keeps
+ * its cooldown* is a rule about where the cooldown is stamped rather than about
+ * channels, and `sim/attack-cancel.test.ts` asserts it on both sides of the
+ * attack point through the backswing -- refunded before it, kept after it.
+ *
+ * If a channel is ever authored again, the test to restore is a cast broken off
+ * mid-pulse whose `cooldowns[id]` still stands.
+ */
 
 describe('an instant skill', () => {
   /**

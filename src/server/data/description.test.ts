@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ALL_ABILITIES, abilityById } from './abilities.js';
+import { SERVER_TICK_RATE } from '../config.js';
 import { ALL_ITEMS } from './items.js';
 import { STATUS_VISUALS } from './status-visuals.js';
 import { ALL_DOTS, dotById, dotPulseDamage } from './damage-over-time.js';
@@ -162,10 +163,10 @@ describe('derived numbers match the row they came from', () => {
   it('follows a retune without being edited', () => {
     // An *ability*, because since spec 217 a basic attack has no damage number
     // of its own to follow -- see the test below.
-    const bolt = abilityById('bolt.arcane');
-    expect(bolt).not.toBeNull();
-    if (!bolt) return;
-    const louder = { ...bolt, damage: 99, range: 123 };
+    const dart = abilityById('skill.poisonDart');
+    expect(dart).not.toBeNull();
+    if (!dart) return;
+    const louder = { ...dart, damage: 99, range: 123 };
     const text = technicalText(describeAbility(louder));
     expect(text).toContain('Deals 99 damage.');
     expect(text).toContain('Range 123.');
@@ -231,9 +232,22 @@ describe('effects are described in the row order', () => {
   });
 
   it('writes a channel as a cadence rather than as one blow', () => {
-    const ability = abilityById('channel.drain');
-    expect(ability).not.toBeNull();
-    if (!ability) return;
+    // Built here rather than looked up, because **no shipped row is a channel
+    // any more** (spec 231): `channel.drain` was spec 062's one row of that
+    // kind and went with the rest of the demo set. The mechanism is still in
+    // `sim/abilities.ts` and this branch is still in `description.ts`, so it is
+    // still tested -- against a row constructed for it, which is the honest
+    // shape while the kind has no content behind it.
+    const base = abilityById('skill.poisonDart');
+    expect(base).not.toBeNull();
+    if (!base) return;
+    const ability = {
+      ...base,
+      kind: 'channel' as const,
+      damage: 3,
+      channelTicks: 2 * SERVER_TICK_RATE,
+      pulseIntervalTicks: 0.25 * SERVER_TICK_RATE,
+    };
     expect(technicalText(describeAbility(ability))).toContain(
       `Deals ${ability.damage} damage every 0.25s for 2s.`,
     );
@@ -241,8 +255,8 @@ describe('effects are described in the row order', () => {
 });
 
 describe('nothing is invented', () => {
-  it('adds no effect line beyond damage for a row with no effects', () => {
-    const ability = abilityById('melee.heavy');
+  it('adds no effect line beyond damage for a row that only damages', () => {
+    const ability = abilityById('skill.whirlwind');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const effects = describeAbility(ability).lines.filter((line) => line.tone === 'effect');

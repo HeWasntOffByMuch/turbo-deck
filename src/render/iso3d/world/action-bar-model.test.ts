@@ -13,7 +13,7 @@ import { abilityIconFor, UNKNOWN_ABILITY_ICON } from './character-model.js';
 import { VIAL_ABILITY_ID, buildActionBar } from './action-bar.js';
 import { actionBarViewOf, type ActionBarSource } from './action-bar-model.js';
 
-const BAR = buildActionBar(['melee.heavy', null, 'ground.quake', null]);
+const BAR = buildActionBar(['skill.stunningBlow', null, 'skill.blight', null]);
 
 const STATS: EffectiveStats = {
   maxHealth: 138,
@@ -57,9 +57,9 @@ describe('actionBarViewOf (spec 196)', () => {
   it('fills a slot from the plan and leaves an empty one empty', () => {
     const view = actionBarViewOf(source());
     expect(view.slots).toHaveLength(BAR.length);
-    expect(view.slots[0]?.ability?.id).toBe('melee.heavy');
+    expect(view.slots[0]?.ability?.id).toBe('skill.stunningBlow');
     expect(view.slots[1]?.ability).toBeNull();
-    expect(view.slots[2]?.ability?.id).toBe('ground.quake');
+    expect(view.slots[2]?.ability?.id).toBe('skill.blight');
     expect(view.slots[4]?.ability?.id).toBe(VIAL_ABILITY_ID);
   });
 
@@ -97,7 +97,7 @@ describe('actionBarViewOf (spec 196)', () => {
     const view = actionBarViewOf(source());
     const lines = view.slots[0]?.hint ?? [];
     expect(lines.length).toBeGreaterThan(1);
-    expect(lines[0]?.text).toBe(abilityById('melee.heavy')?.name);
+    expect(lines[0]?.text).toBe(abilityById('skill.stunningBlow')?.name);
     // Every line past the name carries a colour token; the name takes the
     // tooltip's own.
     expect(lines.slice(1).every((line) => (line.colorToken ?? '').length > 0)).toBe(true);
@@ -131,16 +131,16 @@ describe('actionBarViewOf (spec 196)', () => {
   });
 
   it('drains the wedge against the tick being drawn', () => {
-    const heavy = abilityById('melee.heavy');
-    if (!heavy) throw new Error('no melee.heavy');
+    const heavy = abilityById('skill.stunningBlow');
+    if (!heavy) throw new Error('no skill.stunningBlow');
     const half = Math.round(heavy.cooldownTicks / 2);
-    const view = actionBarViewOf(source({ cooldowns: { 'melee.heavy': 100 }, tick: 100 - half }));
+    const view = actionBarViewOf(source({ cooldowns: { 'skill.stunningBlow': 100 }, tick: 100 - half }));
     expect(view.slots[0]?.ability?.sweep).toBeCloseTo(half / heavy.cooldownTicks, 2);
     expect(view.slots[0]?.ability?.secondsLeft).toBeCloseTo(half / 60, 2);
   });
 
   it('is not on cooldown once the tick has passed the ready tick', () => {
-    const view = actionBarViewOf(source({ cooldowns: { 'melee.heavy': 100 }, tick: 140 }));
+    const view = actionBarViewOf(source({ cooldowns: { 'skill.stunningBlow': 100 }, tick: 140 }));
     expect(view.slots[0]?.ability?.sweep).toBe(0);
     expect(view.slots[0]?.ability?.secondsLeft).toBe(0);
   });
@@ -153,29 +153,29 @@ describe('actionBarViewOf (spec 196)', () => {
   it('lights an aimed slot ahead of a casting one, and a casting one ahead of a request', () => {
     const aimed = actionBarViewOf(
       source({
-        aimingAbilityId: 'ground.quake',
-        casts: [{ entityId: 1, abilityId: 'ground.quake' }],
-        requestedAbilityId: 'ground.quake',
+        aimingAbilityId: 'skill.blight',
+        casts: [{ entityId: 1, abilityId: 'skill.blight' }],
+        requestedAbilityId: 'skill.blight',
       }),
     );
     expect(aimed.slots[2]?.highlight).toBe('aimed');
 
     const casting = actionBarViewOf(
       source({
-        casts: [{ entityId: 1, abilityId: 'ground.quake' }],
-        requestedAbilityId: 'ground.quake',
+        casts: [{ entityId: 1, abilityId: 'skill.blight' }],
+        requestedAbilityId: 'skill.blight',
       }),
     );
     expect(casting.slots[2]?.highlight).toBe('casting');
 
-    const requested = actionBarViewOf(source({ requestedAbilityId: 'ground.quake' }));
+    const requested = actionBarViewOf(source({ requestedAbilityId: 'skill.blight' }));
     expect(requested.slots[2]?.highlight).toBe('requested');
 
     expect(actionBarViewOf(source()).slots[2]?.highlight).toBeNull();
   });
 
   it("does not light a slot for somebody else's cast", () => {
-    const view = actionBarViewOf(source({ casts: [{ entityId: 9, abilityId: 'ground.quake' }] }));
+    const view = actionBarViewOf(source({ casts: [{ entityId: 9, abilityId: 'skill.blight' }] }));
     expect(view.slots[2]?.highlight).toBeNull();
   });
 

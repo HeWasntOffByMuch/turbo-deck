@@ -3,8 +3,7 @@ import { castBar } from './cast.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { CastPhaseValue } from '../../../server/net/protocol.js';
 
-const heavy = abilityById('melee.heavy');
-const drain = abilityById('channel.drain');
+const heavy = abilityById('skill.stunningBlow');
 
 describe('castBar', () => {
   it('fills across the wind-up and is cancellable the whole way', () => {
@@ -41,13 +40,17 @@ describe('castBar', () => {
     expect(b).toBeGreaterThan(a);
   });
 
+  // No shipped row is `kind: 'channel'` any more (spec 231), and this test does
+  // not need one: `castBar` reads the *phase* off the cast and the ticks either
+  // side of it, so what is under test is `CastPhaseValue.Channel` rather than
+  // the ability's kind. The last case in this file always drove it that way.
   it('fills across a channel between its release and its end', () => {
-    expect(drain).not.toBeNull();
-    if (!drain) return;
+    expect(heavy).not.toBeNull();
+    if (!heavy) return;
     const cast = {
-      abilityId: drain.id,
+      abilityId: heavy.id,
       phase: CastPhaseValue.Channel,
-      startTick: 500 - drain.windupTicks,
+      startTick: 500 - heavy.windupTicks,
       releaseTick: 500,
       endTick: 620,
     };
@@ -93,7 +96,7 @@ describe('turning', () => {
    */
   it('shows an empty, cancellable bar whatever the provisional release says', () => {
     const cast = {
-      abilityId: 'melee.heavy',
+      abilityId: 'skill.stunningBlow',
       phase: CastPhaseValue.Turning,
       startTick: 60,
       releaseTick: 100,
@@ -109,7 +112,7 @@ describe('turning', () => {
 
   it('is the only phase that reports turning', () => {
     for (const phase of [CastPhaseValue.Windup, CastPhaseValue.Channel]) {
-      const cast = { abilityId: 'melee.heavy', phase, startTick: 60, releaseTick: 100, endTick: 140 };
+      const cast = { abilityId: 'skill.stunningBlow', phase, startTick: 60, releaseTick: 100, endTick: 140 };
       expect(castBar(cast, 100).turning).toBe(false);
     }
   });

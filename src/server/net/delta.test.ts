@@ -321,9 +321,9 @@ describe('statuses on the wire (spec 186)', () => {
     const tracker = new DeltaTracker();
     const delta = tracker.build(1, 0, [
       carrying(7, {
-        [adaptedKey('bolt.arcane')]: { expiresAtTick: 300, stacks: 2, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
+        [adaptedKey('skill.poisonDart')]: { expiresAtTick: 300, stacks: 2, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
         [adaptedKey('melee.slash')]: { expiresAtTick: 400, stacks: 5, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
-        [adaptedKey('ground.quake')]: { expiresAtTick: 500, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
+        [adaptedKey('skill.blight')]: { expiresAtTick: 500, stacks: 1, magnitude: 0, sourceId: 0, appliedAtTick: 0 },
       }),
     ]);
 

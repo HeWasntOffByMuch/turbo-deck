@@ -651,7 +651,7 @@ describe('a cast commits on the input it was asked for', () => {
     await client.hello('alice');
     const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
 
-    for (const abilityId of ['melee.slash', 'melee.heavy']) {
+    for (const abilityId of ['melee.slash', 'skill.acidSpray']) {
       await game.receive(
         client.connection,
         encodeClientMessage({
@@ -670,7 +670,7 @@ describe('a cast commits on the input it was asked for', () => {
     game.tick();
     expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
     game.tick();
-    expect(client.of(ServerMessageType.CastRejected)[0]?.abilityId).toBe('melee.heavy');
+    expect(client.of(ServerMessageType.CastRejected)[0]?.abilityId).toBe('skill.acidSpray');
   });
 });
 

@@ -717,14 +717,20 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  spells cast through this one, and their wind-ups run from
                  `channel.drain`'s 0.5s to `ground.quake`'s 1.4s. So its release
                  is rebased per cast by `unit-driver.ts`'s `clipStretch`, and
-                 `CAST_RELEASE_MS` is **derived rather than chosen**: the pig's
-                 `maxTimeScale` is 2, which puts it in `[0.5 * 1400, 2 * 500]`,
+                 `CAST_RELEASE_MS` was **derived rather than chosen**: the pig's
+                 `maxTimeScale` is 2, which put it in `[0.5 * 1400, 2 * 500]`,
                  and the point in that window minimising the worst stretch is
                  the geometric mean, 837 -- 850 being the nearest value on the
                  50ms grid the other two clips are on, and a whole 60Hz sample
-                 of a 1250ms clip. Worst stretch 1.70x, asserted over the
-                 ability table so a spell authored outside the window fails a
-                 test rather than shipping as a twitch.
+                 of a 1250ms clip.
+                 Spec 231 then removed both of the rows that fixed those ends,
+                 and the number **did not move**, which is the more useful half
+                 of the story: what is asserted is the *bound* -- every spell
+                 within `maxTimeScale` of the release, comfortably at 1.55x --
+                 rather than the optimum, because pinning the optimum means
+                 re-authoring a committed `.glb` every time a spell is added or
+                 removed, for a change in the worst stretch nobody can see. The
+                 four spells left are the sigil ones.
                  Two things in it were learned by getting them wrong, and both
                  are about the *recovery* rather than the cast. **A cast's hands
                  travel further coming home than going out**, because the push
@@ -2611,6 +2617,44 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 Since spec 231 **every ability in that table is reachable by
+                 somebody**, and it is a test rather than a habit: an item grants
+                 it as an active skill, an item or a monster names it as a basic
+                 attack, or it is one of the two the game reaches for directly --
+                 `BASIC_ATTACK_ID` (bare hands, and every melee monster) and the
+                 flask, identified by its `chargeCost` rather than by its id,
+                 because that id lives in the renderer and a second copy of it in
+                 the test is the drift the test exists to catch.
+                 What it caught was spec 062's own starting set, still sitting
+                 there: **nine of twenty-five rows granted by nothing** -- one per
+                 `AbilityKind`, written to exercise the kinds end to end and
+                 explicitly "not to be balanced" -- which spec 188 superseded when
+                 it moved what a player casts onto sigils and which nobody
+                 removed. Seven went (`melee.heavy`, the three bolts,
+                 `ground.quake`, `self.mend`, `channel.drain`); two stayed,
+                 because an item table cannot see what reaches them. They were not
+                 harmless: not being `skill: true` they were castable by any
+                 client that named one, and two of them out-damaged every real
+                 skill, so they were what `npm run balance` had been measuring the
+                 twelve builds with -- the harness reads the sigils now, and the
+                 magic rows in that table dropped by half when it did.
+                 Two things the removal exposed and did not fix. `kind: 'channel'`
+                 has **no rows**, so the whole channel path in `sim/abilities.ts`,
+                 `client/combat.ts` and `data/description.ts` is live and
+                 unreachable from content; taking it out means removing a member
+                 from the middle of `CastPhaseValue`, which renumbers the two after
+                 it, so it is a protocol change and wants its own spec. And
+                 `attackTimingFor` sends a non-basic ability's `cooldownTicks`
+                 through `resolveAttackTiming` as though it were a Base Attack
+                 Time, which clamps it to `MAX_ATTACK_INTERVAL_SECONDS` -- a
+                 constant whose own comment says "nothing in the content reaches
+                 either bound", true of BAT and false here: **twelve of the
+                 fourteen non-basic rows are over five seconds, so every one of
+                 them is really on a five-second cooldown.** Scorched Earth's
+                 authored 24s is 5s. It was invisible while the ability those
+                 tests drove was `melee.heavy`, whose cooldown was inside the
+                 bound; `abilities.test.ts` asserts the clamped value and names it
+                 now, so it is written down rather than assumed.
                  `data/weapon-scaling.ts` is **what a weapon scales with**
                  (spec 216), and it exists because until it did, every weapon in
                  the game scaled the same way and the way was Strength: the two
@@ -2856,7 +2900,9 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  That is the first ownership check the ability system has ever
                  had -- `STARTING_ABILITIES` was exported and read by nothing
                  for a hundred and twenty specs, so any client could send
-                 `ground.quake` on its first tick. And **a swap costs
+                 `ground.quake` on its first tick. Spec 231 removed both: the
+                 list, and the nine rows it named that no sigil, weapon or
+                 monster ever reached. And **a swap costs
                  something**: `player/skill-slots.ts` refuses a move that would
                  empty a slot whose skill is on cooldown (checked over *both*
                  ends, since swapping something in empties a slot as surely as
@@ -4397,7 +4443,11 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  exists and **overrides** the equipped skills rather than being
                  the only way to fill a slot -- a harness that wants
                  `ground.quake` on the bar should not have to loot a sigil for
-                 it first.
+                 it first. (That row is gone since spec 231; the switch is not,
+                 and it is the only way to put a skill on the bar without one --
+                 though the *server* still refuses a `skill: true` ability that
+                 is not in a slot, so `?slots=` now fills the bar rather than
+                 the hands.)
                  Since spec 196 none of that is DOM: the row is
                  `src/ui/screens/action-bar.ts` on the interface canvas, the
                  plan is pushed into the mount rather than into `hud.ts`, and a

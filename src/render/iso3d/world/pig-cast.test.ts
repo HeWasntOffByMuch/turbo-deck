@@ -24,6 +24,9 @@ import { CastPhaseValue, EntityActivity } from '../../../server/net/protocol.js'
 import { loadUnitBundle } from '../../../units/bundle.js';
 import { UnitMachine } from '../../../units/machine.js';
 import { CAST_CLIP_ID, CAST_DURATION_MS, CAST_RELEASE_MS } from '../../../units/pig-cast.js';
+
+/** {@link CAST_RELEASE_MS} in ticks, which is what a wind-up is measured in. */
+const CAST_RELEASE_TICKS = (CAST_RELEASE_MS / 1000) * SERVER_TICK_RATE;
 import {
   attackTriggerFor,
   clipStretch,
@@ -91,12 +94,12 @@ function releaseTickOf(machine: UnitMachine, facts: UnitFacts): number | null {
 
 describe('which animation an ability picks', () => {
   it('focuses for a spell, draws for an arrow and swings for everything else', () => {
-    expect(attackTriggerFor('ground.quake')).toBe(DRIVEN_PARAMETERS.cast);
-    expect(attackTriggerFor('self.mend')).toBe(DRIVEN_PARAMETERS.cast);
-    expect(attackTriggerFor('channel.drain')).toBe(DRIVEN_PARAMETERS.cast);
+    expect(attackTriggerFor('skill.blight')).toBe(DRIVEN_PARAMETERS.cast);
+    expect(attackTriggerFor('skill.rimeTouch')).toBe(DRIVEN_PARAMETERS.cast);
+    expect(attackTriggerFor('skill.scorchedEarth')).toBe(DRIVEN_PARAMETERS.cast);
     expect(attackTriggerFor('ranged.shot')).toBe(DRIVEN_PARAMETERS.shoot);
     expect(attackTriggerFor('melee.slash')).toBe(DRIVEN_PARAMETERS.attack);
-    expect(attackTriggerFor('melee.heavy')).toBe(DRIVEN_PARAMETERS.attack);
+    expect(attackTriggerFor('skill.stunningBlow')).toBe(DRIVEN_PARAMETERS.attack);
     expect(attackTriggerFor(null)).toBe(DRIVEN_PARAMETERS.attack);
     expect(attackTriggerFor('not.an.ability')).toBe(DRIVEN_PARAMETERS.attack);
   });
@@ -138,7 +141,7 @@ describe('the clip is rebased onto the cast it is drawing', () => {
     // Including when the cast fell back to the swing, which is the case a unit
     // with no focus state is in -- it is drawing `slash`, so it gets `slash`'s
     // rate rather than a spell's.
-    expect(clipStretch(DRIVEN_PARAMETERS.attack, 'ground.quake')).toBe(1);
+    expect(clipStretch(DRIVEN_PARAMETERS.attack, 'skill.blight')).toBe(1);
   });
 
   it('is the clip’s own release over the ability’s wind-up', () => {
@@ -165,7 +168,7 @@ describe('the trigger reaches a state', () => {
     driveUnit(machine, idle, null, 10);
     expect(machine.stateId).toBe('idle');
 
-    driveUnit(machine, casting('ground.quake'), idle, 1);
+    driveUnit(machine, casting('skill.blight'), idle, 1);
     expect(machine.stateId).toBe('focus');
   });
 
@@ -187,12 +190,12 @@ describe('the trigger reaches a state', () => {
     driveUnit(machine, running, null, 30);
     expect(machine.stateId).toBe('locomotion');
 
-    const spelling: UnitFacts = { ...casting('self.mend'), speed: 200 };
+    const spelling: UnitFacts = { ...casting('skill.rimeTouch'), speed: 200 };
     driveUnit(machine, spelling, running, 1);
     expect(machine.stateId).toBe('focus');
     // Past the end of the clip, at the rate it is entered at: Mend's wind-up is
     // longer than the clip's own release, so the whole thing is stretched.
-    const rate = clipStretch(DRIVEN_PARAMETERS.cast, 'self.mend');
+    const rate = clipStretch(DRIVEN_PARAMETERS.cast, 'skill.rimeTouch');
     driveUnit(machine, spelling, spelling, Math.ceil(CAST_DURATION_MS / rate / TICK_MS) + 4);
     expect(machine.stateId).toBe('locomotion');
   });
@@ -214,9 +217,9 @@ describe('the trigger reaches a state', () => {
       },
     };
     const machine = new UnitMachine({ unit: withoutFocus, clipLib: value.clipLib, entryStateId: 'idle' });
-    expect(triggerFor(machine, 'ground.quake')).toBe(DRIVEN_PARAMETERS.attack);
+    expect(triggerFor(machine, 'skill.blight')).toBe(DRIVEN_PARAMETERS.attack);
     driveUnit(machine, idle, null, 10);
-    driveUnit(machine, casting('ground.quake'), idle, 1);
+    driveUnit(machine, casting('skill.blight'), idle, 1);
     expect(machine.stateId).toBe('swing');
   });
 
@@ -233,12 +236,12 @@ describe('the trigger reaches a state', () => {
 });
 
 describe('the hands come forward on the tick the spell lands', () => {
-  // The property the whole spec is for, asserted at both ends of the table:
-  // `channel.drain` at 0.5s and `ground.quake` at 1.4s are nearly a factor of
-  // three apart, and the clip's own release is 0.85s, so at rate 1 the picture
-  // would be a third of a second early on one and half a second late on the
-  // other.
-  for (const abilityId of ['channel.drain', 'skill.arcLash', 'skill.blight', 'self.mend', 'ground.quake']) {
+  // The property the whole spec is for, asserted over every spell in the table
+  // rather than a chosen few: `skill.arcLash` at 0.55s and `skill.blight` at
+  // 1.0s are the ends of it, and the clip's own release is 0.85s, so at rate 1
+  // the picture would be a third of a second late on one and a sixth early on
+  // the other.
+  for (const abilityId of ALL_ABILITIES.filter((a) => a.castLook !== undefined).map((a) => a.id)) {
     it(`lands ${abilityId} on its own wind-up`, () => {
       const ability = abilityById(abilityId);
       expect(ability?.castLook).toBe('focus');
@@ -256,8 +259,19 @@ describe('the hands come forward on the tick the spell lands', () => {
     // The control. Same clip, same machine, driven at the rate the scene
     // measures off the wire and nothing else -- which is what shipped before
     // this spec and is what every other clip still gets.
+    //
+    // Run against whichever spell the clip's own release is *furthest* from,
+    // rather than a chosen id: what the rebase is worth is a function of the
+    // table, and the table moves. Compared against the rebased answer rather
+    // than against a threshold, for the same reason.
+    const worst = ALL_ABILITIES.filter((a) => a.castLook !== undefined).sort(
+      (a, b) => Math.abs(CAST_RELEASE_TICKS - b.windupTicks) - Math.abs(CAST_RELEASE_TICKS - a.windupTicks),
+    )[0];
+    expect(worst).toBeDefined();
+    if (!worst) return;
+
     const machine = machineFor();
-    const facts = casting('ground.quake');
+    const facts = casting(worst.id);
     driveUnit(machine, idle, null, 10);
     machine.setActionRate(facts.attackRate);
     machine.trigger(DRIVEN_PARAMETERS.cast);
@@ -265,9 +279,13 @@ describe('the hands come forward on the tick the spell lands', () => {
     for (let tick = 1; tick <= 200 && fired === null; tick += 1) {
       for (const event of machine.step(1)) if (event.name === 'swing.impact') fired = tick;
     }
-    const windup = abilityById('ground.quake')?.windupTicks ?? 0;
     expect(fired).not.toBeNull();
-    expect(Math.abs((fired ?? 0) - windup)).toBeGreaterThan(20);
+
+    const without = Math.abs((fired ?? 0) - worst.windupTicks);
+    const with_ = Math.abs((releaseTickOf(machineFor(), facts) ?? 0) - worst.windupTicks);
+    expect(without).toBeGreaterThan(5);
+    expect(with_).toBeLessThanOrEqual(1);
+    expect(without).toBeGreaterThan(with_ * 5);
   });
 
   it('still tracks a wind-up the sim shortened underneath it', () => {

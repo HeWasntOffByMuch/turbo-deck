@@ -30,9 +30,10 @@ describe('appearanceOf', () => {
     expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'ranged.star' }).look).toBe(
       'shuriken',
     );
-    for (const id of ['bolt.arcane', 'bolt.lob', 'bolt.seek']) {
-      expect(appearanceOf({ kind: EntityKind.Projectile, typeId: id }).look, id).toBe('orb');
-    }
+    // One row rather than the three this used to walk: the arcane bolt, the lob
+    // and the seeking bolt were spec 062's demo set and went with it (spec 231),
+    // so `skill.emberToss` is the only shipped shot that names no look at all.
+    expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'skill.emberToss' }).look).toBe('orb');
     // The staff's shot is the fourth look (spec 218), and the one that is mostly
     // paint: `shot.ts` draws half a collision radius of core and `shot_ember`
     // draws the rest of the silhouette.
@@ -96,7 +97,7 @@ describe('appearanceOf', () => {
 describe('displayName', () => {
   it('names what the tables know and falls back to the id', () => {
     expect(displayName({ kind: EntityKind.Monster, typeId: 'grazer' })).toBe('Grazer');
-    expect(displayName({ kind: EntityKind.Projectile, typeId: 'bolt.arcane' })).toBe('Arcane Bolt');
+    expect(displayName({ kind: EntityKind.Projectile, typeId: 'skill.poisonDart' })).toBe('Poison Dart');
     expect(displayName({ kind: EntityKind.Monster, typeId: 'wyrm' })).toBe('wyrm');
   });
 });

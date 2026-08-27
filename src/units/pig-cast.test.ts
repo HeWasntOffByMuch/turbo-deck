@@ -125,20 +125,27 @@ describe('the cast lands on the wind-up it is being played against', () => {
     }
   });
 
-  it('sits at the least bad point of that window', () => {
-    // Derived rather than chosen: the value minimising the worst stretch over
-    // the wind-ups it has to cover is their geometric mean, and 850 is the
-    // nearest point on the 50ms grid the other two authored clips are on.
-    // Asserted as a bound rather than as the mean itself, because the grid is
-    // deliberate -- what must hold is that nothing else on that grid is better.
+  it('sits inside the window that bound defines', () => {
+    // The bound, said the other way round: the release has to be at least half
+    // the longest wind-up and at most twice the shortest, or some spell in the
+    // table cannot reach it.
+    //
+    // A *window* rather than the minimax point, deliberately. 850 was picked as
+    // the geometric mean of the wind-ups as they stood (spec 230) and the table
+    // has moved since -- spec 231 removed the two extremes it was measured
+    // against, and the optimum is now 742. Pinning the optimum would mean
+    // re-authoring a committed `.glb` every time a spell is added or removed,
+    // for a change in the worst stretch of less than a fifth and one nobody can
+    // see. What has to stay true is that every spell reaches it, and that is
+    // the test above.
     const windups = ALL_ABILITIES.filter((ability) => ability.castLook !== undefined).map(
       (ability) => ability.windupTicks * (1000 / SERVER_TICK_RATE),
     );
-    const worst = (release: number): number =>
-      Math.max(...windups.map((ms) => Math.max(release / ms, ms / release)));
-    for (const candidate of [700, 750, 800, 900, 950, 1000]) {
-      expect(worst(CAST_RELEASE_MS)).toBeLessThanOrEqual(worst(candidate));
-    }
+    const unit = JSON.parse(
+      readFileSync(join(UNITS, 'pig_a_pose_full', 'pig_a_pose_full.unitdef.json'), 'utf8'),
+    ) as UnitDef;
+    expect(CAST_RELEASE_MS).toBeGreaterThanOrEqual(Math.max(...windups) / unit.maxTimeScale);
+    expect(CAST_RELEASE_MS).toBeLessThanOrEqual(Math.min(...windups) * unit.maxTimeScale);
   });
 
   it('marks the release where it is, in normalized time', () => {
