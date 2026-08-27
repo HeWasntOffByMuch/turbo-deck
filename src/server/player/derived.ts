@@ -249,7 +249,7 @@ export function deriveTraits(
   // is multiplied by a flag rather than added to a grant -- Intelligence is
   // worth nothing here until the thing that shapes exists.
   const shaping = t.shapingCostPct > 0 ? 1 : 0;
-  // The three capability flags (spec 237), read once and named, because each
+  // The three capability flags (spec 239), read once and named, because each
   // gates two or three fields below and a repeated `t.grantsX > 0` is three
   // chances to gate one of them differently. See `TraitModifier` for why each
   // exists: in every case the capability used to be *inferred* from a number
@@ -351,7 +351,7 @@ export function deriveTraits(
     spellRangePct,
     shapingCostPct: Math.max(0, t.shapingCostPct * (1 - shapingCostRelief)),
     shapingCostRelief,
-    // **Prepared, and what enables it** (spec 237).
+    // **Prepared, and what enables it** (spec 239).
     //
     // The capability is `grantsPrepared`, a flag, and the two numbers below are
     // *deltas onto the base in `SCALING`*. That is the whole fix: they were the
@@ -374,7 +374,7 @@ export function deriveTraits(
     vsAfflictedPct: Math.max(0, t.vsAfflictedPct),
     appliesSundered: t.appliesSundered > 0 ? 1 : 0,
     // **Arcane Overflow's price, which progression may only ever lower**
-    // (spec 237).
+    // (spec 239).
     //
     // The summed field decides *whether* you have Overflow and nothing else;
     // the rate itself comes from `SCALING`, and the only thing that moves it is
@@ -405,7 +405,7 @@ export function deriveTraits(
     secondWindHeal: clamp(t.secondWindHeal, 0, 0.5),
     resoluteBelow: t.resoluteReduction > 0 ? Math.max(0.3, t.resoluteBelow) : 0,
     resoluteReduction: clamp(t.resoluteReduction, 0, 0.4),
-    // **Granted, never inferred** (spec 237). This used to be `resoluteBelow`'s
+    // **Granted, never inferred** (spec 239). This used to be `resoluteBelow`'s
     // twin -- `isResolute` answered both questions -- so the Constitution 25
     // skill, whose entire grant is a damage reduction and whose description
     // says the execute range is where you get harder, also handed out complete
@@ -420,7 +420,7 @@ export function deriveTraits(
     weakPointMultiplier: Math.max(1, weakPointMultiplier),
     exposeTicks,
     exposedDamagePct: Math.max(0, t.exposedDamagePct),
-    // **Opening Read, and what enables it** (spec 237). Prepared's fix again,
+    // **Opening Read, and what enables it** (spec 239). Prepared's fix again,
     // for the same reason: the capability was inferred from the *payoff*
     // (`vulnerableWeakPointFactor > 0`), and the Perception 10 skill grants a
     // longer window rather than a bigger payoff -- so it did nothing for the
@@ -455,7 +455,7 @@ export function deriveTraits(
     attunedTicks: Math.max(0, Math.round(t.attunedTicks)),
     attunedCostPct: clamp(t.attunedCostPct, 0, 0.2),
     attunedFromWeakPoints: t.attunedFromWeakPoints > 0 ? 1 : 0,
-    // **Adaptation, and what enables it** (spec 237). The third of the same
+    // **Adaptation, and what enables it** (spec 239). The third of the same
     // shape and the one that was inert twice over: `markTarget` needs a window
     // to record a stack and `adaptationAgainst` needs a cap to read one, and
     // the Wisdom 25 skill granted neither -- only the per-stack size. So it did

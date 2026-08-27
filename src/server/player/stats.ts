@@ -217,7 +217,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   const scalingModifiers = gradeModifiersFrom(bonus);
   const weaponScaling = effectiveScaling(scalingOf(weapon?.scaling, held), scalingModifiers);
   // The three values every grade in the game is resolved against, named once
-  // (spec 231). The weapon folds its own term into the range below; an ability
+  // (spec 238). The weapon folds its own term into the range below; an ability
   // cannot, because which grades apply depends on which ability -- so the sim
   // carries these and resolves per blow, through the same `contributionOf`.
   const scalingAttributes: ScalingAttributes = { strength, agility, intelligence };
@@ -268,15 +268,15 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const armor = armorFromAttributes(attributes, bonus.armor);
 
-  // Spell Power (spec 231).
+  // Spell Power (spec 238).
   //
-  // **Intelligence is deliberately no longer a term in it.** Before spec 231
+  // **Intelligence is deliberately no longer a term in it.** Before spec 238
   // this was `1 + per * Intelligence + bonus` and it multiplied the damage of
   // every non-basic ability in the game, which is how Whirlwind came to be an
   // Intelligence skill. Intelligence now reaches an ability exactly once, as
   // the attribute its declared `intelligence` grade is resolved against, and
   // leaving the per-point term here as well would make an Intelligence ability
-  // quadratic in Intelligence -- the double-count spec 231 exists to prevent.
+  // quadratic in Intelligence -- the double-count spec 238 exists to prevent.
   //
   // What is left is what items and passives grant, and what it now multiplies
   // is the **Intelligence contribution of an ability's scaling** and nothing

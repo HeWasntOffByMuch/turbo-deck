@@ -75,7 +75,7 @@ export function applyHealing(entity: ServerEntity, amount: number, tick: number)
   // Wisdom's salvage is applied to *what is actually left* (spec 156) -- a
   // salvage that read the whole overheal would pay twice for the part
   // Constitution's shield or Wisdom's own conversion had already taken.
-  // **The overheal cascade** (spec 237). Three outlets, each taking from what
+  // **The overheal cascade** (spec 239). Three outlets, each taking from what
   // the one above it left, in a fixed order that is stated once here:
   //
   //   1. Constitution's shield   (`overhealShieldTicks`, capped by `maxShield`)

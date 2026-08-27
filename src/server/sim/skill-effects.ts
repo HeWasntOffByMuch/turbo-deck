@@ -185,7 +185,7 @@ function applyOne(
       // defence -- a Constitution character who is hurt enough to have it is
       // meant to be unstaggerable, and a skill that walked through it would
       // make the trait worth nothing. It is `isUnstaggerable` rather than
-      // `isResolute` since spec 237, so a stun is refused by the milestone that
+      // `isResolute` since spec 239, so a stun is refused by the milestone that
       // grants immunity and not by the skill that grants a damage reduction.
       if (isUnstaggerable(target) || target.health <= 0) return still(target);
       // It still *stamps* the window, so a guard break cannot follow it for
@@ -197,7 +197,7 @@ function applyOne(
 
     case 'applyStatus':
       // **A row that authors no magnitude carries the caster's resolved ability
-      // power** (spec 231), which is the rule `Exposed` and every affliction
+      // power** (spec 238), which is the rule `Exposed` and every affliction
       // already follow: a status usually belongs to somebody *else's* stats, so
       // what it is worth is captured when it lands rather than re-read off
       // whoever happens to be standing there later.

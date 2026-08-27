@@ -87,7 +87,7 @@ function carrier(
     stats: { ...made.stats, spellPower: 1 },
     // The field status with **no magnitude**, which is what
     // `admin:triggerEvent 'field'` produces and therefore the case worth
-    // fixturing: since spec 231 the pass reads the power the field was cast
+    // fixturing: since spec 238 the pass reads the power the field was cast
     // with off this status, and an unstated one is the table's own rate. A
     // fixture that stated one would leave the developer path -- a ring that
     // draws and burns nobody -- untested.

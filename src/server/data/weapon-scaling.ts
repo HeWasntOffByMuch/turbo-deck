@@ -116,7 +116,7 @@ export const UNARMED_SCALING: WeaponScaling = {
 };
 
 /**
- * The attribute values of a body with no progression (spec 231).
+ * The attribute values of a body with no progression (spec 238).
  *
  * Zeros rather than {@link SCALING.startingAttribute}, and the difference is
  * load-bearing: `contributionOf` measures from `above()`, so zeros and fives
@@ -200,7 +200,7 @@ export function damageOf(damage: WeaponDamage | undefined, held: boolean): Weapo
 export const NO_WEAPON = {
   weaponScaling: NO_SCALING,
   scalingModifiers: NO_GRADE_MODIFIERS,
-  // No attributes at all (spec 231), so an ability cast by such a body is worth
+  // No attributes at all (spec 238), so an ability cast by such a body is worth
   // exactly its authored `damage` -- which is what one was worth before that
   // spec, when every `data/monsters.ts` row authored `spellPower: 1`.
   scalingAttributes: NO_SCALING_ATTRIBUTES,

@@ -2896,7 +2896,7 @@ export class GameServer implements AdminHost {
       // stay: death already costs the meter and the run, and taking the Flow or
       // the Attunement somebody built as well is not what it is meant to charge
       // for.
-      // Afflictions, and Second Wind's consumed mark (spec 237). That one is
+      // Afflictions, and Second Wind's consumed mark (spec 239). That one is
       // *inverted* -- carrying it means the comeback has fired and has not come
       // back -- so leaving it would make death the one reset that does not
       // reset it, beside a flask this same line refills.

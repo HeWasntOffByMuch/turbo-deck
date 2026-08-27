@@ -70,7 +70,7 @@ interface Curve {
 }
 
 /**
- * The reference applier: an ability that declares no scaling (spec 231).
+ * The reference applier: an ability that declares no scaling (spec 238).
  *
  * What this script is for is the **row's own curve**, so the applier's power
  * has to be exactly 1 -- an `A`-grade caster would draw a picture of a build

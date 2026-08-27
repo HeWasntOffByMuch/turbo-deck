@@ -30,7 +30,7 @@
  * here adds a percentage to another percentage, which is the arithmetic that
  * makes a system stop being predictable once it has more than three sources.
  *
- * **Offensive sources add; everything else multiplies** (spec 231). There are
+ * **Offensive sources add; everything else multiplies** (spec 238). There are
  * exactly three ways damage can enter a blow -- the ability's flat number, its
  * declared attribute letters, and a fraction of the weapon -- they are summed
  * once in step 3, and nothing below step 3 is a source. That is what makes
@@ -79,7 +79,7 @@ export const RECENTLY_HIT_TICKS = Math.round(SERVER_TICK_RATE * 0.5);
 /** Perfect Exit's own cooldown, so a hit-trade loop cannot fund itself. */
 export const PERFECT_EXIT_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 4);
 // Second Wind used to have a cooldown here beside Perfect Exit's, and it is
-// gone (spec 237). It never once expired: the rule that read it re-armed the
+// gone (spec 239). It never once expired: the rule that read it re-armed the
 // mechanic the moment health climbed back above its threshold, and the comeback
 // itself does that on the tick it fires. What replaced it is not a longer
 // number but a **lifecycle** -- consumed until a rest or a death, the two
@@ -87,7 +87,7 @@ export const PERFECT_EXIT_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 4);
 /**
  * The bounty a Tactician's exposure leaves for everyone else.
  *
- * The id itself moved to {@link StatusId} in spec 238, where the rest of the
+ * The id itself moved to {@link StatusId} in spec 240, where the rest of the
  * well-known ids are; this is the name every caller here already uses.
  */
 export const EXPOSED_BOUNTY: string = StatusId.ExposedBounty;
@@ -150,7 +150,7 @@ export function resolveBlow(
   //
   // The damage roll leads (spec 217), and it is drawn for a blow that carries
   // some of the weapon: a basic attack, or an ability declaring a `weapon`
-  // fraction (spec 231). Conditioning on the ability's own row is safe where
+  // fraction (spec 238). Conditioning on the ability's own row is safe where
   // conditioning on a *chance* would not be -- both are fixed for a given
   // ability id, so two replays of the same inputs always draw the same count.
   // `weakPointChance > 0` below is the shape to be careful of, and it is
@@ -159,12 +159,12 @@ export function resolveBlow(
   // The Rng draw count is protocol, so adding this moved every seeded combat
   // sequence in the tree once. That is the cost of a weapon having damage of
   // its own, and it is paid here rather than smeared over a special case. No
-  // production ability declares a `weapon` fraction today, so spec 231 moved
+  // production ability declares a `weapon` fraction today, so spec 238 moved
   // none of them a second time.
   let rng = rngIn;
   let weaponRoll = 0;
   // A weapon roll is drawn for a basic attack, and for an ability that declares
-  // a `weapon` fraction (spec 231). Both conditions are properties of the *row*
+  // a `weapon` fraction (spec 238). Both conditions are properties of the *row*
   // -- fixed for an ability id -- so two replays of the same inputs draw the
   // same count in the same order, which is the rule this block is written under.
   const weaponFactor = isBasicAttack ? 1 : abilityWeaponFactor(ability.scaling);
@@ -211,7 +211,7 @@ export function resolveBlow(
   // authors `damage: 0` and declares no letters of its own, so `base` is the
   // weapon's rolled range -- which already carries spec 216's attribute term,
   // the flat bonuses and the percentage. That is bit-for-bit what this line did
-  // before spec 231, and `ability-scaling.test.ts` asserts it rather than
+  // before spec 238, and `ability-scaling.test.ts` asserts it rather than
   // leaving it as a claim.
   //
   // **Nothing enters twice, and each addend is why:**
@@ -258,7 +258,7 @@ export function resolveBlow(
   const exposed = statusOf(target.statuses, StatusId.Exposed, tick);
   if (exposed) damage *= 1 + exposed.magnitude;
   // **Catalysis, against a body that is actually suffering from something**
-  // (spec 238). `hasAffliction` reads `data/status-semantics.ts`, which is the
+  // (spec 240). `hasAffliction` reads `data/status-semantics.ts`, which is the
   // one place a status says what kind of thing it is.
   //
   // This used to be a local `afflicted` that returned true if *any* entry on

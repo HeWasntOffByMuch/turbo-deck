@@ -304,9 +304,9 @@ const CASTABLE = STARTING_ABILITIES.map((id) => abilityById(id))
   .sort((a, b) => b.damage - a.damage);
 
 /**
- * What an ability actually hits this body's targets for (spec 231).
+ * What an ability actually hits this body's targets for (spec 238).
  *
- * **Not `ability.damage`.** That is the row's flat number, and since spec 231 an
+ * **Not `ability.damage`.** That is the row's flat number, and since spec 238 an
  * ability's damage is that plus its declared attribute scaling -- so a caster's
  * Quake is half again its authored 7 and a Strength character's Whirlwind is
  * more than double its authored 4. Comparing the authored number against a

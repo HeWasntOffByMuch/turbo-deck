@@ -779,7 +779,7 @@ describe('Stunning Blow stuns every time it lands', () => {
    * worth nothing.
    */
   it('is still refused by a body that has earned its footing', () => {
-    // `staggerImmuneBelow` since spec 237. The earned defence is the milestone
+    // `staggerImmuneBelow` since spec 239. The earned defence is the milestone
     // that says a body cannot be staggered, not the skill that says it takes
     // less damage -- those were one trait and are two.
     const { state, casterId, targetId } = against('ravager');

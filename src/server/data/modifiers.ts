@@ -75,7 +75,7 @@ export interface TraitModifier {
   /** Sums, clamped 0..1: the fraction of the shaping premium removed. */
   readonly shapingCostRelief?: number;
   /**
-   * Grants the **Prepared** mechanic at all (spec 237).
+   * Grants the **Prepared** mechanic at all (spec 239).
    *
    * A capability flag rather than a number, read as `> 0`, which is the pattern
    * `poiseArmorAllCasts` and `preparedMastery` already set. It exists because
@@ -112,7 +112,7 @@ export interface TraitModifier {
   readonly resoluteReduction?: number;
   /**
    * Below this fraction of maximum health, the body **cannot be staggered**
-   * (spec 237).
+   * (spec 239).
    *
    * Split out of `resoluteReduction` because the two are different promises and
    * were one field. `isResolute` gated the damage reduction *and* the stagger
@@ -133,7 +133,7 @@ export interface TraitModifier {
   readonly exposeTicks?: number;
   readonly exposedDamagePct?: number;
   /**
-   * Grants the **Opening Read** mechanic at all (spec 237).
+   * Grants the **Opening Read** mechanic at all (spec 239).
    *
    * The capability flag {@link grantsPrepared} is, for the same reason and with
    * the same history: `deriveTraits` inferred it from
@@ -174,7 +174,7 @@ export interface TraitModifier {
   readonly attunedCostPct?: number;
   readonly attunedFromWeakPoints?: number;
   /**
-   * Grants the **Adaptation** mechanic at all (spec 237).
+   * Grants the **Adaptation** mechanic at all (spec 239).
    *
    * The third of the three, and the one that was inert in two ways at once: the
    * Wisdom 25 skill grants `adaptationPerStack` and neither a window nor a cap,

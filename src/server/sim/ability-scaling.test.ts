@@ -1,5 +1,5 @@
 /**
- * Explicit ability scaling, in the sim (spec 231).
+ * Explicit ability scaling, in the sim (spec 238).
  *
  * The question this file answers is the one the design brief asks a developer to
  * be able to answer about any ability: **what stats scale this, and did anything
@@ -152,7 +152,7 @@ const ONLY = (key: keyof BaseStats): Partial<BaseStats> => ({ [key]: HIGH });
 
 // --------------------------------------------------------------------------
 
-describe('every production ability declares a scaling model (spec 231)', () => {
+describe('every production ability declares a scaling model (spec 238)', () => {
   it('is inspectable, and answers the six questions without reading combat code', () => {
     // Quality bar 1: the model is a property of the row, so this is a table walk
     // rather than an experiment. A row that answered `undefined` to any of these
@@ -224,7 +224,7 @@ describe('every production ability declares a scaling model (spec 231)', () => {
   });
 });
 
-describe('what a blow is worth (spec 231)', () => {
+describe('what a blow is worth (spec 238)', () => {
   it('scales a pure Strength ability with Strength and with nothing else', () => {
     const ability = row({ damage: 10, scaling: { strength: ScalingGrade.A } });
     const base = damageOf(ability, stats());
@@ -321,7 +321,7 @@ describe('what a blow is worth (spec 231)', () => {
   });
 });
 
-describe('spell power reaches Intelligence and nothing else (spec 231)', () => {
+describe('spell power reaches Intelligence and nothing else (spec 238)', () => {
   const withPower = (effective: EffectiveStats, spellPower: number): EffectiveStats => ({
     ...effective,
     spellPower,
@@ -350,7 +350,7 @@ describe('spell power reaches Intelligence and nothing else (spec 231)', () => {
   });
 });
 
-describe('what an affliction is worth (spec 231)', () => {
+describe('what an affliction is worth (spec 238)', () => {
   const attributes = (intelligence: number, strength = 0): ScalingAttributes => ({
     strength,
     agility: 0,

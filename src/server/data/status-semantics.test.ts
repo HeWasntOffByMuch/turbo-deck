@@ -1,5 +1,5 @@
 /**
- * The status taxonomy (spec 238).
+ * The status taxonomy (spec 240).
  *
  * Two kinds of assertion, and the second is the one that keeps the table
  * honest over time.
@@ -44,7 +44,7 @@ function carrying(...ids: readonly string[]): Statuses {
   return statuses;
 }
 
-describe('coverage (spec 238)', () => {
+describe('coverage (spec 240)', () => {
   it('classifies every well-known status id', () => {
     // `StatusId` is the closed half of the vocabulary, so this is exhaustive
     // for it: a status added there and forgotten here fails, rather than
@@ -85,7 +85,7 @@ describe('coverage (spec 238)', () => {
   });
 });
 
-describe('the tags are internally coherent (spec 238)', () => {
+describe('the tags are internally coherent (spec 240)', () => {
   it('makes every affliction harmful', () => {
     for (const row of STATUS_SEMANTICS) {
       if (!row.tags.includes(StatusTag.Affliction)) continue;
@@ -118,7 +118,7 @@ describe('the tags are internally coherent (spec 238)', () => {
   });
 });
 
-describe('the tags agree with the tables beside them (spec 238)', () => {
+describe('the tags agree with the tables beside them (spec 240)', () => {
   it('tags every row of the affliction table as a damage-over-time', () => {
     // The check that stops the two drifting: an affliction added to
     // `data/damage-over-time.ts` and not classified here would be one Catalysis
@@ -149,7 +149,7 @@ describe('the tags agree with the tables beside them (spec 238)', () => {
   });
 });
 
-describe('what counts as an affliction (spec 238)', () => {
+describe('what counts as an affliction (spec 240)', () => {
   it('counts a real one', () => {
     expect(hasAffliction(carrying(StatusId.Poison), TICK)).toBe(true);
     expect(hasAffliction(carrying(StatusId.Sundered), TICK)).toBe(true);

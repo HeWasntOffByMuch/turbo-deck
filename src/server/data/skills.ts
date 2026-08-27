@@ -67,7 +67,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('str.crushingBlows', 'strength', 'Crushing Blows', T1, 3, 'every blow',
     { traits: { poiseDamagePct: 0.18 } },
     'Your blows carry more weight against an enemy’s guard.'),
-  // 0.08 a rank rather than 0.2 (spec 237). Four sources feed `windupPoiseArmor`
+  // 0.08 a rank rather than 0.2 (spec 239). Four sources feed `windupPoiseArmor`
   // and it is capped at 0.9: at 0.2 a rank they summed to 2.0, so the Strength
   // 35 milestone alone pre-spent two thirds of the cap and rank 3 of this was
   // worth nothing at all -- and past Strength 50 the milestones filled it and
@@ -117,7 +117,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('int.shaping', 'intelligence', 'Spell Shaping', T1, 3, 'ground and projectile abilities',
     { traits: { spellRadiusPct: 0.08, spellRangePct: 0.05, shapingCostPct: 0.1 } },
     'Wider and further, at a premium only Efficient Construction pays off.'),
-  // `grantsPrepared` (spec 237). Both of its numbers are *reductions*, so
+  // `grantsPrepared` (spec 239). Both of its numbers are *reductions*, so
   // before this the skill's only effect on `deriveTraits`' old gate
   // (`preparedWindupScale > 0`) was to fail it -- Prepared did not exist for a
   // character who had bought the skill improving Prepared, and would not until
@@ -141,7 +141,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('int.efficientConstruction', 'intelligence', 'Efficient Construction', T2, 3, 'passive',
     { traits: { shapingCostRelief: 0.4 } },
     'Pays off the shaping premium. It can never make an unshaped cast cheaper.'),
-  // Enables Overflow **and relieves it** (spec 237). Both this and the
+  // Enables Overflow **and relieves it** (spec 239). Both this and the
   // Intelligence 50 milestone granted the rate and the two summed, so arriving
   // at the milestone doubled the health an overflow cast costs. The rate is now
   // `SCALING`'s and the only thing either layer moves is the relief, which can
@@ -165,7 +165,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('con.secondWind', 'constitution', 'Second Wind', T2, 3, 'dropping below 30% health',
     { traits: { secondWindBelow: 0, secondWindHeal: 0.12 } },
     'One comeback. It will not fire again until you have climbed back out.'),
-  // Damage reduction, and **only** damage reduction (spec 237). `isResolute`
+  // Damage reduction, and **only** damage reduction (spec 239). `isResolute`
   // gated the reduction and the immunity to guard breaks together, and
   // `deriveTraits` inferred the threshold from the reduction -- so this skill
   // silently handed out complete stagger immunity below 30% health, which is
@@ -188,7 +188,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('per.weakPointStudy', 'perception', 'Weak-Point Study', T1, 3, 'every blow',
     { traits: { weakPointChance: 0.04 } },
     'You know where the seams are.'),
-  // `grantsOpeningRead`, and a real share of the payoff (spec 237). This
+  // `grantsOpeningRead`, and a real share of the payoff (spec 239). This
   // granted a longer Vulnerable window and a factor of **0**, and the window is
   // gated on the factor -- so from Perception 10 to Perception 35 the skill was
   // three purchasable ranks of nothing whatsoever. The window is the skill's
@@ -226,7 +226,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('wis.mastery', 'wisdom', 'Mastery', T2, 3, 'passive',
     { traits: { masteryRelief: 1 } },
     'The advanced techniques of every attribute open a point early, per level.'),
-  // 0.04 a rank (spec 237). `attunedCostPct` is capped at 0.2 and the Wisdom 20
+  // 0.04 a rank (spec 239). `attunedCostPct` is capped at 0.2 and the Wisdom 20
   // milestone already grants 0.08, so at 0.07 rank 2 was half wasted and rank 3
   // was worth nothing -- a rank you could buy, at the tier where the skill first
   // becomes purchasable, whose effective delta was zero. 0.08 + 3 x 0.04 is the
@@ -237,7 +237,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
   skill('wis.conservation', 'wisdom', 'Conservation', T2, 3, 'an ability that connects',
     { traits: { attunedCostPct: 0.04 } },
     'A cast that did something makes the next one cheaper. A wasted one does not.'),
-  // `grantsAdaptation` (spec 237). This granted a per-stack size and neither a
+  // `grantsAdaptation` (spec 239). This granted a per-stack size and neither a
   // window nor a cap, and Adaptation needs both to do anything -- `markTarget`
   // records a stack only with a window and `adaptationAgainst` reads one only
   // under a cap. Three ranks of nothing from Wisdom 25 to Wisdom 35.

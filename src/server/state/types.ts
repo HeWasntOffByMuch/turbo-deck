@@ -410,7 +410,7 @@ export interface TraitStats {
   readonly resoluteReduction: number;
   /**
    * Below this fraction of maximum health, this body cannot be staggered
-   * (spec 237). 0 is "no such protection", which is every body by default.
+   * (spec 239). 0 is "no such protection", which is every body by default.
    *
    * Separate from {@link resoluteReduction} because they are different
    * promises: one is a number, the other is a *rule about what can happen to
@@ -634,7 +634,7 @@ export type ScalingGradeModifiers = Readonly<Record<ScalingAttribute, number>>;
  * The three attribute values a scaling grade is resolved against (spec 216).
  *
  * Declared here beside the grades rather than in `data/weapon-scaling.ts`,
- * because since spec 231 it rides on {@link EffectiveStats} and crosses the
+ * because since spec 238 it rides on {@link EffectiveStats} and crosses the
  * wire -- so the type has to be reachable from the half of the tree that has no
  * business importing a content table.
  */
@@ -749,7 +749,7 @@ export interface EffectiveStats {
    */
   readonly scalingModifiers: ScalingGradeModifiers;
   /**
-   * The three attribute values scaling is resolved against (spec 231).
+   * The three attribute values scaling is resolved against (spec 238).
    *
    * Strength, Agility and Intelligence *after* every grant -- allocation, item
    * bonuses, milestones, synergies -- which is exactly the object

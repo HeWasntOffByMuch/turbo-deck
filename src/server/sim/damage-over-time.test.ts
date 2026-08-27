@@ -111,7 +111,7 @@ function source(id: number): ServerEntity {
 
 /**
  * An Intelligence-scaling ability, for the tests that are about the *applier*
- * (spec 231).
+ * (spec 238).
  *
  * What an affliction is worth stopped being the applier's `spellPower` and
  * became the applying ability's own declared scaling, so a test about "the
@@ -356,7 +356,7 @@ describe('what a pulse is worth', () => {
     const power = abilityEffectPowerOf(ARCANE.scaling, strong.stats);
     // The rule, stated before it is used: an `A` at 50 Intelligence -- 45 points
     // past the start, since `contributionOf` measures from `above()` -- is what
-    // `spellPower` was worth at 50 Intelligence before spec 231, which is the
+    // `spellPower` was worth at 50 Intelligence before spec 238, which is the
     // curve `SCALING.abilityScaling.effectPerPoint` was chosen to preserve.
     expect(power).toBeCloseTo(3, 1);
 

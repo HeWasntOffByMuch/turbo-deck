@@ -1,5 +1,5 @@
 /**
- * What every progression purchase actually does (spec 239).
+ * What every progression purchase actually does (spec 241).
  *
  * `npm run audit:progression`. The instrument for the question `npm run
  * balance` is the wrong shape for: that one fights twelve attribute presets
@@ -57,7 +57,7 @@ function line(row: RankAudit): string {
 
 const report = auditProgression();
 
-console.log('=== progression audit (spec 239) ===\n');
+console.log('=== progression audit (spec 241) ===\n');
 console.log(
   `${String(ALL_SKILLS.length)} skills, ` +
     `${String(ALL_SKILLS.reduce((sum, s) => sum + s.maxLevel, 0))} ranks, ` +
@@ -108,7 +108,7 @@ for (const span of report.growth) {
 if (spans === 0) console.log('  nothing gets worse as any attribute grows.');
 console.log('');
 
-console.log('--- ability scaling (spec 231) ---');
+console.log('--- ability scaling (spec 238) ---');
 console.log(`  ${pad('ability', 24)} ${pad('scaling', 26)} budget`);
 for (const ability of ALL_ABILITIES) {
   const profile = abilityProfileOf(ability.scaling);

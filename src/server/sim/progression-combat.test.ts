@@ -569,7 +569,7 @@ describe('Second Wind', () => {
     expect(again.health).toBe(stats.maxHealth * 0.1);
   });
 
-  it('stays spent however far the body climbs back out (spec 237)', () => {
+  it('stays spent however far the body climbs back out (spec 239)', () => {
     // **The bug this replaced, as the assertion.** The old rule re-armed Second
     // Wind the moment health went back over the threshold -- and the comeback
     // itself does that, on the same tick, because healing 12% of maximum from
@@ -590,7 +590,7 @@ describe('Second Wind', () => {
     expect(hasStatus(later.statuses, StatusId.SecondWindSpent, 100_000)).toBe(true);
   });
 
-  it('cannot be cycled by crossing the threshold again and again (spec 237)', () => {
+  it('cannot be cycled by crossing the threshold again and again (spec 239)', () => {
     // The property stated directly, over the loop that used to work: drop under
     // the threshold, get the comeback, climb out, drop under again. Only the
     // first one pays.
@@ -609,7 +609,7 @@ describe('Second Wind', () => {
     expect(comebacks).toBe(1);
   });
 
-  it('re-arms on a rest, which is the flask’s own reset (spec 237)', () => {
+  it('re-arms on a rest, which is the flask’s own reset (spec 239)', () => {
     const stats = conStats();
     const hurt = { ...body(stats), health: stats.maxHealth * 0.2 };
     const spent = advanceProgression(hurt, 1, false);

@@ -149,7 +149,7 @@ export function pulseAuraFields(
       const row = dotById(field.dotId);
       // The power this field was **cast** with, read off the carrier's own
       // field status -- which is where `applyStatus` snapshotted it when the
-      // skill landed (spec 231). Per field rather than per carrier, because a
+      // skill landed (spec 238). Per field rather than per carrier, because a
       // body carrying two fields carries two independent snapshots.
       //
       // **A magnitude that is not positive means none was stated**, and the
@@ -174,7 +174,7 @@ export function pulseAuraFields(
           statuses: landDot(body.statuses, row, tick, {
             ...fieldLanding(field, statusOf(body.statuses, row.id, tick), tick),
             // The power the field was **cast** with, snapshotted into the
-            // carrier's own field status when the skill landed (spec 231), not
+            // carrier's own field status when the skill landed (spec 238), not
             // the carrier's live spell power. Two changes in one: it is the
             // casting ability's declared letters rather than Intelligence
             // outright, and it is a snapshot rather than a live read -- so a

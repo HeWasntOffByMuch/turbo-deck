@@ -1,5 +1,5 @@
 /**
- * What an *ability* scales with (spec 231).
+ * What an *ability* scales with (spec 238).
  *
  * The counterpart to `data/weapon-scaling.ts`, and deliberately built out of it
  * rather than beside it. Before this, a weapon said which attributes it bought
@@ -194,7 +194,7 @@ export function abilityAttributeBonus(
 
 /**
  * The multiplier an affliction, slow or exposure landed by this ability carries
- * (spec 231).
+ * (spec 238).
  *
  * The other half of the scaling question, and it needed its own answer because
  * these effects are not damage: a Poison's rate, cadence and length are
@@ -303,7 +303,7 @@ export interface AbilityScalingContribution {
   readonly bonus: number;
 }
 
-/** Why an ability hit for what it hit for (spec 231). */
+/** Why an ability hit for what it hit for (spec 238). */
 export interface AbilityScalingBreakdown {
   readonly abilityId: string;
   /** The row's own flat number, before anything is added to it. */

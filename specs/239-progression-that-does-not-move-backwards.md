@@ -1,4 +1,4 @@
-# 237 — Progression that does not move backwards
+# 239 — Progression that does not move backwards
 
 ## Problem
 
@@ -110,4 +110,4 @@ charge it returns, and `respawn` clears it beside the flask it refills.
 - Redesigning the skill trees, the milestones or the pairs. No row is added or
   removed; eight are retuned and four gain a capability flag.
 - Retuning anything not implicated in one of the eight faults.
-- The audit that would have found these. That is spec 239.
+- The audit that would have found these. That is spec 241.

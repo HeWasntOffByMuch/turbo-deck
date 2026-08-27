@@ -200,7 +200,7 @@ export const SCALING = {
     openingReadTicks: seconds(0.75),
     /**
      * What the Perception 35 milestone adds to the Vulnerable weak-point
-     * factor, **as a bonus above 1** (spec 237).
+     * factor, **as a bonus above 1** (spec 239).
      *
      * It was `vulnerableWeakPointFactor: 2` -- a *total* -- and the milestone
      * granted it while the skill granted 0, which is what made the skill inert:
@@ -311,12 +311,12 @@ export const SCALING = {
   },
 
   /**
-   * What an *ability's* own letters are worth (spec 231).
+   * What an *ability's* own letters are worth (spec 238).
    *
    * Deliberately thin, and that is the point: the ladder, the letters and the
    * damage a point buys are all `weaponScaling` above, shared, so an `A` on
    * Whirlwind and an `A` on a sword buy the same damage per point of Strength.
-   * A second ladder here would be the second coefficient language spec 231
+   * A second ladder here would be the second coefficient language spec 238
    * exists to refuse.
    *
    * What an ability does need of its own is the rate for the effects that are
@@ -331,7 +331,7 @@ export const SCALING = {
      * starting attribute, times the grade's coefficient.
      *
      * Chosen to reproduce the curve this replaced rather than to retune it:
-     * before spec 231 an affliction's magnitude was the applier's `spellPower`,
+     * before spec 238 an affliction's magnitude was the applier's `spellPower`,
      * `1 + 0.04 * Intelligence`, which is `3.0` at 50 Intelligence. At `A`
      * (coefficient 0.9) and 45 points above the start this gives `1 + 45 * 0.9
      * * 0.05 = 3.025`, so a fully-specialised caster's Poison is worth what it

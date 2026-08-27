@@ -1510,7 +1510,7 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
   writer.i16(clampStep(stats.scalingModifiers.strength));
   writer.i16(clampStep(stats.scalingModifiers.agility));
   writer.i16(clampStep(stats.scalingModifiers.intelligence));
-  // The three attribute values every grade is resolved against (spec 231).
+  // The three attribute values every grade is resolved against (spec 238).
   //
   // Not redundant with the `attributes` block on the `Stats` message: that one
   // is what has been *allocated*, which is what the sheet's respec reads, and

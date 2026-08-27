@@ -1,4 +1,4 @@
-# 231 — What an ability scales with
+# 238 — What an ability scales with
 
 ## Problem
 

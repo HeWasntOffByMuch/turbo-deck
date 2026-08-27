@@ -233,7 +233,7 @@ export interface AbilityDefinition {
   readonly range: number;
   readonly damage: number;
   /**
-   * What this ability's offence scales with (spec 231).
+   * What this ability's offence scales with (spec 238).
    *
    * Three modes and any combination of them -- its own STR/AGI/INT letters, a
    * fraction of the equipped weapon's own damage, or both -- through the one
@@ -743,7 +743,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 0,
     damage: 4,
     // One turn, all the way round, blade out: a martial skill, and the
-    // worked example in spec 231's brief. Before that spec this was an
+    // worked example in spec 238's brief. Before that spec this was an
     // *Intelligence* ability, because every active ability was.
     scaling: { strength: G.A, agility: G.D },
     area: { shape: 'circle', origin: 'caster', radius: 160, maxTargets: 6 },
@@ -865,7 +865,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 80,
     damage: 2,
     // The finding this spec exists for, in one row: a cut that will not close
-    // is a martial wound, and before spec 231 its Bleed grew with Intelligence
+    // is a martial wound, and before spec 238 its Bleed grew with Intelligence
     // and nothing else. Agility-led because a cut that keeps opening is placed
     // rather than forced.
     scaling: { strength: G.C, agility: G.B },

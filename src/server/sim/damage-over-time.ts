@@ -149,7 +149,7 @@ export function afflictable(entity: ServerEntity): boolean {
  * coefficient, so an affliction is worth what the build that landed it was
  * worth and does not retroactively change when that build does.
  *
- * That power is the **applying ability's own declared scaling** (spec 231), not
+ * That power is the **applying ability's own declared scaling** (spec 238), not
  * the applier's spell power. Before that spec it was `source.stats.spellPower`
  * outright, which meant every affliction in the game was an Intelligence
  * affliction whatever had applied it -- a Rending Cut's Bleed grew with
