@@ -39,10 +39,15 @@ export interface DeathOverlay {
  * which is also `Dead` and would be a second opinion -- the server sets both
  * from the same blow, and a client that read the one the wire quantizes hardest
  * would be the one to disagree first.
+ *
+ * That test moved onto the view as `selfDead` (spec 229), because the legs need
+ * the same answer and two copies of it are two answers: the overlay saying you
+ * are dead while the body walks off is precisely the disagreement this file's
+ * own reasoning is against. All three of its cases survive the move -- a client
+ * that has not been told which body is its own is not dead, and neither is one
+ * whose body is missing from the replicated set, which is what a reconnect looks
+ * like for a frame or two.
  */
 export function deathOverlay(view: ClientView): DeathOverlay | null {
-  if (view.selfEntityId < 0) return null;
-  const self = view.entities.find((entity) => entity.id === view.selfEntityId);
-  if (!self) return null;
-  return self.health <= 0 ? { text: DEATH_TEXT } : null;
+  return view.selfDead ? { text: DEATH_TEXT } : null;
 }

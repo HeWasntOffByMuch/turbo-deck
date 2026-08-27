@@ -1892,6 +1892,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     }
   };
   let aim = { x: 0, y: 0 };
+  /**
+   * Whether this body was a corpse on the previous tick (spec 229).
+   *
+   * An edge, not a level: what a death does to the orders is *drop* them, and a
+   * level would keep dropping them -- which is `cancelCast` on every tick of
+   * every death. The state that has to survive the death is refused rather than
+   * cleared (see `issueOrder`), so the edge cannot be missed by anything filling
+   * the set back up behind it.
+   */
+  let wasDead = false;
   /** The standing move order from the last right-click, in world units. */
   let destination: { x: number; y: number } | null = null;
   /**
@@ -2070,25 +2080,44 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
-   * Everything the body is committed to, dropped in one press (spec 199).
+   * Every *order* the body is under, dropped (specs 199, 229).
    *
    * `dropCommitments` plus the legs: the walk over to a drop, the standing move
-   * order and the route planned for it, and whatever is held. Unconditional --
-   * a stop asked at rest drops nothing, opens nothing and costs nothing, which
-   * is the whole difference from Escape, whose rule is to reach for the menu
-   * when there is nothing to back out of (spec 135). One control that sometimes
-   * opens a menu is enough.
+   * order and the route planned for it. An order is a place the body was told to
+   * go, and this is the list of them -- one list, because two lists of what an
+   * order is are two answers that drift the first time a sixth kind is added,
+   * which is the reasoning `dropCommitments` is already written under.
    *
-   * Nothing new crosses the wire, because stopping is the *absence* of a
-   * request: with `held` empty and no destination, `moveIntent` asks for (0, 0)
-   * and the server stops the body on the next tick it applies. The one thing
-   * that does need saying is already a message, and `cancelCast` sends it.
+   * Nothing new crosses the wire, because dropping an order is the *absence* of
+   * a request: with nothing ordered, `moveIntent` asks for (0, 0) and the server
+   * stops the body on the next tick it applies. The one thing that does need
+   * saying is already a message, and `cancelCast` sends it.
    */
-  function stopEverything(): void {
+  function dropOrders(): void {
     dropCommitments();
     pickupId = null;
     destination = null;
     planner.clear();
+  }
+
+  /**
+   * Everything the body is committed to, dropped in one press (spec 199).
+   *
+   * `dropOrders` plus whatever is held. Unconditional -- a stop asked at rest
+   * drops nothing, opens nothing and costs nothing, which is the whole
+   * difference from Escape, whose rule is to reach for the menu when there is
+   * nothing to back out of (spec 135). One control that sometimes opens a menu
+   * is enough.
+   *
+   * The keys are the one thing this has and a death does not (spec 229), and
+   * the difference is which tense the intent is in: a stop is a **press**, so
+   * the direction somebody is holding through it is one they are being asked
+   * about now and have not let go of. A death is not a press, and a player still
+   * holding a direction when they get back up is expressing it at that moment
+   * rather than having expressed it before they died.
+   */
+  function stopEverything(): void {
+    dropOrders();
     held.clear();
     // The keys and buttons still down when this fired. Without this the walk
     // resumes on its own at the browser's repeat rate; see `disarmed`.
@@ -2413,6 +2442,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   function issueOrder(): void {
     if (!cursor) return;
+    // A corpse takes no orders (spec 229). Here rather than at each of the three
+    // branches below because a tap reaches this same function, so this is the
+    // one place both devices go through -- and because the branch a click on the
+    // ground takes is the one that used to arm a destination the body walked to
+    // the moment it got back up. Refusing is what lets `dropOrders` be an edge:
+    // with nothing able to arm an order while the body is down, the set the
+    // death emptied stays empty until there is a body to fill it.
+    if (client.view().selfDead) return;
     // A confirmed order is already walking, so a new order is an ordinary
     // change of orders and replaces it, the way a new move order replaces an
     // attack target.
@@ -2996,6 +3033,19 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     withdrawIfMarkGone(client.view());
     const view = client.view();
     const me = selfPosition();
+    // And a death drops the orders outright (spec 229), before the three drivers
+    // below get a chance to re-point one -- each of them returns immediately
+    // with nothing to drive, so clearing first is what makes this one line
+    // rather than a rule each of them has to remember.
+    //
+    // On the *transition*, because the orders have to be gone by the respawn and
+    // there is nothing to keep clearing after that: `moveIntent` refuses to walk
+    // a corpse and `issueOrder` refuses to give one a destination, so the set
+    // cannot fill back up while the body is down. Clearing every tick instead
+    // would work and would also mean `cancelCast` on every tick of a death.
+    const deadNow = view.selfDead;
+    if (deadNow && !wasDead) dropOrders();
+    wasDead = deadNow;
     driveCastOrder(view, me);
     driveAutoAttack(view, me);
     drivePickup(view, me);
@@ -3027,6 +3077,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // body that kept turning through its own stagger would be an error the
       // server never corrects.
       staggered: view.selfStaggered,
+      // And a corpse does not walk at all (spec 229). Its own branch rather
+      // than an emergent consequence of the orders above being cleared: a
+      // right-click while dead is refused by `issueOrder`, but the rule that
+      // makes the legs safe is this one, and it is the one that holds whichever
+      // of the five doors into a destination somebody finds next.
+      dead: deadNow,
     });
     if (intent.arrived) {
       destination = null;

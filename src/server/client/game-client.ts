@@ -478,6 +478,21 @@ export interface ClientView {
    */
   readonly selfStaggered: boolean;
   /**
+   * True while this body is at zero health (spec 229).
+   *
+   * Beside {@link selfStaggered} and published for the same reason: the rule
+   * lives once, and a screen cannot come to a different answer than the client
+   * about whether the legs should ask for anything. `death.ts` reads it too, so
+   * the overlay and the movement agree by construction rather than by two
+   * copies of `health <= 0` staying in step.
+   *
+   * False before the first delta and false for a body missing from the
+   * replicated set -- what a reconnect looks like for a frame or two -- which is
+   * the right way round to be wrong: freezing a live player because we cannot
+   * currently see them is worse than a frame of walking.
+   */
+  readonly selfDead: boolean;
+  /**
    * True while a request of ours has been sent and not yet answered (spec 080).
    *
    * The other half of "am I committed", and the half nothing outside this class
@@ -965,10 +980,21 @@ export class GameClient {
     // server, and the divergence is bounded by the round trip rather than by
     // how long the player keeps holding the key.
     //
-    // Zeroed here rather than at the call site so it covers every caller, and
-    // the facing is left alone because the server holds it anyway -- the intent
+    // The facing is left alone because the server holds it anyway -- the intent
     // it drops is dropped whole.
-    const rooted = this.staggeredNow();
+    //
+    // A corpse is the same zero for a stronger reason (spec 229): the server is
+    // not discarding these components, it never reads them -- its movement pass
+    // steps past a body at zero health before intent -- so it emits no
+    // correction either, and a predicted walk while dead is the one mispredict
+    // nothing pulls back. It stands until the respawn teleport: measured, one
+    // second of a standing move order carried a corpse 155 units across its own
+    // screen while every other client watched it lie where it fell.
+    //
+    // Both are zeroed here rather than at the call site so they cover every
+    // caller, which is the half `moveIntent` cannot reach: the bot harness and
+    // the tests build an input themselves.
+    const rooted = this.staggeredNow() || this.deadNow();
     const intended = rooted ? { ...intent, moveX: 0, moveY: 0 } : intent;
     // The slow the server last told us about (spec 188). Carried on the input
     // rather than baked into the predictor, so a replay after a correction
@@ -1494,15 +1520,6 @@ export class GameClient {
   }
 
   /**
-   * Whether this client can see itself inside a poise break's window
-   * (spec 173).
-   *
-   * Asked of the replica rather than of the mirror, because the mirror is built
-   * for `startCast` and this is a movement question -- and asked through the
-   * sim's own {@link staggered}, so the client and the server cannot disagree
-   * about where the window ends.
-   */
-  /**
    * How fast this client believes its own body may move, 0..1 (spec 188).
    *
    * Read off the *replicated* body rather than from anything local, because a
@@ -1516,6 +1533,30 @@ export class GameClient {
     return self?.moveScale ?? 1;
   }
 
+  /**
+   * Whether this client's own body is a corpse (spec 229).
+   *
+   * Health rather than `activity`, which is also `Dead` and would be a second
+   * opinion -- the server writes both from the same blow, and a client reading
+   * the one the wire quantizes hardest would be the one to disagree first. The
+   * same test `death.ts` has always made, moved here so the overlay and the
+   * legs read it from one place.
+   */
+  private deadNow(): boolean {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    if (!self) return false;
+    return self.health <= 0;
+  }
+
+  /**
+   * Whether this client can see itself inside a poise break's window
+   * (spec 173).
+   *
+   * Asked of the replica rather than of the mirror, because the mirror is built
+   * for `startCast` and this is a movement question -- and asked through the
+   * sim's own {@link staggered}, so the client and the server cannot disagree
+   * about where the window ends.
+   */
   private staggeredNow(): boolean {
     const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
     if (!self) return false;
@@ -1897,6 +1938,7 @@ export class GameClient {
       cooldowns: this.visibleCooldowns(),
       selfRoot: this.selfRoot(),
       selfStaggered: this.staggeredNow(),
+      selfDead: this.deadNow(),
       awaitingCast: this.outstandingCasts.length > 0,
       awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),

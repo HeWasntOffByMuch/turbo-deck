@@ -592,3 +592,104 @@ describe('a body turns to what it is putting down (spec 172)', () => {
     expect(intent({ dropAim: { ...ORIGIN }, facing: 1.25 }).facing).toBeCloseTo(1.25, 9);
   });
 });
+
+/**
+ * A corpse does not walk (spec 229).
+ *
+ * The bug this closes is not a mispredicted step, it is a mispredicted step
+ * that is never corrected: `stepWorld`'s movement pass steps past a body at zero
+ * health *before* it reads an intent, so the server neither moves the body nor
+ * says anything about it, and a `Correction` is the only thing that pulls a
+ * predicted position back. Measured before this branch existed, a standing move
+ * order carried a corpse 155 units in one second across its own screen -- a full
+ * second at `MOVE_SPEED` -- while every other client watched it lie where it
+ * fell, and it stayed wrong until the respawn teleport.
+ *
+ * So the ranking is the whole of it, and it is the strongest one in the
+ * function: every branch below can smuggle a step or a turn through, and the
+ * five doors into a destination are not a list anybody should have to keep.
+ */
+describe('a corpse asks for nothing (spec 229)', () => {
+  const HELD_FACING = -0.7;
+
+  it('asks for no movement, whatever is held', () => {
+    const result = intent({
+      dead: true,
+      held: new Set([MOVE_NORTH, MOVE_EAST]),
+      facing: HELD_FACING,
+    });
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+  });
+
+  it('asks for the heading it already has', () => {
+    // The half nothing reconciles, and more starkly than a stagger's: a
+    // `Correction` carries no facing, and for a dead body the server does not
+    // send one at all.
+    expect(intent({ dead: true, held: new Set([MOVE_SOUTH]), facing: HELD_FACING }).facing).toBe(
+      HELD_FACING,
+    );
+  });
+
+  it('outranks a standing move order and its route', () => {
+    // The reported bug, exactly: a right-click before dying, and a body that
+    // gets up and walks to it.
+    const result = intent({
+      dead: true,
+      destination: { x: 900, y: 0 },
+      route: { x: 400, y: 0 },
+      facing: HELD_FACING,
+    });
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+    expect(result.facing).toBe(HELD_FACING);
+  });
+
+  it('outranks a wind-up aim, a drop aim and a standing mark', () => {
+    // Each of the three turns the body, and one of them (`dropAim`) walks it
+    // too. None should arise from a live sim on a corpse; all three are set
+    // from different places on the client, so the ordering is stated rather
+    // than left to whichever branch happens to be written first.
+    for (const over of [
+      { castAim: { x: 500, y: 500 } },
+      { dropAim: { x: 500, y: 500 } },
+      { targetAim: { x: 500, y: 500 } },
+    ]) {
+      const result = intent({ dead: true, facing: HELD_FACING, ...over });
+      expect(result.moveX).toBe(0);
+      expect(result.moveY).toBe(0);
+      expect(result.facing).toBe(HELD_FACING);
+    }
+  });
+
+  it('outranks a stagger, which it can arrive on top of', () => {
+    // A body broken and then killed carries both. They agree about the legs, so
+    // what this pins is that the order between them is decided rather than
+    // incidental -- the two are set from different fields and either could be
+    // written first.
+    const result = intent({
+      dead: true,
+      staggered: true,
+      held: new Set([MOVE_WEST]),
+      facing: HELD_FACING,
+    });
+    expect(result.moveX).toBe(0);
+    expect(result.facing).toBe(HELD_FACING);
+  });
+
+  it('still reports an order it is standing on as spent', () => {
+    // Being dead is not being somewhere. `arrived` answers the destination and
+    // nothing else, so a caller that clears the order on it is right either way.
+    const spent = intent({ dead: true, self: ORIGIN, destination: { x: 0, y: 0 } });
+    expect(spent.arrived).toBe(true);
+    const standing = intent({ dead: true, self: ORIGIN, destination: { x: 900, y: 0 } });
+    expect(standing.arrived).toBe(false);
+  });
+
+  it('changes nothing for a living body', () => {
+    // The field is optional and every call site that has not been told about it
+    // has to behave exactly as it did.
+    const asked = { held: new Set([MOVE_EAST]), destination: { x: 900, y: 0 } };
+    expect(intent({ ...asked, dead: false })).toEqual(intent(asked));
+  });
+});
