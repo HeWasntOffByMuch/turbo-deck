@@ -126,7 +126,24 @@ export const SOUND_DEFAULTS = {
 
 /** The bounds the SFX tab's controls span, and what a parsed document is clamped into. */
 export const SOUND_LIMITS = {
-  volume: { min: 0, max: 2 },
+  /**
+   * Up to 4x, and the ceiling is set by the *library* rather than by taste.
+   *
+   * The bake deliberately does not normalise -- how loud a sound is relative to
+   * the rest of the game is a mix decision and the mix lives in this document,
+   * which is right, and which assumes the document can express the range the
+   * takes actually span. It could not. Measured across the delivered library the
+   * source levels differ by about 14 dB: the sword swings average -12 to -14 dB
+   * and the three arrow takes -19 to -29, so at a 2x (+6 dB) ceiling the bow was
+   * unreachably quiet no matter what anybody typed into the tab. A bow draw
+   * mixed to parity needs about 3.7x.
+   *
+   * Bounded rather than open because a number nobody can hear the top of is not
+   * a control, and because the alternative fix -- normalising at the bake -- is
+   * the one thing the bake refuses to do, since it would write a mix decision
+   * into the asset where nothing downstream could take it back out.
+   */
+  volume: { min: 0, max: 4 },
   /** An octave either way. Past that it is a different sound, not a variation. */
   pitch: { min: 0.5, max: 2 },
   ref: { min: 10, max: 2000 },
