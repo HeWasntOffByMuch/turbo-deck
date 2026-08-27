@@ -34,16 +34,17 @@ import {
   type ClientMessage,
   type StatsMessage,
 } from './messages.js';
-import { ClientMessageType, ServerMessageType } from './protocol.js';
+import { ClientMessageType,
+  ProgressionTarget, ServerMessageType } from './protocol.js';
 
 function built(): PersistedPlayer {
   return {
     id: 'p1',
     displayName: 'P1',
     baseStats: { strength: 31, agility: 12, intelligence: 5, constitution: 27, perception: 18, wisdom: 9 },
-    skills: [
-      { skillId: 'str.crushingBlows', level: 2 },
-      { skillId: 'con.deepReserves', level: 1 },
+    specializations: [
+      { specializationId: 'str.crushingBlows', tier: 2 },
+      { specializationId: 'con.deepReserves', tier: 1 },
     ],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
@@ -52,8 +53,7 @@ function built(): PersistedPlayer {
     currentZone: 'wilds',
     level: 14,
     experience: 220,
-    unspentSkillPoints: 4,
-    unspentAttributePoints: 7,
+    unspentProgressionPoints: 7,
     health: 500,
     resource: 40,
     coins: 90,
@@ -66,11 +66,10 @@ function statsMessage(stats: EffectiveStats, record: PersistedPlayer): StatsMess
     entityId: 12,
     level: record.level,
     experience: record.experience,
-    unspentSkillPoints: record.unspentSkillPoints,
-    skills: record.skills,
+    specializations: record.specializations,
     baseStats: record.baseStats,
     attributes: record.baseStats,
-    unspentAttributePoints: record.unspentAttributePoints,
+    unspentProgressionPoints: record.unspentProgressionPoints,
     stats,
   };
 }
@@ -84,8 +83,8 @@ describe('the Stats message', () => {
     if (decoded.type !== ServerMessageType.Stats) return;
 
     expect(decoded.baseStats).toEqual(record.baseStats);
-    expect(decoded.unspentAttributePoints).toBe(record.unspentAttributePoints);
-    expect(decoded.skills).toEqual(record.skills);
+    expect(decoded.unspentProgressionPoints).toBe(record.unspentProgressionPoints);
+    expect(decoded.specializations).toEqual(record.specializations);
     // Traits are f32 on the wire, so exact equality would be a lie about
     // floats. Every field survives to single precision, which is what a client
     // draws with.
@@ -128,19 +127,20 @@ describe('the Stats message', () => {
       ...NO_WEAPON,
       traits: NEUTRAL_TRAITS,
     };
-    const record = { ...built(), skills: [], baseStats: startingBaseStats() };
+    const record = { ...built(), specializations: [], baseStats: startingBaseStats() };
     const decoded = decodeServerMessage(encodeServerMessage(statsMessage(bare, record)));
     if (decoded.type !== ServerMessageType.Stats) throw new Error('wrong type');
-    expect(decoded.skills).toEqual([]);
+    expect(decoded.specializations).toEqual([]);
     expect(decoded.stats.traits.backswingScale).toBeCloseTo(1, 6);
   });
 });
 
-describe('the three progression requests', () => {
+describe('the two progression requests (spec 244)', () => {
   it('names an attribute by ordinal, and round-trips it', () => {
     for (const key of ATTRIBUTE_KEYS) {
       const message: ClientMessage = {
-        type: ClientMessageType.AllocateAttribute,
+        type: ClientMessageType.SpendProgressionPoint,
+        target: ProgressionTarget.Attribute,
         attribute: ordinalOfAttribute(key),
       };
       const decoded = decodeClientMessage(encodeClientMessage(message));
@@ -150,17 +150,34 @@ describe('the three progression requests', () => {
 
   it('carries nothing at all for a respec', () => {
     const decoded = decodeClientMessage(
-      encodeClientMessage({ type: ClientMessageType.RespecAttributes }),
+      encodeClientMessage({ type: ClientMessageType.RespecProgression }),
     );
-    expect(decoded).toEqual({ type: ClientMessageType.RespecAttributes });
+    expect(decoded).toEqual({ type: ClientMessageType.RespecProgression });
   });
 
-  it('round-trips a stat-skill request', () => {
+  it('round-trips a specialization request', () => {
     const message: ClientMessage = {
-      type: ClientMessageType.SpendSkillPoint,
-      skillId: 'per.weakPointStudy',
+      type: ClientMessageType.SpendProgressionPoint,
+      target: ProgressionTarget.Specialization,
+      specializationId: 'per.weakPointStudy',
     };
     expect(decodeClientMessage(encodeClientMessage(message))).toEqual(message);
+  });
+
+  it('reads an unrecognised target as a specialization, to be refused by id', () => {
+    // Reading it as an attribute ordinal instead would hand a garbage byte to a
+    // table lookup; as an id it reaches `buySpecializationTier` and is refused
+    // by name, which is a refusal somebody can read.
+    const bytes = encodeClientMessage({
+      type: ClientMessageType.SpendProgressionPoint,
+      target: ProgressionTarget.Specialization,
+      specializationId: 'nonsense',
+    });
+    const decoded = decodeClientMessage(bytes);
+    expect(decoded.type).toBe(ClientMessageType.SpendProgressionPoint);
+    if (decoded.type === ClientMessageType.SpendProgressionPoint) {
+      expect(decoded.target).toBe(ProgressionTarget.Specialization);
+    }
   });
 
   it('carries an out-of-range ordinal through to be refused, not clamped', () => {
@@ -168,10 +185,15 @@ describe('the three progression requests', () => {
     // ordinal of 200 has to reach `attributeByOrdinal` and be refused there,
     // where the refusal can be reported.
     const decoded = decodeClientMessage(
-      encodeClientMessage({ type: ClientMessageType.AllocateAttribute, attribute: 200 }),
+      encodeClientMessage({ type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Attribute, attribute: 200 }),
     );
-    expect(decoded.type).toBe(ClientMessageType.AllocateAttribute);
-    if (decoded.type === ClientMessageType.AllocateAttribute) expect(decoded.attribute).toBe(200);
+    expect(decoded.type).toBe(ClientMessageType.SpendProgressionPoint);
+    if (
+      decoded.type === ClientMessageType.SpendProgressionPoint &&
+      decoded.target === ProgressionTarget.Attribute
+    ) {
+      expect(decoded.attribute).toBe(200);
+    }
   });
 });
 
@@ -207,9 +229,9 @@ describe('nothing a client sends carries a stat', () => {
       { type: ClientMessageType.Ping, nonce: 1 },
       { type: ClientMessageType.Equip, slot: 'head', itemId: 'helm.leather' },
       { type: ClientMessageType.Unequip, slot: 'head' },
-      { type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' },
-      { type: ClientMessageType.AllocateAttribute, attribute: 0 },
-      { type: ClientMessageType.RespecAttributes },
+      { type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Specialization, specializationId: 'str.crushingBlows' },
+      { type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Attribute, attribute: 0 },
+      { type: ClientMessageType.RespecProgression },
       { type: ClientMessageType.Chat, text: 'hi' },
       { type: ClientMessageType.CancelCast, afterInputSeq: 3 },
     ];

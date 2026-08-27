@@ -113,7 +113,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     id: 'p1',
     displayName: 'P1',
     baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
-    skills: [],
+    specializations: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     coins: 0,
@@ -122,8 +122,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     currentZone: 'hearth',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 20,
     ...overrides,
@@ -165,14 +164,14 @@ describe('effective stats', () => {
 
   it('counts a skill once per level held', () => {
     // Deep Reserves is +25 health a level, and its gate is 10 Constitution --
-    // which the record has to actually meet, because `sanitizeSkills` drops a
+    // which the record has to actually meet, because `sanitizeSpecializations` drops a
     // skill whose attribute is not there and the levels would silently vanish.
     const held = { strength: 5, agility: 5, intelligence: 5, constitution: 10, perception: 5, wisdom: 5 };
     const one = computeEffectiveStats(
-      player({ baseStats: held, skills: [{ skillId: 'con.deepReserves', level: 1 }] }),
+      player({ baseStats: held, specializations: [{ specializationId: 'con.deepReserves', tier: 1 }] }),
     );
     const three = computeEffectiveStats(
-      player({ baseStats: held, skills: [{ skillId: 'con.deepReserves', level: 3 }] }),
+      player({ baseStats: held, specializations: [{ specializationId: 'con.deepReserves', tier: 3 }] }),
     );
     const bare = computeEffectiveStats(player({ baseStats: held }));
     expect(one.maxHealth - bare.maxHealth).toBeCloseTo(25, 6);
@@ -182,7 +181,7 @@ describe('effective stats', () => {
   it('ignores an item or skill that has left the tables rather than failing to log in', () => {
     const stats = computeEffectiveStats(
       player({
-        skills: [{ skillId: 'deleted.skill', level: 4 }],
+        specializations: [{ specializationId: 'deleted.skill', tier: 4 }],
         equipment: { ...EMPTY_EQUIPMENT, mainHand: 'deleted.item' },
       }),
     );
@@ -412,7 +411,7 @@ describe('effective stats', () => {
     const trained = computeEffectiveStats(
       player({
         baseStats: { strength: 5, agility: 10, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
-        skills: [{ skillId: 'agi.quickRecovery', level: 3 }],
+        specializations: [{ specializationId: 'agi.quickRecovery', tier: 3 }],
       }),
     );
     expect(intervalOf(trained)).toBe(intervalOf(bare));
@@ -598,11 +597,13 @@ describe('persistence never carries a derived stat', () => {
         'level',
         'position',
         'resource',
-        'skills',
-        // The attribute budget (spec 147). Still nothing derived, which is the
-        // property this test exists to hold rather than the length of the list.
-        'unspentAttributePoints',
-        'unspentSkillPoints',
+        // Ids and tiers, like `equipment` -- what a tier is *worth* stays in
+        // the table and is re-read on every recalculation (spec 244).
+        'specializations',
+        // The one progression budget (specs 147, 244). Still nothing derived,
+        // which is the property this test exists to hold rather than the length
+        // of the list.
+        'unspentProgressionPoints',
       ].sort(),
     );
     expect(saved?.equipment.head).toBe('helm.leather');
@@ -645,7 +646,7 @@ describe('persistence never carries a derived stat', () => {
     const before = await manager.login('p1', 'P1');
     const after = await manager.grantExperience('p1', 10000);
     expect(after?.record.level).toBeGreaterThan(before.record.level);
-    expect(after?.record.unspentSkillPoints).toBeGreaterThan(before.record.unspentSkillPoints);
+    expect(after?.record.unspentProgressionPoints).toBeGreaterThan(before.record.unspentProgressionPoints);
     expect(after?.stats.maxHealth).toBeGreaterThan(before.stats.maxHealth);
   });
 });

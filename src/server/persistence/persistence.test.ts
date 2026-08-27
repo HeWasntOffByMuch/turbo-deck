@@ -11,12 +11,81 @@
 import { describe, expect, it } from 'vitest';
 import { newCharacter } from '../player/player-manager.js';
 import { INVENTORY_SLOTS, type PersistedPlayer } from '../state/types.js';
-import { CorruptPlayerData } from './player-record.js';
+import {
+  CorruptPlayerData,
+  PLAYER_SAVE_VERSION,
+  playerToWrite,
+  rowToPlayer,
+  UnsupportedSaveVersion,
+} from './player-record.js';
 import { managerFor, must, openTestStack } from './testing.js';
 
 function character(id: string, patch: Partial<PersistedPlayer> = {}): PersistedPlayer {
   return { ...newCharacter(id, id, 'hub'), ...patch };
 }
+
+/**
+ * The progression schema, and what a save from before it is worth (spec 244).
+ *
+ * `rowToPlayer` directly rather than through the store, because writing a
+ * version-1 row means writing SQL by hand and the thing under test is the
+ * *decision*, not the driver.
+ */
+describe('the save version', () => {
+  const row = (saveVersion: number, data: string) => ({
+    id: 'p_old',
+    account_id: null,
+    display_name: 'Old',
+    save_version: saveVersion,
+    coins: 10,
+    level: 3,
+    experience: 40,
+    data,
+    created_at: 0,
+    updated_at: 0,
+  });
+
+  it('is 2, and a fresh character round-trips at it', () => {
+    expect(PLAYER_SAVE_VERSION).toBe(2);
+    const write = playerToWrite(character('p_new'));
+    expect(write.saveVersion).toBe(PLAYER_SAVE_VERSION);
+    const back = rowToPlayer(row(write.saveVersion, write.data));
+    expect(back.baseStats).toEqual(character('p_new').baseStats);
+    expect(back.specializations).toEqual([]);
+    expect(back.unspentProgressionPoints).toBe(character('p_new').unspentProgressionPoints);
+  });
+
+  it('refuses a version-1 save by name rather than reinterpreting it', () => {
+    // The whole of the "no migration" decision. A version-1 document holds two
+    // point pools and skill ranks; read as a version-2 one every progression
+    // field silently defaults, which is a character who has lost their build and
+    // cannot tell. It is deliberately not a `CorruptPlayerData` -- corrupt data
+    // is a bug to investigate and this is a stated incompatibility with a
+    // one-line fix, which the message names.
+    const legacy = JSON.stringify({
+      baseStats: { strength: 20, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+      skills: [{ skillId: 'str.crushingBlows', level: 3 }],
+      unspentSkillPoints: 2,
+      unspentAttributePoints: 4,
+    });
+    expect(() => rowToPlayer(row(1, legacy))).toThrow(UnsupportedSaveVersion);
+    try {
+      rowToPlayer(row(1, legacy));
+    } catch (error) {
+      expect(String(error)).toContain('data/game.db');
+    }
+  });
+
+  it('writes no obsolete progression field', () => {
+    const document: unknown = JSON.parse(playerToWrite(character('p_new')).data);
+    const keys = Object.keys(document as Record<string, unknown>);
+    expect(keys).not.toContain('unspentSkillPoints');
+    expect(keys).not.toContain('unspentAttributePoints');
+    expect(keys).not.toContain('skills');
+    expect(keys).toContain('unspentProgressionPoints');
+    expect(keys).toContain('specializations');
+  });
+});
 
 describe('player persistence', () => {
   it('creates a player and loads it again', async () => {
@@ -59,7 +128,7 @@ describe('player persistence', () => {
         experience: 5555,
         position: { x: 42, y: -17, z: 3 },
         facing: 1.25,
-        unspentSkillPoints: 6,
+        unspentProgressionPoints: 6,
       });
 
       const reopened = stack.reopen();
@@ -69,13 +138,13 @@ describe('player persistence', () => {
       expect(loaded?.experience).toBe(5555);
       expect(loaded?.position).toEqual({ x: 42, y: -17, z: 3 });
       expect(loaded?.facing).toBeCloseTo(1.25, 6);
-      expect(loaded?.unspentSkillPoints).toBe(6);
+      expect(loaded?.unspentProgressionPoints).toBe(6);
     } finally {
       stack.dispose();
     }
   });
 
-  it('round-trips a bag, worn gear and a skill allocation exactly', async () => {
+  it('round-trips a bag, worn gear and a specialization tier exactly', async () => {
     const stack = openTestStack();
     try {
       const base = character('p_carol');
@@ -89,7 +158,7 @@ describe('player persistence', () => {
         ...base,
         inventory: bag,
         equipment: { ...base.equipment, trinket: 'ring.plain' },
-        skills: [{ skillId: 'might.cleave', level: 2 }],
+        specializations: [{ specializationId: 'might.cleave', tier: 2 }],
         fallbackCharges: 2,
       });
 
@@ -98,7 +167,7 @@ describe('player persistence', () => {
       expect(loaded.inventory[7]).toEqual({ defId: 'sword.worn', count: 1 });
       expect(loaded.inventory[1]).toBeNull();
       expect(loaded.equipment.trinket).toBe('ring.plain');
-      expect(loaded.skills).toEqual([{ skillId: 'might.cleave', level: 2 }]);
+      expect(loaded.specializations).toEqual([{ specializationId: 'might.cleave', tier: 2 }]);
       expect(loaded.fallbackCharges).toBe(2);
     } finally {
       stack.dispose();

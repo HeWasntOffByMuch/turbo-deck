@@ -15,6 +15,7 @@ import {
   AdminProgressMode,
   AdminReplyType,
   ClientMessageType,
+  ProgressionTarget,
   CorrectionReason,
   EntityField,
   ErrorCode,
@@ -337,32 +338,36 @@ describe('inventory and skills are server-side only', () => {
     // A skill whose attribute gate a fresh character does not meet (spec 147).
     await game.receive(
       client.connection,
-      encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId: 'str.unstoppable' }),
+      encodeClientMessage({ type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Specialization, specializationId: 'str.unstoppable' }),
     );
     expect(client.of(ServerMessageType.Error)[0]?.code).toBe(ErrorCode.RejectedAction);
-    expect(game.playerManager.get('alice')?.record.skills).toEqual([]);
+    expect(game.playerManager.get('alice')?.record.specializations).toEqual([]);
   });
 
   it('accepts a legal one and spends exactly one point', async () => {
     const game = server();
     const client = new Client(game);
     await client.hello('alice');
-    const before = game.playerManager.get('alice')?.record.unspentSkillPoints ?? 0;
+    const before = game.playerManager.get('alice')?.record.unspentProgressionPoints ?? 0;
 
     // Enough Strength for the tier-1 row, placed the way a player would.
     for (let i = 0; i < 5; i++) {
       await game.receive(
         client.connection,
-        encodeClientMessage({ type: ClientMessageType.AllocateAttribute, attribute: 0 }),
+        encodeClientMessage({ type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Attribute, attribute: 0 }),
       );
     }
     await game.receive(
       client.connection,
-      encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' }),
+      encodeClientMessage({ type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Specialization, specializationId: 'str.crushingBlows' }),
     );
     const record = game.playerManager.get('alice')?.record;
-    expect(record?.skills).toEqual([{ skillId: 'str.crushingBlows', level: 1 }]);
-    expect(record?.unspentSkillPoints).toBe(before - 1);
+    expect(record?.specializations).toEqual([{ specializationId: 'str.crushingBlows', tier: 1 }]);
+    // Six points off one pool: five to open the threshold and one for the tier.
+    // It used to be `before - 1`, because the five came out of the *other*
+    // budget -- which is the whole of what spec 244 changed, seen from the wire.
+    expect(record?.unspentProgressionPoints).toBe(before - 6);
+    expect(record?.baseStats.strength).toBe(10);
   });
 });
 

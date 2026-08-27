@@ -54,8 +54,7 @@ class FakeHost implements AdminHost {
       muted: false,
       experience: 0,
       experienceToNextLevel: 50,
-      unspentSkillPoints: 1,
-      unspentAttributePoints: 5,
+      unspentProgressionPoints: 5,
     }));
   }
 

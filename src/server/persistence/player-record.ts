@@ -30,7 +30,7 @@ import {
   type Inventory,
   type ItemStack,
   type PersistedPlayer,
-  type SkillAllocation,
+  type SpecializationAllocation,
   type Vec3,
 } from '../state/types.js';
 import { PLAYER_SAVE_VERSION } from './migrations.js';
@@ -41,6 +41,27 @@ export class CorruptPlayerData extends Error {
     reason: string,
   ) {
     super(`player ${playerId} has unreadable save data: ${reason}`);
+  }
+}
+
+/**
+ * A save written by a build whose progression model this one does not share.
+ *
+ * Its own class rather than a `CorruptPlayerData`, because the two need different
+ * answers: corrupt data is a bug and wants investigating, and this is a *stated*
+ * incompatibility with a one-line fix. The message names the fix, since the only
+ * saves this can fire on are local development characters (spec 244).
+ */
+export class UnsupportedSaveVersion extends Error {
+  constructor(
+    readonly playerId: string,
+    readonly found: number,
+  ) {
+    super(
+      `player ${playerId} has a save at version ${found}, and this build reads ` +
+        `version ${PLAYER_SAVE_VERSION}. Progression was rewritten (spec 244) and old ` +
+        `characters are intentionally not migrated -- delete data/game.db to start fresh.`,
+    );
   }
 }
 
@@ -61,14 +82,13 @@ export interface PlayerRow {
 /** What goes in the `data` column. Everything not worth its own column. */
 interface PlayerDocument {
   readonly baseStats: Record<string, number>;
-  readonly skills: readonly SkillAllocation[];
+  readonly specializations: readonly SpecializationAllocation[];
   readonly equipment: Record<string, string | null>;
   readonly inventory: readonly (ItemStack | null)[];
   readonly position: Vec3;
   readonly facing: number;
   readonly currentZone: string;
-  readonly unspentSkillPoints: number;
-  readonly unspentAttributePoints: number;
+  readonly unspentProgressionPoints: number;
   readonly health: number;
   readonly resource: number;
   readonly fallbackCharges?: number;
@@ -123,15 +143,17 @@ function equipment(value: unknown): Equipment {
   return worn as Equipment;
 }
 
-function skills(value: unknown): readonly SkillAllocation[] {
+function specializations(value: unknown): readonly SpecializationAllocation[] {
   if (!Array.isArray(value)) return [];
-  const out: SkillAllocation[] = [];
+  const out: SpecializationAllocation[] = [];
   for (const entry of value) {
     if (entry === null || typeof entry !== 'object') continue;
     const source = entry as Record<string, unknown>;
-    const skillId = source['skillId'];
-    const level = integer(source['level'], 0);
-    if (typeof skillId === 'string' && skillId.length > 0 && level > 0) out.push({ skillId, level });
+    const specializationId = source['specializationId'];
+    const tier = integer(source['tier'], 0);
+    if (typeof specializationId === 'string' && specializationId.length > 0 && tier > 0) {
+      out.push({ specializationId, tier });
+    }
   }
   return out;
 }
@@ -152,6 +174,14 @@ function baseStats(value: unknown): Record<string, number> {
 }
 
 export function rowToPlayer(row: PlayerRow): PersistedPlayer {
+  // Refused rather than reinterpreted. A version-1 document carries two point
+  // pools and skill ranks; read as a version-2 one every progression field
+  // silently defaults, which is a character who has lost their build and cannot
+  // tell. Failing by name is the honest answer (spec 244).
+  if (row.save_version < PLAYER_SAVE_VERSION) {
+    throw new UnsupportedSaveVersion(row.id, row.save_version);
+  }
+
   let document: PlayerDocument;
   try {
     const parsed: unknown = JSON.parse(row.data);
@@ -171,7 +201,7 @@ export function rowToPlayer(row: PlayerRow): PersistedPlayer {
     // does: `normalizeBaseStats` is the function that decides what a valid
     // spread is, and it runs on the way in from here.
     baseStats: baseStats(document.baseStats) as unknown as PersistedPlayer['baseStats'],
-    skills: skills(document.skills),
+    specializations: specializations(document.specializations),
     equipment: equipment(document.equipment),
     inventory: inventory(document.inventory),
     position: vec3(document.position),
@@ -179,8 +209,7 @@ export function rowToPlayer(row: PlayerRow): PersistedPlayer {
     currentZone: typeof document.currentZone === 'string' ? document.currentZone : '',
     level: Math.max(1, row.level),
     experience: Math.max(0, row.experience),
-    unspentSkillPoints: Math.max(0, integer(document.unspentSkillPoints, 0)),
-    unspentAttributePoints: Math.max(0, integer(document.unspentAttributePoints, 0)),
+    unspentProgressionPoints: Math.max(0, integer(document.unspentProgressionPoints, 0)),
     health: Math.max(0, real(document.health, 0)),
     resource: Math.max(0, real(document.resource, 0)),
     // Left off entirely when it was not stored, never written as `undefined`:
@@ -205,14 +234,13 @@ export interface PlayerWrite {
 export function playerToWrite(player: PersistedPlayer): PlayerWrite {
   const document: PlayerDocument = {
     baseStats: player.baseStats as unknown as Record<string, number>,
-    skills: player.skills ?? [],
+    specializations: player.specializations ?? [],
     equipment: player.equipment as unknown as Record<string, string | null>,
     inventory: player.inventory ?? [],
     position: player.position,
     facing: player.facing,
     currentZone: player.currentZone,
-    unspentSkillPoints: player.unspentSkillPoints,
-    unspentAttributePoints: player.unspentAttributePoints,
+    unspentProgressionPoints: player.unspentProgressionPoints,
     health: player.health,
     resource: player.resource,
     ...(player.fallbackCharges === undefined ? {} : { fallbackCharges: player.fallbackCharges }),

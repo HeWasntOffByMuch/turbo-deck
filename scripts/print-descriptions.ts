@@ -21,10 +21,10 @@
 import { ALL_ABILITIES, abilityById } from '../src/server/data/abilities.js';
 import { ALL_ITEMS } from '../src/server/data/items.js';
 import { STATUS_VISUALS } from '../src/server/data/status-visuals.js';
-import { ALL_SKILLS } from '../src/server/data/skills.js';
+import { ALL_SPECIALIZATIONS } from '../src/server/data/specializations.js';
 import {
   describeAbility,
-  describeStatSkill,
+  describeSpecialization,
   describeStatus,
   type TechnicalDescription,
 } from '../src/server/data/description.js';
@@ -89,8 +89,8 @@ if (only === 'all' || only === 'tree') {
   // somebody looking at an unspent row has. Pass a rank to see the totals.
   const rank = Number(process.argv[3] ?? 0);
   section(`PASSIVE SKILL TREE (rank ${String(rank)})`);
-  for (const skill of ALL_SKILLS) {
-    show(describeStatSkill(skill, rank), skill.id);
+  for (const skill of ALL_SPECIALIZATIONS) {
+    show(describeSpecialization(skill, rank), skill.id);
   }
 }
 

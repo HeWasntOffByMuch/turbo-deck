@@ -47,13 +47,17 @@ import {
 import {
   allocateAttributePoint,
   normalizeBaseStats,
-  reconcileAttributePoints,
-  respecAttributes,
+  reconcileProgressionPoints,
+  respecProgression,
   startingBaseStats,
-  STARTING_ATTRIBUTE_POINTS,
+  STARTING_PROGRESSION_POINTS,
 } from './attributes.js';
 import { resolveProgression } from './progression.js';
-import { sanitizeSkills, spendSkillPoint, type AttributeTotals } from './skills.js';
+import {
+  buySpecializationTier,
+  sanitizeSpecializations,
+  type AttributeTotals,
+} from './specializations.js';
 import type { Holdings } from './trade.js';
 import {
   clampCharges,
@@ -61,7 +65,7 @@ import {
   clampResourceToStats,
   computeEffectiveStats,
 } from './stats.js';
-import { applyLevelEdit, experienceForLevel, SKILL_POINTS_PER_LEVEL } from './levels.js';
+import { applyLevelEdit, experienceForLevel } from './levels.js';
 import { itemById, maxStackOf } from '../data/items.js';
 import { AdminProgressMode, type AdminProgressModeValue } from '../net/protocol.js';
 
@@ -108,7 +112,7 @@ export const STARTING_COINS = 60;
  * because this is where every caller already looks for it. The dependency points
  * that way and not back: `levels.ts` imports nothing from this file.
  */
-export { experienceForLevel, SKILL_POINTS_PER_LEVEL };
+export { experienceForLevel };
 
 /**
  * A loaded record, brought up to spec 147.
@@ -125,19 +129,19 @@ function migrate(loaded: PersistedPlayer): PersistedPlayer {
   return {
     ...loaded,
     baseStats,
-    // A save from before spec 147 holds `might.*`/`finesse.*`/`arcane.*` rows
-    // from the branch-locked tree, which no longer exists. `sanitizeSkills`
-    // drops an id the table does not have, so those go and the points they cost
-    // come back as `unspentSkillPoints` -- nobody is robbed, and nobody is left
-    // holding a skill nothing reads.
-    skills: sanitizeSkills(
-      Array.isArray(loaded.skills) ? loaded.skills : [],
+    // `sanitizeSpecializations` drops an id the table does not have, so a row
+    // removed by a table edit goes and the points it cost come back through
+    // `reconcileProgressionPoints` below -- nobody is robbed, and nobody is left
+    // holding a specialization nothing reads.
+    specializations: sanitizeSpecializations(
+      Array.isArray(loaded.specializations) ? loaded.specializations : [],
       baseStats as unknown as AttributeTotals,
     ),
-    unspentAttributePoints: reconcileAttributePoints(
+    unspentProgressionPoints: reconcileProgressionPoints(
       baseStats,
+      Array.isArray(loaded.specializations) ? loaded.specializations : [],
       loaded.level,
-      loaded.unspentAttributePoints,
+      loaded.unspentProgressionPoints,
     ),
   };
 }
@@ -453,15 +457,16 @@ export class PlayerManager {
    * once it already is.
    */
   private derive(session: PlayerSession): PlayerSession {
-    // Stat skills are re-checked against the *allocated* attributes on every
-    // recalculation (spec 147): a respec, a table edit or a threshold that moved
-    // can all leave a character holding a skill they could not take now, and
-    // there is exactly one place that decides what happens then.
+    // Specializations are re-checked against the *allocated* attributes on every
+    // recalculation (spec 147): a table edit or a threshold that moved can leave
+    // a character holding a tier they could not buy now, and there is exactly one
+    // place that decides what happens then. A respec no longer reaches here --
+    // since spec 244 it refunds the tiers itself, atomically.
     const allocated = resolveProgression(session.record).allocated;
-    const skills = sanitizeSkills(session.record.skills, allocated);
-    const record = skills.length === session.record.skills.length
+    const specializations = sanitizeSpecializations(session.record.specializations, allocated);
+    const record = specializations.length === session.record.specializations.length
       ? session.record
-      : { ...session.record, skills };
+      : { ...session.record, specializations };
     const stats = computeEffectiveStats(record);
     return {
       ...session,
@@ -806,7 +811,7 @@ export class PlayerManager {
   /**
    * Hands every allocated point back, for coins.
    *
-   * Skills are *not* refunded here. `recalculate` runs `sanitizeSkills`
+   * Skills are *not* refunded here. `recalculate` runs `sanitizeSpecializations`
    * against the new allocation, so any skill whose attribute requirement is no
    * longer met is dropped there -- one place that decides what a lost
    * requirement costs, whether it was lost to a respec or to a table edit.
@@ -815,7 +820,7 @@ export class PlayerManager {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
 
-    const outcome = respecAttributes(session.record);
+    const outcome = respecProgression(session.record);
     if (!outcome.ok) return { ok: false, reason: outcome.detail };
 
     this.commit({ ...session, record: outcome.player });
@@ -823,13 +828,16 @@ export class PlayerManager {
     return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
-  /** Validated in `skills.ts`, against the character's live attributes. */
-  async spendSkillPoint(playerId: string, skillId: string): Promise<PlayerActionResult> {
+  /** Validated in `specializations.ts`, against the character's live attributes. */
+  async buySpecializationTier(
+    playerId: string,
+    specializationId: string,
+  ): Promise<PlayerActionResult> {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
 
     const { attributes } = resolveProgression(session.record);
-    const outcome = spendSkillPoint(session.record, attributes, skillId);
+    const outcome = buySpecializationTier(session.record, attributes, specializationId);
     if (!outcome.ok) return { ok: false, reason: outcome.detail };
 
     this.commit({ ...session, record: outcome.player });
@@ -977,7 +985,7 @@ export function newCharacter(playerId: string, displayName: string, zoneId: stri
     id: playerId,
     displayName: displayName || playerId,
     baseStats: startingBaseStats(),
-    skills: [],
+    specializations: [],
     equipment: STARTER_EQUIPMENT,
     inventory: starterInventory(),
     position: DEFAULT_SPAWN,
@@ -985,8 +993,7 @@ export function newCharacter(playerId: string, displayName: string, zoneId: stri
     currentZone: zoneId,
     level: 1,
     experience: 0,
-    unspentSkillPoints: 1,
-    unspentAttributePoints: STARTING_ATTRIBUTE_POINTS,
+    unspentProgressionPoints: STARTING_PROGRESSION_POINTS,
     health: 0,
     resource: 0,
     // `fallbackCharges` is deliberately absent (spec 156), so a brand-new

@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { NEUTRAL_TRAITS } from './derived.js';
-import { ALL_SKILLS } from '../data/skills.js';
+import { ALL_SPECIALIZATIONS } from '../data/specializations.js';
 import {
   auditProgression,
   contextsFor,
@@ -45,9 +45,9 @@ const ALLOWED_RANKS: Readonly<Record<string, string>> = {
   // correctly flags a `down` field going up; this is the one place the game
   // explicitly presents that as the deal.
   ...Object.fromEntries(
-    ALL_SKILLS.filter((skill) => skill.id === 'int.shaping').flatMap((skill) =>
+    ALL_SPECIALIZATIONS.filter((skill) => skill.id === 'int.shaping').flatMap((skill) =>
       contextsFor(skill).flatMap((context) =>
-        Array.from({ length: skill.maxLevel }, (_, index) => [
+        Array.from({ length: skill.maxTier }, (_, index) => [
           `${skill.id} ${String(index)}->${String(index + 1)} @ ${context.attribute} ${String(context.value)}`,
           'the shaping premium is the trade-off the skill is, and it is stated on the row',
         ]),
@@ -101,18 +101,18 @@ describe('the direction table covers what it judges (spec 241)', () => {
 
 describe('every rank checked (spec 241)', () => {
   it('checks every skill at every rank and every legal context', () => {
-    const expected = ALL_SKILLS.reduce(
-      (sum, skill) => sum + skill.maxLevel * contextsFor(skill).length,
+    const expected = ALL_SPECIALIZATIONS.reduce(
+      (sum, skill) => sum + skill.maxTier * contextsFor(skill).length,
       0,
     );
-    expect(report.ranks.length).toBe(expected);
+    expect(report.tiers.length).toBe(expected);
     // And there is something to check: a report over zero skills would pass
     // every assertion below it.
-    expect(report.ranks.length).toBeGreaterThan(100);
+    expect(report.tiers.length).toBeGreaterThan(100);
   });
 
   it('gives every skill at least one context', () => {
-    for (const skill of ALL_SKILLS) {
+    for (const skill of ALL_SPECIALIZATIONS) {
       expect(contextsFor(skill).length, skill.id).toBeGreaterThan(0);
       // The first one is always the value the rank becomes purchasable at,
       // which is the context the brief cares about most.
@@ -150,10 +150,10 @@ describe('no rank is inert, redundant or backwards (spec 241)', () => {
   it('reports the verdicts it is meant to be able to report', () => {
     // A control. Every assertion above is an absence, and an audit that had
     // stopped computing verdicts at all would satisfy all of them.
-    const verdicts = new Set<Verdict>(report.ranks.map((row) => row.verdict));
+    const verdicts = new Set<Verdict>(report.tiers.map((row) => row.verdict));
     expect(verdicts.has('ACTIVE')).toBe(true);
     // And the deltas are real rather than empty: an `ACTIVE` row names what moved.
-    const active = report.ranks.find((row) => row.verdict === 'ACTIVE');
+    const active = report.tiers.find((row) => row.verdict === 'ACTIVE');
     expect(active?.deltas.length).toBeGreaterThan(0);
   });
 });

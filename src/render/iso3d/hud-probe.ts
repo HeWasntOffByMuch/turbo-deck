@@ -156,7 +156,7 @@ const ui = new UiLayer(app, {
   onMove: nothing,
   onDropItem: nothing,
   onSpend: nothing,
-  onAllocate: nothing,
+  onAdvance: nothing,
   onRespec: nothing,
   onBuy: nothing,
   onSell: nothing,
