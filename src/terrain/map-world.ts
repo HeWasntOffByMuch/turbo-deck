@@ -634,6 +634,45 @@ export class MapChunkStore {
     };
   }
 
+  /**
+   * What the ground is made of at a world point, on the topmost layer that has
+   * any (spec 229 follow-up).
+   *
+   * The **baked** material, which is the whole reason this exists rather than
+   * `classify.ts`'s `worldMaterialAt`. That one re-derives from height and slope
+   * with `region: 'default'`, so it reports a hand-painted dirt path as grass
+   * and painted snow as rock -- fine for scattering vegetation over a generated
+   * world, and wrong for anything asking what a body is standing on in a map
+   * somebody edited. Since spec 179 a material is a *choice* a designer made,
+   * and this is the reader for it.
+   *
+   * `null` means "no chunk here holds that cell", not "no material". On a
+   * streaming client that is the ordinary state for ground that has not arrived
+   * yet, and a caller has to treat it as "I do not know" -- never as an answer.
+   *
+   * Topmost-solid, the rule `worldMaterialAt` already uses and `heightAt` is the
+   * other half of: a rock tier over ground is a layer above it, and a body
+   * standing on the tier is standing on the tier's material.
+   */
+  materialAtWorld(x: number, z: number): TerrainMaterial | null {
+    let best: { height: number; material: TerrainMaterial } | null = null;
+    for (const [layerId, layer] of this.layers) {
+      const b = layer.bounds;
+      if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
+      // `Math.round` and not `floor`: a cell is centred on its corner sample,
+      // which is what `chunk.ts` assumes when it maps a column back to a world
+      // x. Flooring shifts every lookup half a cell south-west, which is
+      // invisible in the middle of a field and wrong on every boundary.
+      const col = Math.round((x - layer.origin.x) / this.cellSize);
+      const row = Math.round((z - layer.origin.z) / this.cellSize);
+      const cell = this.cellAt(layerId, col, row);
+      if (!cell || !cell.solid) continue;
+      const height = this.cornerHeight(layerId, col, row);
+      if (!best || height > best.height) best = { height, material: cell.material };
+    }
+    return best ? best.material : null;
+  }
+
   /** Is the layer's global cell solid? What the mesher asks to find real coastlines. */
   cellSolid(layerId: string, col: number, row: number): boolean {
     return this.cellAt(layerId, col, row)?.solid === true;

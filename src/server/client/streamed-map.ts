@@ -24,7 +24,7 @@
 
 import { loadMap, type LoadedMap, type MeshLayer } from '../../terrain/map-world.js';
 import type { TerrainChunk } from '../../terrain/chunk.js';
-import type { TerrainWorld } from '../../terrain/types.js';
+import type { TerrainMaterial, TerrainWorld } from '../../terrain/types.js';
 import { vegetationColliders, type Prop } from '../../terrain/vegetation.js';
 import type { MapInfoMessage } from '../net/map-messages.js';
 import type { ChunkRequest, HeldChunk } from './map-cache.js';
@@ -269,6 +269,18 @@ export class StreamedMap {
   }
 
   /** What the mesher needs to know about each layer. Also live. */
+  /**
+   * What the ground is made of under a world point, or `null` where this client
+   * does not hold that chunk yet (spec 229 follow-up).
+   *
+   * `null` is the state a streaming client is in for everything it has walked
+   * toward and not yet been sent, so a caller has to read it as "I do not know"
+   * and fall back -- never as an answer and never as silence.
+   */
+  materialAt(x: number, z: number): TerrainMaterial | null {
+    return this.loaded.store.materialAtWorld(x, z);
+  }
+
   get meshLayers(): readonly MeshLayer[] {
     return this.loaded.meshLayers;
   }
