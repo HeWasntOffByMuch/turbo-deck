@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "a9de0b0487f942e7ff9f8af73d3640583988245365e458ee2d2f20debaf387c1",
+  "hash": "1e79f5d0ef235a314e0cb8ca94ecdda6e7c859ef2048a96054dc544c593f9fb1",
   "builtStages": [],
   "units": [
     {
@@ -60,8 +60,8 @@
         },
         {
           "path": "biped.core.cliplib.json",
-          "sha256": "d7016f8edf8825a958c77767a67661e0da171e2cd7e94b733c455797c3fba13c",
-          "bytes": 3207
+          "sha256": "d40a4eae83aa05e2a6da44f6ff82c42391d2f5bf80b36a2fced4475c11763388",
+          "bytes": 3203
         },
         {
           "path": "clips/cast.glb",
@@ -111,8 +111,8 @@
       "entries": [
         {
           "path": "pig_a_pose_full/pig_a_pose_full.unitdef.json",
-          "sha256": "1d1122d7dcf42e887e70618a60e236a14fc5d1c9907925fb36e425f61f1f663b",
-          "bytes": 6230
+          "sha256": "4c99cb92101f4295c9bd10b6c02cf00eb08748f0cc4259b6f0df31ebf46568c9",
+          "bytes": 6224
         },
         {
           "path": "pig_a_pose_full/pig_a_pose_full.glb",
@@ -121,8 +121,8 @@
         },
         {
           "path": "biped.core.cliplib.json",
-          "sha256": "d7016f8edf8825a958c77767a67661e0da171e2cd7e94b733c455797c3fba13c",
-          "bytes": 3207
+          "sha256": "d40a4eae83aa05e2a6da44f6ff82c42391d2f5bf80b36a2fced4475c11763388",
+          "bytes": 3203
         },
         {
           "path": "clips/cast.glb",
