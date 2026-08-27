@@ -28,13 +28,15 @@ import {
   soundForAfflictionTick,
   soundForEffect,
   soundForProjectile,
+  soundForProjectileImpact,
+  soundForProjectileLaunch,
   soundForWindup,
   soundsForBlow,
   type BlowFacts,
   type Element,
 } from './audio-wire.js';
 import { isSoundEventId, soundEvent } from '../../audio/events.js';
-import { ABILITIES, ALL_ABILITIES, type ProjectileLook } from '../../../server/data/abilities.js';
+import { ABILITIES, abilityById, ALL_ABILITIES, type ProjectileLook } from '../../../server/data/abilities.js';
 import { ALL_DOTS } from '../../../server/data/damage-over-time.js';
 
 function facts(overrides: Partial<BlowFacts> = {}): BlowFacts {
@@ -294,9 +296,12 @@ describe('soundForWindup', () => {
     // At the wind-up rather than at the contact: a swing is legible because it
     // takes half a second you can read, and one that makes no noise until it
     // lands is a swing with no tell.
+    //
+    // Driven with the look, because that is what `view.ts` passes -- a version
+    // of this that left it off would assert about a call nobody makes.
     for (const ability of ALL_ABILITIES) {
       for (const isHeavy of [false, true]) {
-        const id = soundForWindup(ability.id, isHeavy);
+        const id = soundForWindup(ability.id, isHeavy, ability.projectile?.look ?? null);
         expect(id, `${ability.id} winds up in silence`).not.toBeNull();
         expect(isSoundEventId(id ?? ''), `${ability.id} -> ${id}`).toBe(true);
       }
@@ -305,11 +310,27 @@ describe('soundForWindup', () => {
 
   it('draws the bow and throws the star, rather than swinging both', () => {
     // Both are `projectile` in the table, so `kind` cannot tell them apart.
-    expect(soundForWindup('ranged.shot', false)).toBe('combat.bow.draw');
-    expect(soundForWindup('ranged.star', false)).toBe('combat.throw');
+    expect(soundForWindup('ranged.shot', false, 'arrow')).toBe('combat.bow.draw');
+    expect(soundForWindup('ranged.star', false, 'shuriken')).toBe('combat.throw');
     // ...and neither is a swing at either weight.
-    expect(soundForWindup('ranged.shot', true)).toBe('combat.bow.draw');
-    expect(soundForWindup('ranged.star', true)).toBe('combat.throw');
+    expect(soundForWindup('ranged.shot', true, 'arrow')).toBe('combat.bow.draw');
+    expect(soundForWindup('ranged.star', true, 'shuriken')).toBe('combat.throw');
+  });
+
+  /**
+   * The rule the id-keyed version got wrong, and the reason the look wins.
+   *
+   * `skill.poisonDart` is `look: 'arrow'` and is drawn drawing a bow, because
+   * `unit-driver.ts` picks the animation off the look. Keyed on the ability id
+   * it was heard as an arcane cast, so the body drew a bow and made a spell
+   * noise -- and any arrow ability added later would have fallen through the
+   * physical branch to a sword swing, silently.
+   */
+  it('draws the bow for anything that shoots an arrow, whatever else it is', () => {
+    expect(soundForWindup('skill.poisonDart', false, 'arrow')).toBe('combat.bow.draw');
+    // The element still reaches the player: it is on the impact, which is where
+    // a poison dart's poison actually happens.
+    expect(elementOf('skill.poisonDart')).toBe('poison');
   });
 
   it('tells a light swing from a heavy one', () => {
@@ -320,12 +341,74 @@ describe('soundForWindup', () => {
   it('gives an elemental row its cast instead of a swing, never as well as', () => {
     // A fire staff that whooshed *and* ignited on one press is two attacks'
     // worth of sound for one attack.
+    //
+    // Asked of the rows that are not a physical shot, which is the rule now:
+    // what a body is drawn doing wins, and an arrow is drawn as a bow.
     for (const abilityId of Object.keys(ABILITY_ELEMENTS)) {
+      const look = abilityById(abilityId)?.projectile?.look ?? null;
+      if (look === 'arrow' || look === 'shuriken') continue;
       for (const isHeavy of [false, true]) {
-        const id = soundForWindup(abilityId, isHeavy);
+        const id = soundForWindup(abilityId, isHeavy, look);
         expect(id, abilityId).toMatch(/^elemental\./);
         expect(id, abilityId).not.toMatch(/^combat\./);
       }
+    }
+  });
+
+  it('leaves the ember staff to its element -- it is a staff, not a bow', () => {
+    expect(soundForWindup('ranged.ember', false, 'ember')).toBe('elemental.fire.cast');
+  });
+});
+
+describe('a shot from end to end (spec 229 follow-up)', () => {
+  /**
+   * Three moments, and until this only the first of them was ever heard.
+   *
+   * `combat.projectile.launch` and `combat.projectile.impact` were written as
+   * rows in the vocabulary and fired by nothing at all, so a bow had a draw and
+   * then silence: no loose, and an arrow landing audible only as whatever blow
+   * it happened to cause. The draw alone is the least useful of the three to a
+   * player, because it is the one they already knew about -- they pressed the
+   * button.
+   */
+  it('gives an arrow and a star a loose and a landing', () => {
+    for (const look of ['arrow', 'shuriken']) {
+      expect(soundForProjectileLaunch(look), look).toBe('combat.projectile.launch');
+      expect(soundForProjectileImpact(look), look).toBe('combat.projectile.impact');
+    }
+  });
+
+  /**
+   * The ember is the exception in both tables, and for the same reason each
+   * time: it is not silent, it has *more*. A held travel loop and the server's
+   * own `${ability}.impact` already cover it, so giving it these as well would
+   * be two impacts on one landing.
+   */
+  it('leaves the ember to its own loop and its own impact', () => {
+    expect(soundForProjectileLaunch('ember')).toBeNull();
+    expect(soundForProjectileImpact('ember')).toBeNull();
+    expect(soundForProjectile('ember')).toBe('elemental.fire.travel');
+    // ...and the mirror: a physical shot has no loop, or every arrow in flight
+    // would hold a voice for as long as it flew.
+    expect(soundForProjectile('arrow')).toBeNull();
+    expect(soundForProjectile('shuriken')).toBeNull();
+  });
+
+  it('says nothing about a look it has never heard of', () => {
+    expect(soundForProjectileLaunch('')).toBeNull();
+    expect(soundForProjectileImpact('trebuchet')).toBeNull();
+  });
+
+  it('covers every look the ability table can actually produce', () => {
+    // A look with no row anywhere is a shot that flies in total silence. Either
+    // table may answer it -- the ember's answer is its loop -- but one of them
+    // has to.
+    for (const ability of ALL_ABILITIES) {
+      const look = ability.projectile?.look;
+      if (look === undefined) continue;
+      const heard =
+        soundForProjectileLaunch(look) !== null || soundForProjectile(look) !== null;
+      expect(heard, `${ability.id} throws a silent ${look}`).toBe(true);
     }
   });
 });

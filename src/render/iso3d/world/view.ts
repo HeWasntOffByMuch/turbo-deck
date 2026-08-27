@@ -1696,11 +1696,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const caster = client.view().entities.find((entity) => entity.id === cast.entityId);
     if (!caster) return;
     const ability = abilityById(cast.abilityId);
-    audioDriver.windup(cast.abilityId, (ability?.damage ?? 0) >= HEAVY_ABILITY_DAMAGE, {
-      x: caster.x,
-      y: scene.groundAt(caster.x, caster.y) + BLOOD_HEIGHT,
-      z: caster.y,
-    });
+    audioDriver.windup(
+      cast.abilityId,
+      (ability?.damage ?? 0) >= HEAVY_ABILITY_DAMAGE,
+      {
+        x: caster.x,
+        y: scene.groundAt(caster.x, caster.y) + BLOOD_HEIGHT,
+        z: caster.y,
+      },
+      // What it throws, so a bow is heard being drawn whatever ability drew it
+      // -- the rule `unit-driver.ts` already picks the *animation* by.
+      ability?.projectile?.look ?? null,
+    );
   });
   client.onCastRejected((abilityId, reason) => {
     hud.error(castRefusalText(abilityById(abilityId)?.name ?? abilityId, reason));

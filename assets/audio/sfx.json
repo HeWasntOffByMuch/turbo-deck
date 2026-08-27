@@ -64,6 +64,10 @@
       "volume": 0.7,
       "pitch": { "min": 0.94, "max": 1.04 }
     },
+    "combat.bow.draw": {
+      "variants": ["/audio/elemental/ice/arrow_cast_01.ogg"],
+      "volume": 0.7
+    },
     "combat.throw": {
       "variants": [
         "/audio/combat/swings/punch_01.ogg",
@@ -118,6 +122,14 @@
       "pitch": { "min": 0.72, "max": 0.8 },
       "cooldownMs": 120
     },
+    "combat.projectile.launch": {
+      "variants": ["/audio/elemental/ice/arrow_fly_01.ogg"],
+      "volume": 0.6
+    },
+    "combat.projectile.impact": {
+      "variants": ["/audio/elemental/ice/arrow_hit_01.ogg"],
+      "volume": 0.8
+    },
     "elemental.fire.cast": {
       "variants": [
         "/audio/elemental/fire/cast_01.ogg",
@@ -155,16 +167,12 @@
     "elemental.ice.cast": {
       "variants": [
         "/audio/elemental/ice/cast_01.ogg",
-        "/audio/elemental/ice/arrow_cast_01.ogg",
         "/audio/elemental/ice/glacier_cast_01.ogg"
       ],
       "volume": 0.7
     },
     "elemental.ice.impact": {
-      "variants": [
-        "/audio/elemental/ice/arrow_hit_01.ogg",
-        "/audio/elemental/ice/glacier_impact_01.ogg"
-      ],
+      "variants": ["/audio/elemental/ice/glacier_impact_01.ogg"],
       "volume": 0.8
     },
     "elemental.lightning.cast": {

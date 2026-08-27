@@ -49,6 +49,8 @@ import {
   soundForAfflictionTick,
   soundForEffect,
   soundForProjectile,
+  soundForProjectileImpact,
+  soundForProjectileLaunch,
   soundForWindup,
   soundsForBlow,
   type BlowFacts,
@@ -97,6 +99,18 @@ interface Track {
   /** Which event {@link loop} is playing, so a change of state can restart it. */
   loopId: SoundEventId | null;
   seen: boolean;
+  /**
+   * The impact this body owes when it stops existing, or null.
+   *
+   * A shot's landing has to be played from the sweep, which is the one place
+   * that knows a body has gone -- and the sweep is handed an id and nothing
+   * else. So the *decision* is taken on first sight, when the look is in hand,
+   * and the position is refreshed every frame; what is left at the end is where
+   * it was last seen, which is where it stopped.
+   */
+  endsWith: SoundEventId | null;
+  /** Where it was last seen, for {@link endsWith}. */
+  at: PlayOptions;
 }
 
 export class AudioDriver {
@@ -128,10 +142,23 @@ export class AudioDriver {
    * this body was in the world".
    */
   body(body: AudioBody, drawnTick: number): void {
+    const at: PlayOptions = { x: body.x, y: body.ground + BODY_SOUND_HEIGHT, z: body.z };
+
     let track = this.tracks.get(body.entityId);
     if (!track) {
-      track = { broken: false, loop: 0, loopId: null, seen: true };
+      track = { broken: false, loop: 0, loopId: null, seen: true, endsWith: null, at };
       this.tracks.set(body.entityId, track);
+      // --- the loose ------------------------------------------------------
+      //
+      // A physical projectile's first frame is the frame it was thrown on: the
+      // server creates the entity at the release tick, so first sight *is* the
+      // release and there is no separate message to wait for. Decided here, on
+      // the one frame the look is known to be new, rather than by asking every
+      // frame whether this is still the first one.
+      const look = body.projectileLook ?? '';
+      const launch = soundForProjectileLaunch(look);
+      if (launch !== null) this.audio.play(launch, at);
+      track.endsWith = soundForProjectileImpact(look);
       // First sight is never an edge. A body that walks into view already
       // staggered is not a break somebody watched land -- the rule
       // `StaggerFlinches` states, and the same one that stops a reconnect
@@ -139,8 +166,7 @@ export class AudioDriver {
       track.broken = body.activity === ACTIVITY_STUNNED && drawnTick < body.activityUntilTick;
     }
     track.seen = true;
-
-    const at: PlayOptions = { x: body.x, y: body.ground + BODY_SOUND_HEIGHT, z: body.z };
+    track.at = at;
 
     // --- the edge: a guard breaking ---------------------------------------
     const broken = body.activity === ACTIVITY_STUNNED && drawnTick < body.activityUntilTick;
@@ -186,7 +212,7 @@ export class AudioDriver {
         track.seen = false;
         continue;
       }
-      if (track.loop !== 0) this.audio.stop(track.loop);
+      this.end(track);
       this.tracks.delete(id);
     }
     this.footsteps.sweep();
@@ -195,13 +221,29 @@ export class AudioDriver {
   /** A body has gone. Called from the despawn sweep that already knows. */
   forget(entityId: number): void {
     const track = this.tracks.get(entityId);
-    if (track && track.loop !== 0) this.audio.stop(track.loop);
+    if (track) this.end(track);
     this.tracks.delete(entityId);
     this.footsteps.forget(entityId);
   }
 
+  /**
+   * A body has left: drop what it was holding, and play what it owed.
+   *
+   * One function because there are two doors out -- the sweep and an explicit
+   * `forget` -- and a shot that only made a sound through one of them would be
+   * an arrow that lands audibly or silently depending on which pass noticed
+   * first. Neither can fire twice, because both delete the track.
+   */
+  private end(track: Track): void {
+    if (track.loop !== 0) this.audio.stop(track.loop);
+    if (track.endsWith !== null) this.audio.play(track.endsWith, track.at);
+  }
+
   /** Leaving the tab. Every held loop stopped and every accumulator cleared. */
   stopAll(): void {
+    // Deliberately not `end`: leaving the tab is not a dozen arrows landing at
+    // once. An owed impact is owed to a body that stopped travelling, and this
+    // is the listener stopping instead.
     for (const track of this.tracks.values()) if (track.loop !== 0) this.audio.stop(track.loop);
     if (this.bed !== 0) this.audio.stop(this.bed);
     this.bed = 0;
@@ -251,8 +293,8 @@ export class AudioDriver {
    * is built on a blow being long enough to read and withdraw from, and a swing
    * that makes no sound until it lands has no tell.
    */
-  windup(abilityId: string, isHeavy: boolean, at: PlayOptions): void {
-    const id = soundForWindup(abilityId, isHeavy);
+  windup(abilityId: string, isHeavy: boolean, at: PlayOptions, projectileLook: string | null = null): void {
+    const id = soundForWindup(abilityId, isHeavy, projectileLook);
     if (id !== null) this.audio.play(id, at);
   }
 

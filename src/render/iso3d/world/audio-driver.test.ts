@@ -136,6 +136,11 @@ function ember(over: Partial<AudioBody> = {}): AudioBody {
   return aBody({ projectileLook: 'ember', ...over });
 }
 
+/** An arrow in flight -- a physical shot, which has a loose and a landing. */
+function arrow(over: Partial<AudioBody> = {}): AudioBody {
+  return aBody({ entityId: 31, projectileLook: 'arrow', ...over });
+}
+
 function blowFacts(over: Partial<BlowFacts> = {}): BlowFacts {
   return {
     damage: 12,
@@ -237,12 +242,14 @@ describe('the handle a held loop is', () => {
     const audio = new RecordingAudio();
     const driver = new AudioDriver(audio);
     // An arrow and a star ARE their mesh and an orb is lit from within, which
-    // is the same judgement `shot-vfx.ts` makes about their paint.
+    // is the same judgement `shot-vfx.ts` makes about their paint. A *held*
+    // voice is the claim here: a physical shot fires a one-shot as it leaves,
+    // which is a different thing from carrying a sound across the arena.
     for (const look of ['arrow', 'shuriken', 'orb', null]) {
-      driver.body(aBody({ projectileLook: look }), 0);
+      driver.body(aBody({ entityId: 40 + (look?.length ?? 0), projectileLook: look }), 0);
     }
     expect(audio.holds).toHaveLength(0);
-    expect(audio.played).toHaveLength(0);
+    expect(audio.ids()).toEqual(['combat.projectile.launch', 'combat.projectile.launch']);
   });
 
   it('stops a loop whose body has left, on the sweep, exactly once', () => {
@@ -551,5 +558,91 @@ describe('what the driver holds between frames', () => {
     expect(driver.tracked).toBe(0);
     for (let tick = 1; tick < 10; tick++) driver.body(broken(200), tick);
     expect(audio.countOf('combat.stagger')).toBe(0);
+  });
+});
+
+describe('the three moments a shot has', () => {
+  /**
+   * First sight *is* the release: the server creates the entity on the tick the
+   * arrow leaves, so there is no separate message to wait for and no way for a
+   * client to see one before it was loosed.
+   */
+  it('looses once, on the frame the arrow appears', () => {
+    const audio = new RecordingAudio();
+    const driver = new AudioDriver(audio);
+    for (let frame = 0; frame < 5; frame += 1) {
+      driver.body(arrow({ x: 100 + frame * 30 }), frame);
+      driver.sweep();
+    }
+    expect(audio.countOf('combat.projectile.launch')).toBe(1);
+  });
+
+  it('lands where it was last seen, once, when it stops existing', () => {
+    const audio = new RecordingAudio();
+    const driver = new AudioDriver(audio);
+    driver.body(arrow({ x: 100 }), 0);
+    driver.sweep();
+    driver.body(arrow({ x: 400, z: 55, ground: 20 }), 1);
+    driver.sweep();
+    // Gone: not offered this frame.
+    driver.sweep();
+    expect(audio.countOf('combat.projectile.impact')).toBe(1);
+    const landed = audio.played.find((entry) => entry.id === 'combat.projectile.impact');
+    expect(landed?.options?.x).toBe(400);
+    expect(landed?.options?.z).toBe(55);
+  });
+
+  /**
+   * Two doors out, one sound.
+   *
+   * The despawn sweep calls `forget` and the frame sweep drops anything it did
+   * not see, and an arrow that made a noise through only one of them would land
+   * audibly or silently depending on which pass noticed first. Neither can fire
+   * twice, because both delete the track.
+   */
+  it('lands exactly once whichever way the body leaves', () => {
+    for (const leave of ['forget', 'sweep'] as const) {
+      const audio = new RecordingAudio();
+      const driver = new AudioDriver(audio);
+      driver.body(arrow(), 0);
+      driver.sweep();
+      if (leave === 'forget') driver.forget(31);
+      driver.sweep();
+      driver.sweep();
+      expect(audio.countOf('combat.projectile.impact'), leave).toBe(1);
+    }
+  });
+
+  it('holds no loop for one, and loops the ember without landing it', () => {
+    const audio = new RecordingAudio();
+    const driver = new AudioDriver(audio);
+    driver.body(arrow(), 0);
+    driver.body(ember({ entityId: 32 }), 0);
+    driver.sweep();
+    // The arrow is its own mesh and needs no whistle; the ember is the one that
+    // carries a voice across the arena.
+    expect(audio.heldIds()).toEqual(['elemental.fire.travel']);
+    driver.sweep();
+    driver.sweep();
+    // ...and the ember's landing is the server's own `.impact` message, so it
+    // must not also get the physical one.
+    expect(audio.countOf('combat.projectile.impact')).toBe(1);
+  });
+
+  /**
+   * Leaving the tab is not a dozen arrows landing at once.
+   *
+   * An owed impact is owed to a body that stopped travelling; `stopAll` is the
+   * listener stopping instead, and firing every owed landing into the last
+   * frame before a tab goes away would be a burst of noise on the way out.
+   */
+  it('fires nothing owed when the listener leaves', () => {
+    const audio = new RecordingAudio();
+    const driver = new AudioDriver(audio);
+    driver.body(arrow({ entityId: 1 }), 0);
+    driver.body(arrow({ entityId: 2 }), 0);
+    driver.body(arrow({ entityId: 3 }), 0);
+    driver.stopAll();
+    expect(audio.countOf('combat.projectile.impact')).toBe(0);
   });
 });

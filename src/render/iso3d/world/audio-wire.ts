@@ -198,15 +198,78 @@ const ELEMENT_IMPACTS: Readonly<Record<Element, SoundEventId | null>> = {
  * The two are exclusive on purpose -- a fire staff that whooshed *and* ignited
  * on one press is two attacks' worth of sound for one attack.
  */
-export function soundForWindup(abilityId: string, isHeavy: boolean): SoundEventId | null {
+export function soundForWindup(
+  abilityId: string,
+  isHeavy: boolean,
+  projectileLook: string | null = null,
+): SoundEventId | null {
+  // **The look decides before the element does**, and before the ability id.
+  // What a wind-up sounds like has to agree with what the body is drawn doing,
+  // and `unit-driver.ts` already picks the animation the same way -- an ability
+  // whose projectile look is an arrow is drawn with a bow. Keyed on the id
+  // instead, `skill.poisonDart` is `look: 'arrow'`, drawn drawing a bow, and
+  // heard as an arcane cast; and any future arrow ability is silently a swing,
+  // because the physical branch below falls through to one. A list of ids to
+  // keep in step with the content table is the thing `shot-vfx.ts` refused for
+  // the same reason.
+  const shot = PROJECTILE_WINDUPS[projectileLook ?? ''];
+  if (shot !== undefined) return shot;
+
   const element = elementOf(abilityId);
   if (element !== 'physical') return ELEMENT_CASTS[element];
-  // The two thrown weapons. `ranged.shot` is a bow and `ranged.star` is a
-  // throw, and they are told apart here rather than by `kind` because both are
-  // `projectile` in the table.
-  if (abilityId === 'ranged.shot') return 'combat.bow.draw';
-  if (abilityId === 'ranged.star') return 'combat.throw';
   return isHeavy ? 'combat.swing.heavy' : 'combat.swing.light';
+}
+
+/**
+ * The tell a thrown weapon makes, by what it throws.
+ *
+ * `ember` is deliberately absent: it is a staff, its wind-up is
+ * `elemental.fire.cast`, and it reaches that through the element branch. Absent
+ * rather than null so that "this look has no wind-up of its own" and "this look
+ * is silent" stay different answers.
+ */
+const PROJECTILE_WINDUPS: Readonly<Record<string, SoundEventId>> = {
+  arrow: 'combat.bow.draw',
+  shuriken: 'combat.throw',
+};
+
+/**
+ * The looks that are a physical object in flight, and what they sound like
+ * leaving and landing.
+ *
+ * The other two thirds of a shot. Spec 229 wrote both rows and fired neither,
+ * so a bow had a draw and then nothing at all: no loose, and an arrow landing
+ * heard only as whatever the blow it caused sounded like. Three moments is what
+ * a shot actually is, and the draw alone is the least useful one of them to a
+ * player, because it is the only one they already knew about -- they pressed the
+ * button.
+ *
+ * Absent for `ember`: it is not silent, it has *more* than this -- a held travel
+ * loop and the server's own `${ability}.impact` -- and giving it these as well
+ * would be two impacts on one landing. Which is the rule `soundForProjectile`
+ * states from the other side, and the reason both tables are keyed on the look.
+ */
+const PROJECTILE_LIFE: Readonly<Record<string, { launch: SoundEventId; impact: SoundEventId }>> = {
+  arrow: { launch: 'combat.projectile.launch', impact: 'combat.projectile.impact' },
+  shuriken: { launch: 'combat.projectile.launch', impact: 'combat.projectile.impact' },
+};
+
+/** The loose. Played when a physical projectile is first seen. */
+export function soundForProjectileLaunch(look: string): SoundEventId | null {
+  return PROJECTILE_LIFE[look]?.launch ?? null;
+}
+
+/**
+ * The landing. Played when a physical projectile stops existing.
+ *
+ * Every way a shot ends is "it stopped travelling" -- it hit a body, it hit the
+ * ground, or it outlived `lifetimeTicks` -- and the event's own note says
+ * exactly that, so this deliberately does not try to tell them apart. It has no
+ * way to: an arrow that expires and one that lands both reach the client as an
+ * entity that is no longer in the replicated set.
+ */
+export function soundForProjectileImpact(look: string): SoundEventId | null {
+  return PROJECTILE_LIFE[look]?.impact ?? null;
 }
 
 /**
