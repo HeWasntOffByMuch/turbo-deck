@@ -1823,6 +1823,32 @@ src/render/      the client: a tab shell over the play view, the two tuning
                  the moment touch emulation exists and will not reproduce the
                  device at all; what it is worth is the *wiring* -- point the
                  layout back at a media query and preview-touch says so.
+                 What those four facts cannot do is separate a phone in
+                 desktop-site mode from a **small touchscreen desktop**, and
+                 that is a limit rather than an oversight: both report a
+                 hardware touch count, a fine primary pointer and a frame under
+                 `HANDHELD_MAX_SHORT_SIDE`. A Steam Deck in SteamOS desktop mode
+                 is the second one -- a 1280x800 panel is under 620 once the
+                 browser's chrome and any display scale are off it -- so a
+                 machine with a keyboard attached got the phone frame, and with
+                 one tab left `showsTabButtons` draws no tab strip, which puts
+                 the Studio and the map editor out of reach of the page
+                 entirely. Moving the threshold is the repair that looks
+                 obvious and is wrong: 620 was chosen against a real photograph
+                 of a real phone, and every number above it restores the bug
+                 spec 141 closed. So spec 230 makes the answer **sayable**
+                 instead -- `?frame=desktop` and `?frame=phone`, in the register
+                 `?seed=` and `?perf=noworker` already are. Three rules. It is
+                 applied in `isHandheldDevice` rather than inside `isHandheld`,
+                 because an override is a *person's answer* and `DeviceFacts` is
+                 what the hardware says -- and because every caller comes
+                 through that one function, so the rule that the tab bar, the
+                 HUD and the fullscreen button must agree holds without any of
+                 them learning an override exists. It goes **both ways**, since
+                 forcing the compact frame is how that layout gets looked at
+                 without a phone in your hand. And an unrecognised value
+                 **defers** rather than picking a side, so a misspelling costs
+                 the flag and not the frame.
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
@@ -4717,6 +4743,63 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  for a body that is not in the replicated set at all -- what a
                  reconnect looks like for a frame or two, and where guessing
                  "dead" would put a respawn button in front of a live player.
+                 Since spec 229 that arithmetic is `ClientView.selfDead` and
+                 death.ts is the mapping onto it, for the reason `selfStaggered`
+                 is published rather than recomputed: **the legs need the same
+                 answer**, and an overlay saying you are dead while the body
+                 walks off is exactly the disagreement that module was written
+                 against, one level up.
+                 Which it was doing. `moveIntent` had no death rule at all, so a
+                 player who died holding a move order watched their own body get
+                 up and walk to it -- measured over a loopback, **155 units in
+                 one second**, a full second at `MOVE_SPEED`, while every other
+                 client watched the corpse lie where it fell. The server was
+                 never wrong: `stepWorld`'s movement pass steps past a body at
+                 zero health *before* it reads an intent. That is also the whole
+                 of why it persisted, and the thing worth remembering here -- a
+                 `Correction` is the only thing that pulls a mispredicted
+                 position back, and the server emits one out of the movement
+                 pass, so **the one case that never enters that pass is the one
+                 case nothing corrects.** Every other mispredict in this client
+                 is bounded by a round trip; this one was bounded by how far the
+                 order was, and stood until the respawn teleport.
+                 Three rules close it, and the first is the load-bearing one.
+                 **The rule is at the legs**, `moveIntent`'s `dead`, ranked above
+                 `staggered` and so above a held key and every aim: there are
+                 five doors into a destination -- a key, a move order, a chase,
+                 an aim's approach, a pickup walk -- and being dead is a fact
+                 about the body rather than about any of them, so one branch
+                 holds whichever door somebody finds next. (`autoAttack` and
+                 `pickupOrderFor` keep the death rules they have had since specs
+                 080 and 158, because they also decide whether to *ask the server
+                 for something*, which a rule at the legs cannot cover.)
+                 **`sendInput` zeroes the components too**, exactly as it already
+                 does for a stagger, so the cover is every *caller* rather than
+                 every call site -- the bot harness and the tests build an input
+                 themselves and never reach `moveIntent`. The input is still
+                 sent: spec 080's rule that a request gets an answer is what the
+                 cast pass needs in order to refuse a corpse's swing.
+                 And **the orders are dropped at the death**, or the bug simply
+                 arrives through the other door -- the order outlives the body,
+                 so a player put back on the spawn pad sets off for where they
+                 died without asking. `stopEverything` (spec 199) was split
+                 rather than copied, and the difference between its two callers
+                 is one stated thing: a stop is a **press**, so it disarms the
+                 keys physically down through it, and a death is not, so a player
+                 still holding a direction when they get back up is expressing it
+                 at that moment rather than having expressed it before they died.
+                 `issueOrder` refuses while dead for the same reason in the other
+                 direction, which is what lets the drop be an *edge* rather than
+                 a level: with nothing able to arm an order while the body is
+                 down, the set the death emptied stays empty, and a level would
+                 mean `cancelCast` on every tick of every death.
+                 `server/client/death-prediction.test.ts` is the measurement,
+                 over a real loopback, and it reads the **wire** as well as the
+                 prediction -- "stopped predicting" and "stopped claiming" are
+                 two facts and only the second is what the server is protected
+                 by. Its last case is a control, because every other assertion in
+                 it is an absence and a client that had simply stopped sending
+                 anything would pass all of them.
                  `npx tsx scripts/probe-bottom-hud.ts` is the half no headless
                  test can see: the real `createHud` over a fabricated view in a
                  real browser, reading the boxes back off the DOM. It exists

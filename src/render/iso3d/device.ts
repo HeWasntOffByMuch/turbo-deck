@@ -16,6 +16,9 @@
  * So the question is asked of several facts rather than one, and the rule over
  * them is pure -- every device is a row in a test rather than a thing somebody
  * has to be holding.
+ *
+ * There is one machine those facts cannot separate, and `frameOverride` below is
+ * the answer to it (spec 230).
  */
 
 /** What the page can find out about the device, gathered in one place. */
@@ -91,15 +94,54 @@ export function readDeviceFacts(): DeviceFacts {
 }
 
 /**
+ * The frame a URL asked for, or null when it asked for nothing (spec 230).
+ *
+ * `isHandheld` is a *measurement*, and there is a machine it cannot measure: a
+ * small touchscreen desktop reports a hardware touch count, a fine primary
+ * pointer and a frame under `HANDHELD_MAX_SHORT_SIDE`, which is every fact a
+ * phone in desktop-site mode reports. A Steam Deck in SteamOS desktop mode is
+ * that machine -- a 1280x800 panel is under the threshold once the browser's
+ * chrome and any display scale are off it -- and it arrives at the compact
+ * frame with a keyboard and a trackpad attached.
+ *
+ * Moving the threshold is the wrong repair. 620 was chosen against a real
+ * photograph of a real phone, and every number above it restores the bug spec
+ * 141 closed; on the four facts the two machines are the same machine. So the
+ * answer becomes sayable rather than better guessed at.
+ *
+ * Both directions, because the useful one is not only the one that prompted it:
+ * `?frame=phone` is how the compact layout gets looked at without a phone in
+ * your hand.
+ *
+ * An unrecognised value defers to the measurement rather than throwing or
+ * picking a side -- a misspelled flag should cost the flag, not the frame.
+ */
+export function frameOverride(search: string): boolean | null {
+  const raw = new URLSearchParams(search).get('frame');
+  if (raw === null) return null;
+  const name = raw.trim().toLowerCase();
+  if (name === 'desktop') return false;
+  if (name === 'phone') return true;
+  return null;
+}
+
+/**
  * Whether this device gets the phone frame. What every caller actually wants.
  *
  * Asked once and remembered: it is a question about the hardware, and the
  * answer has to be the same for the tab bar, the HUD and the fullscreen button
  * or the frame is half of each. Deciding it once is also what spec 094 asked
  * for -- a phone does not become a desktop while somebody is playing.
+ *
+ * The override is applied here rather than inside `isHandheld` (spec 230): it is
+ * a person's answer rather than a fact about the hardware, and putting it in
+ * `DeviceFacts` would make the device table a table of two different kinds of
+ * thing. Here it is also the only place it needs to be -- every caller comes
+ * through this function, so none of them learns that an override exists and the
+ * rule above about all of them agreeing holds for free.
  */
 let cached: boolean | null = null;
 export function isHandheldDevice(): boolean {
-  cached ??= isHandheld(readDeviceFacts());
+  cached ??= frameOverride(window.location?.search ?? '') ?? isHandheld(readDeviceFacts());
   return cached;
 }

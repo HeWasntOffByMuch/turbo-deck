@@ -93,10 +93,14 @@ function startBot(index: number, session: GuestSession | null): Bot {
           // Asked once a second rather than every frame: the answer takes a
           // round trip, and sixty asks inside one is a bot load-testing the
           // respawn handler instead of the sim.
+          //
+          // Off `selfDead` rather than off a health test of its own (spec 229),
+          // which is the third copy of that test this tree had: the client
+          // answers it once now, and the legs it drives answer it from the same
+          // place, so a bot cannot come to a different view of its own corpse
+          // than the input path it is exercising.
           frames += 1;
-          const view = client.view();
-          const self = view.entities.find((entity) => entity.id === view.selfEntityId);
-          if (self && self.health <= 0) {
+          if (client.view().selfDead) {
             if (frames % SERVER_TICK_RATE === 0) client.respawn();
             return;
           }

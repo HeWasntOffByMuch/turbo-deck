@@ -153,6 +153,32 @@ export interface IntentInput {
    * here, by not asking for the turn in the first place.
    */
   readonly staggered?: boolean;
+  /**
+   * True while this body is at zero health (spec 229).
+   *
+   * Outranks every branch below, including {@link staggered}, because on the
+   * server it outranks them by not being a branch at all: `stepWorld`'s
+   * movement pass steps past anything at zero health *before* it reads an
+   * intent, so a corpse is neither moved nor turned however the keys are being
+   * held.
+   *
+   * Which makes this the one root nothing ever pulls back. A stagger is
+   * reconciled -- the server reads the intent, discards the components and
+   * corrects the step -- and a corpse is never read, so it is never corrected
+   * either: a predicted walk while dead stands until the respawn teleport,
+   * seconds later, and is bounded only by how far the order was. Measured
+   * before this existed, one second of a standing move order walked a body 155
+   * units across its own screen while every other client watched it lie where
+   * it fell.
+   *
+   * Here rather than in the drivers because there are five doors into a
+   * destination -- a key, a move order, a chase, an aim's approach, a pickup
+   * walk -- and being dead is a fact about the body rather than about any of
+   * them. `autoAttack` and `pickupOrderFor` keep their own death rules because
+   * they also decide whether to *ask the server for something*, which a rule at
+   * the legs cannot cover.
+   */
+  readonly dead?: boolean;
 }
 
 export function moveIntent(input: IntentInput): MoveIntent {
@@ -166,6 +192,20 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // back, and having to cancel an order first would feel like a stuck key. A
   // spent order steers nothing, whatever waypoint is still on offer.
   const direction = keyed ?? (arrived ? null : steerTo(input.self, input.route ?? input.destination));
+
+  // A corpse does neither (spec 229), and does it first: a stagger is something
+  // the server reads and discards, and a dead body is one it never reads at
+  // all. `input.facing` for the same reason the stagger holds it -- the server
+  // leaves `facing` exactly where it was, and a `Correction` carries no facing
+  // to disagree with, so a heading predicted here would be an error nothing
+  // ever corrects.
+  //
+  // `arrived` is still reported honestly. Being dead is not being somewhere,
+  // and a caller that reads it as "the order is spent" is right either way --
+  // the view drops the orders at the death itself.
+  if (input.dead) {
+    return { moveX: 0, moveY: 0, facing: input.facing, arrived };
+  }
 
   // A poise break holds the body outright (spec 173), and holds it harder than
   // a cast does: no step, and no turn either.

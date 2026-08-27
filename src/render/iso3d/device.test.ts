@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { HANDHELD_MAX_SHORT_SIDE, isHandheld, type DeviceFacts } from './device.js';
+import { HANDHELD_MAX_SHORT_SIDE, frameOverride, isHandheld, type DeviceFacts } from './device.js';
 
 interface Device extends DeviceFacts {
   readonly name: string;
@@ -82,6 +82,20 @@ const DEVICES: readonly Device[] = [
     maxTouchPoints: 10,
     viewport: { width: 1920, height: 1080 },
     handheld: false,
+  },
+  {
+    name: 'handheld PC on a desk',
+    // The row spec 230 exists because of, and it asserts the *measurement*
+    // rather than the repair: a Steam Deck driven with a keyboard reports
+    // exactly what `phone in desktop-site mode` reports, so rule 3 calls it a
+    // phone and is not wrong to on these four facts. Nothing in the table can
+    // separate them, which is why the answer became sayable (`frameOverride`)
+    // instead of the threshold being moved.
+    coarsePointer: false,
+    anyCoarsePointer: true,
+    maxTouchPoints: 10,
+    viewport: { width: 1024, height: 600 },
+    handheld: true,
   },
 ];
 
@@ -161,5 +175,56 @@ describe('the rules behind the table', () => {
         viewport: { width: 900, height: 420 },
       }),
     ).toBe(true);
+  });
+});
+
+/**
+ * The frame a URL states (spec 230).
+ *
+ * Separate from the table above on purpose: the table is what the hardware
+ * says, and this is what a person says over the top of it. The row those two
+ * meet on is `handheld PC on a desk`, which is handheld by measurement and is
+ * the machine somebody would type `?frame=desktop` on.
+ */
+describe('the frame a URL asks for', () => {
+  const handheldPC: DeviceFacts = {
+    coarsePointer: false,
+    anyCoarsePointer: true,
+    maxTouchPoints: 10,
+    viewport: { width: 1024, height: 600 },
+  };
+
+  it('forces the desktop frame on a device every rule calls handheld', () => {
+    expect(isHandheld(handheldPC)).toBe(true);
+    expect(frameOverride('?frame=desktop')).toBe(false);
+  });
+
+  it('forces the compact frame on a device no rule calls handheld', () => {
+    const desktop: DeviceFacts = {
+      coarsePointer: false,
+      anyCoarsePointer: false,
+      maxTouchPoints: 0,
+      viewport: { width: 1920, height: 1080 },
+    };
+    expect(isHandheld(desktop)).toBe(false);
+    expect(frameOverride('?frame=phone')).toBe(true);
+  });
+
+  it('defers to the measurement when nothing was asked for', () => {
+    // Null rather than a side, so an unrecognised value costs the flag rather
+    // than the frame -- the caller's `??` then falls through to `isHandheld`.
+    for (const search of ['', '?', '?seed=4', '?frame=', '?frame=tablet', '?frame=desktopish']) {
+      expect(frameOverride(search)).toBe(null);
+    }
+  });
+
+  it('reads the value the way ?perf does, trimmed and case-insensitively', () => {
+    expect(frameOverride('?frame=DESKTOP')).toBe(false);
+    expect(frameOverride('?frame=%20Phone%20')).toBe(true);
+  });
+
+  it('does not disturb the other parameters', () => {
+    expect(frameOverride('?seed=4&frame=desktop&wire=1')).toBe(false);
+    expect(frameOverride('?seed=4&wire=1')).toBe(null);
   });
 });
