@@ -156,12 +156,14 @@ export const ABILITY_ELEMENTS: Readonly<Record<string, Element>> = {
   'skill.poisonDart': 'poison',
   'skill.acidSpray': 'poison',
   'skill.blight': 'poison',
-  // Arcane: the three bolts, the quake, and the drain channel.
-  'bolt.arcane': 'arcane',
-  'bolt.lob': 'arcane',
-  'bolt.seek': 'arcane',
-  'ground.quake': 'arcane',
-  'channel.drain': 'arcane',
+  // Arcane has **no rows**, and the element is kept anyway (spec 237). The five
+  // that were here -- the three bolts, the quake and the drain channel -- were
+  // spec 062's demo set: granted by no sigil, named by no weapon, reachable only
+  // by a client that typed the id. `elemental.arcane.cast` and `.impact` are
+  // recorded and sit unused, which is the same trade the unused ability sprites
+  // are left on: a take costs a few kilobytes and is the next arcane skill's for
+  // free, where a row naming an ability nobody has is a lookup that can only
+  // ever miss -- and one the test below refuses.
 };
 
 /** The element an ability is, defaulting to physical. */

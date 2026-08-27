@@ -36,7 +36,7 @@ import { ACTION_BAR } from './action-bar.js';
  * about a list of nulls. What `hudViewOf` is being asked is what it does with an
  * ability id it cannot resolve, and that needs ids.
  */
-const GALLERY_BAR = ['melee.slash', 'melee.heavy', 'bolt.arcane', 'self.mend'];
+const GALLERY_BAR = ['melee.slash', 'skill.stunningBlow', 'skill.poisonDart', 'self.hearthdraught'];
 import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
 import { NO_WEAPON } from '../../../server/data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
@@ -84,27 +84,27 @@ function source(
 
 describe('the HUD view', () => {
   it('measures a sweep against the ability\'s own cooldown', () => {
-    const quake = abilityById('ground.quake');
-    expect(quake).not.toBeNull();
-    if (!quake) return;
+    const blight = abilityById('skill.blight');
+    expect(blight).not.toBeNull();
+    if (!blight) return;
 
-    const half = abilityViewOf('ground.quake', 100 + quake.cooldownTicks / 2, 100, 999);
+    const half = abilityViewOf('skill.blight', 100 + blight.cooldownTicks / 2, 100, 999);
     expect(half?.sweep).toBeCloseTo(0.5);
-    const done = abilityViewOf('ground.quake', 90, 100, 999);
+    const done = abilityViewOf('skill.blight', 90, 100, 999);
     expect(done?.sweep).toBe(0);
   });
 
   it('never reports a sweep past full, however stale the tick is', () => {
-    const view = abilityViewOf('ground.quake', 100_000, 0, 999);
+    const view = abilityViewOf('skill.blight', 100_000, 0, 999);
     expect(view?.sweep).toBe(1);
   });
 
   it('says what cannot be paid for', () => {
-    const bolt = abilityById('bolt.arcane');
-    expect(bolt).not.toBeNull();
-    if (!bolt) return;
-    expect(abilityViewOf('bolt.arcane', 0, 0, bolt.cost)?.affordable).toBe(true);
-    expect(abilityViewOf('bolt.arcane', 0, 0, bolt.cost - 1)?.affordable).toBe(false);
+    const dart = abilityById('skill.poisonDart');
+    expect(dart).not.toBeNull();
+    if (!dart) return;
+    expect(abilityViewOf('skill.poisonDart', 0, 0, dart.cost)?.affordable).toBe(true);
+    expect(abilityViewOf('skill.poisonDart', 0, 0, dart.cost - 1)?.affordable).toBe(false);
   });
 
   it('answers null for an ability the table does not define', () => {

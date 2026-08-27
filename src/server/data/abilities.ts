@@ -50,6 +50,31 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 export type ProjectileLook = 'orb' | 'arrow' | 'shuriken' | 'ember';
 
 /**
+ * How a body is drawn casting this (spec 231).
+ *
+ * A picture and nothing more, in exactly the register {@link ProjectileLook} is
+ * in: nothing under `src/server/sim/` reads it, it rides no wire, and two
+ * abilities with the same numbers and different looks behave identically. The
+ * renderer maps it onto a trigger in `unit-driver.ts`'s `attackTriggerFor`, and
+ * a row without it is drawn as the swing every ability was drawn as before this
+ * existed.
+ *
+ * It has to be **authored** rather than derived, and that is worth writing down
+ * because every other animation decision in this game is read off what an
+ * ability does. There is no mechanical fact separating a spell from a weapon
+ * skill here: `skill.whirlwind` and `skill.rimeTouch` are both an `area` circle
+ * on the caster's own feet, both `targeting: 'self'`, both damage in a radius --
+ * and one is a blade going all the way round while the other is cold coming off
+ * the ground. Whether a body focuses or swings is a fact about the picture, so
+ * the picture is what says it.
+ *
+ * `focus` is the one that exists: hands gathered at the chest and both arms
+ * thrown forward, `assets/units/clips/cast.glb`, authored in
+ * `src/units/pig-cast.ts`.
+ */
+export type CastLook = 'focus';
+
+/**
  * What a blow is *made of* (spec 232).
  *
  * Content rather than presentation, and the line is worth stating because this
@@ -161,7 +186,6 @@ export function elementOfAbility(ability: AbilityDefinition | null | undefined):
   }
   return ability.element ?? 'physical';
 }
-
 export interface ProjectileSpec {
   /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 088). */
   readonly speed: number;
@@ -266,6 +290,16 @@ export interface AbilityDefinition {
    * ability per unit should carry it.
    */
   readonly basicAttack?: boolean;
+  /**
+   * How the caster is drawn while this winds up (spec 231). Absent is the swing.
+   *
+   * See {@link CastLook}. It is on the row for the reason `projectile.look` is:
+   * `attackTriggerFor` states that which animation an ability gets is *"a fact
+   * read off the content table rather than a list of ids to keep in sync with
+   * it"*, so a new spell says what it looks like here and nothing else is
+   * edited.
+   */
+  readonly castLook?: CastLook;
   /**
    * This ability is an **active skill** and may only be cast out of a skill slot
    * (spec 188).
@@ -403,19 +437,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description: 'A quick forward cut, more habit than decision.',
   },
   {
-    id: 'melee.heavy',
-    name: 'Heavy Blow',
-    kind: 'melee',
-    targeting: 'direction',
-    windupTicks: seconds(1.1),
-    cooldownTicks: seconds(3),
-    cost: 2,
-    range: 90,
-    damage: 6,
-    arcCosSq: 0.65,
-    description: 'Both hands, and everything you weigh, put behind one swing.',
-  },
-  {
     id: 'ranged.shot',
     name: 'Hunting Shot',
     kind: 'projectile',
@@ -490,80 +511,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     projectile: { speed: 700, arc: 0.25, radius: 9, lifetimeTicks: seconds(1.5), look: 'ember' },
     basicAttack: true,
     description: 'A knot of fire, shaken off the charred head of the staff.',
-  },
-  {
-    id: 'bolt.arcane',
-    name: 'Arcane Bolt',
-    kind: 'projectile',
-    targeting: 'direction',
-    windupTicks: seconds(0.6),
-    cooldownTicks: seconds(0.8),
-    cost: 3,
-    range: 700,
-    damage: 3,
-    projectile: { speed: 620, arc: 0, radius: 8, lifetimeTicks: seconds(2) },
-    description: 'Raw force, shaped just enough to travel.',
-  },
-  {
-    id: 'bolt.lob',
-    name: 'Firepot',
-    kind: 'projectile',
-    targeting: 'point',
-    windupTicks: seconds(1.0),
-    cooldownTicks: seconds(4),
-    cost: 5,
-    range: 520,
-    damage: 4,
-    radius: 90,
-    // A full arc: at its 520-unit range that peaks at 130, which is exactly the
-    // constant it replaces -- the tell that the constant was always a 45-degree
-    // shot with the distance filed off (spec 089).
-    projectile: { speed: 300, arc: 1, radius: 12, lifetimeTicks: seconds(4) },
-    description: 'A clay pot of banked embers, thrown in a lazy arc.',
-  },
-  {
-    id: 'bolt.seek',
-    name: 'Seeking Bolt',
-    kind: 'projectile',
-    // The one row that exists to exercise a named cast at a range worth walking
-    // (spec 080). Everything under it was already built: a projectile carrying
-    // a target id tracks its mark and is disjointed by its death (spec 079).
-    targeting: 'unit',
-    windupTicks: seconds(0.9),
-    cooldownTicks: seconds(2.5),
-    cost: 4,
-    range: 480,
-    damage: 4,
-    // A third of the optimal arc: it skims rather than lobs, peaking at 42 over
-    // its full 480 rather than the 120 a full arc would give it.
-    projectile: { speed: 700, arc: 0.35, radius: 9, lifetimeTicks: seconds(3) },
-    description: 'It leaves knowing the shape of what you pointed it at.',
-  },
-  {
-    id: 'ground.quake',
-    name: 'Quake',
-    kind: 'ground',
-    targeting: 'point',
-    windupTicks: seconds(1.4),
-    cooldownTicks: seconds(8),
-    cost: 7,
-    range: 420,
-    damage: 7,
-    radius: 140,
-    description: 'The ground remembers being struck, and answers.',
-  },
-  {
-    id: 'self.mend',
-    name: 'Mend',
-    kind: 'self',
-    targeting: 'self',
-    windupTicks: seconds(1.2),
-    cooldownTicks: seconds(10),
-    cost: 6,
-    range: 0,
-    damage: 0,
-    healing: 9,
-    description: 'Knitting yourself back together is not a quick thing.',
   },
   {
     id: 'self.hearthdraught',
@@ -802,6 +749,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Arc Lash',
     kind: 'area',
     targeting: 'direction',
+    castLook: 'focus',
     skill: true,
     windupTicks: seconds(0.55),
     cooldownTicks: seconds(9),
@@ -820,6 +768,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'area',
     // Nothing to aim, like Whirlwind: the circle is on the caster's own feet.
     targeting: 'self',
+    castLook: 'focus',
     skill: true,
     windupTicks: seconds(0.6),
     cooldownTicks: seconds(11),
@@ -835,6 +784,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Blight',
     kind: 'ground',
     targeting: 'point',
+    castLook: 'focus',
     skill: true,
     // The longest wind-up here, which is what a zone denial has to cost: it is
     // slow enough to walk out of, exactly as Quake is.
@@ -869,6 +819,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     shortName: 'Scorch',
     kind: 'self',
     targeting: 'self',
+    castLook: 'focus',
     skill: true,
     // Long enough to be a commitment and short enough to throw as something
     // closes. Nothing about the cast is aimed, so the wind-up is the only thing
@@ -1032,21 +983,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description:
       'A test blow: no damage worth the name, and every status the game can show, at once.',
   },
-  {
-    id: 'channel.drain',
-    name: 'Drain',
-    kind: 'channel',
-    targeting: 'direction',
-    windupTicks: seconds(0.5),
-    cooldownTicks: seconds(6),
-    cost: 4,
-    range: 220,
-    damage: 1,
-    arcCosSq: 0.75,
-    channelTicks: seconds(2),
-    pulseIntervalTicks: seconds(0.25),
-    description: 'It takes something out of them, and you can feel it arrive.',
-  },
 ];
 
 export const ABILITIES: ReadonlyMap<string, AbilityDefinition> = new Map(
@@ -1065,19 +1001,6 @@ export function abilityById(id: string): AbilityDefinition | null {
  * `EffectiveStats.basicAttackId`, derived from its main hand or its row.
  */
 export const BASIC_ATTACK_ID = 'melee.slash';
-
-/** What a fresh character can use. Everything else is unlocked elsewhere later. */
-export const STARTING_ABILITIES: readonly string[] = [
-  'melee.slash',
-  'melee.heavy',
-  'bolt.arcane',
-  'bolt.lob',
-  'bolt.seek',
-  'ground.quake',
-  'self.mend',
-  'self.hearthdraught',
-  'channel.drain',
-];
 
 /**
  * Total ticks a cast occupies the caster, from the wind-up starting to free,

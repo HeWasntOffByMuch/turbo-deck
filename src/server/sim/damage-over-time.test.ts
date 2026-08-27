@@ -445,7 +445,7 @@ describe('what a lethal pulse leaves behind', () => {
       // *lethal* pulse does to the cast the body was holding.
       ...applyDot(body(1, 600, 450, 0.01), StatusId.Poison, 0, source(9)),
       cast: {
-        abilityId: 'ground.quake',
+        abilityId: 'skill.blight',
         phase: CastPhase.Windup,
         startedTick: 0,
         releaseTick: 200,

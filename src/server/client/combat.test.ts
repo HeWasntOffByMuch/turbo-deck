@@ -48,6 +48,9 @@ const STATS: EffectiveStats = {
   traits: NEUTRAL_TRAITS,
 };
 
+/** Direction-targeted and costed, so no range gate stands between it and a test. */
+const SPELL = 'skill.arcLash';
+
 function mirror(overrides: Partial<Mirror> = {}): Mirror {
   return {
     position: { x: 0, y: 0 },
@@ -108,15 +111,21 @@ describe('the gate, asked of a mirror', () => {
   });
 
   it('will not predict an ability the mirror cannot afford, and will one it can', () => {
-    const bolt = abilityById('bolt.arcane');
-    expect(bolt?.cost).toBeGreaterThan(0);
-    const cost = bolt?.cost ?? 0;
+    // A *skill*, because since spec 237 nothing else costs resource: the rows
+    // that were castable by anybody and priced -- the bolts, the quake, the
+    // heavy blow -- were spec 062's demo set and went with it. So the mirror
+    // has to be carrying it, exactly as the server requires.
+    const spell = abilityById(SPELL);
+    expect(spell?.cost).toBeGreaterThan(0);
+    const cost = spell?.cost ?? 0;
+    const carrying = (resource: number): Mirror =>
+      mirror({ resource, stats: { ...STATS, skillAbilityIds: [SPELL] } });
 
-    expect(mayCast(mirror({ resource: cost - 0.5 }), 'bolt.arcane', EAST, 100, 100)).toEqual({
+    expect(mayCast(carrying(cost - 0.5), SPELL, EAST, 100, 100)).toEqual({
       ok: false,
       reason: 'notEnoughResource',
     });
-    const afforded = mayCast(mirror({ resource: cost }), 'bolt.arcane', EAST, 100, 100);
+    const afforded = mayCast(carrying(cost), SPELL, EAST, 100, 100);
     expect(afforded.ok).toBe(true);
     if (afforded.ok) expect(afforded.cost).toBe(cost);
   });

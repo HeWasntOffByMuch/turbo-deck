@@ -109,32 +109,32 @@ describe('expiry', () => {
 
 describe('adaptation', () => {
   it('is per ability, so learning one blow teaches nothing about another', () => {
-    const held = applyStatus(NO_STATUSES, adaptedKey('bolt.arcane'), 0, 100, { maxStacks: 5 });
-    expect(adaptationAgainst(held, 'bolt.arcane', 0, 0.06, 0.3)).toBeCloseTo(0.06, 9);
+    const held = applyStatus(NO_STATUSES, adaptedKey('skill.poisonDart'), 0, 100, { maxStacks: 5 });
+    expect(adaptationAgainst(held, 'skill.poisonDart', 0, 0.06, 0.3)).toBeCloseTo(0.06, 9);
     expect(adaptationAgainst(held, 'melee.slash', 0, 0.06, 0.3)).toBe(0);
   });
 
   it('grows with the stacks and stops at the cap', () => {
     let held = NO_STATUSES;
     for (let i = 0; i < 20; i++) {
-      held = applyStatus(held, adaptedKey('ground.quake'), 0, 100, { maxStacks: 5 });
+      held = applyStatus(held, adaptedKey('skill.blight'), 0, 100, { maxStacks: 5 });
     }
-    expect(stacksOf(held, adaptedKey('ground.quake'), 0)).toBe(5);
-    expect(adaptationAgainst(held, 'ground.quake', 0, 0.06, 0.3)).toBeCloseTo(0.3, 9);
+    expect(stacksOf(held, adaptedKey('skill.blight'), 0)).toBe(5);
+    expect(adaptationAgainst(held, 'skill.blight', 0, 0.06, 0.3)).toBeCloseTo(0.3, 9);
     // And the cap wins even when the stacks would carry it past.
-    expect(adaptationAgainst(held, 'ground.quake', 0, 0.5, 0.3)).toBe(0.3);
+    expect(adaptationAgainst(held, 'skill.blight', 0, 0.5, 0.3)).toBe(0.3);
   });
 
   it('is nothing at all for a body without the trait', () => {
-    const held = applyStatus(NO_STATUSES, adaptedKey('bolt.arcane'), 0, 100, { maxStacks: 5 });
-    expect(adaptationAgainst(held, 'bolt.arcane', 0, 0, 0.3)).toBe(0);
-    expect(adaptationAgainst(held, 'bolt.arcane', 0, 0.06, 0)).toBe(0);
+    const held = applyStatus(NO_STATUSES, adaptedKey('skill.poisonDart'), 0, 100, { maxStacks: 5 });
+    expect(adaptationAgainst(held, 'skill.poisonDart', 0, 0, 0.3)).toBe(0);
+    expect(adaptationAgainst(held, 'skill.poisonDart', 0, 0.06, 0)).toBe(0);
   });
 
   it('decays: a stack that lapsed is a lesson forgotten', () => {
-    const held = applyStatus(NO_STATUSES, adaptedKey('bolt.arcane'), 0, 10, { maxStacks: 5 });
-    expect(adaptationAgainst(held, 'bolt.arcane', 9, 0.06, 0.3)).toBeCloseTo(0.06, 9);
-    expect(adaptationAgainst(held, 'bolt.arcane', 10, 0.06, 0.3)).toBe(0);
+    const held = applyStatus(NO_STATUSES, adaptedKey('skill.poisonDart'), 0, 10, { maxStacks: 5 });
+    expect(adaptationAgainst(held, 'skill.poisonDart', 9, 0.06, 0.3)).toBeCloseTo(0.06, 9);
+    expect(adaptationAgainst(held, 'skill.poisonDart', 10, 0.06, 0.3)).toBe(0);
   });
 });
 

@@ -228,8 +228,10 @@ const FIT = 44;
 const LOOKS: { id: string; look: ProjectileLook }[] = [
   { id: 'ranged.shot', look: 'arrow' },
   { id: 'ranged.star', look: 'shuriken' },
-  { id: 'bolt.arcane', look: 'orb' },
-  { id: 'bolt.lob', look: 'orb' },
+  // One orb rather than the flat/lobbed pair this used to draw: the two rows
+  // that carried them were removed with the rest of spec 062's demo set (spec
+  // 231), and `skill.emberToss` is the orb the table still grows.
+  { id: 'skill.emberToss', look: 'orb' },
   // Spec 216, and the one cell on this sheet that is deliberately *incomplete*:
   // what a `ShotRig` builds for an ember is only the core, and the rest of the
   // silhouette is `shot_ember`'s paint, which this rasteriser has no particle

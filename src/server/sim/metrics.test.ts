@@ -102,7 +102,7 @@ describe('folding one tick', () => {
     const started = (phase: number): ServerSimEvent => ({
       kind: 'castStarted',
       entityId: 1,
-      abilityId: 'ground.quake',
+      abilityId: 'skill.blight',
       phase,
       startTick: 0,
       releaseTick: 10,
@@ -118,7 +118,7 @@ describe('folding one tick', () => {
       [started(CastPhase.Windup), started(CastPhase.Backswing)],
       REASONS,
     );
-    expect(folded.abilityUses['ground.quake']).toBe(1);
+    expect(folded.abilityUses['skill.blight']).toBe(1);
     expect(folded.castsCommitted).toBe(1);
   });
 
