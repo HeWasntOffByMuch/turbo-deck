@@ -66,6 +66,8 @@ change a game outcome.
 | `npm run build && npx tsx scripts/probe-audio.ts` | Whether any of the audio framework is wired to anything (spec 229). Walks, swings and casts in the shipped page and reads what the engine says **started a voice** -- not what a call site asked for. It found the bug that made every once-only sound silent: the catalog lands before the first click, so the whole warm ran against a context that did not exist yet. Runs twice, `probe-map-editor.ts`'s shape: once over `dist/`, where Save must *say* there is no dev server, and once against a real `npx vite`, where a file chosen in the tab has to reach `assets/audio/raw/`, be encoded, be offered by the picker, be assigned, and land in the catalog on disk |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npm run audit:progression` | Every skill rank at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (spec 241). `--all` lists the working ones too |
+| `npx tsx scripts/probe-stance.ts` | Whether the pig is standing on anything (spec 244). Reads the committed combat clips -- not the pose table -- for where the pelvis sits along its own support span, how far each toe is off the ground the **idle** rests on, and each knee's bend and which way it points. `idle` is printed beside them as the control, and that is the whole instrument: every number is relative, so a probe without one cannot tell a stance that is planted from one measured against itself |
+| `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 244): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
@@ -865,6 +867,38 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  well as the even step: two of the six authored poses sit between
                  multiples of 50, and the first cut of the strip had neither of
                  them in it.
+                 stance.ts is what a stance *is*, as the four things that can be
+                 wrong with one (spec 244): where the pelvis sits along the
+                 support span from rear ankle to leading toe, and per leg the
+                 bend, how far the knee sits off the straight line from hip to
+                 ankle, and how much of that offset points **forward**. One
+                 description with three callers -- `plant-foot.ts` solves against
+                 it, `probe-stance.ts` reads the committed clips through it,
+                 `pig-strike.test.ts` asserts on it -- for the reason `pose.ts`
+                 is one description of the body's axes: a solver and a test each
+                 measuring "is this knee bent backwards" their own way agree
+                 until one is edited.
+                 That last number is the one it exists for. **`bend` is unsigned**
+                 and so cannot tell a knee from the same angle folded the wrong
+                 way, which is the whole of "the knees bend backwards"; and a leg
+                 solved by pinning two points genuinely has the freedom to get it
+                 wrong, since the leg may still swivel about the line between
+                 them. It is a *fraction* rather than a distance because the
+                 offset is itself set by the bend -- a nearly straight leg has
+                 almost none -- so a length would be a demand for a bend as well
+                 as for a direction.
+                 What it found: the guard all three combat clips stand in put the
+                 pelvis **157%** along its own span, past the leading toe, with
+                 both feet 0.03 above the ground the idle rests on and the rear
+                 knee locked at 10.4 degrees while bracing. One mechanism behind
+                 all three -- positive `lateral` carries a hanging limb
+                 *backwards*, so `leftLeg: { lateral: 30 }` bought its knee bend
+                 by driving the ankle back and up rather than by the knee
+                 travelling forward over a planted foot. On this rig those are
+                 the same currency: both legs are straight in bind and stand
+                 exactly as tall as they are long, and the root may not translate,
+                 so **knee bend and foot height are one quantity** and the bend
+                 had been paid for out of the balance.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and

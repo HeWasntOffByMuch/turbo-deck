@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "1e79f5d0ef235a314e0cb8ca94ecdda6e7c859ef2048a96054dc544c593f9fb1",
+  "hash": "7767af94be7fea5c4ed95b8858819e4b0d702cf2f64cc98024dab3090e30f115",
   "builtStages": [],
   "units": [
     {
@@ -65,7 +65,7 @@
         },
         {
           "path": "clips/cast.glb",
-          "sha256": "eeaeca6848b45d35f689343a2971d46c995a40a3edcd720c0c607362563e3c4e",
+          "sha256": "02c864e8afff7af189b8c752df703ea83389b1dbce2cac36b9a0de2166d6e277",
           "bytes": 46040
         },
         {
@@ -90,12 +90,12 @@
         },
         {
           "path": "clips/shoot.glb",
-          "sha256": "899f4e4f19006e124122cc48eb3ba35cc79a1cde8825a28affde4d594e9cdbe4",
+          "sha256": "845f3d665a8bb1c002e5d652d8d173a6f35487959696b6588ba7b6795b4cab92",
           "bytes": 44004
         },
         {
           "path": "clips/slash.glb",
-          "sha256": "6bef1b7033d4de57e159212f6ec89378d28a0bac4a1d68274a9e4f28a9d0dbdb",
+          "sha256": "26f540924c70acf8b1386bb64bf83b24eab0838ee426c6da11dcf8fbbe2d5e57",
           "bytes": 36000
         },
         {
@@ -126,7 +126,7 @@
         },
         {
           "path": "clips/cast.glb",
-          "sha256": "eeaeca6848b45d35f689343a2971d46c995a40a3edcd720c0c607362563e3c4e",
+          "sha256": "02c864e8afff7af189b8c752df703ea83389b1dbce2cac36b9a0de2166d6e277",
           "bytes": 46040
         },
         {
@@ -151,12 +151,12 @@
         },
         {
           "path": "clips/shoot.glb",
-          "sha256": "899f4e4f19006e124122cc48eb3ba35cc79a1cde8825a28affde4d594e9cdbe4",
+          "sha256": "845f3d665a8bb1c002e5d652d8d173a6f35487959696b6588ba7b6795b4cab92",
           "bytes": 44004
         },
         {
           "path": "clips/slash.glb",
-          "sha256": "6bef1b7033d4de57e159212f6ec89378d28a0bac4a1d68274a9e4f28a9d0dbdb",
+          "sha256": "26f540924c70acf8b1386bb64bf83b24eab0838ee426c6da11dcf8fbbe2d5e57",
           "bytes": 36000
         },
         {

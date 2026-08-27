@@ -66,10 +66,19 @@ read back out as a consequence:
 interface FootBrief {
   /** The ankle's fore-aft offset from the pelvis, in rig units. */
   readonly along: number;
-  /** How far the ankle rides above flat: the heel coming up. */
+  /** How far the heel comes up, in degrees of foot pitch past its bind attitude. */
   readonly heel: number;
 }
 ```
+
+`heel` is in degrees and not in the rig units the ankle actually rises, because
+the budget is **anatomical and not geometric** and only one of the two says so.
+As a height it looked generous: the foot is 0.0176 long, so the ankle can rise
+0.0108 before it is directly over the toe, and that 0.0108 is worth 20 degrees of
+knee — exactly the compression this wants. It is also a foot standing at 79
+degrees to the floor, reached by turning the ankle 52 degrees. A pointe is not a
+heel lift. In degrees the same budget reads as what it is: this foot already
+slopes 27 degrees down to the toe, and past about 30 more it is on tiptoe.
 
 The toe is pinned on the **floor the idle stands on** — sampled from `idle.glb`
 per foot rather than typed, because that is the pose the eye calibrates the
@@ -117,17 +126,51 @@ and `pig-cast.test.ts`:
 - **The loaded leg compresses.** The planted left knee is more bent at contact
   than at the guard, by a stated amount, and returns to the guard's bend at
   settle.
-- **The shin leads.** The planted knee stays forward of its own ankle, so the
-  bend reads as the knee travelling over the foot.
+- **The shin leads.** Each knee stays forward of its own ankle, so the bend reads
+  as the knee travelling over the foot.
 - What spec 139 and 143 already assert is unchanged: the left foot does not
-  slide, the left knee does not pump, the right foot steps back and drives
-  through, and the swing's arc, silhouette and timing all still hold.
+  slide, the left knee does not pump, and the swing's arc, silhouette and timing
+  all still hold.
+
+The one existing assertion that **does** move is the size of the right foot's
+step, and both of its numbers were measured with that foot 0.077 above the
+ground. On the floor the step is bounded twice over, and neither bound is a
+taste. Reaching back, the leg cannot put its ankle more than 0.079 from under its
+own hip at all, because the pig stands exactly as tall as its legs are long.
+Driving through, it has to stop at the pelvis rather than pass the left foot,
+because a body with both feet in front of its own weight is this spec's own fault
+arriving from the other side. So `0.08` back becomes `0.075` and `0.22` through
+becomes `0.10`, against measurements of 0.086 and 0.116. `src/items/grip.test.ts`
+carries a second copy of those two numbers and is reduced to what its own comment
+already says it is for — that the leg on the sword's side is the one that moves —
+with the magnitudes left to the file that owns them.
+
+## Measured, after
+
+Through the committed clips, against the idle as the control:
+
+| | pelvis over its span | toe float | knee bend | knee lead |
+|---|---|---|---|---|
+| `idle` (control) | -28%–69% | 0.0097 | 4.1 | 0.94 |
+| `slash` before | 111%–227% | 0.077 | 10.4 | — |
+| `slash` after | 11%–81% | 0.0063 | 21.5 | 0.83 |
+| `shoot`/`cast` after | 58% | 0.0000 | 21.5 | 0.98 |
+
+The support knee goes 21.5° at the guard to 24.7° at contact, where it used to go
+30.4° to 31.2° by way of 28.7° at the load — least bent on the frame the weight
+arrives. What buys that back is three degrees of **pelvic roll** at `contact` and
+four at `follow`: the pelvis yaws 45° between the load and the follow-through and
+carries the left hip 0.05 backwards with it, so a support leg that did nothing
+would straighten into the blow however the feet were placed. Rolling three
+degrees drops that hip 0.010, and it is nearly free elsewhere because at contact
+the hand is close to the roll axis — measured, it moves the hand 0.004.
 
 ## Out of scope
 
 - **The pelvis does not drop.** A weight shift you can see in the hips would want
   root translation, and `glb.ts` refuses to write one because the server owns
-  where a body is. Compression here is knee and ankle only.
+  where a body is. Compression here is knee, ankle and the three degrees of roll
+  above — a rotation the format already allows, not a height the format does not.
 - **The other clips' legs.** `walk`, `run` and `idle` are retargeted purchases,
   not authored tables; `posture.ts` is the tool for editing one and this spec
   does not use it.

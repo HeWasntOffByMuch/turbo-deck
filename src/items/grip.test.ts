@@ -542,9 +542,20 @@ describe('how the pig holds a sword', () => {
     // because the left foot was sliding forward under the pelvis by more than
     // the right foot was stepping back. Planting the left foot cost this
     // two thirds of its number and none of its motion.
-    expect(loadGap).toBeLessThan(guardGap - 0.08);
+    //
+    // The two margins are deliberately loose, and looser again since spec 244
+    // put the stepping foot on the ground -- which bounded the step at both
+    // ends, since a leg that may not leave the floor cannot reach as far back
+    // and a body that must stay over its own feet cannot drive as far through.
+    // They are here to say the step is a step rather than noise; how far it
+    // goes is `pig-strike.test.ts`'s to bound, beside the table it is a fact
+    // about, and a second copy of those numbers here is a second thing to
+    // retune every time the stance moves. This is exactly that second copy,
+    // caught: it went on demanding 0.22 of drive-through for a spec after the
+    // measurement said 0.116.
+    expect(loadGap).toBeLessThan(guardGap - 0.05);
     // Driven through: by contact it has come forward past where it started.
-    expect(contactGap).toBeGreaterThan(loadGap + 0.22);
+    expect(contactGap).toBeGreaterThan(loadGap + 0.1);
     expect(contactGap).toBeGreaterThan(guardGap);
   });
 

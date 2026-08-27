@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { abilityById } from '../server/data/abilities.js';
 import { SERVER_TICK_RATE } from '../server/config.js';
 import { animatedBones, authorClip, frameCount, poseAt, quatAngle, type Quat } from './clip-author.js';
+import { clipDurationOf, clipPoseAt } from './clip-sample.js';
 import { readGlbJson } from './glb.js';
 import { readNodeTree, splitGlb, type GlbReadNode } from './glb-read.js';
 import {
@@ -31,6 +32,7 @@ import {
 import { bodyFrame, boneNode, intoBodyFrame, namingOf, worldPosition, type BodyFrame, type Vec3 } from './pose.js';
 import type { NamingSpec } from './naming.js';
 import { poseWorldMatrices } from './skin.js';
+import { legOf, stanceOf, type Stance } from './stance.js';
 
 const UNIT_DIR = join(process.cwd(), 'assets', 'units', 'pig_a_pose_full');
 /** The family's own documents, one level above each member. */
@@ -173,22 +175,178 @@ describe('the stance the swing is thrown from', () => {
 
   it('steps the wielding-side foot back to brace, then drives it through', () => {
     // The right leg is the wielding side: back through the wind-up, forward past
-    // the left as the blow lands. That is where the weight comes from, and
-    // without it the pig is a torso rotating in place.
+    // where it started as the blow lands. That is where the weight comes from,
+    // and without it the pig is a torso rotating in place.
     //
     // Measured as the *right foot's own* travel, not as the gap between the
     // feet. The gap is what spec 140 asserted and it flattered this by roughly
     // two thirds, because the left foot was sliding the other way underneath it
     // -- so a right leg that barely moved scored as a full step.
+    //
+    // The two numbers are spec 244's and are smaller than spec 143's 0.08 and
+    // 0.22, which were measured with this foot **0.077 above the ground**. On
+    // the floor the step is bounded twice over, and neither bound is a taste.
+    // Reaching back, the leg cannot put its ankle more than 0.079 from under its
+    // own hip at all -- the pig stands exactly as tall as its legs are long, so
+    // a foot that goes further has to come up. Driving through, it stops at the
+    // pelvis rather than passing the left foot, because a body with both feet in
+    // front of its own weight is the same fault as the one this spec started
+    // from, arriving from the other side. Measured: 0.086 back and 0.116
+    // through, against a foot that now stays on the floor the whole way.
     const forwardAt = (ms: number): number => placeAt(rightFoot.index, ms).forward;
     const rest = forwardAt(0);
 
-    expect(forwardAt(STRIKE_KEY_MS.load) - rest, 'braced back').toBeLessThan(-0.08 * HEIGHT);
-    expect(forwardAt(STRIKE_CONTACT_MS) - forwardAt(STRIKE_KEY_MS.load), 'driven through').toBeGreaterThan(0.22 * HEIGHT);
+    expect(forwardAt(STRIKE_KEY_MS.load) - rest, 'braced back').toBeLessThan(-0.075 * HEIGHT);
+    expect(forwardAt(STRIKE_CONTACT_MS) - forwardAt(STRIKE_KEY_MS.load), 'driven through').toBeGreaterThan(0.1 * HEIGHT);
     // Past where it started, not merely back to it: the weight has transferred.
     expect(forwardAt(STRIKE_CONTACT_MS)).toBeGreaterThan(rest);
     // And returned, so a second swing starts from the stance the first left.
     expect(forwardAt(STRIKE_KEY_MS.settle)).toBeCloseTo(rest, 6);
+  });
+});
+
+describe('the stance has weight on it', () => {
+  // Spec 244. Everything here is sampled every 5ms rather than at the seven
+  // keys, because two legal keys can interpolate through an illegal pose --
+  // a knee that straightens through the middle of a slerp is exactly the sort
+  // of thing a key-by-key check reports as fine.
+  //
+  // Only the swing is measured. `shoot` and `cast` hold `STRIKE_GUARD_LEGS` in
+  // every one of their keys and their own tests assert that against the same
+  // object, so the guard being balanced and planted here is the guard being
+  // balanced and planted in all three -- a fact about the module graph rather
+  // than three copies of this file.
+  const legs = { left: legOf(nodes, naming, 'left'), right: legOf(nodes, naming, 'right') };
+  // The rig's own coordinates, not `bindPlace`'s hips-relative ones: `stanceOf`
+  // reads the feet where they actually are, and the pelvis has to be measured
+  // against the same origin or the balance is compared with itself.
+  const PELVIS = intoBodyFrame(frame, worldPosition(hips)).forward;
+
+  const stanceAt = (ms: number): Stance =>
+    stanceOf(nodes, frame, legs, poseWorldMatrices(nodes, poseAt(PIG_STRIKE, rig, ms)), PELVIS);
+
+  const EVERY_5MS: number[] = [];
+  for (let ms = 0; ms <= STRIKE_DURATION_MS; ms += 5) EVERY_5MS.push(ms);
+
+  /**
+   * The ground, taken from the idle rather than from a constant.
+   *
+   * The idle is the pose the game shows, the pose this clip cross-fades from,
+   * and therefore the one a viewer's eye takes the floor from -- so "the feet
+   * are on the ground" is a claim about *these two clips agreeing*, and a
+   * number typed here could not make it. The median across the idle, because an
+   * idle shifts its weight and where a foot rests is wanted rather than the
+   * lowest it ever reaches.
+   */
+  const FLOOR = ((): { left: number; right: number } => {
+    const glb = splitGlb(new Uint8Array(readFileSync(join(CLIP_DIR, 'idle.glb'))));
+    const duration = clipDurationOf(glb);
+    const seen = { left: [] as number[], right: [] as number[] };
+    for (let index = 0; index <= 200; index += 1) {
+      const read = stanceOf(
+        nodes,
+        frame,
+        legs,
+        poseWorldMatrices(nodes, clipPoseAt(glb, nodes, (duration * index) / 200)),
+        PELVIS,
+      );
+      seen.left.push(read.left.toe.up);
+      seen.right.push(read.right.toe.up);
+    }
+    const median = (values: number[]): number =>
+      [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
+    return { left: median(seen.left), right: median(seen.right) };
+  })();
+
+  it('keeps the pelvis over its own feet, at every frame', () => {
+    // 0 is the rear ankle and 1 the leading toe, so outside that is a body that
+    // has already begun to fall. The guard used to read **157%** -- the pelvis
+    // 0.064 past the leading toe -- and stayed outside through the whole
+    // wind-up, because the bend was bought by swinging both feet backwards.
+    // Measured now: 11% at the drive-through and 81% at the deepest of the
+    // brace, so the margin is real at both ends rather than scraped at one.
+    for (const ms of EVERY_5MS) {
+      expect(stanceAt(ms).over, `pelvis over the feet at ${ms}ms`).toBeGreaterThan(0.05);
+      expect(stanceAt(ms).over, `pelvis over the feet at ${ms}ms`).toBeLessThan(0.95);
+    }
+  });
+
+  it('keeps both feet on the floor the idle stands on', () => {
+    // The clip is rotation-only and the server owns where a body is, so the root
+    // cannot drop to meet a raised foot: a toe above the idle's is a foot in the
+    // air, full stop. The right one used to reach 0.077 above it -- 7.7% of body
+    // height -- during the beat this file calls a brace. Worst now: 0.0063, on
+    // the rear foot at the furthest of its reach back, which is the one moment a
+    // real foot would also be light.
+    for (const ms of EVERY_5MS) {
+      const read = stanceAt(ms);
+      expect(Math.abs(read.left.toe.up - FLOOR.left), `left toe at ${ms}ms`).toBeLessThan(0.01 * HEIGHT);
+      expect(Math.abs(read.right.toe.up - FLOOR.right), `right toe at ${ms}ms`).toBeLessThan(0.01 * HEIGHT);
+    }
+  });
+
+  it('never locks a knee out', () => {
+    // 14 degrees is `plant-foot.ts`'s floor and is not a taste: the idle carries
+    // a median of 10.5 on the left and 15.4 on the right, and a combat stance
+    // that stood straighter than standing about would be the wrong way round.
+    // The rear knee used to read 10.4 at the load -- locked while bracing -- and
+    // then snap 44 degrees in 100ms. Measured now: never under 21.5.
+    for (const ms of EVERY_5MS) {
+      const read = stanceAt(ms);
+      expect(read.left.bend, `left knee at ${ms}ms`).toBeGreaterThan(14);
+      expect(read.right.bend, `right knee at ${ms}ms`).toBeGreaterThan(14);
+    }
+  });
+
+  it('never bends a knee backwards', () => {
+    // The signed half, which `bend` cannot make: of however far the knee sits
+    // off the straight line from its hip to its ankle, how much of that points
+    // forward. Zero is a knee straight out sideways and negative is the joint
+    // folded the wrong way -- and the six knobs a leg is solved with genuinely
+    // leave that freedom, since two pinned points still let the leg swivel about
+    // the line between them. Measured never under 0.83.
+    //
+    // Unlike the four above it, this one passed against the old stance too --
+    // that stance was unbalanced and airborne, not inside out. It is here to
+    // hold the solver's spare degree of freedom, which nothing else does.
+    for (const ms of EVERY_5MS) {
+      const read = stanceAt(ms);
+      expect(read.left.lead, `left knee at ${ms}ms`).toBeGreaterThan(0.5);
+      expect(read.right.lead, `right knee at ${ms}ms`).toBeGreaterThan(0.5);
+    }
+  });
+
+  it('shifts the knees forward of the ankles, so the shins lead', () => {
+    // What a bent leg standing on something looks like: the knee travels out
+    // over the foot. The old stance had the knee ahead of the ankle too, and
+    // got there the other way round -- by driving the *ankle* backwards until
+    // it was behind the hip, which is the kickstand this spec exists to undo.
+    // Asserting it beside the balance rule is what tells the two apart -- on its
+    // own this passes against either stance, and it says nothing until the
+    // pelvis is known to be over the feet.
+    for (const ms of EVERY_5MS) {
+      const read = stanceAt(ms);
+      expect(read.left.knee.forward - read.left.ankle.forward, `left shin at ${ms}ms`).toBeGreaterThan(0);
+      expect(read.right.knee.forward - read.right.ankle.forward, `right shin at ${ms}ms`).toBeGreaterThan(0);
+    }
+  });
+
+  it('compresses the support leg into the blow rather than straightening it', () => {
+    // The whole point of the pelvic roll at `contact` and `follow`. The pelvis
+    // yaws 45 degrees between the load and the follow-through and carries the
+    // left hip 0.05 backwards with it, so a support leg that did nothing gets
+    // *straighter* exactly as the weight arrives on it -- and it did: 30.4
+    // degrees at the guard, 28.7 at the load, with the least-bent frame of the
+    // swing being the one the blow lands on.
+    //
+    // Three degrees of roll drops that hip about 0.010, which is what buys this
+    // back on a rig whose root may not translate. Measured: 21.5 at the guard
+    // and 24.7 at contact.
+    const guard = stanceAt(STRIKE_KEY_MS.guard).left.bend;
+    const contact = stanceAt(STRIKE_CONTACT_MS).left.bend;
+    expect(contact - guard, 'the support knee, guard to contact').toBeGreaterThan(2);
+    // And back, so a second swing starts from the stance the first left.
+    expect(stanceAt(STRIKE_KEY_MS.settle).left.bend).toBeCloseTo(guard, 1);
   });
 });
 
