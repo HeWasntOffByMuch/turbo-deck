@@ -542,6 +542,20 @@ tooltip ends in `Beneficial.` or `Harmful.`. Colour alone is a distinction a
 colour-blind player does not have, and the two marks are a warm red against a
 cool blue — the single most common confusion there is.
 
+**This is presentation, and it is not the categorisation the sim reads.** Since
+spec 233 there is a second, mechanical one in `data/status-semantics.ts`:
+`beneficial`, `harmful`, `affliction`, `damageOverTime`, `bookkeeping`, covering
+every status id including the ones no player is ever shown. It exists because
+one map holds a poison and a half-second reaction window alike, and something
+had to be able to tell them apart — see `progression-and-scaling.md` Part 3.
+
+The two are held in step by a test rather than by convention: a status drawn as
+a boon must carry `beneficial` and one drawn as an affliction must carry
+`harmful`. They do **not** merge, because they answer different questions. Here
+the question is *what colour is this mark*, and there it is *is this body
+suffering from something* — and Exposed, which is drawn as an affliction, is
+harmful and deliberately not one.
+
 ---
 
 ## Part 4 — Open questions

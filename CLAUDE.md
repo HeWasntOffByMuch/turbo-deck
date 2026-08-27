@@ -128,7 +128,28 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
-docs/            durable direction that outlives one spec. vfx-plan.md, ui/, and
+docs/            durable direction that outlives one spec.
+                 progression-and-scaling.md (specs 231-234) is the rules
+                 progression and combat-scaling work is decided against: what an
+                 ability is allowed to scale with and in what order the three
+                 addends of a blow are summed, the two progression rules (**every
+                 purchased rank does something where it can be bought**, and
+                 **progression does not move backwards**), the status taxonomy
+                 the sim reads, and Second Wind's consumed state with its reset
+                 rule. The parts worth knowing before touching any of it: damage
+                 is `base + own letters + a fraction of the weapon`, summed once,
+                 with everything below that point a multiplier -- so
+                 double-counting is a structural impossibility rather than
+                 something to be careful about; Spell Power multiplies what
+                 Intelligence buys and nothing else, its own Intelligence term
+                 having been removed so an Intelligence ability is not quadratic
+                 in Intelligence; an affliction's rate, cadence and length are its
+                 own row's whole, and the only thing an applier moves is one
+                 snapshotted multiplier derived from *that ability's* letters;
+                 and a capability is a flag rather than a number a layer reduces,
+                 because inferring one from the number a skill *lowers* is how
+                 three purchasable skills came to switch off the mechanic they
+                 improve. vfx-plan.md, ui/, and
                  reward-philosophy.md (spec 158) -- the rules future loot,
                  progression, encounter and feedback work is decided against:
                  world-embedded rewards over reward cards, contrast between
