@@ -1,5 +1,5 @@
 /**
- * The spell cast, driven the way the game drives it (spec 230).
+ * The spell cast, driven the way the game drives it (spec 231).
  *
  * Beside `pig-swing.test.ts` and `pig-shoot.test.ts`, and for the reason those
  * files give: `src/units/` may not import `unit-driver.ts`, so "does the trigger

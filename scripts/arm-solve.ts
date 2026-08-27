@@ -1,5 +1,5 @@
 /**
- * Put a rig's hand where an author says it goes, and answer with the arm (spec 230).
+ * Put a rig's hand where an author says it goes, and answer with the arm (spec 231).
  *
  * This is `aim-bow.ts`'s solver, lifted out of it so a second clip can use it
  * without a second copy. Nothing about the arithmetic moved: the same cost, the

@@ -48,7 +48,7 @@ const TICK_RATE = 60;
 const ABILITY_ICONS: Readonly<Record<string, string>> = {
   'melee.slash': 'ability:slash',
   // The bow and the stars borrow glyphs rather than having their own. The names
-  // outlived the abilities they were drawn for (spec 231) and are kept because
+  // outlived the abilities they were drawn for (spec 232) and are kept because
   // the *sprites* are still the right picture for a shot and a thrown blade.
   'ranged.shot': 'ability:seek',
   'ranged.star': 'ability:slash',

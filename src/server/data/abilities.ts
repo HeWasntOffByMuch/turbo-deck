@@ -50,7 +50,7 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 export type ProjectileLook = 'orb' | 'arrow' | 'shuriken' | 'ember';
 
 /**
- * How a body is drawn casting this (spec 230).
+ * How a body is drawn casting this (spec 231).
  *
  * A picture and nothing more, in exactly the register {@link ProjectileLook} is
  * in: nothing under `src/server/sim/` reads it, it rides no wire, and two
@@ -179,7 +179,7 @@ export interface AbilityDefinition {
    */
   readonly basicAttack?: boolean;
   /**
-   * How the caster is drawn while this winds up (spec 230). Absent is the swing.
+   * How the caster is drawn while this winds up (spec 231). Absent is the swing.
    *
    * See {@link CastLook}. It is on the row for the reason `projectile.look` is:
    * `attackTriggerFor` states that which animation an ability gets is *"a fact

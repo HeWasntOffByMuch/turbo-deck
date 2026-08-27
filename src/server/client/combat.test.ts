@@ -111,7 +111,7 @@ describe('the gate, asked of a mirror', () => {
   });
 
   it('will not predict an ability the mirror cannot afford, and will one it can', () => {
-    // A *skill*, because since spec 231 nothing else costs resource: the rows
+    // A *skill*, because since spec 232 nothing else costs resource: the rows
     // that were castable by anybody and priced -- the bolts, the quake, the
     // heavy blow -- were spec 062's demo set and went with it. So the mirror
     // has to be carrying it, exactly as the server requires.

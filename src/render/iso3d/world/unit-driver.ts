@@ -123,7 +123,7 @@ export const DRIVEN_PARAMETERS = {
   attack: 'attack',
   shoot: 'shoot',
   /**
-   * The spell cast (spec 230).
+   * The spell cast (spec 231).
    *
    * The third of the three, and the first that is reached by more than one
    * ability: a body has one sword and one bow and seven spells, so the clip
@@ -157,7 +157,7 @@ export const DRIVEN_PARAMETERS = {
  * this a fact read off the content table rather than a list of ids to keep in
  * sync with it.
  *
- * The cast is the third answer (spec 230) and the one place that rule bends,
+ * The cast is the third answer (spec 231) and the one place that rule bends,
  * because there is nothing mechanical to read. `skill.whirlwind` and
  * `skill.rimeTouch` are both an `area` circle on the caster's own feet, and one
  * is a blade going all the way round while the other is cold coming off the
@@ -178,7 +178,7 @@ export function attackTriggerFor(abilityId: string | null): string {
 }
 
 /**
- * How fast the chosen clip has to run for its own beat to be the sim's (spec 230).
+ * How fast the chosen clip has to run for its own beat to be the sim's (spec 231).
  *
  * A factor on {@link UnitFacts.attackRate}, and 1 for every clip that was
  * authored for one ability. That is the swing and the draw: `slash`'s contact
@@ -252,7 +252,7 @@ export function driveUnit(
   // Written before the trigger, so the swing that is about to start is entered
   // at the right rate rather than a tick of it playing at the old one. The
   // trigger is resolved first because the rate depends on which clip it reaches
-  // (spec 230) -- resolving it is a parameter lookup and raising it is not, so
+  // (spec 231) -- resolving it is a parameter lookup and raising it is not, so
   // it is safe to ask on every tick and only raise on the edge.
   const trigger = triggerFor(machine, facts.abilityId);
   machine.setActionRate(facts.attackRate * clipStretch(trigger, facts.abilityId));
@@ -278,7 +278,7 @@ export function driveUnit(
 /**
  * The trigger to raise, given what this particular unit can answer.
  *
- * A unitdef with no `shoot` -- or, since spec 230, no `cast` -- parameter falls
+ * A unitdef with no `shoot` -- or, since spec 231, no `cast` -- parameter falls
  * back to `attack`, which is what it did before either existed. That matters
  * because the roster is not uniform: the fox and the dev mannequin share this
  * family's clip library and neither has a draw state or a focus state, and a

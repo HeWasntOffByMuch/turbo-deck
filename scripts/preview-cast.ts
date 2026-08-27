@@ -1,4 +1,4 @@
-// Dev-only: photograph the authored spell cast, frame by frame (spec 230).
+// Dev-only: photograph the authored spell cast, frame by frame (spec 231).
 // `npx tsx scripts/preview-cast.ts`
 //
 // The same rasteriser as `preview-strike.ts` and `preview-shot.ts`, copied for

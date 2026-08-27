@@ -1,5 +1,5 @@
 /**
- * The pig's spell cast, as a table of poses (spec 230).
+ * The pig's spell cast, as a table of poses (spec 231).
  *
  * `pig-strike.ts` and `pig-shot.ts` are the same file for the sword and the
  * bow, and everything structural here is theirs: keys in the body's own axes,

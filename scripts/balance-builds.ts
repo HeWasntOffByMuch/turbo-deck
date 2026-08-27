@@ -304,7 +304,7 @@ function run(preset: BuildPreset): Row {
  */
 const PUNCTUATION_RATIO = 2;
 /**
- * What a build has to punctuate with, read off the **sigils** (spec 231).
+ * What a build has to punctuate with, read off the **sigils** (spec 232).
  *
  * It used to be `STARTING_ABILITIES`, which was spec 062's demo set -- one row
  * per `AbilityKind`, granted by nothing and castable by anybody. Those rows are

@@ -704,7 +704,7 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  *is* the distance the hands get apart, and it prints that
                  distance per frame beside the picture because a thumbnail of a
                  pig cannot settle whether the string hand went back.
-                 pig-cast.ts is the third of them (spec 230): six poses over
+                 pig-cast.ts is the third of them (spec 231): six poses over
                  1250ms with the hands drawn in to the chest, a coil that creeps
                  for 460ms, and both arms thrown forward at 850. It exists
                  because every spell in the game was drawn as a sword chop --
@@ -2617,7 +2617,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  from. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
-                 Since spec 231 **every ability in that table is reachable by
+                 Since spec 232 **every ability in that table is reachable by
                  somebody**, and it is a test rather than a habit: an item grants
                  it as an active skill, an item or a monster names it as a basic
                  attack, or it is one of the two the game reaches for directly --
@@ -4443,7 +4443,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  exists and **overrides** the equipped skills rather than being
                  the only way to fill a slot -- a harness that wants
                  `ground.quake` on the bar should not have to loot a sigil for
-                 it first. (That row is gone since spec 231; the switch is not,
+                 it first. (That row is gone since spec 232; the switch is not,
                  and it is the only way to put a skill on the bar without one --
                  though the *server* still refuses a `skill: true` ability that
                  is not in a slot, so `?slots=` now fills the bar rather than

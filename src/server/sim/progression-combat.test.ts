@@ -154,7 +154,7 @@ function ability(id: string): AbilityDefinition {
 const SLASH = ability('melee.slash');
 // A ground spell that launches nothing, and a projectile that does: the two
 // halves of the handling test below. Repointed off spec 062's demo rows by
-// spec 231; what matters about each is its *shape*, not its id.
+// spec 232; what matters about each is its *shape*, not its id.
 const SPELL = ability('skill.blight');
 const SHOT = ability('ranged.shot');
 const DART = ability('skill.poisonDart');

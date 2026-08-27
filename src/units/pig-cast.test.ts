@@ -1,6 +1,6 @@
 /**
  * What the spell cast has to be, asserted against the rig and the ability table
- * it was authored for (spec 230).
+ * it was authored for (spec 231).
  *
  * The subject is the real `pig_a_pose_full.glb` off disk, for the reason
  * `pig-strike.test.ts` and `pig-shot.test.ts` both give about the same rig:
@@ -131,8 +131,8 @@ describe('the cast lands on the wind-up it is being played against', () => {
     // table cannot reach it.
     //
     // A *window* rather than the minimax point, deliberately. 850 was picked as
-    // the geometric mean of the wind-ups as they stood (spec 230) and the table
-    // has moved since -- spec 231 removed the two extremes it was measured
+    // the geometric mean of the wind-ups as they stood (spec 231) and the table
+    // has moved since -- spec 232 removed the two extremes it was measured
     // against, and the optimum is now 742. Pinning the optimum would mean
     // re-authoring a committed `.glb` every time a spell is added or removed,
     // for a change in the worst stretch of less than a fifth and one nobody can

@@ -40,7 +40,7 @@ describe('castBar', () => {
     expect(b).toBeGreaterThan(a);
   });
 
-  // No shipped row is `kind: 'channel'` any more (spec 231), and this test does
+  // No shipped row is `kind: 'channel'` any more (spec 232), and this test does
   // not need one: `castBar` reads the *phase* off the cast and the ticks either
   // side of it, so what is under test is `CastPhaseValue.Channel` rather than
   // the ability's kind. The last case in this file always drove it that way.

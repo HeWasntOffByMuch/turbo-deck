@@ -1,5 +1,5 @@
 /**
- * Put both of the pig's hands where a cast needs them, at each key (spec 230).
+ * Put both of the pig's hands where a cast needs them, at each key (spec 231).
  *
  *   npx tsx scripts/aim-cast.ts
  *

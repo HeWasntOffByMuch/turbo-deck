@@ -61,7 +61,7 @@ const CAST_SIGILS = [
 
 /**
  * Puts the cast sigils in a player's skill slots, so the server will let them
- * cast one (spec 231).
+ * cast one (spec 232).
  *
  * Every ability a player can cast that is not their weapon's own swing now comes
  * from a sigil, and `startCast` refuses one that is not in a slot -- so a test

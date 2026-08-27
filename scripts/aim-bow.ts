@@ -10,7 +10,7 @@
  * travels away from it. So this states **where each hand is** and solves the
  * shoulder, elbow and wrist of both arms for it.
  *
- * Since spec 230 the solve itself is `arm-solve.ts`, shared with `aim-cast.ts`:
+ * Since spec 231 the solve itself is `arm-solve.ts`, shared with `aim-cast.ts`:
  * a second clip wanted exactly this and a second copy of a descent is a second
  * set of weights to keep in step. What stayed here is the only part that was
  * ever about a bow, which is the table below.

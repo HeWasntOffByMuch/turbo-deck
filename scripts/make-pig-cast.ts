@@ -1,5 +1,5 @@
 /**
- * Writes the pig's authored spell cast into its clip library (spec 230).
+ * Writes the pig's authored spell cast into its clip library (spec 231).
  *
  *   npx tsx scripts/make-pig-cast.ts
  *
@@ -32,7 +32,7 @@ const CLIP_DIR = join(repoRoot, 'assets', 'units', 'clips');
 const MESH = join(UNIT_DIR, 'pig_a_pose_full.glb');
 const OUT = join(CLIP_DIR, `${CAST_CLIP_ID}.glb`);
 
-const GENERATOR = 'turbo-deck authored clip (spec 230)';
+const GENERATOR = 'turbo-deck authored clip (spec 231)';
 
 function fail(message: string): never {
   console.error(`  ${message}`);
