@@ -162,7 +162,13 @@ async function play(drive: boolean): Promise<RunResult> {
       onLayoutChanged: () => {
         layoutWrites += 1;
       },
-      nearestVendor: () => null,
+      // Spec 246. In `requests` with everything else that reaches the server:
+      // a reply can open a shop and can end a conversation, and both are things
+      // this test's claim -- that mounting the interface asks for nothing -- is
+      // about.
+      onDialogueChoice: (index) => requests.push(`dialogueChoice:${index}`),
+      onDialogueAdvance: () => requests.push('dialogueAdvance'),
+      onDialogueLeave: () => requests.push('dialogueLeave'),
     },
     VIEWPORT,
   );

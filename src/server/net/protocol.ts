@@ -145,6 +145,20 @@ export const ClientMessageType = {
    * item lands is a client throwing one across the map.
    */
   DropItem: 0x1b,
+  /**
+   * Start or end a conversation with a friendly NPC (spec 246).
+   *
+   * An entity id of 0 ends whatever is in progress, the same convention
+   * `OpenVendor`'s empty id already uses -- so there is one message rather than
+   * two, and a client leaving cannot be a client that forgot to say it was
+   * leaving.
+   *
+   * Refused, silently and with a `Conversation` naming 0, for a body that is
+   * not an NPC, is out of its own `talkRadius`, is dead, or is already talking
+   * to somebody else. The claim is what stops the body wandering; what it
+   * *says* is a table both ends already have, so none of that is on the wire.
+   */
+  Talk: 0x1c,
 } as const;
 
 export const ServerMessageType = {
@@ -234,6 +248,19 @@ export const ServerMessageType = {
    * "notice" step; the payoff is what is being withheld.
    */
   LootDrop: 0x56,
+  /**
+   * Which NPC this client is talking to, or 0 for none (spec 246).
+   *
+   * The answer to a `Talk`, and also what arrives unasked when the server ends
+   * one: walking out of range, either body dying, the NPC despawning. So a
+   * client never has to infer that a conversation is over from the absence of
+   * something, which is the same reason `VendorState` answers a refusal rather
+   * than staying quiet.
+   *
+   * Sent only to the player in the conversation. Everybody else sees a body
+   * that has stopped walking and turned, which is already replicated.
+   */
+  Conversation: 0x57,
   /**
    * The health economy's own two numbers (spec 156): how full the restoration
    * meter is, and how many flask charges are left.

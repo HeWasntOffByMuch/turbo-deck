@@ -93,7 +93,23 @@ export type Temperament =
    * Notices at `noticeRange` and commits on the spot, and answers a blow landed
    * within `assistRange` of it as though it had been struck itself.
    */
-  | { readonly kind: 'ferocious'; readonly noticeRange: number; readonly assistRange: number };
+  | { readonly kind: 'ferocious'; readonly noticeRange: number; readonly assistRange: number }
+  /**
+   * Will not fight, and cannot be fought (spec 246).
+   *
+   * The only member with no number on it, and that is the authoring rule
+   * holding rather than an omission: it notices nothing, waits for nothing and
+   * assists nobody, so there is no range or clock it could read. The whole of
+   * its behaviour is that `isHostile` refuses it at both ends -- so nothing
+   * swings at it, no blast catches it, it never turns up in `nearestQuarry`,
+   * and it never acquires a target of its own.
+   *
+   * A temperament rather than an entity kind, because everything else about
+   * such a body is a monster: it spawns from a marker, wanders through
+   * `sim/idle.ts`, moves through `resolveMovement`, replicates, streams and is
+   * drawn. `Prop` is scenery that does none of that.
+   */
+  | { readonly kind: 'friendly' };
 
 /**
  * What a body does with its own time (spec 213).
@@ -194,6 +210,23 @@ export function noticeRangeOf(temperament: Temperament): number {
  * no row at all is a body the table cannot describe -- and a thing nobody can
  * name should not also be walking about.
  */
+/**
+ * Whether a body of this type will not fight and cannot be fought (spec 246).
+ *
+ * The one answer, because three places need it and they are in three different
+ * trees: `sim/aggro.ts`'s `isFriendly` wraps it for an entity, the renderer's
+ * `appearanceOf` reads it to withhold a health bar and to make a right-click
+ * mean "talk", and a test picking a body to fight has to skip one. A predicate
+ * each would be three readings of one union member.
+ *
+ * By type id rather than by entity, so a caller with a replicated body and no
+ * server types can ask -- which is the whole reason the client can answer it at
+ * all without a bit on the wire.
+ */
+export function isFriendlyMonster(typeId: string): boolean {
+  return monsterById(typeId)?.temperament.kind === 'friendly';
+}
+
 export function idlePlanOf(typeId: string): Idle {
   return monsterById(typeId)?.idle ?? SENTINEL;
 }
@@ -247,6 +280,75 @@ function withTraits(monster: AuthoredMonster): MonsterDefinition {
 
 function seconds(value: number): number {
   return Math.max(1, Math.round(value * SERVER_TICK_RATE));
+}
+
+/**
+ * A body that is not an enemy (spec 246).
+ *
+ * A row here rather than a table of its own because everything about it except
+ * the fighting is a monster: it comes off a `spawner` marker, wanders through
+ * `sim/idle.ts`, is moved by `resolveMovement`, replicates and is drawn. What it
+ * *says* lives in `data/npcs.ts`, keyed by this id.
+ *
+ * A factory rather than three literal rows, because since spec 247 there are
+ * three of them and every field but the id and the name is the same -- and the
+ * fields are the same for reasons, written out below, that would then be
+ * written out three times or (worse) once, beside whichever row happened to be
+ * first. What a shopkeeper differs in is its shop and its script, and neither
+ * of those is in this table.
+ */
+function shopkeeper(id: string, name: string): AuthoredMonster {
+  return {
+    id,
+    name,
+    radius: 20,
+    // Nothing can kill it, so nothing can be paid for killing it.
+    experience: 0,
+    temperament: { kind: 'friendly' },
+    // A tight ramble, and tight for a reason the other rows do not have: a body
+    // you walk up to and talk to should still be roughly where you last saw it,
+    // and its shop's reach is measured from the *anchor* rather than from the
+    // body (`withinReach` in `data/vendors.ts`), so how far it strays is a
+    // number `reachFor` has to cover.
+    //
+    // Nine seconds against 90 units leaves it standing for most of the cycle,
+    // and at a person's walking speed that is *most* of it: `IDLE_PACE` of 155
+    // crosses the disc in a second or so, so what a player sees is a few
+    // unhurried steps and then a long wait. Which is what a shopkeeper does --
+    // and it is the ratio that would need re-tuning, not the radius, if this
+    // ever wants to look busier.
+    idle: { kind: 'wander', radius: 90, cycleTicks: seconds(9) },
+    stats: {
+      // It cannot be hit -- `isHostile` refuses a friendly body at both ends --
+      // so this is the number that keeps it a live body rather than a corpse,
+      // and nothing ever subtracts from it.
+      maxHealth: 100,
+      // A person's walk rather than an animal's: the same speed a fresh
+      // character has, since this is a body that walks the same roads. It only
+      // ever *uses* `IDLE_PACE` of it (0.45), so what a player sees is an
+      // unhurried amble that still covers ground -- and a merchant that moved
+      // visibly slower than everything else in the world reads as wounded.
+      moveSpeed: 155,
+      // Faster than it walks needs, and deliberately: the one turn anybody
+      // watches this body make is the one where it comes round to face them,
+      // and a shopkeeper that swings round slowly reads as reluctant. Above the
+      // fresh character's own 390, so it is always the one that finishes first.
+      turnRate: 420,
+      attackDamage: 0,
+      attackRange: 0,
+      baseAttackTimeTicks: 1,
+      ...NO_ATTACK_SPEED,
+      armor: 0,
+      spellPower: 1,
+      critChance: 0,
+      maxResource: 0,
+      resourceRegen: 0,
+      // No attack at all, the training dummy's convention: an empty id is a
+      // body that never swings, which for this one is the point rather than a
+      // consequence of never being made to stand.
+      basicAttackId: '',
+    },
+  };
 }
 
 const AUTHORED: readonly AuthoredMonster[] = [
@@ -497,6 +599,15 @@ const AUTHORED: readonly AuthoredMonster[] = [
       basicAttackId: 'ranged.star',
     },
   },
+  shopkeeper('npc.merchant', 'Rell'),
+  // The two shops that used to be invisible coordinates near the spawn
+  // (spec 247). They were reached by standing on the spot and pressing a key,
+  // which is what "there is no map that says where a town is" bought in spec
+  // 129; there is a town now, and the key is gone, so they are bodies like
+  // Rell -- same row shape, same wander, same voice machinery, different
+  // stock. What that costs is one `shopkeeper(...)` line each.
+  shopkeeper('npc.quartermaster', 'Quartermaster'),
+  shopkeeper('npc.armourer', 'Armourer'),
 ];
 
 const DUMMY: AuthoredMonster = {

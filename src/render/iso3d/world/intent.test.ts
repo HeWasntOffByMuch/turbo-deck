@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MOVE_EAST, MOVE_NORTH, MOVE_SOUTH, MOVE_WEST } from '../../../ui/input/actions.js';
-import { ARRIVE_EPS, moveIntent, RoutePlanner, steerTo, type IntentInput } from './intent.js';
+import { aligned, ARRIVE_EPS, moveIntent, RoutePlanner, steerTo, type IntentInput } from './intent.js';
 import { createWorldColliders } from '../../../sim/collision.js';
 import { PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../../sim/constants.js';
 
@@ -469,6 +469,77 @@ describe('a body faces what it was told to attack (spec 090)', () => {
   it('keeps its heading when it is standing on top of the mark', () => {
     const onTop = intentWith({ facing: 1.25, targetAim: { x: self.x, y: self.y } });
     expect(onTop.facing).toBe(1.25);
+  });
+});
+
+/**
+ * Spec 246. Turning to face somebody you have just started talking to.
+ *
+ * The same slot the mark above sits in, and for the same reason -- a walk
+ * outranks it -- with one difference that is the whole of what makes it a
+ * *greeting* rather than a lock: the caller drops it the instant the body has
+ * come round. That half lives in `view.ts`, since this function is pure and
+ * holds nothing between calls; what is asserted here is that the aim does what
+ * it says while it is set.
+ */
+describe('a body faces whoever it has just spoken to (spec 246)', () => {
+  const self = { x: 600, y: 450 };
+  const merchant = { x: self.x - 300, y: self.y };
+
+  function intentWith(over: Partial<IntentInput>): ReturnType<typeof moveIntent> {
+    return moveIntent({
+      held: new Set(),
+      self,
+      destination: null,
+      route: null,
+      facing: 0,
+      castAim: null,
+      targetAim: null,
+      talkAim: null,
+      ...over,
+    });
+  }
+
+  it('turns toward them, standing still', () => {
+    const greeting = intentWith({ talkAim: merchant });
+    expect(Math.hypot(greeting.moveX, greeting.moveY)).toBe(0);
+    expect(greeting.facing).toBeCloseTo(Math.PI, 9);
+    // Without one it keeps whatever heading it had, which is the control.
+    expect(intentWith({}).facing).toBe(0);
+  });
+
+  it('lets a walk outrank it, because the player is free to leave', () => {
+    const walking = intentWith({ held: new Set([MOVE_EAST]), talkAim: merchant });
+    expect(walking.moveX).toBeCloseTo(1, 9);
+    expect(walking.facing).toBeCloseTo(0, 9);
+  });
+
+  it('is outranked by a committed blow, like every other standing aim', () => {
+    const aim = { x: self.x, y: self.y + 300 };
+    expect(intentWith({ castAim: aim, talkAim: merchant }).facing).toBeCloseTo(Math.PI / 2, 9);
+  });
+
+  it('keeps its heading when it is standing on top of them', () => {
+    expect(intentWith({ facing: 1.25, talkAim: { x: self.x, y: self.y } }).facing).toBe(1.25);
+  });
+
+  it('is held still by a stagger and refused by death, like every other aim', () => {
+    expect(intentWith({ talkAim: merchant, staggered: true, facing: 1.25 }).facing).toBe(1.25);
+    expect(intentWith({ talkAim: merchant, dead: true, facing: 1.25 }).facing).toBe(1.25);
+  });
+});
+
+describe('aligned', () => {
+  it('is true for a heading that has arrived, and false for one still turning', () => {
+    expect(aligned(1.2, 1.2)).toBe(true);
+    expect(aligned(1.2, 1.2 + 0.01)).toBe(true);
+    expect(aligned(0, Math.PI / 2)).toBe(false);
+  });
+
+  it('does not treat the wrap at pi as a large difference', () => {
+    // Two headings either side of pi are a hair apart; the *numbers* are 2pi
+    // apart, which is what a plain subtraction would report.
+    expect(aligned(Math.PI - 0.01, -Math.PI + 0.01)).toBe(true);
   });
 });
 

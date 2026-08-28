@@ -333,6 +333,23 @@ export interface WatchSpawnersMessage {
  *
  * There is no "and reveal it first". A drop mid-reveal is picked up now.
  */
+/**
+ * Start or end a conversation with an NPC (spec 246).
+ *
+ * `entityId` of 0 ends whatever is in progress rather than naming a body, which
+ * is the same convention `OpenVendor`'s empty id uses -- one message rather than
+ * two, so a client leaving cannot be a client that forgot to say so.
+ *
+ * No request id, because there is nothing optimistic to roll back: a client does
+ * not predict a conversation, and the answer is a `Conversation` naming what the
+ * server decided, whether that is this body or nothing.
+ */
+export interface TalkMessage {
+  readonly type: typeof ClientMessageType.Talk;
+  /** The NPC's entity id, or 0 to end. */
+  readonly entityId: number;
+}
+
 export interface PickUpItemMessage {
   readonly type: typeof ClientMessageType.PickUpItem;
   readonly requestId: number;
@@ -406,6 +423,7 @@ export type ClientMessage =
   | WatchSpawnersMessage
   | PickUpItemMessage
   | DropItemMessage
+  | TalkMessage
   | RespawnMessage;
 
 /**
@@ -534,6 +552,9 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
     case ClientMessageType.PickUpItem:
       writer.varuint(message.requestId).varuint(message.entityId);
       break;
+    case ClientMessageType.Talk:
+      writer.varuint(message.entityId);
+      break;
     case ClientMessageType.DropItem:
       writer.varuint(message.requestId);
       writeAddress(writer, message.at);
@@ -651,6 +672,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         requestId: reader.varuint(),
         entityId: reader.varuint(),
       };
+    case ClientMessageType.Talk:
+      return { type: ClientMessageType.Talk, entityId: reader.varuint() };
     case ClientMessageType.DropItem:
       return {
         type: ClientMessageType.DropItem,
@@ -1260,6 +1283,24 @@ export interface SpawnerStatesMessage {
  * see this" is not the answer -- it would restart the anticipation for somebody
  * who walked up halfway through it.
  */
+/**
+ * Which NPC this client is talking to, or 0 (spec 246).
+ *
+ * The answer to a `Talk` and also what arrives unasked when the server ends one
+ * -- walking out of range, either body dying, the NPC despawning -- so a client
+ * never has to infer the end of a conversation from silence.
+ *
+ * One field, because everything else about the conversation is a table the
+ * client already has: the entity id names the body, `entity.typeId` names the
+ * NPC row, and the row is the name, the voice and the script. Sending any of
+ * that would be replicating a file both ends were built from.
+ */
+export interface ConversationMessage {
+  readonly type: typeof ServerMessageType.Conversation;
+  /** The NPC's entity id, or 0 for "you are not talking to anybody". */
+  readonly entityId: number;
+}
+
 export interface LootDropMessage {
   readonly type: typeof ServerMessageType.LootDrop;
   readonly entityId: number;
@@ -1309,7 +1350,8 @@ export type ServerMessage =
   | MapChunkMessage
   | ChunkDeniedMessage
   | SpawnerStatesMessage
-  | LootDropMessage;
+  | LootDropMessage
+  | ConversationMessage;
 
 // Field bits, duplicated here as plain numbers so the hot encode path is a
 // bitmask test rather than a property lookup. Kept in sync with protocol.ts.
@@ -1759,6 +1801,9 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       }
       break;
     }
+    case ServerMessageType.Conversation:
+      writer.varuint(message.entityId);
+      break;
     case ServerMessageType.LootDrop:
       writer
         .varuint(message.entityId)
@@ -1950,6 +1995,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         ...(pendingSwap === undefined ? {} : { pendingSwap }),
       };
     }
+    case ServerMessageType.Conversation:
+      return { type: ServerMessageType.Conversation, entityId: reader.varuint() };
     case ServerMessageType.LootDrop:
       return {
         type: ServerMessageType.LootDrop,

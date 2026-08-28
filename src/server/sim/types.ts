@@ -555,6 +555,23 @@ export interface ServerEntity {
    * since `beyondLeash` gives up on a null anchor first.
    */
   readonly leashRadius: number;
+  /**
+   * The player this body is talking to, or null (spec 246).
+   *
+   * A claim on the body, in the register `activity` already has for a swap: it
+   * is what makes a conversation cost something visible rather than being a
+   * window one client opened. `monsterIntent` reads it before it reads
+   * anything else, so a body holding one stands still and faces -- and every
+   * other client watches it stop, because a position and a facing are already
+   * replicated. What is *said* is not: that is a table both ends have.
+   *
+   * An entity id rather than a boolean, because "is somebody talking to it"
+   * and "is it you" are two questions and only the second can refuse a second
+   * player. Released by `releaseConversation` on every path that can end one,
+   * including the ones nobody asked for -- walking away, dying, despawning,
+   * disconnecting.
+   */
+  readonly conversationWith: number | null;
 
   // --- progression state (spec 147) --------------------------------------
   /**

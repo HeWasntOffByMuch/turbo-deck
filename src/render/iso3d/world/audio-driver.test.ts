@@ -110,6 +110,13 @@ class RecordingAudio implements Audio {
     // The SFX tab's, and nothing this driver does reaches it.
   }
 
+  speech(): null {
+    // Procedural dialogue (spec 246) builds its own nodes and never reaches
+    // this driver. Null is what a recorder can honestly offer: there is no
+    // context here to hang an oscillator off.
+    return null;
+  }
+
   /** Every id played, in order. What most assertions here are actually about. */
   ids(): readonly string[] {
     return this.played.map((entry) => entry.id);

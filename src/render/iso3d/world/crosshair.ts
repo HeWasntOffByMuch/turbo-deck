@@ -82,14 +82,49 @@ const SMALL: readonly string[] = [
   '....#....',
 ];
 
-/** The art's side, in font pixels. Square, so one number covers both. */
+/**
+ * The speech bubble: what sits over a body you can talk to (spec 246).
+ *
+ * The one mark of the three that is a **picture rather than a reticle**, and
+ * deliberately so: the other two say *where* the click lands, and this says
+ * *what it does*. A crosshair variant would have had to encode "talk" in the
+ * length of four arms, which is not something four arms can say.
+ *
+ * On the same nine-by-nine grid as the other two, so all three swap without the
+ * box under the pointer changing size -- and with the same odd side, so the tail
+ * can sit on the centre column and the mark still reads as pointing at one
+ * pixel. A rounded box with a tail out of the bottom-left, which is the shape
+ * every speech bubble in every game has been since they were drawn on paper;
+ * three dots inside, because an empty box is a box and the dots are what make it
+ * a *said* thing.
+ *
+ * The blank row top and bottom is not padding: this mark is **centred on the
+ * pointer** like the other two, so what has to sit on the box's middle is the
+ * bubble's own body rather than the whole drawing including its tail. Without
+ * them the art's mass rides a row high, and against a mark that is meant to sit
+ * *on* the body it is pointing out, a row is visible.
+ */
+const BUBBLE: readonly string[] = [
+  '.........',
+  '.#######.',
+  '#.......#',
+  '#.#.#.#.#',
+  '#.......#',
+  '.#######.',
+  '..#......',
+  '.#.......',
+  '.........',
+];
+
+/** The art's side, in font pixels. Square, so one number covers all three. */
 export const CROSSHAIR_SIDE = FULL.length;
 
-/** Which of the two marks a caller wants. */
-export type CrosshairArt = 'full' | 'small';
+/** Which of the three marks a caller wants. */
+export type CrosshairArt = 'full' | 'small' | 'bubble';
 
 function artFor(art: CrosshairArt): readonly string[] {
-  return art === 'full' ? FULL : SMALL;
+  if (art === 'full') return FULL;
+  return art === 'bubble' ? BUBBLE : SMALL;
 }
 
 /** One rect per lit pixel, origin at the top left, in font-pixel coordinates. */
@@ -200,6 +235,16 @@ export interface WorldPointerInput {
    * world with no other affordance saying it can be clicked.
    */
   readonly overDrop: boolean;
+  /**
+   * True while the cursor is over a body that can be talked to (spec 246) --
+   * `talkable`'s answer, the same way `overEnemy` is `attackable`'s.
+   *
+   * Its own field rather than folded into `overEnemy`, because the two can never
+   * both be true and the *mark* is the whole point: a friendly body under the
+   * pointer means something different is about to happen, and the pointer is
+   * where a player looks to find that out.
+   */
+  readonly overNpc: boolean;
 }
 
 /**
@@ -215,6 +260,9 @@ export interface WorldPointerInput {
  */
 export function worldMark(input: WorldPointerInput): CrosshairArt | null {
   if (input.aiming) return 'full';
+  // Ahead of `overEnemy` for clarity rather than for precedence: `attackable`
+  // already refuses a friendly body, so the two can never both be true.
+  if (input.overNpc) return 'bubble';
   if (input.overEnemy) return 'small';
   return null;
 }

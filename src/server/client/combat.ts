@@ -126,6 +126,7 @@ export function asEntity(mirror: Mirror): ServerEntity {
     spawnerId: null,
     anchor: null,
     leashRadius: 0,
+    conversationWith: null,
     // The progression state the mirror can honestly claim (spec 147). Poise and
     // shields are replicated, so they are real; statuses are not, so the mirror
     // carries none -- which makes the client's predicted cost the *undiscounted*

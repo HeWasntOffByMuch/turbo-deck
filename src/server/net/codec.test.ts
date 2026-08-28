@@ -202,6 +202,11 @@ describe('game message round-trip', () => {
       aimX: 0,
       aimY: 0,
     },
+    // Both halves of one message (spec 246): a body to talk to, and the 0 that
+    // ends it. The zero is the case worth carrying, since it is what a client
+    // leaving sends and what a varuint encodes in its shortest form.
+    { type: ClientMessageType.Talk, entityId: 4242 },
+    { type: ClientMessageType.Talk, entityId: 0 },
   ];
 
   it.each(clientMessages.map((m) => [m.type, m] as const))(
@@ -354,6 +359,10 @@ describe('game message round-trip', () => {
     // A shop with nothing in it, and the empty id that means "closed".
     { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] },
     { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000, inputQueueFloor: 4 },
+    // Both halves again (spec 246): the body being talked to, and the 0 that is
+    // both a refusal and the end of a conversation.
+    { type: ServerMessageType.Conversation, entityId: 4242 },
+    { type: ServerMessageType.Conversation, entityId: 0 },
     { type: ServerMessageType.Error, code: 7, message: 'rejected' },
     { type: ServerMessageType.Disconnect, reason: 'kicked' },
   ];

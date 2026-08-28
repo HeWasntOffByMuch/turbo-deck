@@ -20,6 +20,7 @@ import { ZoneManager, type ZoneDefinition } from '../world/zone-manager.js';
 import { EntityKind, EntityActivity, EntityField } from '../net/protocol.js';
 import { RESUME_GRACE_TICKS } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
+import { isFriendlyMonster } from '../data/monsters.js';
 import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { isHostile } from '../sim/world.js';
 import { PLAYER_BODY_RADIUS } from '../sim/world.js';
@@ -154,7 +155,7 @@ describe('two players in one world', () => {
     // than teleported for the reason trade-wire.test.ts gives: a tick mirrors
     // authoritative positions back, so a hand-written record does not stick.
     //
-    // *Nearest reachable*, rather than whichever the replica happens to list
+    // *Nearest reachable and fightable*, rather than whichever the replica lists
     // first. Entity ids are handed out in the map's authored spawner order, so
     // "first" is a fact about how somebody wrote a JSON file: on the shipped map
     // it is a spider 1,421 units away across a wood, and the test spent its whole
@@ -170,7 +171,20 @@ describe('two players in one world', () => {
       const me = from();
       const shared = ana
         .view()
-        .entities.filter((e) => e.kind === EntityKind.Monster && e.health > 0 && theirs.has(e.id))
+        .entities.filter(
+          (e) =>
+            e.kind === EntityKind.Monster &&
+            e.health > 0 &&
+            theirs.has(e.id) &&
+            // Not a friendly body (spec 246). `Monster` is the kind an NPC has
+            // -- everything about a merchant except the fighting is a monster --
+            // so without this the nearest shared body is the one standing in the
+            // town square, and the whole budget goes on swinging at something
+            // `isHostile` refuses. Which is the feature working; this test is
+            // about two replicas agreeing on a body's health, and it needs one
+            // whose health can move.
+            !isFriendlyMonster(e.typeId),
+        )
         .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y))
         .find((e) => findPath(grid, me, { x: e.x, y: e.y }).length > 0);
       if (shared) monsterId = shared.id;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decideControlDown, decideControlUp, NO_DECISION } from './control-actions.js';
 import { moveIntent } from './intent.js';
+import { ACTIONS } from '../../../ui/input/actions.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
 
 const NONE: Modifiers = { shift: false, ctrl: false, alt: false, meta: false };
@@ -162,7 +163,7 @@ describe('what a control press means to the Play tab', () => {
   });
 
   /**
-   * The four `ui.*` actions (spec 131).
+   * The `ui.*` actions (spec 131).
    *
    * They have been in `bindings.json` since phase 3 and reached nothing at all,
    * which is why "pressing I does nothing" was true for three phases while the
@@ -176,13 +177,37 @@ describe('what a control press means to the Play tab', () => {
     // K goes to the options window's keys tab: there is one keybindings screen
     // and it lives in one place (spec 135).
     expect(decideControlDown(map, 'KeyK', NONE).windows).toEqual(['options']);
-    expect(decideControlDown(map, 'KeyV', NONE).windows).toEqual(['shop']);
   });
 
   it('opens nothing on a gameplay key', () => {
     const map = new InputMap();
     expect(decideControlDown(map, 'KeyW', NONE).windows).toEqual([]);
     expect(decideControlDown(map, 'Digit1', NONE).windows).toEqual([]);
+  });
+
+  /**
+   * No control opens a shop (spec 247).
+   *
+   * Asserted over every action in the table rather than over `KeyV`, because
+   * what was removed is not a key -- it is the idea that a shop can be opened
+   * without a merchant. A rebind could put the shop on any key; a row in
+   * `UI_WINDOWS` is what would make any of them work, and there is none.
+   */
+  it('has no control that opens a shop', () => {
+    const map = new InputMap();
+    for (const action of ACTIONS) {
+      const bound = map.bindingsFor(action.id);
+      for (const chord of [bound.primary, bound.secondary]) {
+        if (!chord) continue;
+        const mods: Modifiers = {
+          shift: chord.shift === true,
+          ctrl: chord.ctrl === true,
+          alt: chord.alt === true,
+          meta: chord.meta === true,
+        };
+        expect(decideControlDown(map, chord.code, mods).windows, action.id).not.toContain('shop');
+      }
+    }
   });
 
   it('follows a rebind, like everything else here', () => {

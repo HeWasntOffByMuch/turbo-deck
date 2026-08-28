@@ -165,6 +165,28 @@ const TICK_SECONDS = 1 / SERVER_TICK_RATE;
 const CAMERA_SMOOTH = 0.15;
 
 /**
+ * How much clear world sits around the pair while a conversation is framed
+ * (spec 246).
+ *
+ * Generous, and it has to be: the frustum's half-*width* is a screen axis and
+ * the two bodies are separated in *world* space at an orbited 45 degrees, so
+ * their on-screen separation is somewhere between the world distance and its
+ * projection. Padding covers the difference, and the clamp in `applyControls`
+ * covers the rest -- the framing may only ever pull the camera *in*, so the
+ * worst an underestimate can do is leave the shot as wide as the player already
+ * had it.
+ */
+const DIALOGUE_FRAME_PAD = 120;
+
+/**
+ * The tightest a conversation is framed.
+ *
+ * Standing on top of the merchant would otherwise put the pair a few units
+ * apart and pull the camera to a close-up neither body fits in.
+ */
+const DIALOGUE_MIN_HALF_WIDTH = 150;
+
+/**
  * How far above the ground the listener sits, in world units (spec 229).
  *
  * About half a body -- `DEFAULT_CANONICAL_HEIGHT` is 55.65 -- and it is paired
@@ -644,6 +666,15 @@ export class WorldScene {
   private readonly camOffsetTarget = new THREE.Vector3();
   private readonly target = new THREE.Vector3();
   private targetPlaced = false;
+  /**
+   * Where the other end of a framed conversation is, or null (spec 246).
+   *
+   * Pushed by the mount while a conversation is live and cleared when it ends.
+   * Deliberately *not* written into `ViewControls`: those sliders are the
+   * player's, and a framing that moved them would be a preference this feature
+   * quietly changed.
+   */
+  private framing: { x: number; y: number } | null = null;
   private halfWidth = DEFAULT_VIEW_HALF_WIDTH;
   private lastHalfWidth = -1;
   private shadowHalfWidth = -1;
@@ -1539,7 +1570,7 @@ export class WorldScene {
     this.listenerX = me.x;
     this.listenerY = groundY;
     this.listenerZ = me.y;
-    this.followSelf(me, groundY, dt);
+    this.followSelf(this.framedPoint(me), groundY, dt);
     this.applyControls();
     this.applyPlayerLights(me, groundY);
     this.camera.lookAt(this.target);
@@ -2924,6 +2955,36 @@ export class WorldScene {
    * they stop. The first frame snaps -- otherwise the view opens by gliding in
    * from wherever the camera happened to start.
    */
+  /**
+   * How wide the shot is while a conversation is framed.
+   *
+   * **Never wider than the player's own zoom**, which is the one rule here: a
+   * framing that could push the camera out would override a preference rather
+   * than decorate it, and somebody playing zoomed right in would have the game
+   * jump away from them the moment they said hello. So this only ever takes the
+   * minimum, and a player already closer than the framing wants keeps what they
+   * had.
+   */
+  private dialogueHalfWidth(chosen: number): number {
+    const framing = this.framing;
+    if (framing === null) return chosen;
+    const dx = framing.x - this.listenerX;
+    const dy = framing.y - this.listenerZ;
+    const needed = Math.hypot(dx, dy) / 2 + DIALOGUE_FRAME_PAD;
+    return Math.min(chosen, Math.max(DIALOGUE_MIN_HALF_WIDTH, needed));
+  }
+
+  /**
+   * Frame a conversation with the body at this point, or clear it (spec 246).
+   *
+   * A point rather than an entity id, because the scene should not have to look
+   * one up -- and because the mount already has the body it is drawing a bubble
+   * over.
+   */
+  setDialogueFraming(at: Vec2 | null): void {
+    this.framing = at === null ? null : { x: at.x, y: at.y };
+  }
+
   private followSelf(position: Vec2, groundY: number, dt: number): void {
     if (!this.targetPlaced) {
       this.target.set(position.x, groundY, position.y);
@@ -2936,13 +2997,31 @@ export class WorldScene {
     this.target.z += (position.y - this.target.z) * alpha;
   }
 
+  /**
+   * Where the camera looks: the player, or between the player and whoever they
+   * are talking to (spec 246).
+   *
+   * Applied *here* rather than by writing into the controls, which is the whole
+   * of "do not permanently modify the player's camera". Nothing is stored: the
+   * framing is a value the mount pushes while a conversation is live and clears
+   * when it ends, and both the move to it and the move back go through
+   * `followSelf`'s existing ease -- so "smoothly reframes" and "smoothly
+   * restores" are the same mechanism the camera has always used to follow a
+   * body, rather than a second one.
+   */
+  private framedPoint(me: Vec2): Vec2 {
+    const framing = this.framing;
+    if (framing === null) return me;
+    return { x: (me.x + framing.x) / 2, y: (me.y + framing.y) / 2 };
+  }
+
   private applyControls(): void {
     const off = this.controls.cameraOffset();
     this.camOffsetTarget.set(off.x, off.y, off.z);
     this.camOffsetCurrent.lerp(this.camOffsetTarget, CAMERA_SMOOTH);
     this.camera.position.copy(this.target).add(this.camOffsetCurrent);
 
-    const wanted = this.controls.viewHalfWidth();
+    const wanted = this.dialogueHalfWidth(this.controls.viewHalfWidth());
     this.halfWidth += (wanted - this.halfWidth) * CAMERA_SMOOTH;
     if (Math.abs(this.halfWidth - this.lastHalfWidth) > 0.05) {
       const frustum = cameraFrustum(this.halfWidth, this.aspect);

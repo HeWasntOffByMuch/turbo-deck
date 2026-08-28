@@ -60,6 +60,7 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     spawnerId: null,
     anchor: null,
     leashRadius: 0,
+    conversationWith: null,
     fleeGoal: null,
     resource: 0,
     cast: null,

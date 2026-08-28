@@ -110,6 +110,7 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
     spawnerId: null,
     anchor: null,
     leashRadius: 0,
+    conversationWith: null,
     fleeGoal: null,
     resource: stats.maxResource,
     cast: null,

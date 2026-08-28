@@ -196,6 +196,28 @@ rolled back by.
 immediately when it is. The pending presentation simply never happens.
 Anticipation is never a lock on the player's hands.
 
+### `0x1c Talk`
+`varuint entityId`
+
+Start or end a conversation with a friendly NPC (spec 246). `entityId` of `0`
+ends whatever is in progress rather than naming a body — one message rather
+than two, the same convention `OpenVendor`'s empty id already uses, so a client
+leaving cannot be a client that forgot to say it was leaving.
+
+No request id, because nothing about a conversation is predicted: the answer
+decides whether a body stops walking, and a client that opened a bubble on the
+press would draw a conversation with something still ambling away.
+
+Answered with a `Conversation` **either way**, so a refusal is distinguishable
+from a dropped message. The server refuses a body that is not an NPC, is dead,
+is outside its own `talkRadius`, or is already claimed by another player —
+silently, with a `Conversation 0`, because every one of those is something the
+player can see and a refusal line for standing slightly too far away is noise.
+
+What the NPC *says* is not on this wire at any point. The script, the name and
+the voice are a content table both ends were built from, so sending them would
+be replicating a file the client already has.
+
 ### `0x1b DropItem`
 `varuint requestId` · `u8 container` · `varint index` · `varint count` ·
 `f32 aimX` · `f32 aimY`
@@ -663,6 +685,26 @@ guess needs taking away.
 
 Equipment slot order is the wire contract: a new slot is appended to
 `EQUIP_SLOTS` and never reordered, because there are no names on the wire.
+
+### `0x57 Conversation`
+`varuint entityId`
+
+Which NPC this client is talking to, or `0` for none (spec 246). The answer to a
+`Talk`, and also what arrives **unasked** when the server ends one: the player
+walked past `talkRadius`, either body died, the NPC despawned, or the connection
+dropped and came back. So a client never has to infer the end of a conversation
+from the absence of something.
+
+Sent to the player in the conversation and to nobody else. What every other
+client sees is a body that has stopped walking and turned to face somebody, and
+both of those already replicate on the delta — there is no "is talking" bit,
+because standing still and facing you *is* the tell.
+
+The claim itself lives on the NPC's entity in the sim (`conversationWith`),
+which is what stops it wandering off mid-sentence and what a replay reproduces.
+This message is the client's copy of that fact, reconciled once per broadcast:
+the server asks whether the conversation is still holdable rather than raising
+an event when it is not, so a release path added later cannot forget to fire one.
 
 ### `0x56 LootDrop`
 `varuint entityId` · `u8 rarity` · `u32 spawnTick` · `u32 revealTick` ·

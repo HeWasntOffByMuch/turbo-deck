@@ -400,6 +400,16 @@ export interface ClientView {
    */
   readonly vendorRevision: number;
   /**
+   * The NPC this player is talking to, or 0 (spec 246).
+   *
+   * Authoritative, and the client never decides it for itself -- the same rule
+   * `vendor` above lives by, and for a stronger reason: the claim on the body is
+   * what stops the merchant wandering off, so a client that believed it was
+   * talking to something the server had released would draw a conversation with
+   * a body walking away mid-sentence.
+   */
+  readonly conversationEntityId: number;
+  /**
    * The trade in progress, or null (spec 132).
    *
    * Whole, and replaced by whatever the server last said. A client never decides
@@ -743,6 +753,8 @@ export class GameClient {
    * on the same frame, forever.
    */
   private vendorReplies = 0;
+  /** What the server last said about who this player is talking to (spec 246). */
+  private conversationEntityId = 0;
   /** The trade this client is in, or null (spec 132). Replaced whole. */
   private tradeView: TradeView | null = null;
   private equipment: Equipment = EMPTY_EQUIPMENT;
@@ -916,6 +928,11 @@ export class GameClient {
     channel.onMessage((bytes) => this.receive(bytes));
     channel.onClose(() => {
       this.connected = false;
+      // A conversation cannot outlive the socket it was held over (spec 246).
+      // The server drops the claim on its side when the connection goes, so a
+      // client that kept believing in one would draw a bubble over a merchant
+      // that had already gone back to wandering.
+      this.conversationEntityId = 0;
     });
   }
 
@@ -1235,6 +1252,19 @@ export class GameClient {
   cancelTrade(): void {
     if (!this.connected) return;
     this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeCancel }));
+  }
+
+  /**
+   * Ask to talk to `entityId`, or 0 to end the conversation (spec 246).
+   *
+   * Not predicted, and deliberately: the answer decides whether a body stops
+   * walking, so a client that opened a bubble on the press would show a
+   * conversation with something still ambling away. `conversationEntityId` moves
+   * when the server says so.
+   */
+  talk(entityId: number): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.Talk, entityId }));
   }
 
   openVendor(vendorId: string): void {
@@ -1939,6 +1969,7 @@ export class GameClient {
       pendingSwap: this.pendingSwap,
       vendor: this.vendorView,
       vendorRevision: this.vendorReplies,
+      conversationEntityId: this.conversationEntityId,
       trade: this.tradeView,
       endedTrade: this.lastTrade,
       level: this.level,
@@ -2313,6 +2344,10 @@ export class GameClient {
           // reason, on a trade it does not describe.
           this.lastTrade = null;
         }
+        break;
+
+      case ServerMessageType.Conversation:
+        this.conversationEntityId = message.entityId;
         break;
 
       case ServerMessageType.VendorState:

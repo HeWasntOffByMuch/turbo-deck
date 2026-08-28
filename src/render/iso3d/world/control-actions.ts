@@ -36,9 +36,10 @@ export type WindowId = 'inventory' | 'character' | 'shop' | 'trade' | 'options' 
 /**
  * Which window an action opens.
  *
- * The three on the left have been in `bindings.json` since phase 3 and reached
- * nothing; `ui.shop` joins them here because a shop that cannot be opened is not
- * mounted. A table rather than a switch, so adding a screen is a row.
+ * A table rather than a switch, so adding a screen is a row -- and so removing
+ * one is deleting a row. There is deliberately no entry for the shop: since
+ * spec 247 it is opened by a reply in a conversation and by nothing else, so
+ * there is no control that could open it and no action id left to name.
  */
 const UI_WINDOWS: Readonly<Record<string, WindowId | undefined>> = {
   'ui.inventory': 'inventory',
@@ -49,7 +50,6 @@ const UI_WINDOWS: Readonly<Record<string, WindowId | undefined>> = {
   // holding it -- and two screens over one map would be two things to keep in
   // step for no gain.
   'ui.keybindings': 'options',
-  'ui.shop': 'shop',
   // Spec 226. A window rather than a page of the options screen, because it is
   // not a setting -- it is the difference between a character that exists only
   // in this browser's storage and one that has an account behind it.

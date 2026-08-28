@@ -70,6 +70,7 @@ import {
   type AudioStats,
   type ListenerPose,
   type PlayOptions,
+  type SpeechOutput,
 } from './sink.js';
 import { AUDIO_DEFAULTS, busGain, type AudioMix } from './mix.js';
 import { drawRate, PlayThrottle, VariantPicker, type Random } from './variants.js';
@@ -604,6 +605,27 @@ export class AudioEngine implements Audio {
       node.disconnect();
     };
     source.start();
+  }
+
+  /**
+   * The context and bus a procedural voice is built on (spec 246).
+   *
+   * Answers null until `resume` has made a context, and never makes one itself.
+   * That is the same rule `play` follows and the reason is the same: a browser
+   * refuses to let a page make noise before an interaction, and a context built
+   * anyway starts suspended and stays there in a way that is invisible until
+   * somebody says there is no sound.
+   *
+   * What it hands back is a **bus**, never `context.destination`, so a mumble
+   * is scaled by the Dialogue slider and by master and is silenced by mute --
+   * which is what keeps the one hole in this surface from being a hole in the
+   * mix as well.
+   */
+  speech(bus: BusId): SpeechOutput | null {
+    const context = this.context;
+    const buses = this.buses;
+    if (context === null || buses === null) return null;
+    return { context, into: buses[bus] };
   }
 }
 

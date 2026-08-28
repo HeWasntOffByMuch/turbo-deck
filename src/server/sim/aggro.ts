@@ -34,6 +34,19 @@ export function temperamentOf(entity: ServerEntity): Temperament | null {
   return monsterById(entity.typeId)?.temperament ?? null;
 }
 
+/**
+ * Whether this body will not fight and cannot be fought (spec 246).
+ *
+ * Here rather than inside `isHostile` because three questions want it and only
+ * one of them is about damage: whether a blow may land, whether a scan may
+ * return it, and whether a shout may reach it. One predicate, so a fourth
+ * caller cannot come to a different answer -- the shape `staggered` already has
+ * one file over.
+ */
+export function isFriendly(entity: ServerEntity): boolean {
+  return temperamentOf(entity)?.kind === 'friendly';
+}
+
 /** Nothing to say about anybody: no target, no clock, nowhere it was bolting. */
 function calm(entity: ServerEntity): ServerEntity {
   if (
@@ -94,6 +107,11 @@ export function bolt(body: ServerEntity, from: ServerEntity): Vec2 {
  */
 export function provoke(target: ServerEntity, attacker: ServerEntity, tick: number): ServerEntity {
   const temperament = temperamentOf(target);
+  // Unreachable through a blow, since `isHostile` refuses a friendly body at
+  // both ends and nothing can hit one. Stated anyway, because this function is
+  // also what an admin conjuring damage reaches, and a friendly body that
+  // acquired a target would chase and swing with an ability it has not got.
+  if (temperament?.kind === 'friendly') return target;
   if (!temperament) {
     // The pre-163 rule, untouched: the first thing to hit you is the thing you
     // hold, and later blows do not steal it.
@@ -147,7 +165,13 @@ export function notice(
   // Switched on the union rather than asked through `noticeRangeOf`, so the two
   // temperaments that notice anything are the two the compiler lets read a
   // range -- the scan below cannot be reached with a body that has none.
-  if (temperament.kind === 'skittish' || temperament.kind === 'defensive') return monster;
+  if (
+    temperament.kind === 'skittish' ||
+    temperament.kind === 'defensive' ||
+    temperament.kind === 'friendly'
+  ) {
+    return monster;
+  }
 
   const found = nearestQuarry(monster, players, temperament.noticeRange);
   if (found === null) return monster;

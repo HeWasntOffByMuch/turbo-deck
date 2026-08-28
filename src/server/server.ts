@@ -166,6 +166,7 @@ import { MAX_FRAME_BYTES, MAX_NAME_LENGTH, RateLimiter } from './net/rate-limit.
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
 import { buyPrice } from './data/vendors.js';
+import { npcById, type NpcDefinition } from './data/npcs.js';
 import { TradeStageValue } from './net/protocol.js';
 
 export interface GameServerOptions {
@@ -358,6 +359,17 @@ interface Connection {
   readonly pendingSwaps: PendingSwap[];
   /** The shop this connection has open, or '' (spec 129). */
   openVendorId: string;
+  /**
+   * The NPC this connection is talking to, or 0 (spec 246).
+   *
+   * The claim itself lives on the *entity*, in the sim, because that is what
+   * stops the body wandering and what a replay has to reproduce. This is the
+   * connection's copy of it, and it exists so that ending one is a question
+   * about this player rather than a scan of every body in the world: the
+   * broadcast checks that the entity still exists and still names this player,
+   * and drops both halves together when it does not.
+   */
+  talkingToId: number;
   /** Bumped by every cast or cancel, so the two queues can be put back in order. */
   asks: number;
   /** The last input seq handed to the sim, so a gap in the stream is visible. */
@@ -665,6 +677,7 @@ export class GameServer implements AdminHost {
       pendingDrops: [],
       pendingSwaps: [],
       openVendorId: '',
+      talkingToId: 0,
       asks: 0,
       appliedSeq: 0,
       lastDriftTick: 0,
@@ -899,6 +912,11 @@ export class GameServer implements AdminHost {
       case ClientMessageType.OpenVendor:
         if (connection.playerId === null) return;
         this.sendVendorState(connection, message.vendorId);
+        break;
+
+      case ClientMessageType.Talk:
+        if (connection.playerId === null) return;
+        this.setConversation(connection, message.entityId);
         break;
 
       case ClientMessageType.BuyItem: {
@@ -1468,6 +1486,11 @@ export class GameServer implements AdminHost {
       if (ended) this.endTrade(ended);
     }
     connection.openVendorId = '';
+    // And the conversation, which is a claim on somebody else's body (spec 246).
+    // Left behind, it is a merchant standing still forever facing where a
+    // player used to be -- the one release path that cannot be a range check,
+    // because there is no longer a player to measure a range to.
+    this.setConversation(connection, 0);
     // A drop waiting for a turn goes with the connection (spec 172). The body
     // may linger for its grace period and a lingering body still resolves its
     // facing, so an aim left behind is a corpse-in-waiting turning toward
@@ -2367,6 +2390,99 @@ export class GameServer implements AdminHost {
     });
   }
 
+  // --- conversation (spec 246) -------------------------------------------
+
+  /**
+   * Start, move or end this connection's conversation.
+   *
+   * The one writer. Every path that can end one -- an explicit `Talk 0`, the
+   * player walking out of range, either body dying, the NPC despawning, a
+   * disconnect -- comes through here, so there is no path that clears the claim
+   * on the entity and forgets to tell the client, or the reverse.
+   *
+   * Refusals are silent and answer 0 rather than an error: the reasons a body
+   * cannot be talked to are all things a player can see (it is not an NPC, it is
+   * too far, somebody else is already talking to it), and a refusal line in the
+   * corner for walking slightly too far away would be noise.
+   */
+  private setConversation(connection: Connection, entityId: number): void {
+    const previous = connection.talkingToId;
+    // The *entity* id, never the NPC row's -- one names a body in the world and
+    // the other names a row in a table, and they are both called `id`.
+    const next = entityId !== 0 && this.talkableFor(connection, entityId) !== null ? entityId : 0;
+
+    // Release the old claim before taking a new one, or talking to a second NPC
+    // while holding the first would leave the first standing still forever.
+    if (previous !== 0 && previous !== next) this.releaseClaim(previous, connection.entityId);
+    if (next !== 0) {
+      const body = this.state.entities.get(next);
+      if (body && body.conversationWith !== connection.entityId) {
+        this.state = replaceEntity(this.state, { ...body, conversationWith: connection.entityId });
+      }
+    }
+
+    connection.talkingToId = next;
+    // Sent even when nothing moved, because this is also the answer to a
+    // request: a client that asked and was refused has to hear something, or a
+    // failed `Talk` is indistinguishable from a dropped one.
+    this.send(connection, { type: ServerMessageType.Conversation, entityId: next });
+  }
+
+  /**
+   * The body this connection may talk to, or null.
+   *
+   * Every rule about *whether* a conversation may start, in one place. The
+   * range is measured from the player's own entity rather than from the
+   * persisted record, because the record is written by the autosave and a body
+   * that has walked since the last flush would be measured where it used to be.
+   */
+  private talkableFor(connection: Connection, entityId: number): NpcDefinition | null {
+    const body = this.state.entities.get(entityId);
+    if (!body || body.health <= 0) return null;
+    const npc = npcById(body.typeId);
+    if (!npc) return null;
+    // Already claimed by somebody else. Not an error and not a queue: two
+    // players talking to one merchant is two conversations it would have to
+    // face in two directions.
+    if (body.conversationWith !== null && body.conversationWith !== connection.entityId) return null;
+    const me = this.state.entities.get(connection.entityId);
+    if (!me || me.health <= 0) return null;
+    const dx = body.position.x - me.position.x;
+    const dy = body.position.y - me.position.y;
+    if (Math.hypot(dx, dy) > npc.talkRadius) return null;
+    return npc;
+  }
+
+  /** Take a claim off a body, if it is still there and still names this player. */
+  private releaseClaim(npcEntityId: number, playerEntityId: number): void {
+    const body = this.state.entities.get(npcEntityId);
+    if (!body || body.conversationWith !== playerEntityId) return;
+    this.state = replaceEntity(this.state, { ...body, conversationWith: null });
+  }
+
+  /**
+   * End any conversation this connection can no longer hold.
+   *
+   * Run once per broadcast rather than per tick, which is the right cadence for
+   * the same reason a drift correction rides it: what it is watching for is a
+   * player walking away, and a player cannot walk out of a 130-unit radius in
+   * three ticks.
+   *
+   * **Reconciled rather than announced.** Nothing raises "this conversation
+   * ended" -- this asks whether it is still true, so a body that died, despawned
+   * or was claimed by somebody else is caught by the same three lines as one
+   * that was walked away from, and a release path added later cannot forget to
+   * fire an event.
+   */
+  private sweepConversations(): void {
+    for (const connection of this.connections) {
+      if (connection.talkingToId === 0) continue;
+      if (this.talkableFor(connection, connection.talkingToId) === null) {
+        this.setConversation(connection, 0);
+      }
+    }
+  }
+
   // --- trade (spec 132) --------------------------------------------------
 
   /** The stage byte the wire carries, from the stage the rules use. */
@@ -3115,6 +3231,11 @@ export class GameServer implements AdminHost {
   }
 
   private broadcastDeltas(): void {
+    // Before the deltas rather than after, so a conversation that ended this
+    // broadcast is released on the same frame the client is told about it
+    // (spec 246) -- and so the body's claim is gone before the delta that
+    // reports it standing still goes out.
+    this.sweepConversations();
     for (const connection of this.connections) {
       if (connection.playerId === null || connection.entityId < 0) continue;
       const session = this.players.get(connection.playerId);

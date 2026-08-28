@@ -12,7 +12,7 @@ import { buy, sell } from '../../../server/player/shop.js';
 import { buyPrice, sellPrice, vendorById, type VendorDefinition } from '../../../server/data/vendors.js';
 import { emptyInventory, type Inventory } from '../../../server/state/types.js';
 import { UNKNOWN_ICON } from './inventory-model.js';
-import { nearestVendorTo, shopViewOf, type ShopSource } from './shop-model.js';
+import { shopViewOf, type ShopSource } from './shop-model.js';
 
 const QUARTERMASTER = vendorById('vendor.quartermaster') as VendorDefinition;
 
@@ -136,41 +136,3 @@ describe('shopViewOf', () => {
   });
 });
 
-/**
- * Which shop a player standing here can reach (spec 131).
- *
- * The client's guess, and only a guess: the server runs the same check and
- * answers an out-of-range request with nothing. So the cost of being wrong is an
- * empty window rather than a trade the rules refused, which is what makes it
- * safe to make on this side at all.
- */
-describe('nearestVendorTo', () => {
-  const ARMOURER = vendorById('vendor.armourer') as VendorDefinition;
-
-  it('finds the one you are standing on', () => {
-    expect(nearestVendorTo(QUARTERMASTER.x, QUARTERMASTER.y)).toBe(QUARTERMASTER.id);
-    expect(nearestVendorTo(ARMOURER.x, ARMOURER.y)).toBe(ARMOURER.id);
-  });
-
-  it('finds none out in the field', () => {
-    expect(nearestVendorTo(QUARTERMASTER.x + 5000, QUARTERMASTER.y)).toBeNull();
-  });
-
-  /**
-   * The two of them overlap near the spawn, and this is the case "whichever is
-   * first in the table" gets wrong: one of them could then never be reached.
-   */
-  it('picks the nearer of two in reach', () => {
-    const midpoint = { x: (QUARTERMASTER.x + ARMOURER.x) / 2, y: (QUARTERMASTER.y + ARMOURER.y) / 2 };
-    expect(nearestVendorTo(midpoint.x, midpoint.y)).not.toBeNull();
-    // A step toward each is a step into their answer.
-    expect(nearestVendorTo(midpoint.x + 20, midpoint.y + 15)).toBe(QUARTERMASTER.id);
-    expect(nearestVendorTo(midpoint.x - 20, midpoint.y - 15)).toBe(ARMOURER.id);
-  });
-
-  it('refuses one a step past its reach', () => {
-    const far = { x: ARMOURER.x - ARMOURER.radius - 1, y: ARMOURER.y };
-    // Out of the armourer's circle, and the quartermaster is further still.
-    expect(nearestVendorTo(far.x, far.y)).toBeNull();
-  });
-});

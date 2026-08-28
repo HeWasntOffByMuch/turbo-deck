@@ -23,7 +23,7 @@
  *    paints, reading a smoothed pose that is presentation and nothing else.
  */
 
-import { GameClient } from '../../../server/client/game-client.js';
+import { GameClient, type ClientView } from '../../../server/client/game-client.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { afflictionsFromQuery } from './affliction-vfx.js';
 import { fieldsWantedByQuery } from './aura-vfx.js';
@@ -122,6 +122,8 @@ import {
 } from './action-bar.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
+import { isFriendlyMonster } from '../../../server/data/monsters.js';
+import { DialogueDriver, SpeechSink } from './dialogue-driver.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
 import { weaponTypeFor } from './weapon-look.js';
 import { damageElementOf } from '../../../server/data/abilities.js';
@@ -137,13 +139,12 @@ import { TradeStageValue } from '../../../server/net/protocol.js';
 import { HEAVY_ABILITY_DAMAGE } from '../../../server/sim/abilities.js';
 import type { UiSoundId } from '../../../ui/core/sound.js';
 import catalogUrl from '../../../../assets/audio/sfx.json?url';
-import { moveIntent, RoutePlanner } from './intent.js';
+import { aligned, moveIntent, RoutePlanner } from './intent.js';
 import { pickupLead, pickupOrderFor } from './loot-drop.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
 import { decideControlDown, decideControlUp, type ControlDecision } from './control-actions.js';
 import { pointerCode, wheelCode } from '../../../ui/input/actions.js';
 import { UiLayer } from './ui-layer.js';
-import { nearestVendorTo } from './shop-model.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
 import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import {
@@ -173,6 +174,17 @@ import { castRefusalText } from './error-log.js';
 import { backoffTicksFor, KEEPALIVE_MS } from './keepalive.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
+
+/**
+ * How high above a speaker's feet the dialogue bubble points (spec 246).
+ *
+ * Above the head rather than at it: `projectPoint`'s lift is world units up
+ * from the ground, and the tallest body that can hold a conversation is a
+ * generated unit drawn at canonical height. Comfortably clear of the health
+ * bar's own band as well, since a body a player is talking to may still be
+ * carrying status marks from a fight they walked away from.
+ */
+const DIALOGUE_BUBBLE_LIFT = 96;
 
 /**
  * Wall-clock quiet before the prop field is rebuilt (spec 165).
@@ -1854,6 +1866,39 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const audioEngine = createAudioEngine();
   const audioDriver = new AudioDriver(audioEngine);
+  /**
+   * The conversation, if there is one (spec 246).
+   *
+   * Built here because it needs three things that only exist at this level: the
+   * audio engine to speak through, the client to tell when the player leaves,
+   * and the window manager to open a shop on. What it does *not* need is the
+   * scene or the DOM, which is why it is a module rather than a closure.
+   */
+  /**
+   * Somebody to turn and face, because a conversation has just started
+   * (spec 246).
+   *
+   * A **one-shot**: armed when a conversation opens and dropped the instant the
+   * body has come round or the player walks off. Holding it for the length of
+   * the conversation would be a different feature -- the player would snap back
+   * to facing the merchant every time they stopped moving, which is not what
+   * "turn toward them when you start talking" means and would fight anybody who
+   * wanted to look at something else mid-sentence.
+   */
+  let talkAim: { x: number; y: number } | null = null;
+  /** Which body `talkAim` was armed for, so a second conversation re-arms it. */
+  let talkAimFor = 0;
+
+  const dialogue = new DialogueDriver({
+    speech: new SpeechSink(audioEngine),
+    onShop: (vendorId) => {
+      // The NPC's own shop, named by the reply. Since spec 247 it is the only
+      // way a shop opens: the proximity answer went with the key press that was
+      // its only caller.
+      ui.showShopFor(vendorId);
+    },
+    onLeave: () => client.talk(0),
+  });
   let audioMix = loadMix(bindingStorage);
   audioEngine.setMix(audioMix);
   /**
@@ -2031,6 +2076,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     onVendor: (vendorId) => client.openVendor(vendorId),
     onTradeOffer: (slots, coins) => client.offerInTrade(slots, coins),
     onTradeAccept: (revision) => client.acceptTrade(revision),
+    onDialogueChoice: (index) => dialogue.choose(index, performance.now()),
+    onDialogueAdvance: () => dialogue.advance(performance.now()),
+    onDialogueLeave: () => dialogue.leave(),
     onTradeRespond: (accept) => client.respondToTrade(accept),
     onTradeCancel: () => client.cancelTrade(),
     onTradeDismiss: () => client.dismissEndedTrade(),
@@ -2134,13 +2182,6 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     layout: loadLayout(bindingStorage),
     onLayoutChanged: (layout) => {
       saveLayout(bindingStorage, layout);
-    },
-    // Where the *player* is, not where the camera is looking: the server checks
-    // the same distance from the same position, and asking about a shop the
-    // server will refuse is how a window opens empty.
-    nearestVendor: () => {
-      const me = client.view().self;
-      return me ? nearestVendorTo(me.x, me.y) : null;
     },
     // A request like every other one here (spec 189). The server truncates,
     // refuses a muted player and broadcasts to everyone including the sender --
@@ -2450,6 +2491,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   function stopEverything(): void {
     dropOrders();
+    // A conversation is something the body is committed to (spec 246), so the
+    // one press that drops everything drops it too -- and it is the *only* key
+    // that ends one, since Escape reaches the menu when there is nothing to back
+    // out of and the bubble is not a window Escape can close.
+    dialogue.leave();
     held.clear();
     // The keys and buttons still down when this fired. Without this the walk
     // resumes on its own at the browser's repeat rate; see `disarmed`.
@@ -2464,10 +2510,35 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * the blow is *allowed* -- hostility, range, the zone's pvp flag -- is the
    * server's to answer, and it answers it on every swing.
    */
-  function attackable(entity: { id: number; kind: number; health: number }, selfId: number): boolean {
+  function attackable(
+    entity: { id: number; kind: number; health: number; typeId?: string },
+    selfId: number,
+  ): boolean {
     if (entity.id === selfId) return false;
     if (entity.health <= 0) return false;
+    // A friendly body is not something to swing at (spec 246). Still as thin as
+    // the rest of this predicate: the server refuses the blow either way, and
+    // what this decides is which of the three things a right-click meant --
+    // without it, clicking a merchant is a walk over and a swing that quietly
+    // never lands.
+    if (entity.typeId !== undefined && isFriendlyMonster(entity.typeId)) return false;
     return entity.kind === EntityKind.Monster || entity.kind === EntityKind.Player;
+  }
+
+  /**
+   * Whether a right-click on this body starts a conversation (spec 246).
+   *
+   * The third reading of `world.order`, beside `collectable` and `attackable`
+   * and answered before both: a body you can talk to is never a body you fight,
+   * so the two predicates cannot both be true and the order between them is not
+   * load-bearing. As thin as its neighbours -- the range, whether somebody else
+   * is already talking to it and whether it is alive are the server's, and it
+   * answers all three on every request.
+   */
+  function talkable(entity: { kind: number; health: number; typeId?: string }): boolean {
+    if (entity.health <= 0) return false;
+    if (entity.kind !== EntityKind.Monster) return false;
+    return entity.typeId !== undefined && isFriendlyMonster(entity.typeId);
   }
 
   /**
@@ -2800,6 +2871,26 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       planner.clear();
       return;
     }
+    // A friendly body is the fourth thing the button can mean (spec 246), and
+    // like the drop above it is checked before `attackable` for clarity rather
+    // than for precedence: `attackable` already refuses a friendly body, so the
+    // two can never both be true.
+    //
+    // The order is dropped first, and everything else about it is the server's:
+    // whether the player is close enough, whether the body is already talking to
+    // somebody, and whether the merchant then stops walking. A refusal comes
+    // back as a `Conversation 0` and nothing has been committed to here.
+    if (picked && talkable(picked)) {
+      targetId = null;
+      destination = null;
+      planner.clear();
+      // The wind-up somebody was mid-way through is withdrawn: walking up to a
+      // merchant to talk is a change of mind about the swing, exactly as a new
+      // mark or a click on the ground is.
+      client.cancelCast();
+      client.talk(picked.id);
+      return;
+    }
     if (picked && attackable(picked, client.view().selfEntityId)) {
       // A new mark withdraws from the blow aimed at the old one (spec 155),
       // through exactly the call the empty-ground branch below makes. The button
@@ -2932,6 +3023,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       aiming: pendingAim !== null,
       overEnemy: hovered !== undefined && attackable(hovered, view.selfEntityId),
       overDrop: hovered !== undefined && collectable(hovered),
+      // The same predicate `issueOrder` branches on (spec 246), so the mark
+      // under the pointer and what the button does cannot disagree -- which is
+      // the rule `overEnemy` already lives by one line up.
+      overNpc: hovered !== undefined && talkable(hovered),
     };
     // The mark and the cursor under it are one decision read twice, so "we hid
     // the pointer" and "we drew a mark" cannot come apart.
@@ -3433,6 +3528,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // whole attack delay, and only turned once the blow committed -- so the
       // turn was paid for *after* the wait instead of during it.
       targetAim: aimedMark(view),
+      // And face somebody you have just started talking to (spec 246), once.
+      // Beside `targetAim` rather than fighting it: a friendly body is never an
+      // attack target, so the two are never both set.
+      talkAim,
       // A poise break holds the legs *and* the heading (spec 173). The heading
       // is the half that matters here: a correction carries a position, so a
       // predicted step is pulled back, and it carries no facing at all -- so a
@@ -3454,6 +3553,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // Turn toward what was asked for at our own rate, so the drawn heading is
     // the one the server is about to arrive at rather than the one it left.
     facing = turnToward(facing, intent.facing, view.stats?.turnRate ?? 0, SERVER_TICK_RATE);
+    // And let the conversation's one-shot go, now that the turn it asked for has
+    // either happened or been overruled (spec 246). Here rather than inside
+    // `moveIntent`, which is pure and holds nothing between calls -- and after
+    // the turn rather than before it, so the aim survives the tick it arrives
+    // on instead of being dropped a frame early.
+    if (talkAim !== null && (intent.moveX !== 0 || intent.moveY !== 0 || aligned(facing, intent.facing))) {
+      talkAim = null;
+    }
     client.sendInput({ moveX: intent.moveX, moveY: intent.moveY, facing: intent.facing, buttons: 0 });
   }
 
@@ -3530,6 +3637,49 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   function armAudio(): void {
     audioEngine.resume();
+  }
+
+  /**
+   * One frame of a conversation (spec 246).
+   *
+   * Driven off `view.conversationEntityId`, which is the server's answer and the
+   * only trigger: every way a conversation can end -- walking away, either body
+   * dying, the NPC despawning, the socket dropping -- arrives as that going back
+   * to 0, so none of them needs a case here.
+   *
+   * Runs *after* the scene has drawn, so the anchor is projected through the
+   * camera this frame actually used rather than the previous one's -- which at
+   * the rate the framing eases is a bubble trailing the body it belongs to.
+   */
+  function driveDialogue(view: ClientView, nowMs: number): void {
+    dialogue.update(view.conversationEntityId, view.entities, nowMs);
+    const speakerId = dialogue.speakerId;
+    const speaker = speakerId === 0 ? undefined : view.entities.find((e) => e.id === speakerId);
+
+    // The camera looks between the two while a conversation is live, and goes
+    // back on its own when it is not: both are the same ease the camera has
+    // always used to follow a body, so there is nothing to restore.
+    scene.setDialogueFraming(speaker ? { x: speaker.x, y: speaker.y } : null);
+
+    // Armed on the *edge* rather than held (spec 246): the player turns to face
+    // whoever they have just spoken to, and is then free to look anywhere. Keyed
+    // on the body, so walking from one merchant to another turns you again.
+    if (speakerId !== talkAimFor) {
+      talkAimFor = speakerId;
+      talkAim = speaker ? { x: speaker.x, y: speaker.y } : null;
+    }
+
+    const bubble = dialogue.view();
+    if (bubble === null || speaker === undefined) {
+      ui.setDialogue(null, null);
+      return;
+    }
+    // Over the speaker's head. `projectPoint` answers in CSS pixels and reports
+    // whether the point is on screen at all -- an off-screen anchor draws no
+    // bubble rather than one pinned to an edge, since the conversation is with
+    // somebody the player cannot see and the camera is on its way to them.
+    const at = scene.projectPoint(speaker.x, speaker.y, DIALOGUE_BUBBLE_LIFT);
+    ui.setDialogue(bubble, at.onScreen ? { x: at.x, y: at.y } : null);
   }
 
   function frame(now: number): void {
@@ -3912,6 +4062,8 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
         : [],
     );
 
+    driveDialogue(view, now);
+
     publishUnitReadout();
     publishVfxReadout();
     publishAudioReadout();
@@ -3998,6 +4150,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // cancelled on the line above -- so an ember in flight when you switched
       // to the map editor would drone until the page was closed.
       audioDriver.stopAll();
+      // And the conversation, for the same reason one line up (spec 246): a
+      // mumble is scheduled by the frame loop being cancelled on the line
+      // above, so a line half-spoken when you switched to the map editor would
+      // otherwise leave the merchant standing still on the server with nobody
+      // in front of it. `leave` tells the server as well, which is what makes
+      // it start wandering again.
+      dialogue.leave();
       audioEngine.suspend();
       window.removeEventListener('pointerdown', armAudio);
       window.removeEventListener('keydown', armAudio);

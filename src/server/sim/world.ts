@@ -36,7 +36,7 @@ import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
-import { bolt, notice, playersOf, rally, settle } from './aggro.js';
+import { bolt, isFriendly, notice, playersOf, rally, settle } from './aggro.js';
 import { idle } from './idle.js';
 import { approachPoints, type Approach } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
@@ -89,7 +89,7 @@ import {
   type MoteSpawn,
 } from './restoration.js';
 import { shotHeightAt, SHOT_IMPACT_HEIGHT } from './ballistics.js';
-import { isWalkable, resolveMovement, type MovementContext } from './movement.js';
+import { headingToward, isWalkable, resolveMovement, type MovementContext } from './movement.js';
 import { regenerated } from './resource.js';
 import {
   ActivityValue,
@@ -172,6 +172,7 @@ function blankEntity(id: number): ServerEntity {
     // Only ever read where there is an anchor, so this is what a body with no
     // spawner behind it carries rather than a value anything acts on (spec 222).
     leashRadius: LEASH_RADIUS,
+    conversationWith: null,
     resource: 0,
     cast: null,
     cooldowns: {},
@@ -345,6 +346,7 @@ export function spawnEntity(
     // Nothing an admin conjures is leashed: `spec.anchor` is what decides that,
     // and a body with no anchor never reaches this number (spec 222).
     leashRadius: LEASH_RADIUS,
+    conversationWith: null,
     resource: spec.stats.maxResource,
     cast: null,
     cooldowns: {},
@@ -494,6 +496,12 @@ export function isHostile(
   // nothing.
   if (attacker.kind === EntityKindValue.Drop) return false;
   if (target.kind === EntityKindValue.Drop) return false;
+  // A friendly body (spec 246), refused at both ends for the reason the four
+  // above are: nothing swings at it, no blast catches it, nothing aggros onto
+  // it, and it never turns up in `nearestQuarry`. This one line is the whole of
+  // its non-hostility -- there is no branch anywhere else asking whether a body
+  // is an enemy, because every one of them asks this function.
+  if (isFriendly(attacker) || isFriendly(target)) return false;
   if (attacker.kind === target.kind) {
     if (attacker.kind !== EntityKindValue.Player) return false;
     // Both ends, not just the attacker's (spec 145). Reading the attacker's
@@ -2125,6 +2133,15 @@ function monsterIntent(
   context: StepContext,
   approaches: ApproachBoard,
 ): MonsterDecision {
+  // Being talked to outranks everything below it, including the leash and the
+  // idle plan (spec 246), because a shopkeeper that wandered off mid-sentence is
+  // the one thing this feature cannot do. Asked first rather than folded into
+  // `idleDecision`, so it is a claim on the body rather than a mood: the plan
+  // underneath is untouched and resumes at the epoch it would have reached
+  // anyway, since `postAt` is a function of the tick and not of a stored goal.
+  const listener = monster.conversationWith === null ? null : entities.get(monster.conversationWith);
+  if (listener && listener.health > 0) return conversationDecision(monster, listener);
+
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
 
@@ -2357,6 +2374,46 @@ function beyondLeash(monster: ServerEntity): boolean {
  * simply stands there. **That standing is the dwell** -- "pick a spot, hang out
  * on it, move on" with nothing counting the hanging out.
  */
+/**
+ * A body being talked to: stands still, and turns to the player (spec 246).
+ *
+ * Nothing new steers. The pose is the one `monsterIntent` already has for an
+ * alert body -- "stopped, facing you" -- expressed the way that one is, as an
+ * input with no movement in it and a heading, so the turn goes through
+ * `turnToward` at the body's own rate and every client watches the same turn.
+ *
+ * The path is **forgotten** rather than kept. A body that was walking somewhere
+ * when it was spoken to would otherwise resume that route the instant the
+ * conversation ends, walking off toward a spot its idle plan has since moved
+ * on from -- and `idleDecision` plans a fresh one on the next tick anyway.
+ */
+function conversationDecision(monster: ServerEntity, listener: ServerEntity): MonsterDecision {
+  return {
+    entity: forgetPath(monster),
+    charging: null,
+    input: {
+      entityId: monster.id,
+      seq: 0,
+      moveX: 0,
+      moveY: 0,
+      // Standing on top of it leaves no direction to look in, so the body keeps
+      // the heading it has -- `headingToward`'s own rule, applied here because
+      // this function is not handed an input to fall back through.
+      facing: headingToward(monster.position, listener.position, monster.facing),
+      buttons: 0,
+      predictedX: monster.position.x,
+      predictedY: monster.position.y,
+      hasPrediction: false,
+      seqSpan: 1,
+      castAbilityId: '',
+      castTargetX: 0,
+      castTargetY: 0,
+      castTargetEntityId: 0,
+      cancelCast: false,
+    },
+  };
+}
+
 function idleDecision(monster: ServerEntity, tick: number, context: StepContext): MonsterDecision {
   const step = idle(monster, tick);
   const rested = step.entity;

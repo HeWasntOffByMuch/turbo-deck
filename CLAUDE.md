@@ -84,6 +84,7 @@ change a game outcome.
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
 | `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 224) |
+| `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 246, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -1513,6 +1514,36 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that took it whenever the cursor happened to be bottom-left
                  would break zoom in one corner of the screen with nothing drawn
                  there to explain why.
+                 dialogue.ts is the bubble (spec 246), furniture in the same
+                 register as those two -- no title bar, never dragged, nothing in
+                 the layout store, because it is not something the player opened.
+                 What makes it different is that it is **anchored to a body**, so
+                 `DialogueDock` places it at a *point* where `Anchor` places at
+                 one of nine sides; the mount hands in that point each frame and
+                 nothing here knows what a world position is or how one becomes a
+                 pixel.
+                 It shares two of the neighbours' rules and inverts the third.
+                 **Nothing is drawn when nobody is speaking**, settled before the
+                 has-anything-changed early-out, which is the trap `chat.ts`
+                 names and `selected-unit.ts` repeats. Its **width is fixed**,
+                 `selected-unit.ts`'s reason one step further: this box is centred
+                 on a moving body, so a width following its content would move
+                 *both* edges every time a character was revealed, and a bubble
+                 that grows while you read it is worse than one sometimes wider
+                 than it needs to be. And the **pointer does not pass through** --
+                 a readout is something you look at *through* and a bubble with
+                 replies in it is something you press, so a click on a reply
+                 cannot also be a click on the world, by the panel being opaque to
+                 the hit test rather than by anything remembering to swallow an
+                 event. Its dock still is transparent, or the empty
+                 three-quarters of the frame would eat every click meant for the
+                 ground.
+                 The replies are rebuilt **only when the list changes**, since a
+                 screen tearing down four buttons a frame loses the hover state on
+                 the one under the cursor between the press and the release; and
+                 they are withheld entirely while the line is still typing,
+                 because a reply that could be pressed before its question had
+                 finished being asked is a reply to something unread.
                  action-bar.ts and selected-unit.ts are the two screens spec 192
                  added, and both are the chat's kind of furniture: docked in the
                  `hud` layer, no title bar, never dragged, nothing in the layout
@@ -1859,6 +1890,78 @@ src/render/audio/  the audio framework (spec 229), and the one place in this rep
                  played late, and `warm` exists so the buses that fire in the
                  first ten seconds never take that path: a hit that arrives 200ms
                  after the blow is worse than one that did not arrive.
+                 `dialogue-voice.ts` and `dialogue-sound.ts` are the procedural
+                 speech (spec 246), and they are the one thing in this directory
+                 that is **generated rather than fetched** -- so they sit either
+                 side of the same line every other pair here does. *Which* letter
+                 makes a noise, at what pitch, after what pause is arithmetic and
+                 is asserted in Node; the four synthesis engines are transcribed
+                 from `procedural_mumble_4voices.html` in the register
+                 `sim/avoidance.ts` transcribes RVO2, because that file is what
+                 the voices are defined *by* and a version written from its prose
+                 would be a fifth voice sounding like none of them.
+                 `planLine(text, voice, seed)` answers when every character
+                 appears and which of them speak, and the rules it encodes are
+                 the handoff spec's: a word start always speaks, a long enough
+                 gap speaks, a vowel speaks on a shorter gap, and punctuation is
+                 **timing and never a sound** -- a full stop that spoke would put
+                 a vocal event on the beat the voice is meant to have stopped on.
+                 Consonants modify the *resonance* and never add an attack, which
+                 is that spec's one instruction written from experience: hard
+                 attacks on T/K/C/P/S turn a voice into repeated `tsk`.
+                 Two things are hashed rather than drawn, and both had to be for
+                 the same reason `crowd.ts`'s `symmetryBreak` is: a plan built
+                 from `Math.random` is a plan no test can hold. The pitch wobble
+                 is hashed off **speaker + line id**, which the handoff spec
+                 itself suggests, so a line spoken twice is the same performance
+                 and two lines are two. The one place `Math.random` survives is
+                 the *contents* of the breath noise buffer, which has no
+                 perceptible identity to keep stable and nothing asserted about
+                 it.
+                 Two numbers were **measured rather than derived** and the
+                 formulas that looked right were wrong. The mean gap between
+                 vocal events has to be taken off a real line: one sound every
+                 `density` characters says Warm Murmur does not overlap, and over
+                 actual text it does -- 156ms between beats against a 160ms
+                 event, which is the property that makes it read as murmuring
+                 rather than as a row of separate noises. And a density bias only
+                 shows in **long words**: in short-word text nearly every sound
+                 is a word start, so soft and nasal tie and a test on the wrong
+                 sentence reports a working bias as none.
+                 `SpeechVoices` holds the two rules a bare function cannot: the
+                 **cap** (four, the spec's own figure, for the case density
+                 cannot cover) and the **cut** -- because nothing here stops
+                 itself, and "no leftover dialogue audio after the conversation
+                 closes" needs somewhere that can reach a sounding voice. The cut
+                 is a 15ms ramp rather than a jump to zero, since a step in the
+                 waveform is a click and closing a bubble mid-word would
+                 otherwise be *louder* than letting it finish.
+                 What there is **no** of is a schedule: every voice starts at
+                 `currentTime` the moment the reveal reaches its character, so
+                 there is never a pending sound to cancel. That is a stronger
+                 guarantee than the playback token the handoff spec suggests --
+                 skipping a line cannot produce a burst because there is nothing
+                 queued to release -- and the token is kept for the sounds that
+                 have already started.
+                 `DIALOGUE_GAIN` is why "make dialogue louder" is one edit
+                 rather than four: the levels in `VOICE_PRESETS` are the
+                 reference file's verbatim, tuned against *each other* by ear, so
+                 a lift applied per engine would quietly re-balance the four. It
+                 is 2.5 because the reference plays into `context.destination`
+                 and this plays into a **bus** -- `level x bus(0.8) x
+                 master(0.7)` is 0.56 before anything else, so merely matching
+                 the reference takes about 1.8.
+                 `sink.ts`'s `speech(bus)` is the one hole in that otherwise
+                 closed surface, and it is shaped so it is not a hole in the
+                 *mix*: what comes back is a **bus gain node**, never
+                 `context.destination`, so a mumble is scaled by master and
+                 silenced by mute like every file the catalog plays. A sixth
+                 bus, `voice`, was written and taken out again -- `BUSES` is the
+                 *sound event* vocabulary and `events.test.ts` asserts every bus
+                 appears in the SFX tab's tree in mixer order, so a bus that can
+                 never hold a catalog event is an empty folder and a slider with
+                 nothing behind it. A Dialogue level is a follow-up wanting a
+                 mixer that separates "a bus of events" from "a level".
 src/render/iso3d/sfx/  the SFX tab (spec 229), the seventh in the shell: a tree
                  down the left, one event's editor on the right, and a Save that
                  writes `assets/audio/sfx.json`. Hand-rolled DOM, which is the
@@ -2597,6 +2700,88 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
+                 Since spec 246 a body can be **friendly**, and that is one line
+                 rather than a system: a fifth `Temperament` with no numbers on
+                 it, and a refusal in `isHostile` -- which is the only thing in
+                 the sim that answers "may this body damage that one", so nothing
+                 swings at it, no blast catches it, it never turns up in
+                 `nearestQuarry` and it never acquires a target. It stays
+                 `kind: Monster` because everything else about it already works:
+                 it comes off a `spawner` marker, wanders through `sim/idle.ts`,
+                 is moved by `resolveMovement`, replicates, streams and is drawn.
+                 `Prop` is scenery that does none of that, which is why it was
+                 not the answer despite already being excluded from `isHostile`.
+                 `isFriendlyMonster` in `data/monsters.ts` is the **one** answer
+                 to "is this type friendly", because three trees need it: the sim
+                 wraps it as `aggro.ts`'s `isFriendly`, `appearanceOf` reads it to
+                 withhold a health bar and to make a right-click mean *talk*, and
+                 a test picking something to fight has to skip one. By type id
+                 rather than by entity, which is what lets the client answer it
+                 with no bit on the wire.
+                 `ServerEntity.conversationWith` is the claim that stops a
+                 merchant wandering off mid-sentence, read by `monsterIntent`
+                 *before* the leash and before the idle plan. The plan underneath
+                 is untouched and resumes at the epoch it would have reached
+                 anyway, since `postAt` is a function of the tick rather than of
+                 a stored goal -- so a conversation costs the sim one field and
+                 nothing to unwind. An entity id rather than a boolean, because
+                 "is somebody talking to it" and "is it *you*" are two questions
+                 and only the second can refuse a second player.
+                 `Talk`/`Conversation` are one message each (spec 246) and an id
+                 of 0 ends one, `OpenVendor`'s own convention -- so a client
+                 leaving cannot be a client that forgot to say so. The release is
+                 **reconciled rather than announced**: `sweepConversations` asks
+                 once per broadcast whether each is still holdable, so walking
+                 out of range, either body dying, the NPC despawning and somebody
+                 else claiming it are three lines rather than four events, and a
+                 release path added later cannot forget to fire one. Nothing
+                 about what is *said* crosses: `data/npcs.ts` and
+                 `data/dialogue.ts` are tables both ends were built from, so
+                 sending a script would be replicating a file the client has.
+                 `data/npcs.ts` is keyed by the MONSTERS row id and is **one**
+                 table read from both ends -- the server takes `talkRadius` and
+                 `vendorId`, the client takes the name, the voice and the script
+                 -- because a name authored in two places is a name that
+                 disagrees with itself. Where an NPC *stands* is deliberately not
+                 in it: a body comes off a spawner marker like every other body,
+                 so moving a shopkeeper is a map edit. What that costs is the one
+                 coupling this feature has: a vendor's reach is measured from a
+                 **fixed point** and its owner walks, so the three `*_HOME`
+                 constants in `data/vendors.ts` have to agree with markers in a
+                 document they cannot see -- and `world/npc-placement.test.ts`
+                 asserts the worst case off the shipped map rather than leaving
+                 it a comment. That reach is derived (`talkRadius + wander radius
+                 + a margin`) rather than chosen.
+                 Since spec 247 **every** shop is one of these, and the removal
+                 is the more interesting half of that spec. `vendor.quartermaster`
+                 and `vendor.armourer` were invisible coordinates near the spawn
+                 that a player walked onto and pressed `KeyV` at -- which was the
+                 honest answer while `data/vendors.ts`'s own header was still
+                 true that "there is no map yet that says where a town is". Two
+                 ways to open a shop is two answers to *whose* stock is on
+                 screen, and the proximity one got worse as the world filled up:
+                 those two stand 89 units apart so their circles already
+                 overlapped, and spec 246 had to add a `byProximity` flag purely
+                 to keep Rell's four-times-wider reach from swallowing both. A
+                 flag whose whole job is to hide a row from a search is the
+                 search asking to be deleted.
+                 What decided the shape is that **removing the key alone would
+                 have taken four items out of the game**: `KeyV` is the only
+                 caller of `nearestVendorTo` and that is the only thing that ever
+                 names those two rows, so deleting the binding orphans them --
+                 and `staff.emberwood`, `helm.plated`, `chest.scale` and
+                 `shield.oak` are in no loot table anywhere. So the two shops got
+                 bodies, which is what 244 built the machinery for and what
+                 `shopkeeper(id, name)` in `data/monsters.ts` is: three rows that
+                 differ in an id and a name, because everything a shopkeeper's
+                 body *is* is the same and everything it *sells* lives elsewhere.
+                 Their stock, markups and sell fractions did not move. Where they
+                 stand was **measured** rather than chosen -- every candidate
+                 scored for prop collisions and walkable slope over its whole
+                 wander disc -- and they sit 210 to 220 apart against two wander
+                 radii of 180, which is a test rather than a number in a comment.
+                 `showShopFor(vendorId)` is now the only way a shop opens, and
+                 `UiScreens.show` no longer special-cases one.
                  net/transport-ws.ts pings (spec 197), and the reason is the one
                  thing spec 157 could not have known: it moved the heartbeat off
                  `requestAnimationFrame` onto a wall-clock `setInterval` because
@@ -4417,6 +4602,51 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
+                 dialogue.ts and dialogue-driver.ts (a conversation, spec 246).
+                 The first is the controller the handoff spec recommends and the
+                 fences here require: `src/ui/` may not import `render/audio/`,
+                 so a bubble cannot be the thing scheduling sounds, and a sound
+                 layer owning the reveal would be deciding what a screen shows.
+                 So **one thing owns the text reveal and the vocal events it
+                 triggers**, time is an argument, and the sink is injected --
+                 which is what makes "skipping emits no backlog" and "closing
+                 mid-word speaks nothing further" assertions rather than
+                 something somebody has to listen for.
+                 The two-stage confirm is the spec's: while typing, a press
+                 reveals the rest of the line and the characters it skipped past
+                 **do not speak**, because the cursor moves without going through
+                 `update`; once the line is whole it ends the conversation if
+                 there are no replies, and does nothing if there are -- advancing
+                 past a question would be choosing on the player's behalf. A
+                 reply's `go` is a line **id** rather than a nested line, which is
+                 the whole reason asking who somebody is does not cost the chance
+                 to shop and nothing has to remember that it was asked.
+                 The driver is the four things a conversation is joined to, and
+                 the rule it is built around is that **the server decides whether
+                 one exists**: `ClientView.conversationEntityId` is the entire
+                 trigger, so the player walking away, either body dying, the NPC
+                 despawning and the socket dropping all arrive as it going back
+                 to 0 and none of them needs a case. The client never opens a
+                 bubble on the press, because the answer is what decides whether
+                 the body stops walking and a bubble over something still ambling
+                 away is worse than a moment's wait.
+                 `SpeechSink` beside it is built to `affliction-vfx.ts`'s and
+                 `shot-vfx.ts`'s rules because the failure modes are the same:
+                 the **stop is owed** (nothing in the synth stops itself), and
+                 the output is **re-asked every call** rather than cached --
+                 there is no `AudioContext` until the first user gesture, and a
+                 null cached at mount is an NPC silent for the session.
+                 The camera is a `WorldScene.setDialogueFraming` push and
+                 nothing more: the focus point becomes the midpoint of the two
+                 bodies and the half-width is taken down, both through the ease
+                 the camera has *always* used to follow a body -- so "smoothly
+                 reframes" and "smoothly restores" are one mechanism rather than
+                 two, and clearing it restores exactly. It may only ever pull the
+                 camera **in**, never out, which is what keeps it from
+                 overriding the Zoom slider rather than decorating it: somebody
+                 playing zoomed right in would otherwise have the game jump away
+                 from them the moment they said hello. Nothing is written into
+                 `ViewControls`, so the player's own settings are untouched.
                  shot-vfx.ts (the paint a shot flies with, spec 218: `SHOT_ART`
                  says which effect each `ProjectileLook` carries, and the driver
                  beside it starts one when a projectile comes into view and stops
@@ -4775,13 +5005,20 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the ground fell across it, which for a mark this size is a couple
                  of units on anything walkable),
                  crosshair.ts (what the pointer *is* over the world, spec 200:
-                 two marks that are the same mark at two lengths, authored as a
-                 9x9 table of `#` in `pixel-font.ts`'s register and rendered as
-                 crisp rects -- which is why the art is odd-sided, since what a
+                 three marks, authored as a 9x9 table of `#` in `pixel-font.ts`'s
+                 register and rendered as crisp rects -- which is why the art is odd-sided, since what a
                  crosshair marks is its centre pixel and an even box has none.
                  The **small** one -- a centre dot and the four arm tips -- says
                  a click would act on the body under the pointer; the **full**
-                 one says a skill is armed and the next click places it.
+                 one says a skill is armed and the next click places it. The
+                 **bubble** (spec 246) says the body under the pointer can be
+                 talked to, and it is the one of the three that is a *picture
+                 rather than a reticle*: the other two say where the click lands
+                 and this says what it does, which is not something four arms
+                 can encode. Its blank top and bottom row are not padding --
+                 the mark is centred on the pointer like the other two, so what
+                 has to sit on the box's middle is the bubble's body rather than
+                 the whole drawing including its tail.
                  Everywhere else the page's own arrow stands, because a mark that
                  is always on says nothing by being on.
                  They are **drawn in the page** rather than handed to CSS as
