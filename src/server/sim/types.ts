@@ -85,8 +85,8 @@ export const ActivityValue = {
  * still because it is sizing you up and a monster holding still because it has
  * nothing to do are the same `Idle`, and they are not the same thing.
  *
- * `Calm` and `targetId === null` are one state seen from two sides, and every
- * transition in `sim/aggro.ts` keeps them that way.
+ * `targetId === null` is `Calm` or `Returning` and nothing else, and every
+ * transition in `sim/aggro.ts` keeps it that way.
  */
 export const AggroValue = {
   /** No business with anybody. */
@@ -97,6 +97,16 @@ export const AggroValue = {
   Engaged: 2,
   /** Running from whatever hit it, and swinging at nothing. */
   Fleeing: 3,
+  /**
+   * Walking back to its anchor, and it will not be talked out of it (spec 248).
+   *
+   * Also `targetId === null`, and so distinguishable from `Calm` only by what
+   * it refuses -- which is the whole reason it is a state rather than the
+   * absence of one. A calm body notices, is rallied and can be hit; this one
+   * does none of the three until it is home. Two of those are free, because
+   * `notice` and `rally` already require `Calm`.
+   */
+  Returning: 4,
 } as const;
 
 export type AggroStateValue = (typeof AggroValue)[keyof typeof AggroValue];
@@ -376,6 +386,21 @@ export interface ProjectileState {
   readonly expiresAtTick: number;
 }
 
+/**
+ * The bottom of a returning body's ramp home (spec 248).
+ *
+ * `distance` is to the **anchor**, not to the point the walk ends at: the
+ * arrival radius is a function of the body's idle plan, which `sim/idle.ts`
+ * already reads and this file has no business knowing. So the span is closed
+ * there, where the two numbers meet.
+ */
+export interface ReturnStart {
+  /** How far from its anchor the body was when it gave up. */
+  readonly distance: number;
+  /** And what health it gave up on -- the value the ramp starts from. */
+  readonly health: number;
+}
+
 export interface ServerEntity {
   readonly id: number;
   readonly kind: number;
@@ -446,6 +471,25 @@ export interface ServerEntity {
    * screen; a heading re-derived every 16ms is not.
    */
   readonly fleeGoal: Vec2 | null;
+  /**
+   * Where this body's walk home began, and null for anything that is not
+   * `Returning` (spec 248).
+   *
+   * The pair {@link fleeGoal} makes with `Fleeing`: a state in the aggro
+   * machine, plus the one number that state needs and no other does. Both ends
+   * of a ramp, because "regenerate to full along the route" is a line between
+   * two points and neither of them can be re-derived later -- the distance is
+   * gone the moment the body takes a step, and the health is gone the moment it
+   * takes any of it back.
+   *
+   * Written by `goHome`, which is idempotent for exactly this reason: a span
+   * re-snapshotted every tick is a ramp that restarts from where it has got to,
+   * which is a body that never heals at all. Cleared by `arriveHome`, and by
+   * `calm` and `engage` alongside `fleeGoal` -- a stale span left on a body that
+   * turned round would be picked up by its next walk home instead of being
+   * measured from the leash break that started it.
+   */
+  readonly returnStart: ReturnStart | null;
   /**
    * The route this body is following, when the straight line to its target is
    * blocked (spec 065). Plain data on an immutable entity like everything else,

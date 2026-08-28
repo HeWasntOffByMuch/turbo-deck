@@ -92,6 +92,27 @@ export class DialogueScreen extends Panel {
   /** Where the speaker is, in UI pixels, or null for nothing to point at. */
   private anchor: { x: number; y: number } | null = null;
 
+  /**
+   * Where each reply is, in UI pixels, for a harness (spec 249).
+   *
+   * A bubble is drawn to a canvas, so "the reply I pressed opened a shop" has
+   * no element to ask -- and the whole path from the button to the vendor is
+   * one nothing in Node can see, which is how a shop that opens and shuts again
+   * shipped green. Empty while the line is still typing, because the replies
+   * are withheld then and a box for a button nobody can press is a lie.
+   */
+  /** What is on screen right now, for a harness: the speaker and the line. */
+  get shownLine(): string {
+    return this.visible ? `${this.speaker.text} ${this.body.text}` : '';
+  }
+
+  get replyRects(): readonly { readonly id: string; readonly rect: Rect }[] {
+    if (!this.visible) return [];
+    return this.buttons
+      .filter((button) => button.visible)
+      .map((button, index) => ({ id: String(index), rect: button.rect }));
+  }
+
   constructor(private readonly options: DialogueScreenOptions) {
     super('column', 'dialogue');
     const theme = options.theme;

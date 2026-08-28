@@ -322,6 +322,24 @@ export const WINDOW_CHROME = {
  */
 export const CHARACTER_MIN_SIZE: Size = { width: 96, height: 120 };
 
+/**
+ * The smallest the shop window may be, in UI pixels (spec 249).
+ *
+ * A floor rather than a size, and it exists for the case the placement fix
+ * cannot reach: a layout **already written** by a build that placed the shop
+ * before its stock arrived. That one measured an empty list -- 135x129 on the
+ * frame it was reported from -- and `saveLayout` captures every window whether
+ * it is open or not, so the sliver outlives the bug that made it. `restore`
+ * clamps a stored size up to this on the way in, which is what turns "reinstall
+ * and it is still broken" into "it is a shop again next time you open it".
+ *
+ * The height is what a stocked list actually measures (215) rounded up, so it
+ * is a floor a real shop is already above rather than a size that forces one:
+ * the natural placement is unchanged by it, and the only thing it moves is a
+ * window somebody -- or a bug -- has made too small to read.
+ */
+export const SHOP_MIN_SIZE: Size = { width: 160, height: 220 };
+
 /** How far a window sits from the edge it opens against, in UI pixels. */
 const MARGIN = 8;
 
@@ -784,7 +802,9 @@ export class UiScreens {
       minSize: CHARACTER_MIN_SIZE,
     });
     this.registerWindow('account', this.account);
-    this.registerWindow('shop', this.shop);
+    // A floor, so a sliver is not expressible -- by a stale layout document, by
+    // a resize, or by a placement that ran before the stock arrived (spec 249).
+    this.registerWindow('shop', this.shop, { minSize: SHOP_MIN_SIZE });
     this.registerWindow('trade', this.trade);
     // Not scrolled by the mount: the options screen's tabs scroll their own
     // bodies (spec 198), and the keybindings page inside it has a filter field
@@ -999,8 +1019,23 @@ export class UiScreens {
       //
       // ...but only once the server has actually answered. Before that there is
       // no shop because nobody has said yet, which is a different thing from no.
-      if (shopView) this.shop.setShop(shopView);
-      else if (view.vendorRevision > this.shopAskedAt) this.close('shop');
+      if (shopView) {
+        this.shop.setShop(shopView);
+        // Placed on the first frame it has stock in it, and never before
+        // (spec 249). A window is sized from what its screen wants, and this is
+        // the one screen whose contents are a **round trip** away rather than a
+        // frame: placed at the press, the shop is measured from a list with
+        // nothing in it and comes out 135x129 -- a sliver, kept for the session
+        // by `placed`, and saved to the layout document to be restored just as
+        // small next time.
+        //
+        // Invisible over a loopback, where the answer lands before the frame
+        // that placed it, which is why every test and every in-tab probe drew a
+        // perfectly good shop. On a socket it is what "the shop only flashes"
+        // actually is: the window opens, it is a sliver, and there is nothing
+        // in it to read.
+        if (!this.placed.has('shop')) this.awaitingPlacement.add('shop');
+      } else if (view.vendorRevision > this.shopAskedAt) this.close('shop');
     }
 
     // Placed *here*, after the screens have been fed, and not in `show`.
@@ -1257,11 +1292,24 @@ export class UiScreens {
     readonly selectedRows: readonly string[];
     readonly selectedRect: Rect | null;
     readonly barSlots: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly dialogueOpen: boolean;
+    readonly dialogueRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly dialogueLine: string;
   } {
     const tabs = this.optionsScreen.tabs;
     const shownTrade = this.isOpen('trade') ? this.trade.view : null;
     const selectedUnit = this.selectedUnit.view;
     return {
+      // The bubble (spec 246), and where its replies are (spec 249). Here for
+      // the reason the chat's lines are: it is drawn to a canvas, so "the
+      // reply I pressed opened this merchant's shop" has no element to ask --
+      // and that path is the one a Node test cannot see, which is how a shop
+      // that opened and shut again shipped with a green suite.
+      dialogueOpen: this.dialogue.visible,
+      dialogueRects: this.dialogue.replyRects,
+      // Separators stripped: the readout joins on these, and a line that carried
+      // one would split into fields nobody meant.
+      dialogueLine: this.dialogue.shownLine.replace(/[|;:,]/g, ' '),
       windows: this.opened(),
       bag: this.inventory.bagSlots.map((cell) => cell.item?.name ?? ''),
       // What the chat is showing, said the way a player reads it (spec 189).
@@ -1748,7 +1796,10 @@ export class UiScreens {
     // Handed the time, so the window wipes into view (spec 133). It is the only
     // caller that has one -- the goldens open a window settled, on purpose.
     this.windows.open(id, this.now);
-    if (!this.placed.has(id)) this.awaitingPlacement.add(id);
+    // Every window but the shop is placed now, from a screen the same frame is
+    // about to feed. The shop's stock comes from the server, so it is queued
+    // where it *arrives* instead -- see the branch in `update` (spec 249).
+    if (id !== 'shop' && !this.placed.has(id)) this.awaitingPlacement.add(id);
     // At the intent (spec 133's rule), and here rather than on the button:
     // Escape, a keybinding and the server all open windows without a press.
     this.sound('ui.open');
