@@ -1,4 +1,4 @@
-<title>turbo-deck — sixteen days after the world went 3D</title>
+<title>turbo-deck — a month after the world went 3D</title>
 
 <style>
   :root {
@@ -9,7 +9,7 @@
     --text:#DDE5E2; --muted:#8B9E9C; --faint:#5D6E6D; --ember:#E4653F;
 
     --lane-0:#E0A53E; --lane-1:#B187C6; --lane-2:#D9788F; --lane-3:#74A55E; --lane-4:#4FA0AB;
-    --lane-5:#7389D4; --lane-6:#E4653F; --lane-7:#5CB0A0; --lane-8:#C9A15E; --lane-9:#7B8B8C;
+    --lane-5:#7389D4; --lane-6:#E4653F; --lane-7:#D2A05C; --lane-8:#5CB0A0; --lane-9:#C9A15E; --lane-10:#7B8B8C;
 
     --maxw: 68rem;
   }
@@ -19,79 +19,64 @@
       --bg:#E9ECE9; --panel:#F5F7F4; --panel-2:#DFE4E1; --rule:#C6CFCB; --rule-2:#D6DDD9;
       --text:#131E1D; --muted:#566664; --faint:#82918F; --ember:#C24A22;
       --lane-0:#9C6C0C; --lane-1:#7A4C90; --lane-2:#9B3A55; --lane-3:#47702F; --lane-4:#1E6C79;
-      --lane-5:#40529C; --lane-6:#C24A22; --lane-7:#1D7566; --lane-8:#7E6014; --lane-9:#5A6A6B;
+      --lane-5:#40529C; --lane-6:#C24A22; --lane-7:#8A5A12; --lane-8:#1D7566; --lane-9:#7E6014; --lane-10:#5A6A6B;
     }
   }
-
   :root[data-theme="dark"] {
     --bg:#0D1416; --panel:#141D20; --panel-2:#101819; --rule:#24312F; --rule-2:#1A2426;
     --text:#DDE5E2; --muted:#8B9E9C; --faint:#5D6E6D; --ember:#E4653F;
     --lane-0:#E0A53E; --lane-1:#B187C6; --lane-2:#D9788F; --lane-3:#74A55E; --lane-4:#4FA0AB;
-    --lane-5:#7389D4; --lane-6:#E4653F; --lane-7:#5CB0A0; --lane-8:#C9A15E; --lane-9:#7B8B8C;
+    --lane-5:#7389D4; --lane-6:#E4653F; --lane-7:#D2A05C; --lane-8:#5CB0A0; --lane-9:#C9A15E; --lane-10:#7B8B8C;
   }
   :root[data-theme="light"] {
     --bg:#E9ECE9; --panel:#F5F7F4; --panel-2:#DFE4E1; --rule:#C6CFCB; --rule-2:#D6DDD9;
     --text:#131E1D; --muted:#566664; --faint:#82918F; --ember:#C24A22;
     --lane-0:#9C6C0C; --lane-1:#7A4C90; --lane-2:#9B3A55; --lane-3:#47702F; --lane-4:#1E6C79;
-    --lane-5:#40529C; --lane-6:#C24A22; --lane-7:#1D7566; --lane-8:#7E6014; --lane-9:#5A6A6B;
+    --lane-5:#40529C; --lane-6:#C24A22; --lane-7:#8A5A12; --lane-8:#1D7566; --lane-9:#7E6014; --lane-10:#5A6A6B;
   }
 
   body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 16px; line-height: 1.65; -webkit-font-smoothing: antialiased; }
-
-  .wrap {
-    max-width: var(--maxw); margin: 0 auto;
-    padding: clamp(2.5rem, 6vw, 5rem) clamp(1.15rem, 4vw, 2.5rem) 6rem;
-    display: flex; flex-direction: column; gap: clamp(3rem, 6vw, 4.5rem);
-  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: clamp(2.5rem,6vw,5rem) clamp(1.15rem,4vw,2.5rem) 6rem; display: flex; flex-direction: column; gap: clamp(3rem,6vw,4.5rem); }
 
   .masthead { display: flex; flex-direction: column; gap: 1.15rem; }
-  .eyebrow {
-    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.17em; text-transform: uppercase;
-    color: var(--faint); display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; margin: 0;
-  }
+  .eyebrow { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.17em; text-transform: uppercase; color: var(--faint); display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; margin: 0; }
   .eyebrow b { color: var(--ember); font-weight: 500; }
-
-  h1 {
-    font-family: var(--mono); font-weight: 600; font-size: clamp(1.9rem, 4.5vw, 3rem);
-    letter-spacing: -0.035em; line-height: 1.04; text-wrap: balance; margin: 0; max-width: 21ch;
-  }
+  h1 { font-family: var(--mono); font-weight: 600; font-size: clamp(1.9rem,4.5vw,3rem); letter-spacing: -0.035em; line-height: 1.04; text-wrap: balance; margin: 0; max-width: 21ch; }
   h1 em { font-style: normal; color: var(--ember); }
-
   .deck { max-width: 62ch; font-size: 1.06rem; color: var(--muted); margin: 0; }
   .deck strong { color: var(--text); font-weight: 600; }
 
-  .stats {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-    gap: 1px; background: var(--rule-2); border: 1px solid var(--rule-2); margin: 0;
-  }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem,1fr)); gap: 1px; background: var(--rule-2); border: 1px solid var(--rule-2); margin: 0; }
   .stat { background: var(--bg); padding: 0.95rem 1rem 1rem; }
   .stat dt { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.13em; text-transform: uppercase; color: var(--faint); }
-  .stat dd { margin: 0.3rem 0 0; font-family: var(--mono); font-size: 1.45rem; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
-  .stat dd span { font-size: 0.76rem; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  .stat dd { margin: 0.3rem 0 0; font-family: var(--mono); font-size: 1.42rem; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .stat dd span { font-size: 0.74rem; font-weight: 400; color: var(--muted); letter-spacing: 0; }
 
   section { display: flex; flex-direction: column; gap: 1.35rem; }
   .sec-head { display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid var(--rule); padding-top: 1.15rem; }
-  h2 { font-family: var(--mono); font-size: clamp(1.15rem, 2.4vw, 1.42rem); font-weight: 600; letter-spacing: -0.022em; margin: 0; text-wrap: balance; }
+  h2 { font-family: var(--mono); font-size: clamp(1.15rem,2.4vw,1.42rem); font-weight: 600; letter-spacing: -0.022em; margin: 0; text-wrap: balance; }
   .sec-note { max-width: 62ch; color: var(--muted); font-size: 0.94rem; margin: 0; }
   code { font-family: var(--mono); font-size: 0.85em; color: var(--text); background: var(--panel-2); padding: 0.05rem 0.3rem; }
 
   .chart-shell { position: relative; }
   .chart-scroll { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--rule); background: var(--panel-2); scrollbar-width: thin; }
-  .chart-scroll svg { display: block; width: 1700px; height: auto; }
+  .chart-scroll svg { display: block; width: 1680px; height: auto; }
   .scroll-hint { font-family: var(--mono); font-size: 0.63rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 0; }
 
-  .l0{color:var(--lane-0)} .l1{color:var(--lane-1)} .l2{color:var(--lane-2)} .l3{color:var(--lane-3)} .l4{color:var(--lane-4)}
-  .l5{color:var(--lane-5)} .l6{color:var(--lane-6)} .l7{color:var(--lane-7)} .l8{color:var(--lane-8)} .l9{color:var(--lane-9)}
+  .l0{color:var(--lane-0)} .l1{color:var(--lane-1)} .l2{color:var(--lane-2)} .l3{color:var(--lane-3)}
+  .l4{color:var(--lane-4)} .l5{color:var(--lane-5)} .l6{color:var(--lane-6)} .l7{color:var(--lane-7)}
+  .l8{color:var(--lane-8)} .l9{color:var(--lane-9)} .l10{color:var(--lane-10)}
 
-  .g-era      { fill: var(--muted); font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.15em; }
-  .g-axis     { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; }
-  .g-count    { fill: var(--rule); font-family: var(--mono); font-size: 7.5px; }
-  .g-lane     { fill: var(--muted); font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.02em; }
-  .g-lane-sub { fill: var(--faint); font-family: var(--mono); font-size: 7px; letter-spacing: 0.1em; }
-  .g-label    { fill: var(--text); font-family: var(--mono); font-size: 9.5px; letter-spacing: -0.008em; }
-  .g-code     { fill: var(--faint); font-family: var(--mono); font-size: 7.5px; letter-spacing: 0.06em; }
-  .g-future   { fill: var(--muted); font-family: var(--mono); font-size: 8.5px; }
-  .g-now      { fill: var(--ember); font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.16em; }
+  .g-era{fill:var(--muted);font-family:var(--mono);font-size:8.5px;letter-spacing:0.15em}
+  .g-axis{fill:var(--faint);font-family:var(--mono);font-size:8.5px;letter-spacing:0.05em}
+  .g-count{fill:var(--rule);font-family:var(--mono);font-size:7.5px}
+  .g-gap{fill:var(--faint);font-family:var(--mono);font-size:7px;letter-spacing:0.1em}
+  .g-lane{fill:var(--muted);font-family:var(--mono);font-size:9.5px;letter-spacing:0.02em}
+  .g-lane-sub{fill:var(--faint);font-family:var(--mono);font-size:7px;letter-spacing:0.1em}
+  .g-label{fill:var(--text);font-family:var(--mono);font-size:9.5px;letter-spacing:-0.008em}
+  .g-code{fill:var(--faint);font-family:var(--mono);font-size:7.5px;letter-spacing:0.06em}
+  .g-future{fill:var(--muted);font-family:var(--mono);font-size:8.5px}
+  .g-now{fill:var(--ember);font-family:var(--mono);font-size:8.5px;letter-spacing:0.16em}
 
   .node { cursor: pointer; }
   .node .hit { fill: transparent; }
@@ -100,14 +85,9 @@
   .node:hover .dot, .node:focus-visible .dot { r: 7; }
   .dot { transition: r 120ms ease; }
   .colband { fill: var(--panel); }
+  .gapband { fill: var(--panel-2); }
 
-  .tip {
-    position: absolute; z-index: 5; max-width: 20rem;
-    background: var(--panel); border: 1px solid var(--rule); border-left: 3px solid currentColor;
-    padding: 0.7rem 0.85rem 0.78rem; pointer-events: none;
-    opacity: 0; transform: translateY(4px); transition: opacity 120ms ease, transform 120ms ease;
-    box-shadow: 0 12px 28px rgba(0,0,0,0.35);
-  }
+  .tip { position: absolute; z-index: 5; max-width: 20rem; background: var(--panel); border: 1px solid var(--rule); border-left: 3px solid currentColor; padding: 0.7rem 0.85rem 0.78rem; pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity 120ms ease, transform 120ms ease; box-shadow: 0 12px 28px rgba(0,0,0,0.35); }
   .tip.on { opacity: 1; transform: translateY(0); }
   .tip .tip-code { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; color: currentColor; }
   .tip .tip-title { font-family: var(--mono); font-size: 0.86rem; font-weight: 600; color: var(--text); margin: 0.18rem 0 0.35rem; letter-spacing: -0.015em; }
@@ -118,22 +98,21 @@
   .swatch { width: 9px; height: 9px; background: currentColor; flex: none; }
   .swatch.hollow { background: transparent; border: 1px dashed currentColor; }
 
-  .turns { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1px; background: var(--rule-2); border: 1px solid var(--rule-2); }
+  .turns { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem,1fr)); gap: 1px; background: var(--rule-2); border: 1px solid var(--rule-2); }
   .turn { background: var(--bg); padding: 1.15rem 1.15rem 1.3rem; display: flex; flex-direction: column; gap: 0.55rem; }
   .turn .when { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
   .turn h3 { font-family: var(--mono); font-size: 0.96rem; font-weight: 600; letter-spacing: -0.018em; margin: 0; color: var(--text); text-wrap: balance; }
   .turn p { margin: 0; font-size: 0.85rem; color: var(--muted); line-height: 1.6; }
   .turn .metric { font-family: var(--mono); font-size: 0.76rem; font-variant-numeric: tabular-nums; color: currentColor; letter-spacing: -0.01em; margin-top: auto; padding-top: 0.35rem; }
 
-  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr)); gap: 1px; background: var(--rule-2); border: 1px solid var(--rule-2); }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(13.5rem,1fr)); gap: 1px; background: var(--rule-2); border: 1px solid var(--rule-2); }
   .score-col { background: var(--bg); padding: 1.05rem 1.05rem 1.25rem; display: flex; flex-direction: column; gap: 0.8rem; }
   .score-col > h3 { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.13em; text-transform: uppercase; margin: 0; color: currentColor; display: flex; align-items: baseline; gap: 0.45rem; }
   .score-col > h3 b { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
   .score-col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
   .score-col li { font-size: 0.79rem; line-height: 1.5; color: var(--muted); }
   .score-col li b { display: block; font-family: var(--mono); font-size: 0.78rem; font-weight: 600; color: var(--text); letter-spacing: -0.015em; }
-  .s-landed { color: var(--lane-3); } .s-unmoved { color: var(--faint); }
-  .s-reversed { color: var(--ember); } .s-missed { color: var(--lane-7); }
+  .s-landed{color:var(--lane-3)} .s-partial{color:var(--lane-0)} .s-unmoved{color:var(--faint)} .s-missed{color:var(--lane-8)}
 
   .diagnosis { border-left: 3px solid var(--ember); padding: 0.15rem 0 0.15rem 1rem; max-width: 62ch; color: var(--muted); font-size: 0.94rem; margin: 0; display: flex; flex-direction: column; gap: 0.8rem; }
   .diagnosis p { margin: 0; }
@@ -147,10 +126,9 @@
   td.item { color: var(--text); font-family: var(--mono); font-size: 0.81rem; letter-spacing: -0.012em; white-space: nowrap; }
   td.src { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); white-space: nowrap; }
   .pill { display: inline-block; font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.11em; text-transform: uppercase; padding: 0.16rem 0.45rem; border: 1px solid currentColor; color: currentColor; white-space: nowrap; }
-  .p-stated { color: var(--lane-4); } .p-implied { color: var(--lane-0); } .p-guess { color: var(--faint); }
-  .age { font-family: var(--mono); font-size: 0.7rem; color: var(--ember); white-space: nowrap; }
+  .p-stated{color:var(--lane-4)} .p-implied{color:var(--lane-0)} .p-guess{color:var(--faint)}
 
-  .pred { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: clamp(1.5rem, 4vw, 3rem); align-items: start; }
+  .pred { display: grid; grid-template-columns: minmax(0,1.55fr) minmax(0,1fr); gap: clamp(1.5rem,4vw,3rem); align-items: start; }
   @media (max-width: 46rem) { .pred { grid-template-columns: 1fr; } }
   .pred-body { display: flex; flex-direction: column; gap: 1rem; max-width: 60ch; }
   .pred-body p { margin: 0; }
@@ -168,7 +146,6 @@
   .signals .no .mark { color: var(--ember); }
 
   footer { border-top: 1px solid var(--rule); padding-top: 1.15rem; font-family: var(--mono); font-size: 0.68rem; color: var(--faint); letter-spacing: 0.04em; display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem; }
-
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 
@@ -177,48 +154,47 @@
   <header class="masthead">
     <p class="eyebrow">
       <span>turbo-deck</span>
-      <span>2026-07-29 → 2026-08-12</span>
-      <span>through spec <b>142</b></span>
-      <span>rev. 3</span>
+      <span>2026-07-29 → 2026-08-28</span>
+      <span>through spec <b>248</b></span>
+      <span>rev. 4</span>
     </p>
-    <h1>Sixteen days after the world went <em>3D</em></h1>
+    <h1>A month after the world went <em>3D</em></h1>
     <p class="deck">
       Spec 031 stood the flat top-down arena up into a blocked, flat-shaded isometric scene.
-      Everything since is downstream of that one decision, and it has not stopped compounding:
-      <strong>737 commits and 139 specs</strong>, of which 428 commits and 90 specs landed in the
-      six days since this page was last written.
+      One month later: <strong>1,467 commits, 267 specs, 301,290 lines and 7,410 tests</strong>.
+      Multiplayer, accounts, a database, loot, an economy, six progression tracks, afflictions,
+      sound, a village with shopkeepers who are people.
     </p>
     <p class="deck">
-      That stretch added three subsystems that did not exist in any previous roadmap — a GUI
-      framework, a unit-authoring format, and a tab that spends real money — while
-      <strong>seven of the twelve things I predicted did not move at all</strong>. The scorecard is
-      below, and this time the misses say something different than they did last time.
+      The last revision of this page called it "an engine and a toolchain with a game-shaped hole
+      where the thing you play is supposed to be." <strong>That was wrong, and it was wrong fast.</strong>
+      Seven of its twelve predictions landed, including both of the falsifiable signals it named as
+      the test of whether this project had decided to be played rather than built.
     </p>
   </header>
 
   <dl class="stats">
-    <div class="stat"><dt>Commits since 031</dt><dd>737</dd></div>
-    <div class="stat"><dt>Specs landed</dt><dd>139<span> / 170</span></dd></div>
-    <div class="stat"><dt>Elapsed</dt><dd>16<span> days</span></dd></div>
-    <div class="stat"><dt>TypeScript</dt><dd>158,193<span> lines</span></dd></div>
-    <div class="stat"><dt>Test cases</dt><dd>3,728</dd></div>
-    <div class="stat"><dt>Busiest day</dt><dd>129<span> · Aug 11</span></dd></div>
+    <div class="stat"><dt>Commits since 031</dt><dd>1,467</dd></div>
+    <div class="stat"><dt>Specs landed</dt><dd>267<span> / 298</span></dd></div>
+    <div class="stat"><dt>Elapsed</dt><dd>31<span> days</span></dd></div>
+    <div class="stat"><dt>TypeScript</dt><dd>301,290<span> lines</span></dd></div>
+    <div class="stat"><dt>Test cases</dt><dd>7,410</dd></div>
+    <div class="stat"><dt>Busiest day</dt><dd>144<span> · Aug 12</span></dd></div>
   </dl>
 
   <section>
     <div class="sec-head">
       <h2>The graph</h2>
       <p class="sec-note">
-        Ten threads, left to right — three more than the last revision needed. The time axis is
-        scaled by commit volume, not calendar, so the first three days now occupy less room than
-        Aug 11 alone. Eras are banded above the day ticks. Everything left of the ember rule has
-        landed; everything right of it is dashed and sourced from the specs' own
-        <em>Out of scope</em> sections. Hover any node.
+        Eleven threads. The time axis is scaled by commit volume, so days are grouped where the
+        volume is thin and the two genuine pauses — Aug 14–16 and Aug 22 — are drawn as gaps
+        rather than smoothed away. Everything left of the ember rule has landed; everything right
+        is dashed. Hover any node.
       </p>
     </div>
     <div class="chart-shell">
       <div class="chart-scroll" id="chart-scroll">
-        <svg id="graph" role="img" aria-label="Swimlane graph of turbo-deck development from spec 031 to spec 142, across ten threads, with a projected roadmap"></svg>
+        <svg id="graph" role="img" aria-label="Swimlane graph of turbo-deck development from spec 031 to spec 248 across eleven threads, with a projected roadmap"></svg>
       </div>
       <div class="tip" id="tip" aria-hidden="true">
         <div class="tip-code"></div><div class="tip-title"></div><div class="tip-body"></div>
@@ -229,96 +205,56 @@
       <span class="l6"><i class="swatch"></i> shipped</span>
       <span class="l6"><i class="swatch hollow"></i> projected</span>
       <span class="l6">◉ rupture — something was deleted</span>
-      <span class="l9">┈ cross-thread dependency</span>
+      <span class="l10">┈ cross-thread dependency</span>
     </p>
   </section>
 
   <section>
     <div class="sec-head">
       <h2>Seven moments where the project stopped being what it was</h2>
-      <p class="sec-note">
-        Each of these is a deletion or a reversal as much as an addition, which remains the most
-        distinctive thing about how this codebase moves.
-      </p>
     </div>
     <div class="turns">
       <article class="turn l3">
         <span class="when">Jul 31 · specs 043–044</span>
         <h3>The ground stopped being flat</h3>
-        <p>
-          A flat slab became layered heightfields, the arena walls came off, and trees were promoted
-          from decoration to colliders. Every system written after this assumes a world, not a level.
-        </p>
+        <p>A flat slab became layered heightfields, the arena walls came off, and trees were promoted from decoration to colliders. Everything after assumes a world, not a level.</p>
         <p class="metric">flat slab → heightfield chunks</p>
       </article>
-
       <article class="turn l6">
         <span class="when">Aug 5 · spec 062</span>
         <h3>The deck was deleted</h3>
-        <p>
-          The card hand, the poker combos, the parry window and the adrenaline economy — the entire
-          premise of the name — were removed in a single commit and replaced with wind-ups,
-          projectiles and cooldowns.
-        </p>
+        <p>The card hand, the poker combos and the parry window — the entire premise of the name — removed in one commit and replaced with wind-ups, projectiles and cooldowns.</p>
         <p class="metric">−14,652 / +2,958 lines · 90 files</p>
       </article>
-
       <article class="turn l5">
         <span class="when">Aug 5 · spec 057</span>
         <h3>Two simulations became one</h3>
-        <p>
-          The client's simulation was not synchronised with the server's; it was deleted.
-          <code>src/sim/</code> shrank to geometry helpers, and the tick rate split from the
-          broadcast rate — 60Hz for the game, 20Hz for the wire.
-        </p>
-        <p class="metric">2 sims → 1 · 60 Hz / 20 Hz</p>
+        <p>The client's sim was not synchronised with the server's; it was deleted. 60Hz for the game, 20Hz for the wire, and one authority.</p>
+        <p class="metric">2 sims → 1</p>
       </article>
-
       <article class="turn l4">
         <span class="when">Aug 6 · spec 072</span>
         <h3>The editor's world became the played world</h3>
-        <p>
-          The renderer stopped building a world from a seed. The world is baked to
-          <code>maps/arena.json</code>, the server ticks that document, and the client asks for the
-          ground underfoot. The editor's output is the game's input.
-        </p>
+        <p>The renderer stopped building a world from a seed. The world is a document the server ticks and the client streams. The editor's output is the game's input.</p>
         <p class="metric">seed → document → wire → screen</p>
       </article>
-
       <article class="turn l8">
-        <span class="when">Aug 9 · specs 108–113</span>
-        <h3>The game started spending money</h3>
-        <p>
-          A Studio tab that generates units through a third-party model API. The spec is explicitly
-          not "call the API" — it is the ledger, the cost projection shown before you confirm, the
-          rig-check that aborts before a paid call, a per-day ceiling, and a cache so nobody buys the
-          same model twice. It is also the first time the browser ever spoke HTTP to the game server.
-        </p>
-        <p class="metric">25 files · money.test.ts · fake-tripo.ts</p>
-      </article>
-
-      <article class="turn l7">
         <span class="when">Aug 10–11 · specs 123–138</span>
         <h3>The interface became a subsystem</h3>
-        <p>
-          A GUI framework written from scratch: layout, focus, drag, layers, motion, sound, a router
-          and a window manager, with screens for inventory, shop, trade, character, keybindings and
-          options. Pure and headless — "a gui the tests can see" — and checked against 32 golden
-          images. The same architectural move as the sim, applied to the UI.
-        </p>
-        <p class="metric">src/ui/ · 82 files · 0 DOM in core</p>
+        <p>A GUI framework from scratch — layout, focus, drag, windows, motion, sound — pure, headless, and checked against golden images. The sim's architecture, applied to the UI.</p>
+        <p class="metric">src/ui/ · 48 goldens</p>
       </article>
-
+      <article class="turn l5">
+        <span class="when">Aug 12 · specs 144–151</span>
+        <h3>Multiplayer landed in a day</h3>
+        <p>A browser socket, two players in one world, collider paging, rate matching, lag compensation, reconnect and a hardening pass — eight specs, in the single busiest day the repository has had. The trade table built for two sides finally had two.</p>
+        <p class="metric">144 commits · 8 specs · one day</p>
+      </article>
       <article class="turn l9">
-        <span class="when">somewhere in between</span>
-        <h3>The balance harness was deleted</h3>
-        <p>
-          <code>npm run balance</code> is gone from <code>package.json</code> and the script is gone
-          from <code>scripts/</code>. In its place: 26 preview rigs, 10 probes, 32 golden images and
-          143 screenshots. <code>CLAUDE.md</code> still lists the balance harness in two places, and
-          nothing noticed.
-        </p>
-        <p class="metric">52 scripts · 0 of them measure fun</p>
+        <span class="when">Aug 25–27 · specs 226, 244</span>
+        <h3>Nothing survived a restart, then everything did</h3>
+        <p>SQLite with migrations, accounts, sessions and autosave replaced the in-memory store that had been the only implementation since spec 056. Two days later progression collapsed two currencies into one pool and six tracks, and deleted fifteen authored synergies for being content nobody asked to be surprised by.</p>
+        <p class="metric">memory → disk · 2 currencies → 1</p>
       </article>
     </div>
   </section>
@@ -327,64 +263,64 @@
     <div class="sec-head">
       <h2>How the last roadmap scored</h2>
       <p class="sec-note">
-        The previous revision made twelve calls. Ninety specs landed after it. One call landed
-        outright, two landed halfway, one reversed, and seven did not move — while the bulk of the
-        work went somewhere no row on the table mentioned.
+        Twelve calls. Seven landed outright, one moved halfway, four did not move — the best hit
+        rate of any revision of this page, and the one where being right matters least, because
+        the interesting part is why the previous diagnosis was wrong.
       </p>
     </div>
     <div class="score">
       <div class="score-col s-landed">
-        <h3><b>3</b> landed</h3>
+        <h3><b>7</b> landed</h3>
         <ul>
-          <li><b>A real inventory</b>Completely. Spec 126 gave ownership a place to live — before it, any client could equip anything in the table. Then bags, drag, a shop, currency, a character screen and a two-player trade.</li>
-          <li><b>Corpses, then loot</b>Half. Ownership, containers and a swap that moves four of them atomically all exist. Nothing drops into them: no <code>lootTable</code>, no ground item.</li>
-          <li><b>More weather, more world</b>Sideways. Not rain or a second biome — instead a whole-renderer look pass (097–106) and verticality: rocks you can stand on, tiers, cliffs, stairs with real steps.</li>
+          <li><b>A second player</b>Aug 12. The sharpest gap in the repository, closed in a day.</li>
+          <li><b>Collider paging</b>Spec 146. Called the gate on multiplayer; it gated it by about six hours.</li>
+          <li><b>Loot that drops</b>Specs 158, 184 and 229 — a drop you notice before you read it, a number for what the kill was worth, and a corpse that stays where it fell.</li>
+          <li><b>Aggro that isn't a grudge</b>Spec 163 turned <code>aggroRange</code> back on — not as a radius but as four temperaments, which is a better answer than the one I predicted.</li>
+          <li><b>Effects the sim can see</b>Spec 223. An aura is a reach that lays an affliction, so a drawn ring is now something a rule reads.</li>
+          <li><b>Persistence</b>Spec 226. SQLite, migrations, accounts, sessions, autosave.</li>
+          <li><b>A way to tell if it is fun</b><code>npm run balance</code> is back, with <code>audit:progression</code> beside it. I predicted its return on the grounds that every judgement here eventually gets a rig pointed at it. It did.</li>
+        </ul>
+      </div>
+      <div class="score-col s-partial">
+        <h3><b>1</b> halfway</h3>
+        <ul>
+          <li><b>A roster bigger than one</b><code>assets/units/</code> now holds a pig and a fox beside the dev mannequin. Two is more than one and is not a roster, and the Studio pipeline that was built to fill it has had five commits in sixteen days.</li>
         </ul>
       </div>
       <div class="score-col s-unmoved">
-        <h3><b>7</b> did not move</h3>
+        <h3><b>4</b> did not move</h3>
         <ul>
-          <li><b>Collider paging</b>Called the gate on multiplayer six days ago. Still no spec and no code.</li>
-          <li><b>ws:// from the tab</b>Still loopback. Spec 109 notes the browser had never spoken HTTP to the game server at all until Studio needed it.</li>
-          <li><b>Predicting the hit</b>Prediction got two more specs (090, 092) — both about withdrawals reconciling. Damage is still server-only.</li>
-          <li><b>Aggro that isn't a grudge</b><code>aggroRange</code> is still in the table with a comment beside it saying it sits unread.</li>
-          <li><b>Shots stopped by the world</b>Arrows, shuriken and arcs arrived (087–089). None of them collide with terrain.</li>
-          <li><b>Publish live from the editor</b>Half: the map can grow from the editor (084). Hot-swapping a ticking server, no.</li>
-          <li><b>Spawn tables, packs, interest bounds</b>Untouched since 076 named them.</li>
-        </ul>
-      </div>
-      <div class="score-col s-reversed">
-        <h3><b>1</b> reversed</h3>
-        <ul>
-          <li><b>Balance, finally</b>I called this the one thing on the roadmap that no screenshot and no determinism test could settle, and said nothing in the workflow would flag it. The instrument was then removed: no <code>balance</code> script, no npm task, the docs still advertising it. Not deferred — deleted.</li>
+          <li><b>Predicting the hit</b><code>client/combat.ts</code> is explicit: it spawns nothing, damages nobody, and rolls no dice. Still the largest deferred commitment in the client.</li>
+          <li><b>Shots stopped by the world</b><code>projectileHits</code> still takes a body and a body only. Nine specs of projectile work and no terrain term.</li>
+          <li><b>Dragging into the trade table</b>Still click-only, one gesture short, since spec 134 named it.</li>
+          <li><b>One ordered queue of asks</b>Spec 092's "probably where this ends up", still where it was.</li>
         </ul>
       </div>
       <div class="score-col s-missed">
         <h3><b>5</b> missed entirely</h3>
         <ul>
-          <li><b>A GUI framework</b><code>src/ui/</code>, 82 files, headless and golden-tested.</li>
-          <li><b>Studio</b>A paid generation pipeline with a ledger, a ceiling and a cache.</li>
-          <li><b>Units as a format</b><code>src/units/</code>, 36 files: a unit is three files, GLB parsing, mesh checks, bone naming, a state machine.</li>
-          <li><b>The phone</b>Touch controls, a HUD that fits, device detection, and a build that hides five of six tabs on a phone.</li>
-          <li><b>Effects and verticality</b>Particles as array rows, blood, decals, smoke, auras, explosions — and a world with tiers.</li>
+          <li><b>Scale</b>Specs 192–214: a tick that costs what is near you, a boot that meshes nothing, a client that forgets behind it, a map that is many files.</li>
+          <li><b>Sound</b>Spec 229, a whole audio layer with its own bake and catalog.</li>
+          <li><b>A vocabulary</b>Spec 191 — one controlled term per mechanic, and every player-facing description derived from the row the sim reads.</li>
+          <li><b>People in the world</b>Specs 224, 246 and 247: a village, bodies that are not enemies, and shops that are somebody rather than a coordinate.</li>
+          <li><b>The progression rebuild</b>Specs 237–244, and the deletion of fifteen authored synergies.</li>
         </ul>
       </div>
     </div>
     <div class="diagnosis">
       <p>
-        Last revision I concluded the misses were all <em>taste</em> — look and feel, things that
-        leave no structural trace the way an unread interface does. <strong>That diagnosis was
-        wrong.</strong> This time the misses are three subsystems with their own top-level
-        directories, 200 files between them, and more tests than the whole project had a week ago.
-        They are as structural as anything gets.
+        Last revision I concluded that a deferral surviving two revisions is "not queued, it is
+        declined", and put an age column on the roadmap to make the point. <strong>That was also
+        wrong.</strong> Every row I marked six days stale landed within a week of my marking it —
+        collider paging, a second player, loot, aggro, persistence. Age predicted nothing.
       </p>
       <p>
-        The real pattern is simpler and less flattering. An <em>Out of scope</em> section describes
-        <strong>a deferral inside a thread that is already running</strong>. It is excellent at
-        predicting the next spec in that thread and says nothing whatsoever about which entirely new
-        thread opens next — and new threads are where most of the work goes. Seven of my twelve rows
-        were deferrals, and all seven are still deferrals; ninety specs happened beside them. A
-        roadmap read off interfaces predicts continuations, not decisions.
+        What actually happens is that this project runs a thread until it is out of obvious next
+        steps, then turns and clears a batch of deferrals from a different one. Deferrals are not
+        declined and they are not queued: <strong>they are batched, and the batch is picked when a
+        thread exhausts itself.</strong> That explains both the seven that landed and the four that
+        did not — the four are all still inside threads with obvious next steps of their own, so
+        nothing has needed to turn to them yet.
       </p>
     </div>
   </section>
@@ -393,171 +329,94 @@
     <div class="sec-head">
       <h2>The revised roadmap</h2>
       <p class="sec-note">
-        Same sourcing discipline, with one addition: rows carry how long they have been deferred.
-        On the evidence above, age is the more informative column — a deferral that has survived
-        two revisions is not queued, it is declined.
+        The age column is gone; it measured nothing. What is left is the systems gap — genuinely
+        short now — and a new category that has been growing quietly the whole time: everything
+        between a finished game and a person playing it.
       </p>
     </div>
     <div class="road-scroll">
       <table>
-        <thead>
-          <tr><th scope="col">Next thing</th><th scope="col">Where it stands</th><th scope="col">Source</th><th scope="col">Deferred</th><th scope="col">Confidence</th></tr>
-        </thead>
+        <thead><tr><th scope="col">Next thing</th><th scope="col">Where it stands</th><th scope="col">Source</th><th scope="col">Confidence</th></tr></thead>
         <tbody>
-          <tr>
-            <td class="item">A second player</td>
-            <td>The sharpest gap in the repository. There is a trade registry, an atomic four-container swap, a trade window, and a screen designed around the fact that "the other person is on the other side of it" — in a game that has never had two people in it.</td>
-            <td class="src">072, 134</td>
-            <td class="age">6 days</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">Collider paging</td>
-            <td>Named in 072 as the thing needed before a remote client can predict correctly. Nothing since. It gates the row above.</td>
-            <td class="src">072</td>
-            <td class="age">6 days</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">Loot that drops</td>
-            <td>Inventory, shops, currency and trade all exist. The only way an item enters the world is the table it was authored in — monsters still leave nothing behind.</td>
-            <td class="src">076, 126</td>
-            <td class="age">6 days</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">A roster bigger than one</td>
-            <td>Spec 111 wired authored units into the game and notes that exactly one exists — the dev mannequin. Studio is the machine for filling that roster and has not yet been pointed at it.</td>
-            <td class="src">111</td>
-            <td class="age">3 days</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">Aggro that isn't a grudge</td>
-            <td>Target selection is still "whoever hit me first". <code>aggroRange</code> and <code>passive</code> sit in the monster table with a comment explaining that they are unread.</td>
-            <td class="src">076</td>
-            <td class="age">6 days</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">Shots stopped by the world</td>
-            <td>Three specs of projectile work and a shot is still stopped only by a body or its own lifetime.</td>
-            <td class="src">079, 087–089</td>
-            <td class="age">6 days</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">One ordered queue of asks</td>
-            <td>092 says it is "probably where this ends up" — merging the two input queues so <code>arrivedAt</code> becomes unnecessary. Deferred because it moves the starvation rule and every test on it.</td>
-            <td class="src">092</td>
-            <td class="age">4 days</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">Dragging into the trade table</td>
-            <td>One gesture short. 134 ships the window with clicking only, and names the drag as the next thing.</td>
-            <td class="src">134</td>
-            <td class="age">1 day</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">Predicting the hit</td>
-            <td>Still the largest deferred commitment in the client. 069's reasoning holds: a health bar that jumps back up is worse than one that moves late.</td>
-            <td class="src">069</td>
-            <td class="age">6 days</td>
-            <td><span class="pill p-implied">implied</span></td>
-          </tr>
-          <tr>
-            <td class="item">Effects the sim can see</td>
-            <td>The VFX library is entirely cosmetic — blood, smoke, shockwaves, auras, all drawn and none of them consulted by a rule. That asymmetry is stable but it is the obvious next ask.</td>
-            <td class="src">118–126</td>
-            <td class="age">—</td>
-            <td><span class="pill p-guess">projected</span></td>
-          </tr>
-          <tr>
-            <td class="item">Persistence</td>
-            <td><code>DataStore</code> is still one interface and one in-memory implementation — now with an inventory, a wallet and a trade history that would all be worth keeping.</td>
-            <td class="src">state/</td>
-            <td class="age">8 days</td>
-            <td><span class="pill p-guess">projected</span></td>
-          </tr>
-          <tr>
-            <td class="item">A way to tell if it is fun</td>
-            <td>The only instrument for this was deleted. Predicting its return is a guess about intent rather than about code — but every other judgement in this project eventually got a rig pointed at it.</td>
-            <td class="src">—</td>
-            <td class="age">—</td>
-            <td><span class="pill p-guess">projected</span></td>
-          </tr>
+          <tr><td class="item">Somewhere to arrive</td><td>The Pages workflow deploys <code>dist/</code> — a static client. There is no server deployment, so the public build can only run the in-tab loopback server. Every piece of multiplayer machinery works and has no host.</td><td class="src">.github/</td><td><span class="pill p-implied">implied</span></td></tr>
+          <tr><td class="item">A front door</td><td>A desktop visitor meets seven tab buttons, six of them developer workbenches. Spec 140 fixed this for phones on input grounds; nobody has made the audience argument.</td><td class="src">140, 230</td><td><span class="pill p-implied">implied</span></td></tr>
+          <tr><td class="item">Teaching the verbs</td><td>Click to move, right-click to attack, aim-then-confirm, a stop key, a bag, trade. A keybindings screen exists; nothing introduces any of it. No tutorial or onboarding anything exists in the tree.</td><td class="src">—</td><td><span class="pill p-implied">implied</span></td></tr>
+          <tr><td class="item">A name before a world</td><td>New players are called "Wanderer". The account screen is a HUD button found after you are already playing.</td><td class="src">226, 227</td><td><span class="pill p-implied">implied</span></td></tr>
+          <tr><td class="item">Predicting the hit</td><td>Unchanged and still correctly reasoned: a health bar that jumps back up is worse than one that moves late.</td><td class="src">069</td><td><span class="pill p-stated">stated</span></td></tr>
+          <tr><td class="item">Shots stopped by the world</td><td>Nine specs of projectile work; a shot is still stopped by a body or its own lifetime and by nothing else.</td><td class="src">079, 087–089</td><td><span class="pill p-stated">stated</span></td></tr>
+          <tr><td class="item">Dragging into the trade table</td><td>One gesture, named at the time, never added.</td><td class="src">134</td><td><span class="pill p-stated">stated</span></td></tr>
+          <tr><td class="item">A roster worth the pipeline</td><td>Studio has a ledger, a ceiling, a cache and every interlock, and has produced two units in sixteen days. Either it gets used or it is the most carefully engineered dormant code in the repository.</td><td class="src">108–113</td><td><span class="pill p-guess">projected</span></td></tr>
+          <tr><td class="item">A second map</td><td>The map can be many files, can grow, has a shore and a village. There is still one of it.</td><td class="src">204, 209, 224</td><td><span class="pill p-guess">projected</span></td></tr>
+          <tr><td class="item">A reason to keep playing</td><td>Six tracks, an economy, loot and a balance harness — and nothing that asks you to come back tomorrow. Quests, objectives or a progression ceiling are all unbuilt.</td><td class="src">244</td><td><span class="pill p-guess">projected</span></td></tr>
         </tbody>
       </table>
     </div>
   </section>
 
   <section>
-    <div class="sec-head">
-      <h2>What this becomes</h2>
-    </div>
+    <div class="sec-head"><h2>What this becomes</h2></div>
     <div class="pred">
       <div class="pred-body">
         <p class="lead">
-          Not a game that ships. An engine and a toolchain of unusual quality, with a game-shaped
-          hole where the thing you play is supposed to be — and the hole is now the most
-          load-bearing feature of the codebase.
+          A finished game nobody can reach. The systems argument is over and the project won it —
+          what is left between turbo-deck and players is a URL, a front door, and somebody being
+          told which button attacks.
         </p>
         <p>
-          I have revised this section down twice and it needs revising down again. The
-          architectural call was right and keeps being right: the editor authors the world, the
-          server owns it, the client draws and predicts it, and content is data all the way through
-          — a unit is three files, a species is a data file, an item is a row, an effect is a row.
-          Sixteen days in, that structure has held under 158,000 lines without bending. It is
-          genuinely impressive work.
+          I have now been wrong about this project in two opposite directions. Revision 1 said it
+          would become a small multiplayer action-RPG, which was right. Revision 3 said it never
+          would — that every subsystem was "the tool for a thing that does not exist yet", and
+          listed seven of them as evidence. <strong>Six of those seven resolved within a
+          fortnight.</strong> The two-player trade table got two players. The inventory got drops.
+          The memory store became a database. The one-arena chunk manager got a map of many files,
+          a shore and a village. The cosmetic VFX library got an aura that damages you. The absent
+          fun-harness came back.
         </p>
         <p>
-          But look at what the last six days actually bought. A GUI framework — for a game with one
-          player. A trade table with two sides — for a game with one player. A paid pipeline for
-          generating a roster — which contains one mannequin. An inventory with ownership
-          enforcement — that nothing drops into. <strong>Every one of these is the tool for a thing
-          that does not exist yet</strong>, built to a standard that assumes it will.
+          I also named the falsifiable test myself — "the first commit that adds a second player, or
+          the first that makes a monster drop something" — and said either would mean the project had
+          decided to be played rather than built. Both happened, thirteen days apart. I should have
+          weighted the evidence in front of me over the pattern I had fitted to it: a project that
+          builds the tool before the thing is not avoiding the thing, it is just building in that
+          order.
         </p>
         <p>
-          And the one instrument that measured the thing itself was deleted. That is the fact I
-          would not have predicted and cannot argue away. This project instruments everything it can
-          photograph — 26 preview rigs, 10 probes, 32 goldens, 143 screenshots — and removed the one
-          harness pointed at whether the fight is any good. Two revisions ago I said nothing in the
-          workflow would flag that. Nothing did; <code>CLAUDE.md</code> still advertises the harness
-          that isn't there.
+          So the prediction is now about the only gap left, and it is not a systems gap. This is a
+          game with lag compensation and no title screen. It has accounts, sessions and a
+          per-connection hardening pass, and it calls you Wanderer. It deploys automatically on
+          every push to a static host that cannot run its own server. A stranger opening the public
+          build meets seven tabs, six of which are developer tools, and no indication of which one
+          is the game.
         </p>
         <p>
-          So the prediction is narrower and more specific than before. This becomes an
-          <strong>engine other people build on</strong> — the map format, the unit format, the
-          headless UI, the determinism lint and the preview rigs are all more reusable than the
-          arena they were built for, and the whole thing runs and is tested without a screen, which
-          is rare and valuable. The game on top will keep being the least finished part, not
-          through neglect but because every path out of a hard content question leads to a
-          well-specified system instead, and the workflow rewards that turn every time. The clearest
-          signal to watch is a trivial one: the first commit that adds a second player, or the first
-          that makes a monster drop something. Either would mean the project has decided to be
-          played rather than built.
+          That gap will close too — the pattern is now well established enough that predicting
+          otherwise would be the same mistake a third time. What I would watch instead is what
+          happens <em>after</em> the door opens, because it is the first question this workflow has
+          faced that no test, probe, golden image or balance harness can answer: whether people
+          stay. Everything up to here has been a problem the repository could pose to itself. That
+          one has to come from outside it.
         </p>
       </div>
       <aside class="signals">
         <div>
-          <h3>Built, and waiting for something</h3>
+          <h3>Revision 3's "built and waiting" list, one month on</h3>
           <ul>
-            <li class="yes"><span class="mark">✓</span><span>A two-player trade table, four-container atomic swap, both sides drawn — <code>one player</code></span></li>
-            <li class="yes"><span class="mark">✓</span><span>Studio: ledger, per-day ceiling, cost projection, cache — <code>one authored unit</code></span></li>
-            <li class="yes"><span class="mark">✓</span><span>Inventory with ownership enforcement, bags, a shop, a wallet — <code>no drops</code></span></li>
-            <li class="yes"><span class="mark">✓</span><span><code>ZoneManager</code>, chunk paging, interest management — <code>one arena</code></span></li>
-            <li class="yes"><span class="mark">✓</span><span><code>DataStore</code> as an interface — <code>one memory implementation</code></span></li>
-            <li class="yes"><span class="mark">✓</span><span>A VFX library of blood, smoke, auras and shockwaves — <code>no rule reads one</code></span></li>
+            <li class="yes"><span class="mark">✓</span><span>Two-player trade table — <code>had two players</code></span></li>
+            <li class="yes"><span class="mark">✓</span><span>Inventory with no drops — <code>loot, corpses, rewards</code></span></li>
+            <li class="yes"><span class="mark">✓</span><span><code>DataStore</code>, memory only — <code>SQLite + migrations</code></span></li>
+            <li class="yes"><span class="mark">✓</span><span>Chunk paging for one arena — <code>many files, a shore, a village</code></span></li>
+            <li class="yes"><span class="mark">✓</span><span>VFX no rule reads — <code>aura fields lay afflictions</code></span></li>
+            <li class="yes"><span class="mark">✓</span><span>No harness for fun — <code>npm run balance</code></span></li>
+            <li class="no"><span class="mark">✗</span><span>Studio's roster of one — <code>now two, in sixteen days</code></span></li>
           </ul>
         </div>
         <div>
-          <h3>Instrumented, and not</h3>
+          <h3>What a stranger meets today</h3>
           <ul>
-            <li class="yes"><span class="mark">✓</span><span>3,728 tests · 32 golden images · 143 screenshots · 26 preview rigs · 10 probes</span></li>
-            <li class="yes"><span class="mark">✓</span><span>ESLint failing the build on <code>Math.random</code>, <code>Date</code> and three.js inside the core</span></li>
-            <li class="no"><span class="mark">✗</span><span>Any harness that measures whether the combat is good — deleted, still documented</span></li>
+            <li class="no"><span class="mark">✗</span><span>Seven tab buttons, six of them developer workbenches</span></li>
+            <li class="no"><span class="mark">✗</span><span>No title screen, menu, or tutorial anywhere in the tree</span></li>
+            <li class="no"><span class="mark">✗</span><span>A character called <code>Wanderer</code></span></li>
+            <li class="no"><span class="mark">✗</span><span>A static host with no server to connect to</span></li>
           </ul>
         </div>
       </aside>
@@ -565,10 +424,9 @@
   </section>
 
   <footer>
-    <span>Read from 737 commits, 139 specs and the working tree at spec 142.</span>
+    <span>Read from 1,467 commits, 267 specs and the working tree at spec 248.</span>
     <span>Roadmap sourced from spec <em>Out of scope</em> sections where marked stated.</span>
   </footer>
-
 </div>
 
 <script>
@@ -576,31 +434,30 @@
   "use strict";
 
   var COLS = [
-    { label: "29", n: 36 }, { label: "30", n: 21 }, { label: "31", n: 31 },
-    { label: "1", n: 11 }, { label: "2–3", n: 3, lull: true }, { label: "4", n: 52 },
-    { label: "5", n: 57 }, { label: "6", n: 117 }, { label: "7", n: 30 },
-    { label: "8", n: 64 }, { label: "9", n: 58 }, { label: "10", n: 76 },
-    { label: "11", n: 129 }, { label: "12", n: 52 }
+    { label: "Jul 29–31", n: 88 }, { label: "Aug 1–5", n: 123 }, { label: "Aug 6", n: 117 },
+    { label: "Aug 7–9", n: 152 }, { label: "Aug 10–11", n: 205 }, { label: "Aug 12–13", n: 212 },
+    { label: "14–16", n: 0, gap: true },
+    { label: "Aug 17–18", n: 159 }, { label: "Aug 19–21", n: 211 },
+    { label: "22", n: 0, gap: true },
+    { label: "Aug 23–25", n: 91 }, { label: "Aug 26–28", n: 109 }
   ];
 
   var ERAS = [
-    { label: "The look · Jul", a: 0, b: 2 },
-    { label: "The world", a: 3, b: 5 },
-    { label: "The server", a: 6, b: 6 },
-    { label: "On the wire", a: 7, b: 7 },
-    { label: "Rebuilt from data", a: 8, b: 10 },
-    { label: "The interface", a: 11, b: 12 },
-    { label: "The phone", a: 13, b: 13 }
+    { label: "The look", a: 0, b: 0 }, { label: "The world", a: 1, b: 1 },
+    { label: "On the wire", a: 2, b: 2 }, { label: "Rebuilt from data", a: 3, b: 3 },
+    { label: "The interface", a: 4, b: 4 }, { label: "Multiplayer", a: 5, b: 6 },
+    { label: "Scale and content", a: 7, b: 9 }, { label: "Progression and people", a: 10, b: 11 }
   ];
 
   var LANES = [
-    { name: "Look", sub: "renderer · weather" },
-    { name: "Bodies", sub: "rigs · species · units" },
+    { name: "Look & sound", sub: "renderer · weather · audio" },
+    { name: "Bodies", sub: "rigs · units · animation" },
     { name: "Effects", sub: "vfx" },
-    { name: "World", sub: "terrain · routing" },
+    { name: "World", sub: "terrain · routing · places" },
     { name: "Editor", sub: "authoring" },
-    { name: "Server & wire", sub: "authority" },
+    { name: "Server & wire", sub: "authority · net · data" },
     { name: "Combat", sub: "the game" },
+    { name: "Progression", sub: "economy · scaling" },
     { name: "Interface", sub: "gui · items · phone" },
     { name: "Studio", sub: "paid generation" },
     { name: "Harness", sub: "how it is built" }
@@ -608,145 +465,140 @@
 
   var PHASES = ["Next", "Then", "After"];
 
-  // lane, col, frac, code, label, detail, kind?
   var NODES = [
-    // 0 Look
-    [0, 0, 0.25, "031", "the iso renderer", "Flat-shaded blocks, an orthographic camera locked to 2:1, a low-resolution buffer upscaled. The look was decided before there was a world to look at."],
-    [0, 2, 0.30, "038–045", "dither, shadows, canopy", "An ordered dither over a quantized palette, a 27° pitch so vertical faces are what you see, a shadow map for the sun, and a real canopy instead of a stamped triangle."],
-    [0, 3, 0.45, "047", "day/night, torches", "The sun put on a clock and stepped in 1/10s ticks so shadows never diverge — a torch that casts and an orb that deliberately does not."],
-    [0, 6, 0.20, "063", "Play draws the server", "The Play tab stops reading a local sim and renders GameClient.view(): 20Hz deltas interpolated to a pose per frame."],
-    [0, 7, 0.18, "072", "the map it was sent", "The Play tab stops building a world from a seed and draws the chunks the server sent it, streamed in without freezing the page."],
-    [0, 7, 0.62, "074–075", "weather and water", "One wind system driving tree sway, ground streaks and a stylized four-colour sea, with shadows that lean with the trunks — and a panel to blow it around."],
-    [0, 7, 0.95, "077–078", "a third tree", "A lobed canopy walked as an outline, a flat-leaved variant built and deleted because it could not take light, and the seam a streamed chunk leaves against ground that has not arrived."],
-    [0, 10, 0.30, "097–106", "the hike look", "The renderer rebuilt: one config for the look, normals that were actually wrong, two buffers and a way to look at them, a palette as data, what distance does to a fill, creases already in the data, a softer edge, and detail on a world with no textures."],
-    [0, 12, 0.25, "129", "turning the camera", "The isometric camera stops being fixed."],
+    // 0 Look & sound
+    [0,0,0.28,"031","the iso renderer","Flat-shaded blocks, an orthographic camera locked to 2:1, a low-resolution buffer upscaled. The look was decided before there was a world to look at."],
+    [0,0,0.80,"038–045","dither, shadows, canopy","An ordered dither over a quantized palette, a 27° pitch, a shadow map, and a real canopy."],
+    [0,1,0.30,"047","day/night, torches","The sun on a clock stepped in tenths of a second, a torch that casts and an orb that deliberately does not."],
+    [0,2,0.20,"063·072","draws what it was sent","The Play tab renders GameClient.view() and the chunks the server streamed, rather than a world it built itself."],
+    [0,2,0.72,"074–078","weather, water, a third tree","One wind driving sway, ground streaks and a stylized sea; a lobed canopy walked as an outline; the seam a streamed chunk leaves."],
+    [0,3,0.40,"097–106","the hike look","The renderer rebuilt: one config, normals that were wrong, two buffers, a palette as data, creases already in the data, and detail on a world with no textures."],
+    [0,8,0.55,"200–202","a crosshair, a zoom","A crosshair on the point you picked, a map you can measure, and a zoom you choose."],
+    [0,11,0.30,"229","a game that makes a sound","A whole audio layer: an offline bake, a catalog, spatialised events, and a report of which hooks are still silent."],
 
     // 1 Bodies
-    [1, 0, 0.55, "032–035", "legs and two sandboxes", "Ground-locking spider legs where the legs lead and the body yaw follows — and two viewports built for nothing but watching one unit walk."],
-    [1, 1, 0.55, "036", "3–8 legs", "The four-quadrant leg model thrown out so any leg count from three to eight actually walks."],
-    [1, 2, 0.35, "046", "the robe", "A headless position-based-dynamics cloth solver with procedural wind. No three.js and no DOM, so the folds are unit-tested."],
-    [1, 5, 0.70, "055", "critters as data", "A species is a data file over one shared skeleton. Adding an animal is a file and one line in an index."],
-    [1, 6, 0.92, "066", "the sandboxes return", "The tuning tabs come back on a pure, headlessly tested mover — explicitly not a second simulation."],
-    [1, 8, 0.20, "081", "the player is a cow", "The Play tab stops drawing the spec 031 bird. The critter rig reaches the main game, and the player's movement is redefined around a body that pivots faster than the old figure."],
-    [1, 10, 0.72, "107·111", "a unit is three files", "A unit becomes a format: two JSON documents and a GLB, validated by one parser that both the tool and the game read — so what you tuned is what ships."],
-    [1, 11, 0.25, "114–120", "the rig names its bones", "Rig families that can be let go, what the mesh itself says, which way is forward, root motion, and the naming a rig actually uses."],
-    [1, 13, 0.40, "139·142", "a pig does not pivot like a cow", "Per-species turn rates, and a turn given a beginning and an end — because arriving at full angular velocity in one tick is what reads as a whip-crack."],
+    [1,0,0.55,"032–036","legs and two sandboxes","Ground-locking spider legs where the legs lead and the body follows, and two viewports built for watching one unit walk."],
+    [1,1,0.18,"046","the robe","A headless position-based-dynamics cloth solver with procedural wind. No three.js, so the folds are unit-tested."],
+    [1,1,0.78,"055","critters as data","A species is a data file over one shared skeleton. Adding an animal is a file and one line."],
+    [1,3,0.18,"081","the player is a cow","The critter rig reaches the main game, replacing the spec 031 bird."],
+    [1,3,0.82,"107·111–120","a unit is three files","A unit becomes a format — two JSON documents and a GLB, one parser read by both the tool and the game, rig families, bone naming, and what the mesh itself says."],
+    [1,4,0.85,"139–143","a pig does not pivot like a cow","Per-species turn rates, a turn given a beginning and an end, and the foot the pig is standing on."],
+    [1,7,0.30,"163","the run that looked at the floor","Posture as a stated edit to a bought clip, so a stride survives and only the carriage moves."],
+    [1,11,0.60,"231·245","a cast, and a stance with weight","A cast clip every spell shares, rebased per ability — and a stance measured against the ground the idle rests on."],
 
     // 2 Effects
-    [2, 11, 0.45, "118–119", "a particle is a row", "Particles as rows in an array, and blood authored and then thrown."],
-    [2, 11, 0.88, "120–122", "decals and fronds", "A decal belongs to a chunk; tuning is the authoring; a frond with a bite out of it."],
-    [2, 12, 0.30, "123–126", "smoke, auras, shockwaves", "Smoke as a solid, an aura as a sigil rather than a spray, an explosion as a crystal, and a shockwave as a ring on the floor with tunable counts."],
+    [2,4,0.40,"118–126","particles, blood, smoke","Particles as rows in an array, blood authored and then thrown, decals that belong to a chunk, smoke as a solid, auras, explosions and shockwaves."],
+    [2,8,0.75,"215·219","afflictions you can see","Seven afflictions painted on the body, beating on the tick the damage lands — and blood that only answers a blow."],
+    [2,11,0.15,"223·233–236","an aura that reaches","A ring that is where the fire actually is: a reach, an affliction and a linger. The first drawn thing a rule reads."],
 
     // 3 World
-    [3, 1, 0.15, "037", "hitboxes and a route", "Units get collision volumes, and a grid router to path around what blocks them."],
-    [3, 2, 0.25, "043–044", "the ground stops being a slab", "Layered heightfields replace the flat plane, the walls come off the play area, and vegetation is grown where both halves of the game can see it."],
-    [3, 5, 0.12, "048", "the map is a document", "A world can be baked to JSON and loaded back — the single change that makes an editor possible at all."],
-    [3, 6, 0.95, "067", "gaps that thread", "The router had been refusing gaps a body actually fits through. It stops refusing them."],
-    [3, 7, 0.12, "072", "a world on disk", "The generated world baked to maps/arena.json, and the server ticking that document rather than a closure."],
-    [3, 7, 0.50, "073", "no way through", "The nav grid learns which ground connects to which, so an unreachable target costs a lookup instead of a full search."],
-    [3, 8, 0.62, "083–086", "a map that can grow", "A map that can be extended, a part that costs a part rather than the whole map, and a prop field that rebuilds by region."],
-    [3, 12, 0.55, "123·130–132", "tiers, cliffs and stairs", "A rock you can stand on, a route that knows about cliffs, a stair with real steps, and a flight notched into a tier. The world gains a vertical axis."],
+    [3,0,0.45,"037·043–044","the ground stops being a slab","Layered heightfields replace the flat plane, the walls come off, and trees become colliders."],
+    [3,1,0.52,"048","the map is a document","A world baked to JSON and loaded back — the change that makes an editor possible at all."],
+    [3,2,0.48,"072–073","a world on disk","The server ticks a document, and the nav grid learns which ground connects to which."],
+    [3,3,0.60,"083–086","a map that can grow","A map extended by a part rather than regenerated, and a prop field that rebuilds by region."],
+    [3,4,0.70,"123·130–132","tiers, cliffs and stairs","A rock you can stand on, a route that knows about cliffs, and a stair with real steps. The world gains a vertical axis."],
+    [3,8,0.15,"201–212","a map that is many files","The map leaves the bundle and becomes many region files; a boot that meshes nothing; a client that forgets what it walked past; growing without rewriting."],
+    [3,8,0.88,"210·213","the shore, and a life between fights","A coastline grown so the world stops somewhere, and monsters that wander, patrol and go home rather than standing on a coordinate."],
+    [3,11,0.45,"224·246–248","a village to play in","Huts and a well as props, bodies that are not enemies, shopkeepers who are people, and a walk home that is not a fight."],
 
     // 4 Editor
-    [4, 5, 0.38, "049–054", "six tools in one day", "A tab that renders only from a map document, a terrain brush with undo, prop scatter, markers, a walkability bake that says why — and save, load, survive a refresh."],
-    [4, 6, 0.22, "058–061", "fences, walls, navigation", "Fence variants and a brick wall retiring the coursed one, tools armed from buttons, and the view moved onto the middle mouse button."],
-    [4, 7, 0.45, "076", "markers that spawn", "A marker names a monster id. Nine spawn points go on the arena, and a settings toggle shows every spawner and its timer."],
-    [4, 8, 0.85, "084", "grow the map from here", "The editor can extend the world it is editing, rebaking only the region that changed."],
+    [4,1,0.42,"049–054","six tools in one day","A tab that renders only from a document, a terrain brush with undo, prop scatter, markers, a walkability bake, and save/load."],
+    [4,2,0.30,"076","markers that spawn","A marker names a monster id, and the map decides where the enemies are."],
+    [4,3,0.90,"084","grow the map from here","The editor extends the world it is editing, rebaking only the region that changed."],
+    [4,7,0.60,"176–179","the map the editor opens","The editor opens the map the game plays, saves straight to the file, says which marker kind you meant, and paints what the ground is made of."],
+    [4,11,0.78,"222·225","editing a spawner","Select and edit a marker rather than erase and replace it — and see a building before you place it."],
 
     // 5 Server & wire
-    [5, 5, 0.30, "056", "an authoritative tick", "A binary wire format because a position should cost bytes not JSON, a network chunk grid owing nothing to the meshing one, stats derived from ids and levels, and an admin token re-verified on every message."],
-    [5, 6, 0.12, "057", "one simulation", "60Hz for the game, 20Hz for the wire. The client's simulation is deleted; the server's becomes the only one."],
-    [5, 6, 0.78, "067", "prediction over a wire", "Drift corrected as it happens rather than snapped, corrections adopted exactly but eased visually."],
-    [5, 7, 0.05, "068–069", "predict the blow", "The client draws the wind-up the moment you ask, is told what it has left to spend, and dims a button it cannot pay for."],
-    [5, 7, 0.85, "072", "the map on the wire", "The map document travels as info plus requested chunks; the client holds what arrived and asks for the ground underfoot."],
-    [5, 12, 0.42, "126·132", "ownership, and two bags", "Equipping stops being unchecked — before this, any client could equip anything in the table. Then containers, and a swap that moves four of them atomically."],
-    [5, 12, 0.85, "134", "a table between two players", "The first screen where the other person is on the other side of it. A trade registry, five verbs, and a window that has to be careful about somebody else's offer."],
+    [5,1,0.28,"056–057","one authoritative sim","A binary wire format, chunk grids, an admin namespace — then the client's simulation deleted so the server's is the only one."],
+    [5,2,0.15,"068–069","predict the blow","The client draws the wind-up the moment you ask rather than when it is told."],
+    [5,2,0.86,"072","the map on the wire","The map travels as info plus requested chunks; the client asks for the ground underfoot."],
+    [5,5,0.85,"144–151","two players, one world","Eight specs in one day: a browser socket, collider paging, spawns and names, a wire you can make bad on purpose, rate matching, lag compensation, reconnect, and a pass that assumes the client is lying."],
+    [5,7,0.20,"157","one player, one connection","A second socket for the same character stops being two of you."],
+    [5,8,0.45,"192–197","a tick that costs what is near you","A world you do not walk every tick, an active set that is not rebuilt every tick, and a connection the tab cannot break."],
+    [5,11,0.52,"226–227","a database it comes back from","SQLite with migrations, accounts, sessions and autosave replace the memory store — and a character finally keeps the name you gave it."],
 
     // 6 Combat
-    [6, 0, 0.10, "028", "MOBA movement", "Click to move, attack-move, and a turn rate slow enough to read."],
-    [6, 1, 0.75, "040", "queued orders", "Shift-click stacks the next destination behind the current one."],
-    [6, 6, 0.05, "062", "the deck is deleted", "Wind-ups, projectiles and cooldowns replace the card hand, the poker combos and the parry window. 14,652 lines removed against 2,958 added, across 90 files.", "rupture"],
-    [6, 6, 0.55, "064–065", "committing to a blow", "A body that turns to face a target before it swings, no displacement and no freeze on impact, and a cast that is not over when the blow lands."],
-    [6, 7, 0.10, "068", "a blow that frees", "A committed blow lands and releases the body when it does. A blow that lands on a corpse lands on nothing."],
-    [6, 7, 0.45, "070–071", "right-click to fight", "Right-click a unit to attack it with a cursor that says which one — and a click near a body counted as a click on it."],
-    [6, 8, 0.08, "079–080", "withdraw, and aim", "A wind-up you can walk out of, an attack order that does not stutter, and a skill you aim before committing to it."],
-    [6, 9, 0.35, "087–094", "arrows, arcs, cooldowns", "Arrows and shuriken, a shot slow enough to watch, attack speed as a delay with a shot's speed its own, an arc that arcs like a shot, a cooldown the blow pays for, and a withdrawal that catches up with its own commit."],
-    [6, 13, 0.70, "142", "a turn with a beginning", "turnToward was a step function: full rate on tick one, dead stop on the last. Onset and stop get eased, because the discontinuity is what read as a whip-crack."],
+    [6,0,0.12,"028","MOBA movement","Click to move, attack-move, and a turn rate slow enough to read."],
+    [6,1,0.62,"062","the deck is deleted","Wind-ups, projectiles and cooldowns replace the card hand, the poker combos and the parry window. 14,652 lines removed against 2,958 added.","rupture"],
+    [6,1,0.95,"064–065","committing to a blow","A body that turns before it swings, and a cast that is not over when the blow lands."],
+    [6,2,0.60,"070–080","right-click, and withdraw","Right-click a unit to fight it, a click near a body counted as a click on it, and a wind-up you can walk out of."],
+    [6,3,0.10,"087–094","arrows, arcs, cooldowns","Arrows and shuriken, a shot slow enough to watch, attack speed as a delay, and a cooldown the blow pays for."],
+    [6,5,0.12,"152–156","a blow whose mark is gone","The chunk a blow took, a bar that flinches, and the health you carry between fights."],
+    [6,7,0.40,"166–174","an attack you can call off","A cancel that reaches the animation, a body that can get up, a stagger that stops you, and the speed a weapon says it has."],
+    [6,8,0.62,"187–188","active skills, and a crowd","Skills as equippable items with costs, cooldowns and shapes — and a crowd that is not one body, over transcribed reciprocal collision avoidance."],
+    [6,11,0.92,"221·232","a swing in range lands","A blow measured at the wind-up rather than the release, and a blow that says what hit you."],
 
-    // 7 Interface
-    [7, 9, 0.70, "093–094", "controls for a phone", "A touch control scheme and a HUD that fits an 844×390 landscape frame."],
-    [7, 12, 0.15, "123–128", "a gui the tests can see", "A GUI framework from scratch: layout, focus, drag, layers, motion, sound, a router, a window manager, windows that remember where they were, and a key that is a binding rather than a branch. Pure, headless, golden-tested."],
-    [7, 12, 0.62, "129–138", "bags, shops, options", "An item you actually have, a bag you can drag things around, a bar that drains without a relayout, something to spend and somewhere to spend it, a shop and the question it asks first, options, keybindings, and the right to refuse motion and sound."],
-    [7, 13, 0.35, "140–141", "a phone that plays", "Five of six tabs cannot be driven by a finger, so a phone gets the game and nothing else — and is detected as a phone rather than guessed at."],
+    // 7 Progression
+    [7,7,0.78,"184–186","what a kill was worth","A number for the reward, what an item says about itself, and a status you can see."],
+    [7,10,0.45,"216–217","what a weapon scales with","A weapon authors one letter per attribute and a damage range of its own, instead of every weapon in the game scaling with Strength."],
+    [7,11,0.22,"237–244","one pool, six tracks","Every ability reachable by somebody, progression that does not move backwards, one notation for scaling, and two currencies collapsed into one pool — with fifteen authored synergies deleted."],
 
-    // 8 Studio
-    [8, 10, 0.45, "108–110", "a paid call, and a tab", "Generating a unit costs real money in four asynchronous steps against URLs that expire in five minutes. The spec is the accounting: a ledger, a projection before confirmation, a rig-check that stops before a paid call, a per-day ceiling, and a cache so nobody buys twice."],
-    [8, 10, 0.88, "111–113", "the same machine in the game", "The path that makes 'what you tuned is what ships' a fact rather than a promise: one parser read by both the tool and the game, and a manifest both ends agree on."],
+    // 8 Interface
+    [8,4,0.18,"123–128","a gui the tests can see","A GUI framework from scratch: layout, focus, drag, layers, motion, sound, a window manager, and windows that remember where they were. Pure, headless, golden-tested."],
+    [8,4,0.88,"129–138","bags, shops, options","An item you actually have, a bag you can drag things around, a shop and the question it asks first, options, keybindings, and the right to refuse motion and sound."],
+    [8,5,0.55,"140–141","a phone that plays","Five of six tabs cannot be driven by a finger, so a phone gets the game and nothing else — and is detected rather than guessed at."],
+    [8,7,0.88,"158·164","the bar along the bottom","A drop you notice before you read it, and the HUD band rebuilt on the framework's own widgets."],
+    [8,8,0.95,"198–199","a tab you can still reach","A tabbed screen that scrolls its own body, and a stop that means all of it."],
 
-    // 9 Harness
-    [9, 5, 0.55, "agents", "a delegation policy", "Sub-agents with pinned model versions, a notes directory so architecture is not re-derived, and a context budget made an explicit house rule."],
-    [9, 6, 0.35, "lint", "determinism, enforced", "ESLint fails the build on Math.random, on Date and DOM globals, and on importing three.js anywhere inside the deterministic core."],
-    [9, 7, 0.50, "rigs", "photograph the weather", "A preview harness that drives the real page and photographs it — and a shader bug found by the rig built to take them."],
-    [9, 11, 0.62, "goldens", "32 golden images", "The UI gallery bakes golden frames, so a widget's appearance regresses like a unit test."],
-    [9, 12, 0.72, "probes", "26 rigs and 10 probes", "52 scripts: preview rigs for trees, blood, auras, decals, units, arcs and the wind; probes for draw calls, shading, orbit, turn-swing and frame cost. And no balance harness — that one was deleted."]
+    // 9 Studio
+    [9,3,0.50,"108–113","a tab that spends money","Generating a unit costs real money against URLs that expire in five minutes. The spec is the accounting: a ledger, a projection before confirmation, a per-day ceiling, and a cache so nobody buys twice."],
+    [9,4,0.15,"114–115","what the mesh says","A rig family that can be let go, and the checks a schema cannot make — weight sums, joint indices, and what four extreme poses do to a body."],
+
+    // 10 Harness
+    [10,1,0.58,"lint","determinism, enforced","ESLint fails the build on Math.random, on Date and DOM globals, and on importing three.js anywhere inside the deterministic core."],
+    [10,2,0.40,"rigs","photograph the weather","A preview harness that drives the real page and photographs it — and a shader bug found by the rig built to take them."],
+    [10,4,0.50,"goldens","golden images","The UI gallery bakes golden frames, so a widget's appearance regresses like a unit test."],
+    [10,8,0.50,"probes","143 scripts","Preview rigs, probes and benches for trees, blood, auras, stance, walkability, crowds, streaming and frame cost."],
+    [10,10,0.70,"balance","the harness comes back","npm run balance fights twelve build presets through the real sim, with audit:progression beside it. It had been deleted; it is back."]
   ];
 
   var FUTURE = [
-    [0, 2, ["rain, seasons,", "a second biome"], "Still projected, and still the category I am worst at. The look thread has its own screenshot harness, which is what a thread that intends to keep producing builds first."],
-    [1, 0, ["a roster bigger", "than one"], "Spec 111 wired authored units into the game and notes that exactly one exists — the dev mannequin. Studio is the machine for filling the roster and has not been pointed at it."],
-    [2, 1, ["effects the sim", "can see"], "Blood, smoke, shockwaves and auras are entirely cosmetic — drawn, and never consulted by a rule. Stable, and the obvious next ask."],
-    [3, 0, ["shots stopped by", "walls and props"], "Three specs of projectile work and a shot is still stopped only by a body or its own lifetime. Terrain does not block anything."],
-    [4, 1, ["publish live to", "a running server"], "The map can grow from the editor now. Hot-swapping the map on a server that is already ticking is still named out of scope."],
-    [5, 0, ["collider paging", "on the client"], "Named in 072 as needed before a remote client can predict correctly. Six days old, no spec, no code — and it gates every multiplayer row."],
-    [5, 1, ["a second player"], "There is a trade registry, an atomic four-container swap and a window built around somebody else's offer, in a game that has never had two people in it."],
-    [5, 2, ["a store that", "isn't memory"], "DataStore is still one interface and one in-memory implementation — now with an inventory, a wallet and a trade history that would be worth keeping."],
-    [6, 0, ["loot that", "drops"], "Ownership, bags, currency, shops and trade all exist. No lootTable, no ground item: the only way an item enters the world is the table it was authored in."],
-    [6, 1, ["aggro that", "isn't a grudge"], "Still 'whoever hit me first'. aggroRange and passive sit in the monster table with a comment beside them saying they are unread."],
-    [6, 2, ["predicting", "the hit"], "The largest deferred commitment in the client. 069's reasoning holds: a health bar that jumps back up is worse than one that moves late."],
-    [7, 0, ["dragging into", "the table"], "One gesture short. 134 ships the trade window with clicking only and names the drag as the next thing."],
-    [7, 2, ["a phone that", "can trade"], "The phone build hides five of six tabs. Whether the screens follow it there is unanswered."],
-    [8, 1, ["a roster the", "studio filled"], "The interlocks, ledger and cache are built and the pipeline has produced one mannequin. Either it gets used or it becomes the most carefully engineered unused code in the repository."],
-    [9, 0, ["a way to tell", "if it is fun"], "The only instrument for this was deleted, and CLAUDE.md still advertises it. Every other judgement in this project eventually got a rig pointed at it."]
+    [0,2,["a look for","a second place"],"One arena, one palette, one weather system. A second biome is the obvious use of a look pass this thorough."],
+    [1,1,["a roster the","studio filled"],"A pig and a fox beside the dev mannequin. The pipeline built to fill the roster has had five commits in sixteen days."],
+    [3,1,["a second map"],"The map can be many files, can grow, has a shore and a village. There is still one of it."],
+    [4,2,["publish live to","a running server"],"The map reaches the server as a file. Hot-swapping one that is already ticking is still named out of scope."],
+    [5,0,["somewhere","to arrive"],"The Pages workflow deploys a static client. There is no server deployment, so every piece of multiplayer machinery works and has no host."],
+    [6,1,["shots stopped","by the world"],"projectileHits still takes a body and a body only. Nine specs of projectile work with no terrain term in any of them."],
+    [6,2,["predicting","the hit"],"client/combat.ts is explicit: it spawns nothing, damages nobody and rolls no dice. Correctly reasoned, and still the largest deferred commitment in the client."],
+    [7,2,["a reason to","come back"],"Six tracks, an economy, loot and a balance harness — and nothing that asks for a second session."],
+    [8,0,["a front door"],"A desktop visitor meets seven tab buttons, six of them developer workbenches. Spec 140 fixed this for phones on input grounds; the audience argument has never been made."],
+    [8,1,["teaching","the verbs"],"Click to move, right-click to attack, aim-then-confirm, a stop key, a bag, trade. Nothing in the tree introduces any of it."],
+    [9,2,["used, or","dormant"],"Studio has every interlock a paid pipeline needs and has produced two units. Either it gets used or it is the most carefully engineered dormant code here."],
+    [10,0,["the first ten","minutes, measured"],"Everything this project can photograph has a rig pointed at it. The opening is judged by nobody."]
   ];
 
   var ARCS = [
-    [3, 2, 0.25, 0, 2, 0.30, "the look pass needed ground with vertical faces"],
-    [3, 5, 0.12, 4, 5, 0.38, "the editor exists because the map became a document"],
-    [5, 6, 0.12, 0, 6, 0.20, "one simulation is what let the renderer be repointed at it"],
-    [3, 7, 0.12, 0, 7, 0.18, "the renderer draws the document now, not a generator"],
-    [5, 12, 0.42, 7, 12, 0.62, "ownership on the server is what the bag draws"],
-    [1, 10, 0.72, 8, 10, 0.45, "studio exists to fill a format the game already reads"]
+    [3,0,0.45,0,0,0.80,"the look pass needed ground with vertical faces"],
+    [3,1,0.52,4,1,0.42,"the editor exists because the map became a document"],
+    [5,2,0.86,0,2,0.20,"the renderer draws the document, not a generator"],
+    [5,5,0.85,8,5,0.55,"two players is what the trade table was built for"],
+    [1,3,0.82,9,3,0.50,"studio exists to fill a format the game already reads"],
+    [5,11,0.52,7,11,0.22,"progression is only progression if it survives a restart"]
   ];
 
-  /* ---------- geometry ---------- */
+  var GUTTER = 150, HIST_W = 1150, GAP_W = 16;
+  var LANE_TOP = 66, LANE_H = 58, PHASE_W = 100, PHASE_GAP = 22;
 
-  var GUTTER = 150, HIST_W = 1150, LULL_W = 20;
-  var LANE_TOP = 66, LANE_H = 60;
-  var PHASE_W = 100, PHASE_GAP = 22;
-
-  var live = COLS.reduce(function (s, c) { return s + (c.lull ? 0 : c.n); }, 0);
-  var perCommit = HIST_W / live;
+  var live = COLS.reduce(function (s, c) { return s + c.n; }, 0);
+  var gapTotal = COLS.filter(function (c) { return c.gap; }).length * GAP_W;
+  var perCommit = (HIST_W - gapTotal) / live;
 
   var x = GUTTER;
-  COLS.forEach(function (c) { c.w = c.lull ? LULL_W : c.n * perCommit; c.x0 = x; x += c.w; });
-  var HIST_END = x;
-  var DIVIDER = HIST_END + 21;
-  var PHASE_X0 = DIVIDER + PHASE_GAP;
+  COLS.forEach(function (c) { c.w = c.gap ? GAP_W : c.n * perCommit; c.x0 = x; x += c.w; });
+  var HIST_END = x, DIVIDER = HIST_END + 21, PHASE_X0 = DIVIDER + PHASE_GAP;
   var W = PHASE_X0 + PHASES.length * PHASE_W + 22;
   var H = LANE_TOP + LANES.length * LANE_H + 26;
   var END_ANCHOR = HIST_END - 110;
 
-  function cx(col, frac) { return COLS[col].x0 + frac * COLS[col].w; }
-  function ly(lane) { return LANE_TOP + lane * LANE_H + LANE_H / 2; }
+  function cx(c, f) { return COLS[c].x0 + f * COLS[c].w; }
+  function ly(l) { return LANE_TOP + l * LANE_H + LANE_H / 2; }
   function px(p) { return PHASE_X0 + p * PHASE_W + PHASE_W / 2; }
-
-  /* ---------- label placement ---------- */
 
   var placed = NODES.map(function (n) {
     return { lane: n[0], x: cx(n[1], n[2]), code: n[3], label: n[4], detail: n[5], kind: n[6] };
   });
 
-  (function place() {
+  (function () {
     var byLane = {};
     placed.forEach(function (n) { (byLane[n.lane] = byLane[n.lane] || []).push(n); });
     Object.keys(byLane).forEach(function (k) {
@@ -765,8 +617,6 @@
     });
   })();
 
-  /* ---------- render ---------- */
-
   var NS = "http://www.w3.org/2000/svg";
   var svg = document.getElementById("graph");
   svg.setAttribute("viewBox", "0 0 " + W + " " + H);
@@ -783,9 +633,14 @@
       gArcs = add(svg, el("g")), gNodes = add(svg, el("g"));
 
   COLS.forEach(function (c, i) {
+    if (c.gap) {
+      add(gBands, el("rect", { x: c.x0, y: LANE_TOP - 10, width: c.w, height: LANES.length * LANE_H + 10, class: "gapband" }));
+      add(gAxis, el("text", { x: c.x0 + c.w / 2, y: 46, "text-anchor": "middle", class: "g-gap" }, c.label));
+      return;
+    }
     if (i % 2 === 0) add(gBands, el("rect", { x: c.x0, y: LANE_TOP - 10, width: c.w, height: LANES.length * LANE_H + 10, class: "colband" }));
     add(gAxis, el("text", { x: c.x0 + c.w / 2, y: 46, "text-anchor": "middle", class: "g-axis" }, c.label));
-    if (c.w > 30) add(gAxis, el("text", { x: c.x0 + c.w / 2, y: 56, "text-anchor": "middle", class: "g-count" }, String(c.n)));
+    add(gAxis, el("text", { x: c.x0 + c.w / 2, y: 56, "text-anchor": "middle", class: "g-count" }, String(c.n)));
   });
 
   ERAS.forEach(function (e) {
@@ -806,26 +661,17 @@
 
     var mine = placed.filter(function (n) { return n.lane === i; });
     if (mine.length) {
-      add(gSpine, el("line", {
-        x1: Math.min.apply(null, mine.map(function (n) { return n.x; })), x2: DIVIDER - 6, y1: y, y2: y,
-        class: "l" + i, stroke: "currentColor", "stroke-width": 1, "stroke-opacity": 0.3
-      }));
+      add(gSpine, el("line", { x1: Math.min.apply(null, mine.map(function (n) { return n.x; })), x2: DIVIDER - 6, y1: y, y2: y, class: "l" + i, stroke: "currentColor", "stroke-width": 1, "stroke-opacity": 0.3 }));
     }
     var fut = FUTURE.filter(function (f) { return f[0] === i; });
     if (fut.length) {
-      add(gSpine, el("line", {
-        x1: DIVIDER + 6, x2: Math.max.apply(null, fut.map(function (f) { return px(f[1]); })), y1: y, y2: y,
-        class: "l" + i, stroke: "currentColor", "stroke-width": 1, "stroke-opacity": 0.28, "stroke-dasharray": "2 4"
-      }));
+      add(gSpine, el("line", { x1: DIVIDER + 6, x2: Math.max.apply(null, fut.map(function (f) { return px(f[1]); })), y1: y, y2: y, class: "l" + i, stroke: "currentColor", "stroke-width": 1, "stroke-opacity": 0.28, "stroke-dasharray": "2 4" }));
     }
   });
 
   ARCS.forEach(function (a) {
     var x1 = cx(a[1], a[2]), y1 = ly(a[0]), x2 = cx(a[4], a[5]), y2 = ly(a[3]);
-    var path = add(gArcs, el("path", {
-      d: "M" + x1 + "," + y1 + " Q" + ((x1 + x2) / 2 - 14) + "," + ((y1 + y2) / 2) + " " + x2 + "," + y2,
-      fill: "none", stroke: "var(--muted)", "stroke-width": 0.9, "stroke-opacity": 0.4, "stroke-dasharray": "1.5 3.5"
-    }));
+    var path = add(gArcs, el("path", { d: "M" + x1 + "," + y1 + " Q" + ((x1 + x2) / 2 - 14) + "," + ((y1 + y2) / 2) + " " + x2 + "," + y2, fill: "none", stroke: "var(--muted)", "stroke-width": 0.9, "stroke-opacity": 0.4, "stroke-dasharray": "1.5 3.5" }));
     add(path, el("title", {}, a[6]));
     add(gArcs, el("circle", { cx: x2, cy: y2, r: 1.8, fill: "var(--muted)", "fill-opacity": 0.55 }));
   });
@@ -856,14 +702,12 @@
     var ny = ly(n.lane);
     var g = add(gNodes, el("g", { class: "node l" + n.lane, tabindex: "0", role: "listitem" }));
     add(g, el("title", {}, n.code + " — " + n.label));
-
     if (n.kind === "rupture") {
       add(g, el("circle", { cx: n.x, cy: ny, r: 8, fill: "none", stroke: "currentColor", "stroke-width": 1, "stroke-opacity": 0.5 }));
       add(g, el("circle", { cx: n.x, cy: ny, r: 4, fill: "currentColor", class: "dot" }));
     } else {
       add(g, el("circle", { cx: n.x, cy: ny, r: 4.8, fill: "currentColor", class: "dot" }));
     }
-
     var tx = n.anchor === "end" ? n.x - 9 : n.x + 9;
     var ty = n.below ? ny + 14 : ny - 11;
     add(g, el("text", { x: tx, y: ty, "text-anchor": n.anchor, class: "g-label" }, n.label));
@@ -890,7 +734,7 @@
     all.sort(function (a, b) { return a.getBoundingClientRect().left - b.getBoundingClientRect().left; });
     all.forEach(function (g, i) {
       g.style.transition = "opacity 300ms ease";
-      setTimeout(function () { g.style.opacity = "1"; }, 60 + i * 14);
+      setTimeout(function () { g.style.opacity = "1"; }, 60 + i * 12);
     });
   }
 })();
