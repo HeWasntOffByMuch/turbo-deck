@@ -120,6 +120,42 @@ the midpoint of two tones that have no reason to be symmetric. And the gust is
 the meadow's mean brightness does not move — `GLSL_STREAK`'s own rule, arrived at
 here independently.
 
+## The art-direction pass after it
+
+The first tuning shipped legible and **busy**: the strokes read as fingerprints
+and brushed metal rather than as marks on grass. Four things were wrong, and
+three of them are the same mistake in different places -- a number chosen for how
+big it is rather than for how it sits against the frame.
+
+- **Density, not amplitude.** Both micro tails at a 0.80 cut marked nearly half
+  the meadow, and the stroke threshold passed about the same again. A faint mark
+  everywhere is a grain; the fix is fewer marks, not quieter ones, so the cuts
+  went up and the clump became a **gate** — outside one, the stroke field cannot
+  reach its threshold from any value it takes, so that ground carries nothing.
+- **Curl is a wavelength, not an angle.** The stroke direction was driven off the
+  macro field, which swings its whole range every couple of hundred units — about
+  the length of a few strokes, which is exactly the condition for a whorl. It is
+  driven off a new long-wavelength *coarse* field now (~790 units), which lets the
+  bend be *larger* and read as arcs.
+- **A structure wider than the frame is not a structure.** Scaling the gusts 2.5x
+  put a third of all frames wholly inside one lobe, and the front stopped crossing
+  the clearing and started tinting it. Surveyed rather than guessed: 4% of frames
+  blanketed at the original size, 33% at 320, 42% at 380.
+- **A tint toward a tone shifts hue; a multiplier cannot.** With fronts that big,
+  mixing toward the light tone — markedly redder than the base — turned the whole
+  meadow yellow. The breath is multiplicative now, like `GLSL_STREAK`'s. The same
+  trap caught the dry patches when they were briefly moved onto the coarse field:
+  measured through the panel, zeroing the macro term took the ground's R/G from
+  0.95 back to 0.86 against 0.83 with the layer off, so that one term was nearly
+  all of the shift.
+
+And one deliberate inversion of the band rule. The strokes are now worth **half**
+a colour step at rest and a whole one at a gust's crest, where every other mark
+clears a step standing still. That gap is the look: calm in a screenshot, alive
+in motion. `gustReveal` is the other half of it — a front lowers the stroke
+threshold as well as brightening it, so what passes is *more grass* rather than
+the same grass lit harder.
+
 ## Invariants tested
 
 - Every tone in `TERRAIN_COLORS.grass` reads as grass; every tone of `sand`,
@@ -137,8 +173,12 @@ here independently.
   few degrees of wobble cannot reach it, and 1 well before `MAX_WALK_SLOPE`.
 - `macroTone` is symmetric: at the middle of its range the shift is zero, so the
   authored colour is what unmodulated ground shows.
-- Every mark the layer draws — the macro tones, a gust front, a stroke against
-  its counter-stroke, a trail, a speck — is worth at least one whole colour step.
+- Every mark the layer draws — the macro tones, a gust front, a trail, a speck —
+  is worth at least one whole colour step. The strokes deliberately invert it:
+  under a step at rest, over one at a gust's crest, with the gap between them
+  worth better than half a step on its own.
+- Ground outside a clump carries no strokes at all, at any density the panel can
+  ask for and at a gust's full crest — the gate, stated as arithmetic.
 - The macro window is symmetric about the noise's own middle, and `macroTone(m, m)`
   at the middle is exactly zero.
 - The front moves: over one screen of ground, a fifth to three quarters of it

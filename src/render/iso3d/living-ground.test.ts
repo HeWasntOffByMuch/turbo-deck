@@ -201,7 +201,21 @@ describe('the wind over the ground', () => {
     // is the rule `GLSL_STREAK` states and the reason its own front is
     // two-sided. Here it is the `(gust - 0.5) * 2.0` that makes it true.
     expect(GLSL).toContain('float front = (gust - 0.5) * 2.0;');
-    expect(GLSL).toContain('delta += toLight * front * uGrassGustBrightness');
+  });
+
+  it('breathes over the meadow without touching its hue', () => {
+    // The regression that shipped the moment the fronts were made big enough to
+    // blanket a frame. Mixed toward the light tone -- which is markedly redder
+    // than the base -- a full-frame front did not brighten the clearing, it
+    // turned it yellow. A multiplier scales every channel together, so a hue
+    // shift is not something it *can* express, which is the same reason
+    // `GLSL_STREAK` applies its own front that way.
+    expect(GLSL).toContain('result *= 1.0 + front * uGrassGustBrightness * GRASS_GUST_BREATH');
+    expect(GLSL).not.toMatch(/delta \+= toLight \* front/);
+    // The strokes keep the tone shift, and are allowed to: a yellower green is
+    // what a sunlit tip looks like, and it lands on a twentieth of the ground
+    // rather than on all of it.
+    expect(GLSL).toContain('delta += toLight * strokes * strokeAmount * lit;');
   });
 
   it('brightens a stroke only on the front\'s leading half', () => {
@@ -386,12 +400,19 @@ describe('the scales, against the sizes the look is described in', () => {
     }
   });
 
-  it('makes every mark it draws worth a colour band', () => {
-    // The rule this whole file keeps rediscovering, applied to all four scales
-    // at once so the next one added cannot skip it. The retro pass quantizes to
-    // twelve levels; a mark that moves a channel less than half a step is not a
-    // subtle mark, it is an absent one -- which is how the macro layer, the gust
-    // and the specks were each written the first time.
+  it('holds every mark to a colour band -- and the strokes only at a gust\'s crest', () => {
+    // The rule this file keeps rediscovering, applied to every scale at once so
+    // the next one added cannot skip it. The retro pass quantizes to twelve
+    // levels; a mark that moves a channel less than half a step is not a subtle
+    // mark, it is an absent one -- which is how the macro layer, the gust and the
+    // specks were each written the first time.
+    //
+    // The strokes are the one deliberate exception, and it is the art direction
+    // rather than an oversight: a still frame should be calm, so a stroke at rest
+    // is worth about half a step and the crest of a gust carries it back over a
+    // whole one. Both halves are asserted, because either on its own is a
+    // different look -- quiet without the crest is a layer nobody ever sees, and
+    // the crest without the quiet is the busy field this replaced.
     const base = linearOf(LIVING_GROUND.base);
     const light = linearOf(LIVING_GROUND.light);
     const dark = linearOf(LIVING_GROUND.dark);
@@ -404,10 +425,10 @@ describe('the scales, against the sizes the look is described in', () => {
     const marks = {
       // The macro tones, dark against light.
       macro: (up + down) * LIVING_GROUND.macroStrength,
-      // A gust front, bright half against dim half.
-      gust: 2 * up * LIVING_GROUND.gustBrightness,
-      // A bright stroke against the dark counter-stroke between them.
-      stroke: (up + down * LIVING_GROUND_SHAPE.strokeShade) * LIVING_GROUND.detailStrength,
+      // A gust front, bright half against dim half. Multiplicative now, so it is
+      // measured against the grass's own green rather than against a tone.
+      gust:
+        2 * (base[1] ?? 0) * LIVING_GROUND.gustBrightness * LIVING_GROUND_SHAPE.gustBreath,
       // A trail, over the ground beside it.
       trail: up * LIVING_GROUND.windStrength,
       // A speck, against the ground it sits on.
@@ -418,15 +439,60 @@ describe('the scales, against the sizes the look is described in', () => {
         `${name}: ${Math.max(1, swing / half).toFixed(2)} half-bands`,
       );
     }
+
+    // A bright stroke against the dark counter-stroke between them, with and
+    // without the front lighting it.
+    const shade = down * LIVING_GROUND_SHAPE.strokeShade * LIVING_GROUND.detailStrength;
+    const atRest = up * LIVING_GROUND.detailStrength + shade;
+    const atCrest = up * LIVING_GROUND.detailStrength * (1 + LIVING_GROUND_SHAPE.gustStrokeGain) + shade;
+    expect(atRest / half).toBeLessThan(1);
+    expect(atCrest / half).toBeGreaterThanOrEqual(1);
+    // ...and the gap between them is half of what a player reads as the wind
+    // arriving -- worth better than half a colour step on its own. The other
+    // half is `gustReveal`, which is a change in how *much* grass there is
+    // rather than in how bright it is, and no amplitude can express it.
+    expect((atCrest - atRest) / half).toBeGreaterThan(0.6);
+  });
+
+  it('lets a gust reveal strokes that were not there, not only brighten the ones that were', () => {
+    // Brightness alone is a light moving over a fixed pattern. Lowering the
+    // threshold is what makes more grass appear inside a front and sink back
+    // behind it, which is the thing that reads as wind rather than as exposure.
+    expect(LIVING_GROUND_SHAPE.gustReveal).toBeGreaterThan(0);
+    expect(GLSL).toContain('float litCut = cut - max(front, 0.0) * GRASS_GUST_REVEAL;');
+    // The dark counter-strokes are deliberately *not* revealed: letting both
+    // tails in would raise the pattern's contrast rather than bring more grass
+    // forward.
+    expect(GLSL).toContain('float shade = smoothstep(cut, cut + GRASS_STROKE_SOFT');
+  });
+
+  it('leaves ground outside a clump with no strokes on it whatsoever', () => {
+    // The clump is a gate rather than a modulation, and this is what that buys,
+    // stated as arithmetic rather than as an intention: at the gate's floor the
+    // stroke field cannot reach its threshold from *any* value it takes, so that
+    // ground carries nothing. Modulated instead, every part of the meadow keeps a
+    // faint stroke -- and a faint mark everywhere is a grain, which is exactly
+    // what "reads like brushed metal" was.
+    const s = LIVING_GROUND_SHAPE;
+    // The loosest threshold the panel can ask for, with a gust at full crest.
+    const loosestCut = s.strokeCutLow - s.gustReveal;
+    // The most the stroke field can produce outside a clump.
+    const outsideAClump = 1 * s.clumpBase;
+    expect(outsideAClump).toBeLessThan(loosestCut);
   });
 
   it('leaves empty ground between the details', () => {
-    // The brief asks for space between the marks rather than a carpet of them.
-    // Both micro sets are tails of one field, so what is *not* left blank is at
-    // most twice what is past the cut -- about a sixth of the ground.
+    // The brief asks for space between the marks rather than a carpet of them,
+    // and this is the number that was wrong when the ground read as brushed
+    // metal: both micro sets are tails of one field, so what is *not* blank is
+    // at most twice what is past the cut. At the 0.80 this opened at that was
+    // two fifths of the meadow.
     const s = LIVING_GROUND_SHAPE;
-    expect(2 * (1 - s.microCut)).toBeLessThan(0.5);
+    expect(2 * (1 - s.microCut)).toBeLessThan(0.3);
     expect(LIVING_GROUND.detailDensity).toBeLessThan(0.7);
+    // And the strokes' own threshold has to sit high on a field whose median is
+    // 0.5, or the same thing happens one scale up.
+    expect(s.strokeCutHigh).toBeGreaterThan(0.85);
   });
 });
 

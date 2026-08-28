@@ -138,13 +138,22 @@ export interface LivingGroundConfig {
    */
   readonly gustContrast: number;
   /**
-   * How far a front lifts and drops the grass, 0..1, as a fraction of the
-   * distance to the light tone.
+   * How far a front lifts and drops the grass's **own** brightness, 0..1, where
+   * 1 is `LIVING_GROUND_SHAPE.gustBreath`.
+   *
+   * **Multiplicative, and that is the whole of why the meadow stays green.** It
+   * was a mix toward the light tone, which is a good deal redder than the base --
+   * so once the fronts were made big enough to blanket a frame, a gust did not
+   * brighten the clearing, it turned it yellow. A multiplier scales every channel
+   * together and cannot shift a hue at all, which is why `GLSL_STREAK` applies
+   * its own front that way; the *strokes* keep the tone shift, because there a
+   * yellower green is what a sunlit tip looks like and it is only on a twentieth
+   * of the ground.
    *
    * **Two-sided**, so a front brightens its leading half and dims behind it and
    * the meadow's mean brightness does not move -- `GLSL_STREAK` states the same
-   * rule for the same reason: a one-sided front repaints the whole world darker
-   * to animate a fraction of it.
+   * rule for the same reason: a one-sided front repaints the whole world to
+   * animate a fraction of it.
    */
   readonly gustBrightness: number;
 
@@ -228,17 +237,27 @@ export const LIVING_GROUND: LivingGroundConfig = {
    */
   detailScale: 10,
   /**
-   * 0.34, which is the smallest value at which a bright stroke and the dark
-   * counter-stroke between them are a whole colour step apart -- the floor every
-   * mark in this file is held to, and the one the test states for all four
-   * scales at once. Inside a gust the strokes go half again as far, and that gap
-   * is the feature: quiet when nothing is happening, stepping forward when the
-   * wind crosses, which is what "calm when stationary, alive when the wind moves
-   * through it" has to mean for a layer that never moves.
+   * 0.17, which is **half** what this first shipped at, and the halving is the
+   * art direction rather than a retreat.
+   *
+   * At 0.34 a stroke cleared a whole colour step standing still, and a still
+   * frame of the meadow was a field of marks: legible, and busy in a way that
+   * read as texture on the ground rather than as marks in it. At 0.17 a stroke
+   * at rest is worth about half a step -- present, quiet, on the edge of what
+   * the retro pass will show -- and the crest of a gust carries it back over a
+   * whole one through `gustStrokeGain` and `gustReveal`.
+   *
+   * That is the one place this file deliberately sits under the band floor
+   * every other mark is held to, and it is what "calm in a screenshot, alive in
+   * motion" costs. `living-ground.test.ts` asserts both halves: quiet at rest,
+   * legible at the crest.
    */
-  detailStrength: 0.34,
+  detailStrength: 0.17,
   /**
-   * 0.32, and it came down from 0.45 when the noise underneath it was fixed.
+   * 0.32 against a threshold pair that has since moved up, so the same number
+   * now marks a good deal less ground -- see `LIVING_GROUND_SHAPE.strokeCutHigh`.
+   *
+   * It came down from 0.45 when the noise underneath it was fixed.
    *
    * Worth recording, because it is the same story as the gust's amplitude one
    * paragraph up and it happened at the same moment. Every threshold in this
@@ -252,8 +271,8 @@ export const LIVING_GROUND: LivingGroundConfig = {
    */
   detailDensity: 0.32,
 
-  /** 55 units between trails, so several run through the frame at once. */
-  windScale: 55,
+  /** 80 units between trails, so a handful run through the frame at once. */
+  windScale: 80,
   windSpeed: 1,
   /**
    * 0.55. A trail is only ever seen multiplied by the front it is inside, so
@@ -262,13 +281,28 @@ export const LIVING_GROUND: LivingGroundConfig = {
   windStrength: 0.55,
 
   /**
-   * 150 units between fronts along the flow, about two across the frame -- the
-   * same reasoning `WIND.gustScale` records, and deliberately a different number
-   * from it. Two layers of front at the same period would beat against each
-   * other; at 150 against the streak's 130, and at a different drift speed, they
-   * read as one moving air mass with structure in it.
+   * 320 units between fronts along the flow -- a little over twice what this
+   * opened at, and the frame is about 735 units along the wind axis, so what
+   * crosses it is one broad sweep and the edge of the next rather than several
+   * lobes.
+   *
+   * The ceiling on this is not taste, it is that a frame sitting wholly inside
+   * one lobe has a gust *tinting* it rather than crossing it. Surveyed over
+   * two dozen windows: at 150 that happened on 4% of them, at 320 on a third,
+   * and at 380 on nearly half. A third is affordable **only** because the breath
+   * is multiplicative (see `LivingGroundConfig.gustBrightness`) -- blanketed, it
+   * is a shade of brightness over the clearing rather than a change of colour,
+   * which is what a gust overhead actually looks like.
+   *
+   * At 150 the fronts were the right size to read as structure and the wrong
+   * size to read as weather: several of them on screen at once is a field of
+   * light and dark patches moving, where one boundary travelling across the
+   * clearing is a gust. The streak layer next door keeps its own much smaller
+   * period, and the two no longer share an order of magnitude at all -- which is
+   * a better answer to "do not beat against each other" than the near-miss
+   * these two started at.
    */
-  gustScale: 150,
+  gustScale: 320,
   /**
    * 0.7, which puts the transition at about 30% of the noise range and leaves
    * flat ground either side of a front. Softer than the streak's, and it can
@@ -282,16 +316,15 @@ export const LIVING_GROUND: LivingGroundConfig = {
    * effective 0.157 and `probe-living-ground.ts` could not find the gust at all
    * against four walking animals.
    *
-   * The arithmetic it now clears: two-sided, the front swings the grass 0.8 of
-   * the way to the light tone, which is 0.111 in linear green against a retro
-   * band of about 0.13 at the grass's own brightness. So a front is worth about
-   * 0.85 of a colour step and crosses one on its own -- spec 074's lesson,
-   * arrived at there by shipping a streak layer at a quarter of a step and
-   * finding it invisible. For scale, that streak's own swing on this ground is
-   * about 0.68 of a step, so the two layers are the same order and neither
-   * drowns the other.
+   * The arithmetic it clears: two-sided at `gustBreath`, the front swings the
+   * grass by about 26% of its own brightness, which on the meadow's linear green
+   * is 0.115 against a retro band of about 0.14. So a front is worth better than
+   * a whole colour step and crosses one on its own -- spec 074's lesson, arrived
+   * at there by shipping a streak layer at a quarter of a step and finding it
+   * invisible. For scale, that streak's own swing on this ground is about 0.68 of
+   * a step, so the two layers are the same order and neither drowns the other.
    */
-  gustBrightness: 0.4,
+  gustBrightness: 0.38,
 
   /** 5 units, so a speck is three or four pixels. Below this it would crawl. */
   microScale: 5,
@@ -386,30 +419,98 @@ export const LIVING_GROUND_SHAPE = {
   macroLow: 0.26,
   macroHigh: 0.74,
 
-  /** The dry field: its own octave of the macro scale, and how sparse it is. */
-  dryOctave: 0.61,
-  dryOffset: 113.4,
-  dryCut: 0.62,
-  drySoft: 0.2,
-  /** How much of the macro strength a dry patch is allowed to spend. */
-  dryShare: 0.8,
+  /**
+   * The **coarse field**: one long-wavelength sample doing three jobs -- where
+   * the ground is dry, which way the strokes lie, and how far the wind trails
+   * bow. 0.28 of the macro frequency puts its features around 790 units, so
+   * about one of them spans the frame.
+   *
+   * That length is the whole point and it is what fixed the fingerprints. A
+   * rotation field is read as *curl* when its wavelength is close to the length
+   * of the marks turning inside it: at the macro scale it drove this one, the
+   * direction swung through its whole range every couple of hundred units and a
+   * few strokes' worth of turning closed into a whorl. Over 790 units the same
+   * swing is a long arc that a screen holds one bend of.
+   *
+   * Two jobs off one sample rather than two, because they are the same question
+   * -- which way is the ground lying around here -- and because the budget for
+   * this layer is eight noise samples.
+   *
+   * **The dry patches are deliberately not the third.** They were, briefly, and
+   * it turned the meadow yellow: dryness is the layer's most chromatic term, a
+   * feature at this wavelength is wider than the frame, and a frame sitting
+   * wholly inside one is not a dry patch in a clearing, it is a dry clearing.
+   * Measured through the panel, zeroing the macro term took the ground's R/G
+   * from 0.95 back to 0.86 against 0.83 with the whole layer off -- so that one
+   * term was nearly all of the shift. Dryness went back to the macro scale,
+   * where a patch is a patch.
+   */
+  coarseOctave: 0.28,
+  coarseOffset: 113.4,
+  /**
+   * Where a dry patch starts and how soft its edge is, on `m1 * (1 - m2)`.
+   *
+   * A **product of the two macro octaves** rather than a field of its own, which
+   * buys two things for no extra sample. It is sparse by construction -- both
+   * have to agree, and they are decorrelated, so the product's mean is a quarter
+   * rather than a half -- and it is *anti*-correlated with the tone the same two
+   * octaves produce, so dry ground does not pile onto the brightest patches and
+   * compound into one yellow region. Surveyed over four screen-sized windows it
+   * lands on 5-14% of the ground, which is what "occasional" has to mean for a
+   * term this chromatic.
+   */
+  dryCut: 0.45,
+  drySoft: 0.15,
+  /**
+   * How much of the macro strength a dry patch is allowed to spend.
+   *
+   * 0.6 rather than 0.8, because this is the one tone in the palette that is not
+   * a green and it is the first thing to be noticed if it reaches too far.
+   */
+  dryShare: 0.6,
 
   /**
-   * How far a stroke is stretched along its own direction. 0.5 makes it twice
-   * as long as it is wide, which reads as a mark made by something rather than
-   * as a blob -- and no longer than that, because a stroke long enough to meet
-   * its neighbours is a grain in the ground rather than a stroke on it.
+   * How far a stroke is stretched along its own direction. 0.3 makes it a bit
+   * over three times longer than it is wide -- an arc rather than a dash, which
+   * is what the wind is meant to have combed into it.
+   *
+   * It was 0.5, and lengthening it was safe only once the direction field was
+   * made coarse: an elongated mark in a tightly curling field is what draws a
+   * fingerprint, so the two numbers had to move together.
    */
-  strokeStretch: 0.5,
-  /** The clump field that breaks the strokes up, as an octave of the stroke scale. */
-  clumpOctave: 0.38,
+  strokeStretch: 0.3,
+  /**
+   * The clump field: which ground carries strokes at all, as an octave of the
+   * stroke scale. 0.18 puts its features around 110 units -- several strokes
+   * across, so it gathers them into clusters rather than nibbling at each one.
+   */
+  clumpOctave: 0.18,
   clumpOffset: 7.7,
-  /** A clump multiplies the stroke field by `base + gain * clump`. */
-  clumpBase: 0.55,
-  clumpGain: 0.9,
-  /** The stroke threshold at density 0 and at density 1, and its softness. */
-  strokeCutHigh: 0.78,
-  strokeCutLow: 0.44,
+  /**
+   * A clump is a **gate**, not a modulation, and that is the change that bought
+   * the quiet ground.
+   *
+   * `base + gain * gate` multiplies the stroke field before it meets its
+   * threshold, and at `clumpBase` alone the product cannot reach that threshold
+   * from any value the stroke field takes -- so ground outside a clump carries
+   * no strokes whatsoever rather than faint ones. Modulated instead of gated,
+   * every part of the meadow had *some* stroke in it, which is a texture over
+   * the whole ground and reads as brushed metal.
+   */
+  clumpGateLow: 0.35,
+  clumpGateHigh: 0.72,
+  clumpBase: 0.25,
+  clumpGain: 1.35,
+  /**
+   * The stroke threshold at density 0 and at density 1, and its softness.
+   *
+   * Both ends moved up by 0.14 when the noise was fixed, for the reason
+   * `LivingGroundConfig.detailDensity` records at length: they were set against
+   * a hash that could barely reach them, and against a well-behaved field the
+   * same numbers passed nearly half the ground.
+   */
+  strokeCutHigh: 0.92,
+  strokeCutLow: 0.58,
   strokeSoft: 0.14,
   /**
    * How much of the stroke strength the darker counter-strokes take.
@@ -419,7 +520,7 @@ export const LIVING_GROUND_SHAPE = {
    * and there is no untouched ground left anywhere -- which is a texture rather
    * than a scatter of marks.
    */
-  strokeShade: 0.35,
+  strokeShade: 0.3,
   /** How far a steep face suppresses strokes, at full slope. */
   strokeSlopeCut: 0.75,
 
@@ -427,11 +528,29 @@ export const LIVING_GROUND_SHAPE = {
    * How much wider a gust front is across the flow than along it. Below 1 the
    * fronts lie across the wind, which is what makes them fronts -- `WIND` states
    * the same thing for the same reason, at 0.35.
+   *
+   * 0.18 against the 0.30 it opened at, which is where most of "broader" was
+   * actually bought. A front's *length* along the flow decides how many of them
+   * a frame holds; its width across the flow decides whether each one reads as a
+   * band or as a lobe, and at 0.18 a front is more than five times wider than it
+   * is long -- far wider than the frame, so what crosses is a boundary running
+   * off both edges rather than a patch drifting through.
    */
-  gustAspect: 0.3,
+  gustAspect: 0.18,
   /** Half-width of a front's transition at contrast 0, and at contrast 1. */
   gustEdgeSoft: 0.4,
   gustEdgeHard: 0.04,
+  /**
+   * What 100% of `LivingGroundConfig.gustBrightness` means, as a fraction of the
+   * grass's own brightness.
+   *
+   * 0.34, so the shipped 38% is a swing of about 13% either way -- a shade under
+   * what `WIND.streakContrast` puts on the same ground, which is the right order:
+   * these are two layers of one moving air mass and neither should drown the
+   * other. Compiled in rather than exposed, for `wind.ts`'s reason -- it is what
+   * the slider's range *is*, not a thing to tune per session.
+   */
+  gustBreath: 0.34,
   /**
    * How much *again* a stroke brightens inside the leading half of a front, on
    * top of the tint the whole meadow takes.
@@ -441,22 +560,45 @@ export const LIVING_GROUND_SHAPE = {
    * *pattern* that comes alive rather than a plane that changes brightness.
    * Leading half only: a stroke that dimmed behind the front would read as the
    * grass thinning out rather than as the light moving on.
-   */
-  gustStrokeGain: 0.9,
-
-  /** The ground layer's own drift, world units per second, before `windSpeed`. */
-  driftSpeed: 46,
-  /**
-   * How far the macro field may bend a stroke off the wind axis, radians.
    *
-   * 0.30 -- about seventeen degrees each way -- and it was 0.8 until the noise
-   * was fixed. A rotation field that swings a full quadrant over the macro scale
-   * does not read as a combed meadow, it reads as **circulation**: the strokes
-   * close into whorls a couple of hundred units across and the ground turns into
-   * marbled paper. Seventeen degrees is enough that strokes over one patch lie
-   * differently from the next without any of them curling round.
+   * 2.0, and it carries far more of the layer's weight than it used to: the
+   * strokes at rest were halved, so what a still frame shows is a faint texture
+   * and what the crest of a gust shows is a stroke worth a whole colour step.
+   * That gap *is* the "calm in a screenshot, alive in motion" the look is for.
    */
-  flowBend: 0.3,
+  gustStrokeGain: 2.0,
+
+  /**
+   * How far a gust lowers the stroke threshold at its crest.
+   *
+   * The other half of the reveal, and the half that makes it read as *more
+   * grass* rather than as brighter grass: inside a front, strokes that were
+   * below the cut cross it and appear, then sink back as the front passes.
+   * Brightness alone would be a light moving over a fixed pattern.
+   */
+  gustReveal: 0.16,
+
+  /**
+   * The ground layer's own drift, world units per second, before `windSpeed`.
+   *
+   * 90, raised with `gustScale`. A front is a feature about 760 units long, so
+   * this is one crossing any given blade of grass about every eight seconds --
+   * slower than the streak layer's 2.1, which is what a *broad* sweep should be,
+   * and far short of the sixteen seconds the old speed would have given once the
+   * structures were made two and a half times bigger. Scale without speed is a
+   * gust that has stopped being weather.
+   */
+  driftSpeed: 90,
+  /**
+   * How far the coarse field may bend a stroke off the wind axis, radians.
+   *
+   * 0.45 -- about twenty-six degrees each way -- and it is the *field* that
+   * makes that safe rather than the angle. Driven off the macro scale it was
+   * cut to 0.30 and still curled, because what turns a bend into a curl is the
+   * wavelength it turns over, not how far it turns; off the coarse field it can
+   * afford more swing and reads as arcs. See `LIVING_GROUND_SHAPE.coarseOctave`.
+   */
+  flowBend: 0.45,
   /** How far a trail is stretched along the flow. */
   trailStretch: 0.2,
   /** How far the macro field drags a trail sideways, as a fraction of `windScale`. */
@@ -464,11 +606,24 @@ export const LIVING_GROUND_SHAPE = {
   /** How wide a trail's ridge is, as a fraction of the ridge function's range. */
   trailWidth: 0.22,
 
-  /** Where each tail of the micro field starts, and how soft it is. */
-  microCut: 0.8,
-  microSoft: 0.12,
+  /**
+   * Where each tail of the micro field starts, and how soft it is.
+   *
+   * 0.88 against the 0.80 it opened at, which takes the specks from about a
+   * quarter of the ground to about a twentieth. That is where the *static*
+   * micro detail was actually coming from: at 0.80 both tails together marked
+   * nearly half the meadow, which is not a scatter of flecks, it is a grain --
+   * and a grain at this frequency is exactly what reads as brushed metal.
+   *
+   * The per-speck contrast is held near the legibility floor rather than
+   * lowered with it, and that is a deliberate reading of "quieter": a speck
+   * worth less than a colour step is a noise sample that draws nothing at all,
+   * so what buys quiet here is how few of them there are.
+   */
+  microCut: 0.88,
+  microSoft: 0.07,
   /** How much of the micro strength the dark clumps take against the light tips. */
-  microDarkShare: 0.8,
+  microDarkShare: 0.72,
 
   /** How far a steep face is drained of colour, at full slope strength. */
   slopeDesaturate: 0.45,
@@ -739,14 +894,16 @@ const float GRASS_MACRO_WEIGHT = ${f(s.macroWeight)};
 const float GRASS_MACRO_OFFSET = ${f(s.macroOffset)};
 const float GRASS_MACRO_LOW = ${f(s.macroLow)};
 const float GRASS_MACRO_HIGH = ${f(s.macroHigh)};
-const float GRASS_DRY_OCTAVE = ${f(s.dryOctave)};
-const float GRASS_DRY_OFFSET = ${f(s.dryOffset)};
+const float GRASS_COARSE_OCTAVE = ${f(s.coarseOctave)};
+const float GRASS_COARSE_OFFSET = ${f(s.coarseOffset)};
 const float GRASS_DRY_CUT = ${f(s.dryCut)};
 const float GRASS_DRY_SOFT = ${f(s.drySoft)};
 const float GRASS_DRY_SHARE = ${f(s.dryShare)};
 const float GRASS_STROKE_STRETCH = ${f(s.strokeStretch)};
 const float GRASS_CLUMP_OCTAVE = ${f(s.clumpOctave)};
 const float GRASS_CLUMP_OFFSET = ${f(s.clumpOffset)};
+const float GRASS_CLUMP_GATE_LOW = ${f(s.clumpGateLow)};
+const float GRASS_CLUMP_GATE_HIGH = ${f(s.clumpGateHigh)};
 const float GRASS_CLUMP_BASE = ${f(s.clumpBase)};
 const float GRASS_CLUMP_GAIN = ${f(s.clumpGain)};
 const float GRASS_STROKE_CUT_HIGH = ${f(s.strokeCutHigh)};
@@ -757,7 +914,9 @@ const float GRASS_STROKE_SLOPE_CUT = ${f(s.strokeSlopeCut)};
 const float GRASS_GUST_ASPECT = ${f(s.gustAspect)};
 const float GRASS_GUST_EDGE_SOFT = ${f(s.gustEdgeSoft)};
 const float GRASS_GUST_EDGE_HARD = ${f(s.gustEdgeHard)};
+const float GRASS_GUST_BREATH = ${f(s.gustBreath)};
 const float GRASS_GUST_STROKE_GAIN = ${f(s.gustStrokeGain)};
+const float GRASS_GUST_REVEAL = ${f(s.gustReveal)};
 const float GRASS_DRIFT_SPEED = ${f(s.driftSpeed)};
 const float GRASS_FLOW_BEND = ${f(s.flowBend)};
 const float GRASS_TRAIL_STRETCH = ${f(s.trailStretch)};
@@ -860,7 +1019,12 @@ vec3 livingGround(vec3 albedo, vec3 worldPos, vec3 worldNormal, float t) {
   float macroFreq = 1.0 / max(1.0, uGrassMacroScale);
   float m1 = grassNoise(p * macroFreq);
   float m2 = grassNoise(p * macroFreq * GRASS_MACRO_OCTAVE + GRASS_MACRO_OFFSET);
-  float dryField = grassNoise(p * macroFreq * GRASS_DRY_OCTAVE + GRASS_DRY_OFFSET);
+  // The coarse field: one long-wavelength sample that says which way the ground
+  // is lying around here. It sets the dry patches below, the angle the strokes
+  // lie at, and how far the wind trails bow -- three questions with one answer,
+  // and the wavelength is what keeps the strokes from curling (see
+  // GRASS_COARSE_OCTAVE).
+  float coarse = grassNoise(p * macroFreq * GRASS_COARSE_OCTAVE + GRASS_COARSE_OFFSET);
   float tone = grassMacroTone(m1, m2);
 
   // --- slope: read before anything spends it -------------------------------
@@ -873,12 +1037,18 @@ vec3 livingGround(vec3 albedo, vec3 worldPos, vec3 worldNormal, float t) {
   float gustFreq = 1.0 / max(1.0, uGrassGustScale);
   float gust = grassGustFront(grassNoise(vec2(flow.x, flow.y * GRASS_GUST_ASPECT) * gustFreq),
                          uGrassGustContrast);
+  // Two-sided about the middle, and read here rather than in the compose block
+  // below because the strokes want it: a front does not only light the pattern,
+  // it lets more of it through.
+  float front = (gust - 0.5) * 2.0;
 
-  // The stroke axis: the wind, bent by the macro field. One rotation, and it is
-  // the whole of "swept curves" -- strokes over one patch comb together and the
-  // next patch combs somewhere else, which is what a meadow does and what a
-  // fixed direction cannot.
-  float bend = (m1 - 0.5) * 2.0 * GRASS_FLOW_BEND;
+  // The stroke axis: the wind, bent by the coarse field. One rotation, and it is
+  // the whole of "swept arcs" -- strokes over one stretch of ground comb
+  // together and the next stretch combs somewhere else, which is what a meadow
+  // does and what a fixed direction cannot. Off the *coarse* field rather than
+  // the macro one, because a direction that swings its whole range every couple
+  // of hundred units draws fingerprints rather than arcs.
+  float bend = (coarse - 0.5) * 2.0 * GRASS_FLOW_BEND;
   float cb = cos(bend);
   float sb = sin(bend);
   vec2 dir = vec2(uWindDir.x * cb - uWindDir.y * sb, uWindDir.x * sb + uWindDir.y * cb);
@@ -890,7 +1060,7 @@ vec3 livingGround(vec3 albedo, vec3 worldPos, vec3 worldNormal, float t) {
   // grain already runs into. Multiplied by the front, so a trail arrives and
   // leaves with the gust rather than standing there.
   float trailFreq = 1.0 / max(1.0, uGrassWindScale);
-  vec2 warped = drift + side * ((m2 - 0.5) * uGrassWindScale * GRASS_TRAIL_WARP);
+  vec2 warped = drift + side * ((coarse - 0.5) * uGrassWindScale * GRASS_TRAIL_WARP);
   float tf = grassNoise(vec2(dot(warped, dir) * GRASS_TRAIL_STRETCH, dot(warped, side)) * trailFreq);
   float ridge = 1.0 - abs(tf * 2.0 - 1.0);
   float trail = smoothstep(1.0 - GRASS_TRAIL_WIDTH, 1.0, ridge) * gust;
@@ -899,11 +1069,23 @@ vec3 livingGround(vec3 albedo, vec3 worldPos, vec3 worldNormal, float t) {
   float detailFreq = 1.0 / max(1.0, uGrassDetailScale);
   float stroke = grassNoise(vec2(dot(p, dir) * GRASS_STROKE_STRETCH, dot(p, side)) * detailFreq);
   float clump = grassNoise(p * detailFreq * GRASS_CLUMP_OCTAVE + GRASS_CLUMP_OFFSET);
-  float broken = GRASS_CLUMP_BASE + GRASS_CLUMP_GAIN * clump;
+  // A gate rather than a modulation: at GRASS_CLUMP_BASE the product cannot
+  // reach the threshold from any value the stroke field takes, so ground outside
+  // a clump carries no strokes at all. Modulated instead, every part of the
+  // meadow keeps a faint one -- and a faint mark everywhere is a grain rather
+  // than a scatter of marks.
+  float broken = GRASS_CLUMP_BASE
+               + GRASS_CLUMP_GAIN * smoothstep(GRASS_CLUMP_GATE_LOW, GRASS_CLUMP_GATE_HIGH, clump);
   float cut = mix(GRASS_STROKE_CUT_HIGH, GRASS_STROKE_CUT_LOW, clamp(uGrassDetailDensity, 0.0, 1.0));
-  float strokes = smoothstep(cut, cut + GRASS_STROKE_SOFT, stroke * broken);
+  // The reveal: a front's leading half lowers the threshold, so strokes that sat
+  // under it cross and appear, then sink back as the front goes by. That is what
+  // makes a gust read as *more grass* rather than as the same grass lit harder.
+  float litCut = cut - max(front, 0.0) * GRASS_GUST_REVEAL;
+  float strokes = smoothstep(litCut, litCut + GRASS_STROKE_SOFT, stroke * broken);
   // The other tail of the same field, so the counter-strokes cost no sample and
-  // land between the bright ones rather than under them.
+  // land between the bright ones rather than under them. Deliberately *not*
+  // revealed: letting both tails in would raise the pattern's contrast inside a
+  // front rather than bring more grass forward.
   float shade = smoothstep(cut, cut + GRASS_STROKE_SOFT, (1.0 - stroke) * broken);
 
   // --- micro: sparse specks, both tails of one field -----------------------
@@ -925,15 +1107,12 @@ vec3 livingGround(vec3 albedo, vec3 worldPos, vec3 worldNormal, float t) {
   // itself a negative offset -- is added rather than subtracted.
   vec3 delta = (toLight * max(tone, 0.0) - toDark * min(tone, 0.0)) * uGrassMacroStrength;
 
-  float dry = smoothstep(GRASS_DRY_CUT, GRASS_DRY_CUT + GRASS_DRY_SOFT, dryField) * (1.0 - steep);
+  // The product of the two macro octaves: sparse because both must agree, and at
+  // the macro scale rather than the coarse one because a dry patch wider than the
+  // frame is not a patch -- it is a dry clearing, and it turned this one yellow.
+  float dry = smoothstep(GRASS_DRY_CUT, GRASS_DRY_CUT + GRASS_DRY_SOFT, m1 * (1.0 - m2))
+            * (1.0 - steep);
   delta = mix(delta, toDry, dry * uGrassMacroStrength * GRASS_DRY_SHARE);
-
-  // The front, two-sided about the middle: it lifts the grass ahead of itself
-  // and drops it behind, so the meadow's mean brightness does not move. A
-  // one-sided front repaints the whole world to animate a part of it, which is
-  // the mistake GLSL_STREAK records not making.
-  float front = (gust - 0.5) * 2.0;
-  delta += toLight * front * uGrassGustBrightness * (1.0 - steep);
 
   // ...and the pattern takes it a second time, so a stroke steps forward inside
   // a front rather than merely riding the tint under it. That is the brief's
@@ -968,6 +1147,14 @@ vec3 livingGround(vec3 albedo, vec3 worldPos, vec3 worldNormal, float t) {
   float drained = steep * uGrassSlopeStrength * grass * GRASS_SLOPE_DESATURATE;
   float luma = dot(result, vec3(0.2126, 0.7152, 0.0722));
   result = mix(result, vec3(luma), drained);
+
+  // The front's breath over the whole meadow, last and **multiplicative**: it
+  // lifts the grass ahead of itself and drops it behind, and being a multiplier
+  // it scales every channel together and cannot shift the hue. Mixed toward the
+  // light tone instead -- which is what this did first -- a front big enough to
+  // blanket the frame did not brighten the clearing, it turned it yellow, since
+  // that tone is a good deal redder than the ground it was lifting.
+  result *= 1.0 + front * uGrassGustBrightness * GRASS_GUST_BREATH * (1.0 - steep) * grass;
 
   return max(result, vec3(0.0));
 }

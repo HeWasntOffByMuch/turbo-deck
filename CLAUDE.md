@@ -5932,6 +5932,39 @@ src/render/iso3d/living-ground.ts, terrain-living.ts  what the grass surface is
                  be asserted over the transcribed field in Node, where a time is
                  an argument. A browser probe reports a working front as a broken
                  one, and very nearly did.
+                 A second pass tuned it (same spec), and its findings are the
+                 first ones' in different clothes -- a number chosen for how big
+                 it is rather than for how it sits against the frame. The look
+                 read as **fingerprints and brushed metal**, and four things were
+                 wrong. **Density, not amplitude**: both micro tails at a 0.80 cut
+                 marked nearly half the meadow and the strokes about as much
+                 again, and a faint mark everywhere is a grain -- so the cuts went
+                 up and the clump became a **gate**, outside which the stroke
+                 field cannot reach its threshold from any value it takes.
+                 **Curl is a wavelength, not an angle**: the stroke direction came
+                 off the macro field, which swings its whole range about every two
+                 hundred units -- the length of a few strokes, which is exactly
+                 the condition for a whorl -- so it comes off a long-wavelength
+                 `coarse` field now (~790 units), which lets the bend be *larger*
+                 and read as arcs. **A structure wider than the frame is not a
+                 structure**: scaling the gusts 2.5x put a third of frames wholly
+                 inside one lobe, so the front stopped crossing the clearing and
+                 started tinting it (surveyed: 4% of frames blanketed at the
+                 original size, 42% at 380). And **a tint toward a tone shifts
+                 hue where a multiplier cannot** -- mixing toward the light tone,
+                 markedly redder than the base, turned the meadow yellow once the
+                 fronts were that big, so the breath is multiplicative like
+                 `GLSL_STREAK`'s. The same trap had caught the dry patches when
+                 they were briefly moved onto the coarse field, and the panel
+                 found it: zeroing the macro term took the ground's R/G from 0.95
+                 back to 0.86 against 0.83 with the layer off.
+                 The one place the band rule is deliberately inverted is the
+                 strokes: **half a step at rest and a whole one at a gust's
+                 crest**, where every other mark clears a step standing still.
+                 That gap is the look -- calm in a screenshot, alive in motion --
+                 and `gustReveal` is its other half, a front lowering the stroke
+                 *threshold* as well as its brightness, so what passes is more
+                 grass rather than the same grass lit harder.
                  What is deliberately **not** built is the forest-edge term. There
                  is no prop distance field in this renderer and building one is a
                  system of its own, so `grassShelterAt` returns 0.0 and
