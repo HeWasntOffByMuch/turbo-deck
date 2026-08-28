@@ -1,5 +1,5 @@
 /**
- * The living ground (spec 250): what the grass surface is made of, at four
+ * The living ground (spec 252): what the grass surface is made of, at four
  * scales, and what the wind does to the pattern rather than to the plane.
  *
  * Pure -- no three.js, no DOM, no clock -- for the two reasons `wind.ts` gives.
@@ -174,7 +174,7 @@ export interface LivingGroundConfig {
    *
    * **Ships at 0, and the field it would read is not built.** There is no prop
    * distance field in this renderer and building one is a system of its own
-   * (spec 250 puts it out of scope); `grassShelterAt` in the GLSL returns 0.0
+   * (spec 252 puts it out of scope); `grassShelterAt` in the GLSL returns 0.0
    * and is the one function to fill in the day there is one. The colour
    * arithmetic that consumes it is written and tested, so what lands then is a
    * function body rather than a feature.
@@ -997,7 +997,7 @@ float grassSlopeSteepness(float normalY, float start, float end) {
   return 1.0 - smoothstep(end, start, normalY);
 }
 
-// The forest-edge seam (spec 250). There is no prop distance field in this
+// The forest-edge seam (spec 252). There is no prop distance field in this
 // renderer, so this is 0.0 and uGrassShelter ships at 0 -- but everything that
 // consumes it below is written and tested, so the day a field exists this is a
 // function body rather than a feature. Whatever fills it in must return 0 in the

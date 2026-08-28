@@ -53,7 +53,7 @@ import { patchTerrainLiving } from './terrain-living.js';
  *
  * Both ground materials carry the wind's streak layer (spec 074), from the same
  * clock and the same direction the trees lean and the water churns to. The
- * surface carries the living-ground layer on top of that (spec 250) -- macro
+ * surface carries the living-ground layer on top of that (spec 252) -- macro
  * colour patches, brush strokes, gust fronts and specks -- which is albedo only:
  * the geometry below is exactly the triangles the mesher emitted.
  */
@@ -78,7 +78,7 @@ patchTerrainCurvature(surfaceMaterial);
 // triplanar.
 patchTerrainDetail(surfaceMaterial);
 patchTerrainDetail(wallMaterial);
-// Only the surface, and only **last** (spec 250). A cut bank is earth rather
+// Only the surface, and only **last** (spec 252). A cut bank is earth rather
 // than meadow, so the walls keep `TERRAIN_CLIFF_COLORS` untouched; and the order
 // is a requirement rather than a preference, because each of these patches
 // splices in front of the ones applied before it -- so the last one applied is

@@ -75,7 +75,7 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
-| `npm run build && npx tsx scripts/probe-living-ground.ts` | Whether the grass is alive in the shipped page, and only the grass (spec 250). Defines **its own footprint** rather than measuring a crop somebody chose: with the weather clock stilled, the pixels that change when the panel's Ground detail goes to zero *are* the pixels the layer reaches, so its mean colour answers "did it stay on grass" and every later number is counted inside it. Reports the tones that ground holds with the layer off against with it on, because a modulation the retro pass rounds away adds no tones at all -- which is exactly how spec 074's streak shipped invisible |
+| `npm run build && npx tsx scripts/probe-living-ground.ts` | Whether the grass is alive in the shipped page, and only the grass (spec 252). Defines **its own footprint** rather than measuring a crop somebody chose: with the weather clock stilled, the pixels that change when the panel's Ground detail goes to zero *are* the pixels the layer reaches, so its mean colour answers "did it stay on grass" and every later number is counted inside it. Reports the tones that ground holds with the layer off against with it on, because a modulation the retro pass rounds away adds no tones at all -- which is exactly how spec 074's streak shipped invisible |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -6149,7 +6149,7 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
 src/render/iso3d/living-ground.ts, terrain-living.ts  what the grass surface is
-                 made of (spec 250), and what the wind does to the *pattern*
+                 made of (spec 252), and what the wind does to the *pattern*
                  rather than to the plane. A fourth patch on the terrain surface
                  material, in the register of the three already on it, and albedo
                  only -- nothing is displaced, nothing is instanced, the ground is

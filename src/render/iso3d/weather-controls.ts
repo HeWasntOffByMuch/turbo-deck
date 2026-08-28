@@ -33,7 +33,7 @@ import { createSettingsMenu, resetButton, section } from './settings-menu.js';
  *
  * ## Why the ground is in here
  *
- * The living ground (spec 250) joins this panel rather than taking a seventh
+ * The living ground (spec 252) joins this panel rather than taking a seventh
  * button, and the reason is the one thing spec 074 will not let go of: there is
  * one wind direction and one clock, and the ground's gust fronts are that wind.
  * A panel of its own would be a second place to reason about which way the world
@@ -200,7 +200,7 @@ export function createWeatherControls(opts: WeatherControlOptions = {}): Weather
     (v) => setWindSpeed(v / 100),
   );
 
-  // --- the ground (spec 250) -----------------------------------------------
+  // --- the ground (spec 252) -----------------------------------------------
   // Each row writes one field of the living-ground config, so nothing here has
   // to restate the twenty it does not own.
   const groundKnob = (

@@ -19,7 +19,7 @@ import { MAX_WALK_ANGLE_DEG } from '../../sim/constants.js';
 import { WIND, windDirection, WIND_BEARING_DEG } from './wind.js';
 
 /**
- * The living ground (spec 250).
+ * The living ground (spec 252).
  *
  * Two of the three things this guards were learned one spec at a time somewhere
  * else in the tree, and both are the reason a layer can be correctly wired,

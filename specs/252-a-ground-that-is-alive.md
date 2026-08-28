@@ -1,4 +1,4 @@
-# 250 — A ground that is alive
+# 252 — A ground that is alive
 
 ## Problem
 

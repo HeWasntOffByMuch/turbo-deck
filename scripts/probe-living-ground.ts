@@ -1,5 +1,5 @@
 /**
- * Whether the living ground (spec 250) is wired to anything, and whether it is
+ * Whether the living ground (spec 252) is wired to anything, and whether it is
  * restrained -- in the shipped page, on the map the game boots from.
  *
  *   npm run build && npx tsx scripts/probe-living-ground.ts

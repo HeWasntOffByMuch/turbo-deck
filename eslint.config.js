@@ -75,7 +75,7 @@ const PURE_RENDER = [
   'src/render/iso3d/wind.test.ts',
   'src/render/iso3d/shore-sdf.ts',
   'src/render/iso3d/shore-sdf.test.ts',
-  // The living ground's numbers and the shader they generate (spec 250), beside
+  // The living ground's numbers and the shader they generate (spec 252), beside
   // the wind for the wind's reason and one more of its own: the layer is a
   // *palette* -- four colours and the scales they land at -- and whether a
   // colour still survives the retro pass, or whether a material other than grass

@@ -13,7 +13,7 @@ import { patchTerrainDetail } from './terrain-detail.js';
 import { LIVING_GROUND, LIVING_GROUND_LIMITS, glslLivingGround } from './living-ground.js';
 
 /**
- * The material patch (spec 250).
+ * The material patch (spec 252).
  *
  * `living-ground.test.ts` holds what the layer *is*; this holds whether it is
  * wired to anything, which on this material is a question about **order**. Four

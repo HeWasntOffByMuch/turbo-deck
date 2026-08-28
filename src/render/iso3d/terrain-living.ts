@@ -7,7 +7,7 @@ import {
 } from './living-ground.js';
 
 /**
- * The three.js half of the living ground (spec 250): the uniform objects the
+ * The three.js half of the living ground (spec 252): the uniform objects the
  * weather panel writes through, and the patch that splices the surface shader
  * into the ground material.
  *
@@ -184,7 +184,7 @@ export function resetLivingGround(): void {
  *
  * Surface only. The cliff walls keep `TERRAIN_CLIFF_COLORS` and their own two
  * patches: a cut bank is earth rather than meadow, its colours are outside the
- * grass mask anyway, and spec 250 is explicit that the existing rock and cliff
+ * grass mask anyway, and spec 252 is explicit that the existing rock and cliff
  * treatment is not what this replaces.
  *
  * Composed rather than assigned, like every patch on this material --
