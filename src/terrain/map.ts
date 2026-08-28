@@ -6,7 +6,17 @@ import {
 } from './chunk.js';
 import type { TerrainFeature } from './features.js';
 import { TERRAIN_MATERIALS, rectContains, type Rect, type TerrainWorld } from './types.js';
-import { FENCE_KINDS, STRUCTURE_KINDS, type Prop, type PropKind } from './vegetation.js';
+import {
+  FENCE_KINDS,
+  FIXTURE_KINDS,
+  MAX_FIXTURE_BRIGHTNESS,
+  MAX_FIXTURE_RADIUS,
+  MIN_FIXTURE_BRIGHTNESS,
+  MIN_FIXTURE_RADIUS,
+  STRUCTURE_KINDS,
+  type Prop,
+  type PropKind,
+} from './vegetation.js';
 
 /**
  * The map document (spec 048): a world written down.
@@ -113,6 +123,20 @@ export interface MapProp {
   readonly align?: boolean;
   /** Draw it in one flat colour per material rather than varied (spec 061). */
   readonly uniform?: boolean;
+  /**
+   * What a light fixture burns at, overriding its kind's row (spec 248).
+   *
+   * Optional, and absent by default, which is what keeps this a change nobody's
+   * map noticed: no committed document gains a key, so no region file's bytes
+   * move and no `mapId` does either.
+   */
+  readonly light?: MapPropLight;
+}
+
+/** A fixture's two authored numbers, as the document stores them (spec 248). */
+export interface MapPropLight {
+  readonly brightness: number;
+  readonly radius: number;
 }
 
 export type MapMarkerKind = 'spawn' | 'objective' | 'campfire' | 'trigger' | 'spawner';
@@ -447,6 +471,9 @@ export function exportMap(input: ExportMapInput): MapDocument {
           // Omitted when upright, so the generated forest's JSON is unchanged.
           ...(prop.alignToNormal ? { align: true } : {}),
           ...(prop.uniform ? { uniform: true } : {}),
+          ...(prop.light
+            ? { light: { brightness: quantize(prop.light.brightness), radius: quantize(prop.light.radius) } }
+            : {}),
         })),
         markers: (markersByChunk.get(key) ?? []).map((m) => ({
           kind: m.kind,
@@ -549,7 +576,8 @@ function writeProp(prop: MapProp): string {
   return (
     `{ "species": ${writeScalar(prop.species)}, "x": ${prop.x}, "z": ${prop.z}, ` +
     `"rotation": ${prop.rotation}, "scale": ${prop.scale}, "tint": ${prop.tint}` +
-    `${prop.align ? ', "align": true' : ''}${prop.uniform ? ', "uniform": true' : ''} }`
+    `${prop.align ? ', "align": true' : ''}${prop.uniform ? ', "uniform": true' : ''}` +
+    `${prop.light ? `, "light": { "brightness": ${prop.light.brightness}, "radius": ${prop.light.radius} }` : ''} }`
   );
 }
 
@@ -805,12 +833,35 @@ function withKey<K extends string, V>(key: K, value: V | undefined): Partial<Rec
   return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
 }
 
+/**
+ * A fixture's light block, or undefined (spec 248).
+ *
+ * Both numbers are required once the block is there. A half-written light is a
+ * fixture whose reach came from the table and whose brightness came from a
+ * document, which is a light nobody can reason about from either -- and the
+ * bounds are checked here rather than clamped, because a clamp turns somebody's
+ * typo into a number that quietly works.
+ */
+function parsePropLight(value: unknown, what: string): MapPropLight {
+  const r = asRecord(value, what);
+  const brightness = asNumber(r['brightness'], `${what}.brightness`);
+  const radius = asNumber(r['radius'], `${what}.radius`);
+  if (brightness < MIN_FIXTURE_BRIGHTNESS || brightness > MAX_FIXTURE_BRIGHTNESS) {
+    fail(`${what}.brightness must be between ${MIN_FIXTURE_BRIGHTNESS} and ${MAX_FIXTURE_BRIGHTNESS}`);
+  }
+  if (radius < MIN_FIXTURE_RADIUS || radius > MAX_FIXTURE_RADIUS) {
+    fail(`${what}.radius must be between ${MIN_FIXTURE_RADIUS} and ${MAX_FIXTURE_RADIUS}`);
+  }
+  return { brightness, radius };
+}
+
 function parseProp(value: unknown, what: string): MapProp {
   const r = asRecord(value, what);
   const align = r['align'];
   if (align !== undefined && typeof align !== 'boolean') fail(`${what}.align must be a boolean`);
   const uniform = r['uniform'];
   if (uniform !== undefined && typeof uniform !== 'boolean') fail(`${what}.uniform must be a boolean`);
+  const light = r['light'];
   return {
     species: asString(r['species'], `${what}.species`),
     x: asNumber(r['x'], `${what}.x`),
@@ -820,6 +871,7 @@ function parseProp(value: unknown, what: string): MapProp {
     tint: asNumber(r['tint'], `${what}.tint`),
     ...(align === true ? { align: true } : {}),
     ...(uniform === true ? { uniform: true } : {}),
+    ...(light === undefined ? {} : { light: parsePropLight(light, `${what}.light`) }),
   };
 }
 
@@ -926,7 +978,13 @@ export function parseMap(text: string): MapDocument {
 }
 
 /** The prop kinds the renderer knows how to build, for validating a species id. */
-const KNOWN_PROP_KINDS: readonly string[] = ['tree', 'bush', ...FENCE_KINDS, ...STRUCTURE_KINDS];
+const KNOWN_PROP_KINDS: readonly string[] = [
+  'tree',
+  'bush',
+  ...FENCE_KINDS,
+  ...STRUCTURE_KINDS,
+  ...FIXTURE_KINDS,
+];
 
 /** True when a species id maps onto a `PropKind` the prop field can draw. */
 export function isKnownPropKind(species: string): species is PropKind {
