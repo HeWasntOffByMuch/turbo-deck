@@ -1435,15 +1435,21 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // both are claims about *what is on screen* rather than about a number in a
     // model, which is the half a Node test cannot reach.
     const barSlots = boxes(readout.barSlots);
+    // The bubble and its replies (spec 249). In the key as well as the
+    // attributes: a reply appearing changes nothing else on this line, and it is
+    // the one thing a harness has to be able to press.
+    const dialogueRects = boxes(readout.dialogueRects);
+    const dialogue = `${String(readout.dialogueOpen)}|${dialogueRects}|${readout.dialogueLine}`;
     const selectedRows = readout.selectedRows.join(';');
     const selected = `${readout.selected}|${selectedRows}|${readout.selectedRect ? 'shown' : 'hidden'}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
       `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
-      `|${trade}|${tradeRects}|${chat}|${barSlots}|${selected}`;
+      `|${trade}|${tradeRects}|${chat}|${barSlots}|${selected}|${dialogue}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
+    root.dataset['uiDialogue'] = dialogue;
     root.dataset['uiBag'] = bag;
     root.dataset['uiScale'] = String(readout.scale);
     root.dataset['uiViewport'] = `${readout.viewport.width}x${readout.viewport.height}`;

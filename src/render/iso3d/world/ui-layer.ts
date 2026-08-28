@@ -114,6 +114,9 @@ export interface UiReadout {
   readonly selectedRect: Rect | null;
   readonly barSlots: readonly { readonly id: string; readonly rect: Rect }[];
   readonly chatRects: readonly { readonly id: string; readonly rect: Rect }[];
+  readonly dialogueOpen: boolean;
+  readonly dialogueRects: readonly { readonly id: string; readonly rect: Rect }[];
+  readonly dialogueLine: string;
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };
