@@ -126,6 +126,23 @@ function windowSize(screens: UiScreens, id: WindowId): Rect {
   return placement;
 }
 
+/**
+ * Click the X in a window's title bar (spec 251).
+ *
+ * Through the real pointer path rather than by calling `requestClose`, because
+ * what these tests are about is that the button is *wired* -- a close that
+ * reached the manager and skipped this mount is the bug, and calling the method
+ * directly would step straight over it.
+ */
+function clickClose(screens: UiScreens, id: WindowId): void {
+  const window = screens.root.windows?.get(id);
+  if (!window) throw new Error(`no window called ${id}`);
+  const rect = window.closeRect(screens.root.layoutContext());
+  const at = { x: rect.x + Math.floor(rect.width / 2), y: rect.y + Math.floor(rect.height / 2) };
+  screens.handlePointer('down', at, 0, NONE);
+  screens.handlePointer('up', at, 0, NONE);
+}
+
 describe('the mini HUD (spec 196)', () => {
   function body(overrides: Record<string, unknown> = {}): unknown {
     return {
@@ -309,6 +326,23 @@ describe('what a shop tells the server', () => {
     const { screens, requests } = harness();
     screens.showShopFor('vendor.quartermaster');
     expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
+    expect(screens.isOpen('shop')).toBe(false);
+    expect(requests).toEqual(['vendor:vendor.quartermaster', 'vendor:']);
+  });
+
+  /**
+   * ...and so does the X in its own title bar (spec 251).
+   *
+   * `WindowManager.register` aims a window's `onClose` at the manager, which
+   * would shut this one without ever telling the server -- so `registerWindow`
+   * re-points it at this mount's `close`. The assertion is the request, not the
+   * window: a shop that closes and goes on being replicated is the failure.
+   */
+  it('tells the server to stop when the title bar X closes it', () => {
+    const { screens, requests } = harness();
+    screens.showShopFor('vendor.quartermaster');
+    screens.update(viewFixture(), 0);
+    clickClose(screens, 'shop');
     expect(screens.isOpen('shop')).toBe(false);
     expect(requests).toEqual(['vendor:vendor.quartermaster', 'vendor:']);
   });
@@ -647,6 +681,32 @@ describe('the trade window (spec 134)', () => {
     expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
     expect(screens.isOpen('trade')).toBe(false);
     expect(requests).toContain('tradeDismiss');
+  });
+
+  /** ...and so does the X, which shuts a window without pressing anything else. */
+  it('dismisses the ending when the title bar X shuts it', () => {
+    const { screens, requests } = harness();
+    screens.update(viewFixture({ trade: null, endedTrade }), 0);
+    clickClose(screens, 'trade');
+    expect(screens.isOpen('trade')).toBe(false);
+    expect(requests).toContain('tradeDismiss');
+  });
+
+  /**
+   * The one that would have been a real bug (spec 251).
+   *
+   * Closing a *live* trade is leaving the table, so it cancels. Wired straight
+   * to the manager, the X would have shut the window with the trade still on --
+   * a player in a trade they cannot see and cannot start another from, which is
+   * the exact state spec 170 closed for Escape.
+   */
+  it('cancels a live trade when the title bar X shuts it', () => {
+    const { screens, requests } = harness();
+    screens.update(viewFixture({ trade: openTrade }), 0);
+    expect(screens.isOpen('trade')).toBe(true);
+    clickClose(screens, 'trade');
+    expect(screens.isOpen('trade')).toBe(false);
+    expect(requests).toContain('tradeCancel');
   });
 
   /** Once dismissed, the client stops sending it -- and it stays shut. */

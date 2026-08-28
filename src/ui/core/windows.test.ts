@@ -284,6 +284,180 @@ describe('resizing', () => {
   });
 });
 
+/**
+ * The X in the title bar (spec 251).
+ *
+ * Everything here is about *where a press goes*, because that is the whole of
+ * what makes this button different from the nine others in the framework: it
+ * sits inside a drag handle, and it is the only control in a window whose press
+ * must not also be read by the thing underneath it.
+ */
+describe('the close button', () => {
+  const CONTEXT = { theme: THEME, atlas: ATLAS };
+
+  /** The middle of the X, which is the point a player is aiming at. */
+  function closeCentre(window: UiWindow): Point {
+    const rect = window.closeRect(CONTEXT);
+    return { x: rect.x + Math.floor(rect.width / 2), y: rect.y + Math.floor(rect.height / 2) };
+  }
+
+  it('shuts the window it belongs to, on a click', () => {
+    const h = harness(1);
+    const window = h.window('w0');
+    const at = closeCentre(window);
+
+    h.root.handle(pointer('down', at.x, at.y, 0));
+    h.root.handle(pointer('up', at.x, at.y, 5));
+    expect(window.visible).toBe(false);
+  });
+
+  it('builds none at all for a window that cannot be closed', () => {
+    // Null rather than a hidden child: `closable` never changes after
+    // construction, so a button that exists and is invisible is one that every
+    // hit test, measure and paint has to remember to skip.
+    const fixed = new UiWindow(new Column('a'), {
+      title: 'Fixed',
+      closable: false,
+      at: { x: 8, y: 8 },
+      size: { width: 100, height: 60 },
+    });
+    expect(fixed.closeButton).toBe(null);
+    expect(fixed.closeRect(CONTEXT)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+  });
+
+  it('hit-tests to itself across its whole rect, ahead of the window', () => {
+    const h = harness(1);
+    const window = h.window('w0');
+    const rect = window.closeRect(CONTEXT);
+    for (const point of [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + Math.floor(rect.width / 2), y: rect.y + Math.floor(rect.height / 2) },
+      { x: rect.x + rect.width - 1, y: rect.y + rect.height - 1 },
+    ]) {
+      expect(h.layers.hitTest(point), `${point.x},${point.y}`).toBe(window.closeButton as never);
+    }
+  });
+
+  it('still lets the bar beside it be dragged', () => {
+    // The button claims ten pixels of a hundred-pixel handle. The rest is still
+    // the handle, including the gap immediately left of the X.
+    const h = harness(1);
+    const window = h.window('w0');
+    const start = { ...window.at };
+    const beside = { x: window.closeRect(CONTEXT).x - 2, y: closeCentre(window).y };
+
+    h.root.handle(pointer('down', beside.x, beside.y, 0));
+    h.root.handle(pointer('move', beside.x + 20, beside.y + 20, 10));
+    h.frame();
+    expect(window.at.x).toBe(start.x + 20);
+    expect(window.at.y).toBe(start.y + 20);
+  });
+
+  it('does not drag the window it is on', () => {
+    const h = harness(1);
+    const window = h.window('w0');
+    const before = { ...window.at };
+    const at = closeCentre(window);
+
+    h.root.handle(pointer('down', at.x, at.y, 0));
+    h.root.handle(pointer('move', at.x + 40, at.y + 30, 10));
+    h.frame();
+    expect(window.at).toEqual(before);
+  });
+
+  /**
+   * ...and does not arm one for *later*, which is the case the stop is really
+   * for.
+   *
+   * `UiWindow.onEvent` runs on the bubble walk after the button, so without the
+   * stop it records a drag origin from a press it never took -- and nothing
+   * clears it, because `dragEnd` goes to whichever widget took the press. The
+   * next press that does land on the window itself, anywhere the title-bar
+   * branch does not cover, then drags from that stale origin. The window's own
+   * padding band is such a place: it is inside the window, outside the content
+   * box, and below the bar.
+   */
+  it('leaves the window unarmed, so a press on its edge still drags nothing', () => {
+    const h = harness(1);
+    const window = h.window('w0');
+    const at = closeCentre(window);
+
+    // Pressed, slid off, released: no close, and no gesture the window saw.
+    h.root.handle(pointer('down', at.x, at.y, 0));
+    h.root.handle(pointer('move', at.x + 60, at.y + 60, 10));
+    h.root.handle(pointer('up', at.x + 60, at.y + 60, 20));
+    h.frame();
+    expect(window.visible).toBe(true);
+
+    const before = { ...window.at };
+    const bar = window.titleRect(CONTEXT);
+    // In the left padding band, below the title bar: the window itself takes
+    // this press, and neither of `onEvent`'s branches covers it.
+    const edge = { x: window.at.x + 1, y: bar.y + bar.height + 12 };
+    expect(h.layers.hitTest(edge)).toBe(window as never);
+
+    h.root.handle(pointer('down', edge.x, edge.y, 30));
+    h.root.handle(pointer('move', edge.x + 40, edge.y + 40, 40));
+    h.frame();
+    expect(window.at).toEqual(before);
+  });
+
+  it('does not close when the press slides off it', () => {
+    // The router's own cancel rule, and the escape hatch every platform has for
+    // the one control in a window that discards what is in it.
+    const h = harness(1);
+    const window = h.window('w0');
+    const at = closeCentre(window);
+
+    h.root.handle(pointer('down', at.x, at.y, 0));
+    h.root.handle(pointer('move', at.x + 60, at.y + 60, 10));
+    h.root.handle(pointer('up', at.x + 60, at.y + 60, 20));
+    expect(window.visible).toBe(true);
+  });
+
+  it('stays in the corner through a drag and a resize', () => {
+    const h = harness(1);
+    const window = h.window('w0');
+    const padding = THEME.widget('window').padding;
+
+    const inCorner = (): void => {
+      h.frame();
+      const rect = window.closeRect(CONTEXT);
+      expect(rect.x + rect.width + padding).toBe(window.at.x + window.size.width);
+      expect(rect.y).toBe(window.at.y + Math.round((window.titleHeight(CONTEXT) - rect.height) / 2));
+      // The arranged rect is the one the pointer is tested against, so it is the
+      // one that has to agree -- a computed rect nothing was placed at would
+      // pass every assertion above and be unclickable.
+      expect(window.closeButton?.rect).toEqual(rect);
+    };
+
+    inCorner();
+    window.place({ x: 60, y: 40 }, CONTEXT, VIEWPORT);
+    inCorner();
+    window.resize({ width: 180, height: 120 }, CONTEXT, VIEWPORT);
+    inCorner();
+  });
+
+  /**
+   * A window at its floor shows its whole name *and* the way to shut it.
+   *
+   * Spec 147 put a floor under `minSize` so a window could never be narrower
+   * than its own title; the X takes room out of the same bar, so it has to be
+   * in the same sum or the floor stops meaning what it says.
+   */
+  it('is reserved out of the title, not drawn over it', () => {
+    const h = harness(1);
+    const window = h.window('w0');
+    const padding = THEME.widget('window').padding;
+
+    window.resize({ width: 0, height: 0 }, CONTEXT, VIEWPORT);
+    h.frame();
+    const rect = window.closeRect(CONTEXT);
+    const titleRight = window.at.x + padding + window.minTitleWidth();
+    expect(titleRight).toBeLessThanOrEqual(rect.x);
+  });
+});
+
 describe('z-order', () => {
   it('is always a permutation of the registered ids', () => {
     const h = harness(4);

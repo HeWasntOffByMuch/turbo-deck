@@ -208,6 +208,15 @@ export const WINDOW_GOLDEN_CASES: readonly WindowsGoldenCase[] = [
     options: { viewport: { width: 300, height: 140 } },
     covers: 'every window pulled back on screen at the smallest supported viewport',
   },
+  {
+    // The close button's two loud states, on one focused and one unfocused
+    // title bar (spec 251). Hover and pressed are the only two that draw chrome
+    // at all -- at rest the X is a tinted sprite and nothing else -- so without
+    // this frame the box around it is drawn by code no golden ever looks at.
+    name: 'windows-close',
+    options: { focusWindow: 'character', hoverClose: 'character', pressClose: 'log' },
+    covers: "a title bar's close button hovered and pressed (spec 251)",
+  },
 ];
 
 export interface KeybindingsGoldenCase {
