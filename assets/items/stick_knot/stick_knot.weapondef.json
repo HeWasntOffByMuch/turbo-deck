@@ -1,0 +1,20 @@
+{
+  "$comment": "The stick is symmetric about the origin (-1.509..1.509 in Z) so its own bounds say nothing about which end is held. What settles it is the knot: it sits at z 0.680..0.842, which is where the sword's guard sits at 0.695..0.815. The two meshes were authored to one convention, so the grip is the same point -- recorded here per file rather than promoted to a project rule, because the third weapon will come from somewhere else. `flat` is arbitrary on a round stick and is +Y to match the sword, so a weapon switch does not roll the wrist.",
+  "formatVersion": 1,
+  "id": "stick_knot",
+  "name": "Knotted Stick",
+  "meshRef": "stick_knot.glb",
+  "socket": "weapon.main",
+  "stowSocket": "weapon.stow",
+  "grip": {
+    "at": [0, 0, 1.055],
+    "point": "-Z",
+    "flat": "+Y"
+  },
+  "lengthWorld": 34,
+  "provenance": {
+    "source": "supplied by hand, 2026-08-12",
+    "generator": "trimesh",
+    "note": "256 triangles, two materials, bent along its length -- which is why `measuredLength` reads the point axis rather than the longest bounding-box side."
+  }
+}

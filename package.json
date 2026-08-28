@@ -5,7 +5,7 @@
   "description": "Action-roguelite with a deckbuilding layer: deterministic sim + thin renderer.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "scripts": {
     "test": "vitest run",
@@ -13,12 +13,20 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "validate:units": "tsx scripts/validate-units.ts",
+    "validate:items": "tsx scripts/validate-items.ts",
     "bake:units": "tsx scripts/bake-units.ts",
+    "bake:audio": "tsx scripts/bake-audio.ts",
+    "audio:report": "tsx scripts/audio-report.ts",
     "build": "vite build",
     "dev": "vite",
-    "server": "tsx src/server/index.ts",
-    "server:bots": "tsx scripts/server-bot.ts",
-    "bake:ui-goldens": "tsx scripts/bake-ui-goldens.ts"
+    "server": "node --import tsx src/server/index.ts",
+    "server:bots": "node --import tsx scripts/server-bot.ts",
+    "db:status": "tsx scripts/db-status.ts",
+    "bake:ui-goldens": "tsx scripts/bake-ui-goldens.ts",
+    "balance": "tsx scripts/balance-builds.ts",
+    "audit:progression": "tsx scripts/audit-progression.ts",
+    "check:tracked": "tsx scripts/check-tracked.ts",
+    "check:bundle": "tsx scripts/check-bundle.ts"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",

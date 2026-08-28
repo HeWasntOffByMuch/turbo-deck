@@ -25,7 +25,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,6 +39,8 @@ import { worldBoundsOf } from '../src/server/world/build.js';
 import { isWalkable } from '../src/server/sim/movement.js';
 import { MAX_STEP_HEIGHT } from '../src/server/world/terrain.js';
 import { loadMapFile } from '../src/server/world/map-file.js';
+import { splitMap } from '../src/terrain/regions.js';
+import { writeSplit } from './split-map.js';
 import { DEFAULT_SPAWN } from '../src/server/player/player-manager.js';
 import {
   encodeRuns,
@@ -55,7 +57,13 @@ import {
 } from '../src/terrain/index.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const MAP_PATH = join(root, 'maps', 'arena.json');
+/**
+ * The shipped map, which is a directory of regions rather than a file (spec
+ * 203). Everything below reads and writes it through `loadMapFile` and
+ * `writeSplit`, so this probe cannot invent a second answer about what a map
+ * on disk looks like.
+ */
+const MAP_DIR = join(root, 'maps', 'arena');
 const OUT_DIR = join(root, '.claude', 'screenshots');
 const PORT = 4321;
 const CHROMIUM_PATH = process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium';
@@ -181,7 +189,6 @@ function buildTier(
     tones: encodeRuns(new Uint8Array(cols * rows)),
     props: [],
     markers: [],
-    nav: null,
   };
 
   return {
@@ -215,7 +222,7 @@ function buildProbeMap(
   tier1Top: number;
   tier2Top: number;
 } {
-  const { doc } = loadMapFile(MAP_PATH);
+  const { doc } = loadMapFile(MAP_DIR);
   const ground = doc.layers[0];
   if (!ground) throw new Error('arena.json has no layers');
   const { cellSize, chunkCells } = doc.grid;
@@ -415,7 +422,7 @@ async function main(): Promise<void> {
 
   // 5. The sim's world edge must not move.
   console.log('\nworld bounds');
-  const before = worldBoundsOf(loadMapFile(MAP_PATH).doc);
+  const before = worldBoundsOf(loadMapFile(MAP_DIR).doc);
   const after = worldBoundsOf(round ?? doc);
   const same = before.x === after.x && before.y === after.y && before.w === after.w && before.h === after.h;
   note(same, 'adding a rock layer leaves the world edge where it was', `the world edge moved: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
@@ -497,22 +504,28 @@ async function main(): Promise<void> {
 /**
  * Photograph it in the real renderer.
  *
- * The Play tab imports `maps/arena.json?raw` at build time, so there is no way
- * to point the built page at another map: the only honest way to see this one
- * is to put it in the file, build, shoot, and put the original back. The
+ * The built page fetches the shipped map by name (spec 203), so there is no way
+ * to point it at another one: the only honest way to see this one is to put it
+ * in `maps/arena`, build, shoot, and put the original back. The
  * restore is in a `finally` because leaving somebody's checked-in world
  * replaced by a probe's scratch map would be a genuinely nasty thing to do.
  */
 async function shoot(shots: readonly { name: string; doc: MapDocument }[]): Promise<void> {
   const { chromium } = await import('playwright');
-  const backup = `${MAP_PATH}.probe-backup`;
+  // A whole directory now, so the backup is a copy of the tree rather than of
+  // one file -- and it is cleared first, or a leftover from a killed run is
+  // what gets restored.
+  const backup = `${MAP_DIR}.probe-backup`;
   mkdirSync(OUT_DIR, { recursive: true });
-  copyFileSync(MAP_PATH, backup);
+  rmSync(backup, { recursive: true, force: true });
+  cpSync(MAP_DIR, backup, { recursive: true });
   try {
     for (const shot of shots) {
       let server: ReturnType<typeof spawn> | null = null;
       try {
-        writeFileSync(MAP_PATH, serializeMap(shot.doc));
+        const split = splitMap(shot.doc);
+        rmSync(MAP_DIR, { recursive: true, force: true });
+        writeSplit(MAP_DIR, split.manifest, split.regions);
         console.log(`\nbuilding with the probe map in place (${shot.name})...`);
         await run('npx', ['vite', 'build']);
 
@@ -536,9 +549,10 @@ async function shoot(shots: readonly { name: string; doc: MapDocument }[]): Prom
       }
     }
   } finally {
-    copyFileSync(backup, MAP_PATH);
-    unlinkSync(backup);
-    console.log('  restored maps/arena.json');
+    rmSync(MAP_DIR, { recursive: true, force: true });
+    cpSync(backup, MAP_DIR, { recursive: true });
+    rmSync(backup, { recursive: true, force: true });
+    console.log('  restored maps/arena');
   }
 }
 

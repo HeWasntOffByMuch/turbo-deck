@@ -139,7 +139,45 @@ export function captureLayout(manager: WindowManager, activeTab: ActiveTabLookup
   return { version: LAYOUT_VERSION, windows, order: [...manager.order] };
 }
 
+/**
+ * A short string that changes exactly when {@link captureLayout} would (spec 147).
+ *
+ * The mount asks every frame whether the layout is worth writing, and the honest
+ * way to answer is to capture and compare -- which allocates a document and a
+ * record per window sixty times a second to say "no" almost every time. This is
+ * the same walk without the allocations.
+ *
+ * It lives beside `captureLayout` rather than at the call site because the two
+ * have to agree about what a layout *is*: a field added to the document and not
+ * to the signature is a change that silently never gets saved.
+ */
+export function layoutSignature(manager: WindowManager, activeTab: ActiveTabLookup = () => undefined): string {
+  let out = manager.order.join(',');
+  for (const id of manager.ids()) {
+    const window = manager.get(id);
+    if (!window) continue;
+    out += `|${id}:${window.at.x},${window.at.y},${window.size.width},${window.size.height}`;
+    out += `,${window.visible ? 1 : 0}${window.pinned ? 1 : 0},${activeTab(id) ?? ''}`;
+  }
+  return out;
+}
+
 export type ApplyTab = (id: string, tabId: string) => void;
+
+export interface ApplyOptions {
+  readonly applyTab?: ApplyTab;
+  /**
+   * Which ids this document is allowed to re-open. Every id, by default.
+   *
+   * The game passes one because two of its windows are opened by the *server*
+   * rather than by the player (spec 147): a shop appears because you walked up
+   * to a vendor, and a trade because somebody offered one. Neither was a choice
+   * to remember, and a trade window restored open has no trade in it and no way
+   * to get one. Their size and position restore like everything else -- it is
+   * only the openness that was never the player's.
+   */
+  readonly restoreOpen?: (id: string) => boolean;
+}
 
 /**
  * Put the windows back.
@@ -152,15 +190,16 @@ export function applyLayout(
   manager: WindowManager,
   layout: StoredLayout,
   viewport: Size,
-  applyTab: ApplyTab = () => undefined,
+  options: ApplyOptions = {},
 ): void {
+  const mayOpen = options.restoreOpen ?? ((): boolean => true);
   for (const stored of layout.windows) {
     const window = manager.get(stored.id);
     if (!window) continue;
     window.restore({ x: stored.x, y: stored.y }, { width: stored.width, height: stored.height }, viewport);
-    window.visible = stored.open;
+    window.visible = stored.open && mayOpen(stored.id);
     window.pinned = stored.pinned;
-    if (stored.activeTab !== undefined) applyTab(stored.id, stored.activeTab);
+    if (stored.activeTab !== undefined) options.applyTab?.(stored.id, stored.activeTab);
   }
   // Re-establish z-order back to front, skipping anything unknown.
   for (const id of layout.order) {
@@ -169,10 +208,30 @@ export function applyLayout(
   manager.setViewport(viewport);
 }
 
-export function saveLayout(storage: StorageLike, layout: StoredLayout, key = LAYOUT_KEY): void {
-  storage.setItem(key, JSON.stringify(layout));
+/**
+ * Write the document. Returns whether it landed; never throws.
+ *
+ * The same rule `writeAutosave` learned in spec 054, and it matters more here:
+ * this is called from inside the frame, so a browser that refuses the write --
+ * a full origin, private mode, a sandboxed iframe -- would otherwise throw out
+ * of the render loop on every frame that scheduled a save. The cost of a refused
+ * write is windows in their default places next session.
+ */
+export function saveLayout(storage: StorageLike, layout: StoredLayout, key = LAYOUT_KEY): boolean {
+  try {
+    storage.setItem(key, JSON.stringify(layout));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function loadLayout(storage: StorageLike, key = LAYOUT_KEY): StoredLayout | null {
-  return parseLayout(storage.getItem(key));
+  // `getItem` throws too, in the same browsers and for the same reasons, and a
+  // read that throws at startup takes the whole tab rather than one preference.
+  try {
+    return parseLayout(storage.getItem(key));
+  } catch {
+    return null;
+  }
 }

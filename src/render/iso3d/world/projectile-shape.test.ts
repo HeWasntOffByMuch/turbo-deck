@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ARROW_DRAW_SCALE,
   arrowProfile,
+  EMBER_CORE_SCALE,
+  emberCoreRadius,
   SHURIKEN_DRAW_SCALE,
   SHURIKEN_POINTS,
   SHURIKEN_WAIST,
@@ -129,5 +131,31 @@ describe('shurikenOutline', () => {
     // Thin against its own width, or it is a coin and not a throwing star.
     expect(shurikenThickness(6)).toBeLessThan(6);
     expect(shurikenThickness(Number.NaN)).toBeGreaterThan(0);
+  });
+});
+
+describe('emberCoreRadius (spec 218)', () => {
+  it('draws smaller than it collides, because the paint is the silhouette', () => {
+    // The opposite of the star, and on purpose. An arrow and a shuriken are
+    // objects and their mesh is the whole of them; a ball of fire is not, so the
+    // mesh is only the heat at the middle and `shot_ember` draws the rest. A
+    // core at the full collision radius would be an orange marble with flames
+    // stuck to the outside of it.
+    expect(emberCoreRadius(9)).toBeLessThan(9);
+    expect(emberCoreRadius(9)).toBeCloseTo(9 * EMBER_CORE_SCALE, 9);
+    expect(EMBER_CORE_SCALE).toBeGreaterThan(0);
+    expect(EMBER_CORE_SCALE).toBeLessThan(1);
+  });
+
+  it('scales with the shot, so a bigger fireball is the same fireball bigger', () => {
+    expect(emberCoreRadius(18)).toBeCloseTo(emberCoreRadius(9) * 2, 9);
+  });
+
+  it('yields a core rather than a degenerate mesh for a radius the table forgot', () => {
+    // `arrowProfile`'s rule: a zero or a NaN still has to produce something a
+    // player can see, because the alternative renders as nothing at all.
+    expect(emberCoreRadius(0)).toBeGreaterThan(0);
+    expect(emberCoreRadius(-4)).toBeGreaterThan(0);
+    expect(emberCoreRadius(Number.NaN)).toBeGreaterThan(0);
   });
 });

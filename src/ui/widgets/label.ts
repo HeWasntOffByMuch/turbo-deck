@@ -39,6 +39,19 @@ export class Label extends StyledWidget {
    */
   private measuredWidth = 0;
 
+  /**
+   * The width the current line break was computed at, for a subclass that paints
+   * the rows itself.
+   *
+   * Exposed for the reason the field above exists: a subclass drawing part of a
+   * line in a second colour (`screens/chat.ts`) has to wrap at the width
+   * `measure` reserved room for, and reading `rect.width` instead is exactly the
+   * bug the comment above describes.
+   */
+  protected get wrapWidth(): number {
+    return this.measuredWidth;
+  }
+
   constructor(
     private textValue = '',
     public fontId: FontId = 'body',

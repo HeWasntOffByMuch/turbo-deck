@@ -20,17 +20,24 @@
 import { mountEditor } from './editor/view.js';
 import { mountStudio } from './studio/view.js';
 import { mountVfxStudio } from './studio/vfx-view.js';
+import { mountSfx } from './sfx/view.js';
 import { mountWorld } from './world/view.js';
 import { mountMovement } from './movement.js';
 import { mountDebug } from './debug-view.js';
 import type { ViewHandle } from './view-handle.js';
 import { createFullscreenButton } from './fullscreen.js';
 import { isHandheldDevice } from './device.js';
-import { showsTabButtons, visibleTabs } from './shell-tabs.js';
+import { mountLanded, showsTabButtons, tabPress, visibleTabs } from './shell-tabs.js';
 
 interface Tab {
   readonly label: string;
-  readonly mount: (container: HTMLElement) => ViewHandle;
+  /**
+   * Asynchronous since spec 203: the Play tab and the editor fetch the shipped
+   * map rather than carrying it in the bundle, and the await belongs at this
+   * boundary rather than threaded through a 1700-line view. A tab that needs
+   * nothing may still return a handle directly.
+   */
+  readonly mount: (container: HTMLElement) => ViewHandle | Promise<ViewHandle>;
   /**
    * Whether this tab is the game rather than a workbench (spec 140).
    *
@@ -64,6 +71,11 @@ function main(): void {
     // preview and a wall of parameters, so it lays out under the bar like the
     // other benches rather than owning the screen.
     { label: 'VFX', mount: mountVfxStudio },
+    // Spec 229, and the seventh. A tree and a form, so it lays out under the bar
+    // like the VFX bench beside it rather than owning the screen -- and a
+    // workbench, so a phone is not offered it: assigning files to events is a
+    // two-column tool with a file picker in it.
+    { label: 'SFX', mount: mountSfx },
   ];
 
   // A phone gets the game and nothing else (spec 140).
@@ -99,27 +111,74 @@ function main(): void {
       (on ? 'background:#3a3a4e;color:#f0f0f8;' : 'background:rgba(12,12,18,.82);color:#9a9ab0;');
   };
 
+  /**
+   * Which tabs are mid-mount (spec 203).
+   *
+   * A mount can take a network round trip now, and two things go wrong without
+   * this. Pressing a tab twice would mount it twice -- two views, two servers,
+   * one of them orphaned and still running. And `active` is set when the mount
+   * *finishes*, so a second press during the wait would see `i !== active` and
+   * start a second one.
+   */
+  const mounting = new Set<number>();
+
   const activate = (i: number): void => {
-    if (i === active) return;
     const tab = tabs[i];
     if (!tab) return;
+    const press = tabPress(i, active, mounting, handles[i]);
+    if (press === 'ignore') return;
     const prev = active >= 0 ? handles[active] : null;
     if (prev) {
       prev.stop();
       prev.element.style.display = 'none';
     }
-    let handle = handles[i];
-    if (!handle) {
-      handle = tab.mount(container);
-      // A fullscreen view owns the whole window; the sandbox tabs lay out
-      // normally and just need headroom so the floating tab bar doesn't cover them.
-      if (!tab.fullscreen) handle.element.style.padding = '44px 16px 16px';
-      handles[i] = handle;
-    }
-    handle.element.style.display = 'block';
-    handle.start();
+    // The button lights immediately: the press is answered even when the view
+    // behind it is still fetching, and a bar that does nothing for a second
+    // reads as a dropped click.
     active = i;
     buttons.forEach((btn, j) => styleButton(btn, j === i));
+
+    if (press === 'show') {
+      const held = handles[i];
+      if (held) show(tab, held);
+      return;
+    }
+    const mounted = tab.mount(container);
+    if (!(mounted instanceof Promise)) {
+      handles[i] = mounted;
+      show(tab, mounted);
+      return;
+    }
+    mounting.add(i);
+    void mounted
+      .then((handle) => {
+        mounting.delete(i);
+        handles[i] = handle;
+        if (mountLanded(i, active) === 'shelve') {
+          handle.element.style.display = 'none';
+          return;
+        }
+        show(tab, handle);
+      })
+      .catch((error: unknown) => {
+        mounting.delete(i);
+        // A tab that could not load says so where the tab would have been. The
+        // alternative is a blank rectangle, which reads as the app being broken
+        // rather than as one view failing.
+        if (active !== i) return;
+        const message = document.createElement('pre');
+        message.style.cssText = 'padding:44px 16px 16px;color:#f0a0a0;font-family:ui-monospace,monospace;';
+        message.textContent = `${tab.label} could not start:\n${error instanceof Error ? error.message : String(error)}`;
+        container.appendChild(message);
+      });
+  };
+
+  const show = (tab: Tab, handle: ViewHandle): void => {
+    // A fullscreen view owns the whole window; the sandbox tabs lay out
+    // normally and just need headroom so the floating tab bar doesn't cover them.
+    if (!tab.fullscreen) handle.element.style.padding = '44px 16px 16px';
+    handle.element.style.display = 'block';
+    handle.start();
   };
 
   // No buttons when there is only one tab to be on: a strip you cannot leave is

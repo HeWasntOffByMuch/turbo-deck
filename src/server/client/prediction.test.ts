@@ -261,3 +261,68 @@ describe('easing a drift correction (spec 067)', () => {
     expect(local.position.x).toBeCloseTo(PER_TICK * 3, 9);
   });
 });
+
+describe('a slow the client has been told about (spec 188)', () => {
+  /**
+   * The one thing that keeps a two-and-a-half-second slow from being a
+   * correction every tick for its whole duration: the scale rides the *input*,
+   * so the client walks at the speed the server is walking it at.
+   */
+  it('shortens the step by the scale the input carries', () => {
+    const step = createFlatPredictor(60, 60);
+    const from = { x: 0, y: 0 };
+    const full = step(from, { seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    const slowed = step(from, { seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0, moveScale: 0.6 });
+    expect(full.x).toBeCloseTo(1, 6);
+    expect(slowed.x).toBeCloseTo(0.6, 6);
+  });
+
+  /**
+   * A replay after a correction walks each buffered input at the speed that
+   * applied when it was *made*, which is why the scale is on the input rather
+   * than baked into the predictor when it is built.
+   */
+  it('replays each input at its own scale rather than at the latest one', () => {
+    const buffer = new PredictionBuffer({ x: 0, y: 0 }, createFlatPredictor(60, 60));
+    buffer.apply({ seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0, moveScale: 0.5 });
+    buffer.apply({ seq: 2, moveX: 1, moveY: 0, facing: 0, buttons: 0, moveScale: 1 });
+    expect(buffer.position.x).toBeCloseTo(1.5, 6);
+    // Corrected as of input 1, then input 2 replayed -- at *its* scale.
+    buffer.reconcile(1, { x: 10, y: 0 });
+    expect(buffer.position.x).toBeCloseTo(11, 6);
+  });
+});
+
+/**
+ * The other half of the same question, and the opposite answer. A slow rides
+ * the input because the client hears about it late; a *stat* change is settled
+ * on the tick the server derives it and sends the stats, so the step itself is
+ * swapped and everything still in flight is replayed at the new speed.
+ */
+describe('gear that changes how fast the body walks', () => {
+  it('steps at the new speed from the swap onward', () => {
+    const buffer = new PredictionBuffer({ x: 0, y: 0 }, createFlatPredictor(60, 60));
+    buffer.apply({ seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    expect(buffer.position.x).toBeCloseTo(1, 6);
+    buffer.setStep(createFlatPredictor(120, 60));
+    buffer.apply({ seq: 2, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    expect(buffer.position.x).toBeCloseTo(3, 6);
+  });
+
+  /**
+   * Only the step is replaced, never the buffer. The unacknowledged inputs are
+   * the state a correction replays from, so building a second buffer around the
+   * new speed would throw away the very thing that makes a correction smooth.
+   */
+  it('keeps the inputs the server has not acknowledged', () => {
+    const buffer = new PredictionBuffer({ x: 0, y: 0 }, createFlatPredictor(60, 60));
+    buffer.apply({ seq: 1, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    buffer.apply({ seq: 2, moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    buffer.setStep(createFlatPredictor(120, 60));
+    expect(buffer.pending.map((input) => input.seq)).toEqual([1, 2]);
+    // Corrected as of input 1: input 2 is still there to replay, at the speed
+    // the server is now walking it at.
+    buffer.reconcile(1, { x: 10, y: 0 });
+    expect(buffer.position.x).toBeCloseTo(12, 6);
+  });
+});

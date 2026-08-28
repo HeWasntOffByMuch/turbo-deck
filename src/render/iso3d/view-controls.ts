@@ -49,6 +49,7 @@ import {
   offsetToOrbit,
   orbitToOffset,
   pinchViewHalfWidth,
+  spanForMaxZoom,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -83,8 +84,27 @@ export interface ViewControls {
   cameraOffset(): Vec3;
   /** Orthographic half-width (zoom); smaller frames a tighter region. */
   viewHalfWidth(): number;
-  /** Let the wheel over `target` zoom the view span, as well as the slider (spec 042). */
+  /**
+   * Let the wheel over `target` zoom the view span, as well as the slider
+   * (spec 042).
+   *
+   * The movement sandbox's way in, and since spec 189 only its way in: the Play
+   * tab binds `camera.zoomIn`/`camera.zoomOut` and calls {@link zoomNotch}, so
+   * that a wheel notch is a chord a player can move rather than a listener
+   * nothing can reach. A sandbox is a dev surface and keeps its own pointer
+   * handling, exactly as the editor does.
+   */
   attachWheelZoom(target: HTMLElement): void;
+  /**
+   * Zoom one notch the way an action asked for (spec 189).
+   *
+   * `direction` is +1 in and -1 out and comes from which of the two bindings
+   * fired; `magnitude` is the browser's own `deltaY`, whose *sign* is
+   * deliberately discarded here and whose size is not -- a trackpad's notch and
+   * a wheel's are different distances, and that is a fact about the device
+   * rather than about the binding.
+   */
+  zoomNotch(direction: number, magnitude: number, deltaMode: number): void;
   /**
    * Zoom by a pinch's spread ratio (spec 093). Writes the same slider the wheel
    * writes, because the slider *is* the zoom -- a pinch that kept its own number
@@ -94,6 +114,25 @@ export interface ViewControls {
    * `world/view.ts`; this is only the way in.
    */
   pinchZoom(ratio: number): void;
+  /**
+   * A stored widest-zoom preference, put back at mount (spec 202).
+   *
+   * Clamps the current span as well as future gestures, and does **not** frame
+   * the ceiling: a session left at 320 under a ceiling of 420 has to come back
+   * at 320, and a restore that framed the ceiling would open every session
+   * zoomed all the way out.
+   */
+  restoreMaxZoom(ceiling: number): void;
+  /**
+   * A widest zoom the player has just chosen, framed (spec 202, corrected).
+   *
+   * The counterpart to {@link restoreMaxZoom}, and the two are separate methods
+   * rather than one with a flag because the bug was exactly that they shared an
+   * answer: clamping alone is one-way, so dragging the slider *down* moved the
+   * camera and dragging it *up* did nothing. Two intents, two names, and each
+   * call site says which it is.
+   */
+  chooseMaxZoom(ceiling: number): void;
   /** How long the camera takes to catch up to the unit it follows, ms (spec 039). */
   followLagMs(): number;
   /**
@@ -491,7 +530,12 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const spawners = makeCheckbox('Spawners', false,
     'Mark every spawn point the map places, with what it spawns and how long until it comes back.');
 
-  const retroOn = makeCheckbox('Retro filter', RETRO_DEFAULTS.enabled,
+  // Off by default: every other row here is RETRO_DEFAULTS, which is what the
+  // filter looks like once it is on -- this one is whether it is, and the two are
+  // different questions. The pass is a look laid over the finished frame rather
+  // than a step of the render, so the tab opens on the image the world actually
+  // drew and the row is what puts the quantize and the weave over it.
+  const retroOn = makeCheckbox('Retro filter', false,
     'Quantize the image to a few colours per channel and dither across the bands, ' +
     'the way a machine with too few colours would.');
   const levels = makeSlider('Colour steps', 2, 16, 1, RETRO_DEFAULTS.levels, '',
@@ -724,6 +768,10 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   if (lights) element.append(lights.element);
   element.append(filter.element, hikeMenu.element);
 
+  // The player's own widest zoom (spec 202). Starts at the band's maximum so a
+  // tab that never sets it behaves exactly as it did.
+  let zoomCeiling = MAX_VIEW_HALF_WIDTH;
+
   return {
     element,
     menus,
@@ -733,12 +781,35 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         'wheel',
         (e: WheelEvent) => {
           e.preventDefault();
-          zoom.setValue(zoomViewHalfWidth(zoom.value(), e.deltaY, e.deltaMode));
+          zoom.setValue(zoomViewHalfWidth(zoom.value(), e.deltaY, e.deltaMode, zoomCeiling));
         },
         { passive: false },
       );
     },
-    pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
+    zoomNotch: (direction: number, magnitude: number, deltaMode: number) => {
+      // `zoomViewHalfWidth` reads the sign off the delta -- negative is in, the
+      // browser's own convention -- so the direction is re-applied to a magnitude
+      // stripped of it. Rebuilding the delta rather than adding a second zoom
+      // path keeps one curve, and the curve is what a session's muscle memory is
+      // built on.
+      zoom.setValue(zoomViewHalfWidth(zoom.value(), -direction * Math.abs(magnitude), deltaMode, zoomCeiling));
+    },
+    pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio, zoomCeiling)),
+    /**
+     * The widest the player has asked to be able to zoom out to (spec 202).
+     *
+     * Re-clamps the current span as well as future gestures, because a ceiling
+     * lowered while the camera is already past it would otherwise leave the
+     * frame outside the band until somebody happened to scroll.
+     */
+    restoreMaxZoom: (ceiling: number) => {
+      zoomCeiling = ceiling;
+      zoom.setValue(spanForMaxZoom(zoom.value(), zoomCeiling, false));
+    },
+    chooseMaxZoom: (ceiling: number) => {
+      zoomCeiling = ceiling;
+      zoom.setValue(spanForMaxZoom(zoom.value(), zoomCeiling, true));
+    },
     orbitBy: (degrees: number) => camAz.setValue(wrapTurn(camAz.value() + degrees)),
     orbitDegrees: () => camAz.value(),
     cameraOffset: () =>

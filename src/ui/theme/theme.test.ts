@@ -1,7 +1,7 @@
 import Ajv from 'ajv';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { resolveTheme, THEME, WIDGET_STATES } from './theme.js';
+import { resolveTheme, THEME, WIDGET_STATES, ATTRIBUTE_TOKENS } from './theme.js';
 import { PATCHES, PATCH_PALETTE, ICONS, ICON_SIZE } from './atlas-source.js';
 import document from './theme.json';
 
@@ -25,8 +25,20 @@ describe('theme.json against its schema', () => {
     expect(validate(typo)).toBe(false);
   });
 
-  it('keeps the palette to sixteen colours', () => {
-    expect(Object.keys(THEME.palette).length).toBeLessThanOrEqual(16);
+  // Sixteen until spec 185, which added the three rarity tiers, and
+  // twenty-two since spec 216's three attribute colours. The cap is against
+  // *invented* colour rather than against colour: the tiers are the world's own,
+  // already drawn on every drop in the grass, and these three are the identity
+  // of Strength, Agility and Intelligence -- one hue each, in the fixed order a
+  // scaling line is read in, so `S / D / -` says which letter belongs to which
+  // attribute without three labels to fit beside it.
+  //
+  // They are deliberately not `danger`/`success`/`focus`, which are the three
+  // nearest hues already here. Those mean bad, good and focused: an `S` drawn in
+  // `danger` reads as a warning about the best grade on the ladder, and the two
+  // vocabularies would collide on the one line where both appear.
+  it('keeps the palette to twenty-two colours', () => {
+    expect(Object.keys(THEME.palette).length).toBeLessThanOrEqual(22);
   });
 });
 
@@ -109,6 +121,30 @@ describe('the atlas source', () => {
     for (const [name, rows] of Object.entries(ICONS)) {
       expect(rows.length, name).toBe(ICON_SIZE);
       for (const row of rows) expect(row.length, name).toBe(ICON_SIZE);
+    }
+  });
+});
+
+describe('attribute colours (specs 216, 242)', () => {
+  it('names a token the palette actually has, for each of the three', () => {
+    for (const [attribute, token] of Object.entries(ATTRIBUTE_TOKENS)) {
+      expect(THEME.palette[token], `${attribute} -> ${token}`).toBeDefined();
+    }
+  });
+
+  it('gives each attribute its own hue', () => {
+    // Two attributes sharing a colour would make `A / D / -` unreadable in
+    // exactly the case the notation exists for: telling positions apart.
+    const tokens = Object.values(ATTRIBUTE_TOKENS);
+    expect(new Set(tokens).size).toBe(tokens.length);
+  });
+
+  it('is neither the good nor the bad colour', () => {
+    // An `S` -- the best grade on the ladder -- drawn in the drawback colour
+    // would read as a warning, which is why these are their own hues.
+    for (const token of Object.values(ATTRIBUTE_TOKENS)) {
+      expect(token).not.toBe('danger');
+      expect(token).not.toBe('success');
     }
   });
 });

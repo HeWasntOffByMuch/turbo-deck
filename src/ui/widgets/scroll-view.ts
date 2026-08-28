@@ -17,7 +17,16 @@
 
 import type { DrawList } from '../core/draw-list.js';
 import type { EventContext, Gesture } from '../core/events.js';
-import { boundedOr, shrink, uniformInsets, UNBOUNDED, type Constraint, type Rect, type Size } from '../core/geom.js';
+import {
+  boundedOr,
+  containsPoint,
+  shrink,
+  uniformInsets,
+  UNBOUNDED,
+  type Constraint,
+  type Rect,
+  type Size,
+} from '../core/geom.js';
 import { drawNineSlice } from '../core/paint.js';
 import type { LayoutContext, PaintContext, Widget } from '../core/widget.js';
 import { StyledWidget } from './base.js';
@@ -50,6 +59,33 @@ export class ScrollView extends StyledWidget {
   /** How far down the content is scrolled, in UI pixels. Never negative. */
   private offset = 0;
   private contentHeight = 0;
+  /**
+   * The bar's width, remembered from the last layout.
+   *
+   * A drag has no `LayoutContext` to look a metric up in, and the bar's own
+   * geometry is what says whether a press landed on it. Cached rather than
+   * re-read so the box the pointer is tested against and the box that was drawn
+   * are the same box -- the lesson `innerRect` above is already here for.
+   */
+  private barThickness = 6;
+  /**
+   * The drag in progress: which of the two it is, and where it started from.
+   *
+   * Two, because a scroll view is dragged in two opposite directions on purpose.
+   * Dragging the *content* is grabbing the paper -- it goes with the finger, so
+   * pushing up sends the offset down the list. Dragging the *bar* is grabbing the
+   * position indicator, which has to stay under the pointer, so it goes the other
+   * way and it is scaled: the bar's travel is shorter than the content's, and a
+   * thumb dragged the height of its track must reach the end of the list rather
+   * than a tenth of the way in.
+   *
+   * `from` is the offset the drag began at, because a gesture's `delta` is
+   * measured from the press and not from the last move. Adding it to the *current*
+   * offset applies the whole journey again on every frame of it, which is a drag
+   * that accelerates away from the pointer -- the same anchor-and-add shape
+   * `UiWindow` uses to move and to resize.
+   */
+  private drag: { readonly bar: boolean; readonly from: number } | null = null;
 
   constructor(readonly content: Widget, name = 'scrollView') {
     super('scrollView', name);
@@ -102,12 +138,24 @@ export class ScrollView extends StyledWidget {
     return shrink(this.rect, uniformInsets(INNER_INSET));
   }
 
+  /**
+   * Spend wheel notches on this view. Whether anything moved.
+   *
+   * A method rather than four lines inside `onEvent`, because a wheel does not
+   * always arrive here: a screen that pins a band above its scroller (spec 198)
+   * is handed the notch instead, and one notch has to mean the same distance
+   * whichever of the two took it.
+   */
+  wheelBy(notches: number): boolean {
+    if (!this.scrollable) return false;
+    this.scrollBy(-notches * WHEEL_STEP);
+    return true;
+  }
+
   onEvent(context: EventContext): void {
     const event = context.event;
     if (event.kind === 'wheel') {
-      if (!this.scrollable) return;
-      this.scrollBy(-event.delta * WHEEL_STEP);
-      context.stopPropagation();
+      if (this.wheelBy(event.delta)) context.stopPropagation();
       return;
     }
     if (event.kind !== 'key' || event.phase !== 'down') return;
@@ -119,10 +167,38 @@ export class ScrollView extends StyledWidget {
     context.stopPropagation();
   }
 
-  /** Dragging inside the view scrolls it, which is also the touch behaviour. */
+  /**
+   * Dragging inside the view scrolls it, which is also the touch behaviour --
+   * unless the press landed on the bar, which is dragged the other way.
+   *
+   * Which one it is is decided from the press point rather than from where the
+   * pointer is now: `pos - delta` is exactly where the finger went down, while
+   * `pos` at `dragStart` has already travelled the threshold that made it a drag
+   * and can be off the bar by then.
+   */
   onGesture(gesture: Gesture): void {
-    if (gesture.kind !== 'drag' || !this.scrollable) return;
-    this.scrollBy(-gesture.delta.y);
+    if (gesture.kind === 'dragEnd') {
+      this.drag = null;
+      return;
+    }
+    if (gesture.kind === 'dragStart') {
+      const origin = { x: gesture.pos.x - gesture.delta.x, y: gesture.pos.y - gesture.delta.y };
+      this.drag = this.scrollable ? { bar: containsPoint(this.trackRect(), origin), from: this.offset } : null;
+      // No early return: `dragStart` already carries the movement that crossed
+      // the threshold, and dropping it loses those pixels out of the gesture.
+    } else if (gesture.kind !== 'drag') return;
+
+    const drag = this.drag;
+    if (!drag || !this.scrollable) return;
+    if (!drag.bar) {
+      this.scrollTo(drag.from - gesture.delta.y);
+      return;
+    }
+    // The thumb's travel, not the content's: dividing by it is what turns a
+    // distance down the track into a distance down the list.
+    const travel = this.thumbTravel();
+    if (travel <= 0) return;
+    this.scrollTo(drag.from + (gesture.delta.y * this.maxScroll) / travel);
   }
 
   /**
@@ -135,7 +211,36 @@ export class ScrollView extends StyledWidget {
    * costs nothing and never moves.
    */
   private barRoom(context: LayoutContext): number {
-    return context.theme.widget(this.styleKey).metric('barThickness', 6);
+    this.barThickness = context.theme.widget(this.styleKey).metric('barThickness', 6);
+    return this.barThickness;
+  }
+
+  /**
+   * The column the bar is drawn in -- the whole of it, thumb and track alike.
+   *
+   * A press anywhere in it is a bar drag. Paging from a press on the bare track
+   * is the other convention and would want the thumb's own rect; it is not here
+   * because there is nothing yet that wants to press the track without dragging.
+   */
+  private trackRect(): Rect {
+    const inner = this.innerRect();
+    return {
+      x: inner.x + inner.width - this.barThickness,
+      y: inner.y,
+      width: this.barThickness,
+      height: inner.height,
+    };
+  }
+
+  /** As tall a share of the track as the viewport is of the content, with a floor. */
+  private thumbHeight(): number {
+    const track = this.innerRect().height;
+    return Math.max(4, Math.round((this.viewportHeight() / Math.max(1, this.contentHeight)) * track));
+  }
+
+  /** How far the thumb can slide: the whole scroll range, in track pixels. */
+  private thumbTravel(): number {
+    return Math.max(0, this.innerRect().height - this.thumbHeight());
   }
 
   protected override measureSelf(constraint: Constraint, context: LayoutContext): Size {
@@ -201,21 +306,13 @@ export class ScrollView extends StyledWidget {
 
     if (!this.scrollable) return;
     const state = style.state(this.stateFor(context));
-    const thickness = style.metric('barThickness', 6);
-    const trackHeight = inner.height;
-    const thumbHeight = Math.max(
-      4,
-      Math.round((this.viewportHeight() / Math.max(1, this.contentHeight)) * trackHeight),
-    );
-    const travel = Math.max(0, trackHeight - thumbHeight);
-    const thumbY = inner.y + Math.round((this.offset / Math.max(1, this.maxScroll)) * travel);
-    const bar: Rect = {
-      x: inner.x + inner.width - thickness,
-      y: thumbY,
-      width: thickness,
-      height: thumbHeight,
-    };
-    out.solid({ x: bar.x, y: inner.y, width: thickness, height: trackHeight }, context.theme.color('panelSunken'));
+    // The same track a press is tested against, so the bar somebody grabs and
+    // the bar they can see cannot come apart.
+    const track = this.trackRect();
+    const thumbHeight = this.thumbHeight();
+    const thumbY = track.y + Math.round((this.offset / Math.max(1, this.maxScroll)) * this.thumbTravel());
+    const bar: Rect = { x: track.x, y: thumbY, width: track.width, height: thumbHeight };
+    out.solid(track, context.theme.color('panelSunken'));
     out.solid(bar, state.mark);
   }
 }

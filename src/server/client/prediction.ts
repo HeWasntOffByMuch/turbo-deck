@@ -41,6 +41,17 @@ export interface PredictedInput {
   readonly moveY: number;
   readonly facing: number;
   readonly buttons: number;
+  /**
+   * How fast the body could move on the tick this input was made for, as a
+   * fraction of its own speed (spec 188). Absent is 1.
+   *
+   * On the *input* rather than on the predictor, because a slow is a timed
+   * state: a predictor built with one scale would keep it for the whole
+   * session, and a **replay** of buffered inputs after a correction has to walk
+   * each of them at the speed that applied when it was sent rather than at the
+   * speed that applies now.
+   */
+  readonly moveScale?: number;
 }
 
 export interface Point {
@@ -66,7 +77,7 @@ export function createFlatPredictor(speed: number, tickRate: number): PredictSte
   return (from, input) => {
     const length = Math.hypot(input.moveX, input.moveY);
     if (length <= 1e-6) return from;
-    const scale = (length > 1 ? 1 / length : 1) * perTick;
+    const scale = (length > 1 ? 1 / length : 1) * perTick * (input.moveScale ?? 1);
     return { x: from.x + input.moveX * scale, y: from.y + input.moveY * scale };
   };
 }
@@ -98,7 +109,7 @@ export function createWorldPredictor(options: {
   return (from, input) => {
     const length = Math.hypot(input.moveX, input.moveY);
     if (length <= 1e-6) return from;
-    const scale = (length > 1 ? 1 / length : 1) * perTick;
+    const scale = (length > 1 ? 1 / length : 1) * perTick * (input.moveScale ?? 1);
     const dx = input.moveX * scale;
     const dy = input.moveY * scale;
 
@@ -106,8 +117,26 @@ export function createWorldPredictor(options: {
 
     // The heightfield half, mirroring the server: try each axis alone before
     // refusing, so running along a shoreline slides instead of sticking.
+    //
+    // Skipped entirely across ground this sampler admits it does not have
+    // (spec 146). A streaming client's unarrived ground does not sample as
+    // missing -- it extrapolates the held extent's outermost cell and answers
+    // with a confident number, which reads as a cliff about half the time. So
+    // unknown ground imposes no constraint at all: we keep the collider slide,
+    // we do not invent a cliff or a lake, and the server corrects us if the
+    // guess was wrong. Being wrong in the direction of "kept walking" is what
+    // corrections are for; being wrong in the direction of "refused" sticks the
+    // player on a chunk boundary with no way to know why.
+    const knows = options.terrain.knows;
+    const covered =
+      knows === undefined ||
+      (knows.call(options.terrain, from.x, from.y) && knows.call(options.terrain, landed.x, landed.y));
     const standingOn = { x: from.x, y: from.y, z: options.terrain.heightAt(from.x, from.y) };
-    if ((landed.x !== from.x || landed.y !== from.y) && !isWalkable(standingOn, landed.x, landed.y, options.terrain)) {
+    if (
+      covered &&
+      (landed.x !== from.x || landed.y !== from.y) &&
+      !isWalkable(standingOn, landed.x, landed.y, options.terrain)
+    ) {
       const alongX = { x: landed.x, y: from.y };
       const alongY = { x: from.x, y: landed.y };
       if (alongX.x !== from.x && isWalkable(standingOn, alongX.x, alongX.y, options.terrain)) {
@@ -139,7 +168,7 @@ const OFFSET_EPSILON = 0.02;
  * has been teleported, killed and respawned, or is cheating, and all three
  * should look like what they are.
  */
-const MAX_EASED_OFFSET = 48;
+export const MAX_EASED_OFFSET = 48;
 
 export class PredictionBuffer {
   private pendingInputs: PredictedInput[] = [];
@@ -158,9 +187,35 @@ export class PredictionBuffer {
 
   constructor(
     start: Point,
-    private readonly step: PredictStep,
+    private step: PredictStep,
   ) {
     this.local = start;
+  }
+
+  /**
+   * Swaps the local step, keeping everything else.
+   *
+   * The step closes over how fast this body walks, and that is not a constant
+   * of a session: a level, an attribute and every piece of gear carrying a
+   * `moveSpeed` modifier move it. A step built once and kept walks at whatever
+   * the player happened to be wearing when prediction started, which the server
+   * then corrects on every tick for as long as they keep moving -- which is
+   * exactly what spec 067's drift nudges are not for.
+   *
+   * Only the step, never the buffer: the unacknowledged inputs are the state a
+   * correction replays from, so building a second `PredictionBuffer` around the
+   * new speed would throw away the very thing that makes a correction smooth.
+   *
+   * The inputs still in flight are replayed at the *new* speed rather than at
+   * the one that applied when each was made -- which is the opposite of what
+   * {@link PredictedInput.moveScale} does, and deliberately so. A slow is a
+   * timed state the client is told about a broadcast interval late, so its
+   * buffered inputs were genuinely walked at the old scale; a stat change is
+   * settled on the tick the server derives it and sends the stats, so the
+   * inputs it has not consumed yet are the ones it will walk at the new speed.
+   */
+  setStep(step: PredictStep): void {
+    this.step = step;
   }
 
   /** The predicted position: what the server is told, and what replays from. */

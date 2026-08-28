@@ -27,13 +27,14 @@ import { EntityKindValue, type ServerWorldState } from '../../../server/sim/type
 import { createWorldState, spawnEntity, step, type StepContext } from '../../../server/sim/world.js';
 import { autoAttack } from './target.js';
 import { facesAim } from '../../../server/sim/abilities.js';
+import { staggered } from '../../../server/sim/poise.js';
 import { moveIntent } from './intent.js';
 
 const RECORD: PersistedPlayer = {
   id: 'p1',
   displayName: 'P1',
-  baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
-  skills: [],
+  baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+  specializations: [],
   equipment: EMPTY_EQUIPMENT,
   inventory: emptyInventory(),
   coins: 0,
@@ -42,7 +43,7 @@ const RECORD: PersistedPlayer = {
   currentZone: 'greenmarch',
   level: 1,
   experience: 0,
-  unspentSkillPoints: 0,
+  unspentProgressionPoints: 0,
   health: 200,
   resource: 100,
 };
@@ -155,6 +156,9 @@ function fight(mainHand: string | null, monsterId: string, startX: number, ticks
       },
       range: swing.range,
       rooted: me.cast !== null,
+      // The server's own entity, so this is the authoritative answer rather
+      // than a replicated one (spec 173).
+      staggered: staggered(me, state.tick),
       // No wire here, so a request is answered on the tick it is made and
       // nothing is ever outstanding.
       pending: false,

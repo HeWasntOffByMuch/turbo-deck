@@ -30,6 +30,7 @@ import {
 } from './geom.js';
 import type { Theme } from '../theme/theme.js';
 import type { MotionPreference } from './motion.js';
+import type { SoundSink, UiSoundId } from './sound.js';
 import type { Atlas } from '../render/atlas.js';
 
 /**
@@ -103,6 +104,26 @@ export abstract class Widget {
    * buttons.
    */
   pointerTransparent = false;
+
+  /**
+   * Where this subtree's sounds go, or null to ask an ancestor (spec 229).
+   *
+   * Set on **one** node -- `UiRoot` sets it on its content -- and every
+   * descendant finds it by walking `parent`. That is the same "only the ancestor
+   * chain knows" rule a tab's rows already live by, and it is the answer to the
+   * problem `sound.ts` created and left open: `SoundSink` and `SILENT` have
+   * existed since spec 133 with the sink threaded to exactly one field on
+   * `Button` and assigned by nobody, so every widget in the game emitted into
+   * `SILENT` and the whole vocabulary was unreachable.
+   *
+   * The alternative -- pass the sink to every screen and have each hand it to
+   * every button it builds -- is one chance per widget to forget, across eleven
+   * screens with lazily-built tabs, and the one that gets forgotten is the one
+   * added next. Resolved at emit time rather than pushed down at `add`, so a
+   * widget built into a tab three interactions later inherits with nothing
+   * having to remember to re-push.
+   */
+  sounds: SoundSink | null = null;
 
   /** For diagnostics and for finding a widget in a test without holding a ref. */
   name = '';
@@ -314,6 +335,32 @@ export abstract class Widget {
   *walk(): Generator<Widget> {
     yield this;
     for (const child of this.childList) yield* child.walk();
+  }
+
+  /**
+   * Emit a sound, through whichever ancestor holds the sink.
+   *
+   * Silent by construction when nothing above has one -- which is every test,
+   * the gallery and both golden backends -- so a widget can always emit without
+   * asking whether anybody is listening. The rule about *when*: at the intent,
+   * never at the outcome. See `sound.ts`.
+   */
+  protected emitSound(id: UiSoundId): void {
+    // The walk starts at the parent and this node is checked first, rather than
+    // aliasing `this` into the loop variable -- same traversal, and lint refuses
+    // the alias.
+    if (this.sounds !== null) {
+      this.sounds.play(id);
+      return;
+    }
+    let node = this.parent;
+    while (node !== null) {
+      if (node.sounds !== null) {
+        node.sounds.play(id);
+        return;
+      }
+      node = node.parent;
+    }
   }
 
   protected abstract measureSelf(constraint: Constraint, context: LayoutContext): Size;

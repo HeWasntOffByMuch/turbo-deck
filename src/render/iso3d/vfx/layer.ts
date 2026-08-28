@@ -35,6 +35,13 @@ import { VfxSystem, type VfxHooks, type VfxSystemOptions } from './system.js';
 import { REGISTRY } from './registry.js';
 import { DecalField, type GoreLevel } from './decals.js';
 import { DecalView } from './decal-view.js';
+import {
+  bloodHitRequest,
+  brushExplosionRequest,
+  type BloodHitInput,
+  type BrushExplosionInput,
+  type SpawnRequest,
+} from './brush.js';
 import type { PlayOptions } from './types.js';
 
 /** How many of the sim's lights are actually given a `PointLight`. */
@@ -148,6 +155,35 @@ export class VfxLayer {
     return this.system.play(id, options);
   }
 
+  /**
+   * Throw paint where a blow landed (spec 158).
+   *
+   * The convenience over `play` that the painted vocabulary earns, because its
+   * inputs are the ones a *combat* call site has -- a point, a surface, the
+   * direction the blow was going -- rather than the rotation-about-Y and scale
+   * `PlayOptions` speaks in. The conversion is `bloodHitRequest`, which is pure
+   * and asserted in Node; this is the two lines that cannot be.
+   */
+  spawnBloodHit(input: BloodHitInput): number {
+    return this.playRequest(bloodHitRequest(input));
+  }
+
+  /** The same, for an explosion: a point, how far it should reach, how hard. */
+  spawnBrushExplosion(input: BrushExplosionInput): number {
+    return this.playRequest(brushExplosionRequest(input));
+  }
+
+  private playRequest(request: SpawnRequest): number {
+    return this.system.play(request.id, {
+      x: request.x,
+      y: request.y,
+      z: request.z,
+      rotation: request.rotation,
+      scale: request.scale,
+      seed: request.seed,
+    });
+  }
+
   stop(handle: number, hard = false): void {
     this.system.stop(handle, hard);
   }
@@ -215,7 +251,10 @@ export class VfxLayer {
       const emitter = this.system.emitterAt(i);
       if (!emitter) continue;
       const at = this.cursors[batchIndex] ?? 0;
-      if (batch instanceof MeshParticleBatch) batch.write(at, pool, i);
+      // The decay mode travels with the emitter rather than the particle, the
+      // same way `modeCode` and `stretch` do for the quad batches below: it is a
+      // property of what was authored, not of how far through its life a mark is.
+      if (batch instanceof MeshParticleBatch) batch.write(at, pool, i, emitter.strokeDecay);
       else if (this.families[batchIndex] === FAMILY.ribbon) {
         this.cursors[batchIndex] = at + this.writeRibbon(batch, pool, i, at, emitter.ribbonTaper);
         continue;
@@ -339,7 +378,18 @@ export class VfxLayer {
     this.system.setTimeScale(scale);
   }
 
-  /** What the debug HUD reads. */
+  /**
+   * What the debug HUD reads.
+   *
+   * The two settings are in here for the reason `data-held-weapons` is published
+   * from what is hanging off the bone rather than from what was wanted (spec
+   * 165): they are read back off the system and the field that act on them, so a
+   * panel whose button lit up and reached nothing reads as unchanged.
+   *
+   * `effectIds` is what has *started* recently rather than what is live, because
+   * a burst instance is retired on the tick it fires -- see
+   * {@link VfxSystem.recentlyStarted}.
+   */
   readout(): {
     readonly particles: number;
     readonly effects: number;
@@ -350,6 +400,9 @@ export class VfxLayer {
     readonly throttled: number;
     readonly decals: number;
     readonly decalBuckets: number;
+    readonly intensity: number;
+    readonly gore: GoreLevel;
+    readonly effectIds: readonly string[];
   } {
     const stats = this.system.stats;
     return {
@@ -362,6 +415,9 @@ export class VfxLayer {
       throttled: stats.throttled,
       decals: this.decals.count,
       decalBuckets: this.decalView.bucketCount,
+      intensity: this.system.getIntensity(),
+      gore: this.decals.getGore(),
+      effectIds: this.system.recentlyStarted(),
     };
   }
 

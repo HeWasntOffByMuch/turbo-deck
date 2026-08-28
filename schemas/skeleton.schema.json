@@ -78,7 +78,11 @@
         "properties": {
           "id": { "$ref": "#/definitions/identifier" },
           "bone": { "type": "string", "minLength": 1 },
-          "offset": { "$ref": "#/definitions/vec3" }
+          "offset": { "$ref": "#/definitions/vec3" },
+          "rotationDeg": {
+            "description": "Euler degrees, applied XYZ in the bone's local frame, orienting whatever is attached (spec 140). Where a grip sits in a palm and which way a held thing points out of it are facts about the body rather than about the sword, so one calibration here serves every weapon. Degrees rather than a quaternion because this is the one field in the format somebody tunes by dragging a slider until it looks right.",
+            "$ref": "#/definitions/vec3"
+          }
         }
       }
     },

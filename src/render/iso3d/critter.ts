@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Vec2 } from '../../sim/types.js';
 import type { FigureTuning } from '../cloth/params.js';
+import { BONE } from '../cloth/figure.js';
 import {
   deriveCoat,
   resolveParts,
@@ -577,6 +578,12 @@ export class CritterRig implements SandboxUnit {
   private readonly motion = new MotionObserver();
   private coatHex: number;
   private clock = 0;
+  /** The head, for the grazing dip. Null for a species that never uses it. */
+  private readonly headBone: THREE.Object3D | null;
+  /** Where the head rests, so the dip can return it exactly. */
+  private readonly headRest = new THREE.Vector3();
+  /** How far into the head-down pose the animal currently is, 0..1. */
+  private grazing = 0;
 
   constructor(species: CritterSpecies, opts: { tuning?: CritterTuning; coat?: number } = {}) {
     this.species = species;
@@ -625,6 +632,10 @@ export class CritterRig implements SandboxUnit {
 
     this.humanoid = new Humanoid(species.metrics, dress);
     this.group.add(this.humanoid.group);
+    // The head, for the grazing dip, and where it rests so the dip can put it
+    // back exactly rather than accumulating onto wherever it left it.
+    this.headBone = this.humanoid.bones[BONE.head] ?? null;
+    if (this.headBone) this.headRest.copy(this.headBone.position);
   }
 
   /** The species' gait, for the sandbox status line. */
@@ -674,6 +685,7 @@ export class CritterRig implements SandboxUnit {
     const gait = this.motion.observe(h, worldPos, ry);
     this.humanoid.update(h, gait, this.tuning);
     this.poseSockets(h, gait.speed);
+    this.poseGraze(h, gait.speed);
     this.group.updateMatrixWorld(true);
   }
 
@@ -695,6 +707,38 @@ export class CritterRig implements SandboxUnit {
    * Each is chased through a per-socket follow rate rather than applied directly,
    * so a heavy tail lags and a light ear does not.
    */
+  /**
+   * The head-down pose, for a species that declares one (see {@link GrazePose}).
+   *
+   * Driven off the same gait number the ears read and nothing else: the head
+   * sinks as the animal comes to rest and lifts as it walks off, chased through
+   * a follow rate so it is a movement rather than a switch. The nibble rides on
+   * top, faded in with the dip so a walking animal never twitches its head.
+   *
+   * It writes the head bone's `z` rotation, which the gait leaves alone -- the
+   * walk poses the torso and the four limbs and has never had an opinion about
+   * the neck, so there is nothing here to fight over.
+   */
+  private poseGraze(h: number, speed: number): void {
+    const spec = this.species.graze;
+    if (!spec || !this.headBone) return;
+    // 1 when stopped, 0 once it is properly walking -- the inverse of the `move`
+    // the sockets use, so the head is down exactly when the ears have stopped
+    // swinging with the stride.
+    const target = 1 - smoothstep(IDLE_SPEED, WALK_SPEED, speed);
+    this.grazing += (target - this.grazing) * Math.min(1, h * spec.follow);
+    const nibble = Math.sin(this.clock * TWO_PI * spec.nibbleHz) * spec.nibbleAmp * this.grazing;
+    this.headBone.rotation.z = spec.dip * this.grazing + nibble;
+    // The neck: down and out in front, so the mouth actually reaches the ground
+    // rather than the animal peering at its own knees. Written from the stored
+    // rest position rather than accumulated, so lifting returns it exactly.
+    this.headBone.position.set(
+      this.headRest.x + spec.reach * this.grazing,
+      this.headRest.y - spec.drop * this.grazing,
+      this.headRest.z,
+    );
+  }
+
   private poseSockets(h: number, speed: number): void {
     const phase = this.humanoid.stridePhase * TWO_PI;
     const move = smoothstep(IDLE_SPEED, WALK_SPEED, speed);

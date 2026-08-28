@@ -35,6 +35,8 @@ function ask(overrides: Partial<AutoAttackInput> = {}): ReturnType<typeof autoAt
     // one of those.
     aligned: true,
     rooted: false,
+    // Holding its own footing, unless a case says otherwise (spec 173).
+    staggered: false,
     pending: false,
     readyAtTick: 0,
     tick: 100,
@@ -50,8 +52,8 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
   const stats = computeEffectiveStats({
     id: 'p1',
     displayName: 'P1',
-    baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
-    skills: [],
+    baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+    specializations: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     coins: 0,
@@ -60,7 +62,7 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
     currentZone: 'greenmarch',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
+    unspentProgressionPoints: 0,
     health: 200,
     resource: 100,
   });
@@ -69,11 +71,17 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
       position: from,
       // Pointing at the origin, so the answer is about reach and nothing else.
       facing: Math.atan2(-from.y, -from.x),
+      fallbackCharges: 0,
+      // Not staggered; this is a question about reach (spec 173).
+      activity: 0,
+      activityUntilTick: 0,
       health: stats.maxHealth,
       resource: stats.maxResource,
       cooldowns: {},
       cast: null,
       stats,
+      poise: stats.traits.maxPoise,
+      shield: 0,
     },
     abilityId,
     { x: 0, y: 0 },
@@ -377,5 +385,37 @@ describe('a swing waits to be facing its mark (spec 090)', () => {
     });
     expect(far.chaseTo).not.toBeNull();
     expect(far.attack).toBe(false);
+  });
+});
+
+/** Close enough to swing, so a refusal below is about the break and nothing else. */
+const IN_REACH = { x: 340, y: 0 };
+
+describe('a broken body holds its order and asks for nothing (spec 173)', () => {
+  it('does not ask while staggered', () => {
+    // In reach and otherwise ready, so the only thing stopping the swing is the
+    // break. `IN_REACH` is the same position the plain in-reach case uses.
+    expect(ask({ staggered: true, self: IN_REACH }).attack).toBe(false);
+  });
+
+  it('does not chase while staggered', () => {
+    // Out of reach, so a body that could walk would be told to. It cannot.
+    expect(ask({ staggered: true, self: { x: -400, y: 0 } }).chaseTo).toBeNull();
+  });
+
+  it('keeps the mark', () => {
+    // A stagger is half a second. Dropping the target would make every break
+    // cost the player their order as well as their footing.
+    expect(ask({ staggered: true, self: IN_REACH }).drop).toBe(false);
+  });
+
+  it('asks again the moment the window ends', () => {
+    expect(ask({ staggered: false, self: IN_REACH }).attack).toBe(true);
+  });
+
+  it('still drops a corpse while staggered', () => {
+    // Being staggered does not suspend the rule above it: a dead mark is not a
+    // mark, whatever is happening to the body holding the order.
+    expect(ask({ staggered: true, self: IN_REACH, target: { ...TARGET, health: 0 } }).drop).toBe(true);
   });
 });

@@ -1,0 +1,575 @@
+/**
+ * Twelve builds, fought against the same problem, measured (spec 147).
+ *
+ * The brief's balance instrumentation, standing up. Every preset in
+ * `data/presets.ts` is built through the *real* `computeEffectiveStats`, put in
+ * the *real* `step`, and told to fight the same monster until it wins or dies.
+ * Nothing here is a model of the game: if a number is wrong on this table, it is
+ * wrong in the game.
+ *
+ * **The goal is not equal DPS.** A table where six builds have the same
+ * damage-per-second is not evidence of balance, it is evidence that five of them
+ * have been tuned into the sixth. What to read instead:
+ *
+ *   - every build **wins** -- a row with no kills is a build that does not work;
+ *   - the *shape* of each row differs -- Strength high on staggers, Constitution
+ *     high on damage taken and long on seconds, Agility lowest on health-per-kill,
+ *     Perception highest on weak-point rate, Wisdom highest on resource ratio;
+ *   - a row that looks like somebody else's row is the finding.
+ *
+ * **What this harness cannot see.** Both bodies stand still and one monster is
+ * in front at a time, so it measures a duel and not an encounter. Three of the
+ * six routes are therefore under-reported on purpose rather than by accident:
+ * Agility's repositioning shows only as ROOT%, Intelligence's radius and range
+ * are worth nothing against a single adjacent target, and Constitution's
+ * forgiveness never gets tested by a mistake nobody makes. A stationary duel
+ * against one melee monster is the *most* favourable test there is for a
+ * glass-cannon build, so read Intelligence's DPS with that in mind rather than
+ * tuning it down to match this table.
+ *
+ * Since spec 156 there is a second table under it, and one more thing it cannot
+ * see. Each opponent is given its own spawner id, so the sustain numbers are the
+ * *un-farmed* economy -- which is what a tuning table wants, and which means the
+ * elite guarantee fires on every elite kill instead of once per spawner per
+ * ninety seconds. The default `ravager` is an elite, so its MOTES/K pins at the
+ * guarantee and its NET/K reads far kinder than a real one:
+ *
+ *   npx tsx scripts/balance-builds.ts --monster=stalker --seconds=180
+ *
+ * is the ordinary economy, and the row to tune against.
+ *
+ *   npx tsx scripts/balance-builds.ts [--seconds=n] [--monster=id] [--seed=n]
+ *                                     [--preset=id]
+ *
+ * Nothing here is part of a build. It exists to be run and read.
+ */
+
+import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../src/server/config.js';
+import { abilityById, type AbilityDefinition } from '../src/server/data/abilities.js';
+import { abilityAttributeBonus, abilityGradesOf } from '../src/server/data/ability-scaling.js';
+import { ITEMS } from '../src/server/data/items.js';
+import { BUILD_PRESETS, fullSpreadOf, presetById, type BuildPreset } from '../src/server/data/presets.js';
+import { monsterById } from '../src/server/data/monsters.js';
+import { startingBaseStats } from '../src/server/player/attributes.js';
+import { milestoneProgress, resolveProgression } from '../src/server/player/progression.js';
+import { computeEffectiveStats } from '../src/server/player/stats.js';
+import {
+  EMPTY_METRICS,
+  foldMetrics,
+  foldPosture,
+  foldResource,
+  summarise,
+  type BuildMetrics,
+} from '../src/server/sim/metrics.js';
+import {
+  CastEndReason,
+  CastPhase,
+  EntityKindValue,
+  type ServerInput,
+  type ServerWorldState,
+} from '../src/server/sim/types.js';
+import {
+  createWorldState,
+  replaceEntity,
+  spawnEntity,
+  step,
+  type StepContext,
+} from '../src/server/sim/world.js';
+import { STARTER_EQUIPMENT } from '../src/server/player/player-manager.js';
+import {
+  emptyInventory,
+  type BaseStats,
+  type EffectiveStats,
+  type PersistedPlayer,
+} from '../src/server/state/types.js';
+import { chunkKeyOf } from '../src/server/world/chunks.js';
+import { FLAT_TERRAIN } from '../src/server/world/terrain.js';
+import { ZoneManager } from '../src/server/world/zone-manager.js';
+import { DEFAULT_WORLD } from '../src/sim/collision.js';
+
+function flag(name: string, fallback: string): string {
+  const found = process.argv.find((arg) => arg.startsWith(`--${name}=`));
+  return found ? found.slice(name.length + 3) : fallback;
+}
+
+const seconds = Number(flag('seconds', '30'));
+const monsterId = flag('monster', 'ravager');
+const seed = Number(flag('seed', '1'));
+const only = flag('preset', '');
+
+const CHUNK = 100;
+const ORIGIN = { x: 600, y: 450 };
+
+const context: StepContext = {
+  world: DEFAULT_WORLD,
+  terrain: FLAT_TERRAIN,
+  zones: new ZoneManager(),
+  // No spawners: the fight is the two bodies put there on purpose, and a third
+  // wandering in would make two runs of the same seed different fights.
+  config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
+  activeChunks: (() => {
+    const keys = new Set<string>();
+    for (let dy = -6; dy <= 6; dy++) {
+      for (let dx = -6; dx <= 6; dx++) {
+        keys.add(chunkKeyOf(ORIGIN.x + dx * CHUNK, ORIGIN.y + dy * CHUNK, CHUNK));
+      }
+    }
+    return keys;
+  })(),
+  chunkSize: CHUNK,
+  spawnPoints: [],
+};
+
+const REASONS = {
+  cancelled: CastEndReason.Cancelled,
+  backswingCancelled: CastEndReason.BackswingCancelled,
+  backswingPhase: CastPhase.Backswing,
+};
+
+/**
+ * A preset's record, with the four sigils its own spread hits hardest with.
+ *
+ * Two passes, and the second is the loadout: {@link harnessSigilsFor} ranks
+ * against the record built by the first, which carries no skills at all. Exact
+ * rather than approximate, because a sigil's `modifiers` are empty in every row
+ * -- see that function for why the ranking is per build rather than a list.
+ */
+function recordFor(preset: BuildPreset): PersistedPlayer {
+  const bare = bareRecordFor(preset);
+  const [skill1, skill2, skill3, skill4] = harnessSigilsFor(bare);
+  return {
+    ...bare,
+    // An empty slot is `null` rather than absent, and there are always four
+    // sigils in the table to fill them -- but a slot is typed as nullable, so
+    // the fallback is stated rather than asserted away.
+    equipment: {
+      ...bare.equipment,
+      skill1: skill1 ?? null,
+      skill2: skill2 ?? null,
+      skill3: skill3 ?? null,
+      skill4: skill4 ?? null,
+    },
+  };
+}
+
+function bareRecordFor(preset: BuildPreset): PersistedPlayer {
+  return {
+    id: preset.id,
+    displayName: preset.name,
+    baseStats: fullSpreadOf(preset).attributes as unknown as BaseStats,
+    // Whatever the preset's `tierShare` bought out of the same pool (spec 244).
+    // Twelve of the presets spend nothing here and are the *attribute*
+    // comparison, unchanged; the four `spend.*` rows are the new axis. Which
+    // tiers a spending preset takes is derived from the tables -- lowest
+    // threshold first -- rather than hand-picked, so the table stays a
+    // comparison between policies and not between whoever picked the trees.
+    specializations: fullSpreadOf(preset).specializations,
+    // The starter kit rather than bare hands (spec 217). Every character in the
+    // game begins holding `sword.worn`, and since a weapon now carries the
+    // damage a swing does, an empty-handed preset measures a build punching --
+    // which nobody does, and which is 1-2 damage against an ability's several.
+    // The same weapon for all twelve, so it stays a control rather than a
+    // variable.
+    equipment: STARTER_EQUIPMENT,
+    inventory: emptyInventory(),
+    position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
+    facing: 0,
+    currentZone: 'greenmarch',
+    level: preset.level,
+    experience: 0,
+    unspentProgressionPoints: 0,
+    health: 0,
+    resource: 0,
+    coins: 0,
+  };
+}
+
+interface Row {
+  readonly preset: BuildPreset;
+  readonly metrics: BuildMetrics;
+  readonly survived: boolean;
+  readonly maxHealth: number;
+}
+
+/**
+ * One build against a stream of monsters.
+ *
+ * A stream rather than one, because a single kill measures burst and the thing
+ * being compared is *sustainability*: whether a build can keep going is the
+ * question, and it only has an answer once the pool has run out at least once.
+ * A fresh monster appears the tick after the last one dies.
+ */
+function run(preset: BuildPreset): Row {
+  const record = recordFor(preset);
+  const stats = computeEffectiveStats(record);
+  const monster = monsterById(monsterId);
+  if (!monster) throw new Error(`no such monster: ${monsterId}`);
+
+  let state: ServerWorldState = createWorldState(seed);
+  const spawned = spawnEntity(state, {
+    kind: EntityKindValue.Player,
+    typeId: 'player',
+    ownerPlayerId: preset.id,
+    position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
+    stats,
+    radius: 16,
+    zoneId: 'greenmarch',
+  });
+  state = spawned.state;
+  const selfId = spawned.entity.id;
+
+  // What a swing is worth, which since spec 217 is the **weapon's** resolved
+  // range rather than a field on the ability row. Read off the row it used to
+  // be, this is now 0 for every build -- so `bestReady` preferred any ability
+  // over swinging, every build stopped making basic attacks, and the weak-point
+  // column of this table went to zero across the board while the harness
+  // measured a rotation nobody plays.
+  const basicDamage = stats.attackDamage;
+  let metrics = EMPTY_METRICS;
+  let seq = 0;
+  let foeId = 0;
+
+  for (let tick = 1; tick <= Math.round(seconds * SERVER_TICK_RATE); tick++) {
+    const self = state.entities.get(selfId);
+    if (!self || self.health <= 0) break;
+
+    // Keep exactly one live opponent in front of the build.
+    const foe = foeId > 0 ? state.entities.get(foeId) : undefined;
+    if (!foe || foe.health <= 0) {
+      const next = spawnEntity(state, {
+        kind: EntityKindValue.Monster,
+        typeId: monster.id,
+        position: { x: ORIGIN.x + 60, y: ORIGIN.y, z: 0 },
+        stats: monster.stats,
+        radius: monster.radius,
+        zoneId: 'greenmarch',
+        targetId: selfId,
+      });
+      state = next.state;
+      foeId = next.entity.id;
+      // Each opponent gets its own spawner id (spec 156). Without one they all
+      // share a per-type farm key, and this harness -- which is a stream of the
+      // same monster at the same spot -- decays to the floor within seconds and
+      // measures the anti-farm rule instead of the economy. That rule has its
+      // own tests; what this table is for is what an ordinary fight pays, which
+      // is a camp of distinct spawn points rather than one corner farmed.
+      state = replaceEntity(state, { ...next.entity, spawnerId: `bench-${next.entity.id}` });
+    }
+
+    const target = state.entities.get(foeId);
+    seq += 1;
+    // **One policy, for every build.** Throw the heaviest thing that is ready
+    // and affordable, and fall back to the weapon. The differences in the table
+    // are then the *stats* rather than a rotation somebody wrote per build --
+    // and it is what lets Intelligence and Wisdom show at all, since a harness
+    // that only auto-attacks measures neither a spell nor a resource pool.
+    const chosen = bestReady(self, tick, basicDamage) ?? (target ? stats.basicAttackId : '');
+    const input: ServerInput = {
+      entityId: selfId,
+      seq,
+      moveX: 0,
+      moveY: 0,
+      facing: 0,
+      buttons: 0,
+      predictedX: self.position.x,
+      predictedY: self.position.y,
+      hasPrediction: false,
+      seqSpan: 1,
+      // Attack whenever free. Every build fights the same way -- the differences
+      // in the table are the *stats*, not a policy somebody wrote per build.
+      castAbilityId: self.cast === null && target ? chosen : '',
+      castTargetX: target?.position.x ?? ORIGIN.x,
+      castTargetY: target?.position.y ?? ORIGIN.y,
+      castTargetEntityId: target?.id ?? 0,
+      cancelCast: false,
+    };
+
+    const before = state.entities.get(selfId);
+    const result = step(state, [input], context);
+    state = result.state;
+    const after = state.entities.get(selfId);
+
+    metrics = foldMetrics(metrics, selfId, tick, result.events, REASONS);
+    metrics = foldPosture(metrics, (after?.cast ?? null) !== null);
+    if (before && after) {
+      metrics = foldResource(
+        metrics,
+        { resource: before.resource, shield: before.shield, fallbackCharges: before.fallbackCharges },
+        { resource: after.resource, shield: after.shield, fallbackCharges: after.fallbackCharges },
+      );
+    }
+  }
+
+  const survivor = state.entities.get(selfId);
+  return {
+    preset,
+    metrics,
+    survived: (survivor?.health ?? 0) > 0,
+    maxHealth: stats.maxHealth,
+  };
+}
+
+/**
+ * The heaviest ability this body could throw right now, or null.
+ *
+ * Ready, affordable *through the caster's own cost* -- so a Wisdom build can
+ * afford what a Strength build cannot -- and self-targeted rows excluded,
+ * because a heal aimed at a monster is not a rotation, it is a bug in the
+ * harness. Sorted by damage, so "heaviest" is a fact about the table rather
+ * than an order somebody typed.
+ *
+ * The threshold is what makes the table representative rather than merely
+ * deterministic. Without it the cheapest bolt is off cooldown almost every tick
+ * and the *weapon never swings at all*: the first version of this harness had
+ * every build casting `bolt.arcane` on repeat, which meant zero staggers and
+ * zero weak points on every row, because both are basic-attack mechanics. A
+ * punctuation ability has to be worth interrupting the backbone for, and twice
+ * the weapon's damage is the line.
+ */
+const PUNCTUATION_RATIO = 2;
+/**
+ * What a build has to punctuate with, read off the **sigils** (spec 232).
+ *
+ * It used to be `STARTING_ABILITIES`, which was spec 062's demo set -- one row
+ * per `AbilityKind`, granted by nothing and castable by anybody. Those rows are
+ * gone, and the abilities a character can actually cast now come from the four
+ * skill slots, so the list comes from the same place: every `activeSkillId` in
+ * the item table. Derived rather than typed out, so a thirteenth sigil is in
+ * the harness the moment it is in the game.
+ *
+ * {@link castable} is the one filter, and it is applied in both places that
+ * ask: the loadout, which must not spend a slot on something the harness will
+ * never throw, and {@link bestReady}, which must not offer one. A `self`-kind
+ * ability is excluded because this is a stationary duel and an aura the harness
+ * never walks anybody into measures nothing; `skill.testStatuses` because it is
+ * the debug row, and it is named rather than inferred, since "costs 0 and does
+ * 1 damage" is a shape a real skill could have.
+ */
+function castable(ability: AbilityDefinition): boolean {
+  return !ability.basicAttack && ability.kind !== 'self' && ability.id !== 'skill.testStatuses';
+}
+
+/** Every sigil the harness could throw, paired with the ability it grants. */
+const SIGILS = [...ITEMS.values()]
+  .filter((item) => item.slot === 'skill' && item.activeSkillId !== undefined)
+  .map((item) => ({ itemId: item.id, ability: abilityById(item.activeSkillId as string) }))
+  .filter((row): row is { itemId: string; ability: AbilityDefinition } => row.ability !== null)
+  .filter((row) => castable(row.ability));
+
+/**
+ * The four sigils a preset wears, so `startCast` will let it cast one.
+ *
+ * A skill is refused unless it is in a slot (spec 188), so a harness carrying
+ * none would measure twelve builds auto-attacking.
+ *
+ * **The same rule for all twelve, not the same four sigils** -- and that is a
+ * correction rather than a preference. This was a hardcoded list of the four
+ * highest-`damage` sigils, on the argument that all twelve carrying one set is
+ * a control the way all twelve carrying one sword is. That argument held only
+ * while every ability in the game scaled with Intelligence: the four could be
+ * handed to anybody because the row's flat `damage` really was what each build
+ * got out of them.
+ *
+ * Since spec 238 an ability scales with what its own row declares, and the four
+ * highest-`damage` sigils are all Strength or Agility. Handed to everybody they
+ * stopped being a control and became a martial loadout: Pure Intelligence and
+ * INT/WIS wore four skills their spread bought nothing from, never cleared
+ * {@link PUNCTUATION_RATIO}, never cast, and killed **nothing** in thirty
+ * seconds. That is a fact about the list, not about the build.
+ *
+ * So the *rule* is the control: the four sigils this spread hits hardest with,
+ * ranked by {@link resolvedDamage} -- the same function `bestReady` picks with,
+ * so the loadout and the selection heuristic cannot disagree about what a build
+ * is holding. Nobody hand-picks anything, and a thirteenth sigil is in the
+ * harness the moment it is in the game.
+ *
+ * Ranked against a **skill-less** record, which is exact rather than
+ * approximate: a sigil's `modifiers` are empty in every row, so wearing one
+ * cannot move the attributes the ranking reads.
+ */
+function harnessSigilsFor(record: PersistedPlayer): readonly string[] {
+  const stats = computeEffectiveStats(record);
+  return [...SIGILS]
+    .sort((a, b) => {
+      const byDamage = resolvedDamage(b.ability, stats) - resolvedDamage(a.ability, stats);
+      // Ties broken on id, or the loadout depends on the item table's order.
+      return byDamage !== 0 ? byDamage : a.itemId.localeCompare(b.itemId);
+    })
+    .slice(0, 4)
+    .map((row) => row.itemId);
+}
+
+/**
+ * What an ability actually hits this body's targets for (spec 238).
+ *
+ * **Not `ability.damage`.** That is the row's flat number, and since spec 238 an
+ * ability's damage is that plus its declared attribute scaling -- so a caster's
+ * Ember Toss is several times its authored 2 and a Strength character's
+ * Whirlwind is more than double its authored 4. Comparing the authored number
+ * against a resolved weapon damage is comparing two different quantities, which
+ * is exactly the fault spec 217 recorded fixing in this same function when a
+ * basic attack's damage moved onto the weapon.
+ *
+ * The weapon term is deliberately absent: no production ability declares one,
+ * and a roll has no place in a selection heuristic.
+ */
+function resolvedDamage(ability: AbilityDefinition, stats: EffectiveStats): number {
+  return (
+    ability.damage +
+    abilityAttributeBonus(
+      stats.scalingAttributes,
+      abilityGradesOf(ability.scaling),
+      stats.spellPower,
+    )
+  );
+}
+
+/**
+ * The heaviest thing this body could throw right now, or null for the weapon.
+ *
+ * Two things about the candidate list, and each was a silent zero before it was
+ * fixed.
+ *
+ * **It is what the body is carrying**, off `skillAbilityIds` -- the server's own
+ * derivation from the four slots -- rather than every sigil in the item table.
+ * `startCast` refuses a skill that is not in a slot (spec 188), so a global list
+ * hands a build an id it does not own, the cast is refused, and the fallback to
+ * the weapon never happens because a choice was made. Pure Intelligence went to
+ * **0.0 DPS** that way: offered Whirlwind, which it was not wearing, on every
+ * tick it was free.
+ *
+ * **And it is ranked by {@link resolvedDamage}**, not by the row's flat
+ * `damage`. Since spec 238 those are different orders for every build -- flat
+ * damage is what an ability is worth to nobody in particular.
+ */
+function bestReady(
+  self: {
+    readonly cooldowns: Readonly<Record<string, number>>;
+    readonly resource: number;
+    readonly stats: EffectiveStats;
+  },
+  tick: number,
+  basicDamage: number,
+): string | null {
+  const carried = self.stats.skillAbilityIds
+    .map((id) => abilityById(id))
+    .filter((ability): ability is AbilityDefinition => ability !== null)
+    .filter(castable)
+    .sort((a, b) => resolvedDamage(b, self.stats) - resolvedDamage(a, self.stats));
+  for (const ability of carried) {
+    if (resolvedDamage(ability, self.stats) < basicDamage * PUNCTUATION_RATIO) continue;
+    if (tick < (self.cooldowns[ability.id] ?? 0)) continue;
+    if (self.resource < ability.cost * self.stats.traits.resourceCostScale) continue;
+    return ability.id;
+  }
+  return null;
+}
+
+function pad(text: string, width: number): string {
+  return text.length >= width ? text.slice(0, width) : text + ' '.repeat(width - text.length);
+}
+
+function num(value: number, digits = 1): string {
+  return Number.isFinite(value) ? value.toFixed(digits) : '-';
+}
+
+const presets = only ? [presetById(only)].filter((p): p is BuildPreset => p !== null) : BUILD_PRESETS;
+if (presets.length === 0) {
+  console.error(`no such preset: ${only}`);
+  process.exit(1);
+}
+
+console.log(`\n  ${presets.length} builds x ${seconds}s vs ${monsterId}, seed ${seed}\n`);
+
+const rows = presets.map(run);
+
+console.log(
+  `  ${pad('BUILD', 16)}${pad('KILLS', 6)}${pad('DPS', 7)}${pad('HP/KILL', 9)}${pad('STAG/K', 8)}` +
+    `${pad('WEAK%', 7)}${pad('ABSORB%', 9)}${pad('RES x', 7)}${pad('ROOT%', 7)}${pad('CC%', 6)}${pad('ALIVE', 6)}`,
+);
+console.log(`  ${'-'.repeat(88)}`);
+
+for (const row of rows) {
+  const s = summarise(row.metrics, SERVER_TICK_RATE);
+  console.log(
+    `  ${pad(row.preset.name, 16)}${pad(String(s.kills), 6)}${pad(num(s.dps), 7)}` +
+      `${pad(num(s.healthPerKill), 9)}${pad(num(s.staggersPerKill, 2), 8)}` +
+      `${pad(num(s.weakPointRate * 100), 7)}${pad(num(s.absorbFraction * 100), 9)}` +
+      `${pad(num(s.resourceRatio, 2), 7)}${pad(num(s.rootedFraction * 100), 7)}` +
+      `${pad(num(s.controlledFraction * 100), 6)}` +
+      `${pad(row.survived ? 'yes' : 'NO', 6)}`,
+  );
+}
+
+// --- the health economy (spec 156) ---------------------------------------
+// A second table rather than ten more columns, because it answers a different
+// question. The one above asks whether the six builds *fight* differently; this
+// one asks whether they *sustain* differently, and the column that matters is
+// NET/K -- health restored minus health lost, per kill.
+//
+// What a healthy table looks like: every row negative but not steeply so,
+// Agility nearest zero because it spends least, Wisdom highest on MOTE% because
+// it wastes least, Strength and Perception highest on RESTORE/K because their
+// bonuses fire, and FLASK/K near zero on all of them. A row at or above zero on
+// NET/K is a build that never has to leave, which is the failure this whole
+// spec exists to prevent.
+console.log('\n  Sustain -- net health per kill is the number this is tuned against:\n');
+console.log(
+  `  ${pad('BUILD', 16)}${pad('NET/K', 9)}${pad('REST/K', 9)}${pad('MOTES/K', 9)}` +
+    `${pad('TAKEN/K', 9)}${pad('HEALED/K', 10)}${pad('MOTE%', 8)}${pad('FLASK/K', 9)}`,
+);
+console.log(`  ${'-'.repeat(73)}`);
+
+for (const row of rows) {
+  const s = summarise(row.metrics, SERVER_TICK_RATE);
+  const kills = Math.max(1, row.metrics.kills);
+  console.log(
+    `  ${pad(row.preset.name, 16)}${pad(num(s.netHealthPerKill), 9)}` +
+      `${pad(num(row.metrics.restorationEarned / kills), 9)}` +
+      `${pad(num(s.motesPerKill, 2), 9)}${pad(num(s.healthPerKill), 9)}` +
+      `${pad(num(row.metrics.healingReceived / kills), 10)}` +
+      `${pad(num(s.moteEfficiency * 100), 8)}${pad(num(s.fallbackPerKill, 2), 9)}`,
+  );
+}
+
+// Why each build got what it got. The brief's quality bar asks whether a
+// designer can inspect the derivation rather than only the total, and a route
+// that is not firing shows up here as a missing line rather than as a number
+// that is merely lower than somebody else's.
+console.log('\n  Where the restoration came from:\n');
+for (const row of rows) {
+  const sources = Object.entries(row.metrics.restorationSources)
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, amount]) => `${reason} ${Math.round(amount)}`);
+  console.log(`  ${pad(row.preset.name, 16)}${sources.join(', ') || '(base only)'}`);
+}
+
+console.log('\n  What each build reached:\n');
+for (const row of rows) {
+  const record = recordFor(row.preset);
+  const progression = resolveProgression(record);
+  const reached = progression.milestones.map((m) => m.name);
+  console.log(`  ${pad(row.preset.name, 16)}${reached.join(', ') || '(nothing)'}`);
+}
+
+console.log('\n  Nearest unreached milestone, per build:\n');
+for (const row of rows) {
+  const { attributes } = resolveProgression(recordFor(row.preset));
+  const next = milestoneProgress(attributes)
+    .filter((entry) => entry.next !== null)
+    .sort((a, b) => a.remaining - b.remaining)[0];
+  console.log(
+    `  ${pad(row.preset.name, 16)}${next?.next ? `${next.remaining} more ${next.attribute} -> ${next.next.name}` : '(all reached)'}`,
+  );
+}
+
+// The line the table exists to make checkable. A build that cannot kill the
+// thing in front of it is not a build, whatever its other numbers say.
+const broken = rows.filter((row) => row.metrics.kills === 0);
+console.log('');
+if (broken.length > 0) {
+  console.log(`  !! ${broken.map((row) => row.preset.name).join(', ')} killed nothing.\n`);
+  process.exitCode = 1;
+} else {
+  console.log(`  every build won at least once. Baseline: ${startingBaseStats().strength} in each.\n`);
+}

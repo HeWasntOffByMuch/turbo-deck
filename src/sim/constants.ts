@@ -68,7 +68,7 @@ export const ATTACK_SPEED_PER_AGILITY = 0.05;
 // Intelligence: each point adds this fraction to all spell damage.
 export const SPELL_DAMAGE_PER_INTELLIGENCE = 0.06;
 
-export const PLAYER_MAX_HEALTH = 100;
+export const PLAYER_MAX_HEALTH = 25;
 // Reach of the player's melee strike, measured from the player's centre to the
 // enemy's centre it must be within (ENEMY_RADIUS is added at the call site).
 export const PLAYER_ATTACK_RANGE = 50;
@@ -146,20 +146,15 @@ export const WAVE_MAX_ENEMIES = 40;
 // Cap on stacked incoming-damage reduction (stance + guard), so nothing is fully immune.
 export const MAX_DAMAGE_REDUCTION = 0.85;
 
-// --- Arena obstacles (spec 037) ---
-// A fixed, hand-authored layout: not seeded, so every run has the same walls.
-// Two barricades per flank with a central gap, plus a bar above and below the
-// spawn, which sits at the arena's centre. The outer ring is deliberately left
-// clear (>= 90 units) so travel along the border is never blocked, and the
-// horizontal band through the middle is an open lane between the gaps.
-export const ARENA_OBSTACLES: readonly Rect[] = [
-  { x: 300, y: 90, w: 36, h: 250 },
-  { x: 300, y: 560, w: 36, h: 250 },
-  { x: 864, y: 90, w: 36, h: 250 },
-  { x: 864, y: 560, w: 36, h: 250 },
-  { x: 500, y: 200, w: 200, h: 40 },
-  { x: 500, y: 660, w: 200, h: 40 },
-];
+// --- Arena obstacles ---
+// There are none, and that is the point (spec 221). Spec 037 compiled six
+// hand-authored rects in here -- barricades around a spawn at the centre of a
+// flat 1200x900 arena -- and they outlived both halves of their premise: spec
+// 072 made the map document the world, and spec 165 grew it to 18,480x16,632,
+// leaving that arena as 0.35% of one corner with a hillside running through it.
+// A wall somebody wants comes from `maps/`, where every other collider in the
+// game already comes from. `WorldColliders.rects` is still the facility for
+// one; nothing hard-codes its contents.
 
 // --- Collision resolution ---
 // Pairwise separation passes run after every unit has moved. Separation is an
@@ -170,15 +165,29 @@ export const ARENA_OBSTACLES: readonly Rect[] = [
 export const SEPARATION_ITERATIONS = 4;
 
 // --- Walking on ground that has height (spec 056) ---
-// The steepest single-tick climb a body may make. A move that would gain more
-// height than this is a cliff, and refusing it is what stops a client walking up
-// a wall -- the heightfield half of collision, next to the collider half in
-// collision.ts.
+// The biggest *discontinuity* a body may cross in one tick: a stair riser, the
+// lip of a carved plateau, the edge `heightAt`'s max-over-layers produces where
+// one rock tier meets another. A jump bigger than this is a wall.
 //
 // Here rather than in the server since spec 130, because the router has to
 // refuse exactly the steps movement refuses. `src/server/world/terrain.ts`
 // re-exports it, so the sim's own callers are unchanged.
+//
+// What it is NOT, since spec 228, is how steep a hill may be. It was doing both
+// jobs and could only do one honestly: a height per tick is an *angle* divided
+// by how far the body travelled, so the same hillside answered 69 degrees for a
+// body at `MOVE_SPEED_HARD_MAX` and 88.4 for a grazer -- the slower the body,
+// the steeper the ground it walked up, which is backwards, and a player walked
+// up 83.9 degrees head-on. Steepness is `MAX_WALK_SLOPE` below; this is the
+// jump, and the value has not moved.
+//
+// The two do not interfere, and that is arithmetic rather than luck. Binding
+// this on smooth ground needs `perTick * gradient > MAX_STEP_HEIGHT`, which at
+// the hard max of 9.17 units a tick needs a gradient of 2.6 -- past
+// `MAX_WALK_SLOPE`. On any ground the slope rule permits, this never fires.
+// `walkability.test.ts` asserts that rather than leaving it to be re-derived.
 export const MAX_STEP_HEIGHT = 24;
+
 // Ground at or below this is deep water; nothing walks there, and nothing is
 // routed through it.
 export const WALKABLE_MIN_HEIGHT = SEA_LEVEL;
@@ -191,6 +200,75 @@ export const WALKABLE_MIN_HEIGHT = SEA_LEVEL;
 // wide. At the 30 this used to be, the 32-to-40-unit gaps the scatter actually
 // produces were found or missed on alignment alone (spec 067).
 export const NAV_CELL_SIZE = 10;
+
+/**
+ * The steepest ground a body walks on, as a gradient (rise over run).
+ *
+ * `MAX_STEP_HEIGHT / NAV_CELL_SIZE`: one nav cell of run against one whole step
+ * of rise, which is the steepest ground that can still be described as a
+ * sequence of steps at the resolution routes are planned in. Past it the ground
+ * is not a slope a body negotiates, it is a face.
+ *
+ * **It is loose, and what makes it loose is this game's own stairs.** The line
+ * that would mean something is `classify.ts`'s `rockSlope` (0.8, 38.7 degrees)
+ * -- the gradient at which the classifier stops drawing ground as dirt and
+ * starts drawing it as bare rock, so that "you can walk on it" and "it looks
+ * like ground" would be one number. `bakeStair` forbids it: measured through
+ * this very function, the steepest flight the generator will build reads
+ * **1.50, 56.3 degrees**, because a riser is a whole `MAX_STEP_HEIGHT` over
+ * about a cell of run and `SLOPE_BASELINE` only smooths it so far. A stair the
+ * sim refuses is not a stair, so the limit clears the steepest one the game can
+ * author, with room for another map's jitter. Bringing it down is a change to
+ * how a flight is cut -- more risers over a longer run -- and not a change here.
+ *
+ * There is deliberately no band above this. Steep ground is refused outright:
+ * a body walks or it does not, and a slower "climb" would be a movement state
+ * with no animation behind it and no intent to have one.
+ */
+export const MAX_WALK_SLOPE = MAX_STEP_HEIGHT / NAV_CELL_SIZE;
+
+/** That as an angle, for anything that talks to a person. */
+export const MAX_WALK_ANGLE_DEG = (Math.atan(MAX_WALK_SLOPE) * 180) / Math.PI;
+
+/**
+ * How far the samples that decide how steep ground is reach out (spec 228).
+ *
+ * **The body's own radius**: the ground a body is standing on is the ground
+ * under its own footprint, and sampling past that is asking about ground it is
+ * not on. Judging the slope over the step a body happened to take this tick
+ * cannot work at any threshold instead -- `slope.ts` carries the arithmetic --
+ * so it has to be a fixed distance, and this is the one distance the question
+ * is about.
+ *
+ * Both directions were measured against the game's own baked stair, which is
+ * the shape that punishes getting it wrong at either end. At `PLAYER_RADIUS`
+ * that flight reads 0.89; at 24 it reads 2.38 and at 32, 1.79 -- because a
+ * flight is 40 units wide, so samples reaching further than a body do not land
+ * on the stair at all, and a walkway comes back as steep as the drop beside it.
+ * Shorter, and a riser stops being smoothed by its own tread: the local
+ * gradient of a riser is 2.64.
+ */
+export const SLOPE_BASELINE = PLAYER_RADIUS;
+
+/**
+ * Cells per nav tile, per axis (spec 205).
+ *
+ * The lattice is cut into tiles so a nav grid is sized by where players are
+ * rather than by how big the map is. The unit is the **interest chunk**:
+ * `CHUNK_SIZE` is 400 and this is `400 / NAV_CELL_SIZE`, exactly.
+ *
+ * That exactness is the whole reason for the choice, and the reason the obvious
+ * unit was refused: a *map* chunk is `cellSize 22 x chunkCells 28` = 616 units,
+ * which is 61.6 cells, and tiles of 61.6 cells do not tile a lattice of whole
+ * ones. The interest chunk divides, and is already what residency is counted in
+ * -- `activeChunks` and `isSimulated` both read it.
+ *
+ * Written as a literal rather than derived, because `sim/` may not import
+ * `server/config.ts`: the deterministic core does not depend on the server's
+ * knobs. `nav-tiles.test.ts` asserts the two agree, so the divisibility is
+ * checked rather than remembered.
+ */
+export const NAV_TILE_CELLS = 40;
 // Elbow room a route prefers to keep beyond the body radius, so it does not hug
 // a wall closely enough for separation to shove a unit into one.
 //

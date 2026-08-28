@@ -8,8 +8,33 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { FALLBACK_ICON, SYSTEM_ICONS, systemIconSvg, WEAPON_ICONS, weaponIconSvg } from './icons.js';
+import {
+  FALLBACK_ICON,
+  SLOT_ICONS,
+  slotIconSvg,
+  SYSTEM_ICONS,
+  systemIconSvg,
+  WEAPON_ICONS,
+  weaponIconSvg,
+} from './icons.js';
 import { SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
+
+describe('the action bar’s slot icons (spec 164)', () => {
+  it('draws the vial and the empty slot as different things', () => {
+    expect(SLOT_ICONS.vial).not.toBe(SLOT_ICONS.empty);
+    expect(slotIconSvg('vial')).toContain(SLOT_ICONS.vial);
+    expect(slotIconSvg('empty')).toContain(SLOT_ICONS.empty);
+  });
+
+  it('paints both in currentColor, so a dimmed slot dims its icon', () => {
+    // Same trick the weapon switch relies on: one string serves the lit and the
+    // unlit button, and nothing has a second opinion about which is which.
+    for (const body of Object.values(SLOT_ICONS)) {
+      expect(body).not.toMatch(/(fill|stroke)="#/);
+    }
+    expect(slotIconSvg('vial')).toContain('stroke="currentColor"');
+  });
+});
 
 describe('the weapon icons', () => {
   it('draws a distinct icon for every attack the switch offers', () => {
@@ -91,5 +116,21 @@ describe('the window icons', () => {
       expect(icon.split('<svg').length - 1).toBe(1);
       expect(icon.match(/<(path|circle)\b/g)?.length).toBe(icon.match(/\/>/g)?.length);
     }
+  });
+
+  /**
+   * The account button (spec 227) is not one of `SYSTEM_BUTTONS` -- it lives
+   * in the opposite corner -- so nothing above walks its icon. Its own shape
+   * has to be checked the same three ways: distinct from `character`'s head
+   * and shoulders, well-formed, and painted in `currentColor` like the rest.
+   */
+  it('draws the account key as its own distinct, well-formed shape', () => {
+    expect(SYSTEM_ICONS.account).not.toBe(SYSTEM_ICONS.character);
+    const icon = systemIconSvg('account', { size: 24 });
+    expect(icon.startsWith('<svg ')).toBe(true);
+    expect(icon.endsWith('</svg>')).toBe(true);
+    expect(icon).toContain('stroke="currentColor"');
+    expect(icon).not.toContain('color:');
+    expect(icon.match(/<(path|circle)\b/g)?.length).toBe(icon.match(/\/>/g)?.length);
   });
 });

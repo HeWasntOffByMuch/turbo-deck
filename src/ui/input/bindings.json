@@ -1,34 +1,305 @@
 {
-  "version": 1,
+  "version": 2,
   "actions": [
-    { "id": "move.north", "category": "movement", "label": "Move north", "context": "gameplay", "primary": { "code": "KeyW" }, "secondary": { "code": "ArrowUp" } },
-    { "id": "move.south", "category": "movement", "label": "Move south", "context": "gameplay", "primary": { "code": "KeyS" }, "secondary": { "code": "ArrowDown" } },
-    { "id": "move.west", "category": "movement", "label": "Move west", "context": "gameplay", "primary": { "code": "KeyA" }, "secondary": { "code": "ArrowLeft" } },
-    { "id": "move.east", "category": "movement", "label": "Move east", "context": "gameplay", "primary": { "code": "KeyD" }, "secondary": { "code": "ArrowRight" } },
-
-    { "id": "combat.cancel", "category": "combat", "label": "Cancel cast", "context": "gameplay", "primary": { "code": "Escape" } },
-    { "id": "combat.stop", "category": "combat", "label": "Stop", "context": "gameplay", "primary": { "code": "KeyX" } },
-
-    { "id": "skillbar.1", "category": "skillbar", "label": "Skillbar 1", "context": "gameplay", "primary": { "code": "Digit1" } },
-    { "id": "skillbar.2", "category": "skillbar", "label": "Skillbar 2", "context": "gameplay", "primary": { "code": "Digit2" } },
-    { "id": "skillbar.3", "category": "skillbar", "label": "Skillbar 3", "context": "gameplay", "primary": { "code": "Digit3" } },
-    { "id": "skillbar.4", "category": "skillbar", "label": "Skillbar 4", "context": "gameplay", "primary": { "code": "Digit4" } },
-    { "id": "skillbar.5", "category": "skillbar", "label": "Skillbar 5", "context": "gameplay", "primary": { "code": "Digit5" } },
-    { "id": "skillbar.6", "category": "skillbar", "label": "Skillbar 6", "context": "gameplay", "primary": { "code": "Digit6" } },
-    { "id": "skillbar.7", "category": "skillbar", "label": "Skillbar 7", "context": "gameplay", "primary": { "code": "Digit7" } },
-    { "id": "skillbar.8", "category": "skillbar", "label": "Skillbar 8", "context": "gameplay", "primary": { "code": "Digit8" } },
-    { "id": "skillbar.9", "category": "skillbar", "label": "Skillbar 9", "context": "gameplay", "primary": { "code": "Digit9" } },
-    { "id": "skillbar.10", "category": "skillbar", "label": "Skillbar 10", "context": "gameplay", "primary": { "code": "Digit0" } },
-
-    { "id": "ui.character", "category": "ui", "label": "Character sheet", "context": "gameplay", "primary": { "code": "KeyC" } },
-    { "id": "ui.inventory", "category": "ui", "label": "Inventory", "context": "gameplay", "primary": { "code": "KeyI" }, "secondary": { "code": "KeyB" } },
-    { "id": "ui.keybindings", "category": "ui", "label": "Keybindings", "context": "gameplay", "primary": { "code": "KeyK" } },
-    { "id": "ui.shop", "category": "ui", "label": "Shop", "context": "gameplay", "primary": { "code": "KeyV" } },
-    { "id": "ui.closeTopmost", "category": "ui", "label": "Close window", "context": "ui", "primary": { "code": "Escape" } },
-    { "id": "ui.focusNext", "category": "ui", "label": "Next control", "context": "ui", "primary": { "code": "Tab" } },
-    { "id": "ui.focusPrevious", "category": "ui", "label": "Previous control", "context": "ui", "primary": { "code": "Tab", "shift": true } },
-
-    { "id": "debug.toggleStats", "category": "debug", "label": "Toggle stats", "context": "gameplay", "primary": { "code": "F3" } },
-    { "id": "debug.reloadMap", "category": "debug", "label": "Reload map", "context": "gameplay", "primary": { "code": "F5", "ctrl": true } }
+    {
+      "id": "move.north",
+      "category": "movement",
+      "label": "Move north",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyW"
+      },
+      "secondary": {
+        "code": "ArrowUp"
+      }
+    },
+    {
+      "id": "move.south",
+      "category": "movement",
+      "label": "Move south",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyS"
+      },
+      "secondary": {
+        "code": "ArrowDown"
+      }
+    },
+    {
+      "id": "move.west",
+      "category": "movement",
+      "label": "Move west",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyA"
+      },
+      "secondary": {
+        "code": "ArrowLeft"
+      }
+    },
+    {
+      "id": "move.east",
+      "category": "movement",
+      "label": "Move east",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyD"
+      },
+      "secondary": {
+        "code": "ArrowRight"
+      }
+    },
+    {
+      "id": "combat.cancel",
+      "category": "combat",
+      "label": "Cancel cast",
+      "context": "gameplay",
+      "primary": {
+        "code": "Escape"
+      }
+    },
+    {
+      "id": "combat.stop",
+      "category": "combat",
+      "label": "Stop everything",
+      "context": "gameplay",
+      "primary": {
+        "code": "Space"
+      }
+    },
+    {
+      "id": "world.confirmAim",
+      "category": "world",
+      "label": "Select / aim",
+      "context": "gameplay",
+      "primary": {
+        "code": "MouseLeft"
+      }
+    },
+    {
+      "id": "world.order",
+      "category": "world",
+      "label": "Move / attack",
+      "context": "gameplay",
+      "primary": {
+        "code": "MouseRight"
+      }
+    },
+    {
+      "id": "world.trade",
+      "category": "world",
+      "label": "Offer trade",
+      "context": "gameplay",
+      "primary": {
+        "code": "MouseRight",
+        "shift": true
+      }
+    },
+    {
+      "id": "skillbar.1",
+      "category": "skillbar",
+      "label": "Skillbar 1",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit1"
+      }
+    },
+    {
+      "id": "skillbar.2",
+      "category": "skillbar",
+      "label": "Skillbar 2",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit2"
+      }
+    },
+    {
+      "id": "skillbar.3",
+      "category": "skillbar",
+      "label": "Skillbar 3",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit3"
+      }
+    },
+    {
+      "id": "skillbar.4",
+      "category": "skillbar",
+      "label": "Skillbar 4",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit4"
+      }
+    },
+    {
+      "id": "skillbar.5",
+      "category": "skillbar",
+      "label": "Skillbar 5",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit5"
+      }
+    },
+    {
+      "id": "skillbar.6",
+      "category": "skillbar",
+      "label": "Skillbar 6",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit6"
+      }
+    },
+    {
+      "id": "skillbar.7",
+      "category": "skillbar",
+      "label": "Skillbar 7",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit7"
+      }
+    },
+    {
+      "id": "skillbar.8",
+      "category": "skillbar",
+      "label": "Skillbar 8",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit8"
+      }
+    },
+    {
+      "id": "skillbar.9",
+      "category": "skillbar",
+      "label": "Skillbar 9",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit9"
+      }
+    },
+    {
+      "id": "skillbar.10",
+      "category": "skillbar",
+      "label": "Skillbar 10",
+      "context": "gameplay",
+      "primary": {
+        "code": "Digit0"
+      }
+    },
+    {
+      "id": "camera.zoomIn",
+      "category": "camera",
+      "label": "Zoom in",
+      "context": "gameplay",
+      "primary": {
+        "code": "WheelUp"
+      }
+    },
+    {
+      "id": "camera.zoomOut",
+      "category": "camera",
+      "label": "Zoom out",
+      "context": "gameplay",
+      "primary": {
+        "code": "WheelDown"
+      }
+    },
+    {
+      "id": "ui.character",
+      "category": "ui",
+      "label": "Character sheet",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyC"
+      }
+    },
+    {
+      "id": "ui.inventory",
+      "category": "ui",
+      "label": "Inventory",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyI"
+      },
+      "secondary": {
+        "code": "KeyB"
+      }
+    },
+    {
+      "id": "ui.keybindings",
+      "category": "ui",
+      "label": "Keybindings",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyK"
+      }
+    },
+    {
+      "id": "ui.account",
+      "category": "ui",
+      "label": "Account",
+      "context": "gameplay",
+      "primary": {
+        "code": "KeyU"
+      }
+    },
+    {
+      "id": "ui.chat",
+      "category": "ui",
+      "label": "Chat",
+      "context": "gameplay",
+      "primary": {
+        "code": "Enter"
+      },
+      "secondary": {
+        "code": "NumpadEnter"
+      }
+    },
+    {
+      "id": "ui.closeTopmost",
+      "category": "ui",
+      "label": "Close window",
+      "context": "ui",
+      "primary": {
+        "code": "Escape"
+      }
+    },
+    {
+      "id": "ui.focusNext",
+      "category": "ui",
+      "label": "Next control",
+      "context": "ui",
+      "primary": {
+        "code": "Tab"
+      }
+    },
+    {
+      "id": "ui.focusPrevious",
+      "category": "ui",
+      "label": "Previous control",
+      "context": "ui",
+      "primary": {
+        "code": "Tab",
+        "shift": true
+      }
+    },
+    {
+      "id": "debug.toggleStats",
+      "category": "debug",
+      "label": "Toggle stats",
+      "context": "gameplay",
+      "primary": {
+        "code": "F3"
+      }
+    },
+    {
+      "id": "debug.reloadMap",
+      "category": "debug",
+      "label": "Reload map",
+      "context": "gameplay",
+      "primary": {
+        "code": "F5",
+        "ctrl": true
+      }
+    }
   ]
 }

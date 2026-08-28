@@ -242,7 +242,7 @@ const swatches = COAT_IDS.map((id) => PLAYER_COATS.find((c) => c.id === id)).fil
 
 const cellW = BIG + GAP;
 const rowH = BIG + GAP;
-const sheetW = (swatches.length + 1) * cellW + SMALL * SMALL_SCALE + GAP;
+const sheetW = (swatches.length + 2) * cellW + SMALL * SMALL_SCALE + GAP;
 const SPECIES_IDS = ONLY ? CRITTER_IDS.filter((id) => ONLY.includes(id)) : CRITTER_IDS;
 const sheetH = SPECIES_IDS.length * rowH;
 const img = new PNG({ width: sheetW, height: sheetH, colorType: 6 });
@@ -285,9 +285,19 @@ SPECIES_IDS.forEach((id, row) => {
     swatches.length * cellW,
     row * rowH,
   );
+  // And **at rest**, which stopped being a boring cell the moment a species
+  // could declare a `graze` pose: for a grazing animal this is the pose it
+  // spends most of its life in, and a sheet that only ever drew moving bodies
+  // could not show the one thing a player standing and watching would see.
+  blit(
+    render(posedTriangles(species, species.defaultCoat, 0), BIG),
+    BIG,
+    (swatches.length + 1) * cellW,
+    row * rowH,
+  );
   // And last, at the size it actually ships at.
   const small = posedTriangles(species, species.defaultCoat);
-  blit(render(small, SMALL), SMALL, (swatches.length + 1) * cellW, row * rowH, SMALL_SCALE);
+  blit(render(small, SMALL), SMALL, (swatches.length + 2) * cellW, row * rowH, SMALL_SCALE);
   process.stdout.write(`${species.name}: ${species.parts.length} declared parts, ${small.length} triangles\n`);
 });
 

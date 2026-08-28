@@ -194,6 +194,36 @@ function flameSheet(size: number, frames: number): { pixels: Uint8Array<ArrayBuf
   return { pixels, width };
 }
 
+/**
+ * The plus sign a heal is read by (spec 157).
+ *
+ * Authored in *texels* rather than as a shape with an edge: `arm` is the bar's
+ * half-width in texels, and every pixel of the sheet is on or off. There is no
+ * falloff and no dither in here, which is the opposite of every other sheet
+ * above and is the whole point -- at the gameplay zoom a plus lands on about
+ * eleven pixels, and an antialiased cross that size is a green smudge where a
+ * hard three-texel bar is unmistakably a plus.
+ *
+ * Small on purpose, too. A 7x7 sheet magnified with a nearest filter is a plus
+ * made of chunky blocks at any distance; a 64x64 one would be resampled into
+ * mush by the same downsample the rest of this file exists to survive.
+ */
+function plusSprite(size: number, arm: number): Uint8Array<ArrayBuffer> {
+  const pixels = new Uint8Array(size * size * 4);
+  const centre = (size - 1) / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const on = Math.abs(x - centre) <= arm || Math.abs(y - centre) <= arm;
+      const at = (y * size + x) * 4;
+      pixels[at] = 255;
+      pixels[at + 1] = 255;
+      pixels[at + 2] = 255;
+      pixels[at + 3] = on ? 255 : 0;
+    }
+  }
+  return pixels;
+}
+
 /** An angular chip: debris, ice shards, anything that broke rather than burned. */
 function chipSprite(size: number): Uint8Array<ArrayBuffer> {
   const pixels = new Uint8Array(size * size * 4);
@@ -247,6 +277,9 @@ export function spriteSheet(name: string): THREE.DataTexture {
       break;
     case 'chip':
       texture = makeTexture(chipSprite(4), 4, 4);
+      break;
+    case 'plus':
+      texture = makeTexture(plusSprite(7, 1), 7, 7);
       break;
     case 'flame': {
       const { pixels, width } = flameSheet(16, 8);

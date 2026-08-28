@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Column } from '../core/containers.js';
-import { NO_MODIFIERS } from '../core/events.js';
-import { UNBOUNDED, type Constraint, type Size } from '../core/geom.js';
+import { NO_MODIFIERS, wheelNotches, type UiEvent } from '../core/events.js';
+import { UNBOUNDED, type Constraint, type Rect, type Size } from '../core/geom.js';
 import { UiRoot } from '../core/root.js';
 import { Widget, type LayoutContext } from '../core/widget.js';
 import { DrawList } from '../core/draw-list.js';
@@ -105,6 +105,34 @@ describe('scrolling actually moves the content', () => {
     expect(view.scrollOffset).toBe(0);
   });
 
+  it('goes the way a browser wheel is pointing', () => {
+    // The direction only exists once a DOM `deltaY` has been converted, and the
+    // conversion was the half that was wrong: the Play tab forwarded `deltaY`
+    // raw, so every window in the game scrolled backwards while this file's own
+    // wheel tests -- which mint a `delta` themselves -- stayed green. Asserted
+    // through `wheelNotches` so the two ends cannot drift apart again.
+    const view = new ScrollView(tallList(), 'scroll');
+    const root = mounted(view);
+    const wheel = (deltaY: number, time: number): void => {
+      root.handle({ kind: 'wheel', pos: { x: 10, y: 10 }, delta: wheelNotches(deltaY), mods: NO_MODIFIERS, time });
+    };
+
+    // Pulling the wheel towards you (a positive `deltaY`) walks down the list.
+    wheel(100, 0);
+    expect(view.scrollOffset).toBeGreaterThan(0);
+    const down = view.scrollOffset;
+
+    // And pushing it away comes back up, by the same amount.
+    wheel(-100, 1);
+    expect(view.scrollOffset).toBe(0);
+
+    // A notch is a notch: the browser's magnitude says which device and which
+    // `deltaMode`, never how far. One line-mode notch moves as far as one
+    // pixel-mode notch, rather than a hundredth as far.
+    wheel(3, 2);
+    expect(view.scrollOffset).toBe(down);
+  });
+
   it('re-clamps when the viewport grows past the content', () => {
     const view = new ScrollView(tallList(), 'scroll');
     const root = mounted(view);
@@ -116,6 +144,118 @@ describe('scrolling actually moves the content', () => {
     root.update(32);
     expect(view.scrollable).toBe(false);
     expect(view.scrollOffset).toBe(0);
+  });
+});
+
+/**
+ * The bar's thumb, as it was actually drawn.
+ *
+ * Read off the draw list rather than from a private field, because "the thumb
+ * stays under the pointer" is a claim about the pixels somebody is looking at.
+ * It is the last solid the widget emits -- track first, thumb over it.
+ */
+function thumbRect(view: ScrollView): Rect {
+  const commands = new DrawList();
+  view.paint(commands, {
+    theme: THEME,
+    atlas: ATLAS,
+    now: 0,
+    motion: FULL_MOTION,
+    hovered: null,
+    pressed: null,
+    focused: null,
+  });
+  const solids = commands.finish().filter((command) => command.kind === 'solid');
+  const last = solids[solids.length - 1];
+  if (last?.kind !== 'solid') throw new Error('no thumb was drawn');
+  return last.dst;
+}
+
+/** A point inside the bar column, horizontally centred on it. */
+function barX(view: ScrollView): number {
+  return view.rect.x + view.rect.width - INSET - Math.ceil(BAR / 2);
+}
+
+function pointer(phase: 'down' | 'move' | 'up', x: number, y: number, time: number): UiEvent {
+  return { kind: 'pointer', phase, pos: { x, y }, button: 0, mods: NO_MODIFIERS, time };
+}
+
+describe('dragging the scrollbar', () => {
+  it('walks down the list when the bar is dragged down', () => {
+    // The bug: a press on the bar fell into the content-drag rule, which is the
+    // opposite gesture -- dragging content is grabbing the paper and goes with
+    // the finger, dragging a bar is moving the position indicator and has to go
+    // under it. So the bar ran away from the pointer.
+    const view = new ScrollView(tallList(), 'scroll');
+    const root = mounted(view);
+    const x = barX(view);
+    const thumb = thumbRect(view);
+
+    root.handle(pointer('down', x, thumb.y + 2, 0));
+    root.handle(pointer('move', x, thumb.y + 2 + 12, 1));
+
+    expect(view.scrollOffset).toBeGreaterThan(0);
+    // And the thumb went with the pointer, the same 12 pixels: the drag is scaled
+    // by the *thumb's* travel, which is shorter than the content's scroll range.
+    expect(thumbRect(view).y).toBe(thumb.y + 12);
+  });
+
+  it('reaches both ends and comes back', () => {
+    const view = new ScrollView(tallList(), 'scroll');
+    const root = mounted(view);
+    const x = barX(view);
+
+    root.handle(pointer('down', x, view.rect.y + 4, 0));
+    root.handle(pointer('move', x, view.rect.y + 1000, 1));
+    expect(view.scrollOffset).toBe(view.maxScroll);
+    // Back up past where it started, in the same gesture.
+    root.handle(pointer('move', x, view.rect.y - 1000, 2));
+    expect(view.scrollOffset).toBe(0);
+    root.handle(pointer('up', x, view.rect.y - 1000, 3));
+  });
+
+  it('measures from where the drag began, not from the last move', () => {
+    // A gesture's `delta` is the whole journey from the press, so adding it to the
+    // *current* offset applies that journey again every frame -- a drag that
+    // accelerates away from the pointer and hits the end of any list in three
+    // moves. Two moves that report the same delta must land in the same place.
+    const view = new ScrollView(tallList(), 'scroll');
+    const root = mounted(view);
+    const x = barX(view);
+
+    root.handle(pointer('down', x, view.rect.y + 4, 0));
+    root.handle(pointer('move', x, view.rect.y + 4 + 10, 1));
+    const once = view.scrollOffset;
+    root.handle(pointer('move', x, view.rect.y + 4 + 10, 2));
+    expect(view.scrollOffset).toBe(once);
+    root.handle(pointer('up', x, view.rect.y + 4 + 10, 3));
+  });
+
+  it('leaves the content drag going the other way', () => {
+    // Driven directly: a press over the content hits whatever child is under it,
+    // and the router hands gestures to the widget that took the press -- so this
+    // branch is unreachable through the root with a list this full, and it is
+    // still the touch behaviour on the gaps and on a pointer-transparent child.
+    const view = new ScrollView(tallList(), 'scroll');
+    mounted(view);
+    const inContent = { x: view.rect.x + 4, y: view.rect.y + 20 };
+    const drag = (kind: 'dragStart' | 'drag', dy: number, time: number): void => {
+      view.onGesture({
+        kind,
+        pos: { x: inContent.x, y: inContent.y + dy },
+        delta: { x: 0, y: dy },
+        button: 0,
+        mods: NO_MODIFIERS,
+        time,
+      });
+    };
+
+    // Pushing the content up walks down the list -- grabbing the paper.
+    drag('dragStart', -10, 0);
+    expect(view.scrollOffset).toBe(10);
+    // And it anchors on the press just as the bar does.
+    drag('drag', -20, 1);
+    expect(view.scrollOffset).toBe(20);
   });
 });
 

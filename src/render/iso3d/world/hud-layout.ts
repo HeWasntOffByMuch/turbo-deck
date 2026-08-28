@@ -12,7 +12,16 @@
  * desktop and a desktop with a narrow window is still driven by a mouse.
  */
 
-import { textWidth } from './pixel-font.js';
+import { GLYPH_HEIGHT, textWidth } from './pixel-font.js';
+
+/**
+ * What the account button says while nobody is signed in (spec 227).
+ *
+ * Title case, the same register `SYSTEM_BUTTONS`' names are authored in --
+ * `aria-label` and the caption both derive from this one string, uppercasing
+ * only where the 5x7 face demands it.
+ */
+export const ACCOUNT_GUEST_LABEL = 'Register';
 
 /** A phone held sideways -- the frame `scripts/preview-touch.ts` drives. */
 export const PHONE_LANDSCAPE = { width: 844, height: 390 } as const;
@@ -33,13 +42,15 @@ export interface BoxSize {
 export interface HudLayout {
   /** Whether this is the finger-sized HUD. */
   readonly compact: boolean;
-  /** One hotbar slot. Square when compact, so it is a target before it is a label. */
-  readonly slot: BoxSize;
-  readonly slotGap: number;
-  readonly slotFontPx: number;
-  /** The countdown drawn over a slot on cooldown. */
-  readonly slotCountdownPx: number;
-  /** Whether a slot shows the keyboard number that casts it. */
+  /**
+   * Whether an action-bar slot names the key that fires it (spec 094).
+   *
+   * False on a finger, which has no keyboard to press: a "1" in the corner of a
+   * slot somebody taps is a label about a control that is not there. Still here
+   * after spec 196 moved the bar to the interface canvas, because it is a fact
+   * about the *device* and this is the file that answers those -- the mount is
+   * pure and cannot ask.
+   */
   readonly showsKeyNumber: boolean;
   /** Whether the diagnostic readout is drawn (it is written either way). */
   readonly showsReadout: boolean;
@@ -89,16 +100,53 @@ export interface HudLayout {
    */
   readonly errorScale: number;
   readonly errorGap: number;
+  /**
+   * How tall the experience strip along the very bottom is (spec 164).
+   *
+   * Every other bottom-edge offset in the HUD is `edge + this`, because the
+   * strip is pinned to the frame's bottom and spans its whole width -- so it is
+   * not a thing anything else can sit beside, only above.
+   *
+   * A few pixels, deliberately. It is a progress readout somebody glances at
+   * between fights, not a gauge they play off, and the thing it must never do is
+   * take a band of the world away.
+   */
+  readonly xpBarHeight: number;
+  /** The health/resource block, left of the slots (spec 164). One bar's box. */
+  readonly pool: BoxSize;
+  /** Between the two pool bars, and between the block and the slots. */
+  readonly poolGap: number;
+  /**
+   * Screen pixels per font pixel in a pool bar's label.
+   *
+   * A *scale* rather than a font size, because the label is drawn in the game's
+   * own 5x7 face (spec 065) like the damage numbers and the refusal stack. Which
+   * is also why the bar's height is a number and not a guess: a glyph is
+   * `GLYPH_HEIGHT * poolScale` tall and has to fit inside `pool.height` with a
+   * pixel to spare either side -- `poolLabelFits` below is that sum.
+   */
+  readonly poolScale: number;
+  /** The hover line under the experience strip. */
+  readonly xpDetailScale: number;
+  /**
+   * Every caption along the bottom edge: the weapon names, the window buttons
+   * and the WEAPON heading over them.
+   *
+   * One scale for all of them and it is the smallest, because the constraint is
+   * the longest of them -- "WEIGHTED STARS" beside a 16px icon inside a 152px
+   * button. Raising it means widening two boxes, and a band where the buttons
+   * are captioned at different sizes because their words are different lengths
+   * reads worse than one where they are all small.
+   */
+  readonly captionScale: number;
+  /** The word on the respawn button, which has a whole screen to itself. */
+  readonly respawnScale: number;
   /** The gap between the HUD and the edge of the frame, before any safe-area inset. */
   readonly edge: number;
 }
 
 const DESKTOP: HudLayout = {
   compact: false,
-  slot: { width: 92, height: 46 },
-  slotGap: 6,
-  slotFontPx: 11,
-  slotCountdownPx: 15,
   showsKeyNumber: true,
   showsReadout: true,
   showsTuningMenus: true,
@@ -122,6 +170,19 @@ const DESKTOP: HudLayout = {
   // as the numbers floating over the fight it came out of.
   errorScale: 3,
   errorGap: 4,
+  xpBarHeight: 6,
+  // Wide enough for "1240 / 1240" at 10px and short enough that two of them
+  // stacked are no taller than one slot -- the pool sits beside the bar, not
+  // over it.
+  // Wide and tall enough for "9999 / 9999" at `poolScale` -- the sum is
+  // `poolLabelFits`, and the label is drawn rather than typeset, so a box a
+  // pixel too short clips the glyphs instead of shrinking them.
+  pool: { width: 150, height: 20 },
+  poolGap: 4,
+  poolScale: 2,
+  xpDetailScale: 2,
+  captionScale: 1,
+  respawnScale: 3,
   edge: 16,
 };
 
@@ -136,10 +197,6 @@ const DESKTOP: HudLayout = {
  */
 const COMPACT: HudLayout = {
   compact: true,
-  slot: { width: 46, height: 46 },
-  slotGap: 5,
-  slotFontPx: 9,
-  slotCountdownPx: 13,
   showsKeyNumber: false,
   showsReadout: false,
   showsTuningMenus: false,
@@ -159,6 +216,19 @@ const COMPACT: HudLayout = {
   // the longest message has to cross it whole -- see `errorLineWidth`.
   errorScale: 2,
   errorGap: 3,
+  xpBarHeight: 5,
+  // Narrower on a phone, and the numbers go with it: the block has to fit
+  // between the frame's edge and a hotbar that is centred on a 844px frame, and
+  // `poolClearance` below is what checks that it does.
+  // A phone gets the same label one scale down: at 2 it would be 134 font
+  // pixels wide against a block that has to fit beside a centred bar on an
+  // 844px frame.
+  pool: { width: 104, height: 14 },
+  poolGap: 4,
+  poolScale: 1,
+  xpDetailScale: 2,
+  captionScale: 1,
+  respawnScale: 2,
   edge: 12,
 };
 
@@ -179,14 +249,232 @@ export function stripHeight(box: BoxSize, gap: number, count: number): number {
 }
 
 /**
- * The gap between the left edge of a centred hotbar and the frame's edge.
+ * The box the action bar occupies, in CSS pixels (spec 196).
  *
- * Negative would mean the hotbar is wider than the frame; anything less than the
+ * Told rather than derived, and that is the whole of what moved: the bar is
+ * drawn on the interface canvas now, so how big it is is a fact about the UI
+ * scale the player chose and this file has no business having an opinion about
+ * it. Everything else along that edge still has to clear it, which is what this
+ * type is for.
+ *
+ * Zero before the interface has laid itself out once, which is a real state and
+ * the reason every consumer below takes the number rather than reading a
+ * constant: a bar of no width puts the pool block in the middle for one frame,
+ * where a guessed constant would put it in the wrong place forever.
+ */
+/**
+ * How big one action-bar slot is, in CSS pixels (spec 196).
+ *
+ * Here rather than in `src/ui/screens/action-bar.ts` because it is the same
+ * kind of number as {@link MIN_TAP_PX} beside it and answers the same question:
+ * how big a thing a finger has to be able to hit. The interface draws the bar
+ * and states its own sizes in *UI* pixels, but the UI scale is chosen by two
+ * different constraints at the two ends of the range -- a phone's by how many
+ * device pixels a finger covers, a desktop's by how much has to fit -- so a
+ * fixed number of UI pixels is finger-sized on one and absurd on the other.
+ * `UiLayer` converts this through the scale, which is the one place the two
+ * kinds of pixel meet.
+ *
+ * 46 rather than 44 for the reason the compact HUD's square was 46: the extra
+ * two are what let five of them plus their gaps sit comfortably inside an 844px
+ * frame with both corners still clear.
+ */
+export const ACTION_SLOT_CSS = 46;
+
+export interface ActionBarBox {
+  readonly width: number;
+  readonly height: number;
+  /**
+   * How far the bar's own bottom sits above the frame's, in CSS pixels.
+   *
+   * Told rather than derived, and it is the same lesson the width already
+   * carries. This file knows what the *floor* holds -- the experience strip --
+   * and the interface adds its own margin above that, so a pool block placed at
+   * `bottomEdge` was eight pixels below a bar it was supposed to be centred on.
+   * Measuring the bar's real box is the only way this side can be right about
+   * it, and it is what the bar was already being asked for.
+   */
+  readonly bottom: number;
+}
+
+export const NO_ACTION_BAR: ActionBarBox = { width: 0, height: 0, bottom: 0 };
+
+/**
+ * The gap between the pool block and the slots, in CSS pixels.
+ *
+ * Its own number rather than {@link HudLayout.poolGap}, which is the gap
+ * *between the two bars* -- one is the space inside a block and the other is the
+ * space beside it, and sharing them left the pools hugging the slots.
+ */
+export const POOL_TO_BAR_GAP = 8;
+
+/** What sits left of the bar and belongs with it: the pool block and its gap. */
+export function poolReserve(layout: HudLayout): number {
+  return layout.pool.width + POOL_TO_BAR_GAP;
+}
+
+/** The whole bottom group: the pool block, the gap, and the bar. */
+export function bottomGroupWidth(layout: HudLayout, bar: ActionBarBox): number {
+  return poolReserve(layout) + bar.width;
+}
+
+/**
+ * The gap between the left edge of the centred **bar** and the frame's.
+ *
+ * The bar, not the group: the slots are what a player's eye centres on and what
+ * every other centred thing on screen lines up with, so they take the middle and
+ * the pools sit to their left. Centring the group instead puts the slots off to
+ * the right of the frame's own centre, which is what it looked like.
+ *
+ * Negative would mean the bar is wider than the frame; anything less than the
  * weapon row's width means the two overlap, which is a button that cannot be
  * pressed because another button is on top of it.
  */
-export function centredClearance(layout: HudLayout, slots: number, frameWidth: number): number {
-  return (frameWidth - stripWidth(layout.slot, layout.slotGap, slots)) / 2;
+export function centredClearance(bar: ActionBarBox, frameWidth: number): number {
+  return (frameWidth - bar.width) / 2;
+}
+
+/**
+ * How far the pool block's left edge is from the frame's, given a centred bar.
+ *
+ * Negative means it has run off the left edge; anything less than the weapon
+ * switch's width means the two overlap, which is the same failure
+ * {@link centredClearance} exists to catch one group over.
+ */
+export function poolClearance(layout: HudLayout, bar: ActionBarBox, frameWidth: number): number {
+  return centredClearance(bar, frameWidth) - poolReserve(layout);
+}
+
+/**
+ * How tall the whole pool block is: two bars and the gap between them.
+ *
+ * Its own function because two callers need it and they need it for opposite
+ * reasons -- the layout check below asks whether it fits beside a slot, and
+ * `hud.ts` asks where to put it so that its middle and the slots' middle are the
+ * same line.
+ */
+export function poolBlockHeight(layout: HudLayout): number {
+  return stripHeight(layout.pool, layout.poolGap, 2);
+}
+
+/**
+ * How far the pool block sits above the bottom edge, so that it is *centred* on
+ * the slot row rather than sharing its floor (spec 164).
+ *
+ * The first cut bottom-aligned both, which put a 40px block against the floor of
+ * a 46px row -- six pixels of daylight above it and none below, which reads as a
+ * mistake rather than as a decision because everything else along that edge
+ * lines up.
+ */
+export function poolBottom(layout: HudLayout, bar: ActionBarBox): number {
+  // Off the bar's **own** bottom, which is measured and handed over rather than
+  // assumed to be the floor: the interface adds its own margin above the
+  // experience strip, so a block placed at `bottomEdge` sat eight pixels below
+  // the row it was meant to be centred on.
+  //
+  // Floored at the frame's own bottom edge for the box before the interface has
+  // laid itself out, and for a bar *shorter* than the block beside it -- on a
+  // display where `autoUiScale` picks 1 a slot is 20 CSS pixels and two pool
+  // bars stacked are 44, and centring on something shorter than you means
+  // hanging below it, where the experience strip is.
+  const centred = bar.bottom + Math.round((bar.height - poolBlockHeight(layout)) / 2);
+  return Math.max(bottomEdge(layout), centred);
+}
+
+/**
+ * Whether a pool bar's label fits inside it, in the game's own font.
+ *
+ * The label is drawn rather than typeset, so its height is `GLYPH_HEIGHT` plus
+ * the font pixel of margin the outline lives in, times the scale -- there is no
+ * line box to absorb a bad number, and a glyph taller than its track is simply
+ * clipped. The width is the longest label a real character can produce.
+ */
+export function poolLabelFits(layout: HudLayout, longest: string): boolean {
+  const height = (GLYPH_HEIGHT + 2) * layout.poolScale;
+  const width = (textWidth(longest) + 2) * layout.poolScale;
+  return height <= layout.pool.height && width <= layout.pool.width;
+}
+
+/**
+ * The padding either side of a captioned window-style button, and the gap
+ * between its icon and its caption, in CSS px (spec 140).
+ *
+ * Both buttons that draw this way -- the weapon switch and the window row --
+ * share the same two numbers, which is why the account button (spec 227) can
+ * borrow the box outright rather than measuring one of its own. Named
+ * constants rather than the literals still written into `hud.ts`'s template
+ * strings, because {@link windowButtonCaptionFits} has to agree with the DOM
+ * exactly or "fits" is a claim about a box that is not the one drawn.
+ */
+const WINDOW_BUTTON_PADDING_X = 8;
+const WINDOW_BUTTON_ICON_GAP = 6;
+
+/**
+ * Whether a window button's caption fits beside its icon, in the game's own
+ * font (spec 227).
+ *
+ * The same shape as {@link poolLabelFits}, and it has to be its own function
+ * rather than a call to that one: a pool label spans its whole track, where
+ * this caption shares `layout.systemButton`'s box with an icon, a gap and
+ * padding on both sides -- what is left over is the space being asked about.
+ */
+export function windowButtonCaptionFits(layout: HudLayout, text: string): boolean {
+  const height = (GLYPH_HEIGHT + 2) * layout.captionScale;
+  if (height > layout.systemButton.height) return false;
+  const available =
+    layout.systemButton.width -
+    2 * WINDOW_BUTTON_PADDING_X -
+    layout.systemIconPx -
+    WINDOW_BUTTON_ICON_GAP;
+  const width = (textWidth(text) + 2) * layout.captionScale;
+  return width <= available;
+}
+
+/**
+ * How many characters of a window button's caption fit, at most (spec 227).
+ *
+ * Walked up from zero against {@link windowButtonCaptionFits} itself rather
+ * than solved algebraically, so there is no inverse formula that could
+ * disagree with the check it is derived from -- every glyph in this font is
+ * the same width, so the character used to probe it does not matter. This is
+ * the "caption-fit arithmetic" the account button's truncation is picked
+ * from, rather than a guessed number.
+ */
+export function windowButtonCaptionMaxChars(layout: HudLayout): number {
+  let count = 0;
+  while (windowButtonCaptionFits(layout, 'M'.repeat(count + 1))) count += 1;
+  return count;
+}
+
+/**
+ * The account button's label (spec 227): `REGISTER` while nobody is signed
+ * in, or the account's own name once they are.
+ *
+ * Uppercased, because the 5x7 face is one case -- `ErrorLog` already does this
+ * before a refusal reaches it, and this is the same rule applied to a name
+ * nobody authored. Bounded by {@link windowButtonCaptionMaxChars} rather than
+ * by a guessed length: every other caption along this edge was *authored*
+ * short enough to fit its box, and this is the first one a player types.
+ *
+ * Three rules, and the middle one is why this is not one line. A name that
+ * fits is drawn whole. A name that does not falls back to its **first word**,
+ * which is what a long display name almost always is a first word of -- the
+ * default name is the login, and a login has no spaces at all, so this only
+ * ever fires on a name somebody deliberately typed with one. Only a single
+ * word too long for the box is cut, and then it is cut with a full stop, so
+ * what is drawn reads as a shortening rather than as a caption that ran out
+ * of room. `ADA LOVELA` was the version without the middle rule.
+ */
+export function accountButtonCaption(signedInAs: string | null, layout: HudLayout): string {
+  const full = (signedInAs ?? ACCOUNT_GUEST_LABEL).toUpperCase();
+  if (windowButtonCaptionFits(layout, full)) return full;
+
+  const first = full.split(' ')[0] ?? '';
+  if (first !== '' && windowButtonCaptionFits(layout, first)) return first;
+
+  // The stop costs a character of its own, so it is measured with one.
+  const max = Math.max(0, windowButtonCaptionMaxChars(layout) - 1);
+  return max === 0 ? '' : `${full.slice(0, max)}.`;
 }
 
 /**
@@ -214,5 +502,38 @@ export function errorStackBottom(layout: HudLayout, systemButtons: number): numb
   const group = layout.systemIconOnly
     ? layout.systemButton.height
     : stripHeight(layout.systemButton, layout.systemGap, systemButtons);
-  return layout.edge + group + 6;
+  return bottomEdge(layout) + group + 6;
+}
+
+/**
+ * The bottom of everything that is not the experience strip (spec 164).
+ *
+ * One function rather than `edge` written out with a `+ xpBarHeight` at each of
+ * the four places furniture is pinned to the bottom -- the strip spans the whole
+ * width, so every one of them has to clear it and any that forgot would have a
+ * button with a gold line through it.
+ */
+export function bottomEdge(layout: HudLayout): number {
+  return layout.edge + layout.xpBarHeight;
+}
+
+/**
+ * Whether the diagnostic readout is drawn right now (spec 183).
+ *
+ * Two decisions, answered together: what the layout allows and what the player
+ * last asked for with `debug.toggleStats`. A function rather than an `&&` in the
+ * DOM half because both halves of it are rules, and this is the file where the
+ * first one is already written down.
+ *
+ * **The compact layout keeps it hidden whatever the toggle says.** It is
+ * developer instrumentation over a 390px frame, which is why spec 094 hid it in
+ * the first place, and a phone has no keyboard to reach the toggle with -- so a
+ * `true` arriving there could not have come from a player pressing a key.
+ *
+ * Says nothing about whether the readout is *written*: it always is. See the
+ * note in `hud.ts`, where the touch harness's only clock is a `display:none`
+ * subtree.
+ */
+export function readoutShown(layout: HudLayout, enabled: boolean): boolean {
+  return layout.showsReadout && enabled;
 }

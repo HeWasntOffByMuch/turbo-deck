@@ -13,6 +13,7 @@ import {
   type MapLayer,
   type MapMarker,
   type MapRect,
+  type MapSpawnerSettings,
 } from './map.js';
 import { loadMap } from './map-world.js';
 import { createWorld, rectContains, type Rect, type TerrainWorld } from './types.js';
@@ -146,8 +147,10 @@ describe('exportMap', () => {
     }
   });
 
-  it('reserves nav without baking it', () => {
-    for (const chunk of soleLayer(bake(testWorld())).chunks) expect(chunk.nav).toBeNull();
+  it('writes no walkability field at all', () => {
+    // Spec 204 took it out of the format: 10.5% of every map file, on the wire
+    // to every client, for a dev overlay that bakes its own.
+    expect(JSON.stringify(soleLayer(bake(testWorld())))).not.toContain('"nav"');
   });
 
   it('keeps the version and the grid it was baked at', () => {
@@ -419,6 +422,83 @@ describe('seam ownership', () => {
     expect(() => store.setCornerHeight('ground', -1, 0, 5)).not.toThrow();
     expect(() => store.setCornerHeight('ground', 9999, 0, 5)).not.toThrow();
     expect(() => store.setCornerHeight('nope', 0, 0, 5)).not.toThrow();
+  });
+});
+
+/**
+ * Spec 222. A spawner is the one marker kind with numbers of its own, and the
+ * whole reason the block is nested is so no other kind can carry them.
+ */
+describe("a spawner's own settings", () => {
+  const roundTrip = (markers: readonly MapMarker[]): MapDocument => parseMap(serializeMap(bake(testWorld(), [], markers)));
+
+  const spawner = (settings?: MapSpawnerSettings): MapMarker => ({
+    kind: 'spawner',
+    id: 'spawner-1',
+    x: 100,
+    z: 80,
+    label: 'grazer',
+    ...(settings === undefined ? {} : { spawner: settings }),
+  });
+
+  const sole = (doc: MapDocument): MapMarker => {
+    const found = soleLayer(doc).chunks.flatMap((c) => c.markers)[0];
+    return must(found, 'a marker');
+  };
+
+  it('survives the round trip whole', () => {
+    const marker = sole(roundTrip([spawner({ respawnSeconds: 42.5, leashRadius: 250 })]));
+    expect(marker.spawner).toEqual({ respawnSeconds: 42.5, leashRadius: 250 });
+  });
+
+  it('keeps one member without inventing the other', () => {
+    expect(sole(roundTrip([spawner({ respawnSeconds: 12 })])).spawner).toEqual({ respawnSeconds: 12 });
+    expect(sole(roundTrip([spawner({ leashRadius: 300 })])).spawner).toEqual({ leashRadius: 300 });
+  });
+
+  /**
+   * The claim that makes this change free for every map already committed: a
+   * marker nobody has overridden is the *same bytes* it was before the field
+   * existed, so no map file moves and no `mapId` does either.
+   */
+  it('writes nothing at all for a marker that has none', () => {
+    const before = serializeMap(bake(testWorld(), [], [spawner()]));
+    expect(before).not.toContain('spawner":');
+    expect(serializeMap(roundTrip([spawner()]))).toBe(before);
+  });
+
+  /** An empty block is the same statement as no block, so it normalizes to one. */
+  it('normalizes an empty block to absent', () => {
+    const doc = JSON.parse(serializeMap(bake(testWorld(), [], [spawner()]))) as Record<string, unknown>;
+    const layers = doc['layers'] as Record<string, unknown>[];
+    const chunks = must(layers[0], 'a layer')['chunks'] as Record<string, unknown>[];
+    for (const chunk of chunks) {
+      const markers = chunk['markers'] as Record<string, unknown>[];
+      for (const marker of markers) marker['spawner'] = {};
+    }
+    expect(sole(parseMap(JSON.stringify(doc))).spawner).toBeUndefined();
+  });
+
+  it('refuses the block on a kind that cannot read it', () => {
+    const doc = JSON.parse(
+      serializeMap(bake(testWorld(), [], [{ kind: 'campfire', id: 'fire-1', x: 100, z: 80 }])),
+    ) as Record<string, unknown>;
+    const layers = doc['layers'] as Record<string, unknown>[];
+    const chunks = must(layers[0], 'a layer')['chunks'] as Record<string, unknown>[];
+    for (const chunk of chunks) {
+      for (const marker of chunk['markers'] as Record<string, unknown>[]) marker['spawner'] = { leashRadius: 300 };
+    }
+    expect(() => parseMap(JSON.stringify(doc))).toThrow(/only for a spawner marker, not a campfire/);
+  });
+
+  it('refuses a member that is not a number', () => {
+    const doc = JSON.parse(serializeMap(bake(testWorld(), [], [spawner()]))) as Record<string, unknown>;
+    const layers = doc['layers'] as Record<string, unknown>[];
+    const chunks = must(layers[0], 'a layer')['chunks'] as Record<string, unknown>[];
+    for (const chunk of chunks) {
+      for (const marker of chunk['markers'] as Record<string, unknown>[]) marker['spawner'] = { respawnSeconds: 'soon' };
+    }
+    expect(() => parseMap(JSON.stringify(doc))).toThrow(/respawnSeconds/);
   });
 });
 

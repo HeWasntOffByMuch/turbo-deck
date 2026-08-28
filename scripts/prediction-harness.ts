@@ -18,9 +18,10 @@
 import { GameClient } from '../src/server/client/game-client.js';
 import { createWorldPredictor } from '../src/server/client/prediction.js';
 import { LoopbackTransport } from '../src/server/net/transport-loop.js';
+import { UnreliableChannel, PERFECT_WIRE } from '../src/server/net/unreliable.js';
+import { Rng } from '../src/shared/prng.js';
 import { decodeServerMessage } from '../src/server/net/messages.js';
 import { CorrectionReason, ServerMessageType } from '../src/server/net/protocol.js';
-import type { Channel } from '../src/server/net/transport.js';
 import { GameServer } from '../src/server/server.js';
 import { buildWorld } from '../src/server/world/build.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../src/server/config.js';
@@ -35,67 +36,6 @@ const REASONS: Record<number, string> = {
   [CorrectionReason.Drift]: 'drift',
 };
 
-/**
- * A channel that holds every frame in both directions for a fixed number of
- * ticks. Deterministic on purpose -- jitter would make the numbers below a
- * different story every run, and constant delay is enough to expose anything
- * that only works because the round trip is free.
- */
-class DelayLine implements Channel {
-  private readonly outbound: { at: number; bytes: Uint8Array }[] = [];
-  private readonly inbound: { at: number; bytes: Uint8Array }[] = [];
-  private handler: ((bytes: Uint8Array) => void) | null = null;
-  private tick = 0;
-
-  constructor(
-    private readonly inner: Channel,
-    private readonly delayTicks: number,
-    private readonly onServerFrame: (bytes: Uint8Array) => void,
-  ) {
-    inner.onMessage((bytes) => {
-      this.inbound.push({ at: this.tick + this.delayTicks, bytes });
-    });
-  }
-
-  get isOpen(): boolean {
-    return this.inner.isOpen;
-  }
-
-  send(bytes: Uint8Array): void {
-    this.outbound.push({ at: this.tick + this.delayTicks, bytes: new Uint8Array(bytes) });
-  }
-
-  onMessage(handler: (bytes: Uint8Array) => void): void {
-    this.handler = handler;
-  }
-
-  onClose(handler: () => void): void {
-    this.inner.onClose(handler);
-  }
-
-  close(): void {
-    this.inner.close();
-  }
-
-  get tickNow(): number {
-    return this.tick;
-  }
-
-  /** Releases everything due at or before `tick`. */
-  pump(tick: number): void {
-    this.tick = tick;
-    while (this.outbound.length > 0 && (this.outbound[0]?.at ?? Infinity) <= tick) {
-      const frame = this.outbound.shift();
-      if (frame) this.inner.send(frame.bytes);
-    }
-    while (this.inbound.length > 0 && (this.inbound[0]?.at ?? Infinity) <= tick) {
-      const frame = this.inbound.shift();
-      if (!frame) break;
-      this.onServerFrame(frame.bytes);
-      this.handler?.(frame.bytes);
-    }
-  }
-}
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
@@ -203,7 +143,10 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
   /** What this client claimed for each input, so a correction can be measured. */
   const claims = new Map<number, { x: number; y: number }>();
   let worstResidual = 0;
-  const line = new DelayLine(transport.connect(), delayTicks, (bytes) => {
+  const line = new UnreliableChannel(transport.connect(), () => ({ ...PERFECT_WIRE, delayTicks: delayTicks }), Rng.fromSeed(1), (bytes, direction) => {
+    // Inbound only: the tap sees both directions now, and these all decode a
+    // *server* message.
+    if (direction !== 'in') return;
     const message = decodeServerMessage(bytes);
     if (message.type !== ServerMessageType.Correction) return;
     const name = REASONS[message.reason] ?? String(message.reason);
@@ -312,9 +255,9 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
   for (let tick = 1; tick <= ticks; tick += 1) {
     // Frames deliver; ticks in between run blind, exactly as they do in the tab.
     if (tick % TICKS_PER_FRAME === 1 || TICKS_PER_FRAME === 1) {
-      line.pump(tick);
+      line.deliver(tick);
       await settle();
-      line.pump(tick);
+      line.deliver(tick);
       await settle();
     }
 

@@ -130,7 +130,7 @@ function writeRuns(w: BufferWriter, runs: readonly number[]): void {
 }
 
 function readRuns(r: BufferReader): number[] {
-  const length = r.varuint();
+  const length = r.count();
   const runs: number[] = new Array<number>(length);
   for (let i = 0; i < length; i++) runs[i] = r.varuint();
   return runs;
@@ -172,11 +172,11 @@ export function decodeMapInfo(r: BufferReader): MapInfoMessage {
   const chunkCells = r.varuint();
   const arena = readRect(r);
 
-  const speciesCount = r.varuint();
+  const speciesCount = r.count();
   const species: string[] = new Array<string>(speciesCount);
   for (let i = 0; i < speciesCount; i++) species[i] = r.str();
 
-  const layerCount = r.varuint();
+  const layerCount = r.count();
   const layers: MapLayerInfoMsg[] = new Array<MapLayerInfoMsg>(layerCount);
   for (let i = 0; i < layerCount; i++) {
     const id = r.str();
@@ -186,7 +186,7 @@ export function decodeMapInfo(r: BufferReader): MapInfoMessage {
     const baseY = unq(r.varint());
     const hasWater = r.bool();
     const water = unq(r.varint());
-    const coordCount = r.varuint();
+    const coordCount = r.count();
     const coords: ChunkCoordMsg[] = new Array<ChunkCoordMsg>(coordCount);
     for (let c = 0; c < coordCount; c++) coords[c] = { cx: r.varint(), cz: r.varint() };
     layers[i] = {
@@ -257,8 +257,9 @@ export function encodeMapChunk(msg: MapChunkMessage): Uint8Array {
   writeRuns(w, c.materials);
   writeRuns(w, c.tones);
 
-  w.bool(c.nav !== null);
-  if (c.nav !== null) writeRuns(w, c.nav);
+  // `nav` left this wire in spec 204. It was a run list per chunk carrying baked
+  // walkability to every client, and the only thing that ever read it was the
+  // *editor's* overlay -- which loads the map off disk and never streams.
 
   w.varuint(species.length);
   for (const s of species) w.str(s);
@@ -294,7 +295,7 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
   const cols = r.varuint();
   const rows = r.varuint();
 
-  const heightCount = r.varuint();
+  const heightCount = r.count();
   const heights: number[] = new Array<number>(heightCount);
   let previous = 0;
   for (let i = 0; i < heightCount; i++) {
@@ -305,13 +306,12 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
   const solid = readRuns(r);
   const materials = readRuns(r);
   const tones = readRuns(r);
-  const nav = r.bool() ? readRuns(r) : null;
 
-  const speciesCount = r.varuint();
+  const speciesCount = r.count();
   const species: string[] = new Array<string>(speciesCount);
   for (let i = 0; i < speciesCount; i++) species[i] = r.str();
 
-  const propCount = r.varuint();
+  const propCount = r.count();
   const props: MapProp[] = new Array<MapProp>(propCount);
   for (let i = 0; i < propCount; i++) {
     const index = r.varuint();
@@ -337,7 +337,7 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
     };
   }
 
-  const markerCount = r.varuint();
+  const markerCount = r.count();
   const markers: MapMarker[] = new Array<MapMarker>(markerCount);
   for (let i = 0; i < markerCount; i++) {
     const kindIndex = r.u8();
@@ -354,7 +354,7 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
     type: ServerMessageType.MapChunk,
     mapId,
     layer,
-    chunk: { cx, cz, cols, rows, heights, solid, materials, tones, nav, props, markers },
+    chunk: { cx, cz, cols, rows, heights, solid, materials, tones, props, markers },
   };
 }
 

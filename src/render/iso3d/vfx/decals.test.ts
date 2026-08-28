@@ -206,6 +206,58 @@ describe('gore', () => {
     field.setGore(2);
     expect(field.add(input())).toBe(true);
   });
+
+  /** Fill one chunk past any cap and report what is left standing. */
+  const solidAfter = (level: 1 | 2, count = 200): number => {
+    const field = new DecalField();
+    field.setGore(level);
+    for (let i = 0; i < count; i++) field.add(input({ seed: i }));
+    // A decal over the cap is *marked* rather than removed (a stain that
+    // vanishes on the frame a new one lands is a pop), so what the cap means is
+    // how many are not fading.
+    return field.bucket(0, 0).filter((decal) => decal.fadeFrom < 0).length;
+  };
+
+  it('holds strictly less ground at Less than at Full (spec 182)', () => {
+    // The middle button used to be a label with nothing behind it: `add` refused
+    // at 0 and accepted otherwise, so Less and Full were the same code.
+    expect(solidAfter(1)).toBeLessThan(solidAfter(2));
+    expect(solidAfter(1)).toBeGreaterThan(0);
+  });
+
+  it('trims what is already on the ground when it is turned down', () => {
+    // Waiting for the next add would leave the setting looking broken for
+    // exactly as long as nobody was hitting anything, which is when somebody
+    // changes it.
+    const field = new DecalField();
+    for (let i = 0; i < 200; i++) field.add(input({ seed: i }));
+    const before = field.bucket(0, 0).filter((decal) => decal.fadeFrom < 0).length;
+    field.takeDirty();
+    field.setGore(1);
+    const after = field.bucket(0, 0).filter((decal) => decal.fadeFrom < 0).length;
+    expect(after).toBeLessThan(before);
+    expect(field.takeDirty().length).toBeGreaterThan(0);
+  });
+
+  it('does not re-trim when the level it is handed is the one it has', () => {
+    const field = new DecalField();
+    for (let i = 0; i < 200; i++) field.add(input({ seed: i }));
+    const before = field.bucket(0, 0).map((decal) => decal.fadeFrom);
+    field.setGore(2);
+    expect(field.bucket(0, 0).map((decal) => decal.fadeFrom)).toEqual(before);
+  });
+
+  it('keeps a global cap that is smaller at Less', () => {
+    const spread = (level: 1 | 2): number => {
+      const field = new DecalField();
+      field.setGore(level);
+      // Across many chunks, so the global cap is what bites rather than the
+      // per-chunk one.
+      for (let i = 0; i < 4000; i++) field.add(input({ x: (i % 200) * 700, z: Math.floor(i / 200) * 700, seed: i }));
+      return field.count;
+    };
+    expect(spread(1)).toBeLessThan(spread(2));
+  });
 });
 
 describe('determinism', () => {

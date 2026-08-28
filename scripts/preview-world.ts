@@ -39,6 +39,19 @@ const PORT = 4319;
 const GAP_OFFSET = 70;
 
 /**
+ * What this harness puts in the four skill slots (spec 164).
+ *
+ * The bar ships empty -- four slots a skill will go into and the vial -- so
+ * without this there is nothing on it to press and the aim, the cooldown refusal
+ * and the ground telegraph have no way into the page at all. `?slots=` is the
+ * developer path for exactly that; see `world/action-bar.ts`.
+ *
+ * Order matters and is what the `Digit` presses below name:
+ * 1 Heavy Blow, 2 Seeking Bolt, 3 Quake, 4 Mend.
+ */
+const PROBE_SLOTS = 'melee.heavy,bolt.seek,ground.quake,self.mend';
+
+/**
  * How far a candidate pixel must be from every *other* body's bar, in CSS
  * pixels, for a pick there to mean anything.
  *
@@ -410,7 +423,9 @@ async function main(): Promise<void> {
     // checks that depend on where bodies happen to stand -- the forgiving pick
     // most of all -- passed or failed by the clock. A harness whose answer moves
     // between runs cannot tell a regression from a Tuesday.
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=${PROBE_SLOTS}`, {
+      waitUntil: 'load',
+    });
     await page.waitForSelector('canvas');
     // Two waits, because they are two different facts.
     //
@@ -533,11 +548,11 @@ async function main(): Promise<void> {
     // until a click answers it.
     await page.mouse.move(820, 330);
     await page.waitForTimeout(200);
-    await page.keyboard.press('Digit2');
+    await page.keyboard.press('Digit1');
     const aimed = await waitForAim(page, /^aiming Heavy Blow/);
     await shoot(page, 'world-aim-cone');
     if (!/^aiming Heavy Blow/.test(aimed)) {
-      problems.push(`pressing 2 did not start an aim (readout: ${aimed})`);
+      problems.push(`pressing 1 did not start an aim (readout: ${aimed})`);
     }
 
     // Right-click over an aim means *no*, and only that: it goes away, and
@@ -559,7 +574,7 @@ async function main(): Promise<void> {
     // ...and again, answered this time. Placed close to the body so the confirm
     // is a commitment rather than a walk, which is what this frame is of: the
     // bar, and the body turning into the blow at its own turn rate.
-    await page.keyboard.press('Digit2');
+    await page.keyboard.press('Digit1');
     await waitForAim(page, /^aiming Heavy Blow/);
     await page.mouse.click(700, 430);
     // Confirming consumes the aim, so the question comes off the readout --
@@ -719,7 +734,12 @@ async function main(): Promise<void> {
     // proof it took is that the *server's* stat block came back naming the new
     // attack -- which is what lights the button. Photographed with a bow in
     // hand so the ranged auto-attack is on screen at all.
-    const bow = page.locator('button', { hasText: 'Hunting Bow' }).first();
+    // By `aria-label` rather than by text: since spec 164 the caption is drawn
+    // in the game's own font, so the button is a glyph path and has no text
+    // content to match on. The label is what a screen reader reads out and what
+    // `litWeapon` already reads back, so this and the assertion below are now
+    // asking about the same string.
+    const bow = page.locator('button[aria-label="Hunting Bow"]').first();
     if ((await bow.count()) > 0) {
       await bow.click();
       // Polled, not slept on. A fixed 400ms was reading the switch *before* the
@@ -765,7 +785,7 @@ async function main(): Promise<void> {
     const settled = seekAt ? await settledBar(page, seekAt.id) : null;
     if (settled) {
       await page.mouse.move(bodyPoint(settled).x, bodyPoint(settled).y);
-      await page.keyboard.press('Digit5');
+      await page.keyboard.press('Digit2');
       const asking = await waitForAim(page, /^aiming Seeking Bolt/);
       if (!/^aiming Seeking Bolt/.test(asking)) {
         problems.push(`pressing 5 did not start a unit aim (readout: ${asking})`);
@@ -806,7 +826,7 @@ async function main(): Promise<void> {
     // A ground-targeted blast: the aim circle first, then the telegraph ring
     // the cast puts on the terrain.
     await page.mouse.move(760, 340);
-    await page.keyboard.press('Digit6');
+    await page.keyboard.press('Digit3');
     await waitForAim(page, /^aiming Quake/);
     await shoot(page, 'world-aim-circle');
     await page.mouse.click(760, 340);
@@ -817,7 +837,7 @@ async function main(): Promise<void> {
     // must start nothing. An aim that cannot be thrown is a place to park a
     // press until the timer comes back, which is the queue this refuses.
     await page.mouse.move(700, 500);
-    await page.keyboard.press('Digit6');
+    await page.keyboard.press('Digit3');
     const refused = await waitForAim(page, /^aiming Quake/, 900);
     if (/^aiming Quake/.test(refused)) {
       problems.push('a skill on cooldown could still be aimed');
@@ -863,11 +883,18 @@ async function main(): Promise<void> {
 /**
  * Every key that opens a window, one at a time, opened and shut again.
  *
- * All five rather than the two this used to press. A binding that reaches
- * nothing is exactly the state spec 131 was written to end -- `KeyI` did nothing
- * for three phases while the keybinding screen cheerfully offered to rebind it
- * -- and four of these five had never been pressed by anything but a unit test.
- * The fifth, `KeyV`, turned out not to work at all.
+ * A binding that reaches nothing is exactly the state spec 131 was written to
+ * end -- `KeyI` did nothing for three phases while the keybinding screen
+ * cheerfully offered to rebind it -- and all four of these had never been
+ * pressed by anything but a unit test.
+ *
+ * There were five. `KeyV` opened the shop and, when this first pressed it,
+ * turned out not to work at all; spec 247 removed it outright, because a shop
+ * is opened by talking to whoever owns it and a key press has no merchant to
+ * name. So the shop window has no browser coverage here any more -- reaching it
+ * means walking to a shopkeeper and pressing a reply, which is a probe of its
+ * own and is the stated follow-up. `.claude/screenshots/world-shop.png` is the
+ * last picture this took of it.
  */
 async function windowKeys(page: Page, problems: string[]): Promise<void> {
   for (const [code, id] of [
@@ -875,7 +902,6 @@ async function windowKeys(page: Page, problems: string[]): Promise<void> {
     ['KeyB', 'inventory'],
     ['KeyC', 'character'],
     ['KeyK', 'options'],
-    ['KeyV', 'shop'],
   ] as const) {
     const got = await pressAndWait(page, code, id);
     if (got !== id) {
@@ -885,7 +911,6 @@ async function windowKeys(page: Page, problems: string[]): Promise<void> {
     const painted = (await paintedBox(page))?.painted ?? 0;
     if (painted === 0) problems.push(`the ${id} opened on ${code} and drew nothing`);
     console.log(`  ${code} opens the ${id} (${painted} pixels)`);
-    if (id === 'shop') await shoot(page, 'world-shop');
     // Shut again, so the next key is measured on its own.
     const shut = await pressAndWait(page, code, '');
     if (shut !== '') problems.push(`${code} would not close the ${id}, leaving "${shut}"`);
@@ -1640,7 +1665,7 @@ async function escapeGoesToTheWindowFirst(page: Page, problems: string[]): Promi
     return;
   }
   await page.mouse.move(760, 340);
-  await page.keyboard.press('Digit6');
+  await page.keyboard.press('Digit3');
   if (!/^aiming/.test(await waitForAim(page, /^aiming/, 1200))) {
     console.log('  no measurement: nothing was off cooldown to aim');
     await page.keyboard.press('Escape');

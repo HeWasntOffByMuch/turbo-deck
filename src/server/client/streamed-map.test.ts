@@ -8,16 +8,15 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
-import { parseMap } from '../../terrain/map.js';
 import { loadMap } from '../../terrain/map-world.js';
 import { ServerMessageType } from '../net/protocol.js';
 import type { MapInfoMessage } from '../net/map-messages.js';
 import type { HeldChunk } from './map-cache.js';
 import { StreamedMap } from './streamed-map.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const doc = parseMap(readFileSync('maps/arena.json', 'utf8'));
+const doc = loadMapFile().doc;
 
 const info: MapInfoMessage = {
   type: ServerMessageType.MapInfo,
@@ -147,8 +146,8 @@ describe('what it refuses', () => {
 
 describe('what an arrival makes dirty (spec 078)', () => {
   /** `cx,cz` of each chunk handed back. */
-  const coords = (chunks: readonly { coord: { cx: number; cz: number } }[]): string[] =>
-    chunks.map((c) => `${c.coord.cx},${c.coord.cz}`).sort();
+  const coords = (chunks: readonly { cx: number; cz: number }[]): string[] =>
+    chunks.map((c) => `${c.cx},${c.cz}`).sort();
 
   it('re-meshes the neighbours already held, and only those', () => {
     // A chunk's walls and its corner normals are read across its edges, so a

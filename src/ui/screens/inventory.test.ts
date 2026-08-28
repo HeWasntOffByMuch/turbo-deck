@@ -12,8 +12,13 @@ import { LayerStack } from '../core/layers.js';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
-import type { ItemView } from '../widgets/item-slot.js';
-import { InventoryScreen, type ContainerView, type MoveIntent } from './inventory.js';
+import type { ItemDetail, ItemView } from '../widgets/item-slot.js';
+import {
+  InventoryScreen,
+  type ContainerView,
+  type DropIntent,
+  type MoveIntent,
+} from './inventory.js';
 
 const SLOTS = [
   { id: 'mainHand', label: 'Main' },
@@ -24,8 +29,30 @@ const SLOTS = [
   { id: 'trinket', label: 'Charm' },
 ];
 
-function item(defId: string, slot: string | null, count = 1, level = 1): ItemView {
-  return { defId, name: defId, count, slot, icon: `item:${defId}`, levelRequirement: level };
+// `accepts` is the family (spec 188), which is what `inventory-model.ts` hands
+// in: all four take `skill`, so one sigil row fits any of them.
+const SKILL_SLOTS = [
+  { id: 'skill1', label: 'Skill 1', accepts: 'skill' },
+  { id: 'skill2', label: 'Skill 2', accepts: 'skill' },
+  { id: 'skill3', label: 'Skill 3', accepts: 'skill' },
+  { id: 'skill4', label: 'Skill 4', accepts: 'skill' },
+];
+
+function item(
+  defId: string,
+  slot: string | null,
+  count = 1,
+  level = 1,
+  rarity = 'common',
+  details: readonly ItemDetail[] = [],
+): ItemView {
+  return { defId, name: defId, count, slot, icon: `item:${defId}`, levelRequirement: level, rarity, details };
+}
+
+function says(test: { screen: InventoryScreen }, index: number): readonly string[] {
+  const cell = test.screen.cellAt(inv(index));
+  if (!cell) throw new Error(`no cell ${index}`);
+  return test.screen.tooltipFor(cell).map((line) => line.text);
 }
 
 function viewOf(overrides: Partial<ContainerView> = {}): ContainerView {
@@ -36,6 +63,7 @@ function viewOf(overrides: Partial<ContainerView> = {}): ContainerView {
     bag,
     worn: { mainHand: null, offHand: null, head: null, chest: null, legs: null, trinket: null },
     slots: SLOTS,
+    skillSlots: SKILL_SLOTS,
     level: 3,
     ...overrides,
   };
@@ -44,6 +72,7 @@ function viewOf(overrides: Partial<ContainerView> = {}): ContainerView {
 interface Harness {
   readonly screen: InventoryScreen;
   readonly moves: MoveIntent[];
+  readonly dropped: DropIntent[];
   readonly root: UiRoot;
 }
 
@@ -56,6 +85,8 @@ function harness(view = viewOf()): Harness {
 
   const moves: MoveIntent[] = [];
   screen.onMove = (intent) => moves.push(intent);
+  const dropped: DropIntent[] = [];
+  screen.onDropToWorld = (intent) => dropped.push(intent);
 
   const root = new UiRoot(layers, {
     theme: THEME,
@@ -64,7 +95,7 @@ function harness(view = viewOf()): Harness {
     layers,
   });
   root.update(0);
-  return { screen, moves, root };
+  return { screen, moves, dropped, root };
 }
 
 interface Ref {
@@ -98,7 +129,10 @@ describe('the inventory screen', () => {
     expect(screen.cellAt(inv(0))?.item?.defId).toBe('sword');
     expect(screen.cellAt(inv(1))?.item?.count).toBe(6);
     expect(screen.cellAt(inv(2))?.item).toBeNull();
-    expect(screen.equipmentSlots).toHaveLength(SLOTS.length);
+    // Worn cells and skill cells share one list, indexed by equipment ordinal
+    // (spec 188): a `SlotRef` has to mean the same thing whichever group the
+    // cell was drawn in, or a drag into the skill row would address a helmet.
+    expect(screen.equipmentSlots).toHaveLength(SLOTS.length + SKILL_SLOTS.length);
   });
 
   it('emits one intent for a carry between two bag cells', () => {
@@ -284,14 +318,44 @@ describe('layout', () => {
     bag[0] = item('maul', 'mainHand', 1, 9);
     bag[1] = item('potion', null, 6);
     const test = harness(viewOf({ bag }));
-    const says = (index: number): string => {
-      const cell = test.screen.cellAt(inv(index));
-      if (!cell) throw new Error(`no cell ${index}`);
-      return test.screen.tooltipFor(cell);
-    };
-    expect(says(0)).toContain('Requires level 9');
-    expect(says(1)).toBe('potion x6');
-    expect(says(9)).toBe('');
+    expect(says(test, 0)).toContain('Requires level 9');
+    expect(says(test, 1)).toEqual(['potion', 'x6']);
+    expect(says(test, 9)).toEqual([]);
+  });
+
+  /**
+   * The tier reaches the interface as a colour (spec 185).
+   *
+   * Asserted as tokens rather than as bytes, because a token is what the widget
+   * carries and what a theme retune would keep: the day somebody warms the gold
+   * up, this test should not fail.
+   */
+  it('draws an item in its own tier, and everything it was told about it', () => {
+    const bag: (ItemView | null)[] = new Array<ItemView | null>(24).fill(null);
+    bag[0] = item('bloodstone', 'trinket', 1, 1, 'exceptional', [
+      { text: 'Exceptional  Trinket', tone: 'rarity' },
+      { text: '+12% Health', tone: 'good' },
+      { text: '-8 Move Speed', tone: 'bad' },
+      { text: 'Worth 210 coins', tone: 'dim' },
+    ]);
+    bag[1] = item('rock', null, 1, 1, 'nothing-this-build-has-heard-of');
+    const test = harness(viewOf({ bag }));
+    const cell = test.screen.cellAt(inv(0));
+    if (!cell) throw new Error('no cell');
+
+    expect(test.screen.tooltipFor(cell)).toEqual([
+      { text: 'bloodstone', colorToken: 'rarityExceptional' },
+      // The tier line wears the item's own colour rather than a tone's.
+      { text: 'Exceptional  Trinket', colorToken: 'rarityExceptional' },
+      { text: '+12% Health', colorToken: 'success' },
+      { text: '-8 Move Speed', colorToken: 'danger' },
+      { text: 'Worth 210 coins', colorToken: 'textDim' },
+    ]);
+
+    // Total, like `rarityFromByte`: an unknown tier is ordinary loot, not a throw.
+    const unknown = test.screen.cellAt(inv(1));
+    if (!unknown) throw new Error('no cell');
+    expect(test.screen.tooltipFor(unknown)[0]?.colorToken).toBe('rarityCommon');
   });
 
   // --- specs 136 and 137 -------------------------------------------------
@@ -520,5 +584,122 @@ describe('layout', () => {
       expect(cell?.rect.width).toBe(20);
       expect(cell?.rect.height).toBe(20);
     });
+  });
+});
+/**
+ * Putting a carry down in the world (spec 172).
+ *
+ * The screen's half of it is small on purpose: it says which slot the thing came
+ * out of and lets go. Where it lands, whether the server allows it and what the
+ * cell shows next are all somebody else's -- the same division every other
+ * intent on this screen keeps.
+ */
+describe('dropping a carry into the world', () => {
+  it('emits the slot it came from and ends the carry', () => {
+    const test = harness();
+    clickCell(test, { container: 'inventory', index: 0 });
+    expect(test.screen.drag.active).not.toBeNull();
+
+    expect(test.screen.dropCarried()).toBe(true);
+    expect(test.dropped).toEqual([{ at: { container: 'inventory', index: 0 }, count: 0 }]);
+    expect(test.screen.drag.active).toBeNull();
+    // Nothing was moved between slots: a drop is not a move.
+    expect(test.moves).toEqual([]);
+  });
+
+  /** 0 is "all of it" on the wire, so a part-carry has to say how many. */
+  it('says how many when only part of a stack is in hand', () => {
+    const test = harness();
+    // Right-click on the stack of six takes half of it.
+    clickCell(test, { container: 'inventory', index: 1 }, 2);
+    test.screen.dropCarried();
+    expect(test.dropped).toEqual([{ at: { container: 'inventory', index: 1 }, count: 3 }]);
+  });
+
+  it('drops what was taken off the paperdoll', () => {
+    const worn = viewOf({
+      worn: {
+        mainHand: item('sword', 'mainHand'),
+        offHand: null,
+        head: null,
+        chest: null,
+        legs: null,
+        trinket: null,
+      },
+    });
+    const test = harness(worn);
+    clickCell(test, { container: 'equipment', index: 0 });
+    test.screen.dropCarried();
+    expect(test.dropped).toEqual([{ at: { container: 'equipment', index: 0 }, count: 0 }]);
+  });
+
+  it('does nothing at all with empty hands', () => {
+    const test = harness();
+    expect(test.screen.dropCarried()).toBe(false);
+    expect(test.dropped).toEqual([]);
+  });
+
+  /**
+   * The cell goes back to showing what the server last said. What removes the
+   * item is the client's prediction arriving through `setContainers`, like every
+   * other change here -- this screen never edits itself.
+   */
+  it('leaves the cell holding what it was handed until it is told otherwise', () => {
+    const test = harness();
+    clickCell(test, { container: 'inventory', index: 0 });
+    expect(test.screen.cellAt({ container: 'inventory', index: 0 })?.item).toBeNull();
+    test.screen.dropCarried();
+    expect(test.screen.cellAt({ container: 'inventory', index: 0 })?.item?.defId).toBe('sword');
+  });
+});
+
+/**
+ * A cell takes a *family*, not a slot name (spec 188).
+ *
+ * The bug this covers made the whole skill feature unreachable: a sigil says
+ * `slot: 'skill'` and a cell said `acceptsSlot: 'skill1'`, so the drop was
+ * refused by the screen while `applyMove` on the server would have taken it.
+ * Nothing lit up and nothing said why, because an unlit cell *is* the refusal.
+ */
+describe('what a skill cell will take', () => {
+  it('accepts a sigil in any of the four slots', () => {
+    const screen = new InventoryScreen({ theme: THEME });
+    screen.setContainers(viewOf());
+    const sigil = item('sigil.guardBreak', 'skill');
+    for (let i = 0; i < SKILL_SLOTS.length; i++) {
+      const cell = screen.cellAt({ container: 'equipment', index: SLOTS.length + i });
+      expect(cell, `slot ${i}`).toBeTruthy();
+      expect(
+        cell?.canAcceptDrop({
+          source: cell,
+          data: { from: { container: 'inventory', index: 0 }, item: sigil, count: 1 },
+        }),
+        `slot ${i}`,
+      ).toBe(true);
+    }
+  });
+
+  it('still refuses a sword in a skill slot', () => {
+    const screen = new InventoryScreen({ theme: THEME });
+    screen.setContainers(viewOf());
+    const cell = screen.cellAt({ container: 'equipment', index: SLOTS.length });
+    expect(
+      cell?.canAcceptDrop({
+        source: cell,
+        data: { from: { container: 'inventory', index: 0 }, item: item('sword.worn', 'mainHand'), count: 1 },
+      }),
+    ).toBe(false);
+  });
+
+  it('still refuses a sigil in the main hand', () => {
+    const screen = new InventoryScreen({ theme: THEME });
+    screen.setContainers(viewOf());
+    const cell = screen.cellAt({ container: 'equipment', index: 0 });
+    expect(
+      cell?.canAcceptDrop({
+        source: cell,
+        data: { from: { container: 'inventory', index: 0 }, item: item('sigil.guardBreak', 'skill'), count: 1 },
+      }),
+    ).toBe(false);
   });
 });

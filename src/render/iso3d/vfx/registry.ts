@@ -17,6 +17,7 @@
 
 import { compileRegistry, type CompiledRegistry } from './compile.js';
 import { LIBRARY } from './library.js';
+import { BRUSH_EFFECTS } from './brush.js';
 import type { EffectDefinition } from './types.js';
 
 /**
@@ -261,6 +262,12 @@ export const EFFECTS: readonly EffectDefinition[] = [
   HIT_BLOOD,
   DEATH_BLOOD,
   ...LIBRARY,
+  // The painted vocabulary (spec 158). A file of its own rather than another
+  // family in `library.ts`, because it is not another set of numbers over the
+  // same shapes -- it brings its own geometry, its own two orientations and its
+  // own emitter shape with it, and the argument for all three is worth keeping
+  // beside the effects that spend them.
+  ...BRUSH_EFFECTS,
 ];
 
 /**

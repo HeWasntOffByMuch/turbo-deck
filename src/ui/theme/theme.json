@@ -16,7 +16,13 @@
     "danger": "#d0796f",
     "success": "#7fae3f",
     "focus": "#9fd8ff",
-    "overlay": "#0f0d14"
+    "overlay": "#0f0d14",
+    "rarityCommon": "#b9c2cc",
+    "rarityRare": "#6fb4ff",
+    "rarityExceptional": "#ffc861",
+    "attrStrength": "#e0705f",
+    "attrAgility": "#7cc45a",
+    "attrIntelligence": "#6fa8ff"
   },
   "spacing": {
     "unit": 4,
@@ -466,6 +472,7 @@
     "itemSlot": {
       "frame": "sunken",
       "padding": 0,
+      "rarityWashMix": 56,
       "states": {
         "normal": {
           "fill": "ink",

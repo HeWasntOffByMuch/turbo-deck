@@ -11,9 +11,62 @@
  * than a map edit. When somebody wants to place one by dragging it, this becomes
  * a marker kind and the positions move into the document; nothing else here has
  * to change, because the rest of the system only ever asks for a vendor by id.
+ *
+ * Since spec 247 every row's `x`/`y` is a *body's* spawner rather than a spot
+ * chosen here, which is half of that migration already done by hand: the
+ * positions are in the map document, and these three constants are what has to
+ * agree with them. `world/npc-placement.test.ts` is what says they do.
  */
 
 import { itemById } from './items.js';
+import { idlePlanOf } from './monsters.js';
+import { npcById } from './npcs.js';
+
+/**
+ * Where each shopkeeper's spawner is, in world units (spec 246, spec 247).
+ *
+ * The numbers in this file that have to agree with something outside it. A
+ * vendor's reach is measured from a fixed point and the bodies that own these
+ * *walk*, so the point is the anchor -- which is a marker in the map document,
+ * where this module cannot see it. `world/npc-placement.test.ts` asserts the
+ * shipped map's spawners are here, so the two drifting apart is a failing test
+ * rather than a shop that quietly refuses to open.
+ *
+ * All three are inside Hearthstead, around where players arrive, on flat ground
+ * whose whole wander disc is clear of props -- measured, not guessed. They sit
+ * a little over two hundred units apart, which is more than two wander radii,
+ * so no two of them can end up standing in the same place.
+ */
+export const RELL_HOME = { x: 650, y: 520 } as const;
+export const QUARTERMASTER_HOME = { x: 440, y: 520 } as const;
+export const ARMOURER_HOME = { x: 550, y: 330 } as const;
+
+/**
+ * How far from {@link RELL_HOME} the merchant's shop can be reached.
+ *
+ * **Derived, not chosen**, because the thing it must not do is be smaller than
+ * the distance a player can legitimately be standing at when they press the
+ * reply that opens it. That distance is how far the body has wandered from its
+ * anchor plus how far away the player may be from the body, and both of those
+ * numbers are authored elsewhere -- so this reads them rather than restating
+ * them, and raising either one carries the shop's reach along for free.
+ *
+ * The margin is for the gap between the tick the client asked on and the tick
+ * the server answers: a player walking away as they press is measured where the
+ * server last put them, not where they were.
+ */
+const REACH_MARGIN = 40;
+
+function reachFor(npcId: string): number {
+  const npc = npcById(npcId);
+  const plan = idlePlanOf(npcId);
+  const roam = plan.kind === 'sentinel' ? 0 : plan.radius;
+  return (npc?.talkRadius ?? 0) + roam + REACH_MARGIN;
+}
+
+const RELL_REACH = reachFor('npc.merchant');
+const QUARTERMASTER_REACH = reachFor('npc.quartermaster');
+const ARMOURER_REACH = reachFor('npc.armourer');
 
 export interface VendorDefinition {
   readonly id: string;
@@ -32,16 +85,23 @@ export interface VendorDefinition {
 }
 
 /**
- * Both of them stand near the spawn at (600, 450), because a shop nobody can
- * find is a shop nobody uses and there is no map yet that says where a town is.
+ * Three shops, each with a body standing in it (spec 247).
+ *
+ * They used to be coordinates near the spawn that a player walked onto and
+ * pressed a key at, which was the honest answer while there was no map that
+ * said where a town was. There is one now, and the key is gone -- so every row
+ * here names a spawner in `maps/arena`, its reach is derived from how far that
+ * body wanders, and it is opened by talking to whoever owns it.
+ *
+ * The stock and the rates are exactly what they were. What moved is the way in.
  */
 const DEFINITIONS: readonly VendorDefinition[] = [
   {
     id: 'vendor.quartermaster',
     name: 'Quartermaster',
-    x: 640,
-    y: 470,
-    radius: 60,
+    x: QUARTERMASTER_HOME.x,
+    y: QUARTERMASTER_HOME.y,
+    radius: QUARTERMASTER_REACH,
     stock: [
       'sword.worn',
       'bow.hunting',
@@ -56,15 +116,32 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     sellFraction: 0.4,
   },
   {
-    // Better goods, worse rates: the choice a second shop exists to offer.
+    // Better goods, worse rates: the choice a second shop exists to offer, and
+    // the one thing either script says out loud about a number.
     id: 'vendor.armourer',
     name: 'Armourer',
-    x: 560,
-    y: 430,
-    radius: 60,
+    x: ARMOURER_HOME.x,
+    y: ARMOURER_HOME.y,
+    radius: ARMOURER_REACH,
     stock: ['sword.keen', 'maul.iron', 'staff.emberwood', 'focus.quartz', 'helm.plated', 'chest.scale'],
     buyMarkup: 1.8,
     sellFraction: 0.3,
+  },
+  {
+    // The first shop that had a body standing in it (spec 246), and for one
+    // spec the only one.
+    id: 'vendor.rell',
+    name: "Rell's Pack",
+    x: RELL_HOME.x,
+    y: RELL_HOME.y,
+    radius: RELL_REACH,
+    // A traveller's pack: the things somebody forgot to bring, at a fair price
+    // rather than a good one. Deliberately overlapping the Quartermaster's --
+    // this is a second place to buy a flask, not a third tier of goods.
+    stock: ['potion.minor', 'sword.worn', 'bow.hunting', 'helm.leather', 'legs.traveller'],
+    // Between the two above. It walks to you, so it charges for the walk.
+    buyMarkup: 1.6,
+    sellFraction: 0.35,
   },
 ];
 

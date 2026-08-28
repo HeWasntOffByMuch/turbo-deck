@@ -29,6 +29,13 @@ export const PALETTE = {
   enemySkitter: 0x5fb4d6,
   enemyBrute: 0x9a5ad0,
   enemyEye: 0x1a1208,
+  // The small spider (spec 152), body and legs the same colour. A dark slate
+  // violet rather than 0x000000, for two reasons: every material here is a
+  // Lambert, so a pure black body multiplies the sun out and loses its own
+  // facets -- it becomes a hole rather than a round thing -- and the violet in
+  // it is what stops a near-black body on dark ground from reading as a gap in
+  // the world. Tuned in the movement sandbox against the real grass.
+  enemySpider: 0x3d3846,
   // The player-controlled mech in the movement sandbox (a friendly steel blue).
   mechAlly: 0x4a7fb0,
   // The grey metal walker unit in the movement sandbox (a rotating turret on legs).
@@ -62,14 +69,20 @@ export const PALETTE = {
   arrowHead: 0xd3d9df,
   arrowFletch: 0xbc4a3c,
   shurikenSteel: 0xb4bfca,
+  // The ember shot's core (spec 218), and the one shot in the table that is
+  // mostly paint: the mesh is half the collision radius and everything around
+  // it is `shot_ember`'s marks, so these two only have to be the hot middle.
+  // Near-white against a hot orange rim -- the same core-and-rim pair a mote
+  // uses (spec 156), and for the same reason: a small bright thing on grass
+  // needs a value it does not share with the grass.
+  emberCore: 0xfff3cd,
+  emberRim: 0xff8a3d,
   // The streak a shuriken leaves. Cooler and paler than the plate, so the trace
   // reads as air rather than as more metal.
   shurikenTrace: 0xdce8f4,
   // Warning red marking an unwalkable terrain footprint (toggleable overlay).
   blocked: 0xd6483f,
   // The arena's walls (spec 037): grey stone, with a lighter lit cap on top.
-  wall: 0x6b6b78,
-  wallTop: 0x84848f,
   // Fences (spec 058). Sawn timber sits a shade lighter and greyer than a living
   // trunk, so a paddock rail reads as built rather than grown; the drystone
   // courses borrow the terrain's warm limestone so a wall belongs to its ground.
@@ -92,6 +105,22 @@ export const PALETTE = {
   // Darker than the brick around it, so a joint reads as a shadow between
   // bricks rather than as a pale line drawn over them.
   mortar: 0x8e857a,
+  // A straw roof (spec 224), in three tones. Thatch has to be readable from
+  // above at the game's bearing, because from up there a hut is very nearly all
+  // roof -- so it is the warmest and lightest thing in this half of the palette
+  // and cannot be mistaken for either the ground it stands on or the timber
+  // under it. The deep tone is the underside and the shaded slope; the pale one
+  // is the ridge roll, which is the line that says which way a roof runs.
+  thatch: 0xcaa858,
+  thatchDeep: 0x9d7f3a,
+  thatchPale: 0xdfc37c,
+  // A hut's timber, one shade darker and greyer than a fence's sawn plank: a
+  // wall is weathered where a rail is replaced.
+  hutWall: 0x9c7746,
+  // The doorway, and the water at the bottom of a well. Near-black rather than
+  // simply dark, because both are holes: what says "you could go in there" is
+  // that nothing is lit inside, and a merely dark brown reads as another plank.
+  hollow: 0x241d18,
 } as const;
 
 /**

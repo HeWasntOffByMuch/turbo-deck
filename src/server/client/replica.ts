@@ -13,8 +13,11 @@
  * a second opinion about game state.
  */
 
-import type { EntityDelta } from '../net/messages.js';
+import type { EntityDelta, WireStatus } from '../net/messages.js';
 import { EntityField } from '../net/protocol.js';
+
+/** Shared, so every body carrying nothing points at the same empty list. */
+const NO_STATUSES: readonly WireStatus[] = [];
 
 export interface ReplicatedEntity {
   readonly id: number;
@@ -29,6 +32,36 @@ export interface ReplicatedEntity {
   readonly activity: number;
   readonly activityUntilTick: number;
   readonly level: number;
+  /**
+   * Spec 145. `''` and `0` mean "not told" -- true for every monster, prop and
+   * projectile by design, and true for a player only in the frames before their
+   * first delta lands. Both consumers have a fallback for it.
+   */
+  readonly name: string;
+  readonly turnRate: number;
+  /** Guard left, 0..1 (spec 147). 1 for anything with no poise pool. */
+  readonly poise: number;
+  /** Absorb left in health units, and the tick it falls off whole. */
+  readonly shield: number;
+  readonly shieldUntilTick: number;
+  /**
+   * What this body is visibly carrying (spec 186).
+   *
+   * Empty for anything with nothing on it, which is most bodies most of the
+   * time -- and empty rather than optional, so a reader never has to tell "no
+   * statuses" apart from "not told about yet". Each entry carries an absolute
+   * `expiresAtTick`, and a consumer is expected to refuse a passed one on read
+   * exactly as the sim's own `statusOf` does; nothing prunes this list.
+   */
+  readonly statuses: readonly WireStatus[];
+  /**
+   * How fast this body may move, as a fraction of its own speed (spec 188).
+   *
+   * 1 for a body carrying no slow, which is what a client that has not been
+   * told anything should assume: guessing *slower* than the server would make
+   * an unslowed player trail their own body for no reason.
+   */
+  readonly moveScale: number;
 }
 
 export class ReplicatedWorld {
@@ -79,6 +112,13 @@ export class ReplicatedWorld {
           activity: record.activity ?? 0,
           activityUntilTick: record.activityUntilTick ?? 0,
           level: record.level ?? 1,
+          name: record.name ?? '',
+          turnRate: record.turnRate ?? 0,
+          poise: record.poise ?? 1,
+          moveScale: record.moveScale ?? 1,
+          shield: record.shield ?? 0,
+          shieldUntilTick: record.shieldUntilTick ?? 0,
+          statuses: record.statuses ?? NO_STATUSES,
         });
         continue;
       }
@@ -102,6 +142,30 @@ export class ReplicatedWorld {
           : {}),
         ...(record.fields & EntityField.Level && record.level !== undefined
           ? { level: record.level }
+          : {}),
+        ...(record.fields & EntityField.Identity
+          ? { name: record.name ?? existing.name, turnRate: record.turnRate ?? existing.turnRate }
+          : {}),
+        // Guard and shields, which the first-sight branch above has always read
+        // and this one never did -- so a replicated body's guard was whatever it
+        // had when the client first saw it, forever. Invisible until spec 147
+        // drew the bar: nothing else on this side reads either field, so a value
+        // frozen at spawn and a value tracking the server look identical to
+        // every test that only asks whether the number arrived.
+        ...(record.fields & EntityField.Poise && record.poise !== undefined
+          ? { poise: record.poise }
+          : {}),
+        ...(record.fields & EntityField.MoveScale && record.moveScale !== undefined
+          ? { moveScale: record.moveScale }
+          : {}),
+        ...(record.fields & EntityField.Shield && record.shield !== undefined
+          ? { shield: record.shield, shieldUntilTick: record.shieldUntilTick ?? existing.shieldUntilTick }
+          : {}),
+        // Replaced whole rather than merged (spec 186). The field carries the
+        // body's entire visible set, so an empty list is how the server says the
+        // last one fell off -- merging would make a status impossible to lose.
+        ...(record.fields & EntityField.Statuses
+          ? { statuses: record.statuses ?? NO_STATUSES }
           : {}),
       });
     }

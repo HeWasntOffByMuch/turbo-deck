@@ -1,3 +1,5 @@
+import { SLOPE_BASELINE } from '../../../sim/constants.js';
+import { slopeFrom, walkableSlope } from '../../../sim/slope.js';
 import type { ChunkCoord, LayerInfo, MapChunkStore } from '../../../terrain/index.js';
 
 /**
@@ -5,28 +7,52 @@ import type { ChunkCoord, LayerInfo, MapChunkStore } from '../../../terrain/inde
  *
  * Pure: no three.js, no DOM. `nav-view.ts` draws what this decides.
  *
- * The slope a cell is judged on is the height gradient across it -- the same
- * measurement `sampleChunk` classifies materials with and `scatter.ts` rejects
- * steep ground with. Three consumers of one number, so "too steep to walk" lines
- * up with "too steep to plant on" and "steep enough to be drawn as rock" rather
- * than the three quietly drifting apart.
+ * The slope a cell is judged on is `slope.ts`'s, by import: the same function
+ * the sim grades a step with and the router grades a cell with, over the same
+ * `SLOPE_BASELINE`. So the picture is the answer, not a second opinion about
+ * it.
+ *
+ * **The thresholds are the sim's, by import** (spec 228). They used to be a
+ * `DEFAULT_WALK_SLOPE` of 0.55 and a live *Walk slope* slider, which was the
+ * third of three answers to "how steep is too steep" and the only one a
+ * designer could see -- and it reached nothing, because spec 204 took
+ * `chunk.nav` out of the format, so the bake is a dev overlay and always will
+ * be. On the shipped map it painted 7.93% of the ground red where the game
+ * refused 0.06%. A picture wrong by 55 degrees is worse than no picture: it is
+ * read as a fact.
+ *
+ * What the overlay shows is the worst case at a cell, since a gradient is the
+ * steepest direction out of it. A body crossing along the contour of a cell
+ * marked `CLIMB` is walking, and that is the honest thing for a picture of the
+ * ground to say -- the sim grades the *step*, which needs a direction, and this
+ * grades the *place*, which does not have one.
  */
+
+/** What the overlay says about a cell. Zero is "cliff", so an unset byte is one. */
+export const NAV_CELL_CLIFF = 0;
+export const NAV_CELL_WALK = 1;
 
 /**
- * Gradient at or under which a unit can walk. A shade under the classifier's
- * `dirtSlope`, so ground that has worn to bare dirt is right at the edge of
- * walkable and anything rockier is not.
+ * Steepness at a cell, measured the way the sim measures it.
+ *
+ * Whole cells rather than exactly `SLOPE_BASELINE`, since heights are only
+ * authored at corners -- the same rounding `gradeNavCells` makes, and the true
+ * offset is what the gradient is divided by, so it costs resolution and not
+ * correctness.
  */
-export const DEFAULT_WALK_SLOPE = 0.55;
-
-/** Slope across one cell of the layer's global grid. */
 function cellSlope(store: MapChunkStore, layer: LayerInfo, col: number, row: number): number {
   const cell = store.cellSize;
-  const h00 = store.cornerHeight(layer.id, col, row);
-  const h10 = store.cornerHeight(layer.id, col + 1, row);
-  const h01 = store.cornerHeight(layer.id, col, row + 1);
-  const h11 = store.cornerHeight(layer.id, col + 1, row + 1);
-  return Math.hypot((h10 + h11 - h00 - h01) / (2 * cell), (h01 + h11 - h00 - h10) / (2 * cell));
+  const step = Math.max(1, Math.round(SLOPE_BASELINE / cell));
+  const at = (c: number, r: number): number => cellHeight(store, layer, c, r);
+  return slopeFrom(
+    at(col, row),
+    at(col - step, row),
+    at(col + step, row),
+    at(col, row - step),
+    at(col, row + step),
+    step * cell,
+    step * cell,
+  );
 }
 
 /** Mean height of a cell's four corners. */
@@ -43,21 +69,20 @@ function cellHeight(store: MapChunkStore, layer: LayerInfo, col: number, row: nu
 /**
  * Walkability for one chunk, one byte per cell in the chunk's own cell order.
  *
- * A cell is walkable when the layer has ground there, it is above the water
- * line, and it is not too steep. Returns null if the chunk does not exist.
+ * A cell is walked when the layer has ground there, it is above the water line
+ * and it is no steeper than `MAX_WALK_SLOPE`. Returns null if the chunk does
+ * not exist.
  */
 export function bakeChunkNav(
   store: MapChunkStore,
   layerId: string,
   cx: number,
   cz: number,
-  walkSlope: number = DEFAULT_WALK_SLOPE,
 ): Uint8Array | null {
   const layer = store.layerInfo(layerId);
   const chunk = store.buildChunk(layerId, cx, cz);
   if (!layer || !chunk) return null;
 
-  const limit = Number.isFinite(walkSlope) ? Math.max(0, walkSlope) : DEFAULT_WALK_SLOPE;
   const nav = new Uint8Array(chunk.cols * chunk.rows);
   for (let j = 0; j < chunk.rows; j++) {
     for (let i = 0; i < chunk.cols; i++) {
@@ -65,8 +90,8 @@ export function bakeChunkNav(
       const row = chunk.startRow + j;
       if (!store.cellSolid(layerId, col, row)) continue;
       if (layer.waterLevel !== null && cellHeight(store, layer, col, row) <= layer.waterLevel) continue;
-      if (cellSlope(store, layer, col, row) > limit) continue;
-      nav[j * chunk.cols + i] = 1;
+      if (!walkableSlope(cellSlope(store, layer, col, row))) continue;
+      nav[j * chunk.cols + i] = NAV_CELL_WALK;
     }
   }
   return nav;
@@ -78,9 +103,8 @@ export function bakeChunkNavInto(
   layerId: string,
   cx: number,
   cz: number,
-  walkSlope: number = DEFAULT_WALK_SLOPE,
 ): boolean {
-  const nav = bakeChunkNav(store, layerId, cx, cz, walkSlope);
+  const nav = bakeChunkNav(store, layerId, cx, cz);
   return nav !== null && store.setChunkNav(layerId, cx, cz, nav);
 }
 
@@ -88,14 +112,13 @@ export function bakeChunkNavInto(
 export function bakeLayerNav(
   store: MapChunkStore,
   layerId: string,
-  walkSlope: number = DEFAULT_WALK_SLOPE,
 ): number {
   const layer = store.layerInfo(layerId);
   if (!layer) return 0;
   let baked = 0;
   for (let cz = layer.grid.minCz; cz <= layer.grid.maxCz; cz++) {
     for (let cx = layer.grid.minCx; cx <= layer.grid.maxCx; cx++) {
-      if (bakeChunkNavInto(store, layerId, cx, cz, walkSlope)) baked++;
+      if (bakeChunkNavInto(store, layerId, cx, cz)) baked++;
     }
   }
   return baked;
@@ -106,13 +129,12 @@ export function rebakeNav(
   store: MapChunkStore,
   layerId: string,
   dirty: readonly ChunkCoord[],
-  walkSlope: number = DEFAULT_WALK_SLOPE,
 ): void {
   const seen = new Set<string>();
   for (const c of dirty) {
     const key = `${c.cx},${c.cz}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    bakeChunkNavInto(store, layerId, c.cx, c.cz, walkSlope);
+    bakeChunkNavInto(store, layerId, c.cx, c.cz);
   }
 }

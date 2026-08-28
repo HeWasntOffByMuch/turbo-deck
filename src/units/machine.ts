@@ -121,6 +121,15 @@ export interface MachineSnapshot {
 export class UnitMachine {
   private readonly unit: UnitDef;
   private readonly tickMs: number;
+  /**
+   * The state a body that is simply alive stands in, and the one
+   * {@link UnitMachine.revive} comes back to.
+   *
+   * Kept because a terminal state has no transitions out of it by construction,
+   * so there is nothing in the document that could say where a body gets back
+   * up into -- see {@link UnitMachine.revive}.
+   */
+  private readonly entryStateId: string;
   private readonly clips = new Map<string, Clip>();
   private readonly states = new Map<string, State>();
   private readonly trees = new Map<string, BlendTree>();
@@ -140,6 +149,20 @@ export class UnitMachine {
   private activeAction: ActionTiming | null = null;
   private actionStartTick = 0;
   private tickCount = 0;
+  /**
+   * A multiplier on the playback rate of one-shot states (spec 144).
+   *
+   * Attack speed shortens the gameplay wind-up, so the clip that draws it has to
+   * shorten by the same factor or the two come apart -- a body that commits in
+   * 0.2s while its swing animation takes 0.4s is drawn still winding up after
+   * the arrow has left. `startAction` already rescales a clip to fit gameplay
+   * timing; this is the same rule reaching the trigger-driven path, which enters
+   * a state directly and never consults an action's timing at all.
+   *
+   * One-shots only, and deliberately: the same factor applied to a locomotion
+   * loop would make a hasted body's legs run faster than it travels.
+   */
+  private actionRateScale = 1;
 
   constructor(options: MachineOptions) {
     this.unit = options.unit;
@@ -161,6 +184,7 @@ export class UnitMachine {
 
     const entry = options.entryStateId ?? options.unit.stateMachine.states[0]?.id;
     if (entry === undefined) throw new Error('a unit needs at least one state');
+    this.entryStateId = entry;
     this.current = { stateId: entry, clipTick: -1, rate: this.states.get(entry)?.timeScale ?? 1, finished: false };
   }
 
@@ -200,10 +224,12 @@ export class UnitMachine {
 
     const t = Math.min(1, this.fadeElapsed / this.fadeTicks);
     const outgoing = this.samplesFor(this.outgoing);
-    return [
-      ...outgoing.map((sample) => ({ ...sample, weight: sample.weight * (1 - t) })),
-      ...incoming.map((sample) => ({ ...sample, weight: sample.weight * t })),
-    ].filter((sample) => sample.weight > 0.0001);
+    return mergeByClip(
+      [
+        ...outgoing.map((sample) => ({ ...sample, weight: sample.weight * (1 - t) })),
+        ...incoming.map((sample) => ({ ...sample, weight: sample.weight * t })),
+      ].filter((sample) => sample.weight > 0.0001),
+    );
   }
 
   // --- driving --------------------------------------------------------------
@@ -223,14 +249,33 @@ export class UnitMachine {
   }
 
   /**
+   * How fast one-shot states play, 1 being the clip's authored speed.
+   *
+   * Applied when a state is *entered*, not continuously, so a rate change
+   * halfway through a swing does not jerk the pose -- which is the same
+   * snapshot rule the sim applies to the timing this is derived from.
+   */
+  setActionRate(scale: number): void {
+    this.actionRateScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  }
+
+  /**
    * Fires an action from the timing table.
    *
    * The clip is rescaled to the action, never the other way round: the rate
    * comes from {@link timeScaleFor}, so the wind-up is exactly as long as the
    * timing says and the animation is what bends.
+   *
+   * `override` replaces the table's timing for this one firing, for a *tool*
+   * that is tuning the timing -- the movement sandbox's attack sliders, and the
+   * Studio timing panel when it grows a play button. It changes no document and
+   * survives nothing: the next firing without one is the shipped timing again.
+   * The clip it names still has to be the action's, because a state is found by
+   * `clipRef` and an override that renamed it would enter a different state.
    */
-  startAction(actionId: string): boolean {
-    const action = this.actions.get(actionId);
+  startAction(actionId: string, override?: ActionTiming): boolean {
+    const table = this.actions.get(actionId);
+    const action = override === undefined ? table : { ...override, clipRef: table?.clipRef ?? override.clipRef };
     if (!action) return false;
     const state = [...this.states.values()].find((candidate) => candidate.clipRef === action.clipRef);
     if (!state) return false;
@@ -240,6 +285,95 @@ export class UnitMachine {
     this.activeAction = action;
     this.actionStartTick = this.tickCount;
     this.enter(state.id, state.blendInMs, timeScaleFor(action, clip.durationMs));
+    return true;
+  }
+
+  /**
+   * Leaves the attack that is playing, back to the loop it came from (spec 166).
+   *
+   * The counterpart to the trigger that started it. Without one, a one-shot runs
+   * to the end of its clip whatever the sim does, so a wind-up the player
+   * *withdrew* from -- the decision this whole game is built around -- was still
+   * drawn as a completed blow, impact frame and all, a quarter of a second after
+   * it had been refunded.
+   *
+   * Three things it is careful about.
+   *
+   * **It cross-fades rather than cutting**, over the state's own `blendInMs`,
+   * which is the same fade the natural return uses. A withdrawal that snapped to
+   * the idle pose would replace one wrong picture with a different one.
+   *
+   * **It leaves before the tick is stepped, so the events left in the clip never
+   * fire.** `eventsAt` reads the *incoming* state only, so a swing called off on
+   * tick T cannot emit the `swing.impact` it was three frames from -- and it
+   * must not, because on the sim's side that blow did not happen.
+   *
+   * **It only ever leaves a one-shot.** Called while walking, or in a terminal
+   * state, or in a locking one -- where the refusal to be interrupted is the
+   * whole point of the category -- it does nothing and says so.
+   */
+  cancelAction(blendMs?: number): boolean {
+    const state = this.stateOf(this.current);
+    if (!state || state.category !== 'oneshot') return false;
+    const back = this.returnTo;
+    if (back === null || back === this.current.stateId) return false;
+    this.returnTo = null;
+    this.activeAction = null;
+    this.enter(back, blendMs ?? state.blendInMs);
+    return true;
+  }
+
+  /**
+   * Puts a body that is alive again back on its feet.
+   *
+   * The counterpart to the `dead` parameter, the same way {@link cancelAction}
+   * is the counterpart to the trigger that starts an attack. A death state is
+   * `terminal` and a terminal state has **no exit** -- that is the category's
+   * whole definition, stated in {@link evaluateTransitions} and enforced by the
+   * validator, which refuses to author a transition out of one. It is the right
+   * rule for a corpse and it is exactly why a body cannot get up on its own:
+   * setting `dead` back to false leaves the machine in `down` forever, so a
+   * respawned player went on running around the arena drawn as the last frame
+   * of the clip it fell in.
+   *
+   * So getting up is a *command* rather than a condition. Nothing in the
+   * document can express it -- which is deliberate, because a transition out of
+   * a terminal state would also be one a stray `speed` reading could take -- and
+   * the only thing that knows a body is alive again is whatever is reading the
+   * wire.
+   *
+   * Three things it is careful about.
+   *
+   * **It comes back to the entry state**, which is where the machine started
+   * and is a loop by construction, and lets the ordinary transitions decide
+   * from there: a body that respawned mid-sprint is in `idle` for one tick and
+   * then walks into locomotion under its own 150ms fade, rather than this
+   * having to guess a state from a parameter it does not own.
+   *
+   * **It cuts rather than fading.** Every other thing a respawn does is a cut
+   * -- the position is a `Teleport` correction, which spec 067 snaps because
+   * easing one is a lie -- and a pose blending up off the floor over 200ms
+   * would be the one part of it lagging behind, drawing a body getting up from
+   * a fall that happened somewhere else entirely.
+   *
+   * **It drops any trigger raised while the body was down.** A terminal state
+   * consumes nothing, so a trigger raised at a corpse sits pending forever;
+   * left there, the first thing a revived body would do is throw the blow it
+   * was told about while it was dead.
+   *
+   * A no-op, and false, for a body that is not in a terminal state -- so it is
+   * safe to call on every living tick, which is what makes "alive bodies are
+   * not in a death state" a level the caller holds rather than an edge it has
+   * to catch exactly once.
+   */
+  revive(): boolean {
+    const state = this.stateOf(this.current);
+    if (!state || state.category !== 'terminal') return false;
+    if (this.entryStateId === this.current.stateId) return false;
+    this.pendingTriggers.clear();
+    this.returnTo = null;
+    this.activeAction = null;
+    this.enter(this.entryStateId, 0);
     return true;
   }
 
@@ -510,7 +644,21 @@ export class UnitMachine {
       this.returnTo = this.current.stateId;
     }
 
-    this.outgoing = this.current;
+    // Going back to the state a fade is in the middle of *leaving* is a
+    // reversal, and it fades from that state rather than from the half-arrived
+    // one (spec 167).
+    //
+    // `current` is only as visible as its own fade has got, and taking it as
+    // the new outgoing regardless is what put a hard jerk between two bow
+    // shots. A shot's clip is exactly as long as its cast and the next shot
+    // begins a tick or two later, so the machine starts back toward `idle`,
+    // gets a third of the way, and is sent straight back to `draw` -- at which
+    // point a body three quarters through drawing a bow was drawn *entirely*
+    // standing still for one frame, because `idle` became the full-weight thing
+    // to fade from. Reversing instead keeps the clip that is on screen on
+    // screen, and the two playheads on it merge in `poses`.
+    const reversing = this.outgoing !== null && this.outgoing.stateId === stateId;
+    if (!reversing) this.outgoing = this.current;
     this.fadeTicks = Math.max(0, Math.round(blendMs / this.tickMs));
     this.fadeElapsed = 0;
     if (this.fadeTicks === 0) this.outgoing = null;
@@ -518,9 +666,46 @@ export class UnitMachine {
     this.current = {
       stateId,
       clipTick: -1,
-      rate: rate ?? next.timeScale,
+      rate: (rate ?? next.timeScale) * (next.category === 'oneshot' ? this.actionRateScale : 1),
       finished: false,
     };
     if (next.clipRef !== this.activeAction?.clipRef) this.activeAction = null;
   }
+}
+
+/**
+ * One sample per clip, because a mixer only has one action per clip.
+ *
+ * `UnitRig.applyPoses` keys its actions by clip id and writes a weight and a
+ * time onto each, so two samples naming the same clip are not two layers -- the
+ * second silently overwrites the first, and which one that is depends on the
+ * order this array happens to come out in. An interrupted fade can produce
+ * exactly that: a state fading out and the state being entered can be two
+ * playheads on one clip, which is what a repeated attack is.
+ *
+ * Weights add, because together they are how much of that clip is showing. The
+ * *time* is the heavier sample's, because a single playhead has to be
+ * somewhere and the dominant one is the honest answer -- and for a clip whose
+ * first and last poses are the same, which every attack in this project has by
+ * construction, the two are the same pose anyway.
+ */
+function mergeByClip(samples: readonly PoseSample[]): readonly PoseSample[] {
+  const byClip = new Map<string, { normalizedTime: number; weight: number; top: number }>();
+  for (const sample of samples) {
+    const found = byClip.get(sample.clipId);
+    if (found === undefined) {
+      byClip.set(sample.clipId, { normalizedTime: sample.normalizedTime, weight: sample.weight, top: sample.weight });
+      continue;
+    }
+    found.weight += sample.weight;
+    if (sample.weight > found.top) {
+      found.top = sample.weight;
+      found.normalizedTime = sample.normalizedTime;
+    }
+  }
+  return [...byClip].map(([clipId, entry]) => ({
+    clipId,
+    normalizedTime: entry.normalizedTime,
+    weight: entry.weight,
+  }));
 }

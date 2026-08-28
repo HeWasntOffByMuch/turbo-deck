@@ -56,10 +56,53 @@ export const VFX_PALETTE = {
   dustSnow: 0xf5f5f0,
   dustStone: 0xc6bda9,
   splashWater: 0x4ec3d4,
+  /**
+   * The warm end of the painted explosion's ramp (spec 158).
+   *
+   * The progression the brief asks for is pale yellow, warm yellow, orange, dark
+   * warm brown, and the first three are already here as `fireCore`, `boltYellow`
+   * and `fireBody`. Only the last two were missing: nothing in the table was a
+   * *brown*, and `smokeDark` is a neutral grey that reads as fog rather than as
+   * a painted mass.
+   *
+   * Both were much darker at first (0x4a2a18 and 0x241d19) and the smoke came
+   * out as a black hole punched in the picture rather than as a dark shape in
+   * it. A dark colour still has to be a colour: these have to read as brown
+   * against grass, which is what "deep warm brown" has to mean to be worth
+   * naming.
+   *
+   * ## Why they are authored so much lighter than they look
+   *
+   * Because the particle shaders write `gl_FragColor` themselves and include no
+   * `colorspace_fragment` chunk, so the **linear** value this table decodes to is
+   * what lands in the framebuffer -- there is no encode on the way out. Every
+   * colour here is therefore displayed roughly as its own linear value, which
+   * barely matters for a near-white flash and matters enormously for a brown:
+   * 0x63402c decodes to (0.12, 0.05, 0.03) and shows up as near-black.
+   *
+   * That is a property of the whole system and not of these two entries -- every
+   * fire, dust and smoke colour in the table is subject to it, and the bright
+   * ones simply do not notice. It is written down here because these are the
+   * first *dark* colours the library has needed, and they are the first place it
+   * costs anything.
+   */
+  paintBrown: 0x9a6f52,
+  paintSoot: 0x7a5f4c,
+  /** The burnt orange between the fire and the brown -- the transitional layer. */
+  paintBurnt: 0x8f3d16,
 
   // --- blood and other fluids ---
   bloodFresh: 0xa32a26,
   bloodDeep: 0x5e1414,
+  /**
+   * The red a loaded brush leaves (spec 158) -- brighter and cleaner than
+   * `bloodFresh`, because the painterly hit is a combat *graphic* rather than an
+   * attempt at a fluid, and the mark has to win against grass and stone in three
+   * or four pixels of width.
+   */
+  bloodBright: 0xcf2b33,
+  /** Where a mark dries out. Darker than `bloodDeep` and off toward brown. */
+  bloodInk: 0x3a0d12,
   sapAmber: 0xc98a2b,
   ichorViolet: 0x7b3fa0,
   oilBlack: 0x1a1a20,
@@ -77,9 +120,72 @@ export const VFX_PALETTE = {
   boltWhite: 0xfffbe0,
   boltYellow: 0xffe08a,
   boltViolet: 0x9a5ad0,
+  /**
+   * Corrosion's acid (spec 215) -- and it is a *third* green in a table that
+   * already has two, which is only worth the entry because of what it has to be
+   * told apart from.
+   *
+   * Poison is a leaf green and Corrosion is a chemical one. If they read as the
+   * same colour they read as one affliction at two intensities, which is exactly
+   * backwards: Poison is the weakest rate in the table and Corrosion is the one
+   * that takes the guard and the armour with it. So this ramp is pushed hard
+   * toward yellow -- chartreuse rather than leaf -- and its dark end goes to a
+   * rusted olive-brown rather than to Poison's murk, because what Corrosion
+   * leaves behind is rust and what Poison leaves behind is more poison.
+   */
+  corrodeBright: 0xe9f77a,
+  corrodeBody: 0xa8c22f,
+  corrodeDeep: 0x8a6a2e,
+  /**
+   * Decay's rot (spec 215): the one affliction whose colour is an *absence*.
+   *
+   * Every other ramp here is saturated, because every other effect is something
+   * arriving. Decay suppresses healing -- what it costs you is the health you
+   * cannot put back -- so it is the one that should look like colour draining
+   * rather than colour landing, and it is the only desaturated ramp in the
+   * table. Violet-grey with an olive cast, so it is neither Corrosion's acid nor
+   * the neutral smoke greys, and so that it reads as *sick* beside
+   * `auraHeal`'s clean pale green rather than as dust.
+   */
+  decayBright: 0xc3b8c9,
+  decayBody: 0x8b7f9a,
+  decayDeep: 0x6e6a52,
   arcaneLilac: 0xd7bdf0,
   arcaneMagenta: 0xc04ab8,
   arcaneDeep: 0x4a2a7a,
+
+  /**
+   * The amber between the cream and the orange (spec 215 follow-up).
+   *
+   * `fire` runs `fireCore` (pale cream) to `fireBody` (a strong orange) to
+   * `fireDeep` (red), and that is right for a *flame*, which is a thing you look
+   * into. It was wrong for a body that is on fire: the cling settles on the mid
+   * tone, so a burning body wore `fireBody` and the paint coming off it ran
+   * straight to red -- orange and red, and no yellow anywhere in it.
+   *
+   * This is the missing step, and adding one rather than shifting `fireBody`
+   * matters: seventeen call sites read that key, including the torch, the
+   * campfire and the explosion's own ramp, and none of them asked for a
+   * different flame.
+   */
+  fireAmber: 0xffb833,
+  /**
+   * Lightning, as three colours that are not the bolt's (spec 215 follow-up).
+   *
+   * `boltWhite`/`boltYellow`/`boltViolet` are a *bolt* -- a cream white through
+   * a warm yellow to a purple -- which reads as arcane sparks on a body rather
+   * than as electricity. Lightning is near-white with a blue cast, and the blue
+   * has to be told apart from ice: `icePale` is cyan-leaning and this is
+   * violet-leaning, which is the difference that survives the quantizer when a
+   * shocked body and a frostbitten one are on screen together.
+   *
+   * The mid tone is deliberately barely blue at all. The cling settles there, so
+   * it is what a shocked body actually wears, and what it should wear is
+   * **white** -- the blue belongs to what comes off it and to the jolt.
+   */
+  boltFlash: 0xf4f8ff,
+  boltPale: 0xd2e2ff,
+  boltArc: 0x6478f0,
 
   // --- status auras ---
   auraBuff: 0x7fd08a,

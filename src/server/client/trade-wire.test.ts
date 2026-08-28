@@ -126,6 +126,45 @@ describe('a trade over the wire', () => {
     expect(h.ben.view().trade?.them.displayName).toBe('Ana');
   });
 
+  /**
+   * Which chair you are in (spec 170). `you` and `them` are symmetric by
+   * construction, so nothing else in the message says who opened the trade --
+   * which is how the sender came to be shown "Accept invitation" for their own
+   * invitation.
+   */
+  it('tells each side whether it is the one being asked', async () => {
+    const h = await harness();
+    h.ana.inviteToTrade(entityOf(h.server, 'ben'));
+    await settle();
+    expect(h.ana.view().trade?.invited).toBe(false);
+    expect(h.ben.view().trade?.invited).toBe(true);
+  });
+
+  /**
+   * The whole point of the change: a request that arrives with something in it.
+   * The invitee is looking at goods and coins before deciding, rather than at
+   * an empty table.
+   */
+  it('lets the inviter furnish the request before it is answered', async () => {
+    const h = await harness();
+    h.ana.inviteToTrade(entityOf(h.server, 'ben'));
+    await settle();
+    const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    h.ana.offerInTrade([{ index, count: 1 }], 7);
+    await settle();
+
+    // Still an invitation, and Ben can already read what is being offered.
+    expect(h.ben.view().trade?.stage).toBe(TradeStageValue.Offered);
+    expect(h.ben.view().trade?.them.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+    expect(h.ben.view().trade?.them.coins).toBe(7);
+
+    // ...and it survives the answer rather than being cleared by it.
+    h.ben.respondToTrade(true);
+    await settle();
+    expect(h.ben.view().trade?.stage).toBe(TradeStageValue.Open);
+    expect(h.ben.view().trade?.them.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+  });
+
   it('resolves an offer to items, so the other side can read it', async () => {
     const h = await harness();
     await open(h);
@@ -238,6 +277,102 @@ describe('a trade over the wire', () => {
     expect(h.ben.endedTrade?.reason).toContain('too far apart');
   });
 
+  /**
+   * The ending has to reach the *view*, because the view is all the interface
+   * reads (spec 134). `endedTrade` existed as a getter for two specs and no
+   * screen could see it -- so the window sat frozen on the last live frame with
+   * a Cancel button for a trade the server had already forgotten.
+   */
+  it('carries the ending in the view, until it is dismissed', async () => {
+    const h = await harness();
+    await open(h);
+    h.ben.cancelTrade();
+    await settle();
+
+    const view = h.ana.view();
+    expect(view.trade).toBeNull();
+    expect(view.endedTrade?.stage).toBe(TradeStageValue.Cancelled);
+
+    // The one piece of trade state a client may drop on its own: the trade is
+    // already gone at the server, so there is nothing here to disagree with.
+    h.ana.dismissEndedTrade();
+    expect(h.ana.view().endedTrade).toBeNull();
+  });
+
+  /**
+   * ...and a new trade clears the last one's ending, or the window falls back
+   * to the previous reason the moment this trade ends.
+   */
+  it('clears a stale ending when a new trade starts', async () => {
+    const h = await harness();
+    await open(h);
+    h.ben.cancelTrade();
+    await settle();
+    expect(h.ana.view().endedTrade).not.toBeNull();
+
+    await open(h);
+    expect(h.ana.view().endedTrade).toBeNull();
+    expect(h.ana.view().trade?.stage).toBe(TradeStageValue.Open);
+  });
+
+  /**
+   * A dropped socket ends the trade, and the survivor has to be *told* -- this
+   * is the one ending nobody chose, and a window left sitting there offering an
+   * Accept for a trade with one player in it is the worst version of it.
+   */
+  it('tells the survivor when the other player disconnects', async () => {
+    const h = await harness();
+    await open(h);
+    const anaBefore = countOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    h.ana.offerInTrade([{ index: slotOf(bagOf(h.server, 'ana'), 'bow.hunting'), count: 1 }], 0);
+    await settle();
+
+    h.ben.disconnect();
+    await settle();
+    h.server.tick();
+    await settle();
+
+    expect(h.ana.view().trade).toBeNull();
+    expect(h.ana.view().endedTrade?.stage).toBe(TradeStageValue.Cancelled);
+    expect(h.ana.view().endedTrade?.reason).not.toBe('');
+    // Nothing moved: a trade that paid out when a socket dropped would be the
+    // easiest duplication there is. Counted on the side still here, because the
+    // other one's session went with the socket.
+    expect(countOf(bagOf(h.server, 'ana'), 'bow.hunting')).toBe(anaBefore);
+  });
+
+  /**
+   * A full bag used to surface as the reason a confirmed trade was cancelled --
+   * after both sides had accepted, which is the one moment neither can do
+   * anything about it. It is a warning on the live table now, phrased for
+   * whoever is reading it.
+   */
+  it('warns each side about the bag that has no room, in their own terms', async () => {
+    const h = await harness();
+    await open(h);
+    // Filled through the real path rather than by writing the record, so the
+    // bag this is measured against is a bag the game could actually produce.
+    for (let guard = 0; guard < 200; guard += 1) {
+      const given = await h.server.playerManager.giveItem('ben', 'chest.leather', 1);
+      if (!given.ok) break;
+    }
+    expect(bagOf(h.server, 'ben').every((stack) => stack !== null)).toBe(true);
+
+    const bow = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    h.ana.offerInTrade([{ index: bow, count: 1 }], 0);
+    await settle();
+
+    expect(h.ana.view().trade?.warning).toContain('their bag');
+    expect(h.ben.view().trade?.warning).toContain('your bag');
+
+    // ...and clears when room is made, without what is on the table changing.
+    await h.server.playerManager.sellItem('ben', 'vendor.quartermaster', 0, 1);
+    h.ana.offerInTrade([{ index: bow, count: 1 }], 0);
+    await settle();
+    expect(h.ana.view().trade?.warning).toBe('');
+    expect(h.ben.view().trade?.warning).toBe('');
+  });
+
   it('is still open while they are still close', async () => {
     const h = await harness();
     await open(h);
@@ -248,6 +383,83 @@ describe('a trade over the wire', () => {
       await settle();
     }
     expect(h.ana.view().trade?.stage).toBe(TradeStageValue.Open);
+  });
+
+  /**
+   * What the ending says each side gave (spec 171).
+   *
+   * This is the case that used to come back **reversed**. An offer is a set of
+   * slot indices resolved when the message is built, and the `done` message is
+   * built after both bags have been written -- so the slot Ana's bow left is
+   * the first free one, which is where Ben's stars landed, and Ana was told she
+   * had offered the stars she just received.
+   */
+  it('says what each side gave, not what it got', async () => {
+    const h = await harness();
+    await open(h);
+    const anaBow = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    const benStars = slotOf(bagOf(h.server, 'ben'), 'stars.weighted');
+    h.ana.offerInTrade([{ index: anaBow, count: 1 }], 0);
+    await settle();
+    h.ben.offerInTrade([{ index: benStars, count: 1 }], 0);
+    await settle();
+
+    const revision = h.ana.view().trade?.revision ?? -1;
+    h.ana.acceptTrade(revision);
+    await settle();
+    h.ben.acceptTrade(revision);
+    await settle();
+
+    const ana = h.ana.view().endedTrade;
+    expect(ana?.you.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+    expect(ana?.them.offer).toEqual([{ defId: 'stars.weighted', count: 1 }]);
+    // ...and the same trade from the other chair, which is the same two lists
+    // the other way round.
+    const ben = h.ben.view().endedTrade;
+    expect(ben?.you.offer).toEqual([{ defId: 'stars.weighted', count: 1 }]);
+    expect(ben?.them.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+  });
+
+  /**
+   * The other half: with nothing coming back, the vacated slot stays empty and
+   * the ending said "nothing offered" -- a completed trade that appears to have
+   * moved nothing at all.
+   */
+  it('names the goods when only one side gave anything', async () => {
+    const h = await harness();
+    await open(h);
+    const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    h.ana.offerInTrade([{ index, count: 1 }], 3);
+    await settle();
+    const revision = h.ana.view().trade?.revision ?? -1;
+    h.ana.acceptTrade(revision);
+    await settle();
+    h.ben.acceptTrade(revision);
+    await settle();
+
+    expect(h.ana.view().endedTrade?.you.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+    expect(h.ben.view().endedTrade?.them.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+    // Coins were never wrong: they are stored on the trade, not derived from a
+    // bag. Asserted so a future change to the ending cannot quietly break them.
+    expect(h.ana.view().endedTrade?.you.coins).toBe(3);
+  });
+
+  /**
+   * A cancellation goes on resolving against the bag, and is right to: nothing
+   * was written, so the bag it resolves against is the one the offer was made
+   * from.
+   */
+  it('still reads a cancelled table off the bag it was offered from', async () => {
+    const h = await harness();
+    await open(h);
+    const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    h.ana.offerInTrade([{ index, count: 1 }], 0);
+    await settle();
+    h.ben.cancelTrade();
+    await settle();
+
+    expect(h.ana.view().endedTrade?.stage).toBe(TradeStageValue.Cancelled);
+    expect(h.ana.view().endedTrade?.you.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
   });
 
   /**

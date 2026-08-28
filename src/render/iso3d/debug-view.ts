@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import GUI from 'lil-gui';
 import { characterAt } from '../../sim/characters.js';
 import { ARENA_HEIGHT, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
 import type { Vec2 } from '../../sim/types.js';
@@ -12,6 +13,7 @@ import { defaultMechTuning, MechRig, type MechDebug, type MechTuning } from './r
 import { RobeRig, type RobeDebug } from './robe.js';
 import { ClothDebugOverlay, defaultClothLayers, type ClothLayers } from './robe-debug.js';
 import { buildPanel } from './movement.js';
+import { embedGui, fitPanelHeight, guiContents } from './tuning-panel.js';
 import type { ViewHandle } from './view-handle.js';
 import type { SandboxUnit, UnitKind } from './unit.js';
 import { CritterRig, defaultCritterTuning, type CritterTuning } from './critter.js';
@@ -519,105 +521,45 @@ function buildDebugControls(opts: {
   onClothLayers: (l: ClothLayers) => void;
   onClothVisible: (v: boolean) => void;
   onBodyVisible: (v: boolean) => void;
-}): { element: HTMLElement; setReadout: (text: string) => void; setUnit: (kind: UnitKind) => void } {
+}): {
+  element: HTMLElement;
+  setReadout: (text: string) => void;
+  setUnit: (kind: UnitKind) => void;
+  fit: () => void;
+} {
   const panel = document.createElement('div');
-  panel.style.cssText =
-    `${LABEL_CSS}width:280px;max-height:${CANVAS_H}px;overflow-y:auto;padding:10px 12px 12px;box-sizing:border-box;` +
-    'background:#16161e;border:1px solid #2a2a3a;border-radius:8px;font-size:12px;';
-
-  const heading = (text: string): HTMLElement => {
-    const h = document.createElement('div');
-    h.textContent = text;
-    h.style.cssText = 'color:#f0f0f8;font-weight:600;margin:10px 0 5px;letter-spacing:.03em;';
-    return h;
-  };
+  // Runs to the bottom of the window rather than stopping at the viewports;
+  // `fit` measures where the column starts once the tab is on screen.
+  panel.style.cssText = `${LABEL_CSS}width:280px;max-height:100vh;overflow-y:auto;box-sizing:border-box;`;
+  const gui = embedGui(new GUI({ container: panel, title: 'Rig debug', width: 280 }));
 
   // --- Time control -------------------------------------------------------
-  panel.appendChild(heading('Time'));
-  const timeRow = document.createElement('div');
-  timeRow.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
-  const timeBtns: HTMLButtonElement[] = [];
-  const styleTime = (btn: HTMLButtonElement, on: boolean): void => {
-    btn.style.cssText =
-      `${LABEL_CSS}flex:1;min-width:44px;padding:6px 4px;border-radius:6px;cursor:pointer;font-size:12px;border:1px solid #2a2a3a;` +
-      (on ? 'background:#3a5c7a;color:#f0f0f8;' : 'background:#20202c;color:#9a9ab0;');
-  };
-  TIME_SCALES.forEach((ts, i) => {
-    const btn = document.createElement('button');
-    btn.textContent = ts.label;
-    btn.title = ts.scale === 0 ? 'Freeze the sim (use Step to advance one tick).' : `Run at ${ts.label} real time.`;
-    styleTime(btn, ts.scale === 1);
-    btn.addEventListener('click', () => {
-      timeBtns.forEach((b, j) => styleTime(b, j === i));
-      opts.onScale(ts.scale);
-    });
-    timeRow.appendChild(btn);
-    timeBtns.push(btn);
-  });
-  // Default the active chip to 1x.
-  timeBtns.forEach((b, j) => styleTime(b, j === TIME_SCALES.length - 1));
-  panel.appendChild(timeRow);
-
-  const step = document.createElement('button');
-  step.textContent = 'Step one tick ▸';
-  step.title = 'Advance the sim by exactly one 60 Hz tick (works while paused).';
-  step.style.cssText =
-    `${LABEL_CSS}margin-top:6px;width:100%;padding:7px;border-radius:6px;cursor:pointer;` +
-    'border:1px solid #2a2a3a;background:#2a2a3a;color:#f0f0f8;font-size:12px;';
-  step.addEventListener('click', () => opts.onStep());
-  panel.appendChild(step);
+  const time = gui.addFolder('Time');
+  const timeScales: Record<string, number> = {};
+  for (const ts of TIME_SCALES) timeScales[ts.label] = ts.scale;
+  const timeState = { scale: 1, step: () => opts.onStep() };
+  time
+    .add(timeState, 'scale', timeScales)
+    .name('Speed')
+    .onChange((s: number) => opts.onScale(s))
+    .domElement.title =
+    'How fast the sim runs against real time. Pause freezes it; use Step to advance one tick at a time.';
+  time.add(timeState, 'step').name('Step one tick ▸').domElement.title =
+    'Advance the sim by exactly one 60 Hz tick (works while paused).';
 
   // --- Zoom ---------------------------------------------------------------
-  panel.appendChild(heading('Zoom'));
-  const zoomRow = document.createElement('div');
-  zoomRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
-  zoomRow.title = 'Ortho half-width of both viewports (smaller = closer).';
-  const zoom = document.createElement('input');
-  zoom.type = 'range';
-  zoom.min = '40';
-  zoom.max = '300';
-  zoom.step = '5';
-  zoom.value = '120';
-  zoom.style.cssText = 'flex:1;min-width:0;accent-color:#4a7fb0;';
-  const zoomVal = document.createElement('span');
-  zoomVal.textContent = '120';
-  zoomVal.style.cssText = 'flex:0 0 34px;text-align:right;font-variant-numeric:tabular-nums;color:#e0e0ee;';
-  zoom.addEventListener('input', () => {
-    zoomVal.textContent = zoom.value;
-    opts.onZoom(Number(zoom.value));
-  });
-  zoomRow.append(zoom, zoomVal);
-  panel.appendChild(zoomRow);
+  const zoomState = { zoom: 120 };
+  gui
+    .add(zoomState, 'zoom', 40, 300, 5)
+    .name('Zoom')
+    .onChange((hw: number) => opts.onZoom(hw))
+    .domElement.title = 'Ortho half-width of both viewports (smaller = closer).';
 
   // --- Layers -------------------------------------------------------------
   // Two independent overlay sets: the mechs' leg diagnostics and the robe's
   // cloth diagnostics. Only the active unit's set is shown, so the column stays
   // short and no checkbox toggles something you cannot see.
-  const mechOverlays = document.createElement('div');
-  const clothOverlays = document.createElement('div');
-
-  /** A labelled checkbox row that writes `key` on `flags` and reports the change. */
-  const checkbox = (
-    label: string,
-    tip: string,
-    checked: boolean,
-    onChange: (value: boolean) => void,
-  ): HTMLElement => {
-    const row = document.createElement('label');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:4px 0;cursor:pointer;';
-    row.title = tip;
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = checked;
-    cb.style.accentColor = '#4a7fb0';
-    cb.addEventListener('change', () => onChange(cb.checked));
-    const span = document.createElement('span');
-    span.textContent = label;
-    row.append(cb, span);
-    return row;
-  };
-
-  mechOverlays.appendChild(heading('Overlays'));
+  const mechOverlays = gui.addFolder('Overlays');
   const layers: DebugLayers = { skeleton: true, joints: true, targets: true, rings: true };
   const layerDefs: readonly { key: keyof DebugLayers; label: string; tip: string }[] = [
     { key: 'skeleton', label: 'Leg skeleton', tip: 'The hip → shoulder → knee → foot bone chain per leg.' },
@@ -626,15 +568,14 @@ function buildDebugControls(opts: {
     { key: 'rings', label: 'Rest + trigger', tip: "Each leg's rest spot and its step-trigger radius ring." },
   ];
   for (const def of layerDefs) {
-    mechOverlays.appendChild(
-      checkbox(def.label, def.tip, true, (v) => {
-        layers[def.key] = v;
-        opts.onLayers({ ...layers });
-      }),
-    );
+    mechOverlays
+      .add(layers, def.key)
+      .name(def.label)
+      .onChange(() => opts.onLayers({ ...layers }))
+      .domElement.title = def.tip;
   }
 
-  clothOverlays.appendChild(heading('Cloth overlays'));
+  const clothOverlays = gui.addFolder('Cloth overlays');
   const cloth = defaultClothLayers();
   const clothDefs: readonly { key: keyof ClothLayers; label: string; tip: string }[] = [
     { key: 'particles', label: 'Particles', tip: 'Every cloth particle: cyan where pinned to a bone, pale where simulated.' },
@@ -646,44 +587,55 @@ function buildDebugControls(opts: {
     { key: 'wind', label: 'Wind vector', tip: 'An arrow above the figure showing the current wind direction; its length is the wind strength.' },
   ];
   for (const def of clothDefs) {
-    clothOverlays.appendChild(
-      checkbox(def.label, def.tip, cloth[def.key], (v) => {
-        cloth[def.key] = v;
-        opts.onClothLayers({ ...cloth });
-      }),
-    );
+    clothOverlays
+      .add(cloth, def.key)
+      .name(def.label)
+      .onChange(() => opts.onClothLayers({ ...cloth }))
+      .domElement.title = def.tip;
   }
-  clothOverlays.appendChild(
-    checkbox('Draw garments', 'Hide the shaded cloth to see the simulation overlays unobstructed.', true, opts.onClothVisible),
-  );
-  clothOverlays.appendChild(
-    checkbox('Draw figure', 'Hide the solid body under the robe, to check what the garments alone cover.', true, opts.onBodyVisible),
-  );
-
-  panel.append(mechOverlays, clothOverlays);
+  const drawn = { garments: true, figure: true };
+  clothOverlays
+    .add(drawn, 'garments')
+    .name('Draw garments')
+    .onChange((v: boolean) => opts.onClothVisible(v))
+    .domElement.title = 'Hide the shaded cloth to see the simulation overlays unobstructed.';
+  clothOverlays
+    .add(drawn, 'figure')
+    .name('Draw figure')
+    .onChange((v: boolean) => opts.onBodyVisible(v))
+    .domElement.title = 'Hide the solid body under the robe, to check what the garments alone cover.';
 
   // --- Numeric readout ----------------------------------------------------
-  const readoutHeading = heading('Joint angles');
-  panel.appendChild(readoutHeading);
+  // Raw DOM inside the panel's own contents, because lil-gui has no widget for
+  // a block of monospaced text and floating it beside the panel would put the
+  // numbers somewhere other than the controls they belong to.
+  const readoutHeading = document.createElement('div');
+  readoutHeading.textContent = 'Joint angles';
+  readoutHeading.style.cssText = 'color:#f0f0f8;font-weight:600;margin:10px 0 5px;letter-spacing:.03em;';
   const readout = document.createElement('pre');
   readout.style.cssText =
-    `${MONO_CSS}margin:0;font-size:11px;line-height:1.45;color:#d0d6e6;white-space:pre;` +
+    `${MONO_CSS}margin:0 0 4px;font-size:11px;line-height:1.45;color:#d0d6e6;white-space:pre;` +
     'background:#0e0e14;border:1px solid #2a2a3a;border-radius:6px;padding:8px;overflow-x:auto;';
   readout.textContent = '—';
-  panel.appendChild(readout);
+  guiContents(gui).append(readoutHeading, readout);
 
   const setUnit = (kind: UnitKind): void => {
     const isRobe = kind === 'robe';
     // The critters have neither leg-IK targets nor cloth, so both overlay
     // groups are hidden for them and the readout falls back to the gait line.
     const isCritter = isCritterId(kind);
-    mechOverlays.style.display = isRobe || isCritter ? 'none' : 'block';
-    clothOverlays.style.display = isRobe ? 'block' : 'none';
+    mechOverlays.show(!isRobe && !isCritter);
+    clothOverlays.show(isRobe);
     readoutHeading.textContent = isRobe ? 'Cloth state' : isCritter ? 'Gait' : 'Joint angles';
   };
   setUnit('spider');
 
-  return { element: panel, setReadout: (t) => (readout.textContent = t), setUnit };
+  return {
+    element: panel,
+    setReadout: (t) => (readout.textContent = t),
+    setUnit,
+    fit: () => fitPanelHeight(panel),
+  };
 }
 
 const LEG_NAMES = ['FL', 'FR', 'BL', 'BR'] as const;
@@ -921,6 +873,10 @@ export function mountDebug(container: HTMLElement): ViewHandle {
       running = true;
       lastFrame = undefined;
       accumulator = 0;
+      // The shell shows the tab and then starts it, so this is the first moment
+      // either column has a box to measure.
+      controls.fit();
+      panel.fit();
       input.attach(window);
       requestAnimationFrame(frame);
     },

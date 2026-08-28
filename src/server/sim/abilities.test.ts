@@ -10,9 +10,10 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORLD } from '../../sim/collision.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
-import { abilityById, ALL_ABILITIES, totalCastTicks } from '../data/abilities.js';
-import { monsterById } from '../data/monsters.js';
-import { computeEffectiveStats } from '../player/stats.js';
+import { abilityById, ALL_ABILITIES, BASIC_ATTACK_ID, totalCastTicks } from '../data/abilities.js';
+import { ALL_ITEMS, itemById } from '../data/items.js';
+import { ALL_MONSTERS, monsterById } from '../data/monsters.js';
+import { BASE_ATTACK_TIME_TICKS, computeEffectiveStats } from '../player/stats.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
@@ -28,21 +29,39 @@ import {
 import { SHOT_IMPACT_HEIGHT, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { COMMIT_ALIGN_TICKS, commitAlignEps, facesAim, TURN_ALIGN_EPS } from './abilities.js';
 import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
+import { MAX_ATTACK_INTERVAL_SECONDS } from './attack-timing.js';
 
 const RECORD: PersistedPlayer = {
   id: 'p1',
   displayName: 'P1',
-  baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
-  skills: [],
-  equipment: EMPTY_EQUIPMENT,
+  baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+  specializations: [],
+  // Sigils, because since spec 237 every ability that is not the weapon's own
+  // swing is `skill: true` and `startCast` refuses one that is not in a slot.
+  // The rows these tests used to reach for -- `melee.heavy`, `ground.quake`,
+  // `bolt.seek` -- were spec 062's demo set: granted by nothing and castable by
+  // anybody. `computeEffectiveStats` derives `skillAbilityIds` from here, which
+  // is the same path a real player's stats take.
+  equipment: {
+    ...EMPTY_EQUIPMENT,
+    skill1: 'sigil.acidSpray',
+    skill2: 'sigil.blight',
+    skill3: 'sigil.poisonDart',
+    skill4: 'sigil.emberToss',
+  },
   inventory: emptyInventory(),
   coins: 0,
   position: { x: 600, y: 450, z: 0 },
   facing: 0,
   currentZone: 'greenmarch',
+  // Deliberately left at 1. The sigils above are set directly rather than moved
+  // through `applyMove`, so nothing here enforces their `levelRequirement` --
+  // and a higher level is not free: it buys attribute points, and Wisdom scales
+  // an ability's cooldown, which several assertions below read as
+  // `windupTicks + cooldownTicks` exactly.
   level: 1,
   experience: 0,
-  unspentSkillPoints: 0,
+  unspentProgressionPoints: 0,
   health: 100,
   resource: 100,
 };
@@ -158,7 +177,54 @@ function run(
 const hits = (events: readonly ServerSimEvent[]): Extract<ServerSimEvent, { kind: 'hit' }>[] =>
   events.filter((event): event is Extract<ServerSimEvent, { kind: 'hit' }> => event.kind === 'hit');
 
+/**
+ * The blows, without an affliction's beats.
+ *
+ * A pulse is a `hit` too and carries `periodic` to say so (specs 190, 219). It
+ * did not used to matter here: the abilities these tests were written against
+ * were spec 062's demo rows, and none of them applied anything. The skills that
+ * replaced them do, so a test counting "how many times did this land" has to
+ * say which kind of landing it means.
+ */
+const blows = (events: readonly ServerSimEvent[]): Extract<ServerSimEvent, { kind: 'hit' }>[] =>
+  hits(events).filter((event) => event.periodic !== true);
+
 describe('the ability table', () => {
+  /**
+   * **Every ability is reachable by somebody** (spec 237).
+   *
+   * The check that would have caught the thing that spec removed: nine of
+   * twenty-five rows were castable by naming an id and by no other means, left
+   * over from spec 062's demo set after spec 188 moved what a player casts onto
+   * sigils. They were priced and tuned against a game that had moved twice, and
+   * because two of them out-damaged every real skill they were what
+   * `npm run balance` measured the twelve builds with.
+   *
+   * Three ways in, and they are the only three: an item grants it as an active
+   * skill, an item or a monster names it as a basic attack, or it is one of the
+   * two constants the game reaches for directly -- the fallback swing and the
+   * flask. A row with none of them is a rule nothing can invoke.
+   */
+  it('is reachable, every row of it, by an item or a monster or a constant', () => {
+    // The flask is identified by what it costs rather than by its id, because
+    // the id lives in the renderer (`action-bar.ts`'s `VIAL_ABILITY_ID`) and a
+    // second copy of it here is the drift this test exists to catch. A
+    // `chargeCost` is a flask charge, and nothing else spends one.
+    const granted = new Set<string>([
+      BASIC_ATTACK_ID,
+      ...ALL_ABILITIES.filter((ability) => ability.chargeCost !== undefined).map((a) => a.id),
+    ]);
+    for (const item of ALL_ITEMS) {
+      if (item.activeSkillId) granted.add(item.activeSkillId);
+      if (item.basicAttackId) granted.add(item.basicAttackId);
+    }
+    for (const monster of ALL_MONSTERS) {
+      if (monster.stats.basicAttackId) granted.add(monster.stats.basicAttackId);
+    }
+    const orphans = ALL_ABILITIES.filter((ability) => !granted.has(ability.id)).map((a) => a.id);
+    expect(orphans, 'abilities nothing grants').toEqual([]);
+  });
+
   it('gives every ability the parts its kind needs', () => {
     for (const ability of ALL_ABILITIES) {
       expect(ability.windupTicks, ability.id).toBeGreaterThan(0);
@@ -174,10 +240,89 @@ describe('the ability table', () => {
   });
 });
 
+/**
+ * The shot the Emberwood Staff throws (spec 218).
+ *
+ * Every assertion here is an *ordering* rather than a number, because what the
+ * spec was asked for is an ordering: a shot shorter than the bow's, on the
+ * weapon that until now was the only main hand whose whole identity was
+ * `spellPower` and which changed nothing whatsoever about attacking.
+ *
+ * Retuning any of the three rows moves all of these together, which is the
+ * point -- a test that pinned 330 would fail the day somebody rebalanced the
+ * bow and would say nothing about whether the relationship still held.
+ */
+describe('the ember shot (spec 218)', () => {
+  const ember = abilityById('ranged.ember');
+  const shot = abilityById('ranged.shot');
+  const star = abilityById('ranged.star');
+
+  it('is a basic attack thrown by a weapon', () => {
+    expect(ember?.kind).toBe('projectile');
+    expect(ember?.basicAttack).toBe(true);
+    // Point-targeted, so a throw past the staff's reach is refused rather than
+    // loosed at nothing -- the same gate both other weapon shots sit behind.
+    expect(ember?.targeting).toBe('point');
+  });
+
+  it('reaches less far than the bow and further than the star', () => {
+    expect(ember?.range ?? 0).toBeLessThan(shot?.range ?? 0);
+    expect(ember?.range ?? 0).toBeGreaterThan(star?.range ?? 0);
+  });
+
+  it('flies slower than either weapon that already throws something', () => {
+    // A ball of fire is the slowest thing anybody throws here, which is what
+    // makes it a shot you can see coming -- spec 094's argument about wind-ups,
+    // moved into the flight.
+    const speed = ember?.projectile?.speed ?? Number.POSITIVE_INFINITY;
+    expect(speed).toBeLessThan(shot?.projectile?.speed ?? 0);
+    expect(speed).toBeLessThan(star?.projectile?.speed ?? 0);
+  });
+
+  it('leaves the cadence to the attack-speed stat', () => {
+    // Wind-up plus backswing has to sit inside the Base Attack Time, or the
+    // clip is what decides how often the staff throws rather than the stat
+    // (spec 088). The bow sits at 69 of 72 and this at 60.
+    expect(totalCastTicks(ember as NonNullable<typeof ember>)).toBeLessThan(BASE_ATTACK_TIME_TICKS);
+  });
+
+  it('commits for longer than a thrown star and less than a drawn bow', () => {
+    expect(ember?.windupTicks ?? 0).toBeGreaterThan(star?.windupTicks ?? 0);
+    expect(ember?.windupTicks ?? 0).toBeLessThan(shot?.windupTicks ?? 0);
+  });
+
+  it('leaves what it hits for to the weapon that throws it', () => {
+    // Since spec 217 a basic attack's damage is the weapon's own range, so a
+    // number here would be a number nothing reads -- the whole table carries a
+    // zero for the same reason.
+    expect(ember?.damage).toBe(0);
+    expect(shot?.damage).toBe(0);
+  });
+
+  it('is thrown by a weapon that out-rolls the bow and not the melee rares', () => {
+    // The ordering rather than the numbers, so a retune of any of the four
+    // moves them together. `{1, 2}` was the staff's range before this spec and
+    // was the weakest in the table, chosen when hitting somebody with the staff
+    // was explicitly the fallback rather than the plan.
+    const rangeOf = (id: string): { min: number; max: number } =>
+      itemById(id)?.damage ?? { min: 0, max: 0 };
+    const mean = (id: string): number => (rangeOf(id).min + rangeOf(id).max) / 2;
+    expect(mean('staff.emberwood')).toBeGreaterThan(mean('bow.hunting'));
+    expect(mean('staff.emberwood')).toBeLessThan(mean('sword.keen'));
+    expect(mean('staff.emberwood')).toBeLessThan(mean('maul.iron'));
+  });
+
+  it('is single-target: the explosion is a picture and not an area', () => {
+    // `ability.radius` is what puts a shot on `stepProjectiles`' burst branch.
+    // Absent, so the burst it draws on landing damages exactly the body it hit.
+    expect(ember?.radius).toBeUndefined();
+  });
+});
+
 describe('wind-up', () => {
   it('deals no damage before the release tick, and lands exactly once on it', () => {
-    const ability = abilityById('melee.heavy');
-    if (!ability) throw new Error('no melee.heavy');
+    const ability = abilityById('skill.acidSpray');
+    if (!ability) throw new Error('no skill.acidSpray');
 
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
@@ -185,7 +330,7 @@ describe('wind-up', () => {
     state = withDummy(state, 660, 450).state;
 
     const commit = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 660, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 660, castTargetY: 450 })],
     });
     expect(hits(commit.events)).toHaveLength(0);
 
@@ -208,7 +353,7 @@ describe('wind-up', () => {
     const startX = state.entities.get(player.id)?.position.x ?? 0;
 
     const frames: Record<number, ServerInput[]> = {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     };
     // Standing still: nothing asked for, so nothing is withdrawn from either.
     for (let i = 1; i < 20; i++) frames[i] = [input(player.id, {})];
@@ -231,21 +376,21 @@ describe('wind-up', () => {
     const resource = state.entities.get(player.id)?.resource ?? 0;
 
     const commit = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     });
     const committed = commit.state.entities.get(player.id);
     expect(committed?.cast).not.toBeNull();
     expect(committed?.resource).toBeLessThan(resource);
     // No cooldown yet: it is the price of the blow, not of the commitment
     // (spec 091).
-    expect(committed?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(committed?.cooldowns['skill.acidSpray']).toBeUndefined();
 
     const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
     const withdrawn = away.state.entities.get(player.id);
     expect(withdrawn?.cast).toBeNull();
     // Everything back but the time: cost refunded, no cooldown ever taken.
     expect(withdrawn?.resource).toBeCloseTo(resource, 3);
-    expect(withdrawn?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(withdrawn?.cooldowns['skill.acidSpray']).toBeUndefined();
     // And the step away is the same tick, not the one after it.
     expect(withdrawn?.position.y).toBeGreaterThan(startY);
     expect(
@@ -265,13 +410,13 @@ describe('wind-up', () => {
     state = player.state;
 
     const commit = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 300, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 300, castTargetY: 450 })],
     });
     expect(commit.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Turning);
 
     const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
     expect(away.state.entities.get(player.id)?.cast).toBeNull();
-    expect(away.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(away.state.entities.get(player.id)?.cooldowns['skill.acidSpray']).toBeUndefined();
   });
 
   /**
@@ -293,7 +438,7 @@ describe('wind-up', () => {
     const both = run(state, 1, {
       0: [
         input(player.id, {
-          castAbilityId: 'melee.heavy',
+          castAbilityId: 'skill.acidSpray',
           castTargetX: 700,
           castTargetY: 450,
           cancelCast: true,
@@ -310,7 +455,7 @@ describe('wind-up', () => {
       both.events.filter((event) => event.kind === 'castRejected' && event.reason === 'withdrawn'),
     ).toHaveLength(1);
     // Nothing was charged for it either.
-    expect(both.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(both.state.entities.get(player.id)?.cooldowns['skill.acidSpray']).toBeUndefined();
   });
 
   /**
@@ -338,7 +483,7 @@ describe('wind-up', () => {
         input(player.id, {
           moveX: -1,
           moveY: 0,
-          castAbilityId: 'melee.heavy',
+          castAbilityId: 'skill.acidSpray',
           castTargetX: 700,
           castTargetY: 450,
         }),
@@ -355,7 +500,7 @@ describe('wind-up', () => {
     ).toHaveLength(1);
     // And charged for neither: a withdrawal costs the time it took, and this one
     // took none.
-    expect(both.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(both.state.entities.get(player.id)?.cooldowns['skill.acidSpray']).toBeUndefined();
     expect(both.state.entities.get(player.id)?.resource ?? 0).toBe(STATS.maxResource);
   });
 
@@ -374,7 +519,7 @@ describe('wind-up', () => {
         input(player.id, {
           moveX: 0,
           moveY: 0,
-          castAbilityId: 'melee.heavy',
+          castAbilityId: 'skill.acidSpray',
           castTargetX: 700,
           castTargetY: 450,
         }),
@@ -393,7 +538,7 @@ describe('wind-up', () => {
     state = player.state;
 
     const commit = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     });
     expect(commit.state.entities.get(player.id)?.cast).not.toBeNull();
 
@@ -422,7 +567,7 @@ describe('wind-up', () => {
     ).toHaveLength(1);
   });
 
-  it('does not withdraw from a blow that has already landed', () => {
+  it('cancels only the backswing once the blow has landed (spec 144)', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
@@ -434,16 +579,28 @@ describe('wind-up', () => {
 
     let during = commit;
     while (during.state.tick < releaseTick) during = run(during.state, 1);
+    // The blow has committed: slash has a follow-through, so the cast is now in
+    // its backswing rather than over, and the interval has been stamped.
+    const committed = during.state.entities.get(player.id);
+    expect(committed?.cast?.committed).toBe(true);
+    expect(committed?.cast?.phase).toBe(CastPhase.Backswing);
+    const stamped = committed?.cooldowns['melee.slash'] ?? 0;
+    expect(stamped).toBeGreaterThan(0);
+
+    // Walking now skips the rest of the animation and nothing else. It is
+    // reported as its own kind of ending, so a client cannot mistake it for the
+    // withdrawal that refunds -- and the interval stamped at the attack point
+    // is untouched, to the tick.
+    const after = run(during.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    expect(after.state.entities.get(player.id)?.cast).toBeNull();
+    expect(after.state.entities.get(player.id)?.cooldowns['melee.slash']).toBe(stamped);
     expect(
-      during.events.some(
-        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
+      after.events.some(
+        (event) =>
+          event.kind === 'castEnded' && event.reason === CastEndReason.BackswingCancelled,
       ),
     ).toBe(true);
-
-    // Walking now is an ordinary walk away from a blow that went off, and the
-    // cooldown it started is still standing.
-    const after = run(during.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
-    expect(after.state.entities.get(player.id)?.cooldowns['melee.slash']).toBeGreaterThan(0);
+    // And emphatically *not* the reason that means the attack never happened.
     expect(
       after.events.some(
         (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
@@ -470,8 +627,8 @@ describe('wind-up', () => {
 
 describe('cancellation', () => {
   it('refunds the cost and the cooldown, and lands nothing', () => {
-    const ability = abilityById('ground.quake');
-    if (!ability) throw new Error('no ground.quake');
+    const ability = abilityById('skill.blight');
+    if (!ability) throw new Error('no skill.blight');
 
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
@@ -480,7 +637,7 @@ describe('cancellation', () => {
     const beforeResource = state.entities.get(player.id)?.resource ?? 0;
 
     const started = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 640, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.blight', castTargetX: 640, castTargetY: 450 })],
     });
     expect(started.state.entities.get(player.id)?.resource).toBeCloseTo(
       beforeResource - ability.cost,
@@ -493,7 +650,7 @@ describe('cancellation', () => {
     // At least what was spent is back; regen has also ticked on top of it.
     expect(caster?.resource ?? 0).toBeGreaterThanOrEqual(beforeResource);
     expect(caster?.resource ?? 0).toBeLessThanOrEqual(STATS.maxResource);
-    expect(caster?.cooldowns['ground.quake']).toBeUndefined();
+    expect(caster?.cooldowns['skill.blight']).toBeUndefined();
     expect(
       cancelled.events.some(
         (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
@@ -510,13 +667,13 @@ describe('cancellation', () => {
     state = player.state;
 
     const started = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 640, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.blight', castTargetX: 640, castTargetY: 450 })],
     });
     const cancelled = run(started.state, 1, { 0: [input(player.id, { cancelCast: true })] });
     const again = run(cancelled.state, 1, {
-      0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 640, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.blight', castTargetX: 640, castTargetY: 450 })],
     });
-    expect(again.state.entities.get(player.id)?.cast?.abilityId).toBe('ground.quake');
+    expect(again.state.entities.get(player.id)?.cast?.abilityId).toBe('skill.blight');
   });
 
   it('cannot call back a cast that has already released', () => {
@@ -550,32 +707,32 @@ describe('cost and cooldown gate use', () => {
     state = player.state;
 
     const first = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     });
     const second = run(first.state, 1, {
-      0: [input(player.id, { castAbilityId: 'bolt.arcane', castTargetX: 700, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'ranged.star', castTargetX: 700, castTargetY: 450 })],
     });
     expect(
       second.events.some(
         (event) => event.kind === 'castRejected' && event.reason === 'alreadyCasting',
       ),
     ).toBe(true);
-    expect(second.state.entities.get(player.id)?.cast?.abilityId).toBe('melee.heavy');
+    expect(second.state.entities.get(player.id)?.cast?.abilityId).toBe('skill.acidSpray');
   });
 
   it('refuses one that is on cooldown', () => {
-    const ability = abilityById('melee.heavy');
-    if (!ability) throw new Error('no melee.heavy');
+    const ability = abilityById('skill.acidSpray');
+    if (!ability) throw new Error('no skill.acidSpray');
 
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
 
     const cast = run(state, totalCastTicks(ability) + 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     });
     const again = run(cast.state, 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     });
     expect(
       again.events.some((event) => event.kind === 'castRejected' && event.reason === 'onCooldown'),
@@ -588,7 +745,7 @@ describe('cost and cooldown gate use', () => {
     state = player.state;
 
     const result = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 640, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.blight', castTargetX: 640, castTargetY: 450 })],
     });
     expect(
       result.events.some(
@@ -605,7 +762,7 @@ describe('cost and cooldown gate use', () => {
     state = player.state;
 
     const result = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 6000, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.blight', castTargetX: 6000, castTargetY: 450 })],
     });
     expect(
       result.events.some((event) => event.kind === 'castRejected' && event.reason === 'outOfRange'),
@@ -634,7 +791,7 @@ describe('projectiles', () => {
     state = near.state;
 
     const result = run(state, SERVER_TICK_RATE * 2, {
-      0: [input(player.id, { castAbilityId: 'bolt.arcane', castTargetX: 1200, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'ranged.shot', castTargetX: 1000, castTargetY: 450 })],
     });
 
     const landed = hits(result.events);
@@ -653,17 +810,17 @@ describe('projectiles', () => {
     const player = withPlayer(state, 600, 450);
     state = player.state;
 
-    const ability = abilityById('bolt.lob');
-    if (!ability) throw new Error('no bolt.lob');
+    const ability = abilityById('skill.emberToss');
+    if (!ability) throw new Error('no skill.emberToss');
     const inFlight = run(state, ability.windupTicks + 3, {
-      0: [input(player.id, { castAbilityId: 'bolt.lob', castTargetX: 950, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.emberToss', castTargetX: 950, castTargetY: 450 })],
     });
 
     const projectiles = [...inFlight.state.entities.values()].filter(
       (entity) => entity.kind === EntityKindValue.Projectile,
     );
     expect(projectiles).toHaveLength(1);
-    expect(projectiles[0]?.typeId).toBe('bolt.lob');
+    expect(projectiles[0]?.typeId).toBe('skill.emberToss');
     // A lobbed shot is genuinely off the ground, which is what the client draws.
     expect(projectiles[0]?.position.z).toBeGreaterThan(0);
   });
@@ -681,7 +838,7 @@ describe('projectiles', () => {
     state = c.state;
 
     const result = run(state, SERVER_TICK_RATE * 4, {
-      0: [input(player.id, { castAbilityId: 'bolt.lob', castTargetX: 900, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.emberToss', castTargetX: 900, castTargetY: 450 })],
     });
     const struck = new Set(hits(result.events).map((hit) => hit.targetId));
     expect(struck).toEqual(new Set([a.id, b.id, c.id]));
@@ -693,7 +850,7 @@ describe('projectiles', () => {
     state = player.state;
 
     const result = run(state, SERVER_TICK_RATE * 5, {
-      0: [input(player.id, { castAbilityId: 'bolt.arcane', castTargetX: 1300, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'ranged.star', castTargetX: 880, castTargetY: 450 })],
     });
     expect(
       [...result.state.entities.values()].some(
@@ -710,19 +867,19 @@ describe('projectiles', () => {
     const player = withPlayer(state, 600, 450);
     state = player.state;
 
-    const flat = abilityById('bolt.arcane');
-    const lob = abilityById('bolt.lob');
+    const flat = abilityById('ranged.star');
+    const lob = abilityById('skill.emberToss');
     if (!flat || !lob) throw new Error('missing projectiles');
 
     /** Every height this ability's shot passes through, over flat ground. */
-    function heights(abilityId: string, ticks: number): number[] {
+    function heights(abilityId: string, ticks: number, aimX: number): number[] {
       const seen: number[] = [];
       let current = state;
       for (let tick = 0; tick < ticks; tick++) {
         const result = step(
           current,
           tick === 0
-            ? [input(player.id, { castAbilityId: abilityId, castTargetX: 1100, castTargetY: 450 })]
+            ? [input(player.id, { castAbilityId: abilityId, castTargetX: aimX, castTargetY: 450 })]
             : [],
           context({ activeChunks: activeAround(850, 450) }),
         );
@@ -736,7 +893,10 @@ describe('projectiles', () => {
 
     // Flat is level between the hand it left and the height it lands at
     // (spec 089) -- not zero, and above all not the ground it is crossing.
-    const level = heights('bolt.arcane', flat.windupTicks + 30);
+    // Each aimed as far as its own row reaches: the arc's height is a function
+// of the throw, so a lob aimed inside the flat shot's shorter range would
+// not clear the bar below.
+    const level = heights('ranged.star', flat.windupTicks + 30, 600 + flat.range);
     expect(level.length).toBeGreaterThan(4);
     for (const z of level) {
       expect(z).toBeLessThanOrEqual(SHOT_LAUNCH_HEIGHT + 1e-6);
@@ -748,36 +908,28 @@ describe('projectiles', () => {
     }
 
     // The lob genuinely rises above where it left, which is the difference.
-    const arced = heights('bolt.lob', lob.windupTicks + 30);
+    const arced = heights('skill.emberToss', lob.windupTicks + 30, 600 + lob.range);
     expect(Math.max(...arced)).toBeGreaterThan(SHOT_LAUNCH_HEIGHT + 20);
   });
 });
 
-describe('channels', () => {
-  it('pulses repeatedly while held, and stops when cancelled', () => {
-    const ability = abilityById('channel.drain');
-    if (!ability) throw new Error('no channel.drain');
-
-    let state = createWorldState(1);
-    const player = withPlayer(state, 600, 450);
-    state = player.state;
-    state = withDummy(state, 660, 450).state;
-
-    const full = run(state, ability.windupTicks + (ability.channelTicks ?? 0) + 5, {
-      0: [input(player.id, { castAbilityId: 'channel.drain', castTargetX: 700, castTargetY: 450 })],
-    });
-    const pulses = hits(full.events).length;
-    // A two-second channel pulsing four times a second lands several times.
-    expect(pulses).toBeGreaterThan(2);
-
-    // Cancelled a few ticks in, it lands far fewer.
-    const cutShort = run(state, ability.windupTicks + (ability.channelTicks ?? 0) + 5, {
-      0: [input(player.id, { castAbilityId: 'channel.drain', castTargetX: 700, castTargetY: 450 })],
-      [ability.windupTicks + 2]: [input(player.id, { cancelCast: true })],
-    });
-    expect(hits(cutShort.events).length).toBeLessThan(pulses);
-  });
-});
+/**
+ * `kind: 'channel'` has no shipped row since spec 237, so the sim's channel path
+ * has nothing to point at and the test that used to live here -- a cast that
+ * pulses while held and stops when cancelled -- cannot be written.
+ *
+ * `channel.drain` was spec 062's one row of that kind, granted by nothing and
+ * castable by anybody, and it went with the rest of that demo set. The
+ * mechanism is still live in `abilities.ts` (`endTickFor`, `CastPhase.Channel`,
+ * `nextPulseTick`), still on the wire as `CastPhaseValue.Channel`, and still
+ * described by `data/description.ts` -- which `data/description.test.ts` covers
+ * against a row it constructs. What is gone is any way to drive it through a
+ * real tick.
+ *
+ * Restoring it needs a channel authored behind a sigil; the test to bring back
+ * is a cast held past its release whose pulses land on `pulseIntervalTicks` and
+ * stop on a `cancelCast`.
+ */
 
 describe('self abilities', () => {
   it('heals the caster without exceeding their ceiling', () => {
@@ -791,16 +943,44 @@ describe('self abilities', () => {
     hurt.set(player.id, { ...before, health: 20 });
     state = { ...state, entities: hurt };
 
-    const ability = abilityById('self.mend');
-    if (!ability) throw new Error('no self.mend');
+    const ability = abilityById('self.hearthdraught');
+    if (!ability) throw new Error('no self.hearthdraught');
     const result = run(state, ability.windupTicks + 2, {
-      0: [input(player.id, { castAbilityId: 'self.mend' })],
+      0: [input(player.id, { castAbilityId: 'self.hearthdraught' })],
     });
 
     const healed = result.state.entities.get(player.id);
     expect(healed?.health).toBeGreaterThan(20);
     expect(healed?.health).toBeLessThanOrEqual(STATS.maxHealth);
     expect(result.events.some((event) => event.kind === 'effect')).toBe(true);
+    // And says so, as a hit against itself with the sign flipped (spec 157).
+    const reported = result.events.find((event) => event.kind === 'hit');
+    expect(reported?.kind === 'hit' && reported.damage).toBeLessThan(0);
+  });
+
+  it('reports nothing at all when there was no room for the heal (spec 219)', () => {
+    // A flask drunk at full health. `applyHealing` hands the caster back
+    // untouched, so the difference is zero -- and an unguarded report sends
+    // `-0`, which `effectsForBlow` tests with `damage < 0` and therefore reads
+    // as a *blow*: a brush hit painted on the drinker and a `0` floating off
+    // them. `collectMote` has always guarded this; this never did.
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const full = state.entities.get(player.id);
+    if (!full) throw new Error('no player');
+    expect(full.health).toBe(full.stats.maxHealth);
+
+    const ability = abilityById('self.hearthdraught');
+    if (!ability) throw new Error('no self.hearthdraught');
+    const result = run(state, ability.windupTicks + 2, {
+      0: [input(player.id, { castAbilityId: 'self.hearthdraught' })],
+    });
+
+    // The cast happened -- the ability's own effect went out, so this is a heal
+    // that landed and restored nothing rather than a cast that never resolved.
+    expect(result.events.some((event) => event.kind === 'effect')).toBe(true);
+    expect(result.events.filter((event) => event.kind === 'hit')).toEqual([]);
   });
 });
 
@@ -924,7 +1104,7 @@ describe('turning before the wind-up', () => {
     }
 
     const started = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 640, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 640, castTargetY: 450 })],
     });
     expect(started.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Turning);
 
@@ -934,7 +1114,7 @@ describe('turning before the wind-up', () => {
     const caster = cancelled.state.entities.get(player.id);
     expect(caster?.cast).toBeNull();
     expect(caster?.resource ?? 0).toBeGreaterThanOrEqual(before);
-    expect(caster?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(caster?.cooldowns['skill.acidSpray']).toBeUndefined();
   });
 
   /**
@@ -986,15 +1166,15 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
     });
     state = monster.state;
 
-    const quake = abilityById('ground.quake');
-    if (!quake) throw new Error('no ground.quake');
+    const spell = abilityById('skill.blight');
+    if (!spell) throw new Error('no skill.blight');
 
     // Tick to the last tick of the wind-up, watching for the stalker's blow.
     let current: Run = { state, events: [] };
     let struckWhileWindingUp = false;
-    for (let i = 0; i < quake.windupTicks; i++) {
+    for (let i = 0; i < spell.windupTicks; i++) {
       current = run(current.state, 1, i === 0
-        ? { 0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 640, castTargetY: 450 })] }
+        ? { 0: [input(player.id, { castAbilityId: 'skill.blight', castTargetX: 640, castTargetY: 450 })] }
         : {});
       if (hits(current.events).some((hit) => hit.targetId === player.id)) {
         struckWhileWindingUp = true;
@@ -1015,11 +1195,46 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
     ).toBe(true);
   });
 
+  it('says what died, on an event that outlives the body (spec 164)', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const dummy = withDummy(state, 640, 450);
+    state = dummy.state;
+    // One blow's worth of health, so the first slash finishes it -- and one
+    // blow's worth of *max* health with it, or the body is a 100000-health
+    // dummy that has never been hit, which since spec 213 recovers 417 a tick
+    // and is back over twelve thousand before the wind-up lands. A real body at
+    // 1 health got there by being struck, which holds `InCombat` open and stops
+    // recovery for eight seconds; nothing had struck this one.
+    const body = state.entities.get(dummy.id);
+    if (!body) throw new Error('no dummy');
+    state = replaceEntity(state, {
+      ...body,
+      health: 1,
+      stats: { ...body.stats, maxHealth: 1 },
+    });
+
+    const result = run(state, SERVER_TICK_RATE * 2, {
+      0: [input(player.id, { castAbilityId: 'melee.slash', castTargetX: 640, castTargetY: 450 })],
+    });
+
+    const died = result.events.find((event) => event.kind === 'died');
+    expect(died?.kind === 'died' && died.entityId).toBe(dummy.id);
+    expect(died?.kind === 'died' && died.victimKind).toBe(EntityKindValue.Monster);
+    expect(died?.kind === 'died' && died.victimTypeId).toBe('dummy');
+    // The reason those two fields exist: the same step that emitted the event
+    // swept the body, so every reader downstream of it resolves the id to
+    // nothing. That is what left the experience award unreachable since 062.
+    expect(result.state.entities.get(dummy.id)).toBeUndefined();
+  });
+
   it('still drops the cast when the hit is a killing one, and says so', () => {
     let state = createWorldState(1);
     // A caster frail enough that the stalker's first blow finishes it; it spawns
-    // on full health, so its maximum is all it has.
-    const player = withPlayer(state, 600, 450, { ...STATS, maxHealth: 6, armor: 0 });
+    // on full health, so its maximum is all it has. Two rather than six since
+    // spec 217 -- a stalker hits for what its row authors now, which is three.
+    const player = withPlayer(state, 600, 450, { ...STATS, maxHealth: 2, armor: 0 });
     state = player.state;
 
     const definition = monsterById('stalker');
@@ -1038,7 +1253,7 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
     state = monster.state;
 
     const result = run(state, SERVER_TICK_RATE * 3, {
-      0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 640, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.blight', castTargetX: 640, castTargetY: 450 })],
     });
     expect(result.events.some((event) => event.kind === 'died')).toBe(true);
     expect(result.state.entities.get(player.id)?.cast ?? null).toBeNull();
@@ -1101,16 +1316,18 @@ describe('determinism holds with abilities in play', () => {
     state = withDummy(state, 780, 450).state;
 
     const frames: Record<number, ServerInput[]> = {
-      0: [input(player.id, { castAbilityId: 'bolt.arcane', castTargetX: 900, castTargetY: 450 })],
-      40: [input(player.id, { castAbilityId: 'bolt.lob', castTargetX: 800, castTargetY: 460 })],
-      90: [input(player.id, { castAbilityId: 'channel.drain', castTargetX: 800, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'ranged.star', castTargetX: 900, castTargetY: 450 })],
+      40: [input(player.id, { castAbilityId: 'skill.emberToss', castTargetX: 800, castTargetY: 460 })],
+      // Was `channel.drain` until spec 237; a refused cast is a poor frame for a
+      // determinism replay, since it exercises no path the others do not.
+      90: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 800, castTargetY: 450 })],
       140: [input(player.id, { cancelCast: true })],
-      160: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 780, castTargetY: 450 })],
+      160: [input(player.id, { castAbilityId: 'skill.blight', castTargetX: 780, castTargetY: 450 })],
     };
     return run(state, 260, frames).state;
   }
 
-  it('replays casts, projectiles and channels to bit-identical state', () => {
+  it('replays casts and projectiles to bit-identical state', () => {
     const snapshot = (state: ServerWorldState): string =>
       JSON.stringify({
         tick: state.tick,
@@ -1137,9 +1354,10 @@ describe('cast phases reach the client', () => {
     const phases = result.events
       .filter((event) => event.kind === 'castStarted')
       .map((event) => (event.kind === 'castStarted' ? event.phase : -1));
-    // Committed facing the aim, so no turn -- and nothing after the wind-up,
-    // because the release is the end of the cast (spec 068).
-    expect(phases).toEqual([CastPhase.Windup]);
+    // Committed facing the aim, so no turn. The backswing is announced as a
+    // phase of its own (spec 144), which is the "this attack has committed"
+    // notice: the client's bar has to stop saying "you may still withdraw".
+    expect(phases).toEqual([CastPhase.Windup, CastPhase.Backswing]);
 
     const ended = result.events.filter(
       (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
@@ -1158,11 +1376,11 @@ describe('cast phases reach the client', () => {
     state = player.state;
     const startY = state.entities.get(player.id)?.position.y ?? 0;
 
-    const ability = abilityById('melee.heavy');
-    if (!ability) throw new Error('no melee.heavy');
+    const ability = abilityById('skill.acidSpray');
+    if (!ability) throw new Error('no skill.acidSpray');
 
     const commit = run(state, 1, {
-      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     });
     const releaseTick = commit.state.entities.get(player.id)?.cast?.releaseTick ?? 0;
     expect(releaseTick).toBeGreaterThan(commit.state.tick);
@@ -1194,28 +1412,11 @@ describe('cast phases reach the client', () => {
     expect(after.state.entities.get(player.id)?.position.y).toBeGreaterThan(startY);
   });
 
-  it('walks a channel through its pulses and then over', () => {
-    let state = createWorldState(1);
-    const player = withPlayer(state, 600, 450);
-    state = player.state;
-
-    const ability = abilityById('channel.drain');
-    if (!ability) throw new Error('no channel.drain');
-    const result = run(state, totalCastTicks(ability) + 2, {
-      0: [input(player.id, { castAbilityId: 'channel.drain', castTargetX: 700, castTargetY: 450 })],
-    });
-
-    const phases = result.events
-      .filter((event) => event.kind === 'castStarted')
-      .map((event) => (event.kind === 'castStarted' ? event.phase : -1));
-    expect(phases).toEqual([CastPhase.Windup, CastPhase.Channel]);
-    expect(result.state.entities.get(player.id)?.cast).toBeNull();
-    expect(
-      result.events.some(
-        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
-      ),
-    ).toBe(true);
-  });
+  // The channel walk that used to sit here is gone with `channel.drain` (spec
+  // 231): no shipped row is `kind: 'channel'`, so there is nothing to drive
+  // through `CastPhase.Channel` in a real tick. The phase is still on the wire
+  // and `world/cast.test.ts` still drives `castBar` through it, because that
+  // one reads the phase off the cast rather than the ability's kind.
 });
 
 describe('a named target (spec 070)', () => {
@@ -1316,8 +1517,8 @@ describe('a named target (spec 070)', () => {
    * what it finds.
    */
   it('calls the cast off when its target dies while it is still turning', () => {
-    const heavy = abilityById('melee.heavy');
-    if (!heavy) throw new Error('no melee.heavy');
+    const heavy = abilityById('skill.acidSpray');
+    if (!heavy) throw new Error('no skill.acidSpray');
 
     let state = createWorldState(8);
     const player = withPlayer(state, 600, 450);
@@ -1331,7 +1532,7 @@ describe('a named target (spec 070)', () => {
     const committed = run(state, 1, {
       0: [
         input(player.id, {
-          castAbilityId: 'melee.heavy',
+          castAbilityId: 'skill.acidSpray',
           castTargetX: 600,
           castTargetY: 510,
           castTargetEntityId: victim.id,
@@ -1356,7 +1557,7 @@ describe('a named target (spec 070)', () => {
       ),
     ).toBe(true);
     expect(caster?.resource).toBeCloseTo(resource, 3);
-    expect(caster?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(caster?.cooldowns['skill.acidSpray']).toBeUndefined();
   });
 
   /**
@@ -1367,8 +1568,8 @@ describe('a named target (spec 070)', () => {
    * wind-up ran and deleted it -- once per kill, three-quarters along the bar.
    */
   it('sees a wind-up out when its target dies, and lands it as a miss', () => {
-    const heavy = abilityById('melee.heavy');
-    if (!heavy) throw new Error('no melee.heavy');
+    const heavy = abilityById('skill.acidSpray');
+    if (!heavy) throw new Error('no skill.acidSpray');
 
     let state = createWorldState(8);
     const player = withPlayer(state, 600, 450);
@@ -1380,7 +1581,7 @@ describe('a named target (spec 070)', () => {
     const committed = run(state, 2, {
       0: [
         input(player.id, {
-          castAbilityId: 'melee.heavy',
+          castAbilityId: 'skill.acidSpray',
           castTargetX: 660,
           castTargetY: 450,
           castTargetEntityId: victim.id,
@@ -1521,8 +1722,8 @@ describe('a named target (spec 070)', () => {
   });
 
   it('stamps a basic attack from the caster, and everything else from the table', () => {
-    const quick: EffectiveStats = { ...STATS, attackDelayTicks: 20 };
-    const slow: EffectiveStats = { ...STATS, attackDelayTicks: 40 };
+    const quick: EffectiveStats = { ...STATS, baseAttackTimeTicks: 20 };
+    const slow: EffectiveStats = { ...STATS, baseAttackTimeTicks: 40 };
 
     let state = createWorldState(6);
     const fast = withPlayer(state, 600, 450, quick);
@@ -1549,14 +1750,30 @@ describe('a named target (spec 070)', () => {
     expect(slash.cooldownTicks).not.toBe(20);
 
     // A non-basic ability ignores the stat entirely.
-    const heavyAbility = abilityById('melee.heavy');
-    expect(heavyAbility).toBeDefined();
-    if (!heavyAbility) return;
-    const heavy = run(state, heavyAbility.windupTicks + 2, {
-      0: [input(fast.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+    //
+    // **And its authored cooldown is clamped**, which is a real finding rather
+    // than a detail of this fixture. `attackTimingFor` sends a non-basic
+    // ability's `cooldownTicks` through `resolveAttackTiming` as if it were a
+    // Base Attack Time, and that clamps the interval to
+    // `MAX_ATTACK_INTERVAL_SECONDS`. The constant's own comment says "nothing in
+    // the content reaches either bound", which is true of BAT and false here:
+    // twelve of the fourteen non-basic rows are over 5s, so Scorched Earth's
+    // authored 24 seconds is really 5 and Stunning Blow's 14 is really 5.
+    //
+    // It was invisible while this test used `melee.heavy`, whose cooldown was
+    // inside the bound. Asserted as it *is* rather than as the table reads, so
+    // the behaviour is written down; fixing it is a balance decision and a
+    // change to `attack-timing.ts`, not to this file.
+    const spell = abilityById('skill.acidSpray');
+    expect(spell).toBeDefined();
+    if (!spell) return;
+    const cast = run(state, spell.windupTicks + 2, {
+      0: [input(fast.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     });
-    const heavyReadyAt = heavy.state.entities.get(fast.id)?.cooldowns['melee.heavy'] ?? 0;
-    expect(heavyReadyAt).toBe(1 + heavyAbility.windupTicks + heavyAbility.cooldownTicks);
+    const spellReadyAt = cast.state.entities.get(fast.id)?.cooldowns['skill.acidSpray'] ?? 0;
+    const clamped = Math.min(spell.cooldownTicks, MAX_ATTACK_INTERVAL_SECONDS * SERVER_TICK_RATE);
+    expect(spellReadyAt).toBe(1 + spell.windupTicks + clamped);
+    expect(clamped).toBeLessThan(spell.cooldownTicks);
   });
 
   it('lets a monster swing at the player it is chasing, by id', () => {
@@ -1615,8 +1832,8 @@ describe('a named target (spec 070)', () => {
 });
 
 describe('an ability aimed at a body (spec 080)', () => {
-  const seek = abilityById('bolt.seek');
-  if (!seek) throw new Error('no bolt.seek');
+  const seek = abilityById('skill.poisonDart');
+  if (!seek) throw new Error('no skill.poisonDart');
 
   it('refuses a unit-targeted cast that named nothing, and spends nothing doing it', () => {
     let state = createWorldState(9);
@@ -1626,7 +1843,7 @@ describe('an ability aimed at a body (spec 080)', () => {
 
     const before = state.entities.get(player.id);
     const result = run(state, 3, {
-      0: [input(player.id, { castAbilityId: 'bolt.seek', castTargetX: 800, castTargetY: 450 })],
+      0: [input(player.id, { castAbilityId: 'skill.poisonDart', castTargetX: 800, castTargetY: 450 })],
     });
 
     expect(
@@ -1637,7 +1854,7 @@ describe('an ability aimed at a body (spec 080)', () => {
     // A refusal changes no state: nothing spent, and no cooldown stamped on a
     // blow that was never thrown.
     expect(after?.resource).toBe(before?.resource);
-    expect(after?.cooldowns['bolt.seek']).toBeUndefined();
+    expect(after?.cooldowns['skill.poisonDart']).toBeUndefined();
   });
 
   it('refuses a mark past its range and commits to one inside it', () => {
@@ -1650,7 +1867,7 @@ describe('an ability aimed at a body (spec 080)', () => {
     const refused = run(state, 2, {
       0: [
         input(player.id, {
-          castAbilityId: 'bolt.seek',
+          castAbilityId: 'skill.poisonDart',
           castTargetX: 600 + seek.range + 200,
           castTargetY: 450,
           castTargetEntityId: far.id,
@@ -1669,14 +1886,14 @@ describe('an ability aimed at a body (spec 080)', () => {
     const committed = run(near, 2, {
       0: [
         input(shooter.id, {
-          castAbilityId: 'bolt.seek',
+          castAbilityId: 'skill.poisonDart',
           castTargetX: 900,
           castTargetY: 450,
           castTargetEntityId: mark.id,
         }),
       ],
     });
-    expect(committed.state.entities.get(shooter.id)?.cast?.abilityId).toBe('bolt.seek');
+    expect(committed.state.entities.get(shooter.id)?.cast?.abilityId).toBe('skill.poisonDart');
   });
 
   it('looses a bolt that follows the body it named, and hits that body', () => {
@@ -1690,7 +1907,7 @@ describe('an ability aimed at a body (spec 080)', () => {
     const result = run(state, seek.windupTicks + SERVER_TICK_RATE * 3, {
       0: [
         input(player.id, {
-          castAbilityId: 'bolt.seek',
+          castAbilityId: 'skill.poisonDart',
           castTargetX: 900,
           castTargetY: 450,
           castTargetEntityId: mark.id,
@@ -1698,7 +1915,7 @@ describe('an ability aimed at a body (spec 080)', () => {
       ],
     });
 
-    const struck = hits(result.events);
+    const struck = blows(result.events);
     expect(struck).toHaveLength(1);
     expect(struck[0]?.targetId).toBe(mark.id);
     expect(result.state.entities.get(mark.id)?.health).toBeLessThan(full);
@@ -1717,7 +1934,7 @@ describe('an ability aimed at a body (spec 080)', () => {
     const result = run(state, seek.windupTicks + SERVER_TICK_RATE * 3, {
       0: [
         input(player.id, {
-          castAbilityId: 'bolt.seek',
+          castAbilityId: 'skill.poisonDart',
           castTargetX: 900,
           castTargetY: 450,
           castTargetEntityId: mark.id,
@@ -1725,7 +1942,7 @@ describe('an ability aimed at a body (spec 080)', () => {
       ],
     });
 
-    expect(hits(result.events).map((hit) => hit.targetId)).toEqual([mark.id]);
+    expect(blows(result.events).map((hit) => hit.targetId)).toEqual([mark.id]);
     expect(result.state.entities.get(between.id)?.health).toBe(full);
   });
 
@@ -1750,7 +1967,7 @@ describe('an ability aimed at a body (spec 080)', () => {
       return run(state, windup + 50, {
         0: [
           input(player.id, {
-            castAbilityId: 'bolt.seek',
+            castAbilityId: 'skill.poisonDart',
             castTargetX: 880,
             castTargetY: 470,
             castTargetEntityId: mark.id,

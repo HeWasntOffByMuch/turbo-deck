@@ -133,7 +133,12 @@ async function main(): Promise<void> {
     });
 
     // Pinned seed, for the same reason `preview-world.ts` pins one.
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    // The bar ships empty since spec 164, so Mend has to be put in a slot
+    // before there is anything here to press. `?slots=` is the developer path
+    // for exactly that; slot 1 is what the `Digit1` presses below name.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=self.mend`, {
+      waitUntil: 'load',
+    });
     await page.waitForSelector('canvas');
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await waitForTick(page, 150);
@@ -148,7 +153,7 @@ async function main(): Promise<void> {
     // cooldown table -- which is the path worth photographing, since it is the
     // one that crosses the wire.
     for (let press = 0; press < 6; press++) {
-      await page.keyboard.press('Digit7');
+      await page.keyboard.press('Digit1');
       await page.waitForTimeout(60);
     }
     // ...and then a *second* kind of refusal from the same ability, which is
@@ -156,7 +161,7 @@ async function main(): Promise<void> {
     // finished, Mend is on a ten-second cooldown, so the next press is refused
     // for a different reason and takes a line of its own.
     await page.waitForTimeout(2200);
-    await page.keyboard.press('Digit7');
+    await page.keyboard.press('Digit1');
     await page.waitForTimeout(250);
 
     // Read, then photographed, then judged -- in that order and with nothing

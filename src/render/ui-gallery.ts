@@ -14,7 +14,7 @@
 import { replay } from '../ui/core/draw-list.js';
 import { autoUiScale, uiFrame } from '../ui/core/frame.js';
 import { UiRoot } from '../ui/core/root.js';
-import { NO_MODIFIERS, type Modifiers, type UiEvent } from '../ui/core/events.js';
+import { NO_MODIFIERS, wheelNotches, type Modifiers, type UiEvent } from '../ui/core/events.js';
 import { buildGallery } from '../ui/gallery/gallery.js';
 import { buildWindowsScene } from '../ui/gallery/windows-scene.js';
 import { ContextStack } from '../ui/core/events.js';
@@ -26,9 +26,10 @@ import { InventoryScreen } from '../ui/screens/inventory.js';
 import { HudScreen } from '../ui/screens/hud.js';
 import { CharacterScreen } from '../ui/screens/character.js';
 import { ShopScreen } from '../ui/screens/shop.js';
+import { ChatScreen, chatInsets } from '../ui/screens/chat.js';
 import { ItemSlot } from '../ui/widgets/item-slot.js';
 import { Anchor } from '../ui/core/containers.js';
-import { demoCharacter, demoContainers, demoHud, demoShop } from '../ui/gallery/render.js';
+import { DEMO_CHAT, demoCharacter, demoContainers, demoHud, demoShop } from '../ui/gallery/render.js';
 import { ScrollView } from '../ui/widgets/scroll-view.js';
 import { Tooltip } from '../ui/widgets/tooltip.js';
 import { UiWindow } from '../ui/widgets/window.js';
@@ -80,11 +81,12 @@ function main(): void {
   const bag = wanted === 'bag' ? buildBagScene(viewport) : null;
   const play = wanted === 'play' ? buildPlayScene(viewport) : null;
   const shop = wanted === 'shop' ? buildShopScene(viewport) : null;
-  const gallery = scene ?? keys ?? bag ?? play ?? shop ? null : buildGallery(THEME);
-  const content = scene?.root ?? keys?.root ?? bag?.root ?? play?.root ?? shop?.root ?? gallery?.root;
+  const chat = wanted === 'chat' ? buildChatScene(viewport) : null;
+  const gallery = scene ?? keys ?? bag ?? play ?? shop ?? chat ? null : buildGallery(THEME);
+  const content = scene?.root ?? keys?.root ?? bag?.root ?? play?.root ?? shop?.root ?? chat?.root ?? gallery?.root;
   if (!content) throw new Error('no scene');
-  const manager = scene?.manager ?? keys?.manager ?? bag?.manager ?? play?.manager ?? shop?.manager;
-  const layerStack = scene?.root ?? keys?.root ?? bag?.root ?? play?.root ?? shop?.root;
+  const manager = scene?.manager ?? keys?.manager ?? bag?.manager ?? play?.manager ?? shop?.manager ?? chat?.manager;
+  const layerStack = scene?.root ?? keys?.root ?? bag?.root ?? play?.root ?? shop?.root ?? chat?.root;
 
   const root = new UiRoot(content, {
     theme: THEME,
@@ -129,7 +131,7 @@ function main(): void {
   });
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();
-    send({ kind: 'wheel', pos: toUi(event.clientX, event.clientY), delta: -Math.sign(event.deltaY), mods: NO_MODIFIERS, time: now });
+    send({ kind: 'wheel', pos: toUi(event.clientX, event.clientY), delta: wheelNotches(event.deltaY), mods: NO_MODIFIERS, time: now });
   }, { passive: false });
   globalThis.addEventListener('keydown', (event) => {
     if (event.key === 'Tab') {
@@ -313,7 +315,10 @@ function buildPlayScene(viewport: { width: number; height: number }): {
   const sheet = new CharacterScreen({ theme: THEME });
   sheet.setCharacter(demoCharacter([]));
   manager.register(
-    new UiWindow(new ScrollView(sheet, 'sheetScroll'), {
+    // Not in a `ScrollView`: the sheet pins its heading and its tab strip and
+    // scrolls the tab's own body (spec 198), which needs the window's real
+    // height rather than a scroller's unbounded one.
+    new UiWindow(sheet, {
       title: 'Character',
       at: { x: Math.max(8, viewport.width - 210), y: 8 },
       size: { width: Math.min(200, viewport.width - 16), height: Math.min(220, viewport.height - 16) },
@@ -346,6 +351,38 @@ function buildPlayScene(viewport: { width: number; height: number }): {
  * cross-backend comparison finally covers a layer that was declared in spec 124
  * and never drawn.
  */
+/**
+ * The chat, open, with one line per channel (spec 189).
+ *
+ * The `hud` layer with something in it that is not the HUD, and the first thing
+ * in this framework whose whole point is that it is drawn over the world -- so
+ * it is also the first scene where "does the browser agree with the goldens"
+ * is a question about text in four different tints on one line.
+ *
+ * Built from the same {@link DEMO_CHAT} the golden uses, so the picture a
+ * browser draws and the picture the test compares are one picture rather than
+ * two that have to be kept in step.
+ */
+function buildChatScene(viewport: { width: number; height: number }): {
+  root: LayerStack;
+  manager: WindowManager;
+} {
+  const layers = new LayerStack();
+  const manager = new WindowManager();
+  layers.place('windows', manager);
+
+  const chat = new ChatScreen({ theme: THEME });
+  const dock = new Anchor('chatDock');
+  dock.pointerTransparent = true;
+  dock.padding = chatInsets(THEME, 0);
+  dock.place(chat, 'bottomLeft');
+  layers.place('hud', dock);
+  chat.setView({ lines: DEMO_CHAT, reveal: 1 });
+
+  manager.setViewport(viewport);
+  return { root: layers, manager };
+}
+
 function buildShopScene(viewport: { width: number; height: number }): {
   root: LayerStack;
   manager: WindowManager;

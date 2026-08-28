@@ -32,15 +32,32 @@ import type { Color } from '../../../ui/core/color.js';
 import { Canvas2dSurface } from '../../../ui/render/canvas2d.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
-import type { WindowId } from './key-actions.js';
+import type { WindowId } from './control-actions.js';
+import type { MaxZoomChoice } from '../../../ui/input/display-store.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
-import type { ScaleChoice } from '../../../ui/input/display-store.js';
+import type { AudioMixView } from '../../../ui/screens/audio.js';
+import type { DialogueBubbleView } from '../../../ui/screens/dialogue.js';
+import type { AccountView } from '../../../ui/screens/account.js';
+import type { ActionSlot } from './action-bar.js';
+import { NO_ACTION_BAR, type ActionBarBox } from './hud-layout.js';
+import { DEFAULT_SHOW_FPS, type ScaleChoice } from '../../../ui/input/display-store.js';
 
-export type { WindowId } from './key-actions.js';
+export type { WindowId } from './control-actions.js';
 export interface UiLayerOptions extends UiScreensOptions {
   /** The saved scale preference, read at the DOM edge. `'auto'` by default. */
   readonly scale?: ScaleChoice;
+  /** The saved frame-rate preference (spec 165), read at the same edge. On by default. */
+  readonly showFps?: boolean;
 }
+
+/**
+ * Whether the tab is on its way out, in a way worth flushing the layout for.
+ *
+ * Both events, because neither is enough on its own: `pagehide` is the one that
+ * fires for a bfcache freeze and a navigation, and a phone browser killed in the
+ * background may only ever report `visibilitychange`. Flushing twice costs one
+ * `setItem` of the same document.
+ */
 
 /** How many *drawn* frames the reported cost is taken over. Two seconds at 60fps. */
 const COST_WINDOW = 120;
@@ -60,6 +77,43 @@ export interface UiReadout {
   /** ...and a keybinding row's two buttons, by action id. */
   readonly bindRects: readonly { readonly id: string; readonly rect: Rect }[];
   readonly resetRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /** Every window's placement, open or not, in UI pixels (spec 147). */
+  readonly windowRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /**
+   * What the trade table is showing and where its controls are (spec 134).
+   * Empty when there is no trade; only visible controls are listed.
+   */
+  readonly tradeStage: string;
+  readonly tradeReason: string;
+  /** Whether you are the side being asked: 'yes', 'no', or '' for no trade. */
+  readonly tradeInvited: string;
+  /** Each side as `name|accepted|coins|item xN/item xN`. */
+  readonly tradeYou: string;
+  readonly tradeThem: string;
+  readonly tradeRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /**
+   * The chat's lines, its field and whether the field is open (spec 189).
+   *
+   * The log is drawn to a canvas like everything else here, so "the line the
+   * other player said is on screen" has no element to ask -- and a browser
+   * assertion that could only say some pixels changed would pass just as
+   * happily over a log showing the wrong thing.
+   */
+  readonly chat: readonly string[];
+  readonly chatOpen: boolean;
+  readonly chatInput: string;
+  /**
+   * The mini HUD and the action bar (spec 196), for the reason the chat is here.
+   *
+   * `selected` is `name|detail` and empty for nothing selected; `selectedRows`
+   * is each status as `label|remaining|tone`; `barSlots` is each slot keyed by
+   * the ability it holds, with an empty id for one nothing has been put in yet.
+   */
+  readonly selected: string;
+  readonly selectedRows: readonly string[];
+  readonly selectedRect: Rect | null;
+  readonly barSlots: readonly { readonly id: string; readonly rect: Rect }[];
+  readonly chatRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };
@@ -98,6 +152,14 @@ export class UiLayer {
     // changing the element's size, so the observer alone would miss it.
     this.frameDirty = true;
   };
+  /** The tab going away, so a layout still inside its debounce is written. */
+  private readonly onPageHide = (): void => {
+    this.screens.flushLayout();
+  };
+  /** ...and the same on the way to the background. It fires on the way back too. */
+  private readonly onVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') this.screens.flushLayout();
+  };
 
   constructor(
     private readonly host: HTMLElement,
@@ -116,6 +178,7 @@ export class UiLayer {
     this.frame = this.measureFrame();
     this.screens = new UiScreens(options, { width: this.frame.width, height: this.frame.height });
     this.screens.setScale(this.scaleChoice, this.frame.scale);
+    this.screens.setShowFps(options.showFps ?? DEFAULT_SHOW_FPS);
     this.surface = new Canvas2dSurface(
       this.element,
       this.screens.atlas,
@@ -136,6 +199,11 @@ export class UiLayer {
     // so the frame measured above is a 1x1 placeholder until the first frame.
     this.frameDirty = true;
     globalThis.addEventListener('resize', this.onWindowResize);
+    // Neither is enough alone: `pagehide` covers a navigation and a bfcache
+    // freeze, and a phone browser that kills a backgrounded tab may only ever
+    // report the visibility change (spec 147).
+    globalThis.addEventListener('pagehide', this.onPageHide);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
   private measureFrame(): UiFrame {
@@ -167,6 +235,33 @@ export class UiLayer {
     this.screens.setScale(choice, this.frame.scale);
   }
 
+  /**
+   * Take a new frame-rate preference (spec 165).
+   *
+   * Beside `setScaleChoice` and unlike it in one way: nothing re-frames, because
+   * this changes what an overlay outside the interface draws rather than how big
+   * the interface is. All it does is keep the page's tick in step with what the
+   * mount decided.
+   */
+  /** What the server says this session is (spec 226). Straight through. */
+  setAccount(view: AccountView): void {
+    this.screens.setAccount(view);
+  }
+
+  /** The audio mix as it actually stands (spec 229). See `AudioScreen`. */
+  setAudioMix(mix: AudioMixView): void {
+    this.screens.setAudioMix(mix);
+  }
+
+  setShowFps(show: boolean): void {
+    this.screens.setShowFps(show);
+  }
+
+  /** The widest-zoom preference (spec 202). Same pass-through as the two above. */
+  setMaxZoom(choice: MaxZoomChoice): void {
+    this.screens.setMaxZoom(choice);
+  }
+
   get scale(): number {
     return this.frame.scale;
   }
@@ -179,16 +274,37 @@ export class UiLayer {
    * right answer only at dpr 1. In the game it would draw the interface at twice
    * its size on a retina screen, off the bottom of the tab.
    */
+  /** The last measured bottom band, in CSS pixels. See {@link applySafeBottom}. */
+  private measuredBand = 0;
+  /** ...and the top-right corner's, on the same terms (spec 196). */
+  private measuredRight = 0;
+  /** How big an action-bar slot should be, in CSS pixels. See below. */
+  private slotSideCss = 0;
+
   private applyCssSize(): void {
     this.element.style.width = `${this.frame.cssWidth}px`;
     this.element.style.height = `${this.frame.cssHeight}px`;
   }
 
-  /** Everything a screen shows, then the blit. Cheap when nothing changed. */
-  update(view: ClientView, nowMs: number): void {
+  /**
+   * Everything a screen shows, then the blit. Cheap when nothing changed.
+   *
+   * `drawnTick` is the interpolated presentation tick the bodies are placed by,
+   * handed through rather than re-derived: it is what the mini HUD measures a
+   * status's remaining window against, and a second clock here would let the
+   * panel and the mark over the same body disagree about when one runs out.
+   */
+  update(view: ClientView, nowMs: number, drawnTick: number = view.estimatedTick): void {
     const began = performance.now();
     this.resize();
-    this.screens.update(view, nowMs);
+    // The HUD is built after this layer is mounted, so the measurement taken at
+    // the first resize finds nothing to measure. Retried until it does, and then
+    // left alone -- the switch's height does not change while the frame does
+    // not, and a `getBoundingClientRect` in the render loop is a forced layout
+    // every frame for an answer that is settled after the first one.
+    if (this.measuredBand === 0) this.applySafeBottom();
+    if (this.measuredRight === 0) this.applySafeTopRight();
+    this.screens.update(view, nowMs, drawnTick);
     const list = this.screens.paint();
     // A still interface is not redrawn.
     //
@@ -268,6 +384,9 @@ export class UiLayer {
     this.applyCssSize();
     this.screens.resize({ width: next.width, height: next.height });
     this.screens.setSafeTop(this.toUi({ x: 0, y: chromeBottomCss() }).y);
+    this.applySafeBottom();
+    this.applySafeTopRight();
+    this.applySlotSide();
     // The canvas's backing store was just reallocated, so whatever was on it is
     // gone -- and the same draw list would otherwise be skipped as unchanged and
     // leave the interface blank until something moved.
@@ -303,6 +422,28 @@ export class UiLayer {
     this.screens.toggle(id);
   }
 
+  /** Open the shop at this vendor rather than at the nearest one (spec 246). */
+  showShopFor(vendorId: string): void {
+    this.screens.showShopFor(vendorId);
+  }
+
+  /**
+   * What the dialogue bubble shows, and where it points (spec 246).
+   *
+   * `anchor` arrives in **CSS pixels** -- it is a projected world point, and
+   * that is the space the projector answers in -- and is converted here, because
+   * `toUi` is deliberately the one conversion between the two and a caller doing
+   * its own would be a second one to keep in step.
+   */
+  setDialogue(bubble: DialogueBubbleView | null, anchor: Point | null): void {
+    this.screens.setDialogue(bubble, anchor === null ? null : this.toUi(anchor));
+  }
+
+  /** Whether a conversation's bubble is on screen. */
+  get dialogueOpen(): boolean {
+    return this.screens.dialogueOpen;
+  }
+
   /** Offer a pointer event, in CSS pixels. True when gameplay must not act. */
   handlePointer(phase: 'down' | 'up' | 'move', at: Point, button: number, mods: Modifiers): boolean {
     return this.screens.handlePointer(phase, this.toUi(at), button, mods);
@@ -320,6 +461,124 @@ export class UiLayer {
     this.screens.moveFocus(step);
   }
 
+  // --- the action bar (spec 196) ---------------------------------------------
+
+  /** Replace what the five slots hold. See `UiScreens.setActionBarPlan`. */
+  setActionBarPlan(plan: readonly ActionSlot[]): void {
+    this.screens.setActionBarPlan(plan);
+  }
+
+  /** Which ability is being aimed, so the slot it came from is lit (spec 080). */
+  setAiming(abilityId: string | null): void {
+    this.screens.setAiming(abilityId);
+  }
+
+  /**
+   * The box the bar occupies, in **CSS** pixels.
+   *
+   * The one conversion this file exists for, run the other way round: everything
+   * the DOM HUD still draws along the bottom edge is placed against the bar, and
+   * the bar is measured in UI pixels at whatever scale the player chose. Zero
+   * before the interface has laid itself out once, which is a real state and one
+   * the HUD is written to survive.
+   */
+  actionBarBoxCss(): ActionBarBox {
+    const rect = this.screens.actionBarBox();
+    if (!rect) return NO_ACTION_BAR;
+    const dpr = globalThis.devicePixelRatio || 1;
+    const perUi = this.frame.scale / dpr;
+    return {
+      width: Math.round(rect.width * perUi),
+      height: Math.round(rect.height * perUi),
+      // Where the row actually ended up, not where it was asked to go: the dock
+      // adds the theme's own margin above the floor it was told, and a DOM half
+      // that assumed the floor put the pool block eight pixels low.
+      bottom: Math.round((this.frame.height - rect.y - rect.height) * perUi),
+    };
+  }
+
+  /**
+   * How much of the frame's floor the DOM HUD has reserved, in CSS pixels.
+   *
+   * Converted here rather than by the caller, because this file is where UI
+   * pixels and CSS pixels meet and a second conversion anywhere else is a second
+   * answer. A *distance* rather than a point, so it is the gap between two.
+   */
+  setActionBarFloorCss(cssPixels: number): void {
+    this.screens.setActionBarFloor(this.toUi({ x: 0, y: cssPixels }).y - this.toUi({ x: 0, y: 0 }).y);
+  }
+
+  /**
+   * How big one slot should be, converted from CSS pixels (spec 196).
+   *
+   * Re-applied on every resize rather than pushed once, because the scale is
+   * what the conversion turns on: a player who picks a chunkier interface gets
+   * *fewer* UI pixels for the same physical square, and a bar that kept the old
+   * number would be the one thing on the canvas drawn at the previous scale.
+   */
+  setActionBarSlotCss(cssPixels: number): void {
+    this.slotSideCss = cssPixels;
+    this.applySlotSide();
+  }
+
+  private applySlotSide(): void {
+    if (this.slotSideCss <= 0) return;
+    const dpr = globalThis.devicePixelRatio || 1;
+    this.screens.setActionBarSlotSide((this.slotSideCss * dpr) / this.frame.scale);
+  }
+
+  /** Whether a slot names the key that fires it. See `HudHandle.showsSlotKeys`. */
+  setShowsSlotKeys(shows: boolean): void {
+    this.screens.setShowsSlotKeys(shows);
+  }
+
+  /** Every slot's box, in CSS pixels, and what it holds. See the note above. */
+  actionBarSlotsCss(): readonly { readonly ability: string; readonly rect: Rect }[] {
+    const dpr = globalThis.devicePixelRatio || 1;
+    const perUi = this.frame.scale / dpr;
+    const origin = this.element.getBoundingClientRect();
+    return this.screens.actionBarSlots().map((slot) => ({
+      ability: slot.ability,
+      rect: {
+        x: origin.left + slot.rect.x * perUi,
+        y: origin.top + slot.rect.y * perUi,
+        width: slot.rect.width * perUi,
+        height: slot.rect.height * perUi,
+      },
+    }));
+  }
+
+  // --- the mini HUD (spec 196) ----------------------------------------------
+
+  /**
+   * Point the selected-unit panel at a body, or at nothing.
+   *
+   * A passthrough like the chat's below: this half is a canvas and a coordinate
+   * conversion, and what the interface *is* lives on the other side of it.
+   */
+  select(entityId: number | null): void {
+    this.screens.select(entityId);
+  }
+
+  // --- chat (spec 189) ------------------------------------------------------
+
+  /** A line arrived from the server. */
+  pushChat(channel: number, from: string, text: string): void {
+    this.screens.pushChat(channel, from, text);
+  }
+
+  get chatOpen(): boolean {
+    return this.screens.chatOpen;
+  }
+
+  openChat(): void {
+    this.screens.openChat();
+  }
+
+  closeChat(): void {
+    this.screens.closeChat();
+  }
+
   /** CSS pixels relative to the host, to UI pixels. The one conversion. */
   private toUi(at: Point): Point {
     const dpr = globalThis.devicePixelRatio || 1;
@@ -327,6 +586,43 @@ export class UiLayer {
       x: Math.floor((at.x * dpr) / this.frame.scale),
       y: Math.floor((at.y * dpr) / this.frame.scale),
     };
+  }
+
+  /**
+   * How far up the DOM HUD's own furniture reaches, told to the screens (spec 189).
+   *
+   * **Measured rather than derived.** The chat is docked bottom-left and what is
+   * already there is the weapon switch -- a column whose height depends on how
+   * many weapons there are and on which layout is in force -- so the arithmetic
+   * version was a second description of somebody else's layout, and it was
+   * wrong: it measured the pool bars, which sit lower and further right, and the
+   * log was drawn straight over the switch.
+   *
+   * Converted as a *distance* rather than as a point: `toUi` maps a position,
+   * and a height is the gap between two of them.
+   */
+  private applySafeBottom(): void {
+    const band = bottomBandCss();
+    this.measuredBand = band;
+    this.screens.setSafeBottom(this.toUi({ x: 0, y: band }).y - this.toUi({ x: 0, y: 0 }).y);
+  }
+
+  /**
+   * How far down the top-right corner's own furniture reaches (spec 196).
+   *
+   * The counterpart to {@link applySafeBottom} and measured for the same reason
+   * it is: the tuning popovers are seven buttons of their own heights that wrap
+   * on a narrow window, and they are absent entirely on a handheld. A constant
+   * would be a second description of somebody else's layout -- which is the
+   * mistake that put the chat log on the weapon switch.
+   *
+   * A *point* rather than a distance, because that is what it is: the corner is
+   * occupied from the top of the frame down to where those buttons end.
+   */
+  private applySafeTopRight(): void {
+    const bottom = rightBandCss();
+    this.measuredRight = bottom;
+    this.screens.setSafeTopRight(this.toUi({ x: 0, y: bottom }).y);
   }
 
   /** Forget what was drawn, so the next frame redraws. For a surface swap. */
@@ -337,6 +633,11 @@ export class UiLayer {
   dispose(): void {
     this.observer?.disconnect();
     globalThis.removeEventListener('resize', this.onWindowResize);
+    globalThis.removeEventListener('pagehide', this.onPageHide);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    // Leaving the tab is leaving: a layout inside its debounce is written on the
+    // way out rather than lost with the mount.
+    this.screens.flushLayout();
     this.element.remove();
   }
 }
@@ -366,6 +667,39 @@ function prefersReducedMotion(): boolean {
  * layout flush, which is the cost this file already learned about the hard way.
  * Zero when there is no bar, which is every headless and embedded case.
  */
+/**
+ * How far up the frame the HUD's own furniture reaches, in CSS pixels (spec 189).
+ *
+ * The topmost edge of anything marked `data-hud-bottom`, which today is the
+ * weapon switch and the pool block. Zero when the HUD has not been built yet,
+ * which is a real state -- see {@link UiLayer.applySafeBottom}.
+ */
+function bottomBandCss(): number {
+  const boxes = Array.from(document.querySelectorAll<HTMLElement>('[data-hud-bottom]'))
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0);
+  if (boxes.length === 0) return 0;
+  const top = Math.min(...boxes.map((rect) => rect.top));
+  return Math.max(0, globalThis.innerHeight - top);
+}
+
+/**
+ * How far down the frame anything marked `data-hud-right` reaches, in CSS
+ * pixels (spec 196).
+ *
+ * Today that is the strip of tuning popovers, and only on a pointer device --
+ * spec 140 does not build them on a handheld, so zero there is the truth rather
+ * than a not-yet-measured state. Zero is also what a headless or embedded case
+ * gets, which is correct for the same reason.
+ */
+function rightBandCss(): number {
+  const boxes = Array.from(document.querySelectorAll<HTMLElement>('[data-hud-right]'))
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0);
+  if (boxes.length === 0) return 0;
+  return Math.max(0, ...boxes.map((rect) => rect.bottom));
+}
+
 function chromeBottomCss(): number {
   const bar = document.querySelector<HTMLElement>('[data-tab-bar]');
   return bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;

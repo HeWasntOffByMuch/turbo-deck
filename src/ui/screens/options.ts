@@ -27,6 +27,14 @@ export interface OptionsOptions {
   readonly keys: Widget;
   /** The display page. Built by the caller, because the mount owns the scale. */
   readonly display: Widget;
+  /**
+   * The audio page (spec 229), or absent.
+   *
+   * Optional for the reason the window is a `TabPanel` in the first place: the
+   * gallery and the goldens build this window with no audio engine behind them,
+   * and a tab of sliders that reach nothing is worse than no tab.
+   */
+  readonly audio?: Widget;
 }
 
 export class OptionsScreen extends Column {
@@ -43,11 +51,19 @@ export class OptionsScreen extends Column {
     // doing it for a tab nobody opened would be a cost with no picture.
     this.tabs.addTab('keys', 'Keys', () => options.keys);
     this.tabs.addTab('display', 'Display', () => options.display);
+    // Third, and only where there is an engine behind it. A thunk like the two
+    // above, so a tab nobody opens costs nothing to build.
+    const audio = options.audio;
+    if (audio) this.tabs.addTab('audio', 'Audio', () => audio);
 
-    // No `layoutGrow`: a Linear squashes children it cannot fit, so a growing
-    // tab panel in a short window draws its rows on top of each other. Natural
-    // height plus the caller's ScrollView is the honest pairing, and it is the
-    // third screen to reach that answer.
+    // The tabs take the window, and the strip stays at the top of it (spec 198).
+    // This window is registered *unscrolled*, so before the panel scrolled its
+    // own body the note that used to be here -- "no `layoutGrow`, a Linear
+    // squashes children it cannot fit" -- was the whole bug: a keybinding
+    // category with more rows than the window is tall went through the overflow
+    // branch and every row was shrunk toward nothing, with no bar and no way to
+    // reach the ones at the bottom.
+    this.tabs.layoutGrow = 1;
     this.add(this.tabs);
   }
 }

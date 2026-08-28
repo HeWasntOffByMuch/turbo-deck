@@ -10,6 +10,9 @@ import {
   SHOP_GOLDEN_CASES,
   WINDOW_GOLDEN_CASES,
   TRADE_GOLDEN_CASES,
+  CHAT_GOLDEN_CASES,
+  WORLD_HUD_GOLDEN_CASES,
+  ACCOUNT_GOLDEN_CASES,
 } from './goldens.js';
 import {
   renderGallery,
@@ -18,7 +21,10 @@ import {
   renderPlay,
   renderShop,
   renderTrade,
+  renderChat,
+  renderWorldHud,
   renderWindows,
+  renderAccount,
 } from './render.js';
 import { buildGallery } from './gallery.js';
 import { bakeAtlas } from '../render/atlas.js';
@@ -91,9 +97,66 @@ describe('golden images', () => {
     });
   }
 
+  for (const item of WORLD_HUD_GOLDEN_CASES) {
+    it(`${item.name} matches, pixel for pixel (${item.covers})`, () => {
+      const frame = renderWorldHud(item.options);
+      const actual = {
+        width: frame.surface.width,
+        height: frame.surface.height,
+        pixels: frame.surface.pixels,
+      };
+      const expected = decodePng(readFileSync(new URL(`${item.name}.png`, directory)));
+      const difference = firstDifference(actual, expected);
+      expect(
+        difference,
+        difference === null
+          ? ''
+          : `${item.name} differs -- ${difference}. Look at the change, then run \`npm run bake:ui-goldens\` to accept it.`,
+      ).toBe(null);
+    });
+  }
+
+  for (const item of CHAT_GOLDEN_CASES) {
+    it(`${item.name} matches, pixel for pixel (${item.covers})`, () => {
+      const frame = renderChat(item.options);
+      const actual = {
+        width: frame.surface.width,
+        height: frame.surface.height,
+        pixels: frame.surface.pixels,
+      };
+      const expected = decodePng(readFileSync(new URL(`${item.name}.png`, directory)));
+      const difference = firstDifference(actual, expected);
+      expect(
+        difference,
+        difference === null
+          ? ''
+          : `${item.name} differs -- ${difference}. Look at the change, then run \`npm run bake:ui-goldens\` to accept it.`,
+      ).toBe(null);
+    });
+  }
+
   for (const item of KEYBINDING_GOLDEN_CASES) {
     it(`${item.name} matches, pixel for pixel (${item.covers})`, () => {
       const frame = renderKeybindings(item.options);
+      const actual = {
+        width: frame.surface.width,
+        height: frame.surface.height,
+        pixels: frame.surface.pixels,
+      };
+      const expected = decodePng(readFileSync(new URL(`${item.name}.png`, directory)));
+      const difference = firstDifference(actual, expected);
+      expect(
+        difference,
+        difference === null
+          ? ''
+          : `${item.name} differs -- ${difference}. Look at the change, then run \`npm run bake:ui-goldens\` to accept it.`,
+      ).toBe(null);
+    });
+  }
+
+  for (const item of ACCOUNT_GOLDEN_CASES) {
+    it(`${item.name} matches, pixel for pixel (${item.covers})`, () => {
+      const frame = renderAccount(item.options);
       const actual = {
         width: frame.surface.width,
         height: frame.surface.height,
@@ -299,6 +362,11 @@ describe('sprites blit at a whole-number scale', () => {
 
   it('in the keybinding window', () => {
     check(renderKeybindings().root.paint().finish(), 'keybindings');
+  });
+
+  it('in the account window', () => {
+    check(renderAccount().root.paint().finish(), 'account');
+    check(renderAccount({ mode: 'signIn' }).root.paint().finish(), 'account+signIn');
   });
 
   it('in the shop, including its dialog', () => {

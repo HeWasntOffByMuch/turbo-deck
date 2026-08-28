@@ -21,13 +21,63 @@ import { DragController, type DragPayload } from '../core/drag.js';
 import type { Gesture } from '../core/events.js';
 import { uniformInsets, type Point } from '../core/geom.js';
 import type { Widget } from '../core/widget.js';
-import type { Theme } from '../theme/theme.js';
+import { ATTRIBUTE_TOKENS, type Theme } from '../theme/theme.js';
 import { DragGhost } from '../widgets/drag-ghost.js';
-import { Tooltip } from '../widgets/tooltip.js';
-import { ItemSlot, SLOT_SIDE, type ItemDrag, type ItemView, type SlotRef } from '../widgets/item-slot.js';
+import { Tooltip, type TooltipLine } from '../widgets/tooltip.js';
+import {
+  ItemSlot,
+  rarityToken,
+  SLOT_SIDE,
+  type DetailTone,
+  type ItemDrag,
+  type ItemView,
+  type SlotPending,
+  type SlotRef,
+} from '../widgets/item-slot.js';
 import { Label } from '../widgets/label.js';
 
-export type { ItemView, SlotRef } from '../widgets/item-slot.js';
+export type { ItemDetail, ItemDetailSpan, ItemView, SlotRef } from '../widgets/item-slot.js';
+
+/**
+ * What a tone is drawn in (spec 185).
+ *
+ * The one place the vocabulary the view-model speaks meets the palette. `rarity`
+ * is absent because it is not one colour -- it is the item's own, and only the
+ * item knows which.
+ */
+const TONE_TOKENS: Readonly<Record<Exclude<DetailTone, 'rarity'>, string>> = {
+  good: 'success',
+  bad: 'danger',
+  dim: 'textDim',
+  normal: 'text',
+  // Attribute identity (specs 216, 242), from the one table that names it --
+  // the action bar draws the same three positions on a skill tooltip now, and
+  // two copies of "Strength is this colour" is how the two stop matching.
+  ...ATTRIBUTE_TOKENS,
+};
+
+/**
+ * One equipment slot, as the screen is told about it.
+ *
+ * `accepts` is what the cell will take, and it is a **family** rather than the
+ * slot's own id (spec 188). The two are the same string for every slot that
+ * takes exactly one kind of thing -- a helmet slot accepts `head` -- and they
+ * differ for the four skill slots, which all accept `skill` so that one sigil
+ * row fits any of them.
+ *
+ * It is handed in rather than derived here for the reason the whole list is:
+ * `slotFamily` lives in `server/state`, which this file may not import, and a
+ * screen that re-derived the rule would be a second answer to "will this cell
+ * take this" -- free to disagree with the server's, which is exactly what it
+ * did before this field existed. The cell refused every sigil while the server
+ * would have accepted it, so nothing could be equipped and nothing said why.
+ */
+export interface SlotDescriptor {
+  readonly id: string;
+  readonly label: string;
+  /** What this cell takes. Defaults to {@link id} when a caller omits it. */
+  readonly accepts?: string;
+}
 
 /** Everything the screen shows, assembled outside `src/ui/`. */
 export interface ContainerView {
@@ -40,15 +90,61 @@ export interface ContainerView {
    * `server/state`, which this file may not import -- and a screen that
    * hard-coded six names would silently stop drawing the seventh.
    */
-  readonly slots: readonly { readonly id: string; readonly label: string }[];
+  readonly slots: readonly SlotDescriptor[];
+  /**
+   * The four active-skill slots, in bar order (spec 188).
+   *
+   * A second list rather than four more entries in {@link slots}, because they
+   * are drawn somewhere else: the paperdoll is a column of *worn* things beside
+   * a body, and these are a row of four under the bag that mirrors the four at
+   * the bottom of the screen. One list would have made them six-in-a-column and
+   * the mirror would have been the player's job to notice.
+   *
+   * The `id`s are equipment slots like any other, so a move to one is the same
+   * `MoveIntent` a move to the chest is and nothing downstream learns a new
+   * word.
+   */
+  readonly skillSlots: readonly SlotDescriptor[];
   /** The character's level, for the tooltip's "requires level N". */
   readonly level: number;
+  /**
+   * A change to a skill slot the server has committed to (spec 188), or absent.
+   *
+   * The screen still renders exactly what it is handed and still predicts
+   * nothing -- this is a *fact about the containers*, not a guess at their next
+   * state, and the item stays in the cell it is in until the change lands.
+   *
+   * Two addresses and a fraction, because the two cells are the picture: one
+   * emptying and one filling reads as a direction with no caption, which is
+   * the reading a grid gives for free and the reason the *word* for it lives in
+   * the action bar instead.
+   */
+  readonly pendingSwap?: {
+    readonly from: SlotRef;
+    readonly to: SlotRef;
+    /** 0 when it was asked for, 1 when it lands. */
+    readonly progress: number;
+  };
 }
 
 export interface MoveIntent {
   readonly from: SlotRef;
   readonly to: SlotRef;
   /** 0 means the whole stack, exactly as on the wire (spec 126). */
+  readonly count: number;
+}
+
+/**
+ * A carry let go of over the world (spec 172).
+ *
+ * The address is where it came from, because that is the only address it has --
+ * the ground is not a container and this screen would not know how to name a
+ * place on it if it were. Where it lands is the sim's business and this layer
+ * never learns, which is the same boundary every other intent here respects.
+ */
+export interface DropIntent {
+  readonly at: SlotRef;
+  /** 0 means the whole stack, exactly as {@link MoveIntent.count} does. */
   readonly count: number;
 }
 
@@ -70,6 +166,18 @@ export interface InventoryOptions {
 const DEFAULT_COLUMNS = 6;
 const DEFAULT_SLOTS = 24;
 
+/**
+ * How wide the skill row is (spec 188).
+ *
+ * Four, so the row is one line whatever the caller does with the bag's width --
+ * the whole point of it is that it looks like the bar along the bottom of the
+ * screen, and a bar that wrapped to two lines would stop looking like one.
+ * Not derived from `view.skillSlots.length`: this screen renders what it is
+ * handed, and a fifth slot arriving should be a visible change to this constant
+ * rather than a silent reflow.
+ */
+const SKILL_ROW_COLUMNS = 4;
+
 export class InventoryScreen extends Row {
   readonly ghost = new DragGhost();
   /**
@@ -82,11 +190,14 @@ export class InventoryScreen extends Row {
   readonly tooltip = new Tooltip('itemTooltip');
   readonly drag: DragController;
   onMove: ((intent: MoveIntent) => void) | null = null;
+  /** A carry let go of over the world. Null means there is nowhere to put it. */
+  onDropToWorld: ((intent: DropIntent) => void) | null = null;
 
   private readonly bagCells: ItemSlot[] = [];
   private readonly wornCells: ItemSlot[] = [];
   private readonly slotIds: string[] = [];
   private readonly grid: Grid;
+  private readonly skills: Grid;
   private readonly paperdoll: Column;
   private level = 1;
   /**
@@ -126,9 +237,26 @@ export class InventoryScreen extends Row {
       this.grid.add(cell);
     }
 
+    /**
+     * The four skill slots, under the bag (spec 188).
+     *
+     * Under it rather than beside the paperdoll, and that placement *is* the
+     * feature the brief asks for: these four are the same four along the bottom
+     * of the screen, so they are laid out the same way -- one row, in key
+     * order, next to the bag they are filled from. A skill goes in one by
+     * dragging it out of the grid two rows up, which is the shortest journey
+     * this screen can offer.
+     *
+     * Built empty and filled by `setContainers`, exactly as the paperdoll is:
+     * the screen renders what it is handed and never decides how many slots
+     * there are.
+     */
+    this.skills = new Grid(SKILL_ROW_COLUMNS, SLOT_SIDE, SLOT_SIDE, 'skillGrid');
+    this.skills.gap = theme.spacing.xs;
+
     const bag = new Column('bag');
     bag.gap = theme.spacing.xs;
-    bag.addAll([heading('BAG'), this.grid]);
+    bag.addAll([heading('BAG'), this.grid, heading('SKILLS'), this.skills]);
 
     this.addAll([this.paperdoll, bag]);
   }
@@ -157,8 +285,11 @@ export class InventoryScreen extends Row {
   setContainers(view: ContainerView): void {
     this.view = view;
     this.level = view.level;
-    const ids = view.slots.map((slot) => slot.id);
-    if (ids.join('|') !== this.slotIds.join('|')) this.rebuildPaperdoll(view.slots);
+    // One cell list over both groups, indexed by the *equipment ordinal*, so a
+    // `SlotRef` means the same thing whichever group it landed in -- which is
+    // what lets `cellAt`, `render` and the drag stay group-blind.
+    const ids = [...view.slots, ...view.skillSlots].map((slot) => slot.id);
+    if (ids.join('|') !== this.slotIds.join('|')) this.rebuildPaperdoll(view.slots, view.skillSlots);
     this.render();
   }
 
@@ -174,13 +305,34 @@ export class InventoryScreen extends Row {
     const view = this.view;
     if (!view) return;
     for (let i = 0; i < this.bagCells.length; i++) {
-      this.bagCells[i]?.setItem(this.showing({ container: 'inventory', index: i }, view.bag[i] ?? null));
+      const ref = { container: 'inventory', index: i } as const;
+      const cell = this.bagCells[i];
+      cell?.setItem(this.showing(ref, view.bag[i] ?? null));
+      if (cell) cell.pending = this.pendingFor(ref);
     }
     for (let i = 0; i < this.wornCells.length; i++) {
       const id = this.slotIds[i];
       const worn = id === undefined ? null : view.worn[id] ?? null;
-      this.wornCells[i]?.setItem(this.showing({ container: 'equipment', index: i }, worn));
+      const ref = { container: 'equipment', index: i } as const;
+      const cell = this.wornCells[i];
+      cell?.setItem(this.showing(ref, worn));
+      if (cell) cell.pending = this.pendingFor(ref);
     }
+  }
+
+  /**
+   * What `ref` is doing in the change in flight, or null.
+   *
+   * Both ends and nothing else, so the twenty-eight cells that have nothing to
+   * do with it are cleared on the same pass that marks the two that do -- which
+   * is what stops a mark surviving the change that put it there.
+   */
+  private pendingFor(ref: SlotRef): SlotPending | null {
+    const swap = this.view?.pendingSwap;
+    if (!swap) return null;
+    if (sameRef(swap.from, ref)) return { role: 'out', progress: swap.progress };
+    if (sameRef(swap.to, ref)) return { role: 'in', progress: swap.progress };
+    return null;
   }
 
   /** What a cell draws: what the server says, less what was taken out of it. */
@@ -192,18 +344,59 @@ export class InventoryScreen extends Row {
     return left > 0 ? { ...item, count: left } : null;
   }
 
-  /** What the tooltip says over a cell, or empty when there is nothing there. */
-  tooltipFor(cell: ItemSlot): string {
+  /**
+   * What the tooltip says over a cell, or nothing when the cell is empty.
+   *
+   * The name in the item's tier colour, then whatever the view-model described
+   * (spec 185) -- the tier, where it is worn, what it does to your numbers, what
+   * it is worth. The level gate is still decided *here* rather than in the
+   * model, because it is the only line that depends on who is looking: the same
+   * sword is gated for one character and not for another, and a model that baked
+   * it in would have to be rebuilt every time a level-up landed.
+   */
+  tooltipFor(cell: ItemSlot): readonly TooltipLine[] {
     const item = cell.item;
-    if (!item) return '';
-    const lines = [item.name];
-    if (item.count > 1) lines.push(`x${item.count}`);
-    if (item.levelRequirement > this.level) lines.push(`Requires level ${item.levelRequirement}`);
-    return lines.join(' ');
+    if (!item) return [];
+    const tier = rarityToken(item.rarity);
+    const lines: TooltipLine[] = [{ text: item.name, colorToken: tier }];
+    if (item.count > 1) lines.push({ text: `x${item.count}`, colorToken: TONE_TOKENS.dim });
+    for (const detail of item.details) {
+      const colorToken = detail.tone === 'rarity' ? tier : TONE_TOKENS[detail.tone];
+      // A spanned line carries its runs through with each one's tone resolved
+      // here, which is the same hop the line's own tone makes: the view-model
+      // says what kind of thing each run is and this file says what that looks
+      // like. `text` rides along as the whole line, because the readout and the
+      // repeat-hover key are built from it.
+      lines.push(
+        detail.spans === undefined
+          ? { text: detail.text, colorToken }
+          : {
+              text: detail.text,
+              colorToken,
+              spans: detail.spans.map((span) => ({
+                text: span.text,
+                colorToken: span.tone === 'rarity' ? tier : TONE_TOKENS[span.tone],
+              })),
+            },
+      );
+    }
+    if (item.levelRequirement > this.level) {
+      lines.push({ text: `Requires level ${item.levelRequirement}`, colorToken: TONE_TOKENS.bad });
+    }
+    return lines;
   }
 
-  private rebuildPaperdoll(slots: readonly { readonly id: string; readonly label: string }[]): void {
-    for (const cell of this.wornCells) cell.parent?.parent?.remove(cell.parent);
+  private rebuildPaperdoll(
+    slots: readonly SlotDescriptor[],
+    skillSlots: readonly SlotDescriptor[],
+  ): void {
+    for (const cell of this.wornCells) {
+      // A worn cell sits inside a labelled row; a skill cell sits straight in
+      // the grid. Removing from whichever parent it actually has keeps this one
+      // loop rather than two.
+      if (cell.parent === this.skills) this.skills.remove(cell);
+      else cell.parent?.parent?.remove(cell.parent);
+    }
     this.wornCells.length = 0;
     this.slotIds.length = 0;
     // Keep the heading, drop the rows: the heading is not a slot and rebuilding
@@ -213,7 +406,7 @@ export class InventoryScreen extends Row {
     const theme = this.options.theme;
     for (const [index, slot] of slots.entries()) {
       const cell = this.makeCell({ container: 'equipment', index }, `worn:${slot.id}`);
-      cell.acceptsSlot = slot.id;
+      cell.acceptsSlot = slot.accepts ?? slot.id;
       this.wornCells.push(cell);
       this.slotIds.push(slot.id);
 
@@ -228,6 +421,19 @@ export class InventoryScreen extends Row {
       // slightly wider.
       row.addAll([cell, label]);
       this.paperdoll.add(row);
+    }
+
+    // The four, in the same row and the same order as the bar. No label beside
+    // each: their order *is* their name -- slot 1 is the key you press -- and
+    // four captions under four cells would say less than the row's own heading
+    // already does.
+    for (const [offset, slot] of skillSlots.entries()) {
+      const index = slots.length + offset;
+      const cell = this.makeCell({ container: 'equipment', index }, `skill:${slot.id}`);
+      cell.acceptsSlot = slot.accepts ?? slot.id;
+      this.wornCells.push(cell);
+      this.slotIds.push(slot.id);
+      this.skills.add(cell);
     }
   }
 
@@ -260,6 +466,11 @@ export class InventoryScreen extends Row {
     const taken = Math.max(1, Math.min(count, item.count));
     this.drag.begin({ source: slot, data: { from: slot.ref, item, count: taken } satisfies ItemDrag }, at);
     this.carried = { from: slot.ref, count: taken };
+    // At the intent, and *this* is the intent (spec 229): a stack leaves a cell
+    // the moment the press lands, before anything has been asked of the server.
+    // The rule `sound.ts` states -- a click that made no noise until a round
+    // trip later is a click that felt broken.
+    this.emitSound('ui.pickUp');
     this.render();
     return true;
   }
@@ -314,9 +525,47 @@ export class InventoryScreen extends Row {
     const from = this.carried?.from;
     if (from && from.container === slot.ref.container && from.index === slot.ref.index) {
       this.cancelDrag();
+      // Putting it back where it came from is a cancel, and it still makes the
+      // sound of an item being set down -- because from the hand's point of
+      // view that is exactly what happened.
+      this.emitSound('ui.drop');
       return true;
     }
-    return this.drag.dropOnTarget(slot);
+    const placed = this.drag.dropOnTarget(slot);
+    // Only where the cell took it. A cell that refuses leaves the item in hand,
+    // and a sound there would be the interface reporting a move that did not
+    // happen -- which is the one thing worse than silence.
+    if (placed) this.emitSound('ui.drop');
+    return placed;
+  }
+
+  /**
+   * Put what is in hand down in the world (spec 172).
+   *
+   * The other end of the carry, and the one the screen was written without: the
+   * note on {@link placeOn} used to say there is no floor in this game to lose
+   * things on. There is one now, and it is a forgiving one -- the item lands two
+   * paces from the player and anybody, the dropper included, can pick it back
+   * up.
+   *
+   * Emits and ends the carry, and edits nothing. What the cell shows next comes
+   * from the client's own prediction arriving through `setContainers`, like
+   * every other change to this screen.
+   *
+   * Returns whether there was anything in hand, so the caller can decide whether
+   * to let the press through to the world underneath.
+   */
+  dropCarried(): boolean {
+    const data = this.drag.active?.data as ItemDrag | undefined;
+    if (!data) return false;
+    this.drag.cancel();
+    this.onDropToWorld?.({
+      at: data.from,
+      // The wire says 0 for "all of it", and saying `n` when `n` is the whole
+      // stack would make a plain drop look like a split (spec 126's rule).
+      count: data.count >= data.item.count ? 0 : data.count,
+    });
+    return true;
   }
 
   /**
@@ -378,12 +627,18 @@ export class InventoryScreen extends Row {
       const free = this.firstFreeBagIndex();
       if (free === null) return;
       this.onMove?.({ from: slot.ref, to: { container: 'inventory', index: free }, count: 0 });
+      // Taking something off is the same gesture and the same sound (spec 229).
+      // One row for both directions rather than two, because "equipped" and
+      // "unequipped" are the same event to the hand and a player would have to
+      // be told they were different to notice.
+      this.emitSound('ui.equip');
       return;
     }
     if (item.slot === null) return;
     const target = this.slotIds.indexOf(item.slot);
     if (target < 0) return;
     this.onMove?.({ from: slot.ref, to: { container: 'equipment', index: target }, count: 0 });
+    this.emitSound('ui.equip');
   }
 
   /**
@@ -456,6 +711,10 @@ export class InventoryScreen extends Row {
     this.drag.cancel();
     return true;
   }
+}
+
+function sameRef(a: SlotRef, b: SlotRef): boolean {
+  return a.container === b.container && a.index === b.index;
 }
 
 function heading(text: string): Label {

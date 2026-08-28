@@ -46,6 +46,10 @@ import type { BindBone, Skeleton, SkeletonBone, SkeletonSocket } from './types.j
 const STANDARD_SOCKETS: readonly { readonly id: string; readonly role: BoneRole }[] = [
   { id: 'weapon.main', role: 'rightHand' },
   { id: 'weapon.off', role: 'leftHand' },
+  // Where a sheathed weapon rides (spec 140). On the chest rather than on the
+  // hips because the swing is authored over the right shoulder and a scabbard
+  // at the hip would be drawn through the arm at the top of every wind-up.
+  { id: 'weapon.stow', role: 'chest' },
   { id: 'fx.cast', role: 'rightHand' },
   { id: 'fx.body', role: 'chest' },
   { id: 'anchor.head', role: 'head' },

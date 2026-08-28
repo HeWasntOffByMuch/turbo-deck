@@ -25,13 +25,30 @@ import { LayerStack } from '../core/layers.js';
 import { WindowManager } from '../core/window-manager.js';
 import { InputMap } from '../input/input-map.js';
 import { KeybindingsScreen } from '../screens/keybindings.js';
-import { InventoryScreen, type ContainerView, type ItemView, type SlotRef } from '../screens/inventory.js';
+import { InventoryScreen, type ContainerView, type ItemDetail, type ItemView, type SlotRef } from '../screens/inventory.js';
 import { HudScreen, type HudView } from '../screens/hud.js';
-import { CharacterScreen, type CharacterView, type SkillView } from '../screens/character.js';
+import {
+  CharacterScreen,
+  type CharacterView,
+  type SpecializationView,
+  type TrackNodeView,
+  type TrackView,
+} from '../screens/character.js';
+import { ChatScreen, chatInsets, type ChatLineView } from '../screens/chat.js';
+import { ActionBarScreen, actionBarInsets, type SlotHighlight } from '../screens/action-bar.js';
+import type { AbilityView } from '../widgets/skill-slot.js';
+import {
+  SelectedUnitScreen,
+  selectedUnitInsets,
+  type StatusRowView,
+} from '../screens/selected-unit.js';
 import { ShopScreen, type ShopRow, type ShopView } from '../screens/shop.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
 import { TradeScreen, type TradeUiView } from '../screens/trade.js';
+import { AccountScreen, type AccountDraft, type AccountMode, type AccountView } from '../screens/account.js';
+import { Tab } from '../widgets/tabs.js';
+import { TextField } from '../widgets/text-field.js';
 
 export interface GalleryFrame {
   readonly surface: RasterSurface;
@@ -195,6 +212,16 @@ export interface InventoryRenderOptions {
   readonly carryToCell?: SlotRef;
   /** Show the tooltip over this cell, with the delay already elapsed. */
   readonly tooltipOver?: SlotRef;
+  /**
+   * A skill-slot change in flight, so the commitment is in the frame
+   * (spec 188).
+   *
+   * Worth a golden for the reason the drag cases are: whether the two ends of a
+   * change read as a *direction* -- one cell losing something, one gaining it --
+   * is a fact about pixels, and the whole feature is that a swap is visible
+   * while it happens rather than only once it has.
+   */
+  readonly pendingSwap?: ContainerView['pendingSwap'];
 }
 
 /**
@@ -206,28 +233,59 @@ export interface InventoryRenderOptions {
  */
 export function demoContainers(): ContainerView {
   const bag: (ItemView | null)[] = new Array<ItemView | null>(24).fill(null);
-  const put = (index: number, defId: string, name: string, icon: string, slot: string | null, count = 1): void => {
-    bag[index] = { defId, name, count, slot, icon: `item:${icon}`, levelRequirement: 1 };
+  const put = (
+    index: number,
+    defId: string,
+    name: string,
+    icon: string,
+    slot: string | null,
+    count = 1,
+    rarity = 'common',
+    details: readonly ItemDetail[] = [],
+  ): void => {
+    bag[index] = { defId, name, count, slot, icon: `item:${icon}`, levelRequirement: 1, rarity, details };
   };
   put(0, 'sword', 'Worn Sword', 'sword', 'mainHand');
   put(1, 'bow', 'Hunting Bow', 'bow', 'mainHand');
   put(2, 'star', 'Weighted Stars', 'star', 'mainHand');
-  put(3, 'staff', 'Emberwood Staff', 'staff', 'mainHand');
+  // One of each tier, and the described lines on the one the tooltip golden
+  // opens over: what a rarity is *for* is being different from its neighbours,
+  // and a picture of three commons could not show that (spec 185).
+  put(3, 'staff', 'Emberwood Staff', 'staff', 'mainHand', 1, 'rare', [
+    { text: 'Rare  Main Hand', tone: 'rarity' },
+    { text: '+3 Intelligence', tone: 'good' },
+    { text: '+20% Spell Power', tone: 'good' },
+    { text: '-10% Attack Speed', tone: 'bad' },
+    { text: 'Worth 95 coins', tone: 'dim' },
+  ]);
   put(6, 'shield', 'Oak Shield', 'shield', 'offHand');
-  put(7, 'focus', 'Quartz Focus', 'focus', 'offHand');
+  put(7, 'focus', 'Quartz Focus', 'focus', 'offHand', 1, 'rare');
   put(8, 'potion', 'Minor Salve', 'potion', null, 9);
+  put(12, 'stone', 'Bloodstone', 'trinket', 'trinket', 1, 'exceptional');
   put(13, 'legs', "Traveller's Greaves", 'legs', 'legs');
   put(19, 'mystery', 'Something Else', 'nope', null);
+  // A sigil, so the skill row and the change-in-flight golden have something
+  // real to move (spec 188).
+  put(4, 'sigil', 'Sigil of Guard Break', 'sigil', 'skill');
+
+  const worn = (
+    defId: string,
+    name: string,
+    slot: string,
+    icon: string,
+    levelRequirement: number,
+    rarity = 'common',
+  ): ItemView => ({ defId, name, count: 1, slot, icon: `item:${icon}`, levelRequirement, rarity, details: [] });
 
   return {
     bag,
     worn: {
-      mainHand: { defId: 'maul', name: 'Iron Maul', count: 1, slot: 'mainHand', icon: 'item:sword', levelRequirement: 5 },
+      mainHand: worn('maul', 'Iron Maul', 'mainHand', 'sword', 5, 'rare'),
       offHand: null,
-      head: { defId: 'helm', name: 'Leather Cap', count: 1, slot: 'head', icon: 'item:helm', levelRequirement: 1 },
-      chest: { defId: 'jerkin', name: 'Leather Jerkin', count: 1, slot: 'chest', icon: 'item:chest', levelRequirement: 1 },
+      head: worn('helm', 'Leather Cap', 'head', 'helm', 1),
+      chest: worn('jerkin', 'Leather Jerkin', 'chest', 'chest', 1),
       legs: null,
-      trinket: { defId: 'band', name: 'Swiftband', count: 1, slot: 'trinket', icon: 'item:trinket', levelRequirement: 3 },
+      trinket: worn('band', 'Swiftband', 'trinket', 'trinket', 3, 'rare'),
     },
     slots: [
       { id: 'mainHand', label: 'Main' },
@@ -236,6 +294,13 @@ export function demoContainers(): ContainerView {
       { id: 'chest', label: 'Chest' },
       { id: 'legs', label: 'Legs' },
       { id: 'trinket', label: 'Charm' },
+    ],
+    // `accepts` is the family, so one sigil fits any of the four (spec 188).
+    skillSlots: [
+      { id: 'skill1', label: 'Skill 1', accepts: 'skill' },
+      { id: 'skill2', label: 'Skill 2', accepts: 'skill' },
+      { id: 'skill3', label: 'Skill 3', accepts: 'skill' },
+      { id: 'skill4', label: 'Skill 4', accepts: 'skill' },
     ],
     level: 4,
   };
@@ -267,7 +332,10 @@ export function renderInventory(options: InventoryRenderOptions = {}): Inventory
   layers.place('windows', manager);
 
   const screen = new InventoryScreen({ theme, hitTest: (at) => layers.hitTest(at) });
-  screen.setContainers(demoContainers());
+  screen.setContainers({
+    ...demoContainers(),
+    ...(options.pendingSwap === undefined ? {} : { pendingSwap: options.pendingSwap }),
+  });
   layers.place('dragGhost', screen.ghost);
 
   const tooltip = new Tooltip();
@@ -345,17 +413,28 @@ export interface PlayRenderOptions {
   readonly tab?: string;
   /** Spend these first, so a locked branch and a filled row are in the frame. */
   readonly spend?: readonly string[];
+  /**
+   * Scroll the open tab's body this far, in UI pixels (spec 198).
+   *
+   * Clamped by the scroller, so a number past the end is "as far as it goes" --
+   * which is the frame worth having, since the claim is about what is still on
+   * screen when there is nothing left to scroll.
+   */
+  readonly scrollBody?: number;
 }
 
+// Real ability ids, because the row draws real icons and a made-up id would
+// draw the unknown box -- but fake costs, because what is being photographed is
+// the widget rather than the table. Repointed at surviving rows by spec 237.
 const DEMO_ABILITIES: readonly { readonly id: string; readonly icon: string; readonly cost: number }[] = [
   { id: 'melee.slash', icon: 'ability:slash', cost: 0 },
-  { id: 'melee.heavy', icon: 'ability:heavy', cost: 12 },
-  { id: 'bolt.arcane', icon: 'ability:bolt', cost: 8 },
-  { id: 'bolt.lob', icon: 'ability:lob', cost: 14 },
-  { id: 'bolt.seek', icon: 'ability:seek', cost: 10 },
-  { id: 'ground.quake', icon: 'ability:quake', cost: 22 },
-  { id: 'self.mend', icon: 'ability:mend', cost: 18 },
-  { id: 'channel.drain', icon: 'ability:drain', cost: 16 },
+  { id: 'skill.guardBreak', icon: 'ability:guardBreak', cost: 12 },
+  { id: 'skill.stunningBlow', icon: 'ability:stunningBlow', cost: 8 },
+  { id: 'skill.whirlwind', icon: 'ability:whirlwind', cost: 14 },
+  { id: 'skill.cripplingStrike', icon: 'ability:cripplingStrike', cost: 10 },
+  { id: 'skill.poisonDart', icon: 'ability:poisonDart', cost: 22 },
+  { id: 'skill.rendingCut', icon: 'ability:rendingCut', cost: 18 },
+  { id: 'self.hearthdraught', icon: 'item:potion', cost: 16 },
 ];
 
 const DEMO_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8'];
@@ -390,77 +469,129 @@ export function demoHud(options: PlayRenderOptions = {}): HudView {
 }
 
 /**
- * A character sheet to photograph.
+ * One demo track (spec 244).
  *
- * Written out here rather than run through the game's adapter, for two reasons.
- * `src/ui/` may not import the game's renderer at all -- lint refuses it, and it
- * refused this on the first attempt -- and a golden built from the live skill
- * table would move every time somebody retuned a branch. The *adapter* is tested
- * against the real rules in `character-model.test.ts`; this is a picture.
+ * A picture, not a fixture: a plausible spread with a milestone node and a
+ * purchasable node on each, so the golden shows both kinds of row and the
+ * difference between them.
  */
+function track(
+  key: string,
+  name: string,
+  abbrev: string,
+  allocated: number,
+  total: number,
+  nextThreshold: number,
+  nextEffect: string,
+  nodes: readonly TrackNodeView[],
+): TrackView {
+  return {
+    key,
+    name,
+    abbrev,
+    description: `What ${name} is for.`,
+    from: 5,
+    allocated,
+    total,
+    canAdvance: true,
+    blockedBecause: '',
+    nextThreshold,
+    toNext: Math.max(0, nextThreshold - total),
+    nextEffect,
+    tiersBought: nodes.reduce(
+      (sum, node) => sum + node.specializations.reduce((inner, s) => inner + s.tier, 0),
+      0,
+    ),
+    nodes,
+  };
+}
+
 export function demoCharacter(spend: readonly string[] = []): CharacterView {
   const taken = new Set(spend);
-  const points = Math.max(0, 3 - spend.length);
-  const skill = (id: string, name: string, tier: number, blocked: string): SkillView => ({
+  const points = Math.max(0, 4 - spend.length);
+  const specialization = (
+    id: string,
+    name: string,
+    unlocked: boolean,
+    blocked: string,
+  ): SpecializationView => ({
     id,
     name,
-    tier,
-    level: taken.has(id) ? 1 : 0,
-    maxLevel: 5,
+    tier: taken.has(id) ? 1 : 0,
+    maxTier: 3,
+    cost: 1,
+    unlocked,
     description: `${name}: what it does, in a sentence long enough to wrap.`,
     canSpend: points > 0 && blocked === '',
     blockedBecause: blocked,
   });
 
-  const mightTaken = spend.some((id) => id.startsWith('might.'));
   return {
     name: 'Kestrel',
     level: 6,
     experience: { current: 180, toNext: 400 },
     unspentPoints: points,
     stats: [
-      { label: 'Health', value: '138' },
-      { label: 'Damage', value: '12' },
-      { label: 'Range', value: '56' },
-      { label: 'Speed', value: '2.0/s' },
-      { label: 'Armour', value: '12%' },
-      { label: 'Crit', value: '5%' },
+      { label: 'Health', value: '138', hint: 'what Health does, in one line' },
+      { label: 'Damage', value: '12', hint: 'what Damage does, in one line' },
+      { label: 'Range', value: '56', hint: 'what Range does, in one line' },
+      { label: 'Speed', value: '2.0/s', hint: 'what Speed does, in one line' },
+      { label: 'Armour', value: '12%', hint: 'what Armour does, in one line' },
+      { label: 'Crit', value: '5%', hint: 'what Crit does, in one line' },
+      { label: 'Guard', value: '84', hint: 'what Guard does, in one line' },
+      { label: 'Stagger', value: '22', hint: 'what Stagger does, in one line' },
     ],
-    branches: [
-      {
-        id: 'might',
-        name: 'Might',
-        locked: false,
-        pointsSpent: spend.filter((id) => id.startsWith('might.')).length,
-        skills: [
-          skill('might.toughness', 'Toughness', 1, ''),
-          skill('might.cleave', 'Cleave', 2, 'tier 2 needs 3 points in might, has 1'),
-        ],
-      },
-      {
-        id: 'finesse',
-        name: 'Finesse',
-        locked: false,
-        pointsSpent: 0,
-        skills: [skill('finesse.footwork', 'Footwork', 1, '')],
-      },
-      {
-        id: 'arcane',
-        name: 'Arcane',
-        locked: mightTaken,
-        pointsSpent: 0,
-        skills: [
-          skill(
-            'arcane.focus',
-            'Focus',
-            1,
-            mightTaken ? 'the arcane branch is locked out by an earlier commitment' : '',
-          ),
-        ],
-      },
+    // No pair list, because the sheet does not have one and the rules no longer
+    // have the content it would name (spec 244).
+    tracks: [
+      track('strength', 'Strength', 'STR', 21, 21, 25, 'Committed Swing: while winding up an attack you ignore 60% of incoming poise damage.', [
+        {
+          threshold: 10,
+          reached: true,
+          milestone: null,
+          specializations: [specialization('str.crushingBlows', 'Crushing Blows', true, '')],
+        },
+        {
+          threshold: 20,
+          reached: true,
+          milestone: { name: 'Crushing Blows', effect: 'Blows carry 25% more poise damage.' },
+          specializations: [],
+        },
+        {
+          threshold: 25,
+          reached: false,
+          milestone: null,
+          specializations: [
+            specialization('str.overkill', 'Overkill', false, 'Overkill needs 25 Strength, you have 21'),
+          ],
+        },
+      ]),
+      track('agility', 'Agility', 'AGI', 26, 28, 35, 'Mobile Offense: each Flow stack also cuts 6% off your follow-through.', [
+        {
+          threshold: 10,
+          reached: true,
+          milestone: null,
+          specializations: [specialization('agi.quickRecovery', 'Quick Recovery', true, '')],
+        },
+      ]),
+      track('intelligence', 'Intelligence', 'INT', 8, 8, 10, 'Spell Shaping: your abilities gain radius and range with Intelligence.', []),
+      track('constitution', 'Constitution', 'CON', 25, 25, 35, 'Hard to Kill: below 30% health you cannot be staggered and take 20% less damage.', []),
+      track('perception', 'Perception', 'PER', 24, 24, 25, 'Opening Read: an enemy that has just committed an attack is Vulnerable for 0.75s.', []),
+      track('wisdom', 'Wisdom', 'WIS', 5, 5, 10, 'Resource Discipline: an ability that connects grants Attuned.', [
+        {
+          threshold: 10,
+          reached: false,
+          milestone: null,
+          specializations: [
+            specialization('wis.discipline', 'Resource Discipline', false, 'Resource Discipline needs 10 Wisdom, you have 5'),
+          ],
+        },
+      ]),
     ],
+    respec: { cost: 40, enabled: true },
   };
 }
+
 
 /**
  * The HUD over a window with the character sheet in it (spec 128).
@@ -489,7 +620,10 @@ export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
 
   const sheet = new CharacterScreen({ theme });
   sheet.setCharacter(demoCharacter(options.spend ?? []));
-  const window = new UiWindow(new ScrollView(sheet, 'sheetScroll'), {
+  // Not in a `ScrollView`: the sheet pins its heading and its tab strip and
+  // scrolls the tab's own body (spec 198), which it can only do when it is
+  // handed the window's real height.
+  const window = new UiWindow(sheet, {
     title: 'Character',
     at: { x: 150, y: 8 },
     size: {
@@ -507,6 +641,10 @@ export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
   // (spec 124), so its rows have never been told what is in them.
   sheet.setCharacter(demoCharacter(options.spend ?? []));
   root.update(0);
+  if (options.scrollBody !== undefined) {
+    sheet.tabs.bodyScroller?.scrollTo(options.scrollBody);
+    root.update(0);
+  }
 
   const surface = new RasterSurface(atlas, viewport.width, viewport.height);
   surface.clear(theme.color('ink'));
@@ -514,6 +652,210 @@ export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
 
   return { surface, root, hud, sheet };
 }
+
+export interface ChatFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly chat: ChatScreen;
+}
+
+export interface ChatRenderOptions {
+  readonly viewport?: Size;
+  /** Leave the input line closed, as it is while somebody is just reading. */
+  readonly closed?: boolean;
+  /** Catch it partway out, so the wipe is in the frame (spec 189). */
+  readonly reveal?: number;
+  /** Something half-typed, so the field has a caret in it and content behind it. */
+  readonly typing?: string;
+  /** Nothing said yet, which is what a fresh session opens on. */
+  readonly empty?: boolean;
+}
+
+/**
+ * The chat, open, with one line per channel (spec 189).
+ *
+ * One of each on purpose: the three channels differ only in colour, so a frame
+ * holding one of them says nothing about whether the other two are right -- and
+ * "a channel drawn in the wrong tone" is precisely the failure that no assertion
+ * about a draw list would notice and a person reading a diff would.
+ */
+export function renderChat(options: ChatRenderOptions = {}): ChatFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const layers = new LayerStack();
+
+  const chat = new ChatScreen({ theme });
+  // Docked the way the mount docks it: bottom-left, inside an anchor that fills
+  // the frame. See `renderPlay` above for why the anchor is not optional.
+  const dock = new Anchor('chatDock');
+  dock.pointerTransparent = true;
+  dock.padding = chatInsets(theme, 0);
+  dock.place(chat, 'bottomLeft');
+  layers.place('hud', dock);
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, layers });
+  const focus = {
+    focus: (widget: Widget | null): boolean => root.focus.focus(widget),
+    push: (id: 'textEntry'): void => {
+      root.pushContext(id);
+    },
+    pop: (id: 'textEntry'): void => {
+      root.popContext(id);
+    },
+  };
+  if (options.closed !== true) {
+    chat.open(focus);
+    if (options.typing !== undefined) chat.setInputText(options.typing);
+  }
+  chat.setView({ lines: options.empty === true ? [] : DEMO_CHAT, reveal: options.reveal ?? 1 });
+  root.update(0);
+  chat.settle();
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, chat };
+}
+
+/**
+ * The two things the Play tab draws over the world with no window open
+ * (spec 196): the action bar along the bottom and the mini HUD in the corner.
+ *
+ * One frame rather than two, because what a person reading a diff needs to see
+ * is the *band* -- five slots at the framework's own size, a panel in the
+ * opposite corner, and neither of them touching the other. Two frames would
+ * halve the ink and hide exactly the thing a golden is for.
+ */
+export interface WorldHudFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly bar: ActionBarScreen;
+  readonly selected: SelectedUnitScreen;
+}
+
+export interface WorldHudRenderOptions {
+  readonly viewport?: Size;
+  /** Nothing selected, which is what most of a session looks like. */
+  readonly noSelection?: boolean;
+  /** A body at the end of its life, so the bar says the word rather than 0/60. */
+  readonly dead?: boolean;
+  /** Slot index -> fraction of its cooldown still to run. */
+  readonly cooldowns?: Readonly<Record<number, number>>;
+  /** Resource left, so the unaffordable frame is in the picture. */
+  readonly poor?: boolean;
+  /** Which slot is lit, and why. */
+  readonly highlight?: { readonly slot: number; readonly kind: SlotHighlight };
+  /** A skill-slot change in flight over a slot (spec 188). */
+  readonly change?: { readonly slot: number; readonly progress: number };
+}
+
+/**
+ * The four skills and the vial, as a character with two sigils has them.
+ *
+ * The sprite names are written out rather than resolved, because `src/ui/` may
+ * not read the game's renderer and `abilityIconFor` lives there. What that
+ * costs is exactly the failure this frame was blind to on its first outing --
+ * every one of these drew `item:unknown` in the shipped bar, the icon table
+ * having no row for a skill or for the flask -- so the *mapping* is asserted in
+ * `action-bar-model.test.ts` instead, where the table can be read.
+ */
+const DEMO_BAR: readonly (AbilityView | null)[] = [
+  { id: 'skill.guardBreak', name: 'Guard Break', icon: 'ability:guardBreak', cost: 12, sweep: 0, affordable: true, secondsLeft: 0 },
+  null,
+  { id: 'skill.whirlwind', name: 'Whirlwind', icon: 'ability:whirlwind', cost: 22, sweep: 0, affordable: true, secondsLeft: 0 },
+  { id: 'skill.stunningBlow', name: 'Stunning Blow', icon: 'ability:stunningBlow', cost: 18, sweep: 0, affordable: true, secondsLeft: 0 },
+  { id: 'self.hearthdraught', name: 'Draught', icon: 'item:potion', cost: 0, sweep: 0, affordable: true, secondsLeft: 0 },
+];
+
+/** A grazer with one of each kind on it, so both tones are in the frame. */
+const DEMO_STATUSES: readonly StatusRowView[] = [
+  { id: 'flow', label: 'Flow x2', remaining: '1.2s', tone: 'boon', fading: false },
+  { id: 'exposed', label: 'Exposed', remaining: '4.0s', tone: 'affliction', fading: false },
+  { id: 'sundered', label: 'Sundered', remaining: '0.1s', tone: 'affliction', fading: true },
+];
+
+export function renderWorldHud(options: WorldHudRenderOptions = {}): WorldHudFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const layers = new LayerStack();
+
+  // The size the mount converts `ACTION_SLOT_CSS` into on a desktop, which is
+  // where a person reading a diff is: a golden of a slot at the widget's bare
+  // default would be a picture of a size the game never draws.
+  const bar = new ActionBarScreen({ theme, slotCount: DEMO_BAR.length, slotSide: 46 });
+  const barDock = new Anchor('barDock');
+  barDock.pointerTransparent = true;
+  barDock.padding = actionBarInsets(theme, 0);
+  barDock.place(bar, 'bottom');
+  layers.place('hud', barDock);
+
+  const selected = new SelectedUnitScreen({ theme });
+  const selectedDock = new Anchor('selectedDock');
+  selectedDock.pointerTransparent = true;
+  selectedDock.padding = selectedUnitInsets(theme, 0);
+  selectedDock.place(selected, 'topRight');
+  layers.place('hud', selectedDock);
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, layers });
+
+  bar.setView({
+    slots: DEMO_BAR.map((entry, index) => ({
+      ability:
+        entry === null
+          ? null
+          : {
+              ...entry,
+              sweep: options.cooldowns?.[index] ?? 0,
+              secondsLeft: (options.cooldowns?.[index] ?? 0) * 8,
+              affordable: options.poor !== true || entry.cost === 0,
+            },
+      keyLabel: String(index + 1),
+      hint: entry === null ? [] : [{ text: entry.name }],
+      badge: index === DEMO_BAR.length - 1 ? '2/3' : '',
+      highlight: options.highlight?.slot === index ? options.highlight.kind : null,
+      change:
+        options.change?.slot === index ? { label: 'EQUIP', progress: options.change.progress } : null,
+    })),
+  });
+
+  selected.setView(
+    options.noSelection === true
+      ? null
+      : {
+          name: 'Grazer',
+          detail: 'Lv 3',
+          health: options.dead === true ? { current: 0, max: 60 } : { current: 41, max: 60 },
+          dead: options.dead === true,
+          statuses: DEMO_STATUSES,
+        },
+  );
+
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, bar, selected };
+}
+
+/**
+ * One line per channel, plus a long one so the wrap is in the picture.
+ *
+ * The wrapped line is a say, because a say is the one whose first row is drawn
+ * in two colours -- so a golden of it is also the check that the speaker's
+ * colour stops where the speaker's name does.
+ */
+export const DEMO_CHAT: readonly ChatLineView[] = [
+  { id: 1, channel: 1, from: '', text: 'Grazer was slain by Bru' },
+  { id: 2, channel: 0, from: 'Ada', text: 'watch the ravager on the left, it has not been pulled yet' },
+  { id: 3, channel: 2, from: '', text: 'restarting in five minutes' },
+  { id: 4, channel: 0, from: 'Bru', text: 'on my way' },
+];
 
 export interface ShopFrame {
   readonly surface: RasterSurface;
@@ -693,6 +1035,115 @@ export function renderKeybindings(options: KeybindingsRenderOptions = {}): Keybi
   return { surface, root, screen, map };
 }
 
+/**
+ * Rules good enough to exercise the account screen, and deliberately not the
+ * real ones.
+ *
+ * The genuine rule is `draftProblem` in `world/account-model.ts`, and it is out
+ * of reach from here on purpose: it imports the server's own
+ * `validateLogin`/`validatePassword`, and this directory may not import
+ * `src/render/` -- the same fence that makes `AccountScreen.options.validate`
+ * an injected capability rather than something the screen reads off a
+ * singleton. So the gallery states its own version, close enough to produce a
+ * refused draft for `account-refused` and openly not the rule a real client
+ * runs -- the same standing `demoShop`'s stock has against `data/items.ts`.
+ */
+function accountDraftProblem(draft: AccountDraft): string {
+  if (draft.mode === 'signIn') {
+    if (draft.login.trim().length === 0) return 'enter your login';
+    if (draft.password.length === 0) return 'enter your password';
+    return '';
+  }
+  if (draft.login.trim().length < 3) return 'login must be at least 3 characters';
+  if (draft.password.length < 8) return 'password must be at least 8 characters';
+  if (draft.confirm !== draft.password) return 'the two passwords do not match';
+  return '';
+}
+
+/** Find a widget by name inside the screen, the way `account.test.ts` does. */
+function findInAccount<T>(screen: AccountScreen, name: string, kind: new (...args: never[]) => T): T | null {
+  for (const found of screen.walk()) {
+    if (found.name === name && found instanceof (kind as never)) return found as T;
+  }
+  return null;
+}
+
+/** Type into a named field, firing `onChange` the way a keystroke does. */
+function typeIntoAccount(screen: AccountScreen, name: string, value: string): void {
+  const input = findInAccount(screen, name, TextField);
+  if (input === null) return;
+  input.setText(value);
+  input.onChange?.(value);
+}
+
+export interface AccountFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly screen: AccountScreen;
+}
+
+export interface AccountRenderOptions {
+  readonly viewport?: Size;
+  /** Which tab is selected. The screen itself opens on Register. */
+  readonly mode?: AccountMode;
+  /** Type these into the form's fields before the frame is drawn. */
+  readonly draft?: {
+    readonly login?: string;
+    readonly password?: string;
+    readonly confirm?: string;
+    readonly displayName?: string;
+  };
+  /** What the server says this session is, pushed through `setAccount`. */
+  readonly account?: AccountView;
+}
+
+/**
+ * The account window, rasterised (spec 227).
+ *
+ * Its own scene rather than a seventh window in the six-window one, for the
+ * reason `renderKeybindings` states: the frame budget that scene exists to
+ * measure keeps meaning what it says.
+ */
+export function renderAccount(options: AccountRenderOptions = {}): AccountFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const contexts = new ContextStack();
+  const screen = new AccountScreen({ theme, contexts, validate: accountDraftProblem });
+
+  // The mode is driven through the tab's own `onSelect`, the way a click would
+  // reach it, rather than by reaching into the screen's private `modes` field.
+  if (options.mode !== undefined) {
+    const tabName = options.mode === 'signIn' ? 'tab:account:modeSignIn' : 'tab:account:modeRegister';
+    findInAccount(screen, tabName, Tab)?.onSelect?.();
+  }
+  if (options.draft?.login !== undefined) typeIntoAccount(screen, 'account:login', options.draft.login);
+  if (options.draft?.password !== undefined) typeIntoAccount(screen, 'account:password', options.draft.password);
+  if (options.draft?.confirm !== undefined) typeIntoAccount(screen, 'account:confirm', options.draft.confirm);
+  if (options.draft?.displayName !== undefined) typeIntoAccount(screen, 'account:name', options.draft.displayName);
+  if (options.account !== undefined) screen.setAccount(options.account);
+
+  const window = new UiWindow(screen, {
+    title: 'Account',
+    at: { x: 8, y: 8 },
+    size: { width: viewport.width - 16, height: viewport.height - 16 },
+  });
+  const manager = new WindowManager();
+  const layers = new LayerStack();
+  layers.place('windows', manager);
+  manager.register(window, 'account');
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, windows: manager, layers });
+  manager.setViewport(viewport);
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, screen };
+}
+
 export interface TradeFrame {
   readonly surface: RasterSurface;
   readonly root: UiRoot;
@@ -714,15 +1165,23 @@ export interface TradeRenderOptions {
  */
 export function demoTrade(options: TradeRenderOptions = {}): TradeUiView {
   const bag: (ItemView | null)[] = [
-    { defId: 'bow', name: 'Hunting Bow', count: 1, slot: 'mainHand', icon: 'item:bow', levelRequirement: 1 },
-    { defId: 'potion', name: 'Minor Salve', count: 3, slot: null, icon: 'item:potion', levelRequirement: 1 },
-    { defId: 'helm', name: 'Leather Cap', count: 1, slot: 'head', icon: 'item:helm', levelRequirement: 1 },
+    { defId: 'bow', name: 'Hunting Bow', count: 1, slot: 'mainHand', icon: 'item:bow', levelRequirement: 1, rarity: 'common', details: [] },
+    { defId: 'potion', name: 'Minor Salve', count: 3, slot: null, icon: 'item:potion', levelRequirement: 1, rarity: 'common', details: [] },
+    { defId: 'helm', name: 'Leather Cap', count: 1, slot: 'head', icon: 'item:helm', levelRequirement: 1, rarity: 'common', details: [] },
     null,
     null,
     null,
   ];
   return {
     stage: options.over === true ? 'over' : 'open',
+    // The golden's ending is a cancellation -- the reason below says so -- so it
+    // is drawn in the refusal colour, which is what it was before there was a
+    // second kind of ending to tell it apart from.
+    succeeded: false,
+    // The golden is a table in progress rather than an invitation, so neither
+    // the role split nor the warning is in the picture.
+    invited: false,
+    warning: '',
     you: { name: 'You', rows: [{ name: 'Hunting Bow', count: 1 }], coins: 20, accepted: false },
     them: { name: 'Kestrel', rows: [{ name: 'Oak Shield', count: 1 }], coins: 0, accepted: true },
     bag,

@@ -36,13 +36,37 @@ import type { LiveConfig } from '../config.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { CorrectionReason } from '../net/protocol.js';
 import type { Vec3 } from '../state/types.js';
+import { groundSlopeAt, walkableSlope } from '../../sim/slope.js';
 import { MAX_STEP_HEIGHT, WALKABLE_MIN_HEIGHT, type TerrainSampler } from '../world/terrain.js';
+import { moveScaleOf } from './statuses.js';
 import type { ServerEntity, ServerInput } from './types.js';
+
+/**
+ * The slowest a slow may leave a body, as a fraction of its own speed
+ * (spec 188).
+ *
+ * A quarter, and it is a floor rather than a clamp on the authored magnitude so
+ * that stacking sources -- when there are any -- still cannot cross it. What it
+ * protects is the difference between a slow and a root: a body that cannot move
+ * at all needs its own counterplay, its own duration budget and its own tell,
+ * and none of those come free with a movement multiplier.
+ */
+export const MIN_MOVE_SCALE = 0.25;
 
 export interface MovementContext {
   readonly world: WorldColliders;
   readonly terrain: TerrainSampler;
   readonly config: LiveConfig;
+  /**
+   * The tick being resolved (spec 188).
+   *
+   * Here because a slow is a *timed state* and this is where speed is read: a
+   * status is only live relative to a tick, so a mover that could not name one
+   * would have to be handed a pre-scaled speed instead -- which is a second
+   * place for "how fast is this body" to be answered, and the whole reason
+   * {@link moveScaleOf} exists is that there should be one.
+   */
+  readonly tick: number;
 }
 
 export interface MovementOutcome {
@@ -101,6 +125,23 @@ export function turnToward(
   return from + Math.sign(delta) * step;
 }
 
+/**
+ * The heading from one point to another, or `fallback` when there is no
+ * direction to take.
+ *
+ * The degenerate case is the reason this is a function rather than an `atan2`
+ * at each call site: an aim on top of the body -- a self cast, a click at your
+ * own feet -- has no direction in it, and `atan2(0, 0)` is zero, which is a
+ * heading, and a wrong one. Every reader of this wants "keep looking where you
+ * were looking" there instead.
+ */
+export function headingToward(from: Vec2, to: Vec2, fallback: number): number {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.hypot(dx, dy) < 1e-6) return fallback;
+  return Math.atan2(dy, dx);
+}
+
 function distance(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(ax - bx, ay - by);
 }
@@ -119,7 +160,30 @@ function clampDirection(moveX: number, moveY: number): Vec2 {
   return { x: moveX / length, y: moveY / length };
 }
 
-/** True when the ground at a point is somewhere a body may legally stand. */
+/**
+ * True when the ground at a point is somewhere a body may legally stand.
+ *
+ * **Two rules, asking two different questions** (spec 228), and separating them
+ * is the whole change:
+ *
+ *  - {@link MAX_STEP_HEIGHT} on the *step*: can the body get over this lip?
+ *    Unchanged since spec 056, same value, and still what refuses a tier edge
+ *    and permits a stair riser.
+ *  - {@link groundSlopeAt} at the *destination*: is that ground a body can
+ *    stand on? This is the new half and the one that makes a maximum walkable
+ *    angle exist.
+ *
+ * They were one rule and it could only do one job honestly. A height per tick
+ * is an angle divided by how far the body travelled, so the same hillside came
+ * back at 69 degrees for a body at `MOVE_SPEED_HARD_MAX` and 88.4 for a grazer
+ * -- the slower body walking up the steeper ground -- and a player went up 83.9
+ * degrees head-on with nothing in the game refusing it.
+ *
+ * The ground rule is a property of the ground alone, so it is the same answer
+ * at every speed and from every direction: there is no approach angle that gets
+ * a body up a slope past `MAX_WALK_SLOPE`, which is what "maximum walkable
+ * angle" has to mean to be worth stating.
+ */
 export function isWalkable(
   from: Vec3,
   x: number,
@@ -128,7 +192,11 @@ export function isWalkable(
 ): boolean {
   const height = terrain.heightAt(x, y);
   if (height <= WALKABLE_MIN_HEIGHT) return false;
-  return Math.abs(height - from.z) <= MAX_STEP_HEIGHT;
+
+  // The jump rule, unchanged since spec 056 and now the only thing it does.
+  if (Math.abs(height - from.z) > MAX_STEP_HEIGHT) return false;
+
+  return walkableSlope(groundSlopeAt(x, y, height, (sx, sy) => terrain.heightAt(sx, sy)));
 }
 
 export function resolveMovement(
@@ -142,7 +210,13 @@ export function resolveMovement(
   let dx = 0;
   let dy = 0;
 
-  const maxStep = entity.stats.moveSpeed / SERVER_TICK_RATE;
+  // A slow multiplies the step and nothing else (spec 188): the collision, the
+  // terrain check and the facing are all unchanged, so a slowed body walks the
+  // same way it always did and gets less far doing it. `MIN_MOVE_SCALE` is the
+  // floor -- see `moveScaleOf` -- so no slow can turn into a root.
+  const maxStep =
+    (entity.stats.moveSpeed * moveScaleOf(entity.statuses, context.tick, MIN_MOVE_SCALE)) /
+    SERVER_TICK_RATE;
   if (input) {
     const direction = clampDirection(input.moveX, input.moveY);
     dx += direction.x * maxStep;
@@ -155,7 +229,10 @@ export function resolveMovement(
   // vegetation; it knows nothing about a cliff face or a lake, so those are
   // checked here and refused by simply not moving.
   let blockedByTerrain = false;
-  if ((landed.x !== from.x || landed.y !== from.y) && !isWalkable(entity.position, landed.x, landed.y, terrain)) {
+  if (
+    (landed.x !== from.x || landed.y !== from.y) &&
+    !isWalkable(entity.position, landed.x, landed.y, terrain)
+  ) {
     // Try each axis alone before giving up, so running along a shoreline slides
     // rather than sticking.
     const alongX = { x: landed.x, y: from.y };
@@ -197,11 +274,18 @@ export function resolveMovement(
  * snapping to it the instant the key went down. That turn is visible and it is
  * the readable half of committing -- and it changes no outcome, because a melee
  * cone is measured from `cast.targetX/Y`, not from where the body is looking.
+ *
+ * A pending drop outranks the input for the same reason and is outranked by the
+ * cast for the obvious one (spec 172). The difference from a cast is that a step
+ * does not withdraw from it: there is nothing to refund and nothing rooted, so a
+ * player who asked to put something down and then walked still asked to put it
+ * down, and the body comes round while it walks.
  */
 function resolveFacing(entity: ServerEntity, input: ServerInput | null): number {
   const cast = entity.cast;
-  const wanted = cast
-    ? Math.atan2(cast.targetY - entity.position.y, cast.targetX - entity.position.x)
+  const aim = cast ? { x: cast.targetX, y: cast.targetY } : entity.dropAim;
+  const wanted = aim
+    ? headingToward(entity.position, aim, entity.facing)
     : input && Number.isFinite(input.facing)
       ? input.facing
       : entity.facing;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { circleBlocked, createWorldColliders, DEFAULT_WORLD } from '../../sim/collision.js';
-import { ARENA_OBSTACLES, PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../sim/constants.js';
-import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
+import { PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../sim/constants.js';
+import { CHUNK_SIZE, DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
 import { abilityById } from '../data/abilities.js';
 import { monsterById } from '../data/monsters.js';
 import { CorrectionReason } from '../net/protocol.js';
@@ -12,6 +12,8 @@ import {
 } from '../player/stats.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
+import { NAV_WINDOW_PAD_TILES } from '../world/nav-residency.js';
+import type { SpawnPoint } from '../world/spawners.js';
 import { FLAT_TERRAIN, type TerrainSampler } from '../world/terrain.js';
 import { SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { ZoneManager } from '../world/zone-manager.js';
@@ -34,8 +36,8 @@ import {
 const RECORD: PersistedPlayer = {
   id: 'p1',
   displayName: 'P1',
-  baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
-  skills: [],
+  baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+  specializations: [],
   equipment: EMPTY_EQUIPMENT,
   inventory: emptyInventory(),
   coins: 0,
@@ -44,7 +46,7 @@ const RECORD: PersistedPlayer = {
   currentZone: 'hearth',
   level: 1,
   experience: 0,
-  unspentSkillPoints: 0,
+  unspentProgressionPoints: 0,
   health: 100,
   resource: 20,
 };
@@ -104,8 +106,10 @@ function withMonster(
   /**
    * Who it is already fighting, and where it considers home.
    *
-   * Nothing initiates since spec 076, so a test that wants a monster to walk
-   * anywhere has to hand it the target being hit would have given it.
+   * Handing a body a bare `targetId` is enough: `settle` commits it on the
+   * first tick (spec 163), because a target arriving with no mood attached is
+   * something outside the sim -- a test, an admin -- saying "fight this". Cases
+   * about *acquiring* a target rather than holding one live in `aggro.test.ts`.
    */
   extra: { targetId?: number; anchor?: { x: number; y: number } } = {},
 ): { state: ServerWorldState; id: number } {
@@ -474,15 +478,17 @@ describe('movement validation', () => {
   });
 
   it('refuses to let a body end up inside a wall', () => {
-    const wall = ARENA_OBSTACLES[0];
-    if (!wall) throw new Error('expected an arena obstacle');
+    // Stated here rather than borrowed from the sim's constants, which stopped
+    // carrying a layout in spec 221: what is being tested is that a rect stops
+    // a body, so this test brings its own.
+    const wall = { x: 300, y: 90, w: 36, h: 250 };
     let state = createWorldState(1);
     // Standing just left of the wall, walking straight into it.
     const player = withPlayer(state, wall.x - 20, wall.y + wall.h / 2);
     state = player.state;
 
     const ctx = context({
-      world: createWorldColliders(ARENA_OBSTACLES, [], WORLD_BOUNDS),
+      world: createWorldColliders([wall], [], WORLD_BOUNDS),
       activeChunks: activeAround({ x: wall.x, y: wall.y }),
     });
     for (let tick = 0; tick < 20; tick++) {
@@ -568,8 +574,8 @@ describe('chunk activation gates simulation', () => {
 /** Spec 073. Every enemy in the world stands where the map document put it. */
 describe("the map's spawners", () => {
   const POINTS = [
-    { id: 'spawner-1', monsterId: 'grazer', x: 620, y: 470 },
-    { id: 'spawner-2', monsterId: 'stalker', x: 660, y: 430 },
+    { id: 'spawner-1', monsterId: 'grazer', x: 620, y: 470, respawnTicks: null, leashRadius: null },
+    { id: 'spawner-2', monsterId: 'stalker', x: 660, y: 430, respawnTicks: null, leashRadius: null },
   ];
 
   function spawnerContext(overrides: Partial<StepContext> = {}): StepContext {
@@ -594,6 +600,20 @@ describe("the map's spawners", () => {
       expect(body?.position.x).toBe(point.x);
       expect(body?.position.y).toBe(point.y);
       expect(body?.anchor).toEqual({ x: point.x, y: point.y });
+    }
+  });
+
+  it('puts a body into the world with a full guard, not an empty one', () => {
+    // The bug this exists for: a spawned monster is built from its own literal
+    // here rather than through `spawnEntity`, and that literal did not set
+    // `poise` -- so every wandering monster in the game entered it already
+    // broken and spent its first seconds regenerating up from nothing. Poise is
+    // a live resource, so no derivation test looks at it, and every other poise
+    // test builds its bodies through `spawnEntity`, which does set it.
+    const state = step(createWorldState(3), [], spawnerContext()).state;
+    for (const body of monsters(state)) {
+      expect(body.stats.traits.maxPoise, body.typeId).toBeGreaterThan(0);
+      expect(body.poise, body.typeId).toBe(body.stats.traits.maxPoise);
     }
   });
 
@@ -678,6 +698,171 @@ describe("the map's spawners", () => {
   });
 });
 
+/**
+ * Spec 222. The two numbers a spawner may now author, and the one rule about
+ * them that is a *derivation* rather than a preference: a document may make a
+ * monster tighter on its leash and may not make it looser than the nav window
+ * was sized for.
+ */
+describe("a spawner's own numbers", () => {
+  const point = (
+    id: string,
+    monsterId: string,
+    x: number,
+    y: number,
+    settings: { respawnTicks?: number | null; leashRadius?: number | null } = {},
+  ): SpawnPoint => ({
+    id,
+    monsterId,
+    x,
+    y,
+    respawnTicks: settings.respawnTicks ?? null,
+    leashRadius: settings.leashRadius ?? null,
+  });
+
+  const ctxFor = (points: readonly SpawnPoint[], config?: Partial<LiveConfig>): StepContext =>
+    context({
+      spawnPoints: points,
+      activeChunks: activeAround({ x: 600, y: 450 }),
+      ...(config === undefined ? {} : { config: { ...DEFAULT_LIVE_CONFIG, ...config } }),
+    });
+
+  const monsters = (state: ServerWorldState): ServerEntity[] =>
+    [...state.entities.values()].filter((e) => e.kind === EntityKindValue.Monster);
+
+  /** Fill the world, then kill whatever this spawner put there. */
+  function killAt(ctx: StepContext, id: string): ServerWorldState {
+    let state = step(createWorldState(3), [], ctx).state;
+    const victim = monsters(state).find((m) => m.spawnerId === id);
+    if (!victim) throw new Error(`nothing spawned at ${id}`);
+    state = replaceEntity(state, { ...victim, health: 0 });
+    return step(state, [], ctx).state;
+  }
+
+  it('waits its own clock rather than the map-wide one', () => {
+    const own = 90;
+    const points = [point('spawner-1', 'grazer', 620, 470, { respawnTicks: own })];
+    // A global interval far longer than the spawner's, so a refill on schedule
+    // could only have come from the marker.
+    const ctx = ctxFor(points, { spawnIntervalTicks: 3000, spawnRateMultiplier: 1 });
+    let state = killAt(ctx, 'spawner-1');
+    expect(state.spawners.get('spawner-1')?.readyAtTick).toBe(state.tick + own);
+
+    for (let tick = 0; tick < own - 1; tick++) state = step(state, [], ctx).state;
+    expect(monsters(state)).toHaveLength(0);
+    state = step(state, [], ctx).state;
+    expect(monsters(state)).toHaveLength(1);
+  });
+
+  it('leaves a spawner that authors nothing on the config\'s own clock', () => {
+    const interval = 200;
+    const points = [point('spawner-1', 'grazer', 620, 470)];
+    const ctx = ctxFor(points, { spawnIntervalTicks: interval, spawnRateMultiplier: 1 });
+    const state = killAt(ctx, 'spawner-1');
+    expect(state.spawners.get('spawner-1')?.readyAtTick).toBe(state.tick + interval);
+  });
+
+  /**
+   * A marker's clock is a *base*, not an escape from the live control: the admin
+   * console's multiplier is how a running server is slowed down or stopped, and
+   * a spawner that could opt out of it would make that button a lie.
+   */
+  it('is still scaled by the live rate multiplier', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470, { respawnTicks: 600 })];
+    const ctx = ctxFor(points, { spawnRateMultiplier: 4 });
+    const state = killAt(ctx, 'spawner-1');
+    expect(state.spawners.get('spawner-1')?.readyAtTick).toBe(state.tick + 150);
+  });
+
+  it('is still stopped dead by a multiplier of zero', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470, { respawnTicks: 1 })];
+    let state = createWorldState(3);
+    const off = ctxFor(points, { spawnRateMultiplier: 0 });
+    for (let tick = 0; tick < 120; tick++) state = step(state, [], off).state;
+    expect(monsters(state)).toHaveLength(0);
+  });
+
+  it('hands the body its marker\'s leash', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470, { leashRadius: 250 })];
+    const state = step(createWorldState(3), [], ctxFor(points)).state;
+    expect(monsters(state)[0]?.leashRadius).toBe(250);
+  });
+
+  it('leaves a body whose marker says nothing on the default', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470)];
+    const state = step(createWorldState(3), [], ctxFor(points)).state;
+    expect(monsters(state)[0]?.leashRadius).toBe(LEASH_RADIUS);
+  });
+
+  /**
+   * The cap, asserted against the thing that *causes* it rather than against
+   * 800: `NAV_WINDOW_PAD_TILES` is derived from `LEASH_RADIUS`, so a window is
+   * assembled exactly wide enough for a route home from the global reach. A
+   * body leashed past it would be asking `findPath` for a goal outside its own
+   * window. Raising the constant must move both, and this fails if only one of
+   * them moves.
+   */
+  it('caps a marker that asks for more than the nav window was sized for', () => {
+    const points = [point('spawner-1', 'grazer', 620, 470, { leashRadius: LEASH_RADIUS * 10 })];
+    const state = step(createWorldState(3), [], ctxFor(points)).state;
+    const body = monsters(state)[0];
+    expect(body?.leashRadius).toBe(LEASH_RADIUS);
+    expect(NAV_WINDOW_PAD_TILES * CHUNK_SIZE).toBeGreaterThanOrEqual(body?.leashRadius ?? 0);
+  });
+
+  it('drops a target at the marker\'s distance rather than the default', () => {
+    const anchor = { x: 600, y: 450 };
+    const tight = 300;
+    const points = [point('spawner-1', 'stalker', anchor.x, anchor.y, { leashRadius: tight })];
+    // Every chunk between home and the player, so nothing is skipped as
+    // unloaded while the body walks out and back.
+    const along: { x: number; y: number }[] = [];
+    for (let x = anchor.x - 200; x <= anchor.x + LEASH_RADIUS + 600; x += 100) {
+      along.push({ x, y: anchor.y });
+    }
+    const ctx = context({ spawnPoints: points, activeChunks: activeAround(...along) });
+
+    let state = step(createWorldState(1), [], ctx).state;
+    const player = withPlayer(state, anchor.x + LEASH_RADIUS + 400, anchor.y);
+    state = player.state;
+    const body = monsters(state)[0];
+    if (!body) throw new Error('nothing spawned');
+    state = replaceEntity(state, { ...body, targetId: player.id });
+
+    let furthest = 0;
+    let broke = false;
+    for (let tick = 0; tick < SERVER_TICK_RATE * 30 && !broke; tick++) {
+      state = step(state, [], ctx).state;
+      const at = state.entities.get(body.id);
+      if (!at) break;
+      furthest = Math.max(furthest, Math.hypot(at.position.x - anchor.x, at.position.y - anchor.y));
+      broke = at.targetId === null;
+    }
+    expect(broke).toBe(true);
+    // It gave up at its own distance, and nowhere near the global one -- the
+    // claim that would hold either way is that it gave up at all.
+    expect(furthest).toBeGreaterThan(tight);
+    expect(furthest).toBeLessThan(LEASH_RADIUS);
+  });
+
+  /**
+   * The property the whole feature is subject to: a document clock changes
+   * *when* a body arrives and must not change how many values the sim has drawn
+   * by the time it does, or every combat roll after a respawn moves.
+   */
+  it('draws no randomness, whatever the marker authors', () => {
+    const points = [
+      point('spawner-1', 'grazer', 620, 470, { respawnTicks: 30, leashRadius: 200 }),
+      point('spawner-2', 'stalker', 660, 430),
+    ];
+    const ctx = ctxFor(points);
+    let state = createWorldState(3);
+    const before = state.rng;
+    for (let tick = 0; tick < 400; tick++) state = step(state, [], ctx).state;
+    expect(state.rng).toBe(before);
+  });
+});
+
 /** Spec 073. Nothing initiates, and nothing follows you home. */
 describe('aggro and the leash', () => {
   it('ignores a player standing on top of it until it is hit', () => {
@@ -728,9 +913,13 @@ describe('aggro and the leash', () => {
     }
     expect(broke).toBe(true);
 
-    // ...and then comes back, even though the player never stopped hitting it:
-    // the leash is read before the target, so the grudge is taken straight off
-    // again on the tick after it lands.
+    // ...and then comes back, even though a grudge is forced back onto it every
+    // tick. Since spec 248 the leash does not merely drop the target, it puts
+    // the body in `Returning` -- and `settle` clears a target written onto one
+    // of those, which is what makes "`Returning` and `targetId === null` are one
+    // state" an invariant rather than something nothing happens to violate. What
+    // the walk home *is* lives in `leash-return.test.ts`; this is the original
+    // leash claim, unchanged.
     for (let tick = 0; tick < SERVER_TICK_RATE * 40; tick++) {
       const body = state.entities.get(monster.id);
       if (body) state = replaceEntity(state, { ...body, targetId: player.id });
@@ -1033,8 +1222,8 @@ describe('two inputs in one tick (spec 090)', () => {
     expect(merged.castTargetX).toBe(10);
 
     // A later request replaces an earlier one outright, aim included.
-    const recast = mergeInputs(older, input(7, 3, { castAbilityId: 'melee.heavy', castTargetX: 99 }));
-    expect(recast.castAbilityId).toBe('melee.heavy');
+    const recast = mergeInputs(older, input(7, 3, { castAbilityId: 'skill.acidSpray', castTargetX: 99 }));
+    expect(recast.castAbilityId).toBe('skill.acidSpray');
     expect(recast.castTargetX).toBe(99);
   });
 });
@@ -1173,10 +1362,10 @@ describe('shots that travel', () => {
   });
 
   it('lands on the same tick however fast the weapon attacks (spec 088)', () => {
-    /** The tick a shot from a body with this attack delay arrives on. */
-    function arrival(attackDelayTicks: number): number | null {
+    /** The tick a shot from a body with this Base Attack Time arrives on. */
+    function arrival(baseAttackTimeTicks: number): number | null {
       let state = createWorldState(4);
-      const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, attackDelayTicks });
+      const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, baseAttackTimeTicks });
       state = player.state;
       const mark = withMonster(state, 'dummy', 900, 450);
       state = mark.state;

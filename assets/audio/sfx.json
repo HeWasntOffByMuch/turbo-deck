@@ -1,0 +1,288 @@
+{
+  "version": 1,
+  "sounds": {
+    "player.footstep": {
+      "variants": [
+        "/audio/player/footsteps/boots_01.ogg",
+        "/audio/player/footsteps/boots_02.ogg",
+        "/audio/player/footsteps/boots_03.ogg",
+        "/audio/player/footsteps/boots_04.ogg",
+        "/audio/player/footsteps/boots_05.ogg",
+        "/audio/player/footsteps/boots_06.ogg"
+      ],
+      "volume": 0.25,
+      "pitch": { "min": 0.92, "max": 1.08 },
+      "distance": { "ref": 70, "max": 900 },
+      "cooldownMs": 70
+    },
+    "player.footstep.grass": {
+      "variants": [
+        "/audio/player/footstep_grass/steps_dirt_006.ogg",
+        "/audio/player/footstep_grass/steps_dirt_005.ogg",
+        "/audio/player/footstep_grass/steps_dirt_004.ogg",
+        "/audio/player/footstep_grass/steps_dirt_003.ogg",
+        "/audio/player/footstep_grass/steps_dirt_002.ogg",
+        "/audio/player/footstep_grass/steps_dirt_001.ogg"
+      ],
+      "volume": 0.25,
+      "pitch": { "min": 0.66, "max": 0.75 }
+    },
+    "player.footstep.dirt": {
+      "variants": [
+        "/audio/player/footstep_dirt/steps_dirt_006.ogg",
+        "/audio/player/footstep_dirt/steps_dirt_005.ogg",
+        "/audio/player/footstep_dirt/steps_dirt_004.ogg",
+        "/audio/player/footstep_dirt/steps_dirt_003.ogg",
+        "/audio/player/footstep_dirt/steps_dirt_002.ogg",
+        "/audio/player/footstep_dirt/steps_dirt_001.ogg"
+      ],
+      "volume": 0.25
+    },
+    "player.footstep.sand": {
+      "variants": [
+        "/audio/player/footstep_sand/steps_gravel_021.ogg",
+        "/audio/player/footstep_sand/steps_gravel_019.ogg",
+        "/audio/player/footstep_sand/steps_gravel_018.ogg"
+      ],
+      "volume": 0.25,
+      "pitch": { "min": 0.75, "max": 1.5 }
+    },
+    "player.footstep.rock": {
+      "variants": [
+        "/audio/player/footstep_rock/steps_gravel_006.ogg",
+        "/audio/player/footstep_rock/steps_gravel_005.ogg",
+        "/audio/player/footstep_rock/steps_gravel_004.ogg",
+        "/audio/player/footstep_rock/steps_gravel_003.ogg",
+        "/audio/player/footstep_rock/steps_gravel_002.ogg",
+        "/audio/player/footstep_rock/steps_gravel_001.ogg"
+      ],
+      "volume": 0.25
+    },
+    "player.footstep.snow": {
+      "variants": [
+        "/audio/player/footstep_snow/steps_snow_006.ogg",
+        "/audio/player/footstep_snow/steps_snow_005.ogg",
+        "/audio/player/footstep_snow/steps_snow_004.ogg",
+        "/audio/player/footstep_snow/steps_snow_003.ogg",
+        "/audio/player/footstep_snow/steps_snow_002.ogg",
+        "/audio/player/footstep_snow/steps_snow_001.ogg"
+      ],
+      "volume": 0.25
+    },
+    "player.footstep.water": {
+      "variants": [
+        "/audio/player/footstep_water/steps_water_006.ogg",
+        "/audio/player/footstep_water/steps_water_005.ogg",
+        "/audio/player/footstep_water/steps_water_004.ogg",
+        "/audio/player/footstep_water/steps_water_003.ogg",
+        "/audio/player/footstep_water/steps_water_002.ogg",
+        "/audio/player/footstep_water/steps_water_001.ogg"
+      ],
+      "volume": 0.25
+    },
+    "player.death": {
+      "variants": ["/audio/combat/death/death_01.ogg"],
+      "volume": 0.75,
+      "pitch": { "min": 1, "max": 1 }
+    },
+    "player.attributeUp": {
+      "variants": ["/audio/ui/attribute_up.ogg"],
+      "volume": 0.7,
+      "pitch": { "min": 1, "max": 1 }
+    },
+    "player.skillUp": {
+      "variants": ["/audio/ui/skill_up.ogg"],
+      "volume": 0.7,
+      "pitch": { "min": 1, "max": 1 }
+    },
+    "player.pickUp": {
+      "variants": ["/audio/ui/pick_up_item.ogg"],
+      "volume": 0.6,
+      "distance": { "ref": 90, "max": 900 }
+    },
+    "player.dropItem": {
+      "variants": ["/audio/ui/drop_item.ogg"],
+      "volume": 0.6,
+      "distance": { "ref": 90, "max": 900 }
+    },
+    "loot.spawn": {
+      "variants": ["/audio/ui/drop_item.ogg"],
+      "volume": 0.5,
+      "pitch": { "min": 0.9, "max": 0.98 },
+      "distance": { "ref": 120, "max": 1400 }
+    },
+    "combat.throw": {
+      "variants": [
+        "/audio/combat/swings/punch_01.ogg",
+        "/audio/combat/swings/punch_02.ogg",
+        "/audio/combat/swings/punch_03.ogg"
+      ],
+      "volume": 0.5,
+      "pitch": { "min": 0.96, "max": 1.08 }
+    },
+    "combat.hit.flesh": {
+      "variants": [
+        "/audio/combat/swings/sword_stab_light_01.ogg",
+        "/audio/combat/swings/sword_stab_light_02.ogg",
+        "/audio/combat/swings/sword_stab_light_03.ogg"
+      ],
+      "volume": 0.85,
+      "pitch": { "min": 0.94, "max": 1.06 }
+    },
+    "combat.hit.armored": {
+      "variants": [
+        "/audio/combat/hits/sword_clash_01.ogg",
+        "/audio/combat/hits/sword_clash_02.ogg",
+        "/audio/combat/hits/sword_clash_03.ogg"
+      ],
+      "volume": 0.85,
+      "pitch": { "min": 0.95, "max": 1.05 }
+    },
+    "combat.hit.critical": {
+      "variants": [
+        "/audio/combat/swings/sword_stab_heavy_01.ogg",
+        "/audio/combat/swings/sword_stab_heavy_02.ogg",
+        "/audio/combat/swings/sword_stab_heavy_03.ogg"
+      ],
+      "volume": 0.9,
+      "pitch": { "min": 0.95, "max": 1.02 }
+    },
+    "combat.hit.blocked": {
+      "variants": [
+        "/audio/combat/swings/sword_slash_01.ogg",
+        "/audio/combat/swings/sword_slash_02.ogg",
+        "/audio/combat/swings/sword_slash_03.ogg",
+        "/audio/combat/hit_blocked/block_light_01.ogg"
+      ],
+      "volume": 0.8,
+      "pitch": { "min": 0.96, "max": 1.04 }
+    },
+    "combat.stagger": {
+      "variants": [
+        "/audio/combat/hits/blunt_01.ogg",
+        "/audio/combat/hits/blunt_02.ogg",
+        "/audio/combat/hits/blunt_03.ogg"
+      ],
+      "pitch": { "min": 0.72, "max": 0.8 },
+      "cooldownMs": 120
+    },
+    "combat.projectile.launch": {
+      "variants": ["/audio/combat/projectile_launch/bow_release.ogg"],
+      "volume": 0.8
+    },
+    "combat.projectile.impact": {
+      "variants": ["/audio/combat/projectile_impact/bow_impact_solid_body.ogg"],
+      "volume": 0.8,
+      "distance": { "ref": 420 }
+    },
+    "elemental.fire.cast": {
+      "variants": [
+        "/audio/elemental/fire/cast_01.ogg",
+        "/audio/elemental/fire/cast_02.ogg",
+        "/audio/elemental/fire/cast_03.ogg",
+        "/audio/elemental/fire/throw_01.ogg",
+        "/audio/elemental/fire/whoosh_01.ogg"
+      ],
+      "volume": 0.7,
+      "pitch": { "min": 0.95, "max": 1.05 }
+    },
+    "elemental.fire.travel": {
+      "variants": ["/audio/elemental/fire/hold_01.ogg"],
+      "volume": 0.45,
+      "pitch": { "min": 1, "max": 1 },
+      "distance": { "ref": 110, "max": 1400 }
+    },
+    "elemental.fire.impact": {
+      "variants": [
+        "/audio/elemental/fire/impact_01.ogg",
+        "/audio/elemental/fire/impact_02.ogg",
+        "/audio/elemental/fire/impact_03.ogg",
+        "/audio/elemental/fire/impact_heavy_01.ogg",
+        "/audio/elemental/fire/embers_01.ogg"
+      ],
+      "volume": 0.8,
+      "pitch": { "min": 0.95, "max": 1.05 }
+    },
+    "elemental.fire.field": {
+      "variants": ["/audio/elemental/fire/cast_long_01.ogg"],
+      "volume": 0.5,
+      "pitch": { "min": 1, "max": 1 },
+      "distance": { "ref": 200, "max": 1600 }
+    },
+    "elemental.ice.cast": {
+      "variants": [
+        "/audio/elemental/ice/cast_01.ogg",
+        "/audio/elemental/ice/glacier_cast_01.ogg"
+      ],
+      "volume": 0.7
+    },
+    "elemental.ice.impact": {
+      "variants": ["/audio/elemental/ice/glacier_impact_01.ogg"],
+      "volume": 0.8
+    },
+    "elemental.lightning.cast": {
+      "variants": ["/audio/elemental/lightning/throw_01.ogg"],
+      "volume": 0.7
+    },
+    "elemental.lightning.impact": {
+      "variants": [
+        "/audio/elemental/lightning/hit_01.ogg",
+        "/audio/elemental/lightning/impact_01.ogg"
+      ],
+      "volume": 0.8
+    },
+    "elemental.arcane.cast": {
+      "variants": [
+        "/audio/elemental/water/throw_01.ogg",
+        "/audio/elemental/water/throw_02.ogg"
+      ],
+      "volume": 0.65
+    },
+    "elemental.arcane.impact": {
+      "variants": [
+        "/audio/elemental/water/impact_01.ogg",
+        "/audio/elemental/water/hit_01.ogg"
+      ],
+      "volume": 0.75
+    },
+    "elemental.poison.impact": {
+      "variants": ["/audio/elemental/water/hit_short_01.ogg"],
+      "volume": 0.4
+    },
+    "ui.error": {
+      "variants": ["/audio/ui/denied.ogg"],
+      "volume": 0.6,
+      "pitch": { "min": 1, "max": 1 }
+    },
+    "ui.drop": {
+      "variants": ["/audio/ui/move_item.ogg"],
+      "volume": 0.55,
+      "pitch": { "min": 0.98, "max": 1.02 }
+    },
+    "ui.pickUp": {
+      "variants": ["/audio/ui/pick_up_item.ogg"],
+      "volume": 0.55,
+      "pitch": { "min": 0.98, "max": 1.02 }
+    },
+    "ui.equip": {
+      "variants": ["/audio/ui/equip_item_skill.ogg"],
+      "volume": 0.6,
+      "pitch": { "min": 1, "max": 1 }
+    },
+    "ui.equipCancelled": {
+      "variants": ["/audio/ui/skill_equip_cancelled.ogg"],
+      "volume": 0.6,
+      "pitch": { "min": 1, "max": 1 }
+    },
+    "ui.tradeRequest": {
+      "variants": ["/audio/ui/trade_request.ogg"],
+      "volume": 0.7,
+      "pitch": { "min": 1, "max": 1 }
+    },
+    "ui.tradeComplete": {
+      "variants": ["/audio/ui/trade_complete.ogg"],
+      "volume": 0.7,
+      "pitch": { "min": 1, "max": 1 }
+    }
+  }
+}

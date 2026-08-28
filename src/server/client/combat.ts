@@ -32,11 +32,18 @@
  * Pure: no transport, no DOM, no clock of its own. Tested headlessly.
  */
 
-import { abilityById, totalCastTicks, type AbilityDefinition } from '../data/abilities.js';
-import { turnToward } from '../sim/movement.js';
-import { cooldownTicksFor, startCast, type CastRejection } from '../sim/abilities.js';
+import { abilityById, type AbilityDefinition } from '../data/abilities.js';
+import type { AttackTiming } from '../sim/attack-timing.js';
+import { headingToward, turnToward } from '../sim/movement.js';
+import {
+  attackTimingFor,
+  nextReadyTick,
+  startCast,
+  type CastRejection,
+} from '../sim/abilities.js';
 import { regenerated } from '../sim/resource.js';
-import { CastPhase, EntityKindValue, type CastState, type ServerEntity } from '../sim/types.js';
+import { AggroValue, CastPhase, EntityKindValue, type CastState, type ServerEntity } from '../sim/types.js';
+import { blankProgression } from '../sim/world.js';
 import type { EffectiveStats } from '../state/types.js';
 
 export interface Point {
@@ -53,6 +60,23 @@ export interface Mirror {
   readonly cooldowns: Readonly<Record<string, number>>;
   readonly cast: CastState | null;
   readonly stats: EffectiveStats;
+  /** Replicated, so the mirror may claim them. Statuses are not (spec 147). */
+  readonly poise: number;
+  readonly shield: number;
+  /**
+   * The stagger window, replicated on `FIELD_ACTIVITY` (spec 173).
+   *
+   * Real rather than assumed, for the same reason `fallbackCharges` is: the
+   * gate this mirror exists to ask is `startCast`, and since 173 a poise break
+   * is one of the refusals it can give. A mirror that claimed to be idle would
+   * light a button the server is about to refuse -- the mispredicted press this
+   * file exists to prevent -- and it is the one refusal the player did not
+   * cause, so it is also the one they are least ready for.
+   */
+  readonly activity: number;
+  readonly activityUntilTick: number;
+  /** Replicated on its own message (spec 156), so the flask gate is predictable. */
+  readonly fallbackCharges: number;
 }
 
 /**
@@ -77,11 +101,15 @@ export function asEntity(mirror: Mirror): ServerEntity {
     level: 1,
     zoneId: '',
     stats: mirror.stats,
-    activity: 0,
-    activityUntilTick: 0,
-    attackReadyTick: 0,
+    activity: mirror.activity,
+    activityUntilTick: mirror.activityUntilTick,
     radius: 0,
+    velocity: { x: 0, y: 0 },
     targetId: null,
+    aggro: AggroValue.Calm,
+    aggroUntilTick: 0,
+    fleeGoal: null,
+    returnStart: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -90,11 +118,32 @@ export function asEntity(mirror: Mirror): ServerEntity {
     cast: mirror.cast,
     cooldowns: mirror.cooldowns,
     projectile: null,
+    dropAim: null,
+    drop: null,
+    mote: null,
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
     spawnerId: null,
     anchor: null,
+    leashRadius: 0,
+    conversationWith: null,
+    // The progression state the mirror can honestly claim (spec 147). Poise and
+    // shields are replicated, so they are real; statuses are not, so the mirror
+    // carries none -- which makes the client's predicted cost the *undiscounted*
+    // one and its predicted wind-up the *unshortened* one. Guessing too
+    // expensive and too slow is the right way round to be wrong: the server's
+    // answer only ever arrives cheaper and sooner, and a correction that hands
+    // resource back is invisible where one that takes it away is a stutter.
+    ...blankProgression(),
+    poise: mirror.poise,
+    shield: mirror.shield,
+    // The flask, replicated (spec 156). Real rather than assumed, because the
+    // gate this mirror exists to ask is `startCast`, and an empty flask is a
+    // refusal the client must predict: a button that lights up on a draught the
+    // server will refuse is exactly the mispredicted press this file exists to
+    // prevent.
+    fallbackCharges: mirror.fallbackCharges,
   };
 }
 
@@ -153,21 +202,46 @@ export function mayCast(
   // than a case that happens.
   if (!cast) return { ok: false, reason: 'unknownAbility' };
   const shift = stampAt - decideAt;
+  const shifted: CastState = {
+    ...cast,
+    startedTick: cast.startedTick + shift,
+    windupStartTick: cast.windupStartTick + shift,
+    releaseTick: cast.releaseTick + shift,
+    endTick: cast.endTick + shift,
+  };
   return {
     ok: true,
-    cast: {
-      ...cast,
-      startedTick: cast.startedTick + shift,
-      releaseTick: cast.releaseTick + shift,
-      endTick: cast.endTick + shift,
-    },
+    cast: shifted,
     cost: ability.cost,
-    // From the *release*, not the commit (spec 091): the cooldown starts when
-    // the blow goes off, so a wind-up that is withdrawn from costs none of it.
-    // Predicting it from the commit would grey the button out for a swing that
-    // may never happen, and then have to hand it back.
-    readyAtTick: stampAt + ability.windupTicks + cooldownTicksFor(ability, entity),
+    // Through the sim's own rule rather than a second copy of it (spec 144), so
+    // "when may I swing again" cannot drift between the two ends: a basic attack
+    // is ready an interval after the *wind-up started*, and everything else an
+    // ability cooldown after the release, which is spec 091 kept whole.
+    //
+    // Either way the client only stamps this because it expects the server to
+    // commit. A cast that is withdrawn from before the attack point never
+    // stamps one on the server, and `withdrawLocally` takes this guess back to
+    // match -- the button must not grey out for a swing that never happened.
+    readyAtTick: nextReadyTick(
+      ability,
+      shifted,
+      shifted.releaseTick,
+    ),
   };
+}
+
+/**
+ * The attack timing this client believes it is on, for anything that has to draw
+ * it: the HUD's cooldown sweep, the character sheet's attacks-per-second, and
+ * the auto-attack gate.
+ *
+ * A re-export in function form rather than a second implementation, for the
+ * reason the rest of this file exists: one rulebook.
+ */
+export function timingFor(mirror: Mirror, abilityId: string): AttackTiming | null {
+  const ability = abilityById(abilityId);
+  if (!ability) return null;
+  return attackTimingFor(ability, { stats: mirror.stats });
 }
 
 /**
@@ -190,20 +264,38 @@ export function advanceCast(
 
   if (cast.phase === CastPhase.Turning) {
     if (!facingAim(position, facing, cast)) return cast;
+    // Off the cast's own snapshot rather than off the ability table, because
+    // attack speed has already scaled these (spec 144) and the table has not
+    // heard about it.
+    const releaseTick = tick + cast.timing.attackPointTicks;
     return {
       ...cast,
       phase: CastPhase.Windup,
-      releaseTick: tick + ability.windupTicks,
-      endTick: tick + totalCastTicks(ability),
+      windupStartTick: tick,
+      releaseTick,
+      endTick:
+        ability.kind === 'channel'
+          ? releaseTick + (ability.channelTicks ?? 0)
+          : releaseTick + cast.timing.backswingTicks,
     };
   }
 
-  // The release. A blow that is not a channel is *over* on the tick it lands:
-  // there is no recovery to sit through since spec 069, so the body is free the
-  // moment the swing goes off.
+  // The attack point. A channel opens into its pulses; a basic attack with a
+  // follow-through stays rooted through it and is *committed* -- walking out of
+  // this phase refunds nothing (spec 144). Anything else is over on the tick it
+  // lands, which is spec 069's rule unchanged.
   if (cast.phase === CastPhase.Windup && tick >= cast.releaseTick) {
-    if (ability.kind !== 'channel') return null;
-    return { ...cast, phase: CastPhase.Channel, nextPulseTick: tick };
+    if (ability.kind === 'channel') {
+      return { ...cast, phase: CastPhase.Channel, committed: true, nextPulseTick: tick };
+    }
+    if (cast.timing.backswingTicks > 0) {
+      return { ...cast, phase: CastPhase.Backswing, committed: true };
+    }
+    return null;
+  }
+
+  if (cast.phase === CastPhase.Backswing) {
+    return tick >= cast.endTick ? null : cast;
   }
 
   // A channel runs from its release for `channelTicks`, and ends when its pulses
@@ -233,9 +325,20 @@ export function steerFacing(
   wanted: number,
   turnRate: number,
   tickRate: number,
+  /**
+   * Where a drop this client has asked for is aimed, or null (spec 172).
+   *
+   * Under the cast and over the input, which is the order `resolveFacing` reads
+   * them in on the server. It is here rather than left to the server for one
+   * reason: this client never adopts the server's facing after the first seed,
+   * so without it the local player would be the one person who cannot see their
+   * own body come round.
+   */
+  dropAim: Point | null = null,
 ): number {
-  const toward = cast
-    ? Math.atan2(cast.targetY - position.y, cast.targetX - position.x)
+  const aim = cast ? { x: cast.targetX, y: cast.targetY } : dropAim;
+  const toward = aim
+    ? headingToward(position, aim, facing)
     : Number.isFinite(wanted)
       ? wanted
       : facing;

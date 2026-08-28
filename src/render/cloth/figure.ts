@@ -91,6 +91,35 @@ export interface FigureMetrics {
    * shoved out against its own constraints forever (see the note above).
    */
   readonly drapeClearance: number;
+
+  // --- Stance -------------------------------------------------------------
+  //
+  // Two offsets, both defaulting to zero, and between them they are the whole
+  // difference between a body that stands on two legs and one that stands on
+  // four.
+  //
+  // Everything above places bones by *height*, which quietly says "upright":
+  // the shoulders are above the hips on the same vertical line, so the arms and
+  // the legs hang from the same axis. That is right for the robed figure and
+  // for the critters the player is drawn as, and it is the one thing an animal
+  // on all fours cannot be. A quadruped's forelegs are not above its hind legs,
+  // they are *in front of* them.
+  //
+  // Rather than a second skeleton, the two nodes that carry the front of the
+  // body get a forward offset. The bone count, the parenting, the limb lengths
+  // and -- the part that matters -- the gait are all untouched: the walk swings
+  // each limb about z, which is fore-and-aft on a horse exactly as it is on a
+  // person, and the arm/leg opposition it already produces is a quadruped's
+  // diagonal gait for free.
+
+  /**
+   * How far ahead of the pelvis the chest sits, and with it the shoulders and
+   * both forelegs. `0` (the default) is the upright figure this file was
+   * written for.
+   */
+  readonly chestForward?: number;
+  /** How far ahead of the chest the head sits. `0` is upright. */
+  readonly headForward?: number;
 }
 
 /**
@@ -143,8 +172,8 @@ export interface BoneRest {
 export function boneRestLayout(f: FigureMetrics): readonly BoneRest[] {
   return [
     { bone: BONE.pelvis, parent: -1, x: 0, y: f.hipY, z: 0 },
-    { bone: BONE.chest, parent: BONE.pelvis, x: 0, y: f.chestY - f.hipY, z: 0 },
-    { bone: BONE.head, parent: BONE.chest, x: 0, y: f.neckY - f.chestY, z: 0 },
+    { bone: BONE.chest, parent: BONE.pelvis, x: f.chestForward ?? 0, y: f.chestY - f.hipY, z: 0 },
+    { bone: BONE.head, parent: BONE.chest, x: f.headForward ?? 0, y: f.neckY - f.chestY, z: 0 },
     { bone: BONE.upperArmL, parent: BONE.chest, x: 0, y: f.shoulderY - f.chestY, z: -f.shoulderHalf },
     { bone: BONE.forearmL, parent: BONE.upperArmL, x: 0, y: -f.upperArmLen, z: 0 },
     { bone: BONE.upperArmR, parent: BONE.chest, x: 0, y: f.shoulderY - f.chestY, z: f.shoulderHalf },
