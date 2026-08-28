@@ -277,6 +277,26 @@ export function intoBodyFrame(frame: BodyFrame, world: Vec3): { right: number; u
   };
 }
 
+/**
+ * A body-frame direction back in world terms: the exact inverse of
+ * {@link intoBodyFrame}.
+ *
+ * The frame is orthonormal, so this is the same three dot products read the
+ * other way round -- and the negation on `right` has to be repeated here or a
+ * target stated in the body's axes lands mirrored, which on a stance is two
+ * legs crossed over rather than an obvious error.
+ */
+export function fromBodyFrame(
+  frame: BodyFrame,
+  place: { readonly right: number; readonly up: number; readonly forward: number },
+): Vec3 {
+  return [
+    -place.right * frame.lateral[0] + place.up * frame.up[0] + place.forward * frame.forward[0],
+    -place.right * frame.lateral[1] + place.up * frame.up[1] + place.forward * frame.forward[1],
+    -place.right * frame.lateral[2] + place.up * frame.up[2] + place.forward * frame.forward[2],
+  ];
+}
+
 /** The vocabulary this rig's bones are named in, from the bones themselves. */
 export function namingOf(nodes: readonly GlbReadNode[]): NamingSpec | 'unknown' {
   return detectNaming(nodes.map((node) => node.name));
