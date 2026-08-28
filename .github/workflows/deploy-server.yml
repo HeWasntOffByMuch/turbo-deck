@@ -50,9 +50,14 @@ jobs:
 
       # The gate before anything is published. CI runs this too, but CI is not a
       # dependency of this workflow and a red main must not become a deploy.
+      # 22 because `engines` says >=22.5 and spec 226 means it: `node:sqlite`
+      # ships with the runtime rather than being a dependency, so on 20 it is
+      # simply absent and every auth and persistence suite fails to import with
+      # `No such built-in module: node:sqlite`. Not a version to drift from
+      # ci.yml on -- this job exists to be the same gate.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -73,11 +78,11 @@ jobs:
         with:
           context: .
           push: true
-          # amd64 only, because the box is a Hetzner CX23 (Intel). Stated rather
-          # than left to the runner's default so the assumption is visible: an
-          # Arm box (CAX11 and the rest of that line) needs `linux/arm64` here,
-          # and without it the container dies with `exec format error`, which
-          # reads like a broken image rather than a wrong architecture.
+          # amd64 only, because the box is an x86 VPS. Stated rather than left
+          # to the runner's default so the assumption is visible: an Arm box
+          # needs `linux/arm64` here, and without it the container dies with
+          # `exec format error`, which reads like a broken image rather than a
+          # wrong architecture.
           platforms: linux/amd64
           # Both tags: `main` is what compose.yml defaults to, and the sha is
           # what a rollback names. An image that only had a moving tag would
