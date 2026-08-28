@@ -201,7 +201,7 @@
             { "kind": "spawner", "id": "spawner-10", "x": 91.058, "z": 454.575, "label": "sheep" },
             { "kind": "spawner", "id": "spawner-11", "x": 126.595, "z": 414.303, "label": "sheep" },
             { "kind": "spawner", "id": "spawner-12", "x": 248.141, "z": 445.396, "label": "sheep" },
-            { "kind": "spawner", "id": "npc-armourer", "x": 492.822, "z": 582.641, "label": "npc.armourer" }
+            { "kind": "spawner", "id": "npc-armourer", "x": 493, "z": 583, "label": "npc.armourer" }
           ]
         },
         {
@@ -268,8 +268,8 @@
           "markers": [
             { "kind": "spawner", "id": "spawner-6", "x": 280.545, "z": 575.523, "label": "ravager" },
             { "kind": "spawner", "id": "spawner-7", "x": 261.921, "z": 502.837, "label": "ravager" },
-            { "kind": "spawner", "id": "npc-merchant", "x": 539.867, "z": 117.992, "label": "npc.merchant" },
-            { "kind": "spawner", "id": "npc-quartermaster", "x": 608.321, "z": 259.985, "label": "npc.quartermaster" }
+            { "kind": "spawner", "id": "npc-merchant", "x": 536, "z": 68, "label": "npc.merchant" },
+            { "kind": "spawner", "id": "npc-quartermaster", "x": 608, "z": 260, "label": "npc.quartermaster" }
           ]
         },
         {

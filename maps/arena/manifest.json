@@ -3807,8 +3807,8 @@
         {
           "id": "npc-armourer",
           "monsterId": "npc.armourer",
-          "x": 740.822,
-          "z": 214.64099999999996
+          "x": 741,
+          "z": 215
         },
         {
           "id": "spawner-6",
@@ -3825,14 +3825,14 @@
         {
           "id": "npc-merchant",
           "monsterId": "npc.merchant",
-          "x": 171.86699999999996,
-          "z": 365.992
+          "x": 168,
+          "z": 316
         },
         {
           "id": "npc-quartermaster",
           "monsterId": "npc.quartermaster",
-          "x": 240.32100000000003,
-          "z": 507.985
+          "x": 240,
+          "z": 508
         }
       ],
       "regions": [
@@ -4373,7 +4373,7 @@
         {
           "rx": 1,
           "rz": 1,
-          "hash": "6ef0769d",
+          "hash": "eac16fd1",
           "cells": 3136
         },
         {
@@ -4835,5 +4835,5 @@
       ]
     }
   ],
-  "mapId": "81f3846f"
+  "mapId": "aa45d4e5"
 }
