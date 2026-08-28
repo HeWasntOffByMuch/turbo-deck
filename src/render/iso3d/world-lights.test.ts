@@ -5,17 +5,17 @@ import type { LightRequest } from './light-residency.js';
 import { WorldLights, WORLD_LIGHT_DEFAULTS } from './world-lights.js';
 
 /**
- * Spec 250. Everything here is about the two costs the pool exists to avoid,
- * and both are invisible in a screenshot: a light count that changes recompiles
- * every material in the scene, and a shadow map rebuilt per frame re-renders the
- * world six times.
+ * Spec 250. Everything here is about the cost the pool exists to avoid, and it
+ * is invisible in a screenshot: a light count that changes recompiles every
+ * material in the scene, and `castShadow` is in that same program key -- so the
+ * count is fixed, and no slot casts, ever.
  */
 
 const OPTIONS = { ...WORLD_LIGHT_DEFAULTS, activateRadius: 1000, releaseRadius: 1400 };
 const ORIGIN = { x: 0, z: 0 };
 
-function light(key: string, x: number, shadow = false): LightRequest {
-  return { key, x, y: 30, z: 0, color: 0xffcc88, brightness: 2, radius: 400, shadow, revision: 0 };
+function light(key: string, x: number): LightRequest {
+  return { key, x, y: 30, z: 0, color: 0xffcc88, brightness: 2, radius: 400 };
 }
 
 function pointLightsIn(scene: THREE.Scene): THREE.PointLight[] {
@@ -50,9 +50,9 @@ describe('the world light pool (spec 250)', () => {
     sample();
     pool.update([], ORIGIN);
     sample();
-    pool.update([light('a', 10, true), light('b', 20), light('c', 30)], ORIGIN);
+    pool.update([light('a', 10), light('b', 20), light('c', 30)], ORIGIN);
     sample();
-    pool.update([light('a', 5000, true)], ORIGIN);
+    pool.update([light('a', 5000)], ORIGIN);
     sample();
     pool.update([], ORIGIN);
     sample();
@@ -60,20 +60,25 @@ describe('the world light pool (spec 250)', () => {
     expect([...hidden]).toEqual([true]);
   });
 
-  it('never changes which slots cast, whatever is assigned', () => {
+  /**
+   * Nothing casts (spec 250), and that is asserted rather than assumed: a slot
+   * that started casting would be six passes over the scene every frame for a
+   * light that moves whenever the pool changes hands, and nothing else in this
+   * file would notice.
+   */
+  it('never casts a shadow from any slot, whatever is assigned', () => {
     const { scene, pool } = fresh();
     const casting = (): boolean[] => pointLightsIn(scene).map((one) => one.castShadow);
-    const before = casting();
-    expect(before.filter(Boolean)).toHaveLength(OPTIONS.shadowSlots);
-    pool.update([light('fire', 10, true), light('orb', 20)], ORIGIN);
-    expect(casting()).toEqual(before);
+    expect(casting().some(Boolean)).toBe(false);
+    pool.update([light('fire', 10), light('orb', 20)], ORIGIN);
+    expect(casting().some(Boolean)).toBe(false);
     pool.update([], ORIGIN);
-    expect(casting()).toEqual(before);
+    expect(casting().some(Boolean)).toBe(false);
   });
 
   it('writes the request onto the slot it assigned', () => {
     const { scene, pool } = fresh();
-    pool.update([light('fire', 120, true)], { x: 100, z: 0 });
+    pool.update([light('fire', 120)], { x: 100, z: 0 });
     const lit = pointLightsIn(scene)[0];
     expect(lit?.position.x).toBe(120);
     expect(lit?.distance).toBe(400);
@@ -83,107 +88,12 @@ describe('the world light pool (spec 250)', () => {
 
   it('parks a slot at nothing rather than taking it off the scene', () => {
     const { scene, pool } = fresh();
-    pool.update([light('fire', 10, true)], ORIGIN);
+    pool.update([light('fire', 10)], ORIGIN);
     pool.update([], ORIGIN);
     const parked = pointLightsIn(scene)[0];
     expect(parked?.intensity).toBe(0);
     expect(parked?.visible).toBe(true);
     expect(pool.heldKeys()[0]).toBeNull();
-  });
-
-  /**
-   * The bake is the expensive thing in the system, so this is the assertion the
-   * whole design is for: it happens once when a slot changes hands, and not
-   * again while nothing has changed.
-   */
-  it('bakes a shadow map once per assignment and not again', () => {
-    const { pool } = fresh();
-    const fire = light('fire', 10, true);
-    pool.update([fire], ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(true);
-    for (let frame = 0; frame < 10; frame++) {
-      pool.update([fire], ORIGIN);
-      expect(pool.bakingThisFrame()).toBe(false);
-    }
-  });
-
-  it('bakes again when the ground under a light has changed', () => {
-    const { pool } = fresh();
-    pool.update([light('fire', 10, true)], ORIGIN);
-    pool.update([light('fire', 10, true)], ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(false);
-    // The map's churn counter moved: a chunk arrived, or was let go, so what was
-    // baked is a picture of ground that is no longer what is there.
-    pool.update([{ ...light('fire', 10, true), revision: 1 }], ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(true);
-  });
-
-  it('bakes at most one map a frame', () => {
-    const { pool } = fresh();
-    const village = [light('f1', 10, true), light('f2', 20, true)];
-    pool.update(village, ORIGIN);
-    expect(pool.heldKeys().filter((key) => key !== null)).toHaveLength(2);
-    // Both were assigned, and only one of them was baked.
-    expect(pool.bakingThisFrame()).toBe(true);
-    pool.update(village, ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(true);
-    pool.update(village, ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(false);
-  });
-
-  /**
-   * The bug the one-bake-a-frame rule creates if the debt is not written down.
-   *
-   * Slot 0's ground moves and slot 1 takes a different fixture on the *same*
-   * frame. Slot 0 bakes, slot 1 is passed over -- and if "does this slot need a
-   * bake" is re-derived next frame it comes back **no**, because the key is
-   * already written and the revision has not moved. Slot 1 then lights its new
-   * fixture with the old one's shadows, frozen, for as long as it holds the
-   * slot.
-   */
-  it('remembers a bake it deferred, and takes it on a later frame', () => {
-    const { pool } = fresh();
-    const first = [light('f1', 10, true), light('f2', 20, true)];
-    // Settle both: two frames of baking, then quiet.
-    for (let i = 0; i < 4; i++) pool.update(first, ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(false);
-
-    // The ground under f1 moves, and at the same instant f2's slot changes hands.
-    const moved = [{ ...light('f1', 10, true), revision: 1 }, light('f3', 25, true)];
-    pool.update(moved, ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(true);
-    // The deferred one, on the next frame, with nothing else having changed.
-    pool.update(moved, ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(true);
-    // And then quiet again.
-    pool.update(moved, ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(false);
-    expect(pool.heldKeys().filter((key) => key !== null)).toEqual(['f1', 'f3']);
-  });
-
-  it('never bakes for a light that does not cast', () => {
-    const { pool } = fresh();
-    pool.update([light('orb', 10), light('orb2', 20)], ORIGIN);
-    expect(pool.bakingThisFrame()).toBe(false);
-    expect(pool.heldKeys().filter((key) => key !== null)).toHaveLength(2);
-  });
-
-  /**
-   * The property the hysteresis buys, seen from the other end: a body pacing
-   * across the midpoint of two fixtures must not re-bake a cube map every step.
-   */
-  it('bakes nothing while a walk crosses the boundary between two fixtures', () => {
-    const { pool } = fresh();
-    const pair = [light('left', -300, true), light('right', 300, true)];
-    pool.update(pair, ORIGIN);
-    pool.update(pair, ORIGIN);
-    pool.update(pair, ORIGIN);
-    let bakes = 0;
-    for (let step = 0; step < 60; step++) {
-      pool.update(pair, { x: Math.sin(step) * 60, z: 0 });
-      if (pool.bakingThisFrame()) bakes++;
-    }
-    expect(bakes).toBe(0);
   });
 
   it('takes its lights off the scene when it is disposed', () => {

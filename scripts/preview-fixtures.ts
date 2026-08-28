@@ -482,7 +482,6 @@ for (const kind of FIXTURE_KINDS) {
       `  reach ${String(lit.radius).padStart(4)}` +
       `  flame at ${String(lit.height).padStart(3)}` +
       `  blocks ${footprintRadius(fixture(kind, 0, 0)).toFixed(0)}` +
-      `  ${lit.shadow ? 'casts    ' : 'no shadow'}` +
       `  ground ${at.join(' ')}`,
   );
 }

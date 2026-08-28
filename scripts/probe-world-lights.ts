@@ -7,7 +7,7 @@
  * resolves to (`terrain/fixture-light.test.ts`), that a region carries its
  * lights and drops them with the ground (`prop-instances.test.ts`), the
  * residency's whole hysteresis (`light-residency.test.ts`), and the pool's fixed
- * count and one-bake-per-assignment rule (`world-lights.test.ts`). None of that
+ * count (`world-lights.test.ts`). None of that
  * can say whether any of it is **connected to anything**, and this repo has been
  * bitten by exactly that: spec 121 built the aura path and left it with no
  * caller for a hundred specs, and spec 176 found every rule about saving a
@@ -85,8 +85,8 @@ const DRAW_SAMPLES = 8;
  *
  * Generous on purpose: the count moves with what is on screen -- a monster
  * wandering into frame is a handful of calls -- and what this is looking for is
- * nothing like that size. One cube face of this scene is over a hundred draws
- * and a rebuilt map is six of them, every frame.
+ * nothing like that size. One cube face of this scene is over a hundred draws,
+ * and a slot that cast would draw six of them every frame.
  */
 const DRAW_SPREAD = 60;
 
@@ -132,7 +132,8 @@ async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promi
  * reason, right up until the line above it changed.
  *
  * It is a **per frame** total rather than per `render` call, which is what makes
- * it able to see a shadow pass at all (`renderer.info.autoReset = false`).
+ * it able to see a shadow pass at all (`renderer.info.autoReset = false`) --
+ * which is the point, since what it is checking is that there is not one.
  */
 async function drawCalls(page: Page): Promise<number> {
   return page.evaluate(() => {
@@ -286,17 +287,17 @@ async function main(): Promise<void> {
     // The half of "does not sag performance" that can be seen from outside
     // (spec 250).
     //
-    // A shadow-casting point light is six cube faces of the *whole scene*, and
-    // the entire design is that a fixture's are drawn once and then never again.
-    // If they were rebuilding, the draw count would carry that every frame --
-    // the constructor's own comment measured 1040 of 2673 calls going into
-    // shadow maps when this frame drew them twice.
+    // Lighting a village has to cost **nothing per frame**: the pool is fixed,
+    // so its program is constant, and no slot casts, so no slot adds a pass over
+    // the scene. Standing in the square with four fixtures lit therefore has to
+    // draw exactly what standing there unlit would.
     //
     // So this samples the count over a run of frames and asserts it **settles**.
     // The spread rather than the absolute number, because the absolute number is
-    // a fact about how much world happens to be on screen; a per-frame cube
-    // rebuild is a large, permanent addition to it, and one bake is a single
-    // spike that does not come back.
+    // a fact about how much world happens to be on screen. What it catches is a
+    // slot that started casting again -- a shadow-casting point light is six
+    // cube faces of the *whole* scene, over a hundred draws each here, which is
+    // an addition on every frame that no amount of on-screen churn looks like.
     const draws: number[] = [];
     for (let i = 0; i < DRAW_SAMPLES; i++) {
       draws.push(await drawCalls(page));
@@ -309,8 +310,8 @@ async function main(): Promise<void> {
     check(
       high - low <= DRAW_SPREAD,
       `the count is settled: ${String(high - low)} between the highest and lowest, ` +
-        `against ${String(DRAW_SPREAD)} allowed (a cube map being rebuilt every frame is six ` +
-        `passes over the scene, which this cannot hide)`,
+        `against ${String(DRAW_SPREAD)} allowed (a slot that cast would add six passes over ` +
+        `the scene every frame, which this cannot hide)`,
     );
 
     await page.screenshot({ path: join(outDir, 'world-lights.png') });

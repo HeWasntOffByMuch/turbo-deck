@@ -73,11 +73,11 @@ describe('what a fixture burns at (spec 250)', () => {
     const lit = fixtureLight(prop('campfire', { light: { brightness: 0.5, radius: 200 } }));
     expect(lit?.brightness).toBe(0.5);
     expect(lit?.radius).toBe(200);
-    // The colour, the height and whether it casts are the kind's, not the
-    // instance's: two of the three are geometry and the third is a budget.
+    // The colour and the height are the kind's, not the instance's: a campfire
+    // is fire-coloured and its flame is where its flame is, and neither is a
+    // thing a level designer is deciding when they put one somewhere.
     expect(lit?.color).toBe(FIXTURE_LIGHTS.campfire.color);
     expect(lit?.height).toBe(FIXTURE_LIGHTS.campfire.height);
-    expect(lit?.shadow).toBe(FIXTURE_LIGHTS.campfire.shadow);
   });
 
   /**

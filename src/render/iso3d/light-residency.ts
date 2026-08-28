@@ -13,8 +13,8 @@
  * ## Hysteresis is the whole of it
  *
  * A slot assignment that flipped between two fixtures at the same distance would
- * re-bake a shadow cube map every frame -- the single most expensive thing in
- * this system, driven by the cheapest possible indecision. So a request is
+ * pop a light on and off every frame -- the most visible thing in this system,
+ * driven by the cheapest possible indecision. So a request is
  * *claimed* within {@link LightLimits.activateRadius} and *kept* until past
  * `releaseRadius`, and a slot is only taken off a light already in it by a
  * candidate nearer by more than `swapMargin`.
@@ -24,18 +24,14 @@
  * derived from a request radius so a chunk between them is held and unasked;
  * here, a light between the two radii is lit and not competed for.
  *
- * ## Why two sub-pools rather than one
+ * ## Why every slot is the same
  *
- * A pool light either casts shadows or it does not, for the life of the scene:
- * `castShadow` is part of three's program key, so a light that sometimes cast
- * would recompile every material in the world the moment somebody walked past a
- * campfire. So the pool has a shadow-casting prefix, and a light that wants no
- * shadow may never sit in it -- a shadowless light in a casting slot would still
- * sample whatever was last baked into that slot's cube map, which is somebody
- * else's shadows, frozen.
- *
- * A fixture that wants a shadow and cannot get a casting slot falls back to a
- * plain one: lit with no shadow is much closer to right than not lit at all.
+ * There was a shadow-casting prefix here, and two sub-pools to keep a
+ * shadowless light out of it: `castShadow` is part of three's program key, so a
+ * slot cannot change its mind about casting, and a light dropped into a casting
+ * slot would have sampled whatever was last baked into that slot's cube map.
+ * Nothing casts now -- see `world-lights.ts` for why -- so a slot is a slot and
+ * the whole split went with it.
  */
 
 export interface LightRequest {
@@ -43,8 +39,9 @@ export interface LightRequest {
    * Stable for as long as this is the same light in the same place.
    *
    * What the whole of the hysteresis is keyed on, so a key that changed every
-   * time a region was recomposed would re-bake a shadow map on every stream
-   * event -- which is exactly the cost this module exists to avoid paying.
+   * time a region was recomposed would reassign every slot near the player on
+   * every stream event -- which is exactly the flicker this module exists to
+   * prevent.
    */
   readonly key: string;
   readonly x: number;
@@ -53,20 +50,9 @@ export interface LightRequest {
   readonly color: number;
   readonly brightness: number;
   readonly radius: number;
-  /** Whether this light wants a slot that casts. */
-  readonly shadow: boolean;
-  /**
-   * Bumped when the world under this light has changed since it was baked.
-   *
-   * Not read here -- assignment does not care -- but carried on the request so
-   * that the one place holding a light's identity holds all of it.
-   */
-  readonly revision: number;
 }
 
 export interface LightLimits {
-  /** How many of the pool's slots cast shadows. The pool's prefix. */
-  readonly shadowSlots: number;
   /** Total slots. */
   readonly slots: number;
   /** Nothing further than this is ever claimed. */
@@ -106,7 +92,7 @@ function byDistanceThenKey(
 }
 
 /**
- * Fill one sub-pool, and answer which requests it could not take.
+ * Fill the pool.
  *
  * Three passes, in this order, and the order is the hysteresis:
  *
@@ -115,8 +101,8 @@ function byDistanceThenKey(
  *  2. **Fill** free slots from the nearest candidates inside the activate
  *     radius.
  *  3. **Swap** only where a candidate is nearer than the worst held light by
- *     more than the margin -- which is the pass that can cost a bake, so it is
- *     the one with a threshold on it.
+ *     more than the margin -- which is the only pass that can put a light out,
+ *     so it is the one with a threshold on it.
  */
 function fillPool(
   slotIndices: readonly number[],
@@ -125,7 +111,7 @@ function fillPool(
   focus: LightFocus,
   limits: LightLimits,
   out: (string | null)[],
-): readonly LightRequest[] {
+): void {
   const ranked = candidates
     .map((request) => ({ d: distanceTo(focus, request), request }))
     .sort(byDistanceThenKey);
@@ -163,7 +149,7 @@ function fillPool(
   }
 
   // Whoever is left wants a slot somebody else has. Take the furthest held one
-  // first, and only where the gap is worth a re-bake.
+  // first, and only where the gap is worth putting a light out for.
   for (; next < waiting.length; next++) {
     const one = waiting[next];
     if (!one) break;
@@ -180,8 +166,6 @@ function fillPool(
     if (!worst || one.d >= worst.d - limits.swapMargin) break;
     out[worst.slot] = one.request.key;
   }
-
-  return waiting.slice(next).map((one) => one.request);
 }
 
 /**
@@ -190,8 +174,8 @@ function fillPool(
  * A pure function of its arguments: the same requests, the same held array and
  * the same focus give the same answer, whatever order the requests arrive in.
  * That is asserted rather than assumed, because a residency that depended on
- * arrival order would be a shadow bake that depended on which region the worker
- * happened to finish first.
+ * arrival order would be a village that lit itself differently depending on
+ * which region the worker happened to finish first.
  *
  * `held` is read positionally and may be shorter than the pool; a slot it says
  * nothing about is treated as empty.
@@ -203,19 +187,7 @@ export function assignLights(
   limits: LightLimits,
 ): readonly (string | null)[] {
   const out: (string | null)[] = Array.from({ length: limits.slots }, () => null);
-  const shadowSlots: number[] = [];
-  const plainSlots: number[] = [];
-  for (let slot = 0; slot < limits.slots; slot++) {
-    if (slot < limits.shadowSlots) shadowSlots.push(slot);
-    else plainSlots.push(slot);
-  }
-
-  // The casting prefix first, so a fixture that wants shadows gets first refusal
-  // on the slots that can give it one -- and falls through to a plain slot with
-  // everything else if it does not.
-  const wantsShadow = requests.filter((request) => request.shadow);
-  const spilled = fillPool(shadowSlots, wantsShadow, held, focus, limits, out);
-  const plain = [...requests.filter((request) => !request.shadow), ...spilled];
-  fillPool(plainSlots, plain, held, focus, limits, out);
+  const slots = Array.from({ length: limits.slots }, (_unused, slot) => slot);
+  fillPool(slots, requests, held, focus, limits, out);
   return out;
 }

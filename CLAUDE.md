@@ -411,25 +411,24 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  press-to-place tool for the buildings' reason: a lamp is not
                  *painted*, it goes in one spot somebody chose.
                  What a fixture adds is two numbers, and they are optional.
-                 `FIXTURE_LIGHTS` authors a colour, a brightness, a reach, the
-                 height the flame sits at and whether the kind is worth a baked
-                 shadow map; `Prop.light` overrides only the two a level designer
-                 sets. **Absent is the row**, which is what makes placing forty
-                 of them and then deciding they are all too dim one edit here
-                 rather than forty in a map document -- and what keeps the whole
-                 feature a change nobody's map noticed, since a fixture at its
-                 defaults writes no key, so no committed region file's bytes
-                 moved and no `mapId` did.
-                 **All three cast shadows**, and that is affordable only
-                 because of what `world-lights.ts` does with the map: it is
-                 rendered on the frame the light is assigned a slot and never
-                 again, so a casting fixture costs one cube lookup per lit
-                 fragment and no draw calls after that. The first cut had the
-                 lamp and the torch dark on a budget argument that is true of a
-                 *live* shadow map and false of a frozen one -- and it cost the
-                 two whose shadows say the most, since a light three
-                 body-heights up is the one that throws a figure's shadow out
-                 across the ground rather than under its own feet.
+                 `FIXTURE_LIGHTS` authors a colour, a brightness, a reach and the
+                 height the flame sits at; `Prop.light` overrides only the two a
+                 level designer sets. **Absent is the row**, which is what makes
+                 placing forty of them and then deciding they are all too dim one
+                 edit here rather than forty in a map document -- and what keeps
+                 the whole feature a change nobody's map noticed, since a fixture
+                 at its defaults writes no key, so no committed region file's
+                 bytes moved and no `mapId` did.
+                 **Nothing here casts a shadow**, and that is a decision about
+                 how it looks rather than about what it costs. Spec 250 built
+                 bake-once cube maps and measured them free -- rendered on the
+                 frame a light takes a slot and never again, one lookup per lit
+                 fragment and no draw calls after that -- and then took them out
+                 anyway: a point light a body's height off the ground throws
+                 every trunk, post and body near it outward in a hard radial fan,
+                 and four fixtures round a square throw four of those across each
+                 other. It reads as broken lighting rather than as evening in a
+                 village, and being free does not make it look better.
                  A campfire's **fire is paint rather than geometry** (spec 250):
                  the prop is a ring of stones, four charred logs and a bed of
                  embers, and `fire_camp` in `vfx/brush.ts` is played at the
@@ -4815,9 +4814,12 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  has the whole say and one who has gets exactly what spec 047
                  tuned, down to the shadow switches. A **carried** torch casts no
                  shadow, and that is a decision rather than a default: a
-                 shadow-casting point light is six cube faces a frame and this
-                 one moves every frame, so it is the one light in the game that
-                 could never be baked the way `world-lights.ts` bakes a fixture.
+                 shadow-casting point light is six cube faces of the whole scene
+                 every frame, and this one moves every frame, so there is no
+                 version of it that could be paid for once. Nothing in the world
+                 casts either since spec 250's follow-up, but for a different
+                 reason -- a fixture's could have been frozen and was, and it was
+                 taken out for how it looked.
                  What separates the two carried lights is what the wire carries.
                  A torch is **equipment**, replicated for its owner only (spec
                  165's reason for drawing one body's weapon), so nobody else sees
@@ -5870,61 +5872,48 @@ src/render/iso3d/vfx/brush.ts's brushFire  a fire that stands somewhere and keep
                  is art direction, so it lives beside the art rather than in the
                  map format.
 src/render/iso3d/light-residency.ts, world-lights.ts  the lights standing in the
-                 world, and the shadow maps they build **once** (spec 250).
-                 The pair `player-lights.ts` and `player-lighting.ts` already
+                 world (spec 250). The pair `player-lights.ts` and
+                 `player-lighting.ts` already
                  are: a decision that is arithmetic, and the three.js that acts
                  on it. Spec 047 built a torch and a magic orb, spec 118 built
                  the shader patch that lights a body from a carried flame as
                  though it were farther away, and for a hundred and thirty specs
                  the only caller of any of it was a **checkbox in the tuning
                  panel**. Nothing in the world emitted light at all.
-                 Two costs decide the whole design, and they are different costs
-                 with different fixes.
-                 **A varying number of lights recompiles every material in the
-                 scene.** three collects lights in `projectObject`, which returns
+                 What makes a village affordable is one sentence: **nothing here
+                 casts a shadow, and the number of lights never changes.**
+                 three collects lights in `projectObject`, which returns
                  early on `object.visible === false`, and the count is part of
                  the program key -- so "add a `PointLight` per fixture in range"
                  is a *hitch* every time somebody walks past a campfire rather
-                 than a slowdown. The pool is therefore fixed: allocated at
-                 construction, never grown, never hidden, an idle slot sitting at
-                 intensity 0 with a small reach. `castShadow` is in that key too,
-                 so the casting slots are a fixed **prefix** and never a flag
-                 toggled per assignment -- which is why `light-residency.ts` has
-                 two sub-pools rather than a boolean on a request. Four of the
-                 six slots cast, and the split is decided by two different things
-                 rather than by one budget: the casting four are cheap *because*
-                 their maps are frozen, so the question stops being "how many can
-                 we draw" and becomes "how many samplers can the shader have";
-                 the plain two exist because a conjured light must never cast,
-                 since it moves every frame and a casting slot would either draw
-                 six faces a frame for it or hand it somebody else's frozen
-                 shadows.
-                 **A shadow-casting point light re-renders the scene into six
-                 cube faces every frame.** three already exposes the fix and this
-                 scene has driven shadows by hand since spec 045: `autoUpdate`
-                 off on the light's own shadow, `needsUpdate` set exactly once,
-                 on the frame the slot changes hands. three renders the map on
-                 the next shadow pass and clears the flag itself; after that the
-                 light costs one cube lookup per fragment and no draw calls,
-                 forever.
-                 Three obligations come with freezing a map and each is a bug the
-                 moment it is skipped. **Nothing that moves may be in one** -- a
-                 body baked into a cube map is a silhouette painted on the ground
-                 that stays there after the body walks off -- so a bake frame
-                 masks the bodies out with the `customDistanceMaterial` stand-in
-                 `player-lighting.ts` already uses for the player, and the panel
-                 torch loses body shadows for that one frame, which is one frame
-                 of a debug light. **The ground can arrive after the light**,
-                 since terrain streams, so a bake is stamped with the map's
-                 `revision` -- spec 208's churn counter -- and re-taken when it
-                 moves, which in a settled world is never. And it is
-                 **amortised**: one bake a frame, so walking into a village is
-                 three frames carrying one cube render rather than one frame
-                 carrying three.
+                 than a slowdown. `castShadow` is in that same key. So the pool
+                 is fixed: allocated at construction, never grown, never hidden,
+                 `castShadow = false` written once and never touched, an idle
+                 slot sitting at intensity 0 with a small reach. That is the
+                 whole cost -- a lit square adds no draw calls at all, which is
+                 what `probe-world-lights.ts` measures by sampling the frame's
+                 count across it.
+                 It **did** cast, briefly, and the round trip is worth knowing
+                 because the argument that lost was right about the cost. A
+                 fixture's cube map was rendered on the frame the light took a
+                 slot and never again (`shadow.autoUpdate` off, `needsUpdate`
+                 set once), which is a `samplerCube` and one lookup per lit
+                 fragment and nothing per frame -- measured flat with four of
+                 them lit. It is gone for how it *looked*: a point light a body's
+                 height off the ground throws every trunk, post and body near it
+                 outward in a hard radial fan, and four fixtures round a square
+                 throw four of those across each other. What went with it -- the
+                 casting prefix, the cube setup, the one-bake-a-frame queue, the
+                 `revision` stamp that re-took a map when its ground streamed in
+                 late, and the mask that kept moving bodies out of a frozen one
+                 -- was **deleted rather than left switched off**, because a
+                 socket with nothing plugged into it is what this repo keeps
+                 rediscovering a hundred specs later. Putting it back is one
+                 revert.
                  `light-residency.ts` is which fixtures get slots, and
                  **hysteresis is the whole of it**: a slot that flipped between
-                 two fixtures at equal distance would re-bake a cube map every
-                 frame -- the most expensive thing in the system, driven by the
+                 two fixtures at equal distance would pop a light on and off
+                 every frame, the most visible thing in the system driven by the
                  cheapest possible indecision. A request is claimed inside
                  `activateRadius` and kept until past `releaseRadius`, and a slot
                  is only taken from a light already in it by a candidate nearer
@@ -5936,10 +5925,11 @@ src/render/iso3d/light-residency.ts, world-lights.ts  the lights standing in the
                  sentence -- **the panel wins where it is asking for something,
                  and the game decides where it is not** -- so every switch spec
                  047 tuned still does exactly what it did, and a player who has
-                 never opened the panel gets a torch by carrying one. A carried
-                 torch casts **no** shadow, and that is not a shortcut: it moves
-                 every frame, so it is the one light in the game that could never
-                 be baked.
+                 never opened the panel gets a torch by carrying one. Nothing
+                 the player carries casts either, which was true before the
+                 fixtures stopped casting and for a reason of its own: a carried
+                 light moves every frame, so there was never a version of it that
+                 could have been baked.
                  The thing that could not be found in Node, and was not: three
                  **unrolls** the point-light loop, so `player-lighting.ts`'s two
                  injected declarations are emitted once per light *at the same

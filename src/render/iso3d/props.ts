@@ -2477,15 +2477,16 @@ export interface RegionLight {
    * Stable across a rebuild of the same region from the same document.
    *
    * The pool's residency is keyed on this, and a key that changed every time a
-   * region was recomposed would re-bake a shadow map on every stream event.
-   * Position and index, so two fixtures on one spot are still two keys.
+   * region was recomposed would reassign every slot near the player on every
+   * stream event. Position and index, so two fixtures on one spot are still two
+   * keys.
    */
   readonly key: string;
   /**
    * Which fixture this is (spec 250).
    *
-   * Nothing about the *light* reads it -- the pool is handed a colour, a reach
-   * and whether to cast, and could not care less what shape it is coming out of.
+   * Nothing about the *light* reads it -- the pool is handed a colour and a
+   * reach, and could not care less what shape it is coming out of.
    * It is here because a fixture's **paint** is decided by kind: a campfire has
    * a fire in it and a lamp post does not, and the one list of "the fixtures on
    * ground this client is drawing" is the thing both questions want an answer
@@ -2511,8 +2512,6 @@ export interface RegionLight {
   readonly color: number;
   readonly brightness: number;
   readonly radius: number;
-  /** Whether this one is worth a baked cube map. */
-  readonly shadow: boolean;
   /**
    * The ground the fixture blocks, in world units (spec 250).
    *
@@ -2734,7 +2733,7 @@ export function buildRegionInstances(
  *
  * Walks the bucket in its own order and indexes into it, so a key names the same
  * fixture on every rebuild of the same document -- which is what stops a stream
- * event from re-baking every shadow map near the player.
+ * event from reassigning every slot near the player.
  */
 function composeLights(
   bucket: readonly Prop[],
@@ -2759,7 +2758,6 @@ function composeLights(
       // out to twice the size is twice the fire, and a reach that stayed put
       // would make the big one look like a picture of a fire rather than one.
       radius: light.radius * scale,
-      shadow: light.shadow,
       /** What the prop was placed at, so its paint is the size the prop is. */
       footprint: footprintRadius(prop),
     });

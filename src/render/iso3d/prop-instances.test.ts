@@ -345,7 +345,6 @@ describe('the lights a region carries', () => {
     const composed = buildRegionInstances(props, flat);
     expect(composed.lights).toHaveLength(1);
     expect(composed.lights[0]?.color).toBe(FIXTURE_LIGHTS.campfire.color);
-    expect(composed.lights[0]?.shadow).toBe(FIXTURE_LIGHTS.campfire.shadow);
   });
 
   it("puts the light where the flame is: the ground, plus the row's height", () => {

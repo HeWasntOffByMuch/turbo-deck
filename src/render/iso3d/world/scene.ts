@@ -572,17 +572,6 @@ export class WorldScene {
    * `player-lighting.ts` measures at arm's length.
    */
   private readonly conjuredLights: LightRequest[] = [];
-  /**
-   * Bodies taken out of point-light shadow maps for one frame, so a fixture's
-   * baked map holds nothing that moves (spec 250).
-   *
-   * Held rather than re-traversed, because the restore has to reach exactly the
-   * meshes the mask reached -- `player-lighting.ts` owns the local player's own
-   * `customDistanceMaterial`, and clearing one it set would leave the player
-   * casting into every torch for the rest of the session.
-   */
-  private readonly bakeMasked = new Set<THREE.Mesh>();
-  private readonly noBakeShadow = new THREE.MeshDistanceMaterial();
   /** Scratch for the body anchor, so a frame of lit walking allocates nothing. */
   private readonly lightAnchor = new THREE.Vector3();
   private readonly unwalkable = new THREE.Group();
@@ -843,13 +832,6 @@ export class WorldScene {
     // field initialiser because it adds its lights to `this.scene`, and the
     // order fields are initialised in is not something to depend on.
     //
-    // The stand-in that keeps a body out of a *point* light's shadow map is
-    // `player-lighting.ts`'s, in as many words: it writes neither colour nor
-    // depth, and the shadow pass overwrites `visible`, `side` and the alpha
-    // fields on whatever it is handed, so those two are the only state it can
-    // rely on.
-    this.noBakeShadow.colorWrite = false;
-    this.noBakeShadow.depthWrite = false;
     this.worldLights = new WorldLights(this.scene);
     this.vfx = new VfxLayer({
       hooks: {
@@ -1690,7 +1672,7 @@ export class WorldScene {
       conjured: hasConjuredLight(this.selfStatuses(view), frame.tick),
     });
     // After the body loop, which is where the conjured lights on other people's
-    // bodies were gathered, and before the draw that bakes a shadow map.
+    // bodies were gathered.
     this.applyWorldLights();
     this.camera.lookAt(this.target);
 
@@ -1781,13 +1763,7 @@ export class WorldScene {
       // three clears the flag itself once the maps are drawn, which is what
       // keeps the mask pass inside `retro.render` from rebuilding them again.
       this.renderer.shadowMap.needsUpdate = true;
-      // A fixture's map is baked once and then frozen (spec 250), so nothing
-      // that moves may be in it. True only on the frame a bake actually
-      // happens, because three clears its own flag once the map is drawn.
-      const baking = this.worldLights?.bakingThisFrame() ?? false;
-      if (baking) this.maskBodiesForBake(view.selfEntityId);
       this.retro.render(this.renderer, this.scene, this.camera);
-      if (baking) this.unmaskBodiesAfterBake();
       // Over the finished frame, which is where a line belongs: the fills are
       // settled, so the outline is a constant dark value rather than something
       // the quantizer gets to round.
@@ -1863,7 +1839,6 @@ export class WorldScene {
     // against, so the stop is made here.
     this.fires.forgetAll();
     this.worldLights?.dispose();
-    this.noBakeShadow.dispose();
     this.buffers?.dispose();
     this.edges?.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
@@ -2175,13 +2150,6 @@ export class WorldScene {
             color: MAGIC_COLOR,
             brightness: MAGIC_DEFAULTS.brightness * orbit.intensity,
             radius: MAGIC_DEFAULTS.range,
-            // Never. A conjured light is the one that casts none, which is what
-            // spec 047 says separates it from a lantern -- so this can never
-            // reach the pool's casting prefix and can never cost a bake.
-            shadow: false,
-            // A light that moves every frame has nothing to bake, so there is
-            // nothing for a revision to invalidate.
-            revision: 0,
           });
         }
         this.auras.step(
@@ -3426,12 +3394,7 @@ export class WorldScene {
     const pool = this.worldLights;
     if (!pool) return;
     this.lightRequests.length = 0;
-    // The map's churn counter (spec 208): one up per chunk inserted *and* one
-    // per chunk let go, so it only ever grows. A fixture's baked shadow map is
-    // stamped with it, and a bake taken over ground that had not arrived yet is
-    // re-taken when it does. In a settled world this number never moves.
-    const revision = this.map?.revision ?? 0;
-    for (const light of fixtures) this.lightRequests.push({ ...light, revision });
+    for (const light of fixtures) this.lightRequests.push(light);
     for (const light of this.conjuredLights) this.lightRequests.push(light);
     // The point the camera is framing rather than where the camera is: it parks
     // a constant 6,000 units back, so its own position says nothing about which
@@ -3439,45 +3402,6 @@ export class WorldScene {
     pool.update(this.lightRequests, { x: this.target.x, z: this.target.z });
   }
 
-  /**
-   * Keep everything that moves out of a fixture's shadow map, for the one frame
-   * it is being baked on (spec 250).
-   *
-   * A baked map is a picture of the world taken once, so a body in it is a
-   * silhouette painted on the ground that stays there after the body has walked
-   * off. The mask is `player-lighting.ts`'s stand-in and the mechanism is that
-   * file's, one step wider: `getDepthMaterial` reads `customDistanceMaterial`
-   * for a **point** light only, so this takes the bodies out of every torch and
-   * out of nothing else.
-   *
-   * Every point light's map is affected for that frame, the panel torch's
-   * included -- and that is the whole cost, because the panel torch rebuilds
-   * every frame anyway, so what it loses is one frame of body shadows during an
-   * event that happens when somebody walks up to a campfire.
-   *
-   * The local player is deliberately not touched here. `player-lighting.ts` owns
-   * that rig's `customDistanceMaterial` and holds it across frames; writing over
-   * it and then clearing it would leave the player casting into every torch for
-   * the rest of the session. It is masked by the line below instead, which
-   * `applyPlayerLights` rewrites from the panel on the very next frame.
-   */
-  private maskBodiesForBake(selfEntityId: number): void {
-    this.playerLighting.setCastsPointShadow(false);
-    for (const [id, body] of this.bodies) {
-      if (id === selfEntityId) continue;
-      body.group.traverse((node) => {
-        if (!(node instanceof THREE.Mesh) || node.customDistanceMaterial) return;
-        node.customDistanceMaterial = this.noBakeShadow;
-        this.bakeMasked.add(node);
-      });
-    }
-  }
-
-  /** Put back exactly what {@link maskBodiesForBake} took away. */
-  private unmaskBodiesAfterBake(): void {
-    for (const mesh of this.bakeMasked) mesh.customDistanceMaterial = undefined;
-    this.bakeMasked.clear();
-  }
 
   /**
    * Hand the player's own materials the point they measure the carried lights

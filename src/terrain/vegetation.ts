@@ -207,8 +207,6 @@ export interface ResolvedLight extends PropLight {
   readonly color: number;
   /** How far above the ground the flame sits, at scale 1. */
   readonly height: number;
-  /** Whether this kind is worth a baked shadow map. */
-  readonly shadow: boolean;
 }
 
 /**
@@ -239,19 +237,26 @@ export const MAX_FIXTURE_RADIUS = 900;
  * fire is what would make the two fixtures indistinguishable at this camera's
  * distance.
  *
- * **All three cast**, and that is affordable only because of what
- * `world-lights.ts` does with the map: it is rendered on the frame the light is
- * assigned a slot and never again, so what a casting fixture costs after that is
- * one cube lookup per lit fragment and no draw calls at all. The first cut had
- * the lamp and the torch dark on a budget argument that is true of a *live*
- * shadow map and false of a frozen one -- and it cost the two fixtures whose
- * shadows say the most about where they are, since a light three body-heights up
- * is the one that throws a figure's shadow out across the ground rather than
- * under its own feet.
+ * **None of them casts a shadow**, and that is a look decision rather than a
+ * budget one -- which is worth saying because the budget went the other way.
+ * A fixture's shadow map is affordable: `world-lights.ts` baked it on the frame
+ * the light was assigned a slot and never again, so it cost a `samplerCube` and
+ * one lookup per lit fragment and nothing per frame, and the probe measured the
+ * draw count flat with four of them lit.
  *
- * `shadow` is still a per-kind field rather than an assumption, because it is
- * what puts a fixture in the pool's casting prefix and that prefix is finite:
- * a kind added later that is not worth a cube map says so here.
+ * It was cut because of what it *looked* like. A point light a body's height off
+ * the ground throws every trunk, fence post and body near it outward in a hard
+ * radial fan -- `BasicShadowMap`, so each edge is a step rather than a gradient
+ * -- and four fixtures in a square throw four of those fans across each other.
+ * The light is what says a fire is there; the shadows said something nobody
+ * wanted.
+ *
+ * There is no `shadow` field any more, and the whole bake path went with it:
+ * the pool's casting prefix, the cube-map setup, the one-bake-a-frame queue, the
+ * revision stamp that re-took a map when its ground arrived late, and the mask
+ * that kept moving bodies out of a frozen one. A socket with nothing plugged
+ * into it is the thing this repo keeps finding a hundred specs later, and
+ * putting it back is one revert.
  */
 /**
  * The one thing about `height` that is not obvious, and it decides more than
@@ -279,13 +284,13 @@ export const FIXTURE_LIGHTS: Readonly<Record<FixtureKind, ResolvedLight>> = {
   // presentation -- at 22 the grazing angle costs a campfire a third of the pool
   // it is authored to throw, which reads as a fire that does not light the
   // ground it is standing on.
-  campfire: { color: 0xffa542, brightness: 2.2, radius: 420, height: 34, shadow: true },
+  campfire: { color: 0xffa542, brightness: 2.2, radius: 420, height: 34 },
   // Higher than a body and reaching further than either of the others, which is
   // what a street lamp is for: it lights a path rather than a spot.
-  'lamp-post': { color: 0xffd9a0, brightness: 1.5, radius: 520, height: 122, shadow: true },
+  'lamp-post': { color: 0xffd9a0, brightness: 1.5, radius: 520, height: 122 },
   // The carried torch, standing still: the same colour and the same reach, so a
   // player who plants one and one who holds one get the same light.
-  'torch-stand': { color: 0xffa542, brightness: 1.6, radius: 300, height: 78, shadow: true },
+  'torch-stand': { color: 0xffa542, brightness: 1.6, radius: 300, height: 78 },
 };
 
 /** A number held inside the fixture bounds, total by construction. */

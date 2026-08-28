@@ -2,15 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { assignLights, type LightLimits, type LightRequest } from './light-residency.js';
 
 const LIMITS: LightLimits = {
-  shadowSlots: 2,
   slots: 5,
   activateRadius: 1000,
   releaseRadius: 1400,
   swapMargin: 200,
 };
 
-function light(key: string, x: number, shadow = false): LightRequest {
-  return { key, x, y: 20, z: 0, color: 0xffffff, brightness: 1, radius: 300, shadow, revision: 0 };
+function light(key: string, x: number): LightRequest {
+  return { key, x, y: 20, z: 0, color: 0xffffff, brightness: 1, radius: 300 };
 }
 
 const ORIGIN = { x: 0, z: 0 };
@@ -30,10 +29,10 @@ describe('assignLights (spec 250)', () => {
   it('keeps a light already in a slot until it is past the release radius', () => {
     const held = ['a', null, null, null, null];
     // Between the two radii: too far to be claimed, near enough to be kept.
-    const between = light('a', (LIMITS.activateRadius + LIMITS.releaseRadius) / 2, true);
+    const between = light('a', (LIMITS.activateRadius + LIMITS.releaseRadius) / 2);
     expect(assignLights([between], held, ORIGIN, LIMITS)[0]).toBe('a');
     // And past the release radius it goes, even though nothing else wants it.
-    const gone = light('a', LIMITS.releaseRadius + 1, true);
+    const gone = light('a', LIMITS.releaseRadius + 1);
     expect(assignLights([gone], held, ORIGIN, LIMITS)[0]).toBeNull();
   });
 
@@ -42,7 +41,7 @@ describe('assignLights (spec 250)', () => {
   });
 
   it('takes an occupied slot only for a candidate nearer by more than the margin', () => {
-    const limits: LightLimits = { ...LIMITS, slots: 1, shadowSlots: 0 };
+    const limits: LightLimits = { ...LIMITS, slots: 1 };
     const held = ['sitting'];
     const sitting = light('sitting', 500);
     // Nearer, but not by enough: the sitting light keeps its slot.
@@ -60,7 +59,7 @@ describe('assignLights (spec 250)', () => {
    * module exists to prevent.
    */
   it('does not reassign while a walk crosses the boundary between two lights', () => {
-    const limits: LightLimits = { ...LIMITS, slots: 1, shadowSlots: 0 };
+    const limits: LightLimits = { ...LIMITS, slots: 1 };
     let held: readonly (string | null)[] = ['left'];
     let swaps = 0;
     for (let step = 0; step < 60; step++) {
@@ -79,7 +78,7 @@ describe('assignLights (spec 250)', () => {
   });
 
   it('fills the nearest first', () => {
-    const limits: LightLimits = { ...LIMITS, slots: 2, shadowSlots: 0 };
+    const limits: LightLimits = { ...LIMITS, slots: 2 };
     const out = assignLights(
       [light('far', 800), light('near', 100), light('mid', 400)],
       [null, null],
@@ -90,52 +89,45 @@ describe('assignLights (spec 250)', () => {
   });
 
   it('does not depend on the order the requests arrive in', () => {
-    const requests = [light('a', 100, true), light('b', 200), light('c', 300, true), light('d', 400)];
+    const requests = [light('a', 100), light('b', 200), light('c', 300), light('d', 400)];
     const forwards = assignLights(requests, EMPTY, ORIGIN, LIMITS);
     const backwards = assignLights([...requests].reverse(), EMPTY, ORIGIN, LIMITS);
     expect(backwards).toEqual(forwards);
   });
 
   it('breaks a distance tie on the key rather than on arrival', () => {
-    const limits: LightLimits = { ...LIMITS, slots: 1, shadowSlots: 0 };
+    const limits: LightLimits = { ...LIMITS, slots: 1 };
     const pair = [light('b', 100), light('a', 100)];
     expect(assignLights(pair, [null], ORIGIN, limits)[0]).toBe('a');
     expect(assignLights([...pair].reverse(), [null], ORIGIN, limits)[0]).toBe('a');
   });
 
-  it('never puts a shadowless light in a casting slot', () => {
-    // Four plain lights, all near, against two casting slots and three plain.
+  /**
+   * Every slot is the same slot.
+   *
+   * There was a shadow-casting prefix here, and three tests about which lights
+   * were allowed into it. Nothing casts now, so the whole split is gone -- and
+   * what replaces those three is this one: the pool fills from the front, in
+   * distance order, with nothing skipped.
+   */
+  it('fills from the front, with no slot reserved for anything', () => {
     const out = assignLights(
       [light('p1', 10), light('p2', 20), light('p3', 30), light('p4', 40)],
       EMPTY,
       ORIGIN,
       LIMITS,
     );
-    expect(out.slice(0, LIMITS.shadowSlots)).toEqual([null, null]);
-    expect(out.slice(LIMITS.shadowSlots)).toEqual(['p1', 'p2', 'p3']);
-  });
-
-  it('gives a shadow-wanting light a casting slot first', () => {
-    const out = assignLights([light('fire', 500, true), light('orb', 10)], EMPTY, ORIGIN, LIMITS);
-    expect(out[0]).toBe('fire');
-    expect(out.slice(LIMITS.shadowSlots)).toContain('orb');
-  });
-
-  it('spills a shadow-wanting light into a plain slot rather than leaving it dark', () => {
-    const three = [light('f1', 10, true), light('f2', 20, true), light('f3', 30, true)];
-    const out = assignLights(three, EMPTY, ORIGIN, LIMITS);
-    expect(out.slice(0, LIMITS.shadowSlots)).toEqual(['f1', 'f2']);
-    expect(out).toContain('f3');
+    expect(out).toEqual(['p1', 'p2', 'p3', 'p4', null]);
   });
 
   it('holds no key that is not on offer', () => {
-    const out = assignLights([light('a', 10, true), light('b', 20)], EMPTY, ORIGIN, LIMITS);
+    const out = assignLights([light('a', 10), light('b', 20)], EMPTY, ORIGIN, LIMITS);
     for (const key of out) expect(key === null || key === 'a' || key === 'b').toBe(true);
   });
 
   it('assigns each light at most one slot', () => {
     const out = assignLights(
-      [light('a', 10, true), light('b', 20, true), light('c', 30), light('d', 40)],
+      [light('a', 10), light('b', 20), light('c', 30), light('d', 40)],
       ['a', 'a', 'a', null, null],
       ORIGIN,
       LIMITS,

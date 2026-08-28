@@ -8,13 +8,12 @@ import {
 } from './light-residency.js';
 
 /**
- * The lights standing in the world, and the shadow maps they build once
- * (spec 250).
+ * The lights standing in the world (spec 250).
  *
  * The three.js half of `light-residency.ts`. That module decides *which* lights
  * are lit; this one owns the `PointLight`s they are lit with, and the one rule
- * that makes a village affordable: **a fixture's shadow map is rendered on the
- * frame it is assigned and never again.**
+ * that makes a village affordable: **nothing here casts a shadow, and the number
+ * of lights never changes.**
  *
  * ## Why the pool is fixed
  *
@@ -30,49 +29,29 @@ import {
  * per fragment at the low internal resolution the retro pass draws at, which is
  * what a constant shader program costs.
  *
- * For the same reason `castShadow` is written **once per slot, at construction**.
- * The pool's first {@link WorldLightsOptions.shadowSlots} lights cast and the
- * rest never do, which is why `light-residency.ts` has two sub-pools rather than
- * a flag on a request.
+ * `castShadow` is `false` on every slot, written once at construction and never
+ * touched -- it is part of that same program key, so a light that sometimes cast
+ * would be the recompile this pool exists to prevent.
  *
- * ## Why the shadow maps are built once
+ * ## There are no shadows here any more
  *
- * A shadow-casting point light re-renders the scene into six cube faces every
- * frame. three exposes the fix and this scene already drives shadows by hand
- * (`renderer.shadowMap.autoUpdate = false` since spec 045): `shadow.autoUpdate`
- * off and `shadow.needsUpdate` set exactly once means `WebGLShadowMap` renders
- * the map on the next shadow pass and clears the flag itself. After that the
- * light costs one cube lookup per fragment and no draw calls at all, forever.
+ * There were. A fixture's cube map was baked on the frame the light was assigned
+ * a slot and never again (`shadow.autoUpdate` off, `needsUpdate` set once), which
+ * made a casting fixture cost a `samplerCube` and one lookup per lit fragment
+ * and nothing per frame -- measured flat in the probe with four of them lit. It
+ * was not a budget problem and it is not gone for one.
  *
- * Three obligations come with freezing a map, and each is a bug the moment it is
- * skipped:
+ * It is gone because of what it looked like: a point light a body's height off
+ * the ground throws every trunk, post and body near it outward in a hard radial
+ * fan, and four fixtures in a square throw four of those across each other.
  *
- *  - **Nothing that moves may be in it.** A body baked into a cube map is a
- *    silhouette painted on the ground that stays there once the body has walked
- *    off. {@link bakingThisFrame} is what the scene asks so it can mask the
- *    bodies out for that one frame, the way `player-lighting.ts` already masks
- *    the player permanently.
- *  - **The ground can arrive after the light.** Terrain and props stream, so a
- *    map baked over ground that had not landed is a light shining on nothing.
- *    A request carries a `revision` -- spec 208's churn counter -- and a slot
- *    whose revision has moved bakes again.
- *  - **It is amortised.** At most one light bakes per frame, so walking into a
- *    village is three frames each carrying one cube render rather than one frame
- *    carrying three.
+ * What went with it -- the casting prefix, the cube setup, the one-bake-a-frame
+ * queue, the revision stamp that re-took a map when its ground streamed in late,
+ * and the mask that kept moving bodies out of a frozen one -- is written down
+ * here rather than left in place, because a socket with nothing plugged into it
+ * is the thing this repo keeps rediscovering a hundred specs later. Putting it
+ * back is one revert.
  */
-
-/** How big a fixture's cube map is, per face. */
-const FIXTURE_SHADOW_MAP_SIZE = 256;
-/** How close to the flame the shadow camera starts. */
-const FIXTURE_SHADOW_NEAR = 8;
-/**
- * Pushed along the surface normal before the depth comparison.
- *
- * The torch's own number, and a little more of it, because these maps are half
- * its resolution: acne is a function of how much world one shadow texel covers,
- * so halving the map doubles what the bias has to cover.
- */
-const FIXTURE_SHADOW_NORMAL_BIAS = 4;
 
 /**
  * What an idle slot's reach is set to.
@@ -87,7 +66,6 @@ const IDLE_RADIUS = 1;
 
 export interface WorldLightsOptions {
   readonly slots: number;
-  readonly shadowSlots: number;
   readonly activateRadius: number;
   readonly releaseRadius: number;
   readonly swapMargin: number;
@@ -96,29 +74,19 @@ export interface WorldLightsOptions {
 /**
  * The pool's size.
  *
- * Six lights, four of which cast, and the split is decided by two different
- * things rather than by one budget.
+ * Six, and every one of them is the same slot -- there was a casting prefix and
+ * two sub-pools to keep a shadowless light out of it, and with nothing casting
+ * there is nothing to keep anything out of.
  *
- * **The casting four are cheap because their maps are frozen.** A live
- * shadow-casting point light is six passes over the scene every frame and would
- * make this number two at most; one that is rendered on the frame it is assigned
- * and never again costs a samplerCube and one lookup per lit fragment, so the
- * question stops being "how many can we draw" and becomes "how many samplers can
- * the shader have". With the sun and the panel torch that is five point-shadow
- * cubes and one directional map, against the sixteen texture units WebGL2
- * guarantees a fragment shader -- and the materials under them are
- * `MeshLambertMaterial` with no maps of their own.
- *
- * **The plain two exist because a conjured light must never cast.** It moves
- * every frame, so there is nothing about it that could be baked, and a slot in
- * the casting prefix would either draw six faces a frame for it or hand it
- * somebody else's frozen shadows. Two is enough for the bodies near you carrying
- * one, and a fixture that cannot get a casting slot falls back into them rather
- * than going dark.
+ * What sets the number is that a slot costs a shader program's worth of ALU per
+ * lit fragment whether or not anything is assigned to it, at the low internal
+ * resolution the retro pass draws at. Six covers a village square -- the four
+ * fixtures `light-the-square.ts` places, plus the bodies near you carrying a
+ * conjured light -- with room to spare, and a request that cannot get a slot
+ * goes dark rather than costing anything.
  */
 export const WORLD_LIGHT_DEFAULTS: WorldLightsOptions = {
   slots: 6,
-  shadowSlots: 4,
   /**
    * Nothing further than this is lit.
    *
@@ -136,30 +104,15 @@ export const WORLD_LIGHT_DEFAULTS: WorldLightsOptions = {
 /** One slot, and what it is holding. */
 interface Slot {
   readonly light: THREE.PointLight;
-  readonly casts: boolean;
   key: string | null;
-  /** The revision the map in this slot was baked against, or -1 for never. */
-  bakedRevision: number;
-  /**
-   * This slot's map is out of date and has not been re-taken yet.
-   *
-   * Held rather than re-derived, and that is not bookkeeping for its own sake:
-   * only one slot bakes a frame, so a slot that needed one and was passed over
-   * has to *stay* needing one. Derived from `key` and `revision` instead, it
-   * would not -- the key is written the moment the slot changes hands and the
-   * revision only moves when the ground does, so a slot that took a new fixture
-   * on a frame somebody else was baking would come back next frame looking
-   * settled and keep the **previous fixture's shadows**, frozen, forever.
-   */
-  wantsBake: boolean;
 }
+
 
 export class WorldLights {
   private readonly slots: Slot[] = [];
   private readonly limits: LightLimits;
   /** Scratch, so a frame of walking past a village allocates nothing. */
   private held: (string | null)[];
-  private baking = false;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -167,38 +120,20 @@ export class WorldLights {
   ) {
     this.limits = {
       slots: options.slots,
-      shadowSlots: options.shadowSlots,
       activateRadius: options.activateRadius,
       releaseRadius: options.releaseRadius,
       swapMargin: options.swapMargin,
     };
     for (let i = 0; i < options.slots; i++) {
-      const casts = i < options.shadowSlots;
       const light = new THREE.PointLight(0xffffff, 0, IDLE_RADIUS);
-      light.castShadow = casts;
-      if (casts) {
-        light.shadow.mapSize.set(FIXTURE_SHADOW_MAP_SIZE, FIXTURE_SHADOW_MAP_SIZE);
-        light.shadow.camera.near = FIXTURE_SHADOW_NEAR;
-        light.shadow.normalBias = FIXTURE_SHADOW_NORMAL_BIAS;
-        // The whole point. three renders this map only when it is asked to.
-        light.shadow.autoUpdate = false;
-      }
+      // Written once, and false. See the header: a slot that changed its mind
+      // about casting would be the recompile this whole pool exists to prevent.
+      light.castShadow = false;
       // Added once and never removed, and never hidden: see the header.
       this.scene.add(light);
-      this.slots.push({ light, casts, key: null, bakedRevision: -1, wantsBake: false });
+      this.slots.push({ light, key: null });
     }
     this.held = this.slots.map(() => null);
-  }
-
-  /**
-   * Whether a shadow map is being rendered on this frame.
-   *
-   * Asked by the scene so it can keep the bodies out of it. True only for the
-   * frame the bake actually happens on, because three clears `needsUpdate`
-   * itself once the map is drawn.
-   */
-  bakingThisFrame(): boolean {
-    return this.baking;
   }
 
   /**
@@ -212,10 +147,6 @@ export class WorldLights {
     const next = assignLights(requests, this.held, focus, this.limits);
     const byKey = new Map(requests.map((request) => [request.key, request]));
 
-    // One bake a frame, and the *first* slot that needs one -- so a village
-    // arriving all at once resolves over as many frames as it has fixtures
-    // rather than in one frame that drops.
-    let baked = false;
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i];
       if (!slot) continue;
@@ -227,7 +158,6 @@ export class WorldLights {
         continue;
       }
 
-      const changed = slot.key !== key;
       slot.key = key;
       this.held[i] = key;
       const light = slot.light;
@@ -235,40 +165,17 @@ export class WorldLights {
       light.distance = request.radius;
       light.intensity = pointIntensity(request.brightness, request.radius);
       light.position.set(request.x, request.y, request.z);
-
-      if (!slot.casts) continue;
-      // Owed when this slot changed hands, and when the ground under it has
-      // moved since -- which is a chunk arriving or being forgotten, and nothing
-      // else. In a settled world neither happens and this costs a comparison.
-      //
-      // Recorded rather than acted on, because at most one bake happens below:
-      // see {@link Slot.wantsBake} for what deriving it again next frame would
-      // cost.
-      if (changed || slot.bakedRevision !== request.revision) slot.wantsBake = true;
-      if (!slot.wantsBake || baked) continue;
-      light.shadow.camera.far = Math.max(FIXTURE_SHADOW_NEAR + 1, request.radius);
-      light.shadow.camera.updateProjectionMatrix();
-      light.shadow.needsUpdate = true;
-      slot.bakedRevision = request.revision;
-      slot.wantsBake = false;
-      baked = true;
     }
-    this.baking = baked;
   }
 
   /**
    * Put a slot to sleep without taking it off the scene.
    *
-   * The one thing it must not do is become invisible. Its shadow map is left
-   * exactly where it is: at intensity 0 nothing samples it, and disposing it
-   * would mean re-allocating a render target the next time this slot is used.
+   * The one thing it must not do is become invisible. See the header: an
+   * invisible light is not collected, and the count is part of the program key.
    */
   private park(slot: Slot): void {
     slot.key = null;
-    slot.bakedRevision = -1;
-    // Nothing to bake for a slot lighting nothing; the next thing to take it
-    // will ask again, because taking it is a change of hands.
-    slot.wantsBake = false;
     slot.light.intensity = 0;
     slot.light.distance = IDLE_RADIUS;
   }
@@ -280,7 +187,6 @@ export class WorldLights {
 
   dispose(): void {
     for (const slot of this.slots) {
-      slot.light.shadow.dispose();
       this.scene.remove(slot.light);
       slot.light.dispose();
     }

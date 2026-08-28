@@ -61,8 +61,8 @@ interface Prop {
 export function fixtureLight(prop: Prop): ResolvedLight | null;
 ```
 
-`FIXTURE_LIGHTS` is the authored row per kind — colour, brightness, radius, the
-height the flame sits at, and whether the kind casts shadows. Absent `light` is
+`FIXTURE_LIGHTS` is the authored row per kind — colour, brightness, radius and
+the height the flame sits at. Absent `light` is
 that row unchanged, so a fixture placed with the panel's defaults stores nothing
 extra and a retune reaches every fixture already on every map.
 
@@ -84,7 +84,6 @@ export interface RegionLight {
   readonly key: string;     // region key + index: stable across a rebuild
   readonly x: number; readonly y: number; readonly z: number;
   readonly color: number; readonly brightness: number; readonly radius: number;
-  readonly shadow: boolean;
 }
 ```
 
@@ -92,47 +91,25 @@ export interface RegionLight {
 ground the client has forgotten (spec 208, 215) is a fixture that stops being
 lit, by construction rather than by a second residency rule.
 
-### C. The pool, and the shadow maps that are built once (`world/world-lights.ts`)
+### C. The pool (`world-lights.ts`)
 
-The performance requirement is the design. Two things cost, and they are
-different costs with different fixes.
+The performance requirement is the design, and what makes it affordable is one
+sentence: **nothing here casts a shadow, and the number of lights never changes.**
 
-**A varying number of lights recompiles every material in the scene.** three
-collects lights in `projectObject`, and an invisible light is not collected — so
-"add a `PointLight` per fixture in range" changes `NUM_POINT_LIGHTS` as the
-player walks, and a shader permutation change is a hitch, not a slowdown. So the
-pool is **fixed**: `WORLD_LIGHT_POOL` point lights added at construction and
-never removed, never hidden. An unassigned slot sits at intensity 0 with a small
-radius — a few ALU per fragment at the virtual resolution the retro pass draws
-at, which is the price of a constant program.
+three collects lights in `projectObject`, and an invisible light is not collected
+— so "add a `PointLight` per fixture in range" changes `NUM_POINT_LIGHTS` as the
+player walks, and a shader permutation change is a hitch, not a slowdown.
+`castShadow` is in that same program key. So the pool is **fixed**:
+`WORLD_LIGHT_POOL` point lights added at construction and never removed, never
+hidden, `castShadow = false` written once and never touched. An unassigned slot
+sits at intensity 0 with a small radius — a few ALU per fragment at the virtual
+resolution the retro pass draws at, which is the price of a constant program.
 
-**A shadow-casting point light re-renders the scene six times a frame.** three
-already exposes the fix and this scene already drives shadows by hand
-(`renderer.shadowMap.autoUpdate = false` since spec 045): a fixture light gets
-`shadow.autoUpdate = false`, and `shadow.needsUpdate = true` **exactly once**,
-on the frame it is assigned to a fixture. three renders the cube map on the next
-shadow pass and clears the flag itself. After that the light costs one texture
-lookup and no draw calls, forever.
+That is the whole cost. A village lights up for no draw calls at all, and the
+probe's draw count is flat across the square (`probe-world-lights.ts`).
 
-Three rules fall out of baking rather than rebuilding, and each is a bug the
-moment it is skipped:
-
-- **A frozen map must hold nothing that moves.** A body baked into a fixture's
-  cube map is a silhouette painted on the ground that stays there after the body
-  walks off. So a bake frame masks every body out of point-light shadows with
-  the `customDistanceMaterial` stand-in `player-lighting.ts` already uses for the
-  player, and unmasks after. The panel torch rebuilds every frame and loses body
-  shadows for that one frame, which is one frame of a debug light.
-- **The ground under a light can arrive after it.** Terrain and props stream, so
-  a map baked over ground that had not landed yet is a light shining on nothing.
-  A bake is stamped with the map's `revision` — spec 208's churn counter — and
-  re-taken when that has moved. In steady state it never moves.
-- **A bake is amortised.** At most one light bakes per frame, so walking into a
-  village is three frames each carrying one cube render rather than one frame
-  carrying three.
-
-Which fixtures get slots is a pure module, `world/light-residency.ts`, because it
-is a decision and not a thing that draws:
+Which fixtures get slots is a pure module, `light-residency.ts`, because it is a
+decision and not a thing that draws:
 
 ```ts
 export function assignLights(
@@ -144,17 +121,13 @@ export function assignLights(
 ```
 
 **Hysteresis is the whole of it.** A slot assignment that flipped between two
-fixtures at equal distance would re-bake a cube map every frame — the most
-expensive thing in the system, driven by the cheapest possible indecision. So a
-request is *claimed* within `activateRadius` and *kept* until past
-`releaseRadius`, and a held slot is only taken from it by a candidate nearer by
-more than `LIGHT_SWAP_MARGIN`. The same shape spec 208 derives its keep radius
-with, and for the same reason: the thing that lets go must not fight the thing
-that takes hold.
-
-Shadow-casting slots are a **fixed prefix** of the pool, never a flag toggled per
-assignment: `castShadow` is part of the program key too, so a light that
-sometimes casts is the recompile the fixed pool exists to prevent.
+fixtures at equal distance would pop a light on and off every frame, which is
+the most visible thing in the system driven by the cheapest possible
+indecision. So a request is *claimed* within `activateRadius` and *kept* until
+past `releaseRadius`, and a held slot is only taken from it by a candidate
+nearer by more than `LIGHT_SWAP_MARGIN`. The same shape spec 208 derives its
+keep radius with, and for the same reason: the thing that lets go must not fight
+the thing that takes hold.
 
 ### D. A torch you can hold (`data/items.ts`, `world/carried-light.ts`)
 
@@ -299,30 +272,43 @@ only way the number this spec is asked for means anything: it restores what
 
 ## Follow-up, in the same spec
 
-Two things the first pass got wrong, both found by looking at it.
+Three things the first pass got wrong, all found by looking at it.
 
-### Every fixture casts
+### Fixtures cast, and then they did not
+
+This went both ways, and the round trip is worth keeping because the argument
+that lost was correct about the cost and wrong about the thing that mattered.
 
 The first cut had only the campfire casting, on a budget argument that is true
-of a *live* shadow map and false of a frozen one. Since a fixture's map is
-rendered on the frame it is assigned and never again, what a casting light costs
-after that is a `samplerCube` and one lookup per lit fragment — so the question
-is not "how many can we draw" but "how many samplers can the shader have". With
-the sun and the panel torch that is five point-shadow cubes and one directional
-against the sixteen texture units WebGL2 guarantees.
+of a *live* shadow map and false of a frozen one: a fixture's cube map rendered
+on the frame it is assigned and never again (`shadow.autoUpdate` off,
+`needsUpdate` set once) costs a `samplerCube` and one lookup per lit fragment
+and **nothing per frame**. Measured in the probe with four of them lit: flat.
+So all three were made to cast, on the reading that the question is not "how
+many can we draw" but "how many samplers can the shader have".
 
-So all three cast, and the pool's casting prefix goes from two slots to four.
-The plain two stay, and they are the reason the prefix is not the whole pool: a
-conjured light moves every frame, so there is nothing about it that could be
-baked, and a casting slot would either draw six faces a frame for it or hand it
-somebody else's frozen shadows.
+They cast nothing now, and the reason is not a number. A point light a body's
+height off the ground throws every trunk, post and body near it outward in a
+hard radial fan, and four fixtures round a square throw four of those across
+each other. It reads as a bug in the lighting rather than as evening in a
+village, and no amount of it being free makes it look better.
+
+What went with it: the casting prefix on the pool, the cube setup, the
+one-bake-per-frame queue, the `revision` stamp that re-took a map when its
+ground streamed in late, and the mask that kept moving bodies out of a frozen
+one. **Deleted rather than left switched off**, because a socket with nothing
+plugged into it is what this repo keeps rediscovering a hundred specs later —
+`aurasFor` waited a hundred specs for a caller, `SoundSpec` longer. Putting it
+back is one revert of one commit.
+
+The pool is one undifferentiated six now, because the only reason it was split
+was that a conjured light could never be allowed into the casting half.
 
 The carried torch and the conjured orb also stop being *hidden* when they are
 off. An invisible light is not collected by `projectObject`, so hiding one
 changes `NUM_POINT_LIGHTS` — which is a full material recompile the moment
 somebody equips a torch, the exact hitch the fixed pool exists to avoid. They sit
-at intensity 0 instead, with `castShadow` off, because an intensity of 0 says
-nothing at all about a shadow map.
+at intensity 0 instead.
 
 ### A campfire's fire is paint
 
@@ -402,8 +388,8 @@ produced — so the shipped map stopped surviving its own round trip. Same test.
 - **Light colour in the editor.** A fixture's colour is its kind's; brightness
   and radius are the two the brief names and the two a level designer places
   a lamp with.
-- **Fixture shadows from moving props.** A tree sways after the bake and its
-  baked shadow does not. That is the price of a frozen map, and at this camera's
-  distance it is invisible.
+- **Shadows from fixtures, of any kind.** Tried, measured, and cut for how it
+  looked rather than for what it cost — see the follow-up above. Anything that
+  brings them back has to answer the radial fan, not the budget.
 - **A light budget slider.** The pool is a constant, because the whole point of
   it being fixed is that it cannot change while the game is running.
