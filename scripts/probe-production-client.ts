@@ -221,6 +221,17 @@ async function main(): Promise<void> {
     if (!shipped.frame.readoutPresent) {
       problems.push('the readout element is gone entirely, and half the harnesses use it as a clock');
     }
+    // Started, not forbidden (spec 252): the readout opens hidden and the
+    // binding still reaches it, so a player who is asked for numbers can
+    // produce them. Worth pressing rather than reasoning about, because
+    // "opens hidden" and "cannot be shown" are the same first frame.
+    await shipped.page.keyboard.press('F3');
+    await shipped.page.waitForTimeout(400);
+    const toggled = await readFrame(shipped.page);
+    console.log(`  after F3        readout ${toggled.readout || 'absent'}`);
+    if (toggled.readout !== 'on') {
+      problems.push(`F3 did not bring the readout back in the shipped client (${toggled.readout || 'absent'})`);
+    }
     await shipped.page.context().close();
 
     // The control. Every check above is an absence, and a page that failed to

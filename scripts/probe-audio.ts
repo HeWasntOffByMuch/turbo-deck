@@ -439,7 +439,11 @@ async function main(): Promise<void> {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     page.on('pageerror', (error) => problems.push(String(error)));
     await installPannerRecorder(page);
-    await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=${SLOTS}`, { waitUntil: 'load' });
+    // The built page is the game client since spec 252 and builds no tab strip at
+    // all; this harness drives the SFX tab (only on this dist pass -- `devHalf`
+    // above runs against the dev server, which is the workbench already), so it
+    // asks the workbench back.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=${SLOTS}&client=workbench`, { waitUntil: 'load' });
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await waitForTick(page, 120);
 

@@ -385,7 +385,9 @@ async function main(): Promise<void> {
       window.localStorage.removeItem(key);
     }, AUTOSAVE_KEY);
 
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    // The built page is the game client since spec 252 and builds no tab strip at
+    // all; this harness drives the Map editor tab, so it asks the workbench back.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&client=workbench`, { waitUntil: 'load' });
     await page.click('button:has-text("Map editor")');
     // `canvas` alone matches the Play tab's too -- it stays in the DOM, hidden,
     // when a tab is switched away from.
