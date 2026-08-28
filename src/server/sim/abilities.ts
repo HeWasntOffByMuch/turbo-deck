@@ -42,6 +42,7 @@ import { abilityById, type AbilityDefinition } from '../data/abilities.js';
 import { SCALING } from '../data/scaling.js';
 import { projectileLifetimeTicks, projectileSpeedFor } from '../player/stats.js';
 import {
+  COOLDOWN_BOUNDS,
   NO_ATTACK_SPEED,
   resolveAttackTiming,
   type AttackTiming,
@@ -199,6 +200,10 @@ export function attackTimingFor(
       },
       NO_ATTACK_SPEED,
       SERVER_TICK_RATE,
+      // A cooldown, not a cadence (spec 248). Sent through the attack-interval
+      // bounds this used to share, every authored cooldown over five seconds
+      // silently became five -- twelve of the fourteen rows in the table.
+      COOLDOWN_BOUNDS,
     );
   }
   return resolveAttackTiming(

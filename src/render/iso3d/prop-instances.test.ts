@@ -22,7 +22,7 @@ import {
   TREE_SPECIES,
   type PropShading,
 } from './props.js';
-import { FENCE_KINDS, STRUCTURE_KINDS } from '../../terrain/vegetation.js';
+import { FENCE_KINDS, FIXTURE_KINDS, STRUCTURE_KINDS } from '../../terrain/vegetation.js';
 import type { Prop } from '../../terrain/vegetation.js';
 
 const SMOOTH: PropShading = { smooth: true, creaseAngle: (50 * Math.PI) / 180, swayNormals: true };
@@ -49,8 +49,27 @@ function instancedIn(group: THREE.Object3D): THREE.InstancedMesh[] {
 }
 
 describe('the batch enumeration means the same thing on both sides', () => {
-  it('covers every species, the bush, every fence kind and every structure, and nothing else', () => {
-    expect(PROP_GROUP_COUNT).toBe(TREE_SPECIES.length + 1 + FENCE_KINDS.length + STRUCTURE_KINDS.length);
+  it('covers every species, the bush, every fence kind, every structure and every fixture, and nothing else', () => {
+    expect(PROP_GROUP_COUNT).toBe(
+      TREE_SPECIES.length + 1 + FENCE_KINDS.length + STRUCTURE_KINDS.length + FIXTURE_KINDS.length,
+    );
+  });
+
+  /**
+   * The order is what crosses a thread (spec 181), so it is asserted rather than
+   * assumed: an index into the enumeration is composed on the worker and read
+   * here, and a group that *moved* rather than being appended would hand one
+   * batch's matrices to another's geometry -- which still draws, somewhere else,
+   * as something else.
+   */
+  it('appends: every group that existed before is still at the index it was at', () => {
+    const before = TREE_SPECIES.length + 1 + FENCE_KINDS.length + STRUCTURE_KINDS.length;
+    for (let group = 0; group < before; group++) {
+      expect(propGroupParts(group).length, `group ${group}`).toBeGreaterThan(0);
+    }
+    for (let i = 0; i < FIXTURE_KINDS.length; i++) {
+      expect(propGroupParts(before + i).length, `fixture ${i}`).toBeGreaterThan(0);
+    }
   });
 
   it('answers with a part list for every group and none outside it', () => {

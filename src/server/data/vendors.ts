@@ -111,6 +111,12 @@ const DEFINITIONS: readonly VendorDefinition[] = [
       'chest.leather',
       'legs.traveller',
       'potion.minor',
+      // The two ways to carry a light (spec 248). Both here rather than split
+      // across the three shops, because the Quartermaster is the one whose
+      // stock is *the kit* -- a light belongs beside a flask and a leather cap
+      // rather than behind a level gate at the Armourer's.
+      'torch.hand',
+      'sigil.witchlight',
     ],
     buyMarkup: 1.5,
     sellFraction: 0.4,
@@ -138,7 +144,15 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     // A traveller's pack: the things somebody forgot to bring, at a fair price
     // rather than a good one. Deliberately overlapping the Quartermaster's --
     // this is a second place to buy a flask, not a third tier of goods.
-    stock: ['potion.minor', 'sword.worn', 'bow.hunting', 'helm.leather', 'legs.traveller'],
+    stock: [
+      'potion.minor',
+      'sword.worn',
+      'bow.hunting',
+      'helm.leather',
+      'legs.traveller',
+      // The one thing somebody most reliably forgot to bring.
+      'torch.hand',
+    ],
     // Between the two above. It walks to you, so it charges for the walk.
     buyMarkup: 1.6,
     sellFraction: 0.35,

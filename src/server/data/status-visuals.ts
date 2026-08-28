@@ -47,7 +47,8 @@ export type StatusIconId =
   | 'shock'
   | 'frostbite'
   | 'decay'
-  | 'scorched';
+  | 'scorched'
+  | 'light';
 
 /**
  * Which way a status cuts.
@@ -291,6 +292,27 @@ const DEFINITIONS: readonly StatusVisual[] = [
     kind: 'boon',
     icon: 'scorched',
     maxStacks: 1,
+  },
+
+  // --- the conjured light (spec 248) -------------------------------------
+  //
+  // The one row in this table whose *whole* mechanic is that it is drawn. Every
+  // other entry is a condition the sim reads and this table decides to show; a
+  // conjured light is nothing the sim reads at all, so if it were not here it
+  // would not exist.
+  //
+  // It carries a sentence, because it has to: the rule is that nothing
+  // derivable may be authored, and there is nothing to derive it *from* -- no
+  // rate, no scale, no field row. What the light does lives in
+  // `player-lights.ts`, which is the renderer.
+  {
+    id: StatusId.MagicLight,
+    wire: 17,
+    name: 'Conjured Light',
+    kind: 'boon',
+    icon: 'light',
+    maxStacks: 1,
+    effect: 'A conjured light floats overhead, lighting the ground around you. It casts no shadows.',
   },
 ];
 

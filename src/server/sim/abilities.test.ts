@@ -1749,31 +1749,29 @@ describe('a named target (spec 070)', () => {
     // cost everybody.
     expect(slash.cooldownTicks).not.toBe(20);
 
-    // A non-basic ability ignores the stat entirely.
+    // A non-basic ability ignores the stat entirely, **and gets the cooldown its
+    // row authored** (spec 248).
     //
-    // **And its authored cooldown is clamped**, which is a real finding rather
-    // than a detail of this fixture. `attackTimingFor` sends a non-basic
-    // ability's `cooldownTicks` through `resolveAttackTiming` as if it were a
-    // Base Attack Time, and that clamps the interval to
-    // `MAX_ATTACK_INTERVAL_SECONDS`. The constant's own comment says "nothing in
-    // the content reaches either bound", which is true of BAT and false here:
-    // twelve of the fourteen non-basic rows are over 5s, so Scorched Earth's
-    // authored 24 seconds is really 5 and Stunning Blow's 14 is really 5.
+    // It did not until spec 248. `attackTimingFor` sent a non-basic ability's
+    // `cooldownTicks` through `resolveAttackTiming` as if it were a Base Attack
+    // Time, which clamped the interval to `MAX_ATTACK_INTERVAL_SECONDS` -- a
+    // constant whose own comment says "nothing in the content reaches either
+    // bound", true of a BAT and false here: twelve of the fourteen non-basic
+    // rows are over 5s, so Scorched Earth's authored 24 seconds was really 5 and
+    // Stunning Blow's 14 was really 5.
     //
     // It was invisible while this test used `melee.heavy`, whose cooldown was
-    // inside the bound. Asserted as it *is* rather than as the table reads, so
-    // the behaviour is written down; fixing it is a balance decision and a
-    // change to `attack-timing.ts`, not to this file.
+    // inside the bound. Asserted against the *table* now, and against a row
+    // comfortably over the old ceiling, so the clamp coming back fails here.
     const spell = abilityById('skill.acidSpray');
     expect(spell).toBeDefined();
     if (!spell) return;
+    expect(spell.cooldownTicks).toBeGreaterThan(MAX_ATTACK_INTERVAL_SECONDS * SERVER_TICK_RATE);
     const cast = run(state, spell.windupTicks + 2, {
       0: [input(fast.id, { castAbilityId: 'skill.acidSpray', castTargetX: 700, castTargetY: 450 })],
     });
     const spellReadyAt = cast.state.entities.get(fast.id)?.cooldowns['skill.acidSpray'] ?? 0;
-    const clamped = Math.min(spell.cooldownTicks, MAX_ATTACK_INTERVAL_SECONDS * SERVER_TICK_RATE);
-    expect(spellReadyAt).toBe(1 + spell.windupTicks + clamped);
-    expect(clamped).toBeLessThan(spell.cooldownTicks);
+    expect(spellReadyAt).toBe(1 + spell.windupTicks + spell.cooldownTicks);
   });
 
   it('lets a monster swing at the player it is chasing, by id', () => {

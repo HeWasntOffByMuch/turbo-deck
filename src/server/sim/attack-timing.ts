@@ -111,6 +111,50 @@ export const MIN_ATTACK_INTERVAL_SECONDS = 0.2;
 export const MAX_ATTACK_INTERVAL_SECONDS = 5;
 
 /**
+ * The same two questions for a **cooldown** rather than a cadence (spec 248).
+ *
+ * The bounds above are about a Base Attack Time, and their own comment says
+ * *"nothing in the content reaches either bound"* -- which is true of a BAT and
+ * was false the moment `attackTimingFor` started sending a non-basic ability's
+ * `cooldownTicks` through the same clamp. **Twelve of the fourteen non-basic
+ * rows are authored over five seconds**, so every one of them was really on a
+ * five-second cooldown: Scorched Earth's 24 was 5, Stunning Blow's 14 was 5, and
+ * the table said one thing while the game did another.
+ *
+ * An attacks-per-second cap applied to a spell cooldown is a category error. A
+ * cadence is how often a body may swing and is a property of the body; a
+ * cooldown is how often an *effect* may exist and is a property of the row.
+ *
+ * The floor stays and is the same number, because the reason for it is
+ * arithmetic rather than balance: the interval is divided by the attack-speed
+ * factor, and a modifier that drove the result to nothing would not make an
+ * ability fast, it would make it free. The ceiling exists for the same kind of
+ * reason at the other end -- a bad modifier should be a long cooldown rather
+ * than an infinite one -- and is set where no content reaches it. The longest
+ * row in the table is 24s.
+ */
+export const MIN_COOLDOWN_SECONDS = 0.2;
+export const MAX_COOLDOWN_SECONDS = 300;
+
+/** How wide an interval may be, in seconds. See the two pairs above. */
+export interface IntervalBounds {
+  readonly minSeconds: number;
+  readonly maxSeconds: number;
+}
+
+/** A basic attack's cadence: bounded as an attacks-per-second window. */
+export const ATTACK_INTERVAL_BOUNDS: IntervalBounds = {
+  minSeconds: MIN_ATTACK_INTERVAL_SECONDS,
+  maxSeconds: MAX_ATTACK_INTERVAL_SECONDS,
+};
+
+/** A non-basic ability's cooldown: bounded only against a broken modifier. */
+export const COOLDOWN_BOUNDS: IntervalBounds = {
+  minSeconds: MIN_COOLDOWN_SECONDS,
+  maxSeconds: MAX_COOLDOWN_SECONDS,
+};
+
+/**
  * How far the factor may be pushed, either way.
  *
  * Clamped on the *factor* rather than on the resulting interval, which is the
@@ -211,6 +255,7 @@ export function resolveAttackTiming(
   base: AttackTimingBase,
   inputs: AttackSpeedInputs,
   tickRate: number,
+  bounds: IntervalBounds = ATTACK_INTERVAL_BOUNDS,
 ): AttackTiming {
   const factor = attackSpeedFactor(inputs);
   const rate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 60;
@@ -223,8 +268,8 @@ export function resolveAttackTiming(
 
   const intervalTicks = clamp(
     Math.round(bat / factor),
-    Math.max(1, quantizeToTicks(MIN_ATTACK_INTERVAL_SECONDS, rate)),
-    Math.max(1, quantizeToTicks(MAX_ATTACK_INTERVAL_SECONDS, rate)),
+    Math.max(1, quantizeToTicks(bounds.minSeconds, rate)),
+    Math.max(1, quantizeToTicks(bounds.maxSeconds, rate)),
   );
   const attackPointTicks = Math.max(1, Math.round(point / factor));
   const backswingTicks = Math.max(
