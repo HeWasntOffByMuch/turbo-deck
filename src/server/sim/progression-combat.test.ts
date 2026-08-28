@@ -112,6 +112,7 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
     leashRadius: 0,
     conversationWith: null,
     fleeGoal: null,
+    returnStart: null,
     resource: stats.maxResource,
     cast: null,
     cooldowns: {},

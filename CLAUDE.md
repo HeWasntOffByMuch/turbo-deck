@@ -3467,6 +3467,59 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  pause the player cannot act on is not a decision. Nothing of
                  this rides the wire: the tell is the body turning to face you
                  and standing still, and facing already replicates.
+                 There is a fifth `AggroValue` since spec 248, and it is what
+                 makes the leash mean something: **`Returning`**, a body that
+                 broke its leash and is walking home. Before it, all three of
+                 "gives up, goes home, heals on the way" were true and the walk
+                 was still farmable, because none of them was a *claim on the
+                 body*. It stayed a legal target, so it was shot in the back the
+                 whole way. `restore`'s `InCombat` gate is re-stamped by every
+                 blow, so the recovery that exists to close pull-and-reset was
+                 switched off by exactly the attacks worth closing it against.
+                 And the leash dropped the target two lines above `notice`,
+                 which handed it straight back on the same tick -- so a
+                 ferocious body kited past its leash with the player still
+                 standing there never took a step homeward at all, and the
+                 measurable behaviour of the leash was an oscillation.
+                 The state pairs with `ServerEntity.returnStart` exactly as
+                 `Fleeing` pairs with `fleeGoal`, and it is the one thing in
+                 `idle.ts` that is a **snapshot rather than a derivation**:
+                 "regenerate to full along the route" is a line between two
+                 points, and both of them -- how far out it gave up, and on what
+                 health -- are gone the moment the body takes its first step.
+                 Two of the three refusals cost nothing, which is why it is a
+                 state and not a flag: `notice` and `rally` already require
+                 `Calm`, so neither needed a line. The third is one line in
+                 `isHostile`, refused at both ends, the shape spec 246 gave a
+                 friendly body -- and that one line is the whole of the
+                 invulnerability, because every damage path in the sim filters
+                 its candidates through that function. Nothing swings at it, no
+                 blast catches it, an affliction already burning on it stops
+                 pulsing, and it swings at nothing.
+                 Three things about it were each learned by writing the other
+                 version first. It is entered **above `settle` and `notice`**
+                 rather than inside `idle`, because those are what hand the
+                 target back -- entered below them, the return is a state the
+                 body reaches only when nobody is watching it. `goHome` is
+                 **idempotent**, because `monsterIntent` asks every tick a body
+                 is out past its leash and a span re-snapshotted each time is a
+                 ramp that restarts from where it has got to: a body that walks
+                 the whole way home and heals nothing. And the ramp is a
+                 **floor** on health rather than a value -- the straight line
+                 home is not the route, so a body going round a rock or shoved
+                 outward by the crowd closes less ground this tick than last,
+                 and a bare lerp takes health back off a body that cannot be
+                 hurt. What a detour costs is a pause, never a reversal.
+                 The entry condition is "beyond its leash with nobody left to
+                 fight", one sentence covering the leash break, a flight that
+                 ended out past the leash and a target that died out there; the
+                 exit is arriving on its own ground, which sets health to full.
+                 Nothing about it crosses the wire -- `aggro` is not replicated
+                 and this does not start -- so what another client sees is a body
+                 sprinting home with its health climbing, `conversationWith`'s
+                 own answer to the same question. A mark over the head is the
+                 stated follow-up and wants the status system's expiry model,
+                 which an event-ended state has not got.
                  How far that leash reaches, and how long a kill stays dead, are
                  the spawner's own since spec 222. Both were global constants
                  answering a per-spawner question -- one `spawnIntervalTicks` for
@@ -3530,8 +3583,12 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  is pull-and-reset, wide open, with the leash itself doing the
                  work. One function and one call site, so coming home, milling
                  about, walking a beat and recovering are one answer rather than
-                 four: home first if it has been dragged off its ground, then the
-                 plan its row authors, recovering throughout.
+                 four: the walk home a broken leash started, then home if it has
+                 merely been dragged off its ground, then the plan its row
+                 authors, recovering throughout. `beyondLeash` lives here since
+                 spec 248 rather than in `world.ts`, because the leash stopped
+                 being only a reason to drop a target: it is the one thing that
+                 starts a walk home, and the walk home is this file's.
                  A row authors that plan as a second union beside `Temperament`
                  rather than a fifth member of it, because the two are
                  independent questions -- a temperament is how a body meets a
