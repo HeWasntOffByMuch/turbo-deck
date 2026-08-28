@@ -44,7 +44,7 @@ import {
   type SoundCatalog,
 } from '../../audio/catalog.js';
 import { BUS_LABELS, soundEvent, type SoundEventId } from '../../audio/events.js';
-import { importFolderFor, isSourceName, SOURCE_EXTENSIONS } from '../../audio/paths.js';
+import { importFolderFor, isSourceName, SOURCE_EXTENSIONS, withBase } from '../../audio/paths.js';
 import { AUDIO_DEFAULTS } from '../../audio/mix.js';
 import type { ViewHandle } from '../view-handle.js';
 import {
@@ -67,6 +67,17 @@ import {
 } from './model.js';
 
 import catalogUrl from '../../../../assets/audio/sfx.json?url';
+
+/**
+ * The picker's index, on whatever base the page is served from (spec 153).
+ *
+ * `manifest.json` is a `publicDir` file, so vite copies it verbatim and never
+ * rewrites the path -- which is right in dev and wrong under `--base`, exactly
+ * as it is for the clips the catalog names.
+ */
+function manifestUrl(query: string): string {
+  return withBase('/audio/manifest.json', import.meta.env?.BASE_URL ?? '/') + query;
+}
 
 const MONO = "'Courier New',ui-monospace,monospace";
 const PANEL = 'background:#16161e;border:1px solid #2a2a3a;padding:10px;box-sizing:border-box;';
@@ -614,7 +625,7 @@ export function mountSfx(container: HTMLElement): ViewHandle {
   /** Re-read the bake's index, so the picker and the counts match the disk. */
   async function refreshClips(): Promise<void> {
     try {
-      const response = await fetch(`/audio/manifest.json?t=${String(clipsVersion++)}`);
+      const response = await fetch(manifestUrl(`?t=${String(clipsVersion++)}`));
       clips = parseClips(response.ok ? await response.json() : null);
     } catch {
       // Leave the picker with what it had. A failed refresh is a stale list,
@@ -665,7 +676,7 @@ export function mountSfx(container: HTMLElement): ViewHandle {
     fetch(catalogUrl).then((response) => response.text()),
     // The bake's index. A failure here is a picker with nothing in it, which is
     // a tab you can still read -- so it is caught separately from the catalog.
-    fetch('/audio/manifest.json')
+    fetch(manifestUrl(''))
       .then((response) => (response.ok ? response.json() : null))
       .catch(() => null),
   ])

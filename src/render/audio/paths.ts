@@ -243,3 +243,34 @@ export function resolveImport(folder: string, fileName: string): ImportTarget {
   if (parts.length > 4) return { refusal: 'folder is too deep' };
   return { path: `${parts.join('/')}/${stem}${extension}` };
 }
+
+/**
+ * A catalog URL, moved onto the base the page is actually served from.
+ *
+ * `sfx.json` names every clip absolutely, as `/audio/...`, and that is right:
+ * it is the one shape both the dev server and `dist/` agree on, and
+ * `catalog.ts` uses the prefix as a typo boundary. What it is not is
+ * *deployment*-independent. GitHub Pages serves this project under
+ * `/turbo-deck/`, so a leading-slash URL leaves the site entirely and asks
+ * `hewasntoffbymuch.github.io/audio/...`, which 404s -- every sound in the game
+ * silent, with nothing in the console but a missing file.
+ *
+ * Vite cannot fix this on our behalf. It rewrites the URLs it *processes*, and
+ * these are neither: they are strings in a JSON document, pointing at files in
+ * `publicDir` that are copied verbatim and never enter the module graph.
+ *
+ * Pure, and the base is an argument, for the reason everything else in this
+ * file is: three callers need the same answer and only one of them can read
+ * `import.meta.env`.
+ */
+export function withBase(url: string, base: string): string {
+  // Anything that is not root-relative is already fully specified -- an
+  // absolute URL, or a path relative to the document. Leave it alone.
+  if (!url.startsWith('/')) return url;
+  // Works for a path base (`/turbo-deck/`) and for a full-URL one (vite allows
+  // `https://cdn.example/app/`), because both only ever need the trailing
+  // slash removed before a root-relative path is appended.
+  const trimmed = base.endsWith('/') ? base.slice(0, -1) : base;
+  if (trimmed === '') return url;
+  return `${trimmed}${url}`;
+}
