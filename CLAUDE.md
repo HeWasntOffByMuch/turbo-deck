@@ -75,6 +75,7 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
+| `npm run build && npx tsx scripts/probe-living-ground.ts` | Whether the grass is alive in the shipped page, and only the grass (spec 252). Defines **its own footprint** rather than measuring a crop somebody chose: with the weather clock stilled, the pixels that change when the panel's Ground detail goes to zero *are* the pixels the layer reaches, so its mean colour answers "did it stay on grass" and every later number is counted inside it. Reports the tones that ground holds with the layer off against with it on, because a modulation the retro pass rounds away adds no tones at all -- which is exactly how spec 074's streak shipped invisible |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
 | `npx tsx scripts/check-shore.ts` | Where the world stops, and whether a player could see it (spec 210). `--strict` for an exit code |
@@ -6147,6 +6148,134 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
+src/render/iso3d/living-ground.ts, terrain-living.ts  what the grass surface is
+                 made of (spec 252), and what the wind does to the *pattern*
+                 rather than to the plane. A fourth patch on the terrain surface
+                 material, in the register of the three already on it, and albedo
+                 only -- nothing is displaced, nothing is instanced, the ground is
+                 exactly the triangles the mesher emitted.
+                 Four scales at once, which is the whole idea: macro colour
+                 patches tens of metres across, brush strokes about a metre,
+                 gust fronts and thin curved trails on the shared wind, and
+                 sparse specks. Before it the ground's entire variation was spec
+                 043's two authored greens at cell scale, so a meadow read as a
+                 painted plane -- and everything the fix needed had been in that
+                 fragment shader since spec 106 with nothing reading it together.
+                 Applied **last and to the surface only**, and both halves matter.
+                 A cut bank is earth, so the walls keep `TERRAIN_CLIFF_COLORS`.
+                 And each of these patches splices in front of the ones applied
+                 before it, so the last one applied is the first to run: this one
+                 reads the raw vertex colour, and the rock blend, the detail, the
+                 creases and the streak ride on top of what it produced. It
+                 declares no varyings and has no vertex half at all, borrowing
+                 `vWindWorld` and `vDetailNormal` from the two patches above.
+                 **Which pixels it reaches needs no new data.** There is no
+                 material id in the ground's vertex format, and adding one means
+                 an attribute, a mesher change and a change to what the map worker
+                 transfers -- but grass is the only material in `TERRAIN_COLORS`
+                 whose green channel dominates both of the others, by a gap five
+                 times the width of the window that tests for it. So the mask is a
+                 chromaticity test on the albedo, asserted against `palette.ts`
+                 itself, and retuning a material across the line fails in
+                 `npm test` rather than in somebody's screenshot.
+                 **Relative, never absolute.** The four authored colours are a
+                 base and three tones stated against it, and what the shader adds
+                 is `tone - base`. That is what preserves the per-cell mottling --
+                 both grass tones take the same shift -- and it is why
+                 `macroTone` is *signed*: `mix(toDark, toLight, 0.5)` is the
+                 midpoint of two tones, which is zero only if a palette chosen for
+                 how a moss and a sunlit green look happens to be symmetric in
+                 linear space, and it has no reason to be.
+                 Every knob is a uniform rather than a compiled-in constant, which
+                 is the opposite of the choice `wind.ts` makes and deliberate: the
+                 whole point of this layer is that it is tuned against a running
+                 frame, so the weather panel grew a `Ground` section and the
+                 direction and clock stay the shared ones. What is compiled in is
+                 `LIVING_GROUND_SHAPE` -- the aspect ratios, elongations and
+                 threshold widths that decide what *kind* of thing this is.
+                 Three findings are worth more than the code, and all three are
+                 the same shape: **a layer can be correctly wired, switched on,
+                 and invisible.**
+                 A mark smaller than half a retro colour band is not a subtle
+                 mark, it is an absent one. Spec 074 records learning that once;
+                 every one of the four scales here got it wrong the first time and
+                 the gust worst -- it shipped at a fifth of a step and the probe
+                 could not find it against four walking animals. Every amplitude
+                 is measured against a band in **linear** space at the grass's own
+                 brightness, through `srgbDecode`, and one test states the rule for
+                 all four scales at once so the next one added cannot skip it.
+                 `hash21` is **degenerate on the integer lattice** it is handed:
+                 it opens with `fract(p * vec2(127.1, 311.7))` and `fract(0.1n)`
+                 on integers is a ten-step staircase, so the noise built on it is
+                 far more correlated than it looks and its distribution is biased
+                 low -- p50 at 0.39 against a proper 0.50. On the gust that was
+                 not a subtlety: whole screens saturated at one end of the front,
+                 so the meadow pulsed as one instead of having a boundary cross
+                 it, which is spec 074's own "the ground read as changing colour
+                 rather than as having something cross it" arriving by another
+                 door. `grassNoise` has its own trig-free hash (no `sin`, for
+                 `bayer4`'s reason); `hash21` is left exactly alone, being the
+                 water's and the streak layer's and what those looks were tuned
+                 against. Fixing it also fixed the *strokes*, whose thresholds had
+                 been set generously to let anything through at all and which came
+                 back as marbled whorls the moment the field behaved -- so
+                 `detailDensity` and `flowBend` came down with it.
+                 And **the shared wind clock does not advance in a headless
+                 page.** Measured: with this layer off, the weather at maximum
+                 speed and the weather stilled change the same number of pixels
+                 over six seconds, so the trees are not swaying either. It is why
+                 `preview-world.ts` only ever asserts on wind *strength*, which is
+                 a uniform, and it means "the fronts move with the clock" has to
+                 be asserted over the transcribed field in Node, where a time is
+                 an argument. A browser probe reports a working front as a broken
+                 one, and very nearly did.
+                 A second pass tuned it (same spec), and its findings are the
+                 first ones' in different clothes -- a number chosen for how big
+                 it is rather than for how it sits against the frame. The look
+                 read as **fingerprints and brushed metal**, and four things were
+                 wrong. **Density, not amplitude**: both micro tails at a 0.80 cut
+                 marked nearly half the meadow and the strokes about as much
+                 again, and a faint mark everywhere is a grain -- so the cuts went
+                 up and the clump became a **gate**, outside which the stroke
+                 field cannot reach its threshold from any value it takes.
+                 **Curl is a wavelength, not an angle**: the stroke direction came
+                 off the macro field, which swings its whole range about every two
+                 hundred units -- the length of a few strokes, which is exactly
+                 the condition for a whorl -- so it comes off a long-wavelength
+                 `coarse` field now (~790 units), which lets the bend be *larger*
+                 and read as arcs. **A structure wider than the frame is not a
+                 structure**: scaling the gusts 2.5x put a third of frames wholly
+                 inside one lobe, so the front stopped crossing the clearing and
+                 started tinting it (surveyed: 4% of frames blanketed at the
+                 original size, 42% at 380). And **a tint toward a tone shifts
+                 hue where a multiplier cannot** -- mixing toward the light tone,
+                 markedly redder than the base, turned the meadow yellow once the
+                 fronts were that big, so the breath is multiplicative like
+                 `GLSL_STREAK`'s. The same trap had caught the dry patches when
+                 they were briefly moved onto the coarse field, and the panel
+                 found it: zeroing the macro term took the ground's R/G from 0.95
+                 back to 0.86 against 0.83 with the layer off.
+                 The one place the band rule is deliberately inverted is the
+                 strokes: **half a step at rest and a whole one at a gust's
+                 crest**, where every other mark clears a step standing still.
+                 That gap is the look -- calm in a screenshot, alive in motion --
+                 and `gustReveal` is its other half, a front lowering the stroke
+                 *threshold* as well as its brightness, so what passes is more
+                 grass rather than the same grass lit harder.
+                 What is deliberately **not** built is the forest-edge term. There
+                 is no prop distance field in this renderer and building one is a
+                 system of its own, so `grassShelterAt` returns 0.0 and
+                 `uGrassShelter` ships at 0 -- with the colour arithmetic that
+                 consumes it written and tested, so what lands the day there is a
+                 field is a function body rather than a feature.
+                 `npx tsx scripts/probe-shading.ts` stays the tool for "does it
+                 link", and is what caught a constant this chunk declared
+                 colliding with one the wind chunk already had: a fragment shader
+                 that does not compile, on the ground materials only, in a
+                 browser, with every test in Node green and the terrain drawing
+                 nothing. `terrain-living.test.ts` asserts every name this
+                 introduces is declared exactly once in the *assembled* shader, so
+                 the next collision fails in a second rather than in a browser.
 src/render/iso3d/hike.ts, shading.ts, hike-buffers.ts  the stylized look (specs
                  097-106): hike.ts is the one settings object every step of the arc
                  is switched from -- HIKE_OFF is the frame before the arc started
