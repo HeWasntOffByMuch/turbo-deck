@@ -263,7 +263,9 @@
             { "species": "bush", "x": 491.389, "z": 460.928, "rotation": 4.517, "scale": 1.025, "tint": -0.871 },
             { "species": "bush", "x": 366.068, "z": 153.723, "rotation": 4.761, "scale": 1.348, "tint": 0.618 },
             { "species": "house", "x": 490.319, "z": 332.053, "rotation": 2.094, "scale": 0.9, "tint": -0.208 },
-            { "species": "house", "x": 384.455, "z": 56.484, "rotation": 1.571, "scale": 0.9, "tint": -0.964 }
+            { "species": "house", "x": 384.455, "z": 56.484, "rotation": 1.571, "scale": 0.9, "tint": -0.964 },
+            { "species": "lamp-post", "x": 238.942, "z": 26.089, "rotation": 0, "scale": 1, "tint": 0 },
+            { "species": "lamp-post", "x": 435.739, "z": 454.747, "rotation": 0, "scale": 1, "tint": 0 }
           ],
           "markers": [
             { "kind": "spawner", "id": "spawner-6", "x": 280.545, "z": 575.523, "label": "ravager" },
@@ -320,7 +322,8 @@
             { "species": "bush", "x": 2.404, "z": 423.309, "rotation": 4.121, "scale": 0.93, "tint": -0.814 },
             { "species": "bush", "x": 32.345, "z": 349.876, "rotation": 0.911, "scale": 1.215, "tint": -0.169 },
             { "species": "bush", "x": 528.332, "z": 119.391, "rotation": 1.436, "scale": 1.642, "tint": -0.985 },
-            { "species": "well", "x": 96.271, "z": 66.552, "rotation": 5.76, "scale": 0.55, "tint": -0.886 }
+            { "species": "well", "x": 96.271, "z": 66.552, "rotation": 5.76, "scale": 0.55, "tint": -0.886 },
+            { "species": "campfire", "x": 135, "z": 98.333, "rotation": 0, "scale": 1, "tint": 0 }
           ],
           "markers": []
         }

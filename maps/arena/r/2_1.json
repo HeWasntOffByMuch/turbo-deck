@@ -81,7 +81,8 @@
             { "species": "tree", "x": 550.015, "z": 456.069, "rotation": 0.803, "scale": 1.13, "tint": -0.255 },
             { "species": "tree", "x": 549.308, "z": 542.089, "rotation": 5.885, "scale": 1.45, "tint": -0.953 },
             { "species": "tree", "x": 593.541, "z": 610.949, "rotation": 5.737, "scale": 1.075, "tint": -0.839 },
-            { "species": "tree", "x": 503.461, "z": 471.162, "rotation": 2.442, "scale": 0.775, "tint": 0.465 }
+            { "species": "tree", "x": 503.461, "z": 471.162, "rotation": 2.442, "scale": 0.775, "tint": 0.465 },
+            { "species": "torch-stand", "x": 83.54, "z": 507.23, "rotation": 0, "scale": 1, "tint": 0 }
           ],
           "markers": []
         },
