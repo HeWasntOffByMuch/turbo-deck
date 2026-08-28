@@ -65,7 +65,7 @@ export function isStructureKind(kind: PropKind): kind is StructureKind {
 }
 
 /**
- * The kinds that emit light (spec 248).
+ * The kinds that emit light (spec 250).
  *
  * A fire on the ground, a lamp on a stake, and a torch in a stand. They are
  * `PropKind`s and nothing else, which is the whole design: a fixture is written
@@ -175,7 +175,7 @@ export interface Prop {
    */
   readonly uniform?: boolean;
   /**
-   * What this fixture burns at, overriding its kind's authored row (spec 248).
+   * What this fixture burns at, overriding its kind's authored row (spec 250).
    *
    * Absent is {@link FIXTURE_LIGHTS}, so a fixture placed at the defaults stores
    * nothing extra and a retune of the table reaches every one already standing
@@ -212,7 +212,7 @@ export interface ResolvedLight extends PropLight {
 }
 
 /**
- * The bounds a fixture's two numbers are held within (spec 248).
+ * The bounds a fixture's two numbers are held within (spec 250).
  *
  * Shared by the editor's sliders and by `parseMap`, so a document cannot carry a
  * light nobody could have set and the panel cannot offer one the document would
@@ -239,13 +239,19 @@ export const MAX_FIXTURE_RADIUS = 900;
  * fire is what would make the two fixtures indistinguishable at this camera's
  * distance.
  *
- * Only the campfire casts shadows, and that is a decision rather than a budget.
- * A fire on the ground throws long shadows off everything around it and is the
- * one fixture whose whole picture is what it does to its surroundings; a lamp
- * three body-heights up throws them straight down, where the body standing under
- * it is already covering them. A kind's `shadow` is what puts it in the pool's
- * shadow-casting prefix, so this is also the knob that decides how many baked
- * cube maps a village costs.
+ * **All three cast**, and that is affordable only because of what
+ * `world-lights.ts` does with the map: it is rendered on the frame the light is
+ * assigned a slot and never again, so what a casting fixture costs after that is
+ * one cube lookup per lit fragment and no draw calls at all. The first cut had
+ * the lamp and the torch dark on a budget argument that is true of a *live*
+ * shadow map and false of a frozen one -- and it cost the two fixtures whose
+ * shadows say the most about where they are, since a light three body-heights up
+ * is the one that throws a figure's shadow out across the ground rather than
+ * under its own feet.
+ *
+ * `shadow` is still a per-kind field rather than an assumption, because it is
+ * what puts a fixture in the pool's casting prefix and that prefix is finite:
+ * a kind added later that is not worth a cube map says so here.
  */
 /**
  * The one thing about `height` that is not obvious, and it decides more than
@@ -276,10 +282,10 @@ export const FIXTURE_LIGHTS: Readonly<Record<FixtureKind, ResolvedLight>> = {
   campfire: { color: 0xffa542, brightness: 2.2, radius: 420, height: 34, shadow: true },
   // Higher than a body and reaching further than either of the others, which is
   // what a street lamp is for: it lights a path rather than a spot.
-  'lamp-post': { color: 0xffd9a0, brightness: 1.5, radius: 520, height: 122, shadow: false },
+  'lamp-post': { color: 0xffd9a0, brightness: 1.5, radius: 520, height: 122, shadow: true },
   // The carried torch, standing still: the same colour and the same reach, so a
   // player who plants one and one who holds one get the same light.
-  'torch-stand': { color: 0xffa542, brightness: 1.6, radius: 300, height: 78, shadow: false },
+  'torch-stand': { color: 0xffa542, brightness: 1.6, radius: 300, height: 78, shadow: true },
 };
 
 /** A number held inside the fixture bounds, total by construction. */
@@ -437,7 +443,7 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   house: Math.hypot(HOUSE_PLAN.width, HOUSE_PLAN.depth) / 2,
   // A well *is* a circle, so this one is exact.
   well: WELL_RADIUS,
-  // The fixtures (spec 248). A fire is a ring of stones you walk round rather
+  // The fixtures (spec 250). A fire is a ring of stones you walk round rather
   // than through, and the two poles are poles: wide enough that a body cannot
   // stand inside the thing it is looking at, and no wider, because a lamp with a
   // hut's collider is an invisible wall down a street.

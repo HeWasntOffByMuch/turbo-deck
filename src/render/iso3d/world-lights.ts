@@ -9,7 +9,7 @@ import {
 
 /**
  * The lights standing in the world, and the shadow maps they build once
- * (spec 248).
+ * (spec 250).
  *
  * The three.js half of `light-residency.ts`. That module decides *which* lights
  * are lit; this one owns the `PointLight`s they are lit with, and the one rule
@@ -96,18 +96,29 @@ export interface WorldLightsOptions {
 /**
  * The pool's size.
  *
- * Six lights, two of which cast. Both numbers are a budget rather than a
- * measurement, and the shape of the budget is what matters: the casting pair is
- * the expensive half (a cube map each, and a bake whenever one changes hands),
- * and the plain four are nearly free, so the split is deliberately lopsided
- * toward *more places lit* over *more places casting*.
+ * Six lights, four of which cast, and the split is decided by two different
+ * things rather than by one budget.
  *
- * With the sun and the panel torch that is four point-shadow samplers and one
- * directional in the fragment shader, which is inside what WebGL2 guarantees.
+ * **The casting four are cheap because their maps are frozen.** A live
+ * shadow-casting point light is six passes over the scene every frame and would
+ * make this number two at most; one that is rendered on the frame it is assigned
+ * and never again costs a samplerCube and one lookup per lit fragment, so the
+ * question stops being "how many can we draw" and becomes "how many samplers can
+ * the shader have". With the sun and the panel torch that is five point-shadow
+ * cubes and one directional map, against the sixteen texture units WebGL2
+ * guarantees a fragment shader -- and the materials under them are
+ * `MeshLambertMaterial` with no maps of their own.
+ *
+ * **The plain two exist because a conjured light must never cast.** It moves
+ * every frame, so there is nothing about it that could be baked, and a slot in
+ * the casting prefix would either draw six faces a frame for it or hand it
+ * somebody else's frozen shadows. Two is enough for the bodies near you carrying
+ * one, and a fixture that cannot get a casting slot falls back into them rather
+ * than going dark.
  */
 export const WORLD_LIGHT_DEFAULTS: WorldLightsOptions = {
   slots: 6,
-  shadowSlots: 2,
+  shadowSlots: 4,
   /**
    * Nothing further than this is lit.
    *

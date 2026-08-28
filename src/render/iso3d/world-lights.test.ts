@@ -5,7 +5,7 @@ import type { LightRequest } from './light-residency.js';
 import { WorldLights, WORLD_LIGHT_DEFAULTS } from './world-lights.js';
 
 /**
- * Spec 248. Everything here is about the two costs the pool exists to avoid,
+ * Spec 250. Everything here is about the two costs the pool exists to avoid,
  * and both are invisible in a screenshot: a light count that changes recompiles
  * every material in the scene, and a shadow map rebuilt per frame re-renders the
  * world six times.
@@ -31,7 +31,7 @@ function fresh(): { scene: THREE.Scene; pool: WorldLights } {
   return { scene, pool: new WorldLights(scene, OPTIONS) };
 }
 
-describe('the world light pool (spec 248)', () => {
+describe('the world light pool (spec 250)', () => {
   /**
    * The reason there is a pool at all. three collects lights in
    * `projectObject`, which returns early on `visible === false`, and the count

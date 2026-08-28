@@ -1,5 +1,5 @@
 /**
- * Put lights in the town square of the shipped map (spec 248).
+ * Put lights in the town square of the shipped map (spec 250).
  *
  * `place-npc.ts`'s script, one system over, and it exists for that script's
  * reason: the map editor is the tool for *placing* things, and this is here
@@ -39,6 +39,7 @@ import {
 } from '../src/terrain/vegetation.js';
 
 import { writeSplit } from './split-map.js';
+import { WORLD_LIGHT_DEFAULTS } from '../src/render/iso3d/world-lights.js';
 
 /**
  * The middle of the three shops.
@@ -282,7 +283,7 @@ function main(): void {
   );
   console.log(
     `of which ${String(PLACEMENTS.filter((one) => FIXTURE_LIGHTS[one.kind].shadow).length)} cast a shadow, ` +
-      `against a pool that has 2 casting slots`,
+      `against a pool that has ${String(WORLD_LIGHT_DEFAULTS.shadowSlots)} casting slots`,
   );
   if (!write) {
     console.log('nothing written. Re-run with --write.');
