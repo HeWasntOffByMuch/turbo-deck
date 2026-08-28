@@ -58,11 +58,11 @@ const PER_TIER = SCALING.agility.mobileOffenseCooldownTicks;
  * reached it would measure the tier and the milestone together and read tier 1
  * as two tiers.
  */
-function recordWithTiers(tiers: number): PersistedPlayer {
+function recordWithTiers(tiers: number, agility = 10): PersistedPlayer {
   return {
     id: 'p1',
     displayName: 'P1',
-    baseStats: { strength: 5, agility: 10, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+    baseStats: { strength: 5, agility, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
     specializations: tiers > 0 ? [{ specializationId: 'agi.mobileOffense', tier: tiers }] : [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
@@ -78,8 +78,8 @@ function recordWithTiers(tiers: number): PersistedPlayer {
   };
 }
 
-function statsWithTiers(tiers: number): EffectiveStats {
-  return { ...computeEffectiveStats(recordWithTiers(tiers)), spellPower: 1, critChance: 0 };
+function statsWithTiers(tiers: number, agility = 10): EffectiveStats {
+  return { ...computeEffectiveStats(recordWithTiers(tiers, agility)), spellPower: 1, critChance: 0 };
 }
 
 const CHUNK = 100;
@@ -220,9 +220,12 @@ function swingAndCancel(
 }
 
 /** A world with a player at `tiers` and a dummy to swing at. */
-function fight(tiers: number): { state: ServerWorldState; playerId: number; dummyId: number } {
+function fight(
+  tiers: number,
+  agility = 10,
+): { state: ServerWorldState; playerId: number; dummyId: number } {
   let state = createWorldState(1);
-  const player = withPlayer(state, statsWithTiers(tiers));
+  const player = withPlayer(state, statsWithTiers(tiers, agility));
   state = player.state;
   const dummy = withDummy(state);
   state = dummy.state;
@@ -560,6 +563,34 @@ describe('what must not trigger it', () => {
     const run = swingAndCancel(state, playerId, dummyId, { 'skill.guardBreak': 900 });
     expect(refunds(run.events)).toHaveLength(0);
     expect(entityOf(run.state, playerId).cooldowns['skill.guardBreak']).toBe(900);
+  });
+});
+
+describe('Flow, which the same cancel still grants', () => {
+  /**
+   * The half of this change that is an *absence*, and the one worth a test.
+   *
+   * Mobile Offense used to be what made Flow exist below the Agility 20
+   * milestone -- it granted `flowTicks` -- so taking that away could have made
+   * Flow unreachable rather than merely un-bought, in silence. It has not: the
+   * milestone still introduces it, and `cancelBackswing` still grants a stack
+   * on exactly the same trigger.
+   */
+  it('is still granted by a deliberate cancel, from the milestone that introduces it', () => {
+    expect(statsWithTiers(0, 20).traits.flowTicks).toBeGreaterThan(0);
+    const { state, playerId, dummyId } = fight(0, 20);
+    const run = swingAndCancel(state, playerId, dummyId);
+    const flow = statusOf(entityOf(run.state, playerId).statuses, StatusId.Flow, run.cancelTick);
+    expect(flow?.stacks).toBe(1);
+  });
+
+  it('is no longer something Mobile Offense hands out', () => {
+    // Three tiers at the attribute the specialization is bought at: cooldown,
+    // and not a single tick of Flow.
+    expect(statsWithTiers(3).traits.flowTicks).toBe(0);
+    const { state, playerId, dummyId } = fight(3);
+    const run = swingAndCancel(state, playerId, dummyId);
+    expect(statusOf(entityOf(run.state, playerId).statuses, StatusId.Flow, run.cancelTick)).toBeNull();
   });
 });
 
