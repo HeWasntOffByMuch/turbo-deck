@@ -82,7 +82,7 @@
             { "species": "tree", "x": 549.308, "z": 542.089, "rotation": 5.885, "scale": 1.45, "tint": -0.953 },
             { "species": "tree", "x": 593.541, "z": 610.949, "rotation": 5.737, "scale": 1.075, "tint": -0.839 },
             { "species": "tree", "x": 503.461, "z": 471.162, "rotation": 2.442, "scale": 0.775, "tint": 0.465 },
-            { "species": "torch-stand", "x": 83.54, "z": 507.23, "rotation": 0, "scale": 1, "tint": 0 }
+            { "species": "torch-stand", "x": 4.529, "z": 609.468, "rotation": 0, "scale": 0.6, "tint": -0.084 }
           ],
           "markers": []
         },
@@ -167,7 +167,11 @@
             { "species": "tree", "x": 223.991, "z": 396.29, "rotation": 6.01, "scale": 0.889, "tint": 0.961 },
             { "species": "tree", "x": 75.84, "z": 241.34, "rotation": 2.325, "scale": 0.858, "tint": -0.44 }
           ],
-          "markers": []
+          "markers": [
+            { "kind": "spawner", "id": "spawner-13", "x": 352.796, "z": 303.055, "label": "stalker" },
+            { "kind": "spawner", "id": "spawner-14", "x": 412.305, "z": 223.273, "label": "stalker" },
+            { "kind": "spawner", "id": "spawner-15", "x": 541.582, "z": 352.549, "label": "stalker" }
+          ]
         },
         {
           "cx": 4,
