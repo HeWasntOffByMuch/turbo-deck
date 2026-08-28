@@ -22,8 +22,14 @@ import {
   TREE_SPECIES,
   type PropShading,
 } from './props.js';
-import { FENCE_KINDS, FIXTURE_KINDS, STRUCTURE_KINDS } from '../../terrain/vegetation.js';
-import type { Prop } from '../../terrain/vegetation.js';
+import {
+  FENCE_KINDS,
+  FIXTURE_KINDS,
+  FIXTURE_LIGHTS,
+  STRUCTURE_KINDS,
+  type Prop,
+  type PropKind,
+} from '../../terrain/vegetation.js';
 
 const SMOOTH: PropShading = { smooth: true, creaseAngle: (50 * Math.PI) / 180, swayNormals: true };
 
@@ -316,5 +322,92 @@ describe('a region dropped rather than rebuilt', () => {
     field.adoptRegion(nearKey, buildRegionInstances(near, flat));
     expect(field.heldRegions().length).toBe(2);
     expect(instancedIn(field.group).length).toBe(before);
+  });
+});
+
+/**
+ * Spec 248. The claim the fixture half rests on: a light is read off the *field*
+ * rather than off the map, so a fixture on ground the client has forgotten stops
+ * being lit by construction rather than by a second residency rule.
+ */
+describe('the lights a region carries', () => {
+  const fixture = (kind: PropKind, x: number, z: number, scale = 1): Prop => ({
+    kind,
+    x,
+    y: z,
+    scale,
+    rotation: 0,
+    tint: 0,
+  });
+
+  it('composes one light per fixture and none for anything else', () => {
+    const props = [fixture('campfire', 40, 40), fixture('tree', 80, 80), bush(120, 120)];
+    const composed = buildRegionInstances(props, flat);
+    expect(composed.lights).toHaveLength(1);
+    expect(composed.lights[0]?.color).toBe(FIXTURE_LIGHTS.campfire.color);
+    expect(composed.lights[0]?.shadow).toBe(FIXTURE_LIGHTS.campfire.shadow);
+  });
+
+  it("puts the light where the flame is: the ground, plus the row's height", () => {
+    const composed = buildRegionInstances([fixture('lamp-post', 40, 60)], () => 25);
+    expect(composed.lights[0]?.x).toBe(40);
+    expect(composed.lights[0]?.z).toBe(60);
+    expect(composed.lights[0]?.y).toBe(25 + FIXTURE_LIGHTS['lamp-post'].height);
+  });
+
+  it("scales the flame's height and its reach with the prop", () => {
+    const composed = buildRegionInstances([fixture('torch-stand', 0, 0, 2)], () => 0);
+    expect(composed.lights[0]?.y).toBe(FIXTURE_LIGHTS['torch-stand'].height * 2);
+    expect(composed.lights[0]?.radius).toBe(FIXTURE_LIGHTS['torch-stand'].radius * 2);
+  });
+
+  it('keys a light stably across a rebuild of the same region', () => {
+    const props = [fixture('campfire', 40, 40), fixture('lamp-post', 90, 90)];
+    const first = buildRegionInstances(props, flat).lights.map((one) => one.key);
+    const again = buildRegionInstances(props, flat).lights.map((one) => one.key);
+    expect(again).toEqual(first);
+    expect(new Set(first).size).toBe(first.length);
+  });
+
+  it("carries an instance override rather than the kind's row", () => {
+    const dim = { ...fixture('campfire', 40, 40), light: { brightness: 0.4, radius: 200 } };
+    const composed = buildRegionInstances([dim], flat);
+    expect(composed.lights[0]?.brightness).toBe(0.4);
+    expect(composed.lights[0]?.radius).toBe(200);
+  });
+
+  it('stops offering a light when the region holding it is dropped', () => {
+    const props = [fixture('campfire', 40, 40)];
+    const key = propRegionKey(40, 40);
+    const field = buildPropField([], flat);
+    field.adoptRegion(key, buildRegionInstances(props, flat));
+    expect(field.lights()).toHaveLength(1);
+    expect(field.dropRegion(key)).toBe(true);
+    // Not "and then something clears the light": there is nothing to clear,
+    // because the only place a light was ever held is the region that has gone.
+    expect(field.lights()).toHaveLength(0);
+    field.dispose();
+  });
+
+  it("offers every held region's lights, in region order", () => {
+    const field = buildPropField([], flat);
+    const far = 3000;
+    field.adoptRegion(propRegionKey(40, 40), buildRegionInstances([fixture('campfire', 40, 40)], flat));
+    field.adoptRegion(
+      propRegionKey(far, far),
+      buildRegionInstances([fixture('lamp-post', far, far)], flat),
+    );
+    expect(field.lights()).toHaveLength(2);
+    // Sorted by region key rather than by arrival, so the list a residency pass
+    // is handed does not depend on which region the worker finished first.
+    const reversed = buildPropField([], flat);
+    reversed.adoptRegion(
+      propRegionKey(far, far),
+      buildRegionInstances([fixture('lamp-post', far, far)], flat),
+    );
+    reversed.adoptRegion(propRegionKey(40, 40), buildRegionInstances([fixture('campfire', 40, 40)], flat));
+    expect(reversed.lights().map((one) => one.key)).toEqual(field.lights().map((one) => one.key));
+    field.dispose();
+    reversed.dispose();
   });
 });

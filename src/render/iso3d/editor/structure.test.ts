@@ -3,6 +3,9 @@ import {
   createLayer,
   createWorld,
   exportMap,
+  FIXTURE_KINDS,
+  FIXTURE_LIGHTS,
+  fixtureLight,
   footprintRadius,
   HOUSE_PLAN,
   loadMap,
@@ -18,6 +21,7 @@ import {
   baseFootprint,
   DEFAULT_STRUCTURE,
   dragScale,
+  fixtureOverride,
   placeStructure,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_SCALE_MIN,
@@ -322,5 +326,86 @@ describe('dragging a building out to size (spec 225)', () => {
     );
     expect(out.placed).toMatchObject({ x: 40, y: -25 });
     expect(out.placed?.scale).toBeCloseTo(1.5, 9);
+  });
+});
+
+/**
+ * Spec 248. A fixture goes down through the same tool, so most of what is
+ * asserted above already covers one. What is new is the two numbers, and every
+ * test here is about the same rule: **an override is written only where it
+ * differs from the kind's own row.**
+ */
+describe('placing a light fixture', () => {
+  it('places every fixture kind through the same tool', () => {
+    for (const kind of FIXTURE_KINDS) {
+      const out = placeStructure(loaded().store, LAYER, settings({ structure: kind }), { x: 0, z: 0 });
+      expect(out.placed?.kind, kind).toBe(kind);
+      expect(out.refused, kind).toBeNull();
+    }
+  });
+
+  it("writes no light at all for a fixture placed at its kind's defaults", () => {
+    for (const kind of FIXTURE_KINDS) {
+      const base = FIXTURE_LIGHTS[kind];
+      const armed = settings({
+        structure: kind,
+        fixtureBrightness: base.brightness,
+        fixtureRadius: base.radius,
+      });
+      expect(fixtureOverride(armed), kind).toBeUndefined();
+      expect(placeStructure(loaded().store, LAYER, armed, { x: 0, z: 0 }).placed?.light).toBeUndefined();
+    }
+  });
+
+  it('writes no light for a panel that has never been touched', () => {
+    const armed = settings({ structure: 'campfire' });
+    expect(armed.fixtureBrightness).toBeUndefined();
+    expect(fixtureOverride(armed)).toBeUndefined();
+  });
+
+  it('writes an override where either number differs', () => {
+    const base = FIXTURE_LIGHTS.campfire;
+    const dimmer = settings({ structure: 'campfire', fixtureBrightness: base.brightness / 2 });
+    expect(fixtureOverride(dimmer)).toEqual({ brightness: base.brightness / 2, radius: base.radius });
+    const wider = settings({ structure: 'campfire', fixtureRadius: base.radius + 100 });
+    expect(fixtureOverride(wider)).toEqual({ brightness: base.brightness, radius: base.radius + 100 });
+  });
+
+  /**
+   * A light on a hut is a field nothing will ever read, which is the thing
+   * `parseMarker` refuses one system over. Here it is simply never written.
+   */
+  it('never writes a light onto a kind that emits none', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      const armed = settings({ structure: kind, fixtureBrightness: 3, fixtureRadius: 700 });
+      expect(fixtureOverride(armed), kind).toBeUndefined();
+      expect(placeStructure(loaded().store, LAYER, armed, { x: 0, z: 0 }).placed?.light, kind).toBeUndefined();
+    }
+  });
+
+  it('round-trips a placed override through the document', () => {
+    const map = loaded();
+    placeStructure(map.store, LAYER, settings({ structure: 'lamp-post', fixtureBrightness: 2.5 }), {
+      x: 0,
+      z: 0,
+    });
+    const back = loadMap(parseMap(serializeMap(map.store.toDocument()))).store.props(LAYER);
+    expect(back).toHaveLength(1);
+    const lamp = back[0];
+    if (!lamp) throw new Error('expected the lamp to come back');
+    expect(lamp.light?.brightness).toBe(2.5);
+    // And the resolver reads it, which is the half that matters: an override in
+    // the document that `fixtureLight` did not apply is a slider that does
+    // nothing.
+    expect(fixtureLight(lamp)?.brightness).toBe(2.5);
+  });
+
+  it('blocks the ground it stands on, like any other placed prop', () => {
+    for (const kind of FIXTURE_KINDS) {
+      expect(baseFootprint(kind), kind).toBeGreaterThan(0);
+      expect(structureFootprint(settings({ structure: kind, structureScale: 2 })), kind).toBe(
+        baseFootprint(kind) * 2,
+      );
+    }
   });
 });

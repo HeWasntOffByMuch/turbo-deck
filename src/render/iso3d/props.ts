@@ -1832,7 +1832,11 @@ function buildCampfireParts(): PropPart[] {
     {
       geometry: boxesGeometry(stones),
       offsetY: 0,
-      color: PALETTE.drystone,
+      // The warm stone rather than the pale one, and that is a decision the
+      // preview made: at `drystone` the ring is the brightest thing in the prop
+      // and a campfire photographs as a white splat with a small flame in it.
+      // What has to be brightest is the fire.
+      color: PALETTE.drystoneWarm,
       foliage: false,
       // The widest drift of any fixture part: a fire is made of stones somebody
       // found, so one being greyer than the next is the point.

@@ -26,6 +26,8 @@ import type { Vec2 } from '../../../sim/types.js';
 import type { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import type { WireStatus } from '../../../server/net/messages.js';
+import { hashUnit2 } from '../../../shared/hash.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { PALETTE } from '../palette.js';
 import { castsShadows, makeUnwalkableField } from '../meshes.js';
@@ -103,6 +105,7 @@ import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
+  MAGIC_DEFAULTS,
   MAX_LIGHT_RANGE,
   TORCH_ANCHOR,
   TORCH_COLOR,
@@ -112,6 +115,9 @@ import {
   torchFlicker,
 } from '../player-lights.js';
 import { PlayerLighting } from '../player-lighting.js';
+import { hasConjuredLight, resolveCarriedLights, type CarriedLightFacts } from './carried-light.js';
+import type { LightRequest } from '../light-residency.js';
+import { WorldLights } from '../world-lights.js';
 import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
 import { UnitRig } from '../unit-rig.js';
 import { WeaponRig } from '../weapon-rig.js';
@@ -249,6 +255,15 @@ const BODY_MIDDLE = 0.45;
 
 const FLAME_RADIUS = 5;
 const ORB_RADIUS = 7;
+
+/** The empty list, shared, so a frame with no statuses allocates nothing. */
+const NO_WIRE_STATUSES: readonly WireStatus[] = [];
+/** The carried torch's haft: how long, and how far below the flame it hangs. */
+const HAFT_LENGTH = 22;
+const HAFT_DROP = HAFT_LENGTH / 2 + FLAME_RADIUS * 0.6;
+
+/** Where a remote body's conjured orb sits in its circuit (spec 248). */
+const ORB_PHASE_SEED = 0x11d17;
 
 /** What the view hands the scene each frame. All presentation, no state. */
 export interface FrameInfo {
@@ -512,6 +527,8 @@ export class WorldScene {
   private readonly background = new THREE.Color(PALETTE.sky);
   private readonly torch = new THREE.PointLight(TORCH_COLOR, 0, TORCH_DEFAULTS.range);
   private readonly torchFlame: THREE.Mesh;
+  /** The stick the carried flame is on (spec 248). See {@link buildHaft}. */
+  private readonly torchHaft: THREE.Mesh;
   private readonly orb = new THREE.PointLight(MAGIC_COLOR, 0, 0);
   private readonly orbMesh: THREE.Mesh;
   /** The rig currently carrying the torch, so re-parenting happens once. */
@@ -525,6 +542,36 @@ export class WorldScene {
    * body.
    */
   private readonly playerLighting = new PlayerLighting();
+  /**
+   * The lights standing in the world, and the conjured ones on other bodies
+   * (spec 248).
+   *
+   * Built in the constructor rather than here, because it adds its pool to the
+   * scene at construction and the scene is a field on this class.
+   */
+  private worldLights: WorldLights | null = null;
+  /** Rebuilt every frame, so a walk past a village allocates one array. */
+  private readonly lightRequests: LightRequest[] = [];
+  /**
+   * Conjured lights on bodies that are not the local player (spec 248).
+   *
+   * Gathered in the body loop, where a body's *drawn* position is in scope, and
+   * spent by `applyWorldLights` a few lines later. The local player's own is
+   * the dedicated orb instead: it is the one the tuning panel drives and the one
+   * `player-lighting.ts` measures at arm's length.
+   */
+  private readonly conjuredLights: LightRequest[] = [];
+  /**
+   * Bodies taken out of point-light shadow maps for one frame, so a fixture's
+   * baked map holds nothing that moves (spec 248).
+   *
+   * Held rather than re-traversed, because the restore has to reach exactly the
+   * meshes the mask reached -- `player-lighting.ts` owns the local player's own
+   * `customDistanceMaterial`, and clearing one it set would leave the player
+   * casting into every torch for the rest of the session.
+   */
+  private readonly bakeMasked = new Set<THREE.Mesh>();
+  private readonly noBakeShadow = new THREE.MeshDistanceMaterial();
   /** Scratch for the body anchor, so a frame of lit walking allocates nothing. */
   private readonly lightAnchor = new THREE.Vector3();
   private readonly unwalkable = new THREE.Group();
@@ -779,7 +826,20 @@ export class WorldScene {
     this.scene.add(this.unwalkable);
 
     this.torchFlame = this.buildTorch();
+    this.torchHaft = this.buildHaft();
     this.orbMesh = this.buildOrb();
+    // The pool, allocated once and never grown (spec 248). Here rather than as a
+    // field initialiser because it adds its lights to `this.scene`, and the
+    // order fields are initialised in is not something to depend on.
+    //
+    // The stand-in that keeps a body out of a *point* light's shadow map is
+    // `player-lighting.ts`'s, in as many words: it writes neither colour nor
+    // depth, and the shadow pass overwrites `visible`, `side` and the alpha
+    // fields on whatever it is handed, so those two are the only state it can
+    // rely on.
+    this.noBakeShadow.colorWrite = false;
+    this.noBakeShadow.depthWrite = false;
+    this.worldLights = new WorldLights(this.scene);
     this.vfx = new VfxLayer({
       hooks: {
         // Injected rather than imported, so the sim stays free of terrain.
@@ -1185,6 +1245,23 @@ export class WorldScene {
     return this.auras.entities();
   }
 
+  /**
+   * What each pool slot is lighting, for the probe's readout (spec 248).
+   *
+   * Published from the **pool** rather than from the fixtures that asked for a
+   * slot, the same rule `data-held-weapons` and `data-prop-regions` follow: a
+   * light nothing is drawing should read as absent, which is exactly the failure
+   * a readout of what was *wanted* could never show.
+   */
+  heldWorldLights(): readonly (string | null)[] {
+    return this.worldLights?.heldKeys() ?? [];
+  }
+
+  /** How many fixtures are offering themselves to the pool right now. */
+  worldLightsOffered(): number {
+    return this.lightRequests.length;
+  }
+
   refreshPropsWithin(rects: PropRect | readonly PropRect[]): void {
     if (!this.map || !this.propField) return;
     if (Array.isArray(rects) && rects.length === 0) return;
@@ -1572,7 +1649,16 @@ export class WorldScene {
     this.listenerZ = me.y;
     this.followSelf(this.framedPoint(me), groundY, dt);
     this.applyControls();
-    this.applyPlayerLights(me, groundY);
+    this.applyPlayerLights(me, groundY, {
+      // Only ours, because only ours is on the wire (spec 165): a remote
+      // player's off hand is not replicated, so a torch in one is a light this
+      // client has no way to know about.
+      offHand: view.equipment.offHand,
+      conjured: hasConjuredLight(this.selfStatuses(view), frame.tick),
+    });
+    // After the body loop, which is where the conjured lights on other people's
+    // bodies were gathered, and before the draw that bakes a shadow map.
+    this.applyWorldLights();
     this.camera.lookAt(this.target);
 
     this.camera.updateMatrixWorld();
@@ -1662,7 +1748,13 @@ export class WorldScene {
       // three clears the flag itself once the maps are drawn, which is what
       // keeps the mask pass inside `retro.render` from rebuilding them again.
       this.renderer.shadowMap.needsUpdate = true;
+      // A fixture's map is baked once and then frozen (spec 248), so nothing
+      // that moves may be in it. True only on the frame a bake actually
+      // happens, because three clears its own flag once the map is drawn.
+      const baking = this.worldLights?.bakingThisFrame() ?? false;
+      if (baking) this.maskBodiesForBake(view.selfEntityId);
       this.retro.render(this.renderer, this.scene, this.camera);
+      if (baking) this.unmaskBodiesAfterBake();
       // Over the finished frame, which is where a line belongs: the fills are
       // settled, so the outline is a constant dark value rather than something
       // the quantizer gets to round.
@@ -1733,6 +1825,8 @@ export class WorldScene {
     this.targetRing.dispose();
     this.terrainMesh?.dispose();
     this.propField?.dispose();
+    this.worldLights?.dispose();
+    this.noBakeShadow.dispose();
     this.buffers?.dispose();
     this.edges?.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
@@ -1784,6 +1878,29 @@ export class WorldScene {
     );
     this.scene.add(flame);
     return flame;
+  }
+
+  /**
+   * The stick under the flame, and how far under it (spec 248).
+   *
+   * The panel torch has never drawn one: it is a debug light, and a floating
+   * flame reads fine as one. A torch somebody is *carrying* is a thing they are
+   * holding, and a flame on its own over an empty hand reads as a bug rather
+   * than as a light. It is deliberately not a held *model* -- that is an
+   * `assets/items/` document and a `.glb`, which is spec 140's pipeline -- but a
+   * haft at the anchor costs eight triangles and says which hand it is in.
+   */
+  private buildHaft(): THREE.Mesh {
+    const haft = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.6, 2.2, HAFT_LENGTH, 5),
+      // Unlit, like the flame above it: what is right beside a point light gets
+      // no useful shading from it, and a lit haft goes black on the side facing
+      // away from the flame it is holding.
+      new THREE.MeshBasicMaterial({ color: PALETTE.post }),
+    );
+    haft.visible = false;
+    this.scene.add(haft);
+    return haft;
   }
 
   private buildOrb(): THREE.Mesh {
@@ -1852,6 +1969,7 @@ export class WorldScene {
       );
     }
 
+    this.conjuredLights.length = 0;
     for (const entity of view.entities) {
       // Drops are drawn by `syncDrops` instead (spec 158): what a drop is lit
       // by comes from `view.drops` rather than from the entity record, and
@@ -1995,6 +2113,40 @@ export class WorldScene {
           entity.statuses ?? [],
           frame.tick,
         );
+        // A conjured light on somebody else's body (spec 248).
+        //
+        // Gathered here because this is where a body's *drawn* position is in
+        // scope, and spent by `applyWorldLights` below. Not for our own body:
+        // that one is the dedicated orb, which the tuning panel drives and which
+        // `player-lighting.ts` measures at arm's length -- a pool slot could do
+        // neither.
+        //
+        // It is on the wire at all because it is a **status**, which is what
+        // separates it from the torch in somebody's off hand: statuses are
+        // replicated to every client and equipment is not.
+        if (!isSelf && hasConjuredLight(entity.statuses ?? [], frame.tick)) {
+          // Phased per body, so two people standing together do not orbit in
+          // formation. Hashed rather than drawn, and hashed rather than passing
+          // the id straight in as radians: an id *is* a number and would work,
+          // and would put every low id in the same quarter of the circle.
+          const orbit = orbState(this.elapsed, hashUnit2(entity.id, 0, ORB_PHASE_SEED) * Math.PI * 2);
+          this.conjuredLights.push({
+            key: `orb:${entity.id}`,
+            x: x + orbit.offset.x,
+            y: ground + orbit.offset.y,
+            z: y + orbit.offset.z,
+            color: MAGIC_COLOR,
+            brightness: MAGIC_DEFAULTS.brightness * orbit.intensity,
+            radius: MAGIC_DEFAULTS.range,
+            // Never. A conjured light is the one that casts none, which is what
+            // spec 047 says separates it from a lantern -- so this can never
+            // reach the pool's casting prefix and can never cost a bake.
+            shadow: false,
+            // A light that moves every frame has nothing to bake, so there is
+            // nothing for a revision to invalidate.
+            revision: 0,
+          });
+        }
         this.auras.step(
           { entityId: entity.id, x, y: ground, z: y },
           {
@@ -3107,33 +3259,44 @@ export class WorldScene {
    * reference comparison, and the alternative is the player's light going out
    * the first time they die.
    */
-  private applyPlayerLights(position: Vec2, groundY: number): void {
+  private applyPlayerLights(position: Vec2, groundY: number, facts: CarriedLightFacts): void {
+    // Two things decide these two lights since spec 248: the panel above and the
+    // game. The rule is one sentence and lives in `carried-light.ts` -- the
+    // panel wins where it is asking for something -- so every switch on it still
+    // does exactly what spec 047 tuned, and a player who has never opened it
+    // gets a torch by carrying one.
     const settings = this.controls.playerLights();
+    const lights = resolveCarriedLights(settings, facts);
 
-    this.torch.visible = settings.torchOn;
-    this.torchFlame.visible = settings.torchOn;
-    if (settings.torchOn) {
-      const flame = torchFlicker(this.elapsed, (this.map?.seed ?? 0), settings.torchFlicker);
-      this.torch.castShadow = settings.torchShadows;
-      this.torch.distance = settings.torchRange;
+    this.torch.visible = lights.torch.on;
+    this.torchFlame.visible = lights.torch.on;
+    this.torchHaft.visible = lights.torch.on;
+    if (lights.torch.on) {
+      const flame = torchFlicker(this.elapsed, (this.map?.seed ?? 0), lights.torch.flicker);
+      this.torch.castShadow = lights.torch.shadows;
+      this.torch.distance = lights.torch.range;
       this.torch.intensity =
-        pointIntensity(settings.torchBrightness, settings.torchRange) * flame.intensity;
+        pointIntensity(lights.torch.brightness, lights.torch.range) * flame.intensity;
       this.torch.position.set(
         TORCH_ANCHOR.x + flame.sway.x,
         TORCH_ANCHOR.y + flame.sway.y,
         TORCH_ANCHOR.z + flame.sway.z,
       );
       this.torchFlame.position.copy(this.torch.position);
+      // The haft hangs below the flame and does not gutter with it: a stick that
+      // swayed would be a player waving a torch about, where the flicker is the
+      // flame moving in its own bracket.
+      this.torchHaft.position.set(TORCH_ANCHOR.x, TORCH_ANCHOR.y - HAFT_DROP, TORCH_ANCHOR.z);
     }
 
-    this.orb.visible = settings.magicOn;
-    this.orbMesh.visible = settings.magicOn;
-    if (settings.magicOn) {
+    this.orb.visible = lights.orb.on;
+    this.orbMesh.visible = lights.orb.on;
+    if (lights.orb.on) {
       // The orbit is relative to the player's feet, so the orb is carried
       // without being parented to a rig that respawn would replace.
       const state = orbState(this.elapsed);
-      this.orb.distance = settings.magicRange;
-      this.orb.intensity = pointIntensity(settings.magicBrightness, settings.magicRange) * state.intensity;
+      this.orb.distance = lights.orb.range;
+      this.orb.intensity = pointIntensity(lights.orb.brightness, lights.orb.range) * state.intensity;
       this.orb.position.set(
         position.x + state.offset.x,
         groundY + state.offset.y,
@@ -3145,7 +3308,94 @@ export class WorldScene {
     // No cube-map silhouette of the player across their own feet unless asked
     // for (spec 118). The anchor the lights are measured from is written after
     // the matrices are fresh, in `anchorPlayerLighting`.
-    this.playerLighting.setCastsPointShadow(settings.torchPlayerShadow);
+    this.playerLighting.setCastsPointShadow(lights.playerShadow);
+  }
+
+  /**
+   * The local player's replicated statuses, or an empty list.
+   *
+   * `view.self` is a *prediction* and carries a position and nothing else, so
+   * the statuses have to come off the replicated record like everybody else's.
+   * A body not in the set at all is a reconnect, which is a frame or two of the
+   * player having no statuses rather than something to guess about.
+   */
+  private selfStatuses(view: ClientView): readonly WireStatus[] {
+    for (const entity of view.entities) {
+      if (entity.id === view.selfEntityId) return entity.statuses ?? [];
+    }
+    return NO_WIRE_STATUSES;
+  }
+
+  /**
+   * The lights standing in the world, brought up to date (spec 248).
+   *
+   * Everything the pool could light, ranked by the point the camera is framing:
+   * the fixtures on ground the prop field is currently drawing, and the conjured
+   * lights the body loop just gathered off other people's statuses.
+   *
+   * The fixtures come from `PropFieldHandle.lights()` rather than from the map
+   * store, which is what makes a light on forgotten ground go out by
+   * construction: spec 215's rule is that a region is drawn because a chunk
+   * under it is held, and a second residency rule for lights would be one more
+   * thing to keep in step with it.
+   */
+  private applyWorldLights(): void {
+    const pool = this.worldLights;
+    if (!pool) return;
+    this.lightRequests.length = 0;
+    // The map's churn counter (spec 208): one up per chunk inserted *and* one
+    // per chunk let go, so it only ever grows. A fixture's baked shadow map is
+    // stamped with it, and a bake taken over ground that had not arrived yet is
+    // re-taken when it does. In a settled world this number never moves.
+    const revision = this.map?.revision ?? 0;
+    for (const light of this.propField?.lights() ?? []) {
+      this.lightRequests.push({ ...light, revision });
+    }
+    for (const light of this.conjuredLights) this.lightRequests.push(light);
+    // The point the camera is framing rather than where the camera is: it parks
+    // a constant 6,000 units back, so its own position says nothing about which
+    // corner of the world is on screen.
+    pool.update(this.lightRequests, { x: this.target.x, z: this.target.z });
+  }
+
+  /**
+   * Keep everything that moves out of a fixture's shadow map, for the one frame
+   * it is being baked on (spec 248).
+   *
+   * A baked map is a picture of the world taken once, so a body in it is a
+   * silhouette painted on the ground that stays there after the body has walked
+   * off. The mask is `player-lighting.ts`'s stand-in and the mechanism is that
+   * file's, one step wider: `getDepthMaterial` reads `customDistanceMaterial`
+   * for a **point** light only, so this takes the bodies out of every torch and
+   * out of nothing else.
+   *
+   * Every point light's map is affected for that frame, the panel torch's
+   * included -- and that is the whole cost, because the panel torch rebuilds
+   * every frame anyway, so what it loses is one frame of body shadows during an
+   * event that happens when somebody walks up to a campfire.
+   *
+   * The local player is deliberately not touched here. `player-lighting.ts` owns
+   * that rig's `customDistanceMaterial` and holds it across frames; writing over
+   * it and then clearing it would leave the player casting into every torch for
+   * the rest of the session. It is masked by the line below instead, which
+   * `applyPlayerLights` rewrites from the panel on the very next frame.
+   */
+  private maskBodiesForBake(selfEntityId: number): void {
+    this.playerLighting.setCastsPointShadow(false);
+    for (const [id, body] of this.bodies) {
+      if (id === selfEntityId) continue;
+      body.group.traverse((node) => {
+        if (!(node instanceof THREE.Mesh) || node.customDistanceMaterial) return;
+        node.customDistanceMaterial = this.noBakeShadow;
+        this.bakeMasked.add(node);
+      });
+    }
+  }
+
+  /** Put back exactly what {@link maskBodiesForBake} took away. */
+  private unmaskBodiesAfterBake(): void {
+    for (const mesh of this.bakeMasked) mesh.customDistanceMaterial = undefined;
+    this.bakeMasked.clear();
   }
 
   /**

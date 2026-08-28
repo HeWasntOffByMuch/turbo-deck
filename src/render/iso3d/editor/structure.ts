@@ -1,11 +1,13 @@
 import { hashUnit2 } from '../../../shared/hash.js';
 import {
+  fixtureLight,
   footprintRadius,
-  STRUCTURE_KINDS,
+  isFixtureKind,
+  PLACED_KINDS,
   type ChunkCoord,
   type MapChunkStore,
+  type PlacedKind,
   type Prop,
-  type StructureKind,
 } from '../../../terrain/index.js';
 
 /**
@@ -26,8 +28,22 @@ import {
  */
 
 export interface StructureSettings {
-  readonly structure: StructureKind;
+  readonly structure: PlacedKind;
   readonly structureScale: number;
+  /**
+   * What a light fixture is placed burning at (spec 248).
+   *
+   * Read only for a kind that emits, exactly as `structureYaw` is read only by
+   * a kind that has a front -- a well is round and a lamp post is dark until
+   * one of these two says otherwise.
+   *
+   * Absent means "whatever the kind's row says", which is also what a fixture
+   * placed at those numbers stores: `placeStructure` writes an override only
+   * where one differs, so a lamp put down without touching either slider costs
+   * the document no bytes and follows `FIXTURE_LIGHTS` for the rest of its life.
+   */
+  readonly fixtureBrightness?: number | null;
+  readonly fixtureRadius?: number | null;
   /**
    * Where the front faces, in **degrees**.
    *
@@ -75,7 +91,7 @@ export const STRUCTURE_SCALE_STEPS_PER_UNIT = 20;
 export const STRUCTURE_SCALE_STEP = 1 / STRUCTURE_SCALE_STEPS_PER_UNIT;
 
 /** What a building of this kind blocks at scale 1. */
-export function baseFootprint(kind: StructureKind): number {
+export function baseFootprint(kind: PlacedKind): number {
   return footprintRadius({ kind, x: 0, y: 0, scale: 1, rotation: 0, tint: 0 });
 }
 
@@ -95,7 +111,7 @@ export function baseFootprint(kind: StructureKind): number {
  * the minimum the moment it was crossed, which reads as the building
  * collapsing rather than as a size being set.
  */
-export function dragScale(kind: StructureKind, distance: number): number | null {
+export function dragScale(kind: PlacedKind, distance: number): number | null {
   const base = baseFootprint(kind);
   // NaN specifically, rather than "not finite": the clamp below already handles
   // a distance of any size, and refusing an infinite one would be the gesture
@@ -142,8 +158,41 @@ function tintAt(x: number, z: number): number {
 
 /** True for a kind this tool is allowed to place. Guards a settings object that
  *  has been round-tripped through storage or a URL. */
-export function isPlaceableStructure(kind: string): kind is StructureKind {
-  return (STRUCTURE_KINDS as readonly string[]).includes(kind);
+export function isPlaceableStructure(kind: string): kind is PlacedKind {
+  return (PLACED_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * The light override a fixture is placed with, or **undefined** for one at its
+ * kind's defaults (spec 248).
+ *
+ * Undefined rather than the resolved numbers, and that is the whole of why a
+ * document does not grow: `fixtureLight` reads the row when there is no
+ * override, so a lamp placed without touching a slider follows a retune of
+ * `FIXTURE_LIGHTS` forever, and one placed at 1.5 does not.
+ *
+ * A panel that has never been opened has neither number set, and a kind that
+ * emits nothing gets neither whatever they say -- a light on a hut is a field
+ * nothing will ever read, which is the thing `parseMarker` refuses one step
+ * over.
+ */
+export function fixtureOverride(
+  settings: StructureSettings,
+): { readonly brightness: number; readonly radius: number } | undefined {
+  if (!isFixtureKind(settings.structure)) return undefined;
+  const base = fixtureLight({
+    kind: settings.structure,
+    x: 0,
+    y: 0,
+    scale: 1,
+    rotation: 0,
+    tint: 0,
+  });
+  if (!base) return undefined;
+  const brightness = settings.fixtureBrightness ?? base.brightness;
+  const radius = settings.fixtureRadius ?? base.radius;
+  if (brightness === base.brightness && radius === base.radius) return undefined;
+  return { brightness, radius };
 }
 
 /**
@@ -193,6 +242,7 @@ export function placeStructure(
   }
 
   const scale = Number.isFinite(settings.structureScale) ? Math.max(0.1, settings.structureScale) : 1;
+  const light = fixtureOverride(settings);
   const prop: Prop = {
     kind: settings.structure,
     x: at.x,
@@ -200,6 +250,7 @@ export function placeStructure(
     scale,
     rotation: (((settings.structureYaw % 360) + 360) % 360) * (Math.PI / 180),
     tint: tintAt(at.x, at.z),
+    ...(light ? { light } : {}),
   };
 
   // Snapshot before anything changes, exactly as the scatter does. Every chunk

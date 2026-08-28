@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { pointIntensity } from '../player-lights.js';
+import { pointIntensity } from './player-lights.js';
 import {
   assignLights,
   type LightFocus,

@@ -2,6 +2,14 @@ import GUI from 'lil-gui';
 import { fenceStep } from './fence.js';
 import { STRUCTURE_SCALE_MAX, STRUCTURE_SCALE_MIN, STRUCTURE_SCALE_STEP } from './structure.js';
 import {
+  FIXTURE_LIGHTS,
+  MAX_FIXTURE_BRIGHTNESS,
+  MAX_FIXTURE_RADIUS,
+  MIN_FIXTURE_BRIGHTNESS,
+  MIN_FIXTURE_RADIUS,
+  type FixtureKind,
+} from '../../../terrain/index.js';
+import {
   FENCE_STYLE_CHOICES,
   MARKER_CHOICES,
   markerKindEffect,
@@ -12,6 +20,7 @@ import {
   PAINT_MATERIAL_CHOICES,
   PART_TOOL_CHOICES,
   PART_TOOL_COLORS,
+  armedKindEmits,
   ROCK_TOOL_CHOICES,
   ROCK_TOOL_COLORS,
   SPAWNER_MONSTER_CHOICES,
@@ -174,6 +183,15 @@ export interface EditorPanel {
    * spring back open.
    */
   syncStructureSize(): void;
+  /**
+   * Re-seed and re-show the two light rows (spec 248).
+   *
+   * Beside `syncStructureSize` and for its reason: `refresh()` force-opens every
+   * folder it shows, which is right when a mode is armed and wrong every other
+   * time. Called when a kind is armed from outside the panel -- from a URL, or
+   * from a settings object restored out of storage.
+   */
+  syncStructureLight(): void;
   destroy(): void;
 }
 
@@ -309,7 +327,10 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // One press puts one building down where the cursor is (spec 224). There is
   // no density and no spacing here, which is the whole difference from the
   // scatter above: a village is a layout somebody decided.
-  const structures = gui.addFolder('Buildings');
+  // Renamed from 'Buildings' by spec 248, because it puts lamp posts down now:
+  // one press-to-place tool for everything that is placed rather than painted,
+  // which is what `PLACED_KINDS` is.
+  const structures = gui.addFolder('Structures');
   strip(
     structures,
     STRUCTURE_CHOICES,
@@ -317,6 +338,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     () => s.structure,
     (kind) => {
       s.structure = kind;
+      lightRows();
     },
     () => MODE_COLORS.structure,
   );
@@ -329,6 +351,53 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   const structureSize = structures
     .add(s, 'structureScale', STRUCTURE_SCALE_MIN, STRUCTURE_SCALE_MAX, STRUCTURE_SCALE_STEP)
     .name('Size');
+
+  // What a light fixture is placed burning at (spec 248).
+  //
+  // Two rows rather than a colour as well, and that is the brief: a fixture's
+  // colour is its *kind's* -- a campfire is fire-coloured -- where how bright it
+  // is and how far it reaches are what a level designer is actually deciding
+  // when they put a lamp somewhere.
+  //
+  // The bounds are `vegetation.ts`'s own, which `parseMap` refuses outside of,
+  // so the panel cannot offer a light the document would reject. Steps that read
+  // as numbers a person would type: a twentieth of a stop, and ten units of
+  // reach.
+  const brightnessRow = structures
+    .add(s, 'fixtureBrightness', MIN_FIXTURE_BRIGHTNESS, MAX_FIXTURE_BRIGHTNESS, 0.05)
+    .name('Brightness');
+  const radiusRow = structures
+    .add(s, 'fixtureRadius', MIN_FIXTURE_RADIUS, MAX_FIXTURE_RADIUS, 10)
+    .name('Light radius');
+
+  /**
+   * Show the two light rows for a kind that emits, and hide them for one that
+   * does not.
+   *
+   * *Shown and live are different claims* -- spec 178's rule for the marker
+   * tool's monster dropdown -- and here the honest answer is to hide, because
+   * unlike that dropdown these two would have a perfectly plausible number in
+   * them and nowhere for it to go: a brightness on a well is a slider that moves
+   * and changes nothing.
+   *
+   * They are also **seeded from the kind's own row** whenever the armed kind
+   * changes, rather than being left wherever the last fixture put them. A blank
+   * slider cannot be dragged (lil-gui binds to a number), and a lamp post's
+   * defaults showing a campfire's brightness would be a panel lying about what
+   * pressing now would place.
+   */
+  function lightRows(): void {
+    const emits = armedKindEmits(s);
+    brightnessRow.show(emits);
+    radiusRow.show(emits);
+    if (!emits) return;
+    const base = FIXTURE_LIGHTS[s.structure as FixtureKind];
+    s.fixtureBrightness = base.brightness;
+    s.fixtureRadius = base.radius;
+    brightnessRow.updateDisplay();
+    radiusRow.updateDisplay();
+  }
+  lightRows();
 
   const markers = gui.addFolder('Markers');
   strip(
@@ -596,6 +665,9 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     },
     syncStructureSize: (): void => {
       structureSize.updateDisplay();
+    },
+    syncStructureLight: (): void => {
+      lightRows();
     },
     refresh(): void {
       gui.controllersRecursive().forEach((c) => c.updateDisplay());

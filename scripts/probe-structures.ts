@@ -320,8 +320,8 @@ async function main(): Promise<void> {
     await page.waitForTimeout(400);
     check(
       'arming it shows the buildings panel',
-      (await panelRow(page, 'Buildings', 'Facing'))?.shown === true &&
-        (await panelRow(page, 'Buildings', 'Size'))?.shown === true,
+      (await panelRow(page, 'Structures', 'Facing'))?.shown === true &&
+        (await panelRow(page, 'Structures', 'Size'))?.shown === true,
       'Facing and Size on screen',
     );
     check(
@@ -336,10 +336,10 @@ async function main(): Promise<void> {
     check('a press puts a building down', await clickGround(page, 400, 330), await placed(page));
     check('and says what it placed', /placed house facing 0/.test(await readout(page)), await placed(page));
 
-    await setNumber(page, 'Buildings', 'Facing', 90);
+    await setNumber(page, 'Structures', 'Facing', 90);
     check(
       'the facing takes the value it was set to',
-      (await panelRow(page, 'Buildings', 'Facing'))?.value === '90',
+      (await panelRow(page, 'Structures', 'Facing'))?.value === '90',
       'Facing = 90',
     );
     check('a second press lands too', await clickGround(page, 760, 300), await placed(page));
@@ -392,15 +392,15 @@ async function main(): Promise<void> {
     await page.waitForTimeout(400);
 
     // --- the drag (spec 225) ------------------------------------------------
-    const sizeBefore = Number((await panelRow(page, 'Buildings', 'Size'))?.value ?? Number.NaN);
+    const sizeBefore = Number((await panelRow(page, 'Structures', 'Size'))?.value ?? Number.NaN);
     const reached = await dragOut(page, 300, 560, 150, 40);
     check(
       'dragging out grows the preview past the size the panel was set to',
       Number.isFinite(reached) && reached > sizeBefore,
       `${sizeBefore} -> ${reached.toFixed(2)} mid-drag`,
     );
-    const sizeAfter = Number((await panelRow(page, 'Buildings', 'Size'))?.value ?? Number.NaN);
-    const shown = (await panelRow(page, 'Buildings', 'Size'))?.value ?? '';
+    const sizeAfter = Number((await panelRow(page, 'Structures', 'Size'))?.value ?? Number.NaN);
+    const shown = (await panelRow(page, 'Structures', 'Size'))?.value ?? '';
     check(
       'and the panel is told, so the next building is the size of the last',
       Math.abs(sizeAfter - reached) < 1e-9,

@@ -247,9 +247,33 @@ export const MAX_FIXTURE_RADIUS = 900;
  * shadow-casting prefix, so this is also the knob that decides how many baked
  * cube maps a village costs.
  */
+/**
+ * The one thing about `height` that is not obvious, and it decides more than
+ * `brightness` does: **the ground is not facing the light.**
+ *
+ * `brightness` is illuminance at half reach *on a surface facing the flame*,
+ * which is what `pointIntensity` means and what makes the reach slider
+ * independent of the brightness one. Ground is horizontal, so what lands on it
+ * at distance `d` is scaled by the grazing angle `height / hypot(height, d)` --
+ * a tenth for a flame a body's-height up seen from two hundred units, half for
+ * one carried twice as high. So two fixtures at the same brightness light the
+ * ground quite differently, and the pool a designer sees is always smaller than
+ * the reach they set.
+ *
+ * `npx tsx scripts/preview-fixtures.ts` prints exactly this, per kind, at four
+ * distances and against both the day and the night ambient -- because a pool
+ * dimmer than the ambient is a light nobody can see is on, and that threshold is
+ * three times further out at midnight than at noon.
+ */
 export const FIXTURE_LIGHTS: Readonly<Record<FixtureKind, ResolvedLight>> = {
-  // Wide and warm and low. The flame sits in the fire rather than over it.
-  campfire: { color: 0xffa542, brightness: 2.2, radius: 420, height: 22, shadow: true },
+  // Wide and warm and low.
+  //
+  // The light sits in the *middle of the flame* rather than in the embers: 22 is
+  // where the cone starts and 34 is halfway up it, and the difference is not
+  // presentation -- at 22 the grazing angle costs a campfire a third of the pool
+  // it is authored to throw, which reads as a fire that does not light the
+  // ground it is standing on.
+  campfire: { color: 0xffa542, brightness: 2.2, radius: 420, height: 34, shadow: true },
   // Higher than a body and reaching further than either of the others, which is
   // what a street lamp is for: it lights a path rather than a spot.
   'lamp-post': { color: 0xffd9a0, brightness: 1.5, radius: 520, height: 122, shadow: false },
