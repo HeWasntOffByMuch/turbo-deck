@@ -397,6 +397,31 @@ to `authorized_keys` rather than rotating the key you log into everything with.
 Paste `~/.ssh/turbo-deck.pub` — the *personal* one — into OVH's panel at
 install time. The CI key goes on the box in the next step, restricted.
 
+### If the vendor handed you a password instead
+
+Which is what happens when no key was uploaded at order time. Get your key on
+first, and do it before anything else — every step below assumes you can get
+back in without the password.
+
+```sh
+# from your laptop. Generates nothing: it copies a key you already made.
+ssh-copy-id -i ~/.ssh/turbo-deck.pub ubuntu@<the-ip>
+
+# prove it works, in a second terminal, before touching sshd
+ssh -i ~/.ssh/turbo-deck ubuntu@<the-ip> 'echo key login works'
+```
+
+If `ssh-copy-id` is not available, `ssh ubuntu@<ip>` with the password and
+append the key to `~/.ssh/authorized_keys` by hand.
+
+Then change the vendor's password anyway (`passwd`), even though password login
+is about to be turned off: it is emailed in cleartext and stays valid for the
+vendor's own rescue console.
+
+The account is `ubuntu` on an OVH Ubuntu image, `debian` on Debian, sometimes
+`root`. It holds sudo, so every step marked "as root" below starts with
+`sudo -i`.
+
 ### Once, on the box
 
 Any box from above — rented or your own — on an Ubuntu Server LTS. Nothing below this
@@ -459,6 +484,10 @@ ssh -i ~/.ssh/turbo-deck deploy@play.example.com 'docker ps'
 
 Point an A record at the box — at the rented box's address, or at your static
 one with 80 and 443 forwarded — then as `deploy`:
+
+Both of these fetch from `main`, so **they 404 until this work is merged**.
+Before then, swap `main` for the branch name in the URLs, or paste the two
+files in by hand — they are 80 lines between them.
 
 ```sh
 mkdir ~/turbo-deck && cd ~/turbo-deck
