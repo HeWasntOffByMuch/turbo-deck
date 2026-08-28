@@ -838,6 +838,15 @@ export class UiScreens {
     });
     this.contents.set(id, content);
     this.windows.register(window, id);
+    // Re-pointed at this mount's own close (spec 251). `register` aims `onClose`
+    // straight at the manager, which is the whole story for the gallery and is
+    // half of one here: closing the shop tells the server to stop sending a
+    // vendor's stock, and closing a live trade cancels it. Without this line the
+    // title bar's X would shut the trade window and leave the player in a trade
+    // they can no longer see -- the exact bug spec 170 closed for Escape.
+    window.onClose = () => {
+      this.close(id);
+    };
     window.visible = false;
   }
 

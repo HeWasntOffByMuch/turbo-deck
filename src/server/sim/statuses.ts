@@ -188,6 +188,23 @@ export const StatusId = {
 
   /** Fire underfoot: whoever stands near the carrier catches, briefly. */
   ScorchedEarth: 'scorchedEarth',
+
+  // --- the conjured light (spec 250) -------------------------------------
+  //
+  // The first status here that does nothing to a body at all. Nothing in the
+  // sim reads it: no trait, no scale, no pass. What it is for is that a status
+  // is the one thing about a body that is *replicated to every client* -- so a
+  // light somebody conjured is a light everybody can see, where the torch in
+  // their off hand is not, because equipment is on the wire for its owner only.
+  //
+  // It is in this map rather than in a buff system of its own for the reason
+  // the header gives: what it is, is a timed state on a body, and one map with
+  // one expiry rule is one place to get right. It carries no magnitude -- how
+  // far a conjured light reaches is `MAGIC_DEFAULTS`, whole, so there is no
+  // number here that could depend on who cast it.
+
+  /** A conjured light, floating over its carrier. Purely a thing you can see. */
+  MagicLight: 'magicLight',
 } as const;
 
 /** Adaptation is per ability id: `adapt:skill.poisonDart`. */

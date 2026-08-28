@@ -25,6 +25,13 @@
  * that says which window this is, and two 64-pixel stubs with their titles
  * clipped away are indistinguishable -- so `minTitleWidth` is a floor under the
  * authored `minSize` rather than a number anybody has to remember to pass.
+ *
+ * ...and the one the chrome was missing entirely (spec 251). **A closable window
+ * says so, in the corner of its own title bar.** `closable`, `onClose` and
+ * `requestClose()` have been here since spec 124 and `requestClose` had no
+ * caller anywhere in the tree; `icon:close` has been in the atlas since 123 and
+ * was drawn by nothing. Escape and whatever key opened a window were the only
+ * ways to shut one, and neither is visible.
  */
 
 import type { DrawList } from '../core/draw-list.js';
@@ -39,6 +46,7 @@ import { animate, settled, type Easing, type Tween } from '../core/motion.js';
 import { alignTextX, centerTextY, drawNineSlice, drawTextClipped } from '../core/paint.js';
 import type { LayoutContext, PaintContext, Widget } from '../core/widget.js';
 import { fontById, measureText } from '../text/font.js';
+import type { WidgetState } from '../theme/theme.js';
 import { StyledWidget } from './base.js';
 
 /** How much of the title bar must stay on screen, in UI pixels. */
@@ -91,6 +99,19 @@ export class UiWindow extends StyledWidget {
   private resizeOrigin: Size | null = null;
   private grabbedGrip = false;
 
+  /**
+   * The X in the corner, or null for a window that cannot be closed (spec 251).
+   *
+   * Null rather than a hidden child, because `closable` never changes after
+   * construction: a button that exists and is invisible is a thing every hit
+   * test, every measure and every paint has to keep remembering to skip.
+   *
+   * Added **after** the content, so `Widget.hitTest`'s back-to-front walk
+   * reaches it first. They do not overlap today -- the bar is above the content
+   * box -- and relying on that would be relying on the padding never changing.
+   */
+  readonly closeButton: WindowCloseButton | null;
+
   constructor(readonly content: Widget, options: WindowOptions, name = options.title) {
     super('window', name);
     this.title = options.title;
@@ -101,6 +122,8 @@ export class UiWindow extends StyledWidget {
     this.position = options.at ?? { x: 0, y: 0 };
     this.box = options.size ?? { width: 160, height: 120 };
     this.add(content);
+    this.closeButton = this.closable ? new WindowCloseButton(this) : null;
+    if (this.closeButton) this.add(this.closeButton);
   }
 
   get at(): Point {
@@ -135,6 +158,47 @@ export class UiWindow extends StyledWidget {
   }
 
   /**
+   * The close button, top-right of the title bar. Zero-sized when unclosable.
+   *
+   * Every number in it is *derived* from the two that already set the bar, so
+   * there is no third thing to keep in step: it is a square as tall as the body
+   * font -- which is what the bar's height is built from -- and its right edge
+   * is inset by the same `padding` the title's left edge is. Centring falls out
+   * of the first: the bar is `font.height + padding`, so a square of the font's
+   * own height leaves exactly half the padding above and below, which on this
+   * theme is the 2px the `heavy` frame's border occupies. The X clears the
+   * accent edge on all four sides without either number knowing about the other.
+   */
+  closeRect(context: LayoutContext): Rect {
+    return this.closeBox(context, this.placement());
+  }
+
+  private closeBox(context: LayoutContext, rect: Rect): Rect {
+    if (!this.closeButton) return { x: 0, y: 0, width: 0, height: 0 };
+    const padding = context.theme.widget(this.styleKey).padding;
+    const side = closeSide();
+    const bar = this.titleHeight(context);
+    return {
+      x: rect.x + rect.width - padding - side,
+      y: rect.y + Math.round((bar - side) / 2),
+      width: side,
+      height: side,
+    };
+  }
+
+  /**
+   * How much of the title bar the close button and the gap before it claim.
+   *
+   * The title is clipped to what is left rather than run under the X, and
+   * `minWidthFor` reserves the same amount -- so a window dragged down to its
+   * floor still shows its whole name *and* the way to shut it.
+   */
+  private closeReserve(context: LayoutContext): number {
+    if (!this.closeButton) return 0;
+    return closeSide() + context.theme.widget(this.styleKey).padding;
+  }
+
+  /**
    * Move the window, snapped to the grid and clamped so it stays reachable.
    *
    * Both halves matter and both are here rather than at the call sites, because
@@ -154,13 +218,15 @@ export class UiWindow extends StyledWidget {
   /**
    * The narrowest this window may be dragged, in UI pixels.
    *
-   * The authored `minSize` OR the title plus its insets, whichever is larger.
-   * It needs the context because the insets are the theme's, which is why the
-   * floor is applied here rather than folded into `minSize` at construction --
-   * a window is built long before anybody has handed it a theme.
+   * The authored `minSize` OR the title plus its insets and its close button,
+   * whichever is larger. It needs the context because the insets are the
+   * theme's, which is why the floor is applied here rather than folded into
+   * `minSize` at construction -- a window is built long before anybody has
+   * handed it a theme.
    */
   private minWidthFor(context: LayoutContext): number {
-    return Math.max(this.minSize.width, this.minTitleWidth() + context.theme.widget(this.styleKey).padding * 2);
+    const padding = context.theme.widget(this.styleKey).padding;
+    return Math.max(this.minSize.width, this.minTitleWidth() + padding * 2 + this.closeReserve(context));
   }
 
   resize(size: Size, context: LayoutContext, viewport: Size): void {
@@ -264,6 +330,16 @@ export class UiWindow extends StyledWidget {
     out.popClip();
   }
 
+  /**
+   * Ask to be shut.
+   *
+   * The one route every closer goes through, and since spec 251 it finally has
+   * a caller. `onClose` is the seam rather than `WindowManager.close`, and the
+   * distinction is load-bearing in the game: closing the shop tells the server
+   * to stop sending a vendor's stock and closing a live trade cancels it, so
+   * `UiScreens` points this at its own `close(id)` and the X, Escape and the
+   * key that opened the window are one close with one set of consequences.
+   */
   requestClose(): void {
     if (!this.closable) return;
     this.onClose?.();
@@ -311,7 +387,10 @@ export class UiWindow extends StyledWidget {
     }
     if (containsPointIn(this.titleRect(ctx), event.pos)) {
       // The close button is inside the title bar and takes the press first, via
-      // its own hit test -- this only runs when the bar itself was hit.
+      // its own hit test -- this only runs when the bar itself was hit. True
+      // since spec 251 rather than merely intended: the button is hit-tested
+      // ahead of this window because it is a child, and it stops the bubble
+      // walk, so the press never reaches here to be read as the start of a drag.
       this.grabbedGrip = false;
       this.dragOrigin = { ...this.position };
       context.stopPropagation();
@@ -357,11 +436,20 @@ export class UiWindow extends StyledWidget {
   protected override measureSelf(_constraint: Constraint, context: LayoutContext): Size {
     const inner = this.contentBox(context, { x: 0, y: 0, ...this.box });
     this.content.measure({ maxWidth: inner.width, maxHeight: inner.height }, context);
+    // Measured even though its size is a constant: a child left unmeasured stays
+    // dirty forever, which is a lie told to the one mechanism this framework's
+    // whole case for retained mode rests on.
+    const side = closeSide();
+    this.closeButton?.measure({ maxWidth: side, maxHeight: side }, context);
     return this.box;
   }
 
   protected override arrangeSelf(rect: Rect, context: LayoutContext): void {
     this.content.arrange(this.contentBox(context, rect), context);
+    // From `rect` rather than from `placement()`, exactly as the content box is:
+    // the two agree today, and a button placed from the window's own idea of
+    // where it is would drift the moment they did not.
+    this.closeButton?.arrange(this.closeBox(context, rect), context);
   }
 
   private contentBox(context: LayoutContext, rect: Rect): Rect {
@@ -399,7 +487,7 @@ export class UiWindow extends StyledWidget {
     const inner: Rect = {
       x: bar.x + style.padding,
       y: bar.y,
-      width: Math.max(0, bar.width - style.padding * 2),
+      width: Math.max(0, bar.width - style.padding * 2 - this.closeReserve(context)),
       height: bar.height,
     };
     drawTextClipped(
@@ -412,6 +500,7 @@ export class UiWindow extends StyledWidget {
       focused ? context.theme.color('text') : context.theme.color('textDim'),
       inner,
     );
+    // The close button paints itself, as a child, after this returns.
 
     if (this.resizable) {
       out.sprite(context.atlas.sprite('icon:grip'), this.gripRect(context), state.frameTint);
@@ -451,6 +540,119 @@ export class UiWindow extends StyledWidget {
   minTitleWidth(): number {
     return this.measureTitle();
   }
+}
+
+/**
+ * The X in a window's title bar (spec 251).
+ *
+ * Deliberately not a {@link Button}: what it shares with one is a click and five
+ * theme states, and what it does not share is everything a `Button` is shaped
+ * by. It has no label and no intrinsic text measure, it is never a tab stop, and
+ * -- the part that decides it -- it lives inside a drag handle, which no other
+ * widget in this framework does.
+ *
+ * Three rules, and the first two are that last point.
+ *
+ * **It swallows the press.** The router sends every gesture to whichever widget
+ * took the press, so the drag is already this button's; but `onEvent` runs on
+ * the *bubble* walk afterwards, and `UiWindow.onEvent` would arm a window drag
+ * from the very same press. The comment on that method has claimed since spec
+ * 124 that "the close button takes the press first" -- this is what makes it
+ * true rather than aspirational.
+ *
+ * **A click that lands elsewhere is not a close.** That is the router's own
+ * rule and nothing here has to implement it: pressing the X and sliding off
+ * cancels, which is the escape hatch every platform has for the one control in
+ * a window that discards what is in it.
+ *
+ * **Its rest colour is the title's, not a state of its own.** It is part of the
+ * title bar, so the window's focus picks between `normal` and `focused` exactly
+ * as {@link UiWindow.paintSelf} does for the name beside it -- a dim X on a
+ * focused window's accent bar reads as disabled rather than as quiet. Hover and
+ * pressed beat both, and they are the only two states that draw chrome at all:
+ * a box around the X at rest would be a second frame inside the one bold thing
+ * the whole interface is allowed.
+ */
+export class WindowCloseButton extends StyledWidget {
+  constructor(private readonly owner: UiWindow) {
+    super('windowClose', `${owner.name}:close`);
+    // Not focusable, so it is not a stop in every window's tab cycle. Escape
+    // already closes the front-most window, so the keyboard route exists and a
+    // second one costs every other control in the window a place in the order.
+    this.focusable = false;
+    this.layoutAlign = 'start';
+  }
+
+  protected override measureSelf(): Size {
+    const side = closeSide();
+    return { width: side, height: side };
+  }
+
+  onGesture(gesture: Gesture): void {
+    if (gesture.kind !== 'click' || gesture.button !== 0) return;
+    this.owner.requestClose();
+  }
+
+  /**
+   * Take the press and stop it, so the title bar behind does not start a drag.
+   *
+   * On `down` rather than on the click, because that is the event
+   * `UiWindow.onEvent` reads -- by the time a click has been derived the drag
+   * has already been armed and, if the pointer moved, run.
+   */
+  onEvent(context: EventContext): void {
+    const event = context.event;
+    if (event.kind !== 'pointer' || event.phase !== 'down' || event.button !== 0) return;
+    context.stopPropagation();
+  }
+
+  /**
+   * Which of the five states to draw in.
+   *
+   * `StyledWidget.stateFor` asks whether *this widget* has focus, which it can
+   * never have -- so `focused` would be a row nothing reads. Here it means "the
+   * window this belongs to is the focused one", which is the question the title
+   * bar's own paint asks one line above.
+   */
+  private closeState(context: PaintContext): WidgetState {
+    if (!this.enabled) return 'disabled';
+    if (context.pressed === (this as unknown as Widget)) return 'pressed';
+    if (context.hovered === (this as unknown as Widget)) return 'hover';
+    return this.owner.hasFocusWithin(context) ? 'focused' : 'normal';
+  }
+
+  protected override paintSelf(out: DrawList, context: PaintContext): void {
+    const style = this.style(context);
+    const which = this.closeState(context);
+    const state = style.state(which);
+    if (which === 'hover' || which === 'pressed') {
+      out.solid(this.rect, state.fill);
+      drawNineSlice(out, context.atlas.patch(style.frame), this.rect, state.frameTint);
+    }
+    const icon = context.atlas.sprite('icon:close');
+    out.sprite(
+      icon,
+      {
+        x: this.rect.x + Math.round((this.rect.width - icon.width) / 2),
+        y: this.rect.y + Math.round((this.rect.height - icon.height) / 2),
+        width: icon.width,
+        height: icon.height,
+      },
+      state.text,
+    );
+  }
+}
+
+/**
+ * The close button's side, in UI pixels.
+ *
+ * The body font's height, which is the same number the title bar's own height is
+ * built from -- see {@link UiWindow.closeRect} for why that is what centres it.
+ * A function rather than a constant because `fontById` is the only thing that
+ * knows, and a copy of the number here is a copy that can be wrong.
+ */
+function closeSide(): number {
+  return fontById('body').height;
 }
 
 function containsPointIn(rect: Rect, point: Point): boolean {

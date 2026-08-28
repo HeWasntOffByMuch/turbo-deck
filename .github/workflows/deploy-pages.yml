@@ -24,11 +24,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       # Project site lives at /turbo-deck/, so the asset base must match.
+      #
+      # VITE_SERVER_URL is which server the published page dials with no
+      # `?server=` in the URL (spec 153). Set the PLAY_SERVER_URL repository
+      # variable to `wss://your.host/ws` once the box is up; unset, it bakes in
+      # an empty string and the page is single-player exactly as it was.
+      # `?server=local` turns it off again on a build that has one.
       - run: npm run build -- --base=/turbo-deck/
+        env:
+          VITE_SERVER_URL: ${{ vars.PLAY_SERVER_URL }}
       - run: touch dist/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

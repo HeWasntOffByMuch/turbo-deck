@@ -288,6 +288,17 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
     + '<path d="M12 4.5c2.4 2.3 3.3 3.7 3.3 5.3a3.3 3.3 0 0 1-6.6 0c0-1.2.6-2.2 1.6-3.2 0 1 .4 1.5 1 1.7-.5-1.4-.4-2.7.7-3.8z"/>'
     + '<path d="M6.6 12.6c1.1 1.1 1.5 1.7 1.5 2.4a1.5 1.5 0 0 1-3 0c0-.7.4-1.3 1.5-2.4z"/>'
     + '<path d="M17.4 12.6c1.1 1.1 1.5 1.7 1.5 2.4a1.5 1.5 0 0 1-3 0c0-.7.4-1.3 1.5-2.4z"/>',
+  // Conjured light (spec 250) -- a small disc with four rays off it.
+  //
+  // The one thing it must not be is a *flame*, because Burn is one eight rows
+  // up and the two would read as the same mark in the same colour. So this is
+  // the shape nothing else in the table uses: a filled circle radiating, where
+  // Attuned's concentric rings are open and Prepared's diamond has straight
+  // sides. Four rays rather than eight, because at 14px eight is a blur round
+  // a dot and what carries the silhouette is the *gaps*.
+  light:
+    '<circle cx="12" cy="12" r="3.4"/>'
+    + '<path d="M12 2.5v3.4M12 18.1v3.4M2.5 12h3.4M18.1 12h3.4"/>',
 };
 
 /** One status mark, as markup ready to drop into the HUD. */

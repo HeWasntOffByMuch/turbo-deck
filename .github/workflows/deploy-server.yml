@@ -1,0 +1,239 @@
+# Build the server image and roll it out on the box (spec 153).
+#
+# Two jobs on purpose. Building is public work with no credentials beyond the
+# repository's own GHCR token; deploying holds an SSH key. Keeping them apart
+# means the expensive half can be rerun, and read, without the secret being in
+# scope for it.
+name: Deploy server
+
+on:
+  push:
+    branches: [main]
+    # The renderer deploys to Pages on every push; the server has no reason to.
+    # A push that only touches src/render/ or specs/ leaves the box alone.
+    paths:
+      - 'src/server/**'
+      - 'src/sim/**'
+      - 'src/shared/**'
+      - 'src/terrain/**'
+      - 'src/units/**'
+      - 'src/items/**'
+      - 'maps/**'
+      - 'assets/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Dockerfile'
+      - 'compose.yml'
+      - 'deploy/**'
+      - '.github/workflows/deploy-server.yml'
+  workflow_dispatch:
+
+concurrency:
+  # One rollout at a time, and a newer one supersedes a queued older one --
+  # there is one box and one world on it.
+  group: deploy-server
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The gate before anything is published. CI runs this too, but CI is not a
+      # dependency of this workflow and a red main must not become a deploy.
+      # 22 because `engines` says >=22.5 and spec 226 means it: `node:sqlite`
+      # ships with the runtime rather than being a dependency, so on 20 it is
+      # simply absent and every auth and persistence suite fails to import with
+      # `No such built-in module: node:sqlite`. Not a version to drift from
+      # ci.yml on -- this job exists to be the same gate.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      # What the deploy job is about to decide, printed while there is still a
+      # log to print it in. `if:` conditions fail silently -- a skipped job says
+      # only "skipped", and a variable set as a *secret*, or scoped to an
+      # environment this job does not declare, is indistinguishable from one
+      # nobody set. Variables are not masked, so this is safe to echo.
+      - name: Report the deploy gate
+        run: |
+          echo "DEPLOY_ENABLED=[${{ vars.DEPLOY_ENABLED }}]"
+          echo "DEPLOY_RUNNER=[${{ vars.DEPLOY_RUNNER }}]"
+          echo "The deploy job runs only when DEPLOY_ENABLED is exactly 'true'"
+          echo "(a repository Variable -- not a Secret, and not environment-scoped)."
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Lowercased, because a GHCR path must be and a GitHub owner need not be.
+      - id: name
+        run: echo "image=$(echo '${{ env.IMAGE }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # amd64 only, because the box is an x86 VPS. Stated rather than left
+          # to the runner's default so the assumption is visible: an Arm box
+          # needs `linux/arm64` here, and without it the container dies with
+          # `exec format error`, which reads like a broken image rather than a
+          # wrong architecture.
+          platforms: linux/amd64
+          # Both tags: `main` is what compose.yml defaults to, and the sha is
+          # what a rollback names. An image that only had a moving tag would
+          # make "put back what was running an hour ago" impossible.
+          tags: |
+            ${{ steps.name.outputs.image }}:main
+            ${{ steps.name.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    # Two ways in, and which one you want follows from where the box is.
+    #
+    # A rented box takes the SSH path: GitHub's runner connects in, which needs
+    # port 22 reachable from the internet -- fine on a machine whose entire job
+    # is being on the internet.
+    #
+    # A box on your own network should not open SSH to the world for this. Set
+    # the DEPLOY_RUNNER repository variable to a self-hosted runner's label and
+    # the rollout happens *on the box*, with the runner polling GitHub
+    # outbound: no inbound port, no key in a secret, and nothing to firewall.
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      # The box pulls with this run's own token rather than a long-lived PAT
+      # sitting on the machine.
+      packages: read
+    # Flip the DEPLOY_ENABLED repository variable to 'true' once a box exists.
+    # Skipped rather than failed until then, so this workflow is green on a repo
+    # that has nowhere to deploy to.
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    # Every secret arrives as an environment variable, never interpolated into
+    # the script text -- an SSH key is multi-line and a `${{ }}` in a shell body
+    # is a quoting accident waiting to happen.
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}:${{ github.sha }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_DOMAIN: ${{ secrets.DEPLOY_DOMAIN }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REGISTRY_USER: ${{ github.actor }}
+      # Where compose.yml and .env live on the box. Only the self-hosted path
+      # reads it; the SSH path cds to the same place remotely.
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '~/turbo-deck' }}
+    steps:
+      - name: Roll the new image out, over SSH
+        if: ${{ vars.DEPLOY_RUNNER == '' }}
+        run: |
+          set -euo pipefail
+          # One call each. `install` with more than one source treats the last
+          # argument as a destination *directory*, so the two-file form tried to
+          # install `/dev/null` and `key` into a directory named `known_hosts`
+          # and failed before anything else ran.
+          install -m 600 /dev/null key
+          install -m 600 /dev/null known_hosts
+          printf '%s\n' "$DEPLOY_SSH_KEY" > key
+          # Pin the host key rather than accepting whatever answers. Without it
+          # the deploy trusts DNS, and this step hands a registry token to
+          # whatever it reaches. BatchMode so an unknown host fails immediately
+          # instead of blocking on a prompt nobody can answer.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > known_hosts
+          ssh -i key -o UserKnownHostsFile=known_hosts -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "set -e
+             cd $DEPLOY_DIR
+             echo '$REGISTRY_TOKEN' | docker login ghcr.io -u '$REGISTRY_USER' --password-stdin
+             export SERVER_IMAGE='$IMAGE'
+             docker compose pull server
+             docker compose up -d server
+             docker logout ghcr.io
+             docker image prune -f"
+
+      - name: Roll the new image out, on the box itself
+        if: ${{ vars.DEPLOY_RUNNER != '' }}
+        run: |
+          set -euo pipefail
+          cd "${DEPLOY_DIR/#\~/$HOME}"
+          echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+          export SERVER_IMAGE="$IMAGE"
+          docker compose pull server
+          docker compose up -d server
+          docker logout ghcr.io
+          docker image prune -f
+
+      # Two health checks for one question, because the two paths cannot reach
+      # the server the same way. From outside, the public URL is the honest
+      # test -- it exercises DNS, the port forward and Caddy's certificate as
+      # well as the process. From the box itself that URL often does not
+      # resolve back to the box at all: consumer routers commonly do not
+      # hairpin a forward to their own WAN address, so the check would fail
+      # against a perfectly healthy server. Ask the container directly there.
+      - name: Wait for the world to be advancing again, from outside
+        if: ${{ vars.DEPLOY_RUNNER == '' }}
+        run: |
+          set -euo pipefail
+          # The health endpoint reports the tick, so this asks the question that
+          # matters -- is the world advancing -- rather than whether a port is
+          # open. A process that boots and then freezes passes the second test
+          # and fails this one.
+          tick_now() {
+            curl -fsS --max-time 5 "https://$DEPLOY_DOMAIN/healthz" \
+              | sed -n 's/.*"tick":\([0-9]*\).*/\1/p'
+          }
+          for attempt in $(seq 1 20); do
+            first=$(tick_now || true)
+            sleep 3
+            second=$(tick_now || true)
+            if [ -n "$first" ] && [ -n "$second" ] && [ "$second" -gt "$first" ]; then
+              echo "healthy: tick $first -> $second"
+              exit 0
+            fi
+            echo "attempt $attempt: not advancing yet"
+          done
+          echo "server did not come back healthy" >&2
+          exit 1
+
+      - name: Wait for the world to be advancing again, from the box
+        if: ${{ vars.DEPLOY_RUNNER != '' }}
+        run: |
+          set -euo pipefail
+          cd "${DEPLOY_DIR/#\~/$HOME}"
+          # Same question, asked through the container, which is also how
+          # compose.yml's own healthcheck asks it.
+          tick_now() {
+            docker compose exec -T server node -e \
+              "fetch('http://127.0.0.1:8787/healthz').then(r=>r.json()).then(j=>console.log(j.tick))"
+          }
+          for attempt in $(seq 1 20); do
+            first=$(tick_now || true)
+            sleep 3
+            second=$(tick_now || true)
+            if [ -n "$first" ] && [ -n "$second" ] && [ "$second" -gt "$first" ]; then
+              echo "healthy: tick $first -> $second"
+              exit 0
+            fi
+            echo "attempt $attempt: not advancing yet"
+          done
+          echo "server did not come back healthy" >&2
+          exit 1

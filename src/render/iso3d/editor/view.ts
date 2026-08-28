@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   arenaBounds,
+  fixtureLight,
   loadMap,
   parseMap,
   type ChunkCoord,
@@ -2013,9 +2014,15 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
           // next building is the size of the last one, and the slider says so.
           settings.structureScale = scale;
           panel.syncStructureSize();
+          // What a light was placed *at* is said out loud, for the reason the
+          // refusal below is: a fixture put down at the wrong brightness looks
+          // exactly like one put down at the right one until it is dark
+          // (spec 250). A kind that emits nothing says nothing extra.
+          const lit = fixtureLight(out.placed);
           status =
             `placed ${out.placed.kind} facing ${Math.round(settings.structureYaw)}\u00b0` +
-            ` at ${scale.toFixed(2)}x`;
+            ` at ${scale.toFixed(2)}x` +
+            (lit ? `, ${lit.brightness.toFixed(2)} over ${String(Math.round(lit.radius))}` : '');
         } else if (out.refused) {
           status = out.refused;
         }

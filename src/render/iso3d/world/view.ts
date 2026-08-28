@@ -383,8 +383,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery() });
 
   // The one branch in this file that decides what kind of game this is
-  // (spec 144). No `?server` is single-player over a loopback, exactly as
-  // before; `?server` connects out and constructs no server at all.
+  // (spec 144). No `?server` is single-player over a loopback; `?server`
+  // connects out and constructs no server at all.
+  //
+  // Since spec 153 a build can carry a server of its own: `VITE_SERVER_URL` is
+  // baked in by the Pages workflow, so the published page dials the deployed
+  // box with no query string at all. Absent -- which is every `npm run dev` and
+  // every preview script -- it is the empty string and nothing changes.
+  // `?server=local` is how a build that has one is still driven single-player.
   const plan = planConnection(
     location.search,
     location,
@@ -393,6 +399,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     () => crypto.randomUUID(),
     // Per person: the account session, read from where it is written.
     localStorage,
+    import.meta.env?.VITE_SERVER_URL ?? '',
   );
 
   /**
@@ -1215,10 +1222,20 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // than from the statuses that asked for one -- so a ring refused by the
     // effect budget or evicted by the instance pool reads as absent.
     const aurasDrawn = scene.heldAuras().length;
+    // The light pool (spec 250), on the same terms: what each slot is actually
+    // holding against how many lights asked for one. A fixture offered and never
+    // lit is the failure worth seeing, and a count of the offers alone could not
+    // show it.
+    const lightsHeld = scene.heldWorldLights().filter((key) => key !== null).length;
+    const lightsOffered = scene.worldLightsOffered();
+    // And the fires burning in them (spec 250), on the same terms again: from
+    // the driver's own held set, so one refused by the effect budget or evicted
+    // by the instance pool reads as absent.
+    const firesLit = scene.heldFires().length;
     const meshState =
       `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}` +
       `:${ingest.dirtyRegionCount}:${propsRefused}:${navGeneration}:${navAdopted}:${navStale}` +
-      `:${aurasDrawn}`;
+      `:${aurasDrawn}:${lightsHeld}:${lightsOffered}:${firesLit}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
@@ -1228,6 +1245,8 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       root.dataset['propDirty'] = String(ingest.dirtyRegionCount);
       root.dataset['propRefused'] = String(propsRefused);
       root.dataset['auras'] = String(aurasDrawn);
+      root.dataset['worldLights'] =
+        `lit=${String(lightsHeld)} offered=${String(lightsOffered)} fires=${String(firesLit)}`;
       root.dataset['nav'] =
         `gen=${String(navGeneration)} asked=${String(navAsked)}` +
         ` adopted=${String(navAdopted)} refused=${String(navStale)}`;

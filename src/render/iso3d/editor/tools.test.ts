@@ -29,6 +29,7 @@ import { SPAWNER_MONSTER_CHOICES,
   type MarkerSelection,
 } from './tools.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
+import { FIXTURE_KINDS, FIXTURE_LIGHTS } from '../../../terrain/index.js';
 
 /**
  * Spec 058. The panel's *decisions* -- which tool is armed, whose settings that
@@ -191,6 +192,48 @@ describe('the settings object', () => {
     }
     expect(FENCE_STYLES).toContain(s.style);
     expect(MARKER_KINDS).toContain(s.markerKind);
+  });
+
+  /**
+   * The one that took the editor down to a black tab (spec 250).
+   *
+   * `panel.ts` binds a lil-gui row to a key of this object, and `gui.add`
+   * refuses a value that is not a number: it logs `gui.add failed` and hands
+   * back `undefined`, so the `.name()` on the end of the chain throws, panel
+   * construction stops where it stands, and the editor never gets a frame.
+   *
+   * The two light rows shipped seeded `null` -- meaning "the kind's own row" --
+   * which is a perfectly good encoding everywhere except in the one object a
+   * slider is bound to, and the default armed kind is a hut, which has no light
+   * to seed from. So it was null on every boot.
+   *
+   * Asserted over **every** field rather than over those two, because the next
+   * one will be a different field and the failure is silent in Node: nothing
+   * under `editor/` builds a panel outside a browser.
+   */
+  it('holds a real value for every key, because a lil-gui row binds to one', () => {
+    const s = createEditorSettings();
+    for (const [key, value] of Object.entries(s)) {
+      expect(value, `${key} is bindable`).not.toBeNull();
+      expect(value, `${key} is bindable`).not.toBeUndefined();
+      if (typeof value === 'number') {
+        expect(Number.isFinite(value), `${key} is a finite number`).toBe(true);
+      }
+    }
+  });
+
+  /**
+   * And the two in particular, at the value they are bound at.
+   *
+   * A number rather than a flag for "unset", which costs nothing: a light equal
+   * to its kind's row is what `fixtureOverride` writes no override for, so the
+   * document cannot tell the two apart anyway.
+   */
+  it('seeds the fixture light sliders from a real fixture, not from the armed hut', () => {
+    const s = createEditorSettings();
+    const first = FIXTURE_LIGHTS[FIXTURE_KINDS[0]];
+    expect(s.fixtureBrightness).toBe(first.brightness);
+    expect(s.fixtureRadius).toBe(first.radius);
   });
 });
 

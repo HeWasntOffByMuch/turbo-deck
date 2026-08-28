@@ -1199,9 +1199,14 @@
   ],
   "species": [
     "bush",
+    "campfire",
     "fence-boards",
     "fence-wood",
-    "tree"
+    "house",
+    "lamp-post",
+    "torch-stand",
+    "tree",
+    "well"
   ],
   "layers": [
     {
@@ -3803,6 +3808,12 @@
           "z": 77.39600000000002
         },
         {
+          "id": "npc-armourer",
+          "monsterId": "npc.armourer",
+          "x": 741,
+          "z": 215
+        },
+        {
           "id": "spawner-6",
           "monsterId": "ravager",
           "x": -87.45499999999998,
@@ -3817,20 +3828,14 @@
         {
           "id": "npc-merchant",
           "monsterId": "npc.merchant",
-          "x": 650,
-          "z": 520
+          "x": 168,
+          "z": 316
         },
         {
           "id": "npc-quartermaster",
           "monsterId": "npc.quartermaster",
-          "x": 440,
-          "z": 520
-        },
-        {
-          "id": "npc-armourer",
-          "monsterId": "npc.armourer",
-          "x": 550,
-          "z": 330
+          "x": 240,
+          "z": 508
         }
       ],
       "regions": [
@@ -4293,25 +4298,25 @@
         {
           "rx": 0,
           "rz": 0,
-          "hash": "96ad91b2",
+          "hash": "a23abe37",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 0,
-          "hash": "5640ff8a",
+          "hash": "e065eb82",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 0,
-          "hash": "05f859ed",
+          "hash": "e96edfa7",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": 0,
-          "hash": "988b127e",
+          "hash": "b6bcc175",
           "cells": 3136
         },
         {
@@ -4365,25 +4370,25 @@
         {
           "rx": 0,
           "rz": 1,
-          "hash": "ba2d8716",
+          "hash": "7b689685",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 1,
-          "hash": "be19bfcd",
+          "hash": "23e49dd2",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 1,
-          "hash": "a537db10",
+          "hash": "59ad58cd",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": 1,
-          "hash": "1aebd97a",
+          "hash": "bce72e15",
           "cells": 3136
         },
         {
@@ -4437,25 +4442,25 @@
         {
           "rx": 0,
           "rz": 2,
-          "hash": "d205583b",
+          "hash": "d4031612",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 2,
-          "hash": "868336bb",
+          "hash": "3cb5b693",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 2,
-          "hash": "d91056fa",
+          "hash": "418edc1b",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": 2,
-          "hash": "50ed5376",
+          "hash": "691e71e4",
           "cells": 3136
         },
         {
@@ -4521,19 +4526,19 @@
         {
           "rx": 0,
           "rz": 3,
-          "hash": "ebd732cf",
+          "hash": "7402138f",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 3,
-          "hash": "5d174ac1",
+          "hash": "62fe061e",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 3,
-          "hash": "f724ffab",
+          "hash": "b9ce7600",
           "cells": 3136
         },
         {
@@ -4833,5 +4838,5 @@
       ]
     }
   ],
-  "mapId": "737901ea"
+  "mapId": "04630a14"
 }

@@ -32,14 +32,24 @@ import { npcById } from './npcs.js';
  * shipped map's spawners are here, so the two drifting apart is a failing test
  * rather than a shop that quietly refuses to open.
  *
- * All three are inside Hearthstead, around where players arrive, on flat ground
- * whose whole wander disc is clear of props -- measured, not guessed. They sit
- * a little over two hundred units apart, which is more than two wander radii,
- * so no two of them can end up standing in the same place.
+ * All three stand on flat ground -- gradient zero across the whole wander disc,
+ * so every point any of them can walk to is walkable -- with nothing solid
+ * within thirty units of the anchor. Measured, not guessed. They sit a little
+ * over two hundred units apart, which is more than two wander radii, so no two
+ * of them can end up standing in the same place.
+ *
+ * They moved when the spawn was gated, and two of these three numbers are
+ * simply where the marker went. The merchant's is not: the spots that edit
+ * chose put it a hundred and fifty-eight from the quartermaster, which is
+ * *inside* two wander radii -- the pair shoving each other around through
+ * `resolveCrowding` for the fight-free half of their lives, with a player
+ * right-clicking the pile getting whichever one the pick landed on. It is
+ * fifty units off that spot, on the nearest ground that clears both wander
+ * discs, which is the smallest correction that separates them.
  */
-export const RELL_HOME = { x: 650, y: 520 } as const;
-export const QUARTERMASTER_HOME = { x: 440, y: 520 } as const;
-export const ARMOURER_HOME = { x: 550, y: 330 } as const;
+export const RELL_HOME = { x: 168, y: 316 } as const;
+export const QUARTERMASTER_HOME = { x: 240, y: 508 } as const;
+export const ARMOURER_HOME = { x: 741, y: 215 } as const;
 
 /**
  * How far from {@link RELL_HOME} the merchant's shop can be reached.
@@ -111,6 +121,12 @@ const DEFINITIONS: readonly VendorDefinition[] = [
       'chest.leather',
       'legs.traveller',
       'potion.minor',
+      // The two ways to carry a light (spec 250). Both here rather than split
+      // across the three shops, because the Quartermaster is the one whose
+      // stock is *the kit* -- a light belongs beside a flask and a leather cap
+      // rather than behind a level gate at the Armourer's.
+      'torch.hand',
+      'sigil.witchlight',
     ],
     buyMarkup: 1.5,
     sellFraction: 0.4,
@@ -138,7 +154,15 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     // A traveller's pack: the things somebody forgot to bring, at a fair price
     // rather than a good one. Deliberately overlapping the Quartermaster's --
     // this is a second place to buy a flask, not a third tier of goods.
-    stock: ['potion.minor', 'sword.worn', 'bow.hunting', 'helm.leather', 'legs.traveller'],
+    stock: [
+      'potion.minor',
+      'sword.worn',
+      'bow.hunting',
+      'helm.leather',
+      'legs.traveller',
+      // The one thing somebody most reliably forgot to bring.
+      'torch.hand',
+    ],
     // Between the two above. It walks to you, so it charges for the walk.
     buyMarkup: 1.6,
     sellFraction: 0.35,

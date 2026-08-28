@@ -401,6 +401,37 @@
         }
       }
     },
+    "windowClose": {
+      "frame": "frame",
+      "padding": 0,
+      "states": {
+        "normal": {
+          "fill": "panel",
+          "frameTint": "edgeLight",
+          "text": "textDim"
+        },
+        "focused": {
+          "fill": "panel",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "hover": {
+          "fill": "edgeLight",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "pressed": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "accent"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        }
+      }
+    },
     "tab": {
       "frame": "raised",
       "padding": 4,

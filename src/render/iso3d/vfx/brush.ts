@@ -1775,6 +1775,227 @@ export function brushShot(params: BrushShotParams): EffectDefinition {
 // --- the shipped presets -----------------------------------------------------
 
 /** The nominal radius `explosion_brush` is authored at, for the scale maths. */
+/**
+ * A fire that stands somewhere and keeps burning (spec 250).
+ *
+ * Every other painted fire in this file is an *event*: a shot crossing the frame,
+ * an explosion, a body that caught. This one is a **place** -- it is what a
+ * campfire prop is made of, now that the prop itself is stones and charred
+ * timber and nothing that moves. So it is the first brush effect authored to be
+ * watched rather than glanced at, and the two things that follow from that are
+ * the whole of its shape.
+ *
+ * **It has to loop invisibly.** A one-shot can put everything on screen at once
+ * and let the eye fill in the rest; a fire that did would pulse at its own
+ * emission rate. So the three layers run at unrelated rates over unrelated
+ * lifetimes -- flames a third of a second, embers a second and a half, smoke
+ * two and a bit -- and nothing in it is phased off anything else.
+ *
+ * **It has to read at a glance and cost nothing at distance.** A campfire is a
+ * landmark: what says "there is a fire there" from across the arena is the light
+ * the fixture throws, not the paint, so this is `priority: 1` -- the first thing
+ * to yield when the instance pool is under pressure -- and culls well inside the
+ * light's own reach. The prop and its pool of light stay when this goes.
+ *
+ * ## The three layers
+ *
+ * **Flames** rise on an updraft and die young. Marks rather than a cone, which
+ * is the point of replacing the geometry: a solid can only ever be a picture of
+ * one instant of a fire.
+ *
+ * **Embers** are the layer with real **gravity** on them, and the only one. They
+ * are thrown up out of the flame and fall back, which is the single most legible
+ * thing a fire does -- an arc is a shape the eye reads as heat rising off
+ * something without having to be told. Everything else here rises steadily and
+ * would look like smoke whatever colour it was painted.
+ *
+ * **Smoke** is born above the flame rather than in it, drifts, spreads and goes
+ * dark. Few, and that is `brushShot`'s tuning finding rather than taste: against
+ * a mid-green field a near-black mark is a hole and an orange one is a
+ * highlight, so a fire with as much smoke as flame photographs as a swarm of
+ * specks with a fire behind it.
+ *
+ * Sizes are in **fire radii** -- the effect is played with `scale` set to the
+ * fire's own reach -- so one definition is a campfire at 26 and a brazier at 12.
+ * Speeds, accelerations and gravity are **not** scaled, for the reason
+ * `affliction-vfx.ts` gives about its own: gravity is gravity.
+ */
+export interface BrushFireParams {
+  readonly id: string;
+  /** Flame marks a second. */
+  readonly flames?: number;
+  /** Ember marks a second. Few: an arc is punctuation. */
+  readonly embers?: number;
+  /** Smoke marks a second. Fewer still. See the header. */
+  readonly smoke?: number;
+  /** How wide the flame is born, in fire radii. */
+  readonly base?: number;
+  /** A flame mark's length, in fire radii. */
+  readonly flameSize?: number;
+  /** A smoke mark's length, in fire radii. */
+  readonly smokeSize?: number;
+  /** World units a second squared, up, inside the flame. */
+  readonly updraft?: number;
+  /** How high the smoke is born above the ground, in fire radii. */
+  readonly smokeLift?: number;
+  readonly hot?: PaletteKey;
+  readonly mid?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+  readonly cullDistance?: number;
+}
+
+export function brushFire(params: BrushFireParams): EffectDefinition {
+  const flames = Math.max(0, params.flames ?? 26);
+  const embers = Math.max(0, params.embers ?? 9);
+  // Few, and fewer than the first cut's five. Photographed through
+  // `preview-brush-vfx.ts` the smoke was the biggest thing in the tile and the
+  // flame a smear under it -- `brushShot`'s finding exactly, one effect along:
+  // against a mid-green field a grey mark is a hole and an orange one is a
+  // highlight, so equal counts read as smoke with a fire somewhere in it.
+  const smoke = Math.max(0, params.smoke ?? 3.5);
+  const base = Math.max(0.01, params.base ?? 0.5);
+  const flameSize = params.flameSize ?? 0.5;
+  const smokeSize = params.smokeSize ?? 0.62;
+  const updraft = params.updraft ?? 120;
+  const smokeLift = params.smokeLift ?? 1.6;
+  const hot = params.hot ?? 'fireCore';
+  const mid = params.mid ?? 'fireBody';
+  const deep = params.deep ?? 'fireDeep';
+
+  const emitters: Emitter[] = [
+    // (a) The flame. Born across the ember bed rather than at a point, so the
+    // fire has a *width* at its foot and tapers upward on its own -- a cone
+    // emitter would give it a shape decided by an angle rather than by where the
+    // logs are.
+    {
+      id: 'flame',
+      shape: { kind: 'circle', radius: base },
+      emission: { kind: 'rate', perSecond: flames },
+      // Short. A flame is not a thing that travels, it is a thing that is
+      // replaced -- and a long-lived mark drifting upward is smoke.
+      //
+      // Long enough to *be* a column, though, which is the tuning the preview
+      // paid for: at the first cut's [15, 26] and 26-46 units a second a mark
+      // rose about eighteen units and the marks were fifteen long, so the
+      // "column" was one mark tall and read as a puddle of fire. It climbs
+      // about fifty now, against a ring of stones thirty across.
+      lifetimeTicks: [24, 38],
+      speed: [40, 66],
+      // Narrow, so the column stands up. The width comes from the disc it is
+      // born on and the turbulence, not from throwing marks sideways.
+      spreadRadians: 0.3,
+      // The heat. It is what makes the top of the flame move faster than the
+      // bottom, which is the difference between fire and a fountain.
+      acceleration: { x: 0, y: updraft, z: 0 },
+      turbulence: { amplitude: 26, frequency: 0.055 },
+      drag: 1.1,
+      angularVelocity: [-2.2, 2.2],
+      // Widest low and thinning as it climbs: a flame tapers.
+      size: { keys: [[0, flameSize * 0.7], [0.25, flameSize], [1, flameSize * 0.42]] },
+      alpha: { keys: [[0, 1], [0.66, 1], [1, 0]] },
+      // Pale at the root and deep at the tip, which is the way round a fire
+      // actually is and the opposite of what an ember does. The full ramp,
+      // unlike an affliction's cling: this is a thing you look *into*, so the
+      // dark end is depth rather than mud.
+      color: { stops: [[0, hot], [0.3, mid], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-blot' },
+      blend: 'alpha',
+      strokeDecay: 'fizzle',
+    },
+    // (b) The embers. **The layer with gravity on it**, and the only one.
+    //
+    // Thrown up out of the middle and falling back, which is the shape the eye
+    // reads as heat coming off something. `brush-flick` because it takes
+    // `cardVelocity` and so always faces the camera and points along its own
+    // path: an ember is read by its streak, and one that turned edge-on at the
+    // top of its arc would vanish exactly where it is most legible.
+    {
+      id: 'embers',
+      shape: { kind: 'circle', radius: base * 0.55 },
+      emission: { kind: 'rate', perSecond: embers },
+      lifetimeTicks: [45, 100],
+      speed: [80, 150],
+      spreadRadians: 0.5,
+      // The arc. Gentle for its speed, so an ember hangs at the top rather than
+      // snapping over: at 150 up this apexes about eighty units above the logs,
+      // which is well past the flame and is what carries the fire's real height.
+      gravity: -140,
+      drag: 0.5,
+      turbulence: { amplitude: 22, frequency: 0.07 },
+      angularVelocity: [-4, 4],
+      size: { keys: [[0, 0.26], [0.3, 0.2], [1, 0.09]] },
+      // Held, then out: an ember goes out rather than fading, so the alpha
+      // stays flat for most of its life and drops at the end.
+      alpha: { keys: [[0, 1], [0.7, 0.95], [1, 0]] },
+      color: { stops: [[0, hot], [0.25, 'emberGlow'], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-flick' },
+      // **Alpha, not additive**, and the preview is what settled it. An ember is
+      // *light*, which is the argument for additive and is the one this file
+      // makes for a shot's licks -- but a lick is inside a fireball and an ember
+      // is over open ground, and additive over this game's grass is not a warm
+      // spark, it is a yellow-green speck. Photographed both ways at the same
+      // seed: `brush-shot.png`.
+      //
+      // It also costs nothing. `brush-flick` in alpha is a batch this table
+      // already has, where the additive pair was a twenty-sixth draw call for
+      // the whole registry -- so the version that reads better is also the one
+      // that does not move a ceiling.
+      blend: 'alpha',
+      strokeDecay: 'retract',
+    },
+    // (c) The smoke. Born above the flame, not in it -- smoke that starts at the
+    // logs is a fire with a grey core.
+    {
+      id: 'smoke',
+      shape: { kind: 'circle', radius: base * 0.8 },
+      offset: { x: 0, y: smokeLift, z: 0 },
+      emission: { kind: 'rate', perSecond: smoke },
+      lifetimeTicks: [80, 150],
+      speed: [12, 26],
+      spreadRadians: 0.55,
+      // A third of the flame's. Smoke rises because it is hot, and it stops
+      // being hot -- a column that kept accelerating would leave the frame.
+      acceleration: { x: 0, y: updraft * 0.3, z: 0 },
+      turbulence: { amplitude: 38, frequency: 0.03 },
+      drag: 0.8,
+      angularVelocity: [-1.1, 1.1],
+      // The only layer that grows. Smoke spreads as it cools, and it is what
+      // gives the column a shape that widens where the flame narrows.
+      size: { keys: [[0, smokeSize * 0.5], [0.5, smokeSize], [1, smokeSize * 1.5]] },
+      // Never fully opaque, and the low start is the point: smoke coming off a
+      // fire is thin at its root and thickens as it gathers. Thinner than the
+      // first cut at both ends -- see the count above for what the preview said
+      // about grey marks on grass.
+      alpha: { keys: [[0, 0.3], [0.4, 0.55], [1, 0]] },
+      color: { stops: [[0, 'smokeDark'], [0.25, 'smokeLight'], [1, 'smokeLight']] },
+      render: 'mesh',
+      mesh: { shape: 'brush-blot' },
+      blend: 'alpha',
+      strokeDecay: 'fizzle',
+    },
+  ];
+
+  return {
+    id: params.id,
+    // Ambient, in the sense the type's own comment means: what tells a player
+    // there is a fire there is the *light*, which is a fixture and not this. So
+    // this is the first thing to yield under instance pressure and the fight in
+    // front of you is the last -- the same call `brushAffliction` makes.
+    priority: params.priority ?? 1,
+    // Well inside the light's own reach. Paint at the far edge of a 420-unit
+    // pool is a few pixels; the glow on the ground is what carries that far, and
+    // it costs nothing per particle.
+    cullDistance: params.cullDistance ?? 1100,
+    // Until stopped. The driver owns the stop and owes one when the ground the
+    // fire stands on stops being drawn.
+    durationTicks: 0,
+    emitters,
+  };
+}
+
 export const BRUSH_EXPLOSION_RADIUS = 60;
 
 /**
@@ -2044,6 +2265,10 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // as orange-into-red. The flame effects keep the old ramp; a body on fire is
   // a different subject from a fire, and the thing you want to see on it is the
   // heat rather than the embers.
+  // The campfire's fire (spec 250). One row, because everything about how a
+  // standing fire is built is in `brushFire` -- a brazier or a lit torch is a
+  // second row at a smaller `scale` and nothing else.
+  brushFire({ id: 'fire_camp' }),
   brushAffliction({
     id: 'affliction_burn',
     cling: 22,

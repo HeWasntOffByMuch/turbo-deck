@@ -27,6 +27,7 @@ import type { Channel } from '../net/transport.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
+import { QUARTERMASTER_HOME } from '../data/vendors.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -119,6 +120,13 @@ async function harness(): Promise<Harness> {
     }
     await settle();
   };
+  // Every shop this file opens is the quartermaster's, and a shop is refused
+  // out of its own reach. The arrival point used to be inside all three shops'
+  // reach and, since the spawn was gated and the town moved off it, is inside
+  // none -- so standing at the counter is a precondition to state rather than
+  // one the spawn happens to satisfy. Through the sim's own teleport, because a
+  // tick mirrors the authoritative position back over a hand-written record.
+  server.teleport('p1', QUARTERMASTER_HOME.x, QUARTERMASTER_HOME.y);
   await tick(2);
   return { client, wire, tick };
 }

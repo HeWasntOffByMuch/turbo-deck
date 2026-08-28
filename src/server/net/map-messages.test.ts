@@ -92,6 +92,37 @@ describe('MapChunk round trip', () => {
     expect(back.chunk).toEqual(west);
   });
 
+  /**
+   * A fixture's own numbers cross too (spec 250).
+   *
+   * The shipped map's four fixtures all burn at their kind's defaults and so
+   * carry *no* override -- which is the point of the defaults and is also why
+   * the test above cannot cover this. Without a flag on the wire the override
+   * would be silently dropped somewhere between the map file and the client,
+   * and every fixture in the game would look correct: it would simply be the
+   * table's brightness rather than the one somebody set.
+   */
+  it("reproduces a fixture's own brightness and reach", () => {
+    const chunk = chunks[0]?.chunk;
+    expect(chunk).toBeDefined();
+    if (!chunk) return;
+    const lit: MapChunk = {
+      ...chunk,
+      props: [
+        { species: 'campfire', x: 10, z: 20, rotation: 0, scale: 1, tint: 0, light: { brightness: 1.25, radius: 250 } },
+        // Beside one that carries none, so the flag is proved to be per prop
+        // rather than per chunk -- and so a decoder that read two numbers it was
+        // not sent would desynchronise on this one and fail loudly.
+        { species: 'lamp-post', x: 30, z: 40, rotation: 0, scale: 1, tint: 0 },
+        { species: 'campfire', x: 50, z: 60, rotation: 0, scale: 2, tint: 0.5, light: { brightness: 6, radius: 900 } },
+      ],
+    };
+    const back = decodeMapChunk(
+      payload(encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: lit })),
+    );
+    expect(back.chunk).toEqual(lit);
+  });
+
   it('reproduces heights bit for bit, not merely close', () => {
     const chunk = chunks[0]?.chunk;
     expect(chunk).toBeDefined();

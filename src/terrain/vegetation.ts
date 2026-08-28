@@ -31,7 +31,10 @@ export type PropKind =
   | 'fence-brick'
   | 'fence-rubble'
   | 'house'
-  | 'well';
+  | 'well'
+  | 'campfire'
+  | 'lamp-post'
+  | 'torch-stand';
 
 /**
  * The kinds that are a length of fence rather than a plant: a regular one and a
@@ -59,6 +62,47 @@ export type StructureKind = (typeof STRUCTURE_KINDS)[number];
 
 export function isStructureKind(kind: PropKind): kind is StructureKind {
   return (STRUCTURE_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * The kinds that emit light (spec 250).
+ *
+ * A fire on the ground, a lamp on a stake, and a torch in a stand. They are
+ * `PropKind`s and nothing else, which is the whole design: a fixture is written
+ * into the map document, streamed, collided against, batched per region and
+ * taken out by the eraser without one line of any of those asking what kind a
+ * prop is. That is spec 224's sentence about the hut and the well, one system
+ * further along.
+ *
+ * They are grouped for the reason the buildings are: neither is *painted*. A
+ * tree is scattered by density and a fence laid along a path, and a lamp goes in
+ * one spot somebody chose -- so they share the buildings' press-to-place tool
+ * rather than getting one of their own.
+ *
+ * Appended, never inserted. `PROP_GROUPS` enumerates this list across a thread
+ * boundary, so a kind that moved would hand the worker's matrices to the wrong
+ * geometry.
+ */
+export const FIXTURE_KINDS = ['campfire', 'lamp-post', 'torch-stand'] as const;
+export type FixtureKind = (typeof FIXTURE_KINDS)[number];
+
+export function isFixtureKind(kind: PropKind): kind is FixtureKind {
+  return (FIXTURE_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * What the press-to-place tool offers: a building or a fixture.
+ *
+ * One list rather than two, because the editor asks one question -- *what am I
+ * putting down here* -- and a second dropdown beside the first would be the
+ * panel describing this file's type hierarchy instead of the choice a person is
+ * making.
+ */
+export const PLACED_KINDS = [...STRUCTURE_KINDS, ...FIXTURE_KINDS] as const;
+export type PlacedKind = (typeof PLACED_KINDS)[number];
+
+export function isPlacedKind(kind: string): kind is PlacedKind {
+  return (PLACED_KINDS as readonly string[]).includes(kind);
 }
 
 /**
@@ -130,6 +174,159 @@ export interface Prop {
    * generated forest is untouched.
    */
   readonly uniform?: boolean;
+  /**
+   * What this fixture burns at, overriding its kind's authored row (spec 250).
+   *
+   * Absent is {@link FIXTURE_LIGHTS}, so a fixture placed at the defaults stores
+   * nothing extra and a retune of the table reaches every one already standing
+   * on every map. Ignored by a kind that emits nothing, exactly as `align` is
+   * ignored by a kind that cannot lie down: an intent a kind does not read is
+   * inert rather than an error, which is what keeps `Prop` one shape.
+   */
+  readonly light?: PropLight;
+}
+
+/** What a fixture burns at. Two numbers, and the two the editor sets. */
+export interface PropLight {
+  /**
+   * Illuminance at half {@link radius}.
+   *
+   * The unit `pointIntensity` already means, so the two controls stay
+   * independent: without that definition a reach slider is a second brightness
+   * slider, because intensity for a given apparent brightness goes as the
+   * *square* of the range.
+   */
+  readonly brightness: number;
+  /** Reach, in world units. */
+  readonly radius: number;
+}
+
+/** A fixture's light, resolved: its kind's row with any instance override on top. */
+export interface ResolvedLight extends PropLight {
+  /** Packed RGB. A fixture's colour is its kind's and is not per instance. */
+  readonly color: number;
+  /** How far above the ground the flame sits, at scale 1. */
+  readonly height: number;
+}
+
+/**
+ * The bounds a fixture's two numbers are held within (spec 250).
+ *
+ * Shared by the editor's sliders and by `parseMap`, so a document cannot carry a
+ * light nobody could have set and the panel cannot offer one the document would
+ * refuse. The reach band is `player-lights.ts`'s own -- the same span the tuning
+ * panel spends its torch over -- because a fixture and a carried flame are the
+ * same kind of light and having two answers to "how far does a light reach"
+ * would be two answers to one question.
+ */
+export const MIN_FIXTURE_BRIGHTNESS = 0;
+export const MAX_FIXTURE_BRIGHTNESS = 6;
+export const MIN_FIXTURE_RADIUS = 80;
+export const MAX_FIXTURE_RADIUS = 900;
+
+/**
+ * What each fixture burns at, before anybody drags a slider.
+ *
+ * Authored per kind rather than per instance because a campfire is a campfire:
+ * the *point* of a table is that placing forty of them and then deciding they
+ * are all too dim is one edit here rather than forty in a map document.
+ *
+ * The colours are the two `player-lights.ts` already burns at plus one: a fire
+ * is the torch's flame, and a street lamp is a shade paler and cooler, because a
+ * lamp is a made thing with a mantle in it and reading identically to an open
+ * fire is what would make the two fixtures indistinguishable at this camera's
+ * distance.
+ *
+ * **None of them casts a shadow**, and that is a look decision rather than a
+ * budget one -- which is worth saying because the budget went the other way.
+ * A fixture's shadow map is affordable: `world-lights.ts` baked it on the frame
+ * the light was assigned a slot and never again, so it cost a `samplerCube` and
+ * one lookup per lit fragment and nothing per frame, and the probe measured the
+ * draw count flat with four of them lit.
+ *
+ * It was cut because of what it *looked* like. A point light a body's height off
+ * the ground throws every trunk, fence post and body near it outward in a hard
+ * radial fan -- `BasicShadowMap`, so each edge is a step rather than a gradient
+ * -- and four fixtures in a square throw four of those fans across each other.
+ * The light is what says a fire is there; the shadows said something nobody
+ * wanted.
+ *
+ * There is no `shadow` field any more, and the whole bake path went with it:
+ * the pool's casting prefix, the cube-map setup, the one-bake-a-frame queue, the
+ * revision stamp that re-took a map when its ground arrived late, and the mask
+ * that kept moving bodies out of a frozen one. A socket with nothing plugged
+ * into it is the thing this repo keeps finding a hundred specs later, and
+ * putting it back is one revert.
+ */
+/**
+ * The one thing about `height` that is not obvious, and it decides more than
+ * `brightness` does: **the ground is not facing the light.**
+ *
+ * `brightness` is illuminance at half reach *on a surface facing the flame*,
+ * which is what `pointIntensity` means and what makes the reach slider
+ * independent of the brightness one. Ground is horizontal, so what lands on it
+ * at distance `d` is scaled by the grazing angle `height / hypot(height, d)` --
+ * a tenth for a flame a body's-height up seen from two hundred units, half for
+ * one carried twice as high. So two fixtures at the same brightness light the
+ * ground quite differently, and the pool a designer sees is always smaller than
+ * the reach they set.
+ *
+ * `npx tsx scripts/preview-fixtures.ts` prints exactly this, per kind, at four
+ * distances and against both the day and the night ambient -- because a pool
+ * dimmer than the ambient is a light nobody can see is on, and that threshold is
+ * three times further out at midnight than at noon.
+ */
+export const FIXTURE_LIGHTS: Readonly<Record<FixtureKind, ResolvedLight>> = {
+  // Wide and warm and low.
+  //
+  // The light sits in the *middle of the flame* rather than in the embers: 22 is
+  // where the cone starts and 34 is halfway up it, and the difference is not
+  // presentation -- at 22 the grazing angle costs a campfire a third of the pool
+  // it is authored to throw, which reads as a fire that does not light the
+  // ground it is standing on.
+  campfire: { color: 0xffa542, brightness: 2.2, radius: 420, height: 34 },
+  // Higher than a body and reaching further than either of the others, which is
+  // what a street lamp is for: it lights a path rather than a spot.
+  'lamp-post': { color: 0xffd9a0, brightness: 1.5, radius: 520, height: 122 },
+  // The carried torch, standing still: the same colour and the same reach, so a
+  // player who plants one and one who holds one get the same light.
+  'torch-stand': { color: 0xffa542, brightness: 1.6, radius: 300, height: 78 },
+};
+
+/** A number held inside the fixture bounds, total by construction. */
+function clampLight(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * The light a prop emits, or **null** for one that emits none.
+ *
+ * The one answer to "does this thing glow, and how", with three callers: the
+ * worker composing a region, the editor drawing its ghost, and the panel
+ * offering the sliders. One description, for the reason `footprintRadius` is
+ * one: a ring the editor draws and a light the renderer hangs are the same
+ * fixture, and two files deriving it separately agree until one is edited.
+ *
+ * The override is clamped rather than trusted, because it arrives from a
+ * document somebody may have hand-edited, and a NaN radius is a light that
+ * paints nothing anywhere with no error to go looking for.
+ */
+export function fixtureLight(prop: Prop): ResolvedLight | null {
+  if (!isFixtureKind(prop.kind)) return null;
+  const base = FIXTURE_LIGHTS[prop.kind];
+  const override = prop.light;
+  if (!override) return base;
+  return {
+    ...base,
+    brightness: clampLight(
+      override.brightness,
+      MIN_FIXTURE_BRIGHTNESS,
+      MAX_FIXTURE_BRIGHTNESS,
+      base.brightness,
+    ),
+    radius: clampLight(override.radius, MIN_FIXTURE_RADIUS, MAX_FIXTURE_RADIUS, base.radius),
+  };
 }
 
 export interface ScatterOptions {
@@ -251,6 +448,13 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   house: Math.hypot(HOUSE_PLAN.width, HOUSE_PLAN.depth) / 2,
   // A well *is* a circle, so this one is exact.
   well: WELL_RADIUS,
+  // The fixtures (spec 250). A fire is a ring of stones you walk round rather
+  // than through, and the two poles are poles: wide enough that a body cannot
+  // stand inside the thing it is looking at, and no wider, because a lamp with a
+  // hut's collider is an invisible wall down a street.
+  campfire: 34,
+  'lamp-post': 11,
+  'torch-stand': 10,
 };
 /**
  * Fallback for a kind this build has no footprint for -- a map written by a

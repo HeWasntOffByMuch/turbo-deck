@@ -144,6 +144,10 @@ export interface WindowsRenderOptions {
   readonly arriving?: string;
   /** ...and refuse the animation, which must give the settled frame exactly. */
   readonly reduced?: boolean;
+  /** Paint this window's close button hovered, by window id (spec 251). */
+  readonly hoverClose?: string;
+  /** ...and this one's pressed. */
+  readonly pressClose?: string;
 }
 
 /**
@@ -185,7 +189,21 @@ export function renderWindows(options: WindowsRenderOptions = {}): WindowsFrame 
 
   const surface = new RasterSurface(atlas, viewport.width, viewport.height);
   surface.clear(theme.color('ink'));
-  replay(surface, root.paint().finish());
+
+  // Forced through the paint context rather than driven with a pointer, the way
+  // `renderGallery` forces its states: a golden of the hovered X should not be
+  // able to break because the drag threshold moved.
+  const closeButton = (id: string | undefined): Widget | null =>
+    id === undefined ? null : ((scene.manager.get(id)?.closeButton ?? null) as Widget | null);
+  const hovered = closeButton(options.hoverClose);
+  const pressed = closeButton(options.pressClose);
+  const list = root.paint();
+  if (hovered !== null || pressed !== null) {
+    // Repaint with the forced context; the pass above used the live one.
+    list.clear();
+    scene.root.paint(list, { ...root.paintContext(), hovered, pressed });
+  }
+  replay(surface, list.finish());
 
   return { surface, root, atlas, scene };
 }

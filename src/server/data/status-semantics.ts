@@ -120,6 +120,10 @@ export const STATUS_SEMANTICS: readonly StatusSemantics[] = [
   // row in `data/aura-fields.ts`, and what that lays on them is a Burn, which
   // is tagged where Burn is.
   { id: StatusId.ScorchedEarth, tags: [Beneficial] },
+  // Beneficial and nothing else (spec 250). Not `Bookkeeping`, which is for the
+  // timers the sim keeps for itself: this one is *only* visible, so being seen
+  // is the whole of what it does.
+  { id: StatusId.MagicLight, tags: [Beneficial] },
 
   // --- harmful, but not afflictions -------------------------------------
   { id: StatusId.Exposed, tags: [Harmful] },

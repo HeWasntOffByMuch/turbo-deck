@@ -287,6 +287,25 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 3,
     modifiers: { spellPower: 0.12, intelligence: 2 },
   },
+  // A light you hold (spec 250). Level 1 and cheap, because what it competes
+  // with is a shield and a focus: it occupies the hand those go in, and that
+  // *is* its cost -- carrying a light means giving up six percent of armour or
+  // twelve of spell power, which is the whole of what makes taking one a choice.
+  //
+  // No modifiers at all, and the empty record is the declaration. A torch that
+  // also granted something would make the trade a calculation rather than a
+  // decision about whether being able to see is worth a hand.
+  //
+  // It does not burn down. There is no fuel system, and inventing one so that a
+  // light source could expire would be a second mechanic bolted onto a light.
+  {
+    id: 'torch.hand',
+    value: 12,
+    name: 'Hand Torch',
+    slot: 'offHand',
+    levelRequirement: 1,
+    modifiers: {},
+  },
   // --- armour ---
   {
     id: 'helm.leather',
@@ -515,6 +534,25 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     modifiers: {},
     activeSkillId: 'skill.scorchedEarth',
     value: 280,
+  },
+  // --- the light sigil (spec 250) ---
+  //
+  // The one sigil in the table that does nothing to anybody. What it buys is
+  // being able to see, which is worth nothing at noon and quite a lot under a
+  // canopy at dusk -- so it is priced low and gated at level 1, and it is the
+  // first skill a character can carry that is not a way of hurting something.
+  //
+  // Common, deliberately: a rarity is a promise about how loudly a drop
+  // announces itself (spec 158), and a light is exactly the kind of thing that
+  // should turn up early and quietly rather than being held back as a payoff.
+  {
+    id: 'sigil.witchlight',
+    name: 'Witchlight Sigil',
+    slot: 'skill',
+    levelRequirement: 1,
+    modifiers: {},
+    activeSkillId: 'skill.conjureLight',
+    value: 45,
   },
   // The test row's sigil (spec 190). Not content, and three fields say so:
   // `levelRequirement: 1` so any character can wear it, no `rarity` so it

@@ -727,6 +727,33 @@ export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
     '..TTTTTTTT..',
   ],
   /**
+   * Conjure Light (spec 250): a lamp, radiating.
+   *
+   * The one skill glyph in the set that is neither a blow nor a place, and it
+   * has to look like neither. The mass is a solid `A` disc in the middle with
+   * four `T` rays off the diagonals -- so at 12px the silhouette is a *star*,
+   * which nothing else here is: Scorched Earth above it is a bowl, Rime Touch
+   * is a cross of frost with a square core, and Ember Toss is a lobbed mass.
+   *
+   * The rays are on the diagonals rather than on the axes because the axes are
+   * where a 12px grid's rays land on the same row as the disc's own edge, which
+   * reads as a fat plus sign rather than as light coming off something.
+   */
+  conjureLight: [
+    'T....TT....T',
+    '.T...TT...T.',
+    '..T..TT..T..',
+    '....AAAA....',
+    '...AAAAAA...',
+    'TTT.AAAA.TTT',
+    'TTT.AAAA.TTT',
+    '...AAAAAA...',
+    '....AAAA....',
+    '..T..TT..T..',
+    '.T...TT...T.',
+    'T....TT....T',
+  ],
+  /**
    * The test skill (spec 196 on main): a checklist.
    *
    * It is a developer path and it still needs art, because the alternative is
