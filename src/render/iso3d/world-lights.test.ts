@@ -131,6 +131,36 @@ describe('the world light pool (spec 248)', () => {
     expect(pool.bakingThisFrame()).toBe(false);
   });
 
+  /**
+   * The bug the one-bake-a-frame rule creates if the debt is not written down.
+   *
+   * Slot 0's ground moves and slot 1 takes a different fixture on the *same*
+   * frame. Slot 0 bakes, slot 1 is passed over -- and if "does this slot need a
+   * bake" is re-derived next frame it comes back **no**, because the key is
+   * already written and the revision has not moved. Slot 1 then lights its new
+   * fixture with the old one's shadows, frozen, for as long as it holds the
+   * slot.
+   */
+  it('remembers a bake it deferred, and takes it on a later frame', () => {
+    const { pool } = fresh();
+    const first = [light('f1', 10, true), light('f2', 20, true)];
+    // Settle both: two frames of baking, then quiet.
+    for (let i = 0; i < 4; i++) pool.update(first, ORIGIN);
+    expect(pool.bakingThisFrame()).toBe(false);
+
+    // The ground under f1 moves, and at the same instant f2's slot changes hands.
+    const moved = [{ ...light('f1', 10, true), revision: 1 }, light('f3', 25, true)];
+    pool.update(moved, ORIGIN);
+    expect(pool.bakingThisFrame()).toBe(true);
+    // The deferred one, on the next frame, with nothing else having changed.
+    pool.update(moved, ORIGIN);
+    expect(pool.bakingThisFrame()).toBe(true);
+    // And then quiet again.
+    pool.update(moved, ORIGIN);
+    expect(pool.bakingThisFrame()).toBe(false);
+    expect(pool.heldKeys().filter((key) => key !== null)).toEqual(['f1', 'f3']);
+  });
+
   it('never bakes for a light that does not cast', () => {
     const { pool } = fresh();
     pool.update([light('orb', 10), light('orb2', 20)], ORIGIN);

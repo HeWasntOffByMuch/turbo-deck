@@ -129,6 +129,18 @@ interface Slot {
   key: string | null;
   /** The revision the map in this slot was baked against, or -1 for never. */
   bakedRevision: number;
+  /**
+   * This slot's map is out of date and has not been re-taken yet.
+   *
+   * Held rather than re-derived, and that is not bookkeeping for its own sake:
+   * only one slot bakes a frame, so a slot that needed one and was passed over
+   * has to *stay* needing one. Derived from `key` and `revision` instead, it
+   * would not -- the key is written the moment the slot changes hands and the
+   * revision only moves when the ground does, so a slot that took a new fixture
+   * on a frame somebody else was baking would come back next frame looking
+   * settled and keep the **previous fixture's shadows**, frozen, forever.
+   */
+  wantsBake: boolean;
 }
 
 export class WorldLights {
@@ -162,7 +174,7 @@ export class WorldLights {
       }
       // Added once and never removed, and never hidden: see the header.
       this.scene.add(light);
-      this.slots.push({ light, casts, key: null, bakedRevision: -1 });
+      this.slots.push({ light, casts, key: null, bakedRevision: -1, wantsBake: false });
     }
     this.held = this.slots.map(() => null);
   }
@@ -214,15 +226,20 @@ export class WorldLights {
       light.position.set(request.x, request.y, request.z);
 
       if (!slot.casts) continue;
-      // Re-baked when this slot changed hands, and when the ground under it has
+      // Owed when this slot changed hands, and when the ground under it has
       // moved since -- which is a chunk arriving or being forgotten, and nothing
       // else. In a settled world neither happens and this costs a comparison.
-      const stale = changed || slot.bakedRevision !== request.revision;
-      if (!stale || baked) continue;
+      //
+      // Recorded rather than acted on, because at most one bake happens below:
+      // see {@link Slot.wantsBake} for what deriving it again next frame would
+      // cost.
+      if (changed || slot.bakedRevision !== request.revision) slot.wantsBake = true;
+      if (!slot.wantsBake || baked) continue;
       light.shadow.camera.far = Math.max(FIXTURE_SHADOW_NEAR + 1, request.radius);
       light.shadow.camera.updateProjectionMatrix();
       light.shadow.needsUpdate = true;
       slot.bakedRevision = request.revision;
+      slot.wantsBake = false;
       baked = true;
     }
     this.baking = baked;
@@ -238,6 +255,9 @@ export class WorldLights {
   private park(slot: Slot): void {
     slot.key = null;
     slot.bakedRevision = -1;
+    // Nothing to bake for a slot lighting nothing; the next thing to take it
+    // will ask again, because taking it is a change of hands.
+    slot.wantsBake = false;
     slot.light.intensity = 0;
     slot.light.distance = IDLE_RADIUS;
   }
