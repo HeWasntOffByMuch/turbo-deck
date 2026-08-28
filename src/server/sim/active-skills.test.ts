@@ -35,8 +35,9 @@ import {
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
 import { ZoneManager } from '../world/zone-manager.js';
-import { extraCostsFor } from './abilities.js';
+import { attackTimingFor, extraCostsFor } from './abilities.js';
 import { rally } from './aggro.js';
+import { MAX_ATTACK_INTERVAL_SECONDS } from './attack-timing.js';
 import { MIN_MOVE_SCALE } from './movement.js';
 import { moveScaleOf, statusOf, StatusId } from './statuses.js';
 import { STATUS_VISUALS, visualFor } from '../data/status-visuals.js';
@@ -1634,5 +1635,100 @@ describe('a skill that marks everything', () => {
     for (const vendor of ALL_VENDORS) {
       expect(vendor.stock, vendor.id).not.toContain('sigil.testStatuses');
     }
+  });
+});
+
+/**
+ * The conjured light, end to end (spec 248).
+ *
+ * The one skill in the table that does nothing to anybody, which makes the
+ * things worth asserting about it unusual: not what it damages, but that it
+ * lasts as long as the row says, comes back when the row says, and reaches the
+ * *client* -- because for this one, being seen is the entire mechanic.
+ */
+describe('a skill that only lights the way', () => {
+  const SIGIL: Equipment = wearing('sigil.witchlight');
+  const ABILITY = 'skill.conjureLight';
+
+  function lit(): { state: ServerWorldState; casterId: number } {
+    const empty = createWorldState(7);
+    const caster = withPlayer(empty, 600, 450, statsFor(SIGIL));
+    return { state: caster.state, casterId: caster.id };
+  }
+
+  function cast_(state: ServerWorldState, casterId: number, ticks: number): Run {
+    return run(state, ticks, { 0: [input(casterId, { castAbilityId: ABILITY })] });
+  }
+
+  it('puts a light on the caster and on nobody else', () => {
+    const { state, casterId } = lit();
+    const other = withDummy(state, 660, 450);
+    const windup = abilityById(ABILITY)?.windupTicks ?? 0;
+    const landed = cast_(other.state, casterId, windup + 2);
+    expect(
+      statusOf(landed.state.entities.get(casterId)?.statuses ?? {}, StatusId.MagicLight, landed.state.tick),
+    ).not.toBeNull();
+    expect(
+      statusOf(landed.state.entities.get(other.id)?.statuses ?? {}, StatusId.MagicLight, landed.state.tick),
+    ).toBeNull();
+  });
+
+  it('lasts the sixty seconds the row authors, and then goes out', () => {
+    const { state, casterId } = lit();
+    const ability = abilityById(ABILITY);
+    const effect = ability?.effects?.[0];
+    const duration = effect && effect.kind === 'applyStatus' ? effect.durationTicks : 0;
+    expect(duration).toBe(60 * SERVER_TICK_RATE);
+    const windup = ability?.windupTicks ?? 0;
+    // One tick short of the end, and one past it.
+    const nearly = cast_(state, casterId, windup + duration - 2);
+    expect(
+      statusOf(nearly.state.entities.get(casterId)?.statuses ?? {}, StatusId.MagicLight, nearly.state.tick),
+    ).not.toBeNull();
+    const after = run(nearly.state, 4);
+    expect(
+      statusOf(after.state.entities.get(casterId)?.statuses ?? {}, StatusId.MagicLight, after.state.tick),
+    ).toBeNull();
+  });
+
+  /**
+   * The number spec 248 exists to make true.
+   *
+   * Asserted through `attackTimingFor` rather than off the row, because the row
+   * has said 20 seconds all along and the *game* said five: every non-basic
+   * cooldown went through the attack-interval clamp, whose ceiling is
+   * `MAX_ATTACK_INTERVAL_SECONDS`. Reading the table here would pass either way.
+   */
+  it('comes back after the twenty seconds it says, not the five a Base Attack Time is capped at', () => {
+    const { state, casterId } = lit();
+    const ability = abilityById(ABILITY);
+    expect(ability).toBeDefined();
+    if (!ability) return;
+    const caster = state.entities.get(casterId);
+    expect(caster).toBeDefined();
+    if (!caster) return;
+    const timing = attackTimingFor(ability, caster, state.tick);
+    expect(timing.intervalTicks).toBe(20 * SERVER_TICK_RATE);
+    expect(timing.intervalTicks).toBeGreaterThan(MAX_ATTACK_INTERVAL_SECONDS * SERVER_TICK_RATE);
+  });
+
+  it('is refused to anybody not carrying the sigil', () => {
+    const empty = createWorldState(7);
+    const bare = withPlayer(empty, 600, 450, statsFor(EMPTY_EQUIPMENT));
+    const windup = abilityById(ABILITY)?.windupTicks ?? 0;
+    const landed = cast_(bare.state, bare.id, windup + 2);
+    expect(
+      statusOf(landed.state.entities.get(bare.id)?.statuses ?? {}, StatusId.MagicLight, landed.state.tick),
+    ).toBeNull();
+  });
+
+  /**
+   * And it reaches the client, which for this skill *is* the mechanic: nothing
+   * in the sim reads `MagicLight`, so a status with no `STATUS_VISUALS` row
+   * would be a spell that resolves perfectly and does nothing at all.
+   */
+  it('is a status a client is told about', () => {
+    expect(visualFor(StatusId.MagicLight)).not.toBeNull();
+    expect(visualFor(StatusId.MagicLight)?.kind).toBe('boon');
   });
 });

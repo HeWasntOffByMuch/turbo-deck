@@ -308,6 +308,17 @@ export const ChunkDeniedReason = {
 export const MapPropFlag = {
   Align: 1 << 0,
   Uniform: 1 << 1,
+  /**
+   * This prop carries a light override, and two quantized numbers follow
+   * (spec 248).
+   *
+   * A flag rather than two always-present fields, because almost no prop is a
+   * fixture and almost no fixture overrides its kind's row -- so the common case
+   * pays the bit it was already paying and nothing else. The same shape `align`
+   * and `uniform` are in, one step further: those two *are* their own value,
+   * this one says whether a value follows.
+   */
+  Light: 1 << 2,
 } as const;
 
 /**

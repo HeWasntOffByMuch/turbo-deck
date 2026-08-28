@@ -76,13 +76,41 @@ export function shaderMarkersPresent(): boolean {
 }
 
 /**
+ * Whether three still unrolls the point-light loop.
+ *
+ * Exported for the test, because the unroll is *why* the injection is a block
+ * and a version of three that stopped unrolling would make that reason
+ * disappear without anything failing. Worth pinning either way: this is the one
+ * fact about three's own shader that decides whether the patch compiles at all.
+ */
+export function pointLoopIsUnrolled(): boolean {
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  const at = chunk.indexOf(POINT_LIGHT_CALL);
+  return at >= 0 && chunk.lastIndexOf('#pragma unroll_loop_start', at) >= 0;
+}
+
+/**
+ * The patched point-light statement, for the test.
+ *
+ * Answers the substituted text rather than the whole chunk, so an assertion
+ * about *its* bracing is about the thing that gets repeated rather than about
+ * three's file.
+ */
+export function pointLightInjection(): string {
+  const patched = heldAtArmsLength();
+  const start = patched.indexOf('\t\t{');
+  const end = patched.indexOf(POINT_LIGHT_CALL, start);
+  return start < 0 || end < 0 ? '' : patched.slice(start, patched.indexOf('}', end + POINT_LIGHT_CALL.length) + 1);
+}
+
+/**
  * `lights_fragment_begin`, with the light held at arm's length before it is read.
  *
  * Built from three's own chunk rather than from a copy of it, so everything else
  * it does -- the directional lights, the hemisphere fill, the shadow terms --
  * stays whatever the installed three.js says it is.
  *
- * Three details worth keeping straight:
+ * Four details worth keeping straight:
  *
  * - Everything here is **view space**, which is where `pointLight.position` and
  *   `geometryPosition` already live, so the anchor is handed in that way too.
@@ -91,20 +119,39 @@ export function shaderMarkersPresent(): boolean {
  *   pixel, which is the fan being removed.
  * - `max` against the true distance, so a light that is already further off than
  *   this is left exactly where it is rather than dragged in.
+ * - **The whole thing is one block**, and that is not style. three's point-light
+ *   loop is `#pragma unroll_loop_start`, so the body is emitted once per light
+ *   *at the same scope* -- with two lights, two `vec3 turboToLight` declarations
+ *   land side by side and the shader fails to compile with
+ *   `'turboToLight' : redefinition`. The material then never builds and the
+ *   player is drawn unlit.
+ *
+ *   It was invisible for a hundred and thirty specs because there was exactly
+ *   one point light in this game -- the panel torch -- so the loop unrolled to
+ *   one copy. Spec 248's pool of six is what found it, and it took a browser:
+ *   the failure is a GLSL compile error, and three logs one and carries on
+ *   (`shading-probe.ts` says so in as many words), so every test in the tree
+ *   stayed green.
  */
 function heldAtArmsLength(): string {
   // Term for term `carriedLightDistance` composed with `apparentLightDistance`:
   //   max( trueDistance, max( 1, range * APPARENT_LIGHT_FRACTION ) )
   // The TypeScript is the version a test can execute; this is the transcription.
+  //
+  // The call is *inside* the block with them: `pointLight` and `directLight` are
+  // the loop's own outer-scope variables, so moving the light and then reading
+  // it has to happen before the brace closes.
   const injection = [
-    `\t\tvec3 turboToLight = pointLight.position - ${ANCHOR_UNIFORM};`,
-    '\t\tfloat turboTrue = length( turboToLight );',
-    '\t\tif ( turboTrue > 0.0001 ) {',
-    `\t\t\tfloat turboApparent = max( 1.0, pointLight.distance * ${APPARENT_LIGHT_FRACTION.toFixed(4)} );`,
-    '\t\t\tfloat turboHeld = max( turboTrue, turboApparent );',
-    `\t\t\tpointLight.position = ${ANCHOR_UNIFORM} + ( turboToLight / turboTrue ) * turboHeld;`,
+    '\t\t{',
+    `\t\t\tvec3 turboToLight = pointLight.position - ${ANCHOR_UNIFORM};`,
+    '\t\t\tfloat turboTrue = length( turboToLight );',
+    '\t\t\tif ( turboTrue > 0.0001 ) {',
+    `\t\t\t\tfloat turboApparent = max( 1.0, pointLight.distance * ${APPARENT_LIGHT_FRACTION.toFixed(4)} );`,
+    '\t\t\t\tfloat turboHeld = max( turboTrue, turboApparent );',
+    `\t\t\t\tpointLight.position = ${ANCHOR_UNIFORM} + ( turboToLight / turboTrue ) * turboHeld;`,
+    '\t\t\t}',
+    `\t\t\t${POINT_LIGHT_CALL}`,
     '\t\t}',
-    `\t\t${POINT_LIGHT_CALL}`,
   ].join('\n');
   return THREE.ShaderChunk.lights_fragment_begin.replace(POINT_LIGHT_CALL, injection);
 }

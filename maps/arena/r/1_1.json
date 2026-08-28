@@ -192,7 +192,8 @@
             { "species": "fence-wood", "x": 310.699, "z": 437.076, "rotation": 1.638, "scale": 0.5, "tint": 0.15 },
             { "species": "fence-wood", "x": 306.754, "z": 413.52, "rotation": 1.835, "scale": 0.5, "tint": 0.565 },
             { "species": "fence-wood", "x": 299.241, "z": 390.764, "rotation": 1.944, "scale": 0.5, "tint": -0.005 },
-            { "species": "fence-wood", "x": 287.904, "z": 369.815, "rotation": 2.19, "scale": 0.5, "tint": 0.824 }
+            { "species": "fence-wood", "x": 287.904, "z": 369.815, "rotation": 2.19, "scale": 0.5, "tint": 0.824 },
+            { "species": "torch-stand", "x": 307.787, "z": 478.076, "rotation": 0, "scale": 1, "tint": 0 }
           ],
           "markers": [
             { "kind": "spawner", "id": "spawner-8", "x": 27.159, "z": 412.002, "label": "sheep" },
@@ -313,7 +314,10 @@
             { "species": "bush", "x": 389.992, "z": 143.485, "rotation": 5.954, "scale": 0.943, "tint": -0.964 },
             { "species": "bush", "x": 2.404, "z": 423.309, "rotation": 4.121, "scale": 0.93, "tint": -0.814 },
             { "species": "bush", "x": 32.345, "z": 349.876, "rotation": 0.911, "scale": 1.215, "tint": -0.169 },
-            { "species": "bush", "x": 528.332, "z": 119.391, "rotation": 1.436, "scale": 1.642, "tint": -0.985 }
+            { "species": "bush", "x": 528.332, "z": 119.391, "rotation": 1.436, "scale": 1.642, "tint": -0.985 },
+            { "species": "campfire", "x": 298.667, "z": 208.667, "rotation": 0, "scale": 1, "tint": 0 },
+            { "species": "lamp-post", "x": 589.572, "z": 386.964, "rotation": 0, "scale": 1, "tint": 0 },
+            { "species": "lamp-post", "x": 2.832, "z": 384.319, "rotation": 0, "scale": 1, "tint": 0 }
           ],
           "markers": [
             { "kind": "spawner", "id": "npc-merchant", "x": 402, "z": 272, "label": "npc.merchant" },

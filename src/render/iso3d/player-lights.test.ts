@@ -12,7 +12,7 @@ import {
   pointIntensity,
   torchFlicker,
 } from './player-lights.js';
-import { shaderMarkersPresent } from './player-lighting.js';
+import { pointLightInjection, pointLoopIsUnrolled, shaderMarkersPresent } from './player-lighting.js';
 
 /** A long even sweep of the flame, for statistics rather than spot checks. */
 function flickerSamples(seed: number, count = 4000, step = 1 / 60): number[] {
@@ -246,5 +246,47 @@ describe('the shader patch behind it (spec 118)', () => {
     // matching is a silent no-op there, and a player lit from point blank
     // again. A three.js upgrade that renames this fails here instead.
     expect(shaderMarkersPresent()).toBe(true);
+  });
+
+  /**
+   * The patch has to survive being emitted more than once (spec 248).
+   *
+   * three unrolls the point-light loop, so its body appears once per light *at
+   * the same scope*. Two copies of a bare `vec3 turboToLight` is
+   * `'turboToLight' : redefinition` and a material that never compiles -- and
+   * three logs a failed compile and carries on, so the symptom is an unlit
+   * player and a green suite.
+   *
+   * It hid for a hundred and thirty specs because this game had exactly one
+   * point light. It took the light pool to produce a second one and a browser to
+   * see it, which is why the invariant is pinned here rather than left to the
+   * next probe run.
+   */
+  it('wraps what it injects in a block, because the loop is unrolled', () => {
+    expect(pointLoopIsUnrolled()).toBe(true);
+    const injection = pointLightInjection();
+    expect(injection.trim().startsWith('{')).toBe(true);
+    expect(injection.trim().endsWith('}')).toBe(true);
+    // Balanced, and never closing early: a block that shut before the light was
+    // read would compile and leave the light exactly where it was.
+    let depth = 0;
+    let closedEarly = false;
+    for (const ch of injection) {
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0 && !injection.trimEnd().endsWith(ch)) closedEarly = true;
+      }
+    }
+    expect(depth).toBe(0);
+    expect(closedEarly).toBe(false);
+  });
+
+  it('declares each of its own names exactly once inside that block', () => {
+    const injection = pointLightInjection();
+    for (const name of ['turboToLight', 'turboTrue', 'turboApparent', 'turboHeld']) {
+      const declarations = injection.split(new RegExp(`\\b(?:vec3|float) ${name}\\b`)).length - 1;
+      expect(declarations, name).toBe(1);
+    }
   });
 });

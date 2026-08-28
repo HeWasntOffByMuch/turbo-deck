@@ -271,7 +271,16 @@ export function encodeMapChunk(msg: MapChunkMessage): Uint8Array {
     w.varuint(index);
     w.varint(q(prop.x)).varint(q(prop.z));
     w.varint(q(prop.rotation)).varint(q(prop.scale)).varint(q(prop.tint));
-    w.u8((prop.align === true ? MapPropFlag.Align : 0) | (prop.uniform === true ? MapPropFlag.Uniform : 0));
+    w.u8(
+      (prop.align === true ? MapPropFlag.Align : 0) |
+        (prop.uniform === true ? MapPropFlag.Uniform : 0) |
+        (prop.light ? MapPropFlag.Light : 0),
+    );
+    // A fixture's own numbers, and only where the document carries them
+    // (spec 248). Quantized like every other number on this frame, which is
+    // exact for anything `quantize` produced -- and the document's own writer
+    // quantizes them, so a light survives the round trip unchanged.
+    if (prop.light) w.varint(q(prop.light.brightness)).varint(q(prop.light.radius));
   }
 
   w.varuint(c.markers.length);
@@ -323,6 +332,14 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
     const scale = unq(r.varint());
     const tint = unq(r.varint());
     const flags = r.u8();
+    // Read unconditionally where the flag says so, and *before* the object is
+    // built: the two numbers are in the stream whether or not this build has a
+    // use for them, so skipping the read would desynchronise every prop after
+    // this one rather than losing one light.
+    const light =
+      (flags & MapPropFlag.Light) !== 0
+        ? { brightness: unq(r.varint()), radius: unq(r.varint()) }
+        : undefined;
     // The optional fields are omitted rather than written as false, so a decoded
     // chunk deep-equals the document chunk it was encoded from.
     props[i] = {
@@ -334,6 +351,7 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
       tint,
       ...((flags & MapPropFlag.Align) !== 0 ? { align: true } : {}),
       ...((flags & MapPropFlag.Uniform) !== 0 ? { uniform: true } : {}),
+      ...(light ? { light } : {}),
     };
   }
 

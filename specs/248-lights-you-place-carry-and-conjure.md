@@ -282,6 +282,35 @@ only way the number this spec is asked for means anything: it restores what
 - `presentation-only.test.ts` still holds: driving the light layer changes no
   authoritative state.
 
+## What building it found
+
+Three things that were already wrong, and none of them could have been found by
+reading:
+
+**three unrolls the point-light loop.** `player-lighting.ts`'s shader patch
+declares two locals in the body of that loop, and `#pragma unroll_loop_start`
+emits the body once per light *at the same scope*. With one point light — which
+is every build of this game since spec 047 — that is one copy and it compiles.
+With two it is `'turboToLight' : redefinition`, the player's material never
+builds, and three logs a failed compile and carries on, so the symptom is an
+unlit player and a completely green suite. The pool made a second light and
+`probe-world-lights.ts` found it on its first run. The injection is one block
+now, and `player-lights.test.ts` pins both halves: that the loop is still
+unrolled, and that what is substituted into it is braced.
+
+**A prop's light did not cross the wire.** `MapChunk` carries props with two
+flag bits and no room for anything else, so a fixture's override reached the
+client as nothing at all — every fixture in the game would have looked correct
+and simply burned at the table's brightness rather than the one somebody set.
+Caught by `map-messages.test.ts`'s "reproduces every chunk of the shipped map
+exactly", which is a test written for a completely different reason. There is a
+`MapPropFlag.Light` now, and two quantized numbers behind it.
+
+**A hand-written document is not a baked one.** The first run of
+`light-the-square.ts` wrote raw doubles where every other number in a map
+document is `quantize`d, and the wire's `unq` is exact only for what `quantize`
+produced — so the shipped map stopped surviving its own round trip. Same test.
+
 ## Out of scope
 
 - **Other players' torches.** Equipment is not replicated — only the local
