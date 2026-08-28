@@ -58,18 +58,41 @@ Bounded by `SCALING.startingAttribute` (5) below and `SCALING.attributeHardCap`
 (60) above. Server-authoritative throughout: the request names an attribute
 **ordinal** and carries no value.
 
-## 3. Milestones — what is automatic
+## 3. Milestones — what a threshold is
 
-A **milestone** is a threshold at 20, 35 or 50 that grants a `StatModifier` the
-moment the attribute reaches it. Eighteen of them, three per attribute, in
-`data/milestones.ts`. Nothing is bought and nothing is chosen; reaching the
-number is the whole of it.
+A **milestone is any threshold on a track**: a value that, reached, changes what
+the character can do. Each track has six — 10, 20, 25, 35, 40, 50 — and they come
+in two kinds:
 
-Every milestone **deepens a specialization the track unlocked earlier** — the
-`deepens` field, and all eighteen have one. Strength 10 makes Crushing Blows
-purchasable; Strength 20 improves it whether or not a tier was ever bought. That
-is why the same name appears twice on a track, and recording the link is what
-lets the sheet draw one mechanic growing rather than two things with one name.
+| Kind | Where | What happens |
+|---|---|---|
+| **Automatic** | 20, 35, 50 | Grants a `StatModifier` the moment the attribute reaches it. Nothing is bought and nothing is chosen. |
+| **Unlocking** | 10, 25, 40 | Makes specializations *purchasable*. Reaching it grants nothing by itself. |
+
+Thirty-six nodes over six tracks, eighteen of each kind. `MilestoneDefinition`
+in `data/milestones.ts` is the **automatic** eighteen and only those; the
+unlocking eighteen are implied by the specializations that name them in
+`requires`, and `data/tracks.ts` assembles both into one ordered list.
+
+That wider reading is the one the design brief uses — *"a meaningful threshold
+reached by advancing the attribute"*, with *"reaching a milestone makes its
+specialization available"* — and it is worth stating because the narrow reading
+put a lie on the character sheet. This document said for one spec that a
+milestone was 20/35/50 alone, and the sheet's *"what changes next"* line took its
+distance from the node list and its sentence from the automatic rows: at Strength
+5 it read *"5 more STR: Crushing Blows: your blows carry 25% more poise
+damage"* — the 20 milestone offered fifteen points early, because five more
+Strength only makes Crushing Blows *purchasable*. `character-model.ts`'s
+`effectOf` now takes both halves from one node, and
+`character-model.test.ts` asserts the pairing at every attribute value.
+
+Every **automatic** milestone **deepens a specialization the track unlocked
+earlier** — the `deepens` field, and all eighteen have one. Strength 10 makes
+Crushing Blows purchasable; Strength 20 improves it whether or not a tier was
+ever bought. That is why the same name appears twice on a track, and recording
+the link is what lets the sheet draw one mechanic growing rather than two things
+with one name. It is also what made the fault above invisible: both halves of the
+sentence said "Crushing Blows", and only the numbers disagreed.
 
 ## 4. Specialization tiers — what is bought
 

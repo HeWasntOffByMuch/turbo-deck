@@ -10,7 +10,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { abilityById, ALL_ABILITIES } from '../../../server/data/abilities.js';
-import { allAttributePairs, ATTRIBUTES } from '../../../server/data/attributes.js';
+import {
+  allAttributePairs,
+  ATTRIBUTE_KEYS,
+  ATTRIBUTES,
+} from '../../../server/data/attributes.js';
+import { SCALING } from '../../../server/data/scaling.js';
 import { ALL_MILESTONES } from '../../../server/data/milestones.js';
 import { ALL_SPECIALIZATIONS, specializationsFor } from '../../../server/data/specializations.js';
 import { validateSpecializationSpend } from '../../../server/player/specializations.js';
@@ -348,6 +353,68 @@ describe('the character view', () => {
     expect(strength?.toNext).toBe(2);
     expect(strength?.nodes.find((node) => node.threshold === 10)?.reached).toBe(true);
     expect(strength?.nodes.find((node) => node.threshold === 20)?.reached).toBe(false);
+  });
+
+  /**
+   * The property the sheet was wrong about, and the reason it was wrong silently.
+   *
+   * `nextEffect` came from `milestoneProgress` -- the automatic 20/35/50 rows --
+   * while `nextThreshold` and `toNext` came from the node list, so at Strength 5
+   * the sheet said *"5 more STR: Crushing Blows: your blows carry 25% more poise
+   * damage"*: the distance to the **10** node wearing the promise of the **20**
+   * milestone. Every test in the tree passed, because a milestone and the
+   * specialization it deepens share a name -- both halves said "Crushing Blows"
+   * and only the numbers disagreed.
+   *
+   * So the assertion is about the *pair*: whatever sentence `nextEffect` carries
+   * must belong to the threshold `nextThreshold` names. The last clause is the
+   * one that fails on the old code.
+   */
+  it('names the effect of the threshold it names the distance to', () => {
+    for (const attribute of ATTRIBUTE_KEYS) {
+      for (let value = SCALING.startingAttribute; value <= SCALING.attributeHardCap; value++) {
+        const built = { ...startingBaseStats(), [attribute]: value } as BaseStats;
+        const view = characterViewOf(source([], 4, 6, { attributes: built, baseStats: built }));
+        const track = view.tracks.find((entry) => entry.key === attribute);
+        if (!track) throw new Error(`no track for ${attribute}`);
+        const where = `${attribute} ${String(value)}`;
+
+        if (track.nextThreshold === 0) {
+          expect(track.nextEffect, where).toBe('');
+          expect(track.toNext, where).toBe(0);
+          continue;
+        }
+
+        // The distance is to that threshold, measured from the resolved value.
+        expect(track.toNext, where).toBe(track.nextThreshold - value);
+
+        const node = track.nodes.find((entry) => entry.threshold === track.nextThreshold);
+        expect(node, where).toBeDefined();
+        if (!node) continue;
+        expect(node.reached, where).toBe(false);
+
+        // ...and the sentence is that node's own: the milestone's words where it
+        // fires one, the names it unlocks where it does not.
+        if (node.milestone !== null) {
+          expect(track.nextEffect, where).toContain(node.milestone.effect);
+        } else {
+          expect(node.specializations.length, where).toBeGreaterThan(0);
+          for (const specialization of node.specializations) {
+            expect(track.nextEffect, where).toContain(specialization.name);
+          }
+        }
+
+        // Never a threshold further up the track. This is the clause the bug
+        // trips: at Strength 5 the line carried the Strength 20 effect.
+        for (const later of track.nodes.filter((entry) => entry.threshold > track.nextThreshold)) {
+          if (later.milestone !== null) {
+            expect(track.nextEffect, `${where} names ${String(later.threshold)}`).not.toContain(
+              later.milestone.effect,
+            );
+          }
+        }
+      }
+    }
   });
 
   it('renders a track whose specializations are all still locked', () => {

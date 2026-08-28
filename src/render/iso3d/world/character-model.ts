@@ -30,7 +30,6 @@ import {
 import { describeSpecialization, technicalText } from '../../../server/data/description.js';
 import { experienceForLevel } from '../../../server/player/player-manager.js';
 import { RESPEC_COST, pointsSpent, validateAttributeSpend } from '../../../server/player/attributes.js';
-import { milestoneProgress } from '../../../server/player/progression.js';
 import { trackFor } from '../../../server/data/tracks.js';
 import {
   costOfNextTier,
@@ -332,6 +331,37 @@ function specializationTooltip(
 }
 
 /**
+ * What reaching this threshold does, in one sentence about *this* node.
+ *
+ * The whole of a bug rather than a formatting choice. `nextEffect` used to come
+ * from `milestoneProgress`, which walks the automatic milestones alone, while
+ * `nextThreshold` and `toNext` came from the node list -- so the sheet spliced
+ * the distance to one threshold onto the promise of a different one. At Strength
+ * 5 it read *"5 more STR: Crushing Blows: your blows carry 25% more poise
+ * damage, and a break you cause interrupts whatever it was doing"*, which is the
+ * **20** milestone offered fifteen points early; five more Strength only makes
+ * the specialization purchasable, for +18% Guard damage a tier.
+ *
+ * What made it invisible is the thing that makes a track read well: a milestone
+ * and the specialization it deepens share a name (`deepens`), so both halves of
+ * the sentence said "Crushing Blows" and only the numbers disagreed. Taking both
+ * halves from one node is what makes that unrepresentable rather than caught.
+ *
+ * A node that unlocks purchases has no authored effect line of its own -- the
+ * specializations under it are the answer -- so it names them.
+ */
+function effectOf(node: TrackNodeView): string {
+  if (node.milestone !== null) return `${node.milestone.name}: ${node.milestone.effect}`;
+  const names = node.specializations.map((specialization) => specialization.name);
+  if (names.length === 0) return '';
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `unlocks ${String(list)}`;
+}
+
+/**
  * The six tracks.
  *
  * `canAdvance` goes through `validateAttributeSpend` and `canSpend` through
@@ -339,9 +369,10 @@ function specializationTooltip(
  * client's copy of the record -- so a greyed-out "+" and a refused request cannot
  * disagree, and the tooltip that says why says what the server would have said.
  *
- * `nextEffect` and a milestone's `effect` are the tables' own strings, so the
- * sentence a player reads is the sentence the designer wrote beside the grant
- * rather than a second description of it kept in the UI.
+ * `nextEffect` is {@link effectOf} over the *same* node `nextThreshold` names,
+ * and a milestone's `effect` is the table's own string -- so the sentence a
+ * player reads is the sentence the designer wrote beside the grant, and it is
+ * about the threshold the number beside it counts down to.
  *
  * Both validators want a whole `PersistedPlayer` and this side has a fragment of
  * one, so a stand-in is built from the fields each actually reads. Deliberately a
@@ -359,11 +390,9 @@ export function tracksOf(source: CharacterSource): readonly TrackView[] {
     specializations: source.specializations,
     unspentProgressionPoints: source.unspentProgressionPoints,
   };
-  const progress = milestoneProgress(totals);
 
   return ATTRIBUTES.map((definition) => {
     const advance = validateAttributeSpend(attributeStand, definition.key);
-    const mine = progress.find((entry) => entry.attribute === definition.key);
     const total = source.attributes[definition.key];
     const track = trackFor(definition.key);
 
@@ -399,13 +428,9 @@ export function tracksOf(source: CharacterSource): readonly TrackView[] {
       }),
     }));
 
-    // The *next* threshold on the track, which is not the same question
-    // `milestoneProgress` answers: that one walks the automatic milestones alone,
-    // and a track's next interesting number can be a specialization threshold
-    // ten points below the next milestone. The sentence still comes from the
-    // milestone where there is one, since a threshold that only unlocks a
-    // purchase has no authored effect line of its own -- the specializations
-    // under it are the answer, and they are drawn right there.
+    // The next threshold on the track, and `effectOf` reads its sentence off the
+    // same node. One `next`, so the distance and the promise cannot come from
+    // two different thresholds -- see `effectOf` for what that cost.
     const next = nodes.find((node) => !node.reached) ?? null;
     return {
       key: definition.key,
@@ -424,7 +449,7 @@ export function tracksOf(source: CharacterSource): readonly TrackView[] {
       blockedBecause: advance.ok ? '' : advance.detail,
       nextThreshold: next?.threshold ?? 0,
       toNext: next ? Math.max(0, next.threshold - total) : 0,
-      nextEffect: mine?.next ? `${mine.next.name}: ${mine.next.effect}` : '',
+      nextEffect: next ? effectOf(next) : '',
       tiersBought: totalSpecializationTiers(
         source.specializations.filter(
           (allocation) =>
