@@ -69,7 +69,7 @@ GBs of deltas.
 
 ## What this runs on
 
-Any always-on x86-64 box with Docker, Ubuntu Server 24.04 LTS, and a name
+Any always-on x86-64 box with Docker, a current Ubuntu Server LTS, and a name
 pointed at it. The runbook is written against that and nothing narrower,
 because the specific box has already changed once: OVH's VPS-1 in Warsaw was
 the pick until Warsaw stopped being orderable.
@@ -160,15 +160,37 @@ or a 12-month commitment, since both OVH and Scaleway display both. OVH
 provisioning takes minutes rather than the seconds a Hetzner box takes; that is
 normal, not a failed order.
 
-### Which distribution
+### Which distribution, and which image
 
-**Ubuntu Server 24.04 LTS.** Every command in the runbook below is written for
-it — `apt`, `ufw`, `docker.io`, `unattended-upgrades` — and Docker's own
-packaging targets Ubuntu and Debian first. Free security maintenance runs to
-May 2029, and ten years with Ubuntu Pro, which is free for personal use on up
-to five machines. Take the LTS, not a 25.x interim release: those are supported
-for nine months, which converts a server you wanted to forget about into an
-annual reinstall.
+**Ubuntu Server 26.04 LTS**, plain. Falling back to 24.04 LTS if the vendor's
+image list has not caught up yet — both run the runbook below unchanged, since
+`apt`, `ufw`, `docker.io` and `unattended-upgrades` are the same on either.
+
+26.04 rather than 24.04 for one reason: it is maintained to **April 2031**
+against 24.04's May 2029, and this is a box whose entire purpose is to be
+forgotten about. It released on 23 April 2026 and its `.1` point release landed
+on 6 August, which is the conventional bar for putting a new LTS on a server —
+so that objection has expired. Ten years on either with Ubuntu Pro, free for
+personal use on up to five machines.
+
+Take an **LTS**, never an interim release. Those get nine months, which turns a
+server you wanted to forget about into an annual reinstall.
+
+**Take the plain image**, not a preconfigured one:
+
+- **Never a cPanel or Plesk image.** Those panels bind ports 80 and 443
+  themselves, which is a direct collision with Caddy — the symptom is a
+  certificate that will not issue, because the ACME challenge never reaches the
+  container. This is a concrete conflict, not general hygiene.
+- **Skip the "Docker" ready-to-go image too**, mildly. The runbook installs
+  Docker from Ubuntu's own repository; a preinstalled one may come from a
+  different source at a different version, and then there are two answers to
+  "where did docker come from" on a box that should have one.
+- Ubuntu Server, not Desktop. Nothing here draws anything.
+
+Expect the vendor's image to create a non-root `ubuntu` user holding your SSH
+key, with root login disabled. So the steps below marked "as root" start with
+`sudo -i`.
 
 The rest of OVH's menu, so the choice is made rather than defaulted into:
 
@@ -282,7 +304,7 @@ Five things, in the order they pay off:
 
 ### If it currently runs Windows
 
-**Wipe it and install Ubuntu Server 24.04.** Not because Linux is nicer, but
+**Wipe it and install Ubuntu Server LTS.** Not because Linux is nicer, but
 because of a date: free Windows 10 support ended on 14 October 2025, the
 consumer ESU that bridges the gap runs out on **13 October 2026**, and there is
 no consumer option after that — you cannot keep paying. Hardware of this age
@@ -291,7 +313,7 @@ unpatched Windows with ports forwarded to it from the internet is a bad thing
 to own, and that is precisely what this machine would become before the year is
 out.
 
-Ubuntu Server 24.04 LTS is security-maintained until May 2029, free, and ten
+Ubuntu Server 26.04 LTS is security-maintained until April 2031, free, and ten
 years with Ubuntu Pro, which is also free for personal use on up to five
 machines. It is what every command in the runbook below assumes.
 
@@ -373,7 +395,7 @@ install time. The CI key goes on the box in the next step, restricted.
 
 ### Once, on the box
 
-Any box from above — rented or your own — on Ubuntu 24.04. Nothing below this
+Any box from above — rented or your own — on an Ubuntu Server LTS. Nothing below this
 line is vendor-specific.
 
 ```sh
