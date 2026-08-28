@@ -29,7 +29,15 @@ interface ImportMeta {
    * does not exist at all. Declared here rather than by pulling in
    * `vite/client`, for the same reason `glob` is.
    */
-  readonly env?: { readonly VITE_SERVER_URL?: string };
+  readonly env?: {
+    readonly VITE_SERVER_URL?: string;
+    /**
+     * What `--base` was set to, with a trailing slash. `/` in dev,
+     * `/turbo-deck/` on Pages (spec 153) -- which the audio catalog's
+     * root-relative URLs have to be resolved against or every clip 404s.
+     */
+    readonly BASE_URL?: string;
+  };
 
   glob(pattern: string, options: { eager: true }): Record<string, unknown>;
   /**

@@ -29,6 +29,7 @@ import {
   slugSegment,
   SOURCE_EXTENSIONS,
   urlForBaked,
+  withBase,
 } from './paths.js';
 import { parseCatalog, referencedVariants } from './catalog.js';
 import { SOUND_EVENT_IDS } from './events.js';
@@ -243,5 +244,37 @@ describe('an import', () => {
       expect(target.path.split('/')).not.toContain('..');
       expect(target.path).toMatch(/^[a-z0-9_/]+\.[a-z0-9]+$/);
     }
+  });
+});
+
+describe('withBase (spec 153)', () => {
+  it('leaves a root-served page exactly as it was', () => {
+    // Dev, and the in-tab server. The regression that matters: this is what
+    // every existing catalog URL resolves to today.
+    expect(withBase('/audio/ui/click.ogg', '/')).toBe('/audio/ui/click.ogg');
+    expect(withBase('/audio/ui/click.ogg', '')).toBe('/audio/ui/click.ogg');
+  });
+
+  it('moves a clip onto a project-site base', () => {
+    // GitHub Pages. Without this every sound in the game 404s off the site root.
+    expect(withBase('/audio/ui/click.ogg', '/turbo-deck/')).toBe('/turbo-deck/audio/ui/click.ogg');
+    // A base somebody wrote without the trailing slash means the same thing.
+    expect(withBase('/audio/ui/click.ogg', '/turbo-deck')).toBe('/turbo-deck/audio/ui/click.ogg');
+  });
+
+  it('handles a full-URL base, which vite also allows', () => {
+    expect(withBase('/audio/a.ogg', 'https://cdn.example/app/')).toBe('https://cdn.example/app/audio/a.ogg');
+  });
+
+  it('leaves anything not root-relative alone', () => {
+    // Already fully specified: rewriting these would break them.
+    expect(withBase('https://cdn.example/a.ogg', '/turbo-deck/')).toBe('https://cdn.example/a.ogg');
+    expect(withBase('./a.ogg', '/turbo-deck/')).toBe('./a.ogg');
+    expect(withBase('blob:whatever', '/turbo-deck/')).toBe('blob:whatever');
+  });
+
+  it('is idempotent under a root base, so double-application is safe', () => {
+    const once = withBase('/audio/a.ogg', '/');
+    expect(withBase(once, '/')).toBe(once);
   });
 });

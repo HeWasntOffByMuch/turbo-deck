@@ -61,6 +61,7 @@ import {
   type SoundCatalog,
 } from './catalog.js';
 import { BUSES, soundEvent, type BusId, type SoundEventId } from './events.js';
+import { withBase } from './paths.js';
 import {
   NO_HANDLE,
   SILENT_AUDIO,
@@ -107,6 +108,12 @@ export interface AudioEngineOptions {
   /** `performance.now`, injected for the same reason the random source is. */
   readonly now?: () => number;
   readonly mix?: AudioMix;
+  /**
+   * Where this page is served from, for turning the catalog's root-relative
+   * `/audio/...` into a URL that resolves (spec 153). `import.meta.env.BASE_URL`
+   * in the game; a test passes whatever it is asserting about.
+   */
+  readonly base?: string;
 }
 
 /**
@@ -155,12 +162,14 @@ export class AudioEngine implements Audio {
   private readonly random: Random;
   private readonly clock: () => number;
   private readonly makeContext: ContextFactory;
+  private readonly base: string;
 
   constructor(options: AudioEngineOptions) {
     this.makeContext = options.context;
     this.random = options.random ?? Math.random;
     this.clock = options.now ?? (() => performance.now());
     this.mix = options.mix ?? AUDIO_DEFAULTS;
+    this.base = options.base ?? '/';
   }
 
   // --- lifecycle ---------------------------------------------------------
@@ -470,7 +479,7 @@ export class AudioEngine implements Audio {
 
     const pending = (async (): Promise<AudioBuffer | null> => {
       try {
-        const response = await fetch(url);
+        const response = await fetch(withBase(url, this.base));
         if (!response.ok) throw new Error(`${String(response.status)} ${response.statusText}`);
         const bytes = await response.arrayBuffer();
         const buffer = await context.decodeAudioData(bytes);
@@ -663,7 +672,11 @@ function positionPanner(panner: PannerNode, options: PlayOptions, listener: List
 export function createAudioEngine(options: Partial<AudioEngineOptions> = {}): Audio {
   const factory = options.context ?? defaultContext();
   if (factory === null) return SILENT_AUDIO;
-  return new AudioEngine({ ...options, context: factory });
+  // The one place `import.meta.env` is read: this is the impure factory, and
+  // `AudioEngine` takes the base as a plain argument so a test can state one.
+  // `/` in dev and in the in-tab server, `/turbo-deck/` on Pages.
+  const base = options.base ?? import.meta.env?.BASE_URL ?? '/';
+  return new AudioEngine({ ...options, context: factory, base });
 }
 
 function defaultContext(): ContextFactory | null {
