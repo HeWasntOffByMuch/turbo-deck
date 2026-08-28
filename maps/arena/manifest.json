@@ -3748,6 +3748,36 @@
       ],
       "spawners": [
         {
+          "id": "spawner-17",
+          "monsterId": "small_spider",
+          "x": 4044.585,
+          "z": -1092.97
+        },
+        {
+          "id": "spawner-18",
+          "monsterId": "small_spider",
+          "x": 4067.028,
+          "z": -1302.68
+        },
+        {
+          "id": "spawner-19",
+          "monsterId": "small_spider",
+          "x": 4295.064,
+          "z": -1244.8890000000001
+        },
+        {
+          "id": "spawner-20",
+          "monsterId": "small_spider",
+          "x": 4381.158,
+          "z": -601.629
+        },
+        {
+          "id": "spawner-21",
+          "monsterId": "small_spider",
+          "x": 4095.49,
+          "z": -453.946
+        },
+        {
           "id": "spawner-1",
           "monsterId": "small_spider",
           "x": -660.548,
@@ -3812,6 +3842,30 @@
           "monsterId": "npc.armourer",
           "x": 741,
           "z": 215
+        },
+        {
+          "id": "spawner-13",
+          "monsterId": "stalker",
+          "x": 1832.796,
+          "z": -64.945
+        },
+        {
+          "id": "spawner-14",
+          "monsterId": "stalker",
+          "x": 1892.305,
+          "z": -144.727
+        },
+        {
+          "id": "spawner-15",
+          "monsterId": "stalker",
+          "x": 2021.5819999999999,
+          "z": -15.451000000000022
+        },
+        {
+          "id": "spawner-16",
+          "monsterId": "stalker",
+          "x": 2146.677,
+          "z": 217.98199999999997
         },
         {
           "id": "spawner-6",
@@ -4322,7 +4376,7 @@
         {
           "rx": 4,
           "rz": 0,
-          "hash": "6a778e59",
+          "hash": "2bb90553",
           "cells": 3136
         },
         {
@@ -4376,19 +4430,19 @@
         {
           "rx": 1,
           "rz": 1,
-          "hash": "23e49dd2",
+          "hash": "0d5a76f4",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 1,
-          "hash": "59ad58cd",
+          "hash": "3517dcb7",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": 1,
-          "hash": "bce72e15",
+          "hash": "9dea3154",
           "cells": 3136
         },
         {
@@ -4838,5 +4892,5 @@
       ]
     }
   ],
-  "mapId": "04630a14"
+  "mapId": "86e3b8e7"
 }
