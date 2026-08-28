@@ -294,7 +294,7 @@ const DEFINITIONS: readonly StatusVisual[] = [
     maxStacks: 1,
   },
 
-  // --- the conjured light (spec 248) -------------------------------------
+  // --- the conjured light (spec 250) -------------------------------------
   //
   // The one row in this table whose *whole* mechanic is that it is drawn. Every
   // other entry is a condition the sim reads and this table decides to show; a

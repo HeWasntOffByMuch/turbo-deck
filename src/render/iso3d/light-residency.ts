@@ -1,5 +1,5 @@
 /**
- * Which lights get one of the pool's slots (spec 248).
+ * Which lights get one of the pool's slots (spec 250).
  *
  * A world with fixtures in it has more lights than a frame can afford, and the
  * two costs are different costs with different fixes. This module is the second

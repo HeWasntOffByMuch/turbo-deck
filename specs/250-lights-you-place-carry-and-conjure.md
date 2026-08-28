@@ -1,4 +1,4 @@
-# 248 — Lights you place, carry and conjure
+# 250 — Lights you place, carry and conjure
 
 ## Problem
 

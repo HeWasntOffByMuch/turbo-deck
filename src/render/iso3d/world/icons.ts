@@ -288,7 +288,7 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
     + '<path d="M12 4.5c2.4 2.3 3.3 3.7 3.3 5.3a3.3 3.3 0 0 1-6.6 0c0-1.2.6-2.2 1.6-3.2 0 1 .4 1.5 1 1.7-.5-1.4-.4-2.7.7-3.8z"/>'
     + '<path d="M6.6 12.6c1.1 1.1 1.5 1.7 1.5 2.4a1.5 1.5 0 0 1-3 0c0-.7.4-1.3 1.5-2.4z"/>'
     + '<path d="M17.4 12.6c1.1 1.1 1.5 1.7 1.5 2.4a1.5 1.5 0 0 1-3 0c0-.7.4-1.3 1.5-2.4z"/>',
-  // Conjured light (spec 248) -- a small disc with four rays off it.
+  // Conjured light (spec 250) -- a small disc with four rays off it.
   //
   // The one thing it must not be is a *flame*, because Burn is one eight rows
   // up and the two would read as the same mark in the same colour. So this is

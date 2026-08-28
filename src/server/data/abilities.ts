@@ -941,7 +941,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Sixty seconds of light against twenty of waiting, so letting it go out is
     // a lapse rather than a rotation: a third of the time it is up, you could
     // have had it back and did not. Both numbers only mean anything because
-    // spec 248 stopped `resolveAttackTiming` clamping a spell's cooldown to a
+    // spec 250 stopped `resolveAttackTiming` clamping a spell's cooldown to a
     // Base Attack Time's ceiling -- authored here before that, this row would
     // have come back on five.
     cooldownTicks: seconds(20),
@@ -1096,7 +1096,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       // aimed at, that is nothing: it is `sentinel`, it fights nobody, and
       // `pulseAuraFields` asks `isHostile` from the *carrier's* side.
       { kind: 'applyStatus', statusId: StatusId.ScorchedEarth, durationTicks: TEST_STATUS_TICKS },
-      // The conjured light (spec 248). Here for the same reason as everything
+      // The conjured light (spec 250). Here for the same reason as everything
       // above -- this row's whole job is to put every mark the client can draw
       // on one body at once -- and it is the cheapest of them to apply, because
       // nothing in the sim reads it: what it does is entirely a light in the

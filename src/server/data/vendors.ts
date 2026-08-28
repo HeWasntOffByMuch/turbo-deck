@@ -111,7 +111,7 @@ const DEFINITIONS: readonly VendorDefinition[] = [
       'chest.leather',
       'legs.traveller',
       'potion.minor',
-      // The two ways to carry a light (spec 248). Both here rather than split
+      // The two ways to carry a light (spec 250). Both here rather than split
       // across the three shops, because the Quartermaster is the one whose
       // stock is *the kit* -- a light belongs beside a flask and a leather cap
       // rather than behind a level gate at the Armourer's.

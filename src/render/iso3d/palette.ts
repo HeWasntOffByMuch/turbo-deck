@@ -121,7 +121,7 @@ export const PALETTE = {
   // simply dark, because both are holes: what says "you could go in there" is
   // that nothing is lit inside, and a merely dark brown reads as another plank.
   hollow: 0x241d18,
-  // The light fixtures (spec 248). A fire is charred logs in a stone ring; a
+  // The light fixtures (spec 250). A fire is charred logs in a stone ring; a
   // lamp is iron round a pale mantle; a torch stand is a stake with a pitch head
   // on it. Four tones and no more, because everything else they are made of is
   // already here -- the ring is drystone, the stakes are posts, and the flame is

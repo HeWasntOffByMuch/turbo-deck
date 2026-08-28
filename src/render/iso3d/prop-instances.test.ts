@@ -326,7 +326,7 @@ describe('a region dropped rather than rebuilt', () => {
 });
 
 /**
- * Spec 248. The claim the fixture half rests on: a light is read off the *field*
+ * Spec 250. The claim the fixture half rests on: a light is read off the *field*
  * rather than off the map, so a fixture on ground the client has forgotten stops
  * being lit by construction rather than by a second residency rule.
  */

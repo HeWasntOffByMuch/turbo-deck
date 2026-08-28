@@ -93,7 +93,7 @@ describe('MapChunk round trip', () => {
   });
 
   /**
-   * A fixture's own numbers cross too (spec 248).
+   * A fixture's own numbers cross too (spec 250).
    *
    * The shipped map's four fixtures all burn at their kind's defaults and so
    * carry *no* override -- which is the point of the defaults and is also why

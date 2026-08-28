@@ -310,7 +310,7 @@ export const MapPropFlag = {
   Uniform: 1 << 1,
   /**
    * This prop carries a light override, and two quantized numbers follow
-   * (spec 248).
+   * (spec 250).
    *
    * A flag rather than two always-present fields, because almost no prop is a
    * fixture and almost no fixture overrides its kind's row -- so the common case

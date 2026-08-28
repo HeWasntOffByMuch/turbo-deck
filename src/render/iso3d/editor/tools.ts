@@ -167,7 +167,7 @@ export interface EditorSettings {
   structure: PlacedKind;
   structureScale: number;
   /**
-   * What a light fixture is placed burning at (spec 248).
+   * What a light fixture is placed burning at (spec 250).
    *
    * Nullable rather than optional, because this is a mutable settings object a
    * lil-gui row is bound to and a row cannot bind to a key that is not there.
@@ -476,7 +476,7 @@ export const STRUCTURE_CHOICES = choices(PLACED_KINDS);
 
 /**
  * Which of those emit light, so the panel knows when its two extra rows mean
- * anything (spec 248).
+ * anything (spec 250).
  *
  * A **set** rather than a check at each call site, for the reason `tools.ts`
  * holds every other one of these: what the panel shows and what the tool reads

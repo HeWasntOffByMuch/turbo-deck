@@ -131,7 +131,7 @@ describe('the wire indices the marks cross on', () => {
     // index crosses the wire in place of the string, so a renumber silently
     // re-labels every mark on a client that has not been rebuilt.
     scorchedEarth: 16,
-    // Appended by spec 248, on the same terms.
+    // Appended by spec 250, on the same terms.
     magicLight: 17,
   };
 

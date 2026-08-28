@@ -16,7 +16,7 @@ function light(key: string, x: number, shadow = false): LightRequest {
 const ORIGIN = { x: 0, z: 0 };
 const EMPTY: readonly (string | null)[] = [null, null, null, null, null];
 
-describe('assignLights (spec 248)', () => {
+describe('assignLights (spec 250)', () => {
   it('answers one entry per slot, always', () => {
     expect(assignLights([], EMPTY, ORIGIN, LIMITS)).toHaveLength(LIMITS.slots);
     expect(assignLights([light('a', 10)], EMPTY, ORIGIN, LIMITS)).toHaveLength(LIMITS.slots);

@@ -1639,7 +1639,7 @@ describe('a skill that marks everything', () => {
 });
 
 /**
- * The conjured light, end to end (spec 248).
+ * The conjured light, end to end (spec 250).
  *
  * The one skill in the table that does nothing to anybody, which makes the
  * things worth asserting about it unusual: not what it damages, but that it
@@ -1692,7 +1692,7 @@ describe('a skill that only lights the way', () => {
   });
 
   /**
-   * The number spec 248 exists to make true.
+   * The number spec 250 exists to make true.
    *
    * Asserted through `attackTimingFor` rather than off the row, because the row
    * has said 20 seconds all along and the *game* said five: every non-basic

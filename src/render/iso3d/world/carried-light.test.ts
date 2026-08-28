@@ -7,7 +7,7 @@ import type { PlayerLightSettings } from '../view-controls.js';
 import { carriesTorch, hasConjuredLight, resolveCarriedLights } from './carried-light.js';
 
 /**
- * Spec 248. Two things decide one light now, and the whole of this file is the
+ * Spec 250. Two things decide one light now, and the whole of this file is the
  * rule that keeps them from arguing: the panel wins where it is asking for
  * something, and the game decides where it is not.
  */
@@ -33,7 +33,7 @@ function status(id: string, expiresAtTick: number): WireStatus {
   return { wire: visual.wire, stacks: 1, expiresAtTick };
 }
 
-describe('what the player is carrying (spec 248)', () => {
+describe('what the player is carrying (spec 250)', () => {
   it('recognises the torch, and nothing else in the off hand', () => {
     expect(carriesTorch('torch.hand')).toBe(true);
     expect(carriesTorch('shield.oak')).toBe(false);
@@ -63,7 +63,7 @@ describe('what the player is carrying (spec 248)', () => {
   });
 });
 
-describe('resolving the two carried lights (spec 248)', () => {
+describe('resolving the two carried lights (spec 250)', () => {
   it('is off for a player carrying nothing, with the panel untouched', () => {
     const lights = resolveCarriedLights(PANEL_OFF, EMPTY);
     expect(lights.torch.on).toBe(false);

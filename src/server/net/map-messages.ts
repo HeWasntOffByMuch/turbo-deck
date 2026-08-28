@@ -277,7 +277,7 @@ export function encodeMapChunk(msg: MapChunkMessage): Uint8Array {
         (prop.light ? MapPropFlag.Light : 0),
     );
     // A fixture's own numbers, and only where the document carries them
-    // (spec 248). Quantized like every other number on this frame, which is
+    // (spec 250). Quantized like every other number on this frame, which is
     // exact for anything `quantize` produced -- and the document's own writer
     // quantizes them, so a light survives the round trip unchanged.
     if (prop.light) w.varint(q(prop.light.brightness)).varint(q(prop.light.radius));

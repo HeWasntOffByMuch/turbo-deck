@@ -31,7 +31,7 @@ export interface StructureSettings {
   readonly structure: PlacedKind;
   readonly structureScale: number;
   /**
-   * What a light fixture is placed burning at (spec 248).
+   * What a light fixture is placed burning at (spec 250).
    *
    * Read only for a kind that emits, exactly as `structureYaw` is read only by
    * a kind that has a front -- a well is round and a lamp post is dark until
@@ -164,7 +164,7 @@ export function isPlaceableStructure(kind: string): kind is PlacedKind {
 
 /**
  * The light override a fixture is placed with, or **undefined** for one at its
- * kind's defaults (spec 248).
+ * kind's defaults (spec 250).
  *
  * Undefined rather than the resolved numbers, and that is the whole of why a
  * document does not grow: `fixtureLight` reads the row when there is no

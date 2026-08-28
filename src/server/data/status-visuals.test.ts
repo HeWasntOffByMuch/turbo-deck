@@ -89,7 +89,7 @@ describe('the visible status table (spec 186)', () => {
       // around the body wearing it, and the one this table's rule most obviously
       // covers: everybody in the fight has to be able to see where the fire is.
       StatusId.ScorchedEarth,
-      // The conjured light (spec 248). The one row whose *whole* mechanic is
+      // The conjured light (spec 250). The one row whose *whole* mechanic is
       // that it is drawn: nothing in the sim reads it, so a row here is not this
       // table deciding to show a condition -- it is the condition.
       StatusId.MagicLight,

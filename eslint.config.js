@@ -221,7 +221,7 @@ const PURE_RENDER = [
   // authoritative state -- and that is impossible if running it needs a canvas.
   'src/render/iso3d/world/ui-screens.ts',
   'src/render/iso3d/world/*.test.ts',
-  // Which lights get one of the pool's slots (spec 248). A decision rather than
+  // Which lights get one of the pool's slots (spec 250). A decision rather than
   // a thing that draws, in the split `player-lights.ts` and `player-lighting.ts`
   // already keep -- the hysteresis that stops a shadow map being re-baked every
   // frame is arithmetic, and arithmetic that decides what a frame costs should

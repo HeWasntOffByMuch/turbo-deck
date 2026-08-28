@@ -9,7 +9,7 @@ import type { PlayerLightSettings } from '../view-controls.js';
 
 /**
  * What the player is carrying, and what that means for the two lights the scene
- * already owns (spec 248).
+ * already owns (spec 250).
  *
  * Pure: it decides, and `scene.ts` copies the answer onto a `PointLight`. The
  * split every view-model in this directory keeps, and worth keeping here for a

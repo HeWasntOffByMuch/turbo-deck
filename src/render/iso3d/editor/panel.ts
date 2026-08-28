@@ -184,7 +184,7 @@ export interface EditorPanel {
    */
   syncStructureSize(): void;
   /**
-   * Re-seed and re-show the two light rows (spec 248).
+   * Re-seed and re-show the two light rows (spec 250).
    *
    * Beside `syncStructureSize` and for its reason: `refresh()` force-opens every
    * folder it shows, which is right when a mode is armed and wrong every other
@@ -327,7 +327,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // One press puts one building down where the cursor is (spec 224). There is
   // no density and no spacing here, which is the whole difference from the
   // scatter above: a village is a layout somebody decided.
-  // Renamed from 'Buildings' by spec 248, because it puts lamp posts down now:
+  // Renamed from 'Buildings' by spec 250, because it puts lamp posts down now:
   // one press-to-place tool for everything that is placed rather than painted,
   // which is what `PLACED_KINDS` is.
   const structures = gui.addFolder('Structures');
@@ -352,7 +352,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     .add(s, 'structureScale', STRUCTURE_SCALE_MIN, STRUCTURE_SCALE_MAX, STRUCTURE_SCALE_STEP)
     .name('Size');
 
-  // What a light fixture is placed burning at (spec 248).
+  // What a light fixture is placed burning at (spec 250).
   //
   // Two rows rather than a colour as well, and that is the brief: a fixture's
   // colour is its *kind's* -- a campfire is fire-coloured -- where how bright it

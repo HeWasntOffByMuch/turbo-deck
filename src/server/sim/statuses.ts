@@ -189,7 +189,7 @@ export const StatusId = {
   /** Fire underfoot: whoever stands near the carrier catches, briefly. */
   ScorchedEarth: 'scorchedEarth',
 
-  // --- the conjured light (spec 248) -------------------------------------
+  // --- the conjured light (spec 250) -------------------------------------
   //
   // The first status here that does nothing to a body at all. Nothing in the
   // sim reads it: no trait, no scale, no pass. What it is for is that a status

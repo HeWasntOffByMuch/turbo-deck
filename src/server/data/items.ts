@@ -287,7 +287,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 3,
     modifiers: { spellPower: 0.12, intelligence: 2 },
   },
-  // A light you hold (spec 248). Level 1 and cheap, because what it competes
+  // A light you hold (spec 250). Level 1 and cheap, because what it competes
   // with is a shield and a focus: it occupies the hand those go in, and that
   // *is* its cost -- carrying a light means giving up six percent of armour or
   // twelve of spell power, which is the whole of what makes taking one a choice.
@@ -535,7 +535,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     activeSkillId: 'skill.scorchedEarth',
     value: 280,
   },
-  // --- the light sigil (spec 248) ---
+  // --- the light sigil (spec 250) ---
   //
   // The one sigil in the table that does nothing to anybody. What it buys is
   // being able to see, which is worth nothing at noon and quite a lot under a

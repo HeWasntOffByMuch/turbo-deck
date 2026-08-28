@@ -111,7 +111,7 @@ export const MIN_ATTACK_INTERVAL_SECONDS = 0.2;
 export const MAX_ATTACK_INTERVAL_SECONDS = 5;
 
 /**
- * The same two questions for a **cooldown** rather than a cadence (spec 248).
+ * The same two questions for a **cooldown** rather than a cadence (spec 250).
  *
  * The bounds above are about a Base Attack Time, and their own comment says
  * *"nothing in the content reaches either bound"* -- which is true of a BAT and

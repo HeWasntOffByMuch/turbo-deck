@@ -91,7 +91,7 @@ const ABILITY_ICONS: Readonly<Record<string, string>> = {
   // The field (spec 223). A place rather than a blow, which is what the sprite
   // draws: every other cell on the bar is something you do to a body.
   'skill.scorchedEarth': 'ability:scorchedEarth',
-  // The conjured light (spec 248). The one skill on the bar that does nothing
+  // The conjured light (spec 250). The one skill on the bar that does nothing
   // to anybody, which is what the sprite has to say: every other glyph in the
   // set is a blow or a place, and this is a lamp.
   'skill.conjureLight': 'ability:conjureLight',

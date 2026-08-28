@@ -1750,9 +1750,9 @@ describe('a named target (spec 070)', () => {
     expect(slash.cooldownTicks).not.toBe(20);
 
     // A non-basic ability ignores the stat entirely, **and gets the cooldown its
-    // row authored** (spec 248).
+    // row authored** (spec 250).
     //
-    // It did not until spec 248. `attackTimingFor` sent a non-basic ability's
+    // It did not until spec 250. `attackTimingFor` sent a non-basic ability's
     // `cooldownTicks` through `resolveAttackTiming` as if it were a Base Attack
     // Time, which clamped the interval to `MAX_ATTACK_INTERVAL_SECONDS` -- a
     // constant whose own comment says "nothing in the content reaches either

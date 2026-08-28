@@ -330,7 +330,7 @@ describe('dragging a building out to size (spec 225)', () => {
 });
 
 /**
- * Spec 248. A fixture goes down through the same tool, so most of what is
+ * Spec 250. A fixture goes down through the same tool, so most of what is
  * asserted above already covers one. What is new is the two numbers, and every
  * test here is about the same rule: **an override is written only where it
  * differs from the kind's own row.**

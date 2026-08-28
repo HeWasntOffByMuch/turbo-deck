@@ -2017,7 +2017,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
           // What a light was placed *at* is said out loud, for the reason the
           // refusal below is: a fixture put down at the wrong brightness looks
           // exactly like one put down at the right one until it is dark
-          // (spec 248). A kind that emits nothing says nothing extra.
+          // (spec 250). A kind that emits nothing says nothing extra.
           const lit = fixtureLight(out.placed);
           status =
             `placed ${out.placed.kind} facing ${Math.round(settings.structureYaw)}\u00b0` +

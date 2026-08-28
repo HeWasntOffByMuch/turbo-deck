@@ -727,7 +727,7 @@ export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
     '..TTTTTTTT..',
   ],
   /**
-   * Conjure Light (spec 248): a lamp, radiating.
+   * Conjure Light (spec 250): a lamp, radiating.
    *
    * The one skill glyph in the set that is neither a blow nor a place, and it
    * has to look like neither. The mass is a solid `A` disc in the middle with

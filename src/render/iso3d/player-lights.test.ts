@@ -249,7 +249,7 @@ describe('the shader patch behind it (spec 118)', () => {
   });
 
   /**
-   * The patch has to survive being emitted more than once (spec 248).
+   * The patch has to survive being emitted more than once (spec 250).
    *
    * three unrolls the point-light loop, so its body appears once per light *at
    * the same scope*. Two copies of a bare `vec3 turboToLight` is

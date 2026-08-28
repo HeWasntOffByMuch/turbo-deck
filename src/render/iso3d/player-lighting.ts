@@ -128,7 +128,7 @@ export function pointLightInjection(): string {
  *
  *   It was invisible for a hundred and thirty specs because there was exactly
  *   one point light in this game -- the panel torch -- so the loop unrolled to
- *   one copy. Spec 248's pool of six is what found it, and it took a browser:
+ *   one copy. Spec 250's pool of six is what found it, and it took a browser:
  *   the failure is a GLSL compile error, and three logs one and carries on
  *   (`shading-probe.ts` says so in as many words), so every test in the tree
  *   stayed green.
