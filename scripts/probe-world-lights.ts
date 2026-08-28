@@ -1,9 +1,9 @@
 /**
- * Are the fixtures on the map actually lit, in the real Play tab? (spec 248)
+ * Are the fixtures on the map actually lit, in the real Play tab? (spec 250)
  *
  *   npx tsx scripts/probe-world-lights.ts
  *
- * Everything spec 248 decides is asserted in Node already: what a fixture
+ * Everything spec 250 decides is asserted in Node already: what a fixture
  * resolves to (`terrain/fixture-light.test.ts`), that a region carries its
  * lights and drops them with the ground (`prop-instances.test.ts`), the
  * residency's whole hysteresis (`light-residency.test.ts`), and the pool's fixed
@@ -144,6 +144,8 @@ async function drawCalls(page: Page): Promise<number> {
 interface Reading {
   readonly lit: number;
   readonly offered: number;
+  /** Campfires whose paint is actually burning (spec 250). */
+  readonly fires: number;
 }
 
 /**
@@ -162,13 +164,14 @@ async function reading(page: Page): Promise<Reading> {
     return {
       lit: Number(/lit=(\d+)/.exec(text)?.[1] ?? -1),
       offered: Number(/offered=(\d+)/.exec(text)?.[1] ?? -1),
+      fires: Number(/fires=(\d+)/.exec(text)?.[1] ?? -1),
     };
   });
 }
 
 async function settledReading(page: Page, want: (r: Reading) => boolean, timeoutMs = 20_000): Promise<Reading> {
   const deadline = Date.now() + timeoutMs;
-  let last: Reading = { lit: -1, offered: -1 };
+  let last: Reading = { lit: -1, offered: -1, fires: -1 };
   while (Date.now() < deadline) {
     last = await reading(page);
     if (want(last)) return last;
@@ -216,6 +219,7 @@ async function main(): Promise<void> {
     console.error('nothing to measure. Run `npx tsx scripts/light-the-square.ts --write` first.');
     process.exit(1);
   }
+  const campfires = fixtures.filter((one) => one.kind === 'campfire').length;
   const nearestToSpawn = [...fixtures].sort(
     (a, b) => Math.hypot(a.x - SPAWN.x, a.y - SPAWN.y) - Math.hypot(b.x - SPAWN.x, b.y - SPAWN.y),
   )[0];
@@ -257,8 +261,11 @@ async function main(): Promise<void> {
       `\nstanding at the spawn, ${String(Math.round(Math.hypot(nearestToSpawn.x - SPAWN.x, nearestToSpawn.y - SPAWN.y)))}` +
         ` units from the nearest fixture (a ${nearestToSpawn.kind})`,
     );
-    const there = await settledReading(page, (r) => r.lit > 0);
-    console.log(`  data-world-lights = lit=${String(there.lit)} offered=${String(there.offered)}`);
+    const there = await settledReading(page, (r) => r.lit > 0 && r.fires > 0);
+    console.log(
+      `  data-world-lights = lit=${String(there.lit)} offered=${String(there.offered)}` +
+        ` fires=${String(there.fires)}`,
+    );
     check(there.offered > 0, 'the fixtures on the map offer themselves to the pool');
     check(
       there.offered === fixtures.length,
@@ -267,9 +274,17 @@ async function main(): Promise<void> {
     check(there.lit > 0, 'and the pool is lighting them');
     check(there.lit <= there.offered, 'never more lit than were offered');
     check(there.lit <= POOL_SLOTS, `never more lit than the pool has slots (${String(POOL_SLOTS)})`);
+    // The paint (spec 250). A campfire's prop is stones and charred logs since
+    // this spec, so a fire that did not start is a cold ring of stones -- which
+    // looks exactly like a campfire nobody has lit and would never be reported.
+    check(
+      there.fires === campfires,
+      `every campfire on drawn ground is burning: ${String(campfires)} on the map,` +
+        ` ${String(there.fires)} alight`,
+    );
 
     // The half of "does not sag performance" that can be seen from outside
-    // (spec 248).
+    // (spec 250).
     //
     // A shadow-casting point light is six cube faces of the *whole scene*, and
     // the entire design is that a fixture's are drawn once and then never again.

@@ -118,6 +118,7 @@ import { PlayerLighting } from '../player-lighting.js';
 import { hasConjuredLight, resolveCarriedLights, type CarriedLightFacts } from './carried-light.js';
 import type { LightRequest } from '../light-residency.js';
 import { WorldLights } from '../world-lights.js';
+import { FireVfx, type FireSite } from './fire-vfx.js';
 import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
 import { UnitRig } from '../unit-rig.js';
 import { WeaponRig } from '../weapon-rig.js';
@@ -262,7 +263,7 @@ const NO_WIRE_STATUSES: readonly WireStatus[] = [];
 const HAFT_LENGTH = 22;
 const HAFT_DROP = HAFT_LENGTH / 2 + FLAME_RADIUS * 0.6;
 
-/** Where a remote body's conjured orb sits in its circuit (spec 248). */
+/** Where a remote body's conjured orb sits in its circuit (spec 250). */
 const ORB_PHASE_SEED = 0x11d17;
 
 /** What the view hands the scene each frame. All presentation, no state. */
@@ -527,7 +528,7 @@ export class WorldScene {
   private readonly background = new THREE.Color(PALETTE.sky);
   private readonly torch = new THREE.PointLight(TORCH_COLOR, 0, TORCH_DEFAULTS.range);
   private readonly torchFlame: THREE.Mesh;
-  /** The stick the carried flame is on (spec 248). See {@link buildHaft}. */
+  /** The stick the carried flame is on (spec 250). See {@link buildHaft}. */
   private readonly torchHaft: THREE.Mesh;
   private readonly orb = new THREE.PointLight(MAGIC_COLOR, 0, 0);
   private readonly orbMesh: THREE.Mesh;
@@ -544,7 +545,7 @@ export class WorldScene {
   private readonly playerLighting = new PlayerLighting();
   /**
    * The lights standing in the world, and the conjured ones on other bodies
-   * (spec 248).
+   * (spec 250).
    *
    * Built in the constructor rather than here, because it adds its pool to the
    * scene at construction and the scene is a field on this class.
@@ -553,7 +554,17 @@ export class WorldScene {
   /** Rebuilt every frame, so a walk past a village allocates one array. */
   private readonly lightRequests: LightRequest[] = [];
   /**
-   * Conjured lights on bodies that are not the local player (spec 248).
+   * The fire burning in every campfire on drawn ground (spec 250).
+   *
+   * Driven off the same list the pool is: a fixture's light and a fixture's
+   * paint are two questions about one thing, and asking them from one list is
+   * what stops a fire outliving the ground it stands on.
+   */
+  private fires!: FireVfx;
+  /** Scratch for the sites, so a settled village allocates nothing per frame. */
+  private readonly fireSites: FireSite[] = [];
+  /**
+   * Conjured lights on bodies that are not the local player (spec 250).
    *
    * Gathered in the body loop, where a body's *drawn* position is in scope, and
    * spent by `applyWorldLights` a few lines later. The local player's own is
@@ -563,7 +574,7 @@ export class WorldScene {
   private readonly conjuredLights: LightRequest[] = [];
   /**
    * Bodies taken out of point-light shadow maps for one frame, so a fixture's
-   * baked map holds nothing that moves (spec 248).
+   * baked map holds nothing that moves (spec 250).
    *
    * Held rather than re-traversed, because the restore has to reach exactly the
    * meshes the mask reached -- `player-lighting.ts` owns the local player's own
@@ -828,7 +839,7 @@ export class WorldScene {
     this.torchFlame = this.buildTorch();
     this.torchHaft = this.buildHaft();
     this.orbMesh = this.buildOrb();
-    // The pool, allocated once and never grown (spec 248). Here rather than as a
+    // The pool, allocated once and never grown (spec 250). Here rather than as a
     // field initialiser because it adds its lights to `this.scene`, and the
     // order fields are initialised in is not something to depend on.
     //
@@ -957,6 +968,16 @@ export class WorldScene {
     // same reasons -- a persistent attached effect needs a handle it can find
     // out has been evicted, and it needs somebody to owe it a stop.
     this.shots = new ShotVfx({
+      play: (id, options) => this.vfx.play(id, options),
+      stop: (handle) => this.vfx.stop(handle),
+      has: (id) => this.vfx.system.has(id),
+      isLive: (handle) => this.vfx.system.isLive(handle),
+    });
+    // The fire in a campfire (spec 250). The same four calls a fourth time, and
+    // the reasons have not changed -- except that this one is attached to
+    // *nothing*: a fire stands where the logs are, so it is world space, and
+    // what it is reconciled against is which ground is still being drawn.
+    this.fires = new FireVfx({
       play: (id, options) => this.vfx.play(id, options),
       stop: (handle) => this.vfx.stop(handle),
       has: (id) => this.vfx.system.has(id),
@@ -1246,7 +1267,7 @@ export class WorldScene {
   }
 
   /**
-   * What each pool slot is lighting, for the probe's readout (spec 248).
+   * What each pool slot is lighting, for the probe's readout (spec 250).
    *
    * Published from the **pool** rather than from the fixtures that asked for a
    * slot, the same rule `data-held-weapons` and `data-prop-regions` follow: a
@@ -1260,6 +1281,18 @@ export class WorldScene {
   /** How many fixtures are offering themselves to the pool right now. */
   worldLightsOffered(): number {
     return this.lightRequests.length;
+  }
+
+  /**
+   * The fires actually burning, for the probe's readout (spec 250).
+   *
+   * From the driver's own held set rather than from the fixtures that wanted
+   * one, the rule every other readout in this file follows: a fire refused by
+   * the effect budget or evicted by the instance pool reads as absent, which is
+   * the only failure worth publishing a number for.
+   */
+  heldFires(): readonly string[] {
+    return this.fires.keys();
   }
 
   refreshPropsWithin(rects: PropRect | readonly PropRect[]): void {
@@ -1748,7 +1781,7 @@ export class WorldScene {
       // three clears the flag itself once the maps are drawn, which is what
       // keeps the mask pass inside `retro.render` from rebuilding them again.
       this.renderer.shadowMap.needsUpdate = true;
-      // A fixture's map is baked once and then frozen (spec 248), so nothing
+      // A fixture's map is baked once and then frozen (spec 250), so nothing
       // that moves may be in it. True only on the frame a bake actually
       // happens, because three clears its own flag once the map is drawn.
       const baking = this.worldLights?.bakingThisFrame() ?? false;
@@ -1825,6 +1858,10 @@ export class WorldScene {
     this.targetRing.dispose();
     this.terrainMesh?.dispose();
     this.propField?.dispose();
+    // Nothing in the particle system stops itself, and a fire runs until it is
+    // told to (spec 250). A teardown has no next frame for `step` to reconcile
+    // against, so the stop is made here.
+    this.fires.forgetAll();
     this.worldLights?.dispose();
     this.noBakeShadow.dispose();
     this.buffers?.dispose();
@@ -1881,7 +1918,7 @@ export class WorldScene {
   }
 
   /**
-   * The stick under the flame, and how far under it (spec 248).
+   * The stick under the flame, and how far under it (spec 250).
    *
    * The panel torch has never drawn one: it is a debug light, and a floating
    * flame reads fine as one. A torch somebody is *carrying* is a thing they are
@@ -2113,7 +2150,7 @@ export class WorldScene {
           entity.statuses ?? [],
           frame.tick,
         );
-        // A conjured light on somebody else's body (spec 248).
+        // A conjured light on somebody else's body (spec 250).
         //
         // Gathered here because this is where a body's *drawn* position is in
         // scope, and spent by `applyWorldLights` below. Not for our own body:
@@ -2693,7 +2730,11 @@ export class WorldScene {
     // pair on the scene keeps them in the graph without lighting anything, since
     // both are hidden until the panel says otherwise.
     const parent = host ?? this.scene;
-    parent.add(this.torch, this.torchFlame);
+    // The haft goes with them (spec 250). It has to: `applyPlayerLights` places
+    // all three at `TORCH_ANCHOR`, which is a **rig-local** offset, so a haft
+    // left parented to the scene would stand at world (13, 22, 12) -- near the
+    // arena's corner, in mid air, for the whole session.
+    parent.add(this.torch, this.torchFlame, this.torchHaft);
   }
 
   private bodyFor(id: number, appearance: Appearance): Body {
@@ -3260,7 +3301,7 @@ export class WorldScene {
    * the first time they die.
    */
   private applyPlayerLights(position: Vec2, groundY: number, facts: CarriedLightFacts): void {
-    // Two things decide these two lights since spec 248: the panel above and the
+    // Two things decide these two lights since spec 250: the panel above and the
     // game. The rule is one sentence and lives in `carried-light.ts` -- the
     // panel wins where it is asking for something -- so every switch on it still
     // does exactly what spec 047 tuned, and a player who has never opened it
@@ -3268,9 +3309,24 @@ export class WorldScene {
     const settings = this.controls.playerLights();
     const lights = resolveCarriedLights(settings, facts);
 
-    this.torch.visible = lights.torch.on;
+    // The *light* stays on the graph whether or not it is burning, and only its
+    // intensity says which (spec 250). three drops an invisible light in
+    // `projectObject` and the count is part of the program key, so hiding it
+    // would recompile every material in the scene the moment somebody equipped a
+    // torch -- which is the exact hitch the fixture pool is built to avoid, one
+    // light along. The *meshes* still hide: they are geometry, and geometry
+    // costs nothing to take off the graph.
+    //
+    // `castShadow` has to come off with it, though. An intensity of 0 stops a
+    // light lighting anything and does nothing at all about its shadow map, so a
+    // torch left casting while switched off would draw six cube faces a frame
+    // for a light nobody can see.
     this.torchFlame.visible = lights.torch.on;
     this.torchHaft.visible = lights.torch.on;
+    if (!lights.torch.on) {
+      this.torch.intensity = 0;
+      this.torch.castShadow = false;
+    }
     if (lights.torch.on) {
       const flame = torchFlicker(this.elapsed, (this.map?.seed ?? 0), lights.torch.flicker);
       this.torch.castShadow = lights.torch.shadows;
@@ -3289,8 +3345,10 @@ export class WorldScene {
       this.torchHaft.position.set(TORCH_ANCHOR.x, TORCH_ANCHOR.y - HAFT_DROP, TORCH_ANCHOR.z);
     }
 
-    this.orb.visible = lights.orb.on;
+    // The same rule, and the orb never casts either way -- so an idle one is one
+    // number rather than a permutation.
     this.orbMesh.visible = lights.orb.on;
+    if (!lights.orb.on) this.orb.intensity = 0;
     if (lights.orb.on) {
       // The orbit is relative to the player's feet, so the orb is carried
       // without being parented to a rig that respawn would replace.
@@ -3327,7 +3385,7 @@ export class WorldScene {
   }
 
   /**
-   * The lights standing in the world, brought up to date (spec 248).
+   * The lights standing in the world, brought up to date (spec 250).
    *
    * Everything the pool could light, ranked by the point the camera is framing:
    * the fixtures on ground the prop field is currently drawing, and the conjured
@@ -3352,6 +3410,26 @@ export class WorldScene {
       this.lightRequests.push({ ...light, revision });
     }
     for (const light of this.conjuredLights) this.lightRequests.push(light);
+    // The paint, from the same list and on the same terms (spec 250). A fixture
+    // is here because the region it stands in is being drawn, so a fire that is
+    // no longer in it is one whose ground has gone -- which is exactly when it
+    // should stop burning.
+    //
+    // Every fixture, not only the ones that won a pool slot: a campfire past the
+    // pool's reach still has a fire in it, and tying the paint to the light
+    // would make fires wink out in a village with more of them than slots.
+    this.fireSites.length = 0;
+    for (const light of this.propField?.lights() ?? []) {
+      this.fireSites.push({
+        key: light.key,
+        kind: light.kind,
+        x: light.x,
+        groundY: light.groundY,
+        z: light.z,
+        footprint: light.footprint,
+      });
+    }
+    this.fires.step(this.fireSites);
     // The point the camera is framing rather than where the camera is: it parks
     // a constant 6,000 units back, so its own position says nothing about which
     // corner of the world is on screen.
@@ -3360,7 +3438,7 @@ export class WorldScene {
 
   /**
    * Keep everything that moves out of a fixture's shadow map, for the one frame
-   * it is being baked on (spec 248).
+   * it is being baked on (spec 250).
    *
    * A baked map is a picture of the world taken once, so a body in it is a
    * silhouette painted on the ground that stays there after the body has walked

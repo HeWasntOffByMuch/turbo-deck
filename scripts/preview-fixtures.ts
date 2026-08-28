@@ -1,4 +1,4 @@
-// Dev-only: photograph the three light fixtures (spec 248) so a human -- or an
+// Dev-only: photograph the three light fixtures (spec 250) so a human -- or an
 // agent with no screen -- can see whether a stake with a box on it reads as a
 // street lamp, and whether the numbers in `FIXTURE_LIGHTS` light anything.
 // Not part of the app. `npx tsx scripts/preview-fixtures.ts`
@@ -7,6 +7,14 @@
 // does and for that script's reason: what is rasterised is the geometry the game
 // builds, and the only thing faked is the rasteriser, because there is no GPU in
 // a container.
+//
+// Which is also what it deliberately does *not* show. Since spec 250 a
+// campfire's fire is paint rather than geometry -- `fire_camp`, played at the
+// middle of the ring by `world/fire-vfx.ts` -- so the campfire here is stones,
+// charred logs and an ember bed and nothing that moves. That is the right
+// subject for this sheet: it is judging the thing the light comes *out* of, and
+// the fire is judged on `preview-brush-vfx.ts`'s, where a particle system can be
+// stepped.
 //
 // What it adds over that one is the half a fixture is *for*. The rasteriser has
 // a **point light** in it, transcribed from three's own

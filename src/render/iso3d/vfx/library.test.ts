@@ -110,6 +110,14 @@ describe('the registry as a whole', () => {
     // explosion's flash) and cutout (everything else), so it costs five. What a
     // *frame* pays is still bounded by the effects actually up -- a painted
     // explosion is four calls and a painted hit is three.
+    //
+    // Spec 250 moved it to 26 and then moved it back, which is the more useful
+    // half of the story: the campfire's embers were authored additive because an
+    // ember is *light*, and `brush-flick` additive is a pair nothing else uses.
+    // Photographed, additive over this game's grass is a yellow-green speck
+    // rather than a warm spark -- so the version that reads better is the one
+    // that reuses a batch, and the ceiling never moved. A fire on screen is two
+    // calls: its flame and its smoke share `brush-blot`.
     expect(REGISTRY.batches.length).toBeLessThanOrEqual(25);
   });
 });
