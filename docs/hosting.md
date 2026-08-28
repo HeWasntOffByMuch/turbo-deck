@@ -67,40 +67,52 @@ Fly's convenience is real — it owns TLS, restarts and OS patching, and it has 
 Warsaw region. It is also priced per GB, and this game's whole job is sending
 GBs of deltas.
 
-## What this actually runs on
+## What this runs on
 
-**OVHcloud VPS-1, Warsaw, Ubuntu Server 24.04 LTS.** Chosen and ordered; the
-runbook below is written against it.
+Any always-on x86-64 box with Docker, Ubuntu Server 24.04 LTS, and a name
+pointed at it. The runbook is written against that and nothing narrower,
+because the specific box has already changed once: OVH's VPS-1 in Warsaw was
+the pick until Warsaw stopped being orderable.
 
-| | |
-|---|---|
-| vCPU | 4, x86-64 (**the architecture the deploy builds for**) |
-| RAM | 8 GB |
-| Disk | 75 GB NVMe |
-| Traffic | unlimited, capped at 400 Mbit/s |
-| Price | 44.53 zł/month inc. VAT, ~€10.5 |
-| Location | Warsaw — the only option here that is in the same country as the players |
+The shortlist, cheapest first. All three clear what one core can simulate, so
+this is a question about price and geography rather than capability.
 
-Three properties earned it over the cheaper boxes below. **Unlimited traffic**
-retires the resource that made the host choice interesting at all — 400 Mbit/s
-is ~3,300 players' worth of deltas at 120 kbit/s each, thirty times what one
-core can simulate. **Warsaw** turns the ~25ms to German datacentres into ~5ms;
-not decisive on its own, per the latency note below, but free here. And
-**anti-DDoS is standard**, which is the one risk self-hosting could not
-mitigate at any price.
+| | Specs | Traffic | Price | Where |
+|---|---|---|---|---|
+| **Hetzner CX23** | 2 vCPU, 4 GB, 40 GB | 20 TB | €5.49 + €0.50 IPv4 | DE, FI |
+| **OVH VPS-1** | 4 vCPU, 8 GB, 75 GB | unmetered, 400 Mbit/s | ~44.53 zł inc. VAT | FR, DE, UK, PL |
+| **Scaleway PLAY2** | small, sandbox tier | see their page | from ~€0.014/h, ~€10/mo | **Warsaw**, Paris, AMS |
 
-Against the measured numbers it is roughly 4x the RAM and 4x the cores this
-server can use, which is fine: nothing cheaper is meaningfully cheaper once
-the alternatives are priced honestly, and headroom on the box that hosts a live
-playtest is not the place to economise.
+**Hetzner CX23 is the default recommendation** now that Warsaw is not on the
+table: half the price of the others, 20 TB is ~500 player-months of deltas, and
+its stock rotates within hours rather than being gone for good. Its ~25ms from
+Poland is a non-issue for the reasons in the latency note below — it was never
+the deciding factor, and Warsaw was a bonus rather than a requirement.
 
-### The cheaper alternative, if that price stops being worth it
+Take **OVH VPS-1 in another region** (Gravelines, Frankfurt, London) if you
+would rather stay with OVH; it is the same product, minus the geography.
+Take **Scaleway PLAY2** if being physically in Warsaw turns out to matter after
+all — but note their PLAY2 line is explicitly a sandbox tier without the
+production SLA their PRO2 instances carry.
+
+### Do not buy OVH Public Cloud for this
+
+It is a different product from the VPS, on the same website, and the trap is
+easy to walk into when the VPS you wanted is unavailable. Public Cloud is
+elastic, API-driven, hourly-billed infrastructure; comparable instances run
+**€32-44/month** against the VPS's ~€10.5, and since 1 October 2026 it bills
+à la carte — local storage and the public IPv4 became separate line items on
+the gen-3 flavours, so the headline figure is not the total.
+
+Nothing about this server is elastic. It is one process holding one world, and
+it wants the cheapest always-on box that clears the bar.
+
+### The Hetzner range in detail
 
 **Hetzner Cloud CX23** — 2 shared Intel vCPU, 4 GB, 40 GB NVMe, 20 TB traffic,
 €5.49/month plus €0.50 for the primary IPv4, in Falkenstein (`fsn1`), Nuremberg
-(`nbg1`) or Helsinki (`hel1`). About half the money for a box that still
-comfortably clears what one core can simulate. Two near-misses in the same
-catalogue, so they are ruled out rather than reconsidered later:
+(`nbg1`) or Helsinki (`hel1`). Two near-misses in the same catalogue, so they
+are ruled out rather than reconsidered later:
 
 - **CAX11** (€5.99, 2 vCPU, 4 GB, 20 TB) is the Arm64/Ampere equivalent — fifty
   cents more, and the deploy workflow builds an **amd64** image. Going Arm means
@@ -132,15 +144,21 @@ enough that it cannot be planned around. Before assuming anything is wrong:
 
 ### A note on the prices in this document
 
-44.53 zł is what OVH's Polish checkout actually charges, not the ~€6 an earlier
-draft of this file took from a comparison site: those quote net, and Polish VAT
-is 23%. Assume the same gap applies to every other figure here — they are all
-list prices from vendor pages and comparison sites, and none of them is a quote.
+Every figure here is a list price off a vendor page or a comparison site, and
+none of them is a quote. Two failures already, both worth generalising from:
 
-Worth confirming at OVH's own checkout: whether that rate is month-to-month or
-a 12-month commitment, since the order page shows both. Provisioning also takes
-minutes rather than the seconds a Hetzner box takes; that is normal, not a
-failed order.
+- The OVH VPS was written down as ~€6 from a comparison site quoting **net**
+  prices; the Polish checkout charges 44.53 zł, VAT included. Assume a ~23% gap
+  on anything not explicitly marked "inc. VAT".
+- A named plan in a named region is not a thing you can count on existing. The
+  CX22 in an earlier draft had been discontinued, and the Warsaw VPS this
+  document recommended for several revisions stopped being orderable. Check the
+  order page, not this file.
+
+Also worth confirming at any checkout: whether the rate shown is month-to-month
+or a 12-month commitment, since both OVH and Scaleway display both. OVH
+provisioning takes minutes rather than the seconds a Hetzner box takes; that is
+normal, not a failed order.
 
 ### Which distribution
 
