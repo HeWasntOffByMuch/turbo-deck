@@ -411,10 +411,20 @@ exactly like any other name. Set `SERVER_DOMAIN` to it and nothing else in this
 document changes. `duckdns.org` is on the Public Suffix List, so certificate
 rate limits are counted per subdomain rather than shared with every other user.
 
-**If you want it to look like a real game later**, a `.xyz` or similar is
-€1-3/year at Porkbun or Namecheap, and switching is two edits: `SERVER_DOMAIN`
-in the `.env`, and the `PLAY_SERVER_URL` repository variable. Worth doing
-before strangers bookmark anything; not worth blocking a playtest on.
+**But buy a real name before inviting anybody**, and that is stronger than
+"when you get round to it". Dynamic-DNS domains are used heavily for malware
+command-and-control, so `duckdns.org` and its neighbours sit on blocklists that
+ordinary people are running without knowing it: uBlock Origin, NextDNS,
+Pi-hole, and a good deal of corporate DNS. A blocked player sees the page load
+and the socket never open — the exact symptom of a broken server, reported to
+you as a broken server. It cost an evening's debugging here before the
+extension was the answer, and every one of those users would have hit it.
+
+A `.xyz` or similar is €1-3/year at Porkbun or Namecheap. Switching is two
+edits: `SERVER_DOMAIN` in the `.env` followed by
+`docker compose up -d --force-recreate caddy`, and the `PLAY_SERVER_URL`
+repository variable. Keep DuckDNS for getting the box working, which is what it
+is genuinely good at.
 
 **What about a certificate for the bare IP?** Let's Encrypt has issued those
 since January 2026, so the idea is no longer impossible — but they carry a
