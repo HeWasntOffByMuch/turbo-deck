@@ -30,7 +30,7 @@ still takes the sun, the shadows and the lights.
 
 - `living-ground.ts` — pure. `LivingGroundConfig`, the art-directed `LIVING_GROUND`
   defaults, the panel's `LIVING_GROUND_LIMITS`, TypeScript transcriptions of the
-  three decisions worth asserting, and `glslLivingGround()`.
+  decisions worth asserting, and `glslLivingGround()`.
 - `terrain-living.ts` — the three.js half. `LIVING_GROUND_UNIFORMS` (shared by
   reference, the arrangement `wind-uniforms.ts` established), the setters the
   panel writes through, and `patchTerrainLiving`.
@@ -38,9 +38,11 @@ still takes the sun, the shadows and the lights.
 
 ```ts
 export function grassMask(r: number, g: number, b: number): number;
-export function macroTone(m1: number, m2: number): number;
+export function macroTone(m1: number, m2: number): number;   // signed, -1..1
 export function gustFront(raw: number, contrast: number): number;
 export function slopeSteepness(normalY: number, start: number, end: number): number;
+export function grassNoise(x: number, y: number): number;
+export function gustFrontAt(x: number, z: number, dirX: number, dirZ: number, t: number): number;
 export function glslLivingGround(): string;
 
 export const LIVING_GROUND_UNIFORMS: { readonly [name: string]: THREE.IUniform };
@@ -82,6 +84,42 @@ There is no prop distance field in this renderer and building one is a system of
 its own; the hook exists so that the day there is one, the colour arithmetic
 that consumes it is already written and tested.
 
+## What was learned building it
+
+Three things came out of the work that the design above did not predict, and all
+three are the same shape: **a layer can be correctly wired, switched on, and
+invisible.**
+
+- **A mark smaller than half a retro colour band is not a subtle mark, it is an
+  absent one.** Spec 074 records learning this once; every one of the four scales
+  here got it wrong the first time, and the gust worst of all — it shipped at a
+  fifth of a step and `probe-living-ground.ts` could not find it against four
+  walking animals. Every amplitude is now measured against a band in *linear*
+  space at the grass's own brightness, and the test states the rule for all four
+  scales at once so the next one added cannot skip it.
+- **`hash21` is degenerate on the integer lattice.** It opens with
+  `fract(p * vec2(127.1, 311.7))`, and `fract(0.1n)` on integers is a ten-step
+  staircase — so the value noise built on it is far more correlated than it looks
+  and its distribution is biased low (p50 0.39 against 0.50). On the gust field
+  that was not a subtlety: whole screens saturated at one end of the front, so the
+  meadow pulsed as one instead of having a boundary cross it. `grassNoise` gets
+  its own trig-free hash; `hash21` is left alone, because it is the water's and
+  the streak layer's and their looks were tuned against it.
+- **The shared wind clock does not advance in a headless page.** With this layer
+  switched off, the weather at maximum speed and the weather stilled change the
+  same number of pixels over six seconds — the trees are not swaying either. It
+  is why `preview-world.ts` only ever asserts on wind *strength*, and it means
+  "the fronts move with the clock" has to be asserted over the transcribed field
+  in Node rather than in a browser. A probe there reports a working front as a
+  broken one, and very nearly did.
+
+Two departures from the shape above followed. `macroTone` is **signed**, so the
+middle of the field displaces the map's colour by exactly nothing rather than by
+the midpoint of two tones that have no reason to be symmetric. And the gust is
+**two-sided**, so a front lifts its leading half and drops the trailing one and
+the meadow's mean brightness does not move — `GLSL_STREAK`'s own rule, arrived at
+here independently.
+
 ## Invariants tested
 
 - Every tone in `TERRAIN_COLORS.grass` reads as grass; every tone of `sand`,
@@ -99,11 +137,35 @@ that consumes it is already written and tested.
   few degrees of wobble cannot reach it, and 1 well before `MAX_WALK_SLOPE`.
 - `macroTone` is symmetric: at the middle of its range the shift is zero, so the
   authored colour is what unmodulated ground shows.
+- Every mark the layer draws — the macro tones, a gust front, a stroke against
+  its counter-stroke, a trail, a speck — is worth at least one whole colour step.
+- The macro window is symmetric about the noise's own middle, and `macroTone(m, m)`
+  at the middle is exactly zero.
+- The front moves: over one screen of ground, a fifth to three quarters of it
+  crosses a colour band in two seconds at the shipped drift, and a point two
+  seconds downwind now reads exactly what its upwind neighbour read then.
 - The GLSL names every uniform it declares and declares every uniform it names,
-  and samples the noise no more than the stated number of times.
+  samples the noise no more than the stated number of times, and declares every
+  name it introduces **exactly once in the assembled shader** — the collision
+  that stopped the ground compiling.
 - The patch composes: applied fourth, the compiled fragment shader still carries
   the streak, the cavity and the detail, and the cache key carries all four.
 - The uniform objects are shared by reference between two patched materials.
+
+## Acceptance
+
+`npm run build && npx tsx scripts/probe-living-ground.ts`, on the shipped page
+and the map the game boots from. It defines its own footprint — with the clock
+stilled, the pixels that change when the panel's Ground detail goes to zero *are*
+the pixels this layer reaches — and measures inside it, so nothing depends on a
+crop chosen by eye. Measured: 32% of the frame reached, a green-dominant mean
+(so the layer stayed on grass and off the dirt path), 2,118 distinct tones in
+that ground becoming 5,638, and a gust front that reaches 92% of it at the
+ceiling.
+
+`npx tsx scripts/probe-shading.ts` stays the tool for "does it link", and is what
+caught the constant collision that stopped the ground compiling while every test
+in Node was green.
 
 ## Out of scope
 

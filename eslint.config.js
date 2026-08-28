@@ -75,6 +75,14 @@ const PURE_RENDER = [
   'src/render/iso3d/wind.test.ts',
   'src/render/iso3d/shore-sdf.ts',
   'src/render/iso3d/shore-sdf.test.ts',
+  // The living ground's numbers and the shader they generate (spec 250), beside
+  // the wind for the wind's reason and one more of its own: the layer is a
+  // *palette* -- four colours and the scales they land at -- and whether a
+  // colour still survives the retro pass, or whether a material other than grass
+  // has drifted across the mask, are both arithmetic. Neither is a thing anybody
+  // should be discovering in a screenshot.
+  'src/render/iso3d/living-ground.ts',
+  'src/render/iso3d/living-ground.test.ts',
   // The lobed tree's silhouette (spec 077): the disc cluster its canopy outline
   // is walked from, and the trunk's taper, are both arithmetic -- and the
   // outline is the whole point of the species, so it is checked in Node rather

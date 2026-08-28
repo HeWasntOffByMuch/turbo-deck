@@ -23,6 +23,7 @@ import { buildWaterQuad, disposeWaterQuad } from './water-material.js';
 import { patchTerrainStreak } from './terrain-streak.js';
 import { patchTerrainCurvature } from './terrain-curvature.js';
 import { patchTerrainDetail } from './terrain-detail.js';
+import { patchTerrainLiving } from './terrain-living.js';
 
 /**
  * The only thing that turns terrain data into geometry (spec 043). Everything
@@ -51,7 +52,10 @@ import { patchTerrainDetail } from './terrain-detail.js';
  *   water line and simply occludes it.
  *
  * Both ground materials carry the wind's streak layer (spec 074), from the same
- * clock and the same direction the trees lean and the water churns to.
+ * clock and the same direction the trees lean and the water churns to. The
+ * surface carries the living-ground layer on top of that (spec 250) -- macro
+ * colour patches, brush strokes, gust fronts and specks -- which is albedo only:
+ * the geometry below is exactly the triangles the mesher emitted.
  */
 
 const surfaceMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -74,6 +78,16 @@ patchTerrainCurvature(surfaceMaterial);
 // triplanar.
 patchTerrainDetail(surfaceMaterial);
 patchTerrainDetail(wallMaterial);
+// Only the surface, and only **last** (spec 250). A cut bank is earth rather
+// than meadow, so the walls keep `TERRAIN_CLIFF_COLORS` untouched; and the order
+// is a requirement rather than a preference, because each of these patches
+// splices in front of the ones applied before it -- so the last one applied is
+// the first to run, which is what lets the grass mask read the raw vertex colour
+// and lets the rock blend, the detail, the creases and the streak ride on top of
+// what it produced. It also reads `vWindWorld`, `vDetailNormal`, `hash21` and the
+// two wind uniforms from the three patches above rather than declaring a second
+// copy of any of them.
+patchTerrainLiving(surfaceMaterial);
 
 /** The material index water cells carry, resolved once. */
 const WATER_MATERIAL = materialIndex('water');

@@ -1,5 +1,7 @@
 import { screenVisibility, WIND_BEARING_DEG, WIND_LIMITS } from './wind.js';
 import { setWindBearing, setWindSpeed, setWindStrength } from './wind-uniforms.js';
+import { LIVING_GROUND, LIVING_GROUND_LIMITS, type LivingGroundConfig } from './living-ground.js';
+import { resetLivingGround, setLivingGround } from './terrain-living.js';
 import { createMenuGroup, type MenuGroup } from './menu-group.js';
 import { createSettingsMenu, resetButton, section } from './settings-menu.js';
 
@@ -28,6 +30,20 @@ import { createSettingsMenu, resetButton, section } from './settings-menu.js';
  * and the panel pushes to it. `settings()` exists for tests and for a caller
  * that wants to read back what was asked for; nothing in the render loop calls
  * it.
+ *
+ * ## Why the ground is in here
+ *
+ * The living ground (spec 250) joins this panel rather than taking a seventh
+ * button, and the reason is the one thing spec 074 will not let go of: there is
+ * one wind direction and one clock, and the ground's gust fronts are that wind.
+ * A panel of its own would be a second place to reason about which way the world
+ * is blowing. The split argument that gave weather its own popover was about a
+ * panel already twenty rows deep; this one had three.
+ *
+ * What is here is the subset worth *dragging*. Every parameter the layer has --
+ * the four colours included -- is a field of `LIVING_GROUND` and reachable
+ * through `setLivingGround`; a row exists for the ones whose right value is
+ * found by looking at the frame rather than by thinking about it.
  */
 
 export interface WeatherSettings {
@@ -184,7 +200,123 @@ export function createWeatherControls(opts: WeatherControlOptions = {}): Weather
     (v) => setWindSpeed(v / 100),
   );
 
-  const knobs = [strength, bearing, speed];
+  // --- the ground (spec 250) -----------------------------------------------
+  // Each row writes one field of the living-ground config, so nothing here has
+  // to restate the twenty it does not own.
+  const groundKnob = (
+    label: string,
+    field: keyof LivingGroundConfig,
+    min: number,
+    max: number,
+    step: number,
+    tip: string,
+    unit: '%' | 'u',
+  ): Knob => {
+    const scale = unit === '%' ? 100 : 1;
+    return makeSlider(
+      label,
+      min * scale,
+      max * scale,
+      step,
+      (LIVING_GROUND[field] as number) * scale,
+      tip,
+      (v) => (unit === '%' ? `${Math.round(v)}%` : `${Math.round(v)}u`),
+      (v) => setLivingGround({ [field]: v / scale }),
+    );
+  };
+
+  const S = LIVING_GROUND_LIMITS;
+
+  const grassAmount = groundKnob(
+    'Ground detail', 'amount', S.minStrength, S.maxStrength, 5,
+    'The whole living-ground layer at once: the colour patches, the brush strokes, the gusts and ' +
+      'the specks. 0 is the flat two-tone grass this replaced, at no per-pixel cost.',
+    '%',
+  );
+  const patchSize = groundKnob(
+    'Patch size', 'macroScale', S.minScale, S.maxMacroScale, 5,
+    'World units per lattice cell of the large colour variation; a patch reads about twice this ' +
+      'across. The default is roughly three patches across the frame.',
+    'u',
+  );
+  const patchDepth = groundKnob(
+    'Patch depth', 'macroStrength', S.minStrength, S.maxStrength, 5,
+    'How far those patches move the ground off the colour the map painted -- moss one way, sun the ' +
+      'other, with occasional dry ground. The first slider to reach for: too low and the clearing is ' +
+      'flat again, too high and it stops reading as one material.',
+    '%',
+  );
+  const strokeSize = groundKnob(
+    'Stroke size', 'detailScale', S.minScale, S.maxDetailScale, 1,
+    'World units across a brush stroke. Its length is about two and a half times this, along the ' +
+      'swept direction.',
+    'u',
+  );
+  const strokes = groundKnob(
+    'Strokes', 'detailStrength', S.minStrength, S.maxStrength, 2,
+    'How far a stroke lifts the colour under it. This is the layer the wind lights up, so it is ' +
+      'deliberately quiet with the weather held still.',
+    '%',
+  );
+  const strokeDensity = groundKnob(
+    'Stroke density', 'detailDensity', S.minStrength, S.maxStrength, 5,
+    'How much of the ground carries a stroke at all. The empty ground between them is the point; ' +
+      'past about 70% it stops being marks and becomes a texture.',
+    '%',
+  );
+  const gustSize = groundKnob(
+    'Gust size', 'gustScale', S.minScale, S.maxGustScale, 10,
+    'World units between gust fronts along the wind. The default puts about two across the frame.',
+    'u',
+  );
+  const gustEdge = groundKnob(
+    'Gust edge', 'gustContrast', S.minStrength, S.maxStrength, 5,
+    'How hard the front of a gust is. Low is a soft swell that the retro filter quantizes away; ' +
+      'high is a boundary sweeping over the grass with still ground either side of it.',
+    '%',
+  );
+  const gustLift = groundKnob(
+    'Gust lift', 'gustBrightness', S.minStrength, S.maxStrength, 5,
+    'How much brighter the grass pattern goes inside a gust. The ground itself does not move -- ' +
+      'what crosses it is a change in the pattern.',
+    '%',
+  );
+  const trails = groundKnob(
+    'Wind trails', 'windStrength', S.minStrength, S.maxStrength, 5,
+    'Thin curved streaks running downwind, visible only inside a gust, so they arrive and leave ' +
+      'with it. Meant to be caught out of the corner of an eye.',
+    '%',
+  );
+  const groundSpeed = groundKnob(
+    'Ground drift', 'windSpeed', S.minSpeed, S.maxSpeed, 5,
+    'How fast the ground\'s own fronts cross, as a multiple of their art-directed speed. ' +
+      'Deliberately slower than the streak layer above, so the two do not beat against each other.',
+    '%',
+  );
+  const specks = groundKnob(
+    'Specks', 'microStrength', S.minStrength, S.maxStrength, 5,
+    'Sparse tips and dark motes a few pixels across, on about a twelfth of the ground. Raise this ' +
+      'and the clearing gets busy fast.',
+    '%',
+  );
+  const slopeDry = groundKnob(
+    'Slope dry', 'slopeStrength', S.minStrength, S.maxStrength, 5,
+    'How far a steep face browns and drains of colour, and loses its strokes. Cliffs and rock keep ' +
+      'their own materials -- this only varies the grass on a slope.',
+    '%',
+  );
+
+  const groundRows = [
+    grassAmount, patchSize, patchDepth,
+    strokeSize, strokes, strokeDensity,
+    gustSize, gustEdge, gustLift,
+    trails, groundSpeed, specks, slopeDry,
+  ];
+
+  // Ahead of the rows, so the fields no slider owns -- the four colours, the
+  // micro and trail scales, the shelter hook -- go back too; the rows then push
+  // their own defaults over the top of the same values.
+  const knobs = [{ reset: resetLivingGround }, strength, bearing, speed, ...groundRows];
 
   // A plain wave glyph rather than an emoji. The cog beside it is U+2699, which
   // every UI font carries; a weather emoji is not, and a headless Chromium
@@ -201,7 +333,12 @@ export function createWeatherControls(opts: WeatherControlOptions = {}): Weather
     strength.row,
     bearing.row,
     speed.row,
-    resetButton('Restore the wind to the weather the world was art-directed for.', knobs),
+    section('Ground'),
+    ...groundRows.map((knob) => knob.row),
+    resetButton(
+      'Restore the wind and the ground to the weather the world was art-directed for.',
+      knobs,
+    ),
   );
 
   return {
