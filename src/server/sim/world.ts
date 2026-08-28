@@ -36,8 +36,8 @@ import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
 import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
-import { bolt, isFriendly, notice, playersOf, rally, settle } from './aggro.js';
-import { idle } from './idle.js';
+import { bolt, goHome, isFriendly, isReturning, notice, playersOf, rally, settle } from './aggro.js';
+import { beyondLeash, idle } from './idle.js';
 import { approachPoints, type Approach } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import {
@@ -160,6 +160,7 @@ function blankEntity(id: number): ServerEntity {
     aggro: AggroValue.Calm,
     aggroUntilTick: 0,
     fleeGoal: null,
+    returnStart: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -334,6 +335,7 @@ export function spawnEntity(
     aggro: spec.targetId === undefined ? AggroValue.Calm : AggroValue.Engaged,
     aggroUntilTick: 0,
     fleeGoal: null,
+    returnStart: null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -502,6 +504,14 @@ export function isHostile(
   // its non-hostility -- there is no branch anywhere else asking whether a body
   // is an enemy, because every one of them asks this function.
   if (isFriendly(attacker) || isFriendly(target)) return false;
+  // A body walking home after breaking its leash (spec 248), refused at both
+  // ends and for exactly the reason the line above is: the walk is not a fight.
+  // This one line is the whole of its invulnerability -- nothing swings at it,
+  // no blast catches it, no affliction already on it pulses, and it swings at
+  // nothing -- because every damage path in the sim filters its candidates
+  // through this function. Shooting a retreating body in the back was a free
+  // four fifths of a kill, repeatable, with the leash doing the work.
+  if (isReturning(attacker) || isReturning(target)) return false;
   if (attacker.kind === target.kind) {
     if (attacker.kind !== EntityKindValue.Player) return false;
     // Both ends, not just the attacker's (spec 145). Reading the attacker's
@@ -2154,6 +2164,23 @@ function monsterIntent(
   // so the leash's job resumes with nothing left to do.
   if (target && monster.aggro !== AggroValue.Fleeing && beyondLeash(monster)) target = null;
 
+  // And having let go out there, it goes home -- which is a claim on the body
+  // rather than the absence of a target (spec 248). It is invulnerable, it
+  // notices nobody, and it heals as it walks; `aggro.ts` holds all three and
+  // this is the one line that starts them.
+  //
+  // Asked **here**, above `settle` and `notice`, because those are what used to
+  // hand the target straight back: the leash released it and `notice` re-alerted
+  // on the same tick, so a ferocious body kited past its leash with the player
+  // still standing there never took a step homeward at all. And asked of
+  // `target === null` rather than of the leash line above, so that one condition
+  // also covers a flight that ended out past the leash and a target that died
+  // out there.
+  //
+  // `goHome` is idempotent and anchor-gated, so a body already walking home is
+  // untouched by it and a body with no anchor never begins.
+  if (target === null && beyondLeash(monster)) monster = goHome(monster);
+
   // Proximity is back on (spec 163), as a temperament rather than the radius
   // spec 076 deleted -- and the mind is settled here, before a step is taken.
   // `settle` is what a clock running out, a quarry backing off or a target
@@ -2334,23 +2361,6 @@ function fleeFrom(
       cancelCast: false,
     },
   };
-}
-
-/**
- * Whether this body has been dragged further from its spawn point than it will
- * go.
- *
- * Off the body's own radius rather than the constant since spec 222, because a
- * spawner may author a tighter one. Still gated by `anchor`, so a player and a
- * monster an admin conjured are untouched -- they have no home to be dragged
- * away from, and `leashRadius` on either is a number nothing reads.
- */
-function beyondLeash(monster: ServerEntity): boolean {
-  const anchor = monster.anchor;
-  if (!anchor) return false;
-  const dx = monster.position.x - anchor.x;
-  const dy = monster.position.y - anchor.y;
-  return dx * dx + dy * dy > monster.leashRadius * monster.leashRadius;
 }
 
 /**

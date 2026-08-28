@@ -13,22 +13,26 @@
  * combat is one answer rather than three: come home, healing on the way, then
  * mill about or walk your beat.
  *
- * **Nothing here draws from the `Rng`, and there is no new entity state.** Where
- * a body is headed is a pure function of `(its id, the tick)` through
+ * **Nothing here draws from the `Rng`.** Where a body is *milling about* is a
+ * pure function of `(its id, the tick)` through
  * `shared/hash.ts` -- the precedent `crowd.ts`'s `symmetryBreak` set, and for
  * the reason stated there: the sim's draw *count* is load-bearing, so a field of
  * monsters sampling the PRNG sixty times a second would move every combat roll
  * in the world. Hashing buys the second property for free -- a goal that is
  * derived is a goal that cannot be persisted wrong, expire wrong, or be
- * forgotten to be cleared when a fight starts.
+ * forgotten to be cleared when a fight starts. The one thing that is *not*
+ * derived is a walk home (spec 248): `ServerEntity.returnStart` is a snapshot,
+ * because both ends of "regenerate to full along the route" are gone the moment
+ * the body takes its first step.
  */
 
 import { hash2i, hashUnit2 } from '../../shared/hash.js';
 import type { Vec2 } from '../../sim/types.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { idlePlanOf, type Idle } from '../data/monsters.js';
+import { arriveHome } from './aggro.js';
 import { hasStatus, StatusId } from './statuses.js';
-import { EntityKindValue, type ServerEntity } from './types.js';
+import { EntityKindValue, type ReturnStart, type ServerEntity } from './types.js';
 
 const TAU = Math.PI * 2;
 
@@ -69,6 +73,28 @@ export const RECOVERY_SECONDS = 4;
 /** The same, in ticks -- the denominator of one tick's worth of healing. */
 export const RECOVERY_TICKS = Math.max(1, Math.round(RECOVERY_SECONDS * SERVER_TICK_RATE));
 
+/**
+ * Whether this body has been dragged further from its spawn point than it will
+ * go (specs 076, 222).
+ *
+ * Here rather than in `world.ts` since spec 248, because the leash is no longer
+ * only a reason to drop a target: it is the one thing that starts a walk home,
+ * and the walk home is this file's. `world.ts` still asks it, at the one line
+ * where a chase ends.
+ *
+ * Off the body's own radius rather than the constant, because a spawner may
+ * author a tighter one. Still gated by `anchor`, so a player and a monster an
+ * admin conjured are untouched -- they have no home to be dragged away from,
+ * and `leashRadius` on either is a number nothing reads.
+ */
+export function beyondLeash(monster: ServerEntity): boolean {
+  const anchor = monster.anchor;
+  if (!anchor) return false;
+  const dx = monster.position.x - anchor.x;
+  const dy = monster.position.y - anchor.y;
+  return dx * dx + dy * dy > monster.leashRadius * monster.leashRadius;
+}
+
 // Distinct seeds so the three questions a wander asks of one `(id, epoch)` --
 // which way, how far, and when did this body's cycle start -- are independent
 // rather than three views of one hash.
@@ -96,11 +122,12 @@ export interface IdleStep {
 /**
  * One tick of a monster's life out of combat.
  *
- * The order is the priority: a body too far from its anchor comes home first,
- * and only a body that is *on* its own ground has any business milling about on
- * it. Recovery is not part of that order because it is not a place -- it applies
- * either way, so "a monster nobody is fighting recovers" stays one sentence
- * rather than a special case bolted to the leash.
+ * The order is the priority: a body that gave up out past its leash is walking
+ * home and nothing else, then a body merely off its own ground comes back to it,
+ * and only a body that is *on* it has any business milling about. Recovery is
+ * not part of that order because it is not a place -- it applies either way, so
+ * "a monster nobody is fighting recovers" stays one sentence rather than a
+ * special case bolted to the leash.
  *
  * Answers `goal: null` for anything that is not a monster and for a monster with
  * no anchor. The second is not an omission: a body with no home has no ground to
@@ -110,18 +137,86 @@ export interface IdleStep {
 export function idle(monster: ServerEntity, tick: number): IdleStep {
   if (monster.kind !== EntityKindValue.Monster) return { entity: monster, goal: null };
 
-  const entity = restore(monster, tick);
   const anchor = monster.anchor;
+  const plan = idlePlanOf(monster.typeId);
+  const arrival = homeRadiusOf(plan) + HOME_MARGIN;
+  const drift = anchor
+    ? Math.hypot(monster.position.x - anchor.x, monster.position.y - anchor.y)
+    : 0;
+
+  // The walk home (spec 248), which outranks the rest because it is a claim on
+  // the body rather than something it happens to be doing: it started at a
+  // leash it broke and it ends at its own ground, and nothing in between --
+  // being shot at, a player standing in its notice range, a neighbour shouting
+  // -- moves it. Everything that enforces that lives in `aggro.ts` and
+  // `isHostile`; what is here is where it goes, and what it is owed on the way.
+  //
+  // `restore` is deliberately skipped for the duration. The ramp below is a
+  // second, faster answer to the same question and running both would heal
+  // twice; and `restore`'s `InCombat` gate is exactly what a retreating body
+  // cannot satisfy while somebody keeps hitting it, which is the hole this
+  // closes.
+  if (anchor && monster.returnStart) {
+    if (drift > arrival) {
+      return {
+        entity: healHomeward(monster, monster.returnStart, drift, arrival),
+        goal: { at: anchor, pace: RETURN_PACE },
+      };
+    }
+    // Home. Full health rather than whatever the ramp had reached, because the
+    // ramp is a *presentation* of a promise the arrival is the point of -- and
+    // a body left one point short by a rounding error is a body somebody can
+    // still open a fight against at a discount. It stands this tick and picks a
+    // post on the next, which is what any other body that has just arrived
+    // somewhere does.
+    return { entity: { ...arriveHome(monster), health: monster.stats.maxHealth }, goal: null };
+  }
+
+  const entity = restore(monster, tick);
   if (!anchor) return { entity, goal: null };
 
-  const plan = idlePlanOf(monster.typeId);
-  const drift = Math.hypot(monster.position.x - anchor.x, monster.position.y - anchor.y);
-  if (drift > homeRadiusOf(plan) + HOME_MARGIN) {
-    return { entity, goal: { at: anchor, pace: RETURN_PACE } };
-  }
+  if (drift > arrival) return { entity, goal: { at: anchor, pace: RETURN_PACE } };
 
   const post = postAt(plan, monster.id, anchor, tick);
   return { entity, goal: post === null ? null : { at: post, pace: IDLE_PACE } };
+}
+
+/**
+ * One tick of a returning body's ramp back to full health (spec 248).
+ *
+ * Linear in **ground closed**, not in time: the promise is "full when it gets
+ * there", so the two ends of the ramp are where the body gave up and where the
+ * walk stops -- which is `arrival`, not the anchor. Measured to the anchor and
+ * the last stretch would be a jump; measured to `arrival`, the ramp reaches
+ * full exactly as the walk ends and the snap above has nothing left to snap.
+ *
+ * **It never runs downhill.** `drift` is the straight line home and the route
+ * is not: a body going round a rock, or shoved outward by the crowd, closes
+ * less ground this tick than last, and a bare `lerp` would take health back off
+ * a body that cannot be hurt. So the ramp is a floor rather than a value, and
+ * what a detour costs is a pause rather than a reversal.
+ *
+ * A span that is zero or negative -- a spawner authoring a leash tighter than
+ * its monster's own wander radius -- lands the body on full immediately, which
+ * is the honest reading of "it broke its leash and is already home".
+ */
+function healHomeward(
+  monster: ServerEntity,
+  start: ReturnStart,
+  drift: number,
+  arrival: number,
+): ServerEntity {
+  const max = monster.stats.maxHealth;
+  if (monster.health >= max) return monster;
+  const span = start.distance - arrival;
+  const progress = span > 0 ? clamp01((start.distance - drift) / span) : 1;
+  const owed = start.health + (max - start.health) * progress;
+  const health = Math.min(max, Math.max(monster.health, owed));
+  return health === monster.health ? monster : { ...monster, health };
+}
+
+function clamp01(value: number): number {
+  return value < 0 ? 0 : value > 1 ? 1 : value;
 }
 
 /**
